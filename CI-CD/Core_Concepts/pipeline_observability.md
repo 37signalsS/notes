@@ -333,12 +333,63 @@ promtool query instant http://localhost:9090 \
 
 ## Дополнительная информация
 
+### GitHub Actions: специфическая наблюдаемость
+
+Встроенные механизмы GitHub Actions требуют отдельного подхода, так как доступ к метрикам ограничен API и логами платформы.
+
+**Ключевые источники данных:**
+- **Workflow Runs API** — статус, длительность, commit SHA каждого запуска.
+- **Check Runs API** — результаты job'ов и отдельных шагов.
+- **Job Logs** — текстовые логи с `trace_id` (при настройке).
+- **Runner Metrics** — метрики self-hosted runner'ов через `actions-runner-controller` (ARC) или prometheus-экспортер.
+- **gh-otel-cli** — официальное расширение `gh` для отправки OTLP-спанов прямо из workflow-шагов.
+
+**Настройка gh-otel-cli в workflow:**
+```yaml
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup gh-otel-cli
+        uses: github/setup-gh-otel-cli@v1
+        with:
+          otel_endpoint: http://otel-collector.internal:4317
+      - name: Build with tracing
+        run: |
+          gh otel exec --name "build" --service "myapp-ci" \
+            --attrs "cicd.job.name=build,cicd.system=github_actions" \
+            ./build.sh
+```
+
+**SLI для GitHub Actions:**
+- **Workflow Success Rate** = успешные runs / все runs (цель ≥ 95%).
+- **Workflow Duration (p95)** — 95-й перцентиль длительности Run (цель < 15 мин).
+- **Queue Time** — время ожидания runner'а (для self-hosted: метрики ARC; для hosted — косвенно через разницу `created_at` и `started_at`).
+- **Runner Saturation** — доля занятых слотов self-hosted runner'ов (через `actions-runner-controller` metrics).
+
+**Алерты на основе API:**
+```yaml
+# Пример через GitHub Actions + curl в job'е
+- name: Check failure rate
+  run: |
+    FAILURES=$(gh run list --limit 100 --json conclusion --jq '[.[] | select(.conclusion == "failure")] | length')
+    TOTAL=$(gh run list --limit 100 --json conclusion --jq 'length')
+    RATE=$(echo "scale=2; $FAILURES * 100 / $TOTAL" | bc)
+    echo "Failure rate: $RATE%"
+    if (( $(echo "$RATE > 5" | bc -l) )); then
+      echo "::warning::Failure rate exceeded 5%"
+    fi
+```
+
+**Особенности кардинальности:** `run_id`, `repository`, `branch` — высококардинальные теги. Используйте агрегирование на уровне Collector и избегайте индексирования `trace_id` в Prometheus.
+
 ### Инструментарий
 
 - **OpenTelemetry Collector:** Универсальный сервис (коллектор) для обработки телеметрии.
 - **Grafana Tempo:** Масштабируемое хранилище трейсов.
 - **otel-cli:** CLI-утилита для ручной отправки спанов из bash-скриптов.
-- **gh-otel-cli:** Специализированное расширение для GitHub Actions.
+- **gh-otel-cli:** Официальное расширение `gh` для GitHub Actions (отправка OTLP из workflow).
 - **Tetragon / Hubble (eBPF):** Инструменты для глубокой наблюдаемости сетевого стека и процессов.
 
 ### Grafana-дашборд (что выводить)

@@ -52,7 +52,7 @@
 | `options attempts:N` | Количество попыток на каждый сервер (по умолчанию 2). |
 | `options rotate` | Циклическое распределение запросов между всеми nameserver. |
 | `options ndots:N` | Количество точек, при котором имя считается абсолютным (FQDN). |
-| `options single-request-reopen` | Переоткрытие сокета для каждого запроса при параллельных A/AAAA запросах (актуально для musl/Alpine). |
+| `options single-request-reopen` | Переоткрытие сокета для каждого запроса при параллельных A/AAAA запросах (только glibc; musl/Alpine игнорирует опцию). |
 | `options single-request` | Отправлять A и AAAA запросы последовательно, а не параллельно. |
 | `options use-vc` | Принудительное использование TCP для всех запросов (устраняет проблемы с UDP-фрагментацией). |
 | `options trust-ad` | Доверять флагу аутентичности DNSSEC от резолвера. |
@@ -62,7 +62,7 @@
 Для снижения нагрузки на сеть и уменьшения задержек используются два основных подхода:
 
 *   **systemd-resolved:** Современный стандарт. Поддерживает Split DNS (разные сервера для разных интерфейсов/VPN) и кэширование с учетом TTL.
-*   **[nscd (Name Service Cache Daemon)](../Services/nscd.md):** Устаревший (Legacy) демон кэширования. В 2024–2026 годах заменен на `systemd-resolved` и `sssd`. **Внимание:** часто становится причиной отдачи старых данных из-за игнорирования DNS TTL и отсутствия поддержки современных протоколов.
+*   **[nscd (Name Service Cache Daemon)](../Services/nscd.md):** Устаревший (Legacy) демон кэширования. В современных дистрибутивах заменён на `systemd-resolved` и `sssd`. **Внимание:** часто становится причиной отдачи старых данных из-за игнорирования DNS TTL и отсутствия поддержки современных протоколов.
 
 ## Предусловия
 
@@ -202,7 +202,7 @@ kubectl get pod <pod> -o jsonpath='{.spec.dnsConfig}'
 
 ### 3. Настройка шифрованного DNS (DoT/DoH/DoQ)
 
-На 2026 год стандартом безопасности является шифрование DNS-трафика для предотвращения MITM-атак.
+Стандартом безопасности является шифрование DNS-трафика (DoT/DoH/DoQ) для предотвращения MITM-атак.
 
 ```ini
 # /etc/systemd/resolved.conf
@@ -545,7 +545,7 @@ ldd /lib/x86_64-linux-gnu/libnss_files.so.2
 *   **Очищайте кэш** при подозрении на устаревшие записи: `resolvectl flush-caches` (systemd-resolved), `sudo nscd -i hosts` (nscd).
 *   **Не опускайте TTL ниже 60 секунд** без крайней необходимости — это создает экстремальную нагрузку на DNS-серверы.
 *   **Для контейнерных сред:** используйте `ndots:1` и FQDN с точкой (`example.com.`) для внешних доменов, чтобы избежать задержек.
-*   **В Alpine Linux (musl):** добавляйте `options single-request-reopen` в `/etc/resolv.conf` для предотвращения блокировки при параллельных A/AAAA запросах.
+*   **В Alpine Linux (musl):** тюните поддерживаемые опции (`options timeout:2 attempts:1`); `single-request-reopen` musl не поддерживает — при «зависании» параллельных A/AAAA исправляйте IPv6 или используйте DNS-прокси.
 *   **`getaddrinfo()` блокирует поток:** Стандартный glibc-резолвер является блокирующим. Для асинхронного резолвинга используйте `c-ares` (C/C++), `Go net.Resolver` (Go), или `dns` модуль (Node.js).
 *   **glibc vs musl:** glibc учитывает `/etc/nsswitch.conf` и поддерживает NSS, musl (Alpine) игнорирует NSS и читает только `/etc/resolv.conf`. В Alpine-контейнерах `getent hosts` может не работать для кастомных NSS-источников.
 *   **Не смешивайте nscd и systemd-resolved:** одновременный запуск приводит к двойному кэшированию и конфликтам.
@@ -593,7 +593,7 @@ sudo cp /etc/gai.conf /etc/gai.conf.bak.$(date +%Y%m%d)
 
 **Проблема:** Если один из DNS-серверов медленный, а второй быстрый, но не знает внутренних имен, запрос может завершиться ошибкой NXDOMAIN.
 
-**Решение:** Добавьте `options single-request-reopen` в `/etc/resolv.conf` или настройте `dnsConfig` в Docker/Kubernetes.
+**Решение:** Добавьте `options timeout:2 attempts:1` в `/etc/resolv.conf` или настройте `dnsConfig` в Docker/Kubernetes (опция `single-request-reopen` musl не поддерживает; для glibc-образов она дополнительно переоткрывает сокет).
 
 ### DNS64/NAT64 и локальное разрешение
 
@@ -698,8 +698,8 @@ dns=systemd-resolved
 
 ### См. также
 * [Протокол DNS](../../../Networking/Protocols/DNS/dns.md) — теория, типы записей и иерархия.
-* [Диагностика DNS: Обзор](../../Linux/Diagnostics/Networking/dns/overview.md) — подробный разбор архитектуры и уровней диагностики.
+* [Диагностика DNS: Обзор](../../Diagnostics/Networking/dns/overview.md) — подробный разбор архитектуры и уровней диагностики.
 * [Безопасность DNS](../../../Networking/Protocols/DNS/dns_security.md) — детали DNSSEC и защиты от атак.
-* [Порядок разрешения имен](../../Linux/Diagnostics/Networking/dns/name_resolution.md) — детальный разбор цепочки разрешения и NSS.
-* [Конфигурация DNS-клиента](../../Linux/Diagnostics/Networking/dns/configuration.md) — диагностика и проверка конфигурационных файлов.
-* [Производительность DNS-резолвинга](../../Linux/Diagnostics/Networking/dns/dns_resolution_performance.md) — оптимизация задержек, conntrack race, ndots.
+* [Порядок разрешения имен](../../Diagnostics/Networking/dns/name_resolution.md) — детальный разбор цепочки разрешения и NSS.
+* [Конфигурация DNS-клиента](../../Diagnostics/Networking/dns/configuration.md) — диагностика и проверка конфигурационных файлов.
+* [Производительность DNS-резолвинга](../../Diagnostics/Networking/dns/dns_resolution_performance.md) — оптимизация задержек, conntrack race, ndots.

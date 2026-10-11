@@ -1,12 +1,16 @@
 # Паттерны кэширования
 
+**Актуально для:** Общая теория паттернов кэширования + Redis 8.x / Valkey 8.x / Memcached 1.6.x
+
 ## Определения
 
 **Паттерны кэширования** — это типовые архитектурные стратегии взаимодействия приложения с кэшем и основным хранилищем данных (Database). Выбор паттерна определяет баланс между производительностью (Latency), согласованностью данных (Consistency) и устойчивостью системы к сбоям.
 
 С точки зрения SRE, паттерны кэширования являются инструментом управления **радиусом поражения (Blast Radius)** и обеспечения **деградации функциональности (Graceful Degradation)**. Основная сложность заключается в решении проблемы **Dual Writes** (двойной записи), когда обновление двух независимых систем (БД и кэша) не является атомарным, что может привести к рассинхронизации.
 
-Для ознакомления с уровнями и метриками кэширования см. [общий обзор кэширования](./caching_overview.md).
+*   **[Rate Limiting](../../Networking/Protocols/HTTP/http_rate_limiting_circuit_breakers.md):** Алгоритмы ограничения скорости для защиты от DDoS.
+*   **[Распределенные блокировки](./caching_distributed_locks.md):** Redlock для критических секций.
+*   **[Keyspace Notifications](./caching_keyspace_notifications.md):** Реактивное инвалидирование через Pub/Sub.
 
 ## Основные концепции
 
@@ -452,7 +456,7 @@ def get_with_fallback(key, db_fetch_fn):
     return value
 ```
 
-## Лучшие практики SRE по управлению кэшем
+## Лучшие практики
 
 Для обеспечения надежности систем с агрессивным кэшированием рекомендуется придерживаться следующих правил:
 
@@ -461,8 +465,20 @@ def get_with_fallback(key, db_fetch_fn):
 3.  **Circuit Breaker для кэша:** Если система кэширования недоступна, приложение должно уметь автоматически переключаться на работу напрямую с БД (Fallback), чтобы избежать полного отказа сервиса.
 4.  **Тестирование «холодного» старта:** Регулярно проводите нагрузочное тестирование с пустым кэшем. База данных должна выдерживать нагрузку при 0% Hit Rate в течение времени, необходимого для прогрева.
 5.  **Версионирование кэша:** При изменении структуры данных в приложении используйте префиксы версий в ключах (например, `v1:user:123`, `v2:user:123`), чтобы избежать ошибок десериализации.
-6.  **Защита от Big Keys:** В Redis используйте `--bigkeys` для поиска ключей >1 МБ. Разбивайте крупные объекты на части или храните в S3 с кэшированием метаданных.
+6.  **Защита от Big Keys:** В Redis используйте `--bigkeys` для поиска ключей >1 МБ. Разбивайте крупные объекты на части или храните во внешнем объектном хранилище с кэшированием метаданных.
 7.  **Контейнеризация (systemd/cgroup):** При работе с Redis/Memcached в контейнерах настройте лимиты памяти через `memory.limit_in_bytes` (cgroup v1) или `memory.max` (cgroup v2). Убедитесь, что `maxmemory` Redis составляет не более 70% от лимита контейнера, чтобы оставить место для overhead.
+
+## Устранение неисправностей (Troubleshooting)
+
+| Симптом | Вероятная причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| Hit rate < 80% | Недостаточный объем кэша или неэффективный TTL | `redis-cli INFO stats`, `memcached-tool stats` | Увеличить `maxmemory` или оптимизировать TTL |
+| Рост latency операций | Фрагментация памяти или блокировки | `redis-cli INFO memory`, `redis-cli SLOWLOG GET` | Включить `activedefrag yes`, проверить bigkeys |
+| Write lag растет | БД перегружена или медленные индексы | Мониторинг `cache_write_lag_seconds` | Оптимизировать запросы БД, увеличить concurrency |
+| CDC-события не доходят | Debezium-коннектор упал или Kafka недоступна | `curl http://localhost:8083/connectors/<name>/status` | Перезапустить коннектор, проверить Kafka |
+| Сессии теряются после рестарта | Нет персистентности | `redis-cli INFO persistence` | Настроить RDB/AOF или вынести сессии в другой сервис |
+| `OOM command not allowed` | Исчерпан лимит `maxmemory` | `redis-cli INFO memory \| grep used_memory` | Увеличить `maxmemory` или сменить eviction policy |
+| Memory pressure в контейнере | Лимит `memory.limit_in_bytes` (cgroup v1) или `memory.max` (cgroup v2) слишком низок | `cat /sys/fs/cgroup/memory/memory.limit_in_bytes` | Увеличить `memory` limits контейнера |
 
 ## Дополнительная информация
 
@@ -493,18 +509,6 @@ rate(cache_hits_total[5m]) / (rate(cache_hits_total[5m]) + rate(cache_misses_tot
 # Write lag p95
 histogram_quantile(0.95, rate(cache_write_lag_seconds_bucket[5m]))
 ```
-
-### Диагностика и устранение проблем
-
-| Симптом | Вероятная причина | Диагностика | Решение |
-| :--- | :--- | :--- | :--- |
-| Hit rate < 80% | Недостаточный объем кэша или неэффективный TTL | `redis-cli INFO stats`, `memcached-tool stats` | Увеличить `maxmemory` или оптимизировать TTL |
-| Рост latency операций | Фрагментация памяти или блокировки | `redis-cli INFO memory`, `redis-cli SLOWLOG GET` | Включить `activedefrag yes`, проверить bigkeys |
-| Write lag растет | БД перегружена или медленные индексы | Мониторинг `cache_write_lag_seconds` | Оптимизировать запросы БД, увеличить concurrency |
-| CDC-события не доходят | Debezium-коннектор упал или Kafka недоступна | `curl http://localhost:8083/connectors/<name>/status` | Перезапустить коннектор, проверить Kafka |
-| Сессии теряются после рестарта | Нет персистентности | `redis-cli INFO persistence` | Настроить RDB/AOF или вынести сессии в другой сервис |
-| `OOM command not allowed` | Исчерпан лимит `maxmemory` | `redis-cli INFO memory \| grep used_memory` | Увеличить `maxmemory` или сменить eviction policy |
-| Memory pressure в контейнере | Лимит `memory.limit_in_bytes` (cgroup v1) или `memory.max` (cgroup v2) слишком низок | `cat /sys/fs/cgroup/memory/memory.limit_in_bytes` | Увеличить `memory` limits контейнера |
 
 ### Тестирование паттернов (нагрузочное)
 

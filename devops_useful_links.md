@@ -59,3 +59,5 @@
 - **KubeWeekly**
   Официальный дайджест от CNCF о новостях экосистемы Kubernetes.
   - [https://www.cncf.io/kubeweekly/](https://www.cncf.io/kubeweekly/)
+
+# force reindex test

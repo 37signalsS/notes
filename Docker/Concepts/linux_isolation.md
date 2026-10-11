@@ -1,5 +1,7 @@
 # Изоляция контейнеров: Namespaces и Cgroups
 
+**Актуально для:** Docker 20.10+ (рекомендуется 29.x), Cgroups v2 (Kernel 5.8+)
+
 ## Определения
 
 **Изоляция контейнеров** — это комплекс мер по разграничению ресурсов и видимости системных объектов между процессами контейнера и хостовой ОС. В Linux это достигается на уровне ядра через взаимодействие с **ABI (Application Binary Interface)** и системными вызовами, используя три фундаментальных механизма:
@@ -65,9 +67,10 @@ Docker использует драйвер **overlay2** для создания 
 
 1. **Вложенные контейнеры (Docker-in-Docker / Podman-in-Podman):** При запуске контейнера внутри контейнера (DinD) требуется привилегированный режим (`--privileged`) или явное предоставление доступа к `cgroups` и `devices`, так как внутренний демон не видит cgroups хоста без делегирования.
 2. **Systemd внутри контейнера:** Для корректной работы `systemd` как PID 1 требуется:
-   - Монтирование хостовой иерархии cgroups (`--cgroupns=host`) или приватное пространство cgroup namespace (`--cgroupns=private` с делегированием).
+   - Монтирование хостовой иерархии cgroups (`--cgroupns=host`) или приватное пространство cgroup namespace (`--cgroupns=private` с делегированием). В Docker 29.x с systemd-хостами предпочтительнее `--cgroupns=host`, так как systemd ожидает видеть полную иерархию.
    - Доступ к `/sys/fs/cgroup` и `/run` как tmpfs.
    - Отключение `--read-only` или явное указание writable-путей (`--tmpfs /run`, `--tmpfs /run/lock`).
+   - **Важно для SRE:** При использовании `--cgroupns=host` контейнер получает доступ к информации о всех процессах хоста через `/sys/fs/cgroup`. Это допустимо только для доверенных контейнеров (CI/CD runners, DinD). Для production-workloads используйте `--cgroupns=private` с явным делегированием контроллеров.
 3. **Ограничение глубины OverlayFS:** Стандартное ограничение — 128 нижних слоев (`lowerdir`). При превышении возникает ошибка `too many levels of symbolic links`. Решение: использование `overlay2` с оптимизацией или переход на `fuse-overlayfs` в rootless-режиме.
 4. **Time Namespace:** Несмотря на наличие в ядре 5.6+, Docker не включает `CLONE_NEWTIME` по умолчанию. Контейнеры, которым требуется изолированное время, должны использовать явные флаги или патч рантайма.
 5. **Общий кеш страниц (Page Cache):** Cgroups ограничивают потребление *активной* памяти, но page cache учитывается в `memory.stat`. При высокой I/O-нагрузке cache может занимать значительную часть лимита, приводя к ложным OOMKilled.
@@ -80,8 +83,8 @@ Docker использует драйвер **overlay2** для создания 
 Перед работой с изоляцией убедитесь, что система соответствует требованиям:
 
 **Аппаратные и программные требования:**
-- Ядро Linux **5.8+** для полной поддержки Cgroups v2 и всех контроллеров.
-- Docker **20.10+** (предпочтительно 24.0+ для стабильной работы cgroups v2 и `--cgroupns`).
+- Ядро Linux **5.8+** для полной поддержки Cgroups v2 и всех контроллеров; в production-средах 2026 года преобладают ядра **6.x**.
+- Docker **20.10+** (предпочтительно 29.x+ для стабильной работы cgroups v2 и `--cgroupns`).
 - Файловая система с поддержкой `overlay2` (ext4, xfs, btrfs).
 
 **Проверка окружения:**
@@ -97,7 +100,7 @@ stat -fc %T /sys/fs/cgroup/
 
 # Проверка версии Docker
 docker --version
-# → Docker version 24.0.x, build xxxxx
+# → Docker version 29.x, build xxxxx
 
 # Проверка доступного storage driver
 docker info | grep -i "storage driver"
@@ -136,10 +139,12 @@ grep -i "CONFIG_NAMESPACES" /boot/config-$(uname -r)
 
 При вызове `docker run` или `podman run` происходит взаимодействие нескольких компонентов:
 1. **Container Engine (Docker/Podman):** обрабатывает высокоуровневые запросы и образы.
-2. **Container Runtime (runc / crun):** низкоуровневая утилита, которая взаимодействует с ядром.
-3. **Создание:** `runc` делает системный вызов `clone()` с флагами соответствующих пространств имён (например, `CLONE_NEWPID`, `CLONE_NEWNET`).
+2. **Container Runtime (`runc` / `crun`):** низкоуровневая OCI-совместимая утилита, которая взаимодействует с ядром. В 2026 году `crun` предпочтительнее для production из-за меньшего оверхеда памяти и нативной поддержки cgroups v2.
+3. **Создание:** рантайм делает системный вызов `clone()` с флагами соответствующих пространств имён (например, `CLONE_NEWPID`, `CLONE_NEWNET`).
 4. **Настройка:** внутри нового процесса монтируется `rootfs`, настраивается сеть и применяются лимиты cgroups.
 5. **Exec:** процесс заменяет себя (`execve`) целевым бинарным файлом (например, `/bin/bash`).
+
+> **Примечание для SRE:** В Kubernetes 1.28+ и Docker 29.x контейнеры по умолчанию используют `cgroupns=private`, что скрывает иерархию cgroups хоста. При использовании systemd внутри контейнера (например, в `docker:dind` или legacy-образах) может потребоваться `--cgroupns=host` с учётом рисков раскрытия информации о соседних контейнерах.
 
 ### Практическая инспекция механизмов изоляции
 
@@ -208,6 +213,65 @@ docker run --rm --read-only -it alpine sh -c "touch /test && echo OK" || echo "�
 # → Ожидаемая ошибка: RO FS
 ```
 
+### Валидация изоляции в CI/CD пайплайнах
+
+Для SRE и DevOps-инженеров важно автоматизировать проверку изоляции при деплое. Ниже приведены проверки, которые можно интегрировать в GitLab CI, GitHub Actions или Jenkins:
+
+```bash
+#!/usr/bin/env bash
+# validate-isolation.sh — базовый набор проверок для CI
+set -euo pipefail
+
+CONTAINER="${1:-alpine:latest}"
+
+# 1. Проверка namespaces
+docker run --rm -d --name iso-test "$CONTAINER" sleep 3600
+PID=$(docker inspect -f '{{.State.Pid}}' iso-test)
+
+# PID namespace: контейнер должен иметь свой PID 1
+if ! ls -la /proc/$PID/ns/pid >/dev/null 2>&1; then
+  echo "FAIL: PID namespace отсутствует"
+  exit 1
+fi
+
+# NET namespace: должен быть отдельный netns
+HOST_NET=$(readlink /proc/1/ns/net)
+CONT_NET=$(readlink /proc/$PID/ns/net)
+if [ "$HOST_NET" = "$CONT_NET" ]; then
+  echo "FAIL: Network namespace не изолирован"
+  exit 1
+fi
+
+# 2. Проверка cgroupns (Docker 20.10+)
+docker rm -f iso-test
+docker run --rm -d --name iso-test --cgroupns=private "$CONTAINER" sleep 3600
+PID=$(docker inspect -f '{{.State.Pid}}' iso-test)
+if [ -f "/proc/$PID/ns/cgroup" ]; then
+  echo "OK: cgroup namespace присутствует"
+else
+  echo "WARN: cgroup namespace не поддерживается"
+fi
+
+# 3. Проверка read-only rootfs
+docker rm -f iso-test
+if ! docker run --rm --read-only "$CONTAINER" test -w /tmp 2>/dev/null; then
+  echo "OK: read-only rootfs работает"
+else
+  echo "FAIL: read-only rootfs не изолирует ФС"
+  exit 1
+fi
+
+# 4. Проверка capabilities (должны быть сброшены)
+docker rm -f iso-test
+docker run --rm -d --cap-drop=ALL "$CONTAINER" sleep 3600
+PID=$(docker inspect -f '{{.State.Pid}}' iso-test)
+CAPS=$(cat /proc/$PID/status | grep CapEff)
+echo "CapEff: $CAPS"
+
+docker rm -f iso-test
+echo "Изоляция прошла проверку"
+```
+
 ### Типичные проблемы и диагностика
 
 | Ошибка | Причина | Решение |
@@ -219,21 +283,28 @@ docker run --rm --read-only -it alpine sh -c "touch /test && echo OK" || echo "�
 | `OOMKilled` при наличии лимита | Page cache учитывается в memory.max; приложение не учитывает лимит | Установите `memory.high` ниже `memory.max`; настройте приложение на чтение cgroup-лимитов |
 | `clock: invalid argument` (Time) | Попытка изменения времени без `CAP_SYS_TIME` или нестабильный `clock_gettime` | Не предоставляйте `CAP_SYS_TIME` без необходимости; обновите ядро для поддержки Time Namespace |
 | `operation not permitted` (Seccomp) | Системный вызов заблокирован профилем seccomp | Определите блокируемый вызов через `dmesg` или `audit.log`; добавьте исключение в кастомный профиль |
+| Container escape: suspicious processes | Скомпрометированный контейнер с `CAP_SYS_ADMIN` или `--privileged` | Немедленно остановите контейнер; проверьте `dmesg` и `audit.log`; смените все credentials |
+| `cgroupns` показывает cgroups хоста | Используется `--cgroupns=host` или Docker < 20.10 без namespace | Перезапустите с `--cgroupns=private`; проверьте версию Docker |
+| Page cache вытесняет полезные данные | `memory.max` меньше working set + page cache | Увеличьте `--memory` или настройте `vfs_cache_pressure`; используйте `memory.high` для throttling |
+| Zombie-процессы в контейнере | Отсутствие корректного PID 1 (init) | Используйте `tini` или `--init`; убедитесь, что PID 1 корректно собирает僵尸-процессы |
+| `systemd` не стартует в контейнере | Отсутствует `--cgroupns=host` или `/sys/fs/cgroup` не смонтирован | Проверьте флаги запуска; убедитесь, что хост использует systemd |
 
 ### Рекомендации и лучшие практики
 
 **Безопасность:**
 1. **Минимальные privileges:** Запускайте контейнеры с `--read-only`, `--cap-drop=ALL` и добавляйте только необходимые capabilities через `--cap-add`.
-2. **Cgroup Namespace:** Используйте `--cgroupns=private` (Docker 20.10+) для скрытия иерархии cgroups хоста. На хостах с systemd может потребоваться `--cgroupns=host` для корректного взаимодействия с юнитами.
+2. **Cgroup Namespace:** Используйте `--cgroupns=private` (Docker 20.10+) для скрытия иерархии cgroups хоста. На хостах с systemd может потребоваться `--cgroupns=host` для корректного взаимодействия с юнитами, но только для доверенных контейнеров.
 3. **Seccomp:** Применяйте профиль `docker-default` или кастомный. Избегайте `--security-opt seccomp=unconfined` в production.
 4. **User Namespace Remap:** Включите `userns-remap` в демоне Docker для маппинга root-UID контейнера на непривилегированного пользователя хоста.
 5. **PIDs Limit:** Ограничьте количество процессов через `--pids-limit` для защиты от fork-бомб.
+6. **Автоматическая проверка:** Интегрируйте проверку изоляции в CI/CD. Например, используйте [Docker Bench for Security](https://github.com/docker/docker-bench-security) или [Trivy](https://aquasecurity.github.io/trivy/) для статического анализа конфигураций.
 
 **Стабильность и производительность:**
 1. **Memory High:** Всегда устанавливайте `memory.high` (soft limit) ниже `memory.max` (hard limit). Это позволяет демону OOM (`systemd-oomd` или встроенный) корректно дросселировать процесс до принудительного убийства.
 2. **CPU Quota:** Используйте `--cpus` вместо `--cpu-period`/`--cpu-quota` для простоты. Для высоконагруженных приложений рассмотрите `--cpuset-cpus` для привязки к конкретным ядрам.
 3. **I/O Weight:** Настройте `--blkio-weight` (1-1000) для контейнеров с интенсивным I/O, чтобы предотвратить starvation остальных сервисов.
 4. **Прослеживание (Tracing):** Используйте `docker events` и `cAdvisor` для мониторинга поведения cgroups в реальном времени.
+5. **Аудит namespace:** Регулярно проверяйте `lsns` и `docker inspect` для выявления контейнеров с избыточными правами (`--privileged`, отсутствующий `--cgroupns`).
 
 **Чистка окружения:**
 ```bash
@@ -254,9 +325,11 @@ Namespaces и Cgroups не обеспечивают 100% изоляцию. Ос�
 1. **Общее Ядро (Shared Kernel):** все контейнеры используют одно ядро хоста. Уязвимость в системном вызове (например, `io_uring` или `netfilter`) может привести к компрометации всего хоста.
 2. **Утечки в /proc и /sys:** некоторые файлы в этих псевдо-ФС не изолированы и могут выдавать информацию о хосте (например, `/proc/kcore` или данные о CPU/RAM всего узла).
 3. **Отсутствие Device Namespace:** Docker ограничивает доступ к устройствам через Cgroups, но не виртуализирует их. Контейнер может "видеть" узлы устройств, даже если не может их открыть.
-4. **Time Isolation:** хотя Time Namespace существует, он часто не используется по умолчанию, что позволяет контейнерам влиять на системное время хоста (если есть `CAP_SYS_TIME`).
+4. **Time Isolation:** с Docker 29.5.0 контейнеры получают private time namespace по умолчанию (ядро ≥ 5.6), но `CLOCK_REALTIME` остаётся общим с хостом: контейнер с `CAP_SYS_TIME` может влиять на системное время хоста. Детали — в **[container_time_sync.md](../Docker_troubleshooting/container_time_sync.md)** (Сценарий 8).
+5. **Container Escape через ядро:** уязвимости в ядре (CVE-2022-0185, CVE-2023-3266) позволяют выйти за пределы namespaces. В 2026 году критически важно использовать минимальные образы (distroless, scratch) и обновлять ядро регулярно.
+6. **Сторонние модули ядра:** eBPF-программы, загруженные через `CAP_BPF` или `CAP_SYS_ADMIN`, могут читать память других контейнеров. Ограничьте доступ к BPF через `kernel.unprivileged_bpf_disabled=1`.
 
-Для минимизации этих рисков рекомендуется использовать **Rootless режим**, **User Namespaces** и системы **LSM (AppArmor/SELinux)**.
+Для минимизации этих рисков рекомендуется использовать **Rootless режим**, **User Namespaces** и системы **LSM (AppArmor/SELinux)**. В многоарендных средах (SaaS, PaaS) дополнительно используйте **sandboxed runtimes** (gVisor, Kata Containers) для создания аппаратной границы изоляции.
 
 ## Дополнительная информация
 

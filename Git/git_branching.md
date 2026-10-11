@@ -1,14 +1,19 @@
 # Ветвление в Git: механизмы, стратегии и управление
 
+**Актуально для:** Git 2.56+
+
 ## Определения
 
-* **Ветка (Branch):** Подвижный указатель на один из коммитов. Ветка всегда указывает на **последний коммит** в своей цепочке. Это изолированная линия разработки, позволяющая вести параллельную работу над разными задачами.
-* **HEAD:** Указатель на текущую позицию в истории коммитов. Обычно `HEAD` указывает на имя текущей ветки.
-* **Слияние (Merge):** Процесс интеграции изменений из одной ветки в другую. Результатом является новый "коммит слияния" (merge commit), который имеет двух родителей и объединяет истории обеих веток.
+* **Ветка (Branch):** Подвижный указатель на один из коммитов. Ветка всегда указывает на **последний коммит** в своей цепочке. Это изолированная линия разработки, позволяющая вести параллельную работу над разными задачами. Внутренне хранится как файл в `.git/refs/heads/` или запись в `packed-refs`.
+* **HEAD:** Указатель на текущую позицию в истории коммитов. Обычно `HEAD` указывает на имя текущей ветки (символическая ссылка `.git/HEAD -> refs/heads/main`). В состоянии "detached HEAD" указывает напрямую на хэш коммита.
+* **Слияние (Merge):** Процесс интеграции изменений из одной ветки в другую. Результатом является новый "коммит слияния" (merge commit), который имеет двух родителей и объединяет истории обеих веток. Поддерживает стратегии: `ort` (по умолчанию с Git 2.33+), `recursive`, `ours`, `theirs`, `octopus`.
 * **Перебазирование (Rebase):** Альтернативный метод интеграции. `rebase` перемещает коммиты из одной ветки и "накладывает" их поверх последнего коммита другой ветки, создавая линейную историю. При этом коммиты **переписываются** (получают новые хэши).
-* **Удаленная ветка (Remote-tracking branch):** Локальная ссылка на состояние ветки в удаленном репозитории (например, `origin/main`). Она обновляется при выполнении `fetch` или `pull` и не предназначена для прямого редактирования.
-* **Orphan-ветка:** Ветка, не имеющая родительских коммитов (пустая история). Используется для создания новой ветки с нуля в существующем репозитории (например, для документации).
+* **Удаленная ветка (Remote-tracking branch):** Локальная ссылка на состояние ветки в удаленном репозитории (например, `origin/main`). Она обновляется при выполнении `fetch` или `pull` и не предназначена для прямого редактирования. Хранится в `.git/refs/remotes/`.
+* **Upstream (Tracking branch):** Конфигурация `branch.<name>.remote` и `branch.<name>.merge`, связывающая локальную ветку с удалённой. Позволяет использовать `git pull`/`git push` без аргументов.
+* **Orphan-ветка:** Ветка, не имеющая родительских коммитов (пустая история). Используется для создания новой ветки с нуля в существующем репозитории (например, для документации или `gh-pages`).
 * **Cherry-pick (Выборочное копирование):** Механизм применения изменений, представленных одним или несколькими конкретными коммитами из одной ветки, в текущую ветку без полного слияния веток.
+* **Fast-forward (FF):** Слияние без создания коммита слияния, когда целевая ветка является прямым предком исходной. Указатель просто передвигается вперёд.
+* **Reflog:** Журнал изменений указателей (HEAD, веток). Позволяет восстановить удалённые ветки и откатить ошибочные операции. Хранится в `.git/logs/`.
 
 ---
 
@@ -19,6 +24,16 @@
 * `git switch` — исключительно для переключения веток и создания новых.
 * `git restore` — для восстановления файлов в рабочем дереве или индексе.
 *Использование `git switch` предпочтительнее, так как оно исключает случайную перезапись файлов.*
+
+### Upstream (Tracking) — связь с удалённой веткой
+Каждая локальная ветка может быть настроена на отслеживание удалённой ветки (upstream). Это делается автоматически при клонировании или командой `git push -u` / `git branch -u`.
+Конфигурация хранится в `.git/config`:
+```ini
+[branch "feature/auth"]
+    remote = origin
+    merge = refs/heads/feature/auth
+```
+**Польза:** позволяет использовать `git pull`, `git push`, `git status` (показывает ahead/behind), `git branch -vv` без указания remote/branch. Команда `git branch --delete-merged` (Git 2.56+) использует эту связь для безопасной очистки слитых веток.
 
 ### Конвенции именования веток
 
@@ -37,14 +52,17 @@
 | `test/` | Тестирование | `test/e2e-flows` |
 | `fix/` | Исправление (альтернатива `bugfix/`) | `fix/memory-leak` |
 | `refactor/` | Рефакторинг без изменения функционала | `refactor/auth-module` |
+| `experiment/` | Экспериментальные изменения, не для слияния | `experiment/new-algo` |
+| `wip/` | Работа в процессе (Work In Progress) | `wip/refactor-db` |
 
 **Рекомендации по именованию:**
 
 * **Используйте нижний регистр и дефисы:** `feature/user-auth` (а не `Feature/UserAuth` или `feature/user_auth`).
 * **Будьте описательными:** `bugfix/fix-null-pointer-in-login` лучше, чем `bugfix/fix1`.
 * **Включайте ID задачи (если есть):** `feature/JIRA-123-user-profile` или `feature/123-user-profile`.
-* **Избегайте:**和个人ных имен (`john/feature`), общих слов (`fix`, `new`), специальных символов.
+* **Избегайте:** личных имен (`john/feature`), общих слов (`fix`, `new`), специальных символов.
 * **Длина:** Стремитесь к краткости, но сохраняйте осмысленность (обычно 3-5 слов).
+* **Для автоматизации CI/CD:** Имена веток часто используются в паттернах триггеров (например, `feature/**`, `release/*`), поэтому согласованность критична.
 
 **Иерархическая структура:** Ветки могут использовать `/` для создания иерархии: `feature/auth/oauth2`, `bugfix/payment/timeout`. Это позволяет группировать связанные задачи и упрощает визуализацию в графе коммитов.
 
@@ -56,6 +74,7 @@
 * Полезно для инспекции истории, запуска тестов для старой версии или временных экспериментов.
 * **Риск:** Новые коммиты, созданные в этом состоянии, не принадлежат ни одной ветке. После переключения на существующую ветку (например, `main`), эти коммиты станут недоступными по имени и будут удалены сборщиком мусора (`git gc`).
 * **Решение:** Чтобы сохранить работу, сделанную в состоянии "detached HEAD", необходимо создать новую ветку: `git switch -c <имя_новой_ветки>`.
+* **Восстановление:** Если уже переключились — найдите коммит через `git reflog` и создайте ветку: `git branch recovery <хэш>`.
 
 ### Перенос незакоммиченных изменений
 
@@ -86,6 +105,8 @@ A---B---C <-- main
 A---B---C---F <-- main, feature
 ```
 * **Fast-Forward:** Если в `main` не было новых коммитов с момента ветвления, Git просто передвинет указатель `main` вперед. Чтобы принудительно создать коммит слияния для сохранения структуры, используйте `git merge --no-ff`.
+* **Squash merge:** `git merge --squash` объединяет все коммиты в один без создания merge commit. Полезно для очистки истории feature-ветки перед вливанием в main.
+* **Стратегии слияния:** `ort` (по умолчанию, быстрее recursive), `recursive`, `ours` (игнорирует входящие изменения), `theirs`, `octopus` (3+ веток).
 
 #### 2. Механизм Rebase (Переписывание истории)
 `rebase` перемещает коммиты ветки, применяя их поверх последнего коммита целевой ветки.
@@ -96,21 +117,39 @@ A---B---C---D'---E' <-- feature
 ```
 * **Важно:** Коммиты `D` и `E` заменяются на новые `D'` и `E'` с другими хешами.
 * **Золотое правило:** НИКОГДА не используйте rebase для публичных веток (доступных другим разработчикам), так как это разрушает их локальную историю и вызывает рассинхронизацию при `git pull` у остальных участников.
+* **Rebase с сохранением merge-коммитов:** `git rebase --rebase-merges` сохраняет структуру слияний внутри ветки.
 
-### Критерии выбора стратегии
+#### 3. Критерии выбора стратегии
 
-1. **Публичность ветки:** Только merge для общих веток (`main`, `develop`).
+1. **Публичность ветки:** Только merge для общих веток (`main`, `develop`, `release/*`).
 2. **Чистота истории:** Rebase дает идеальную линию (удобно для feature-веток одного разработчика), Merge сохраняет контекст "когда и что влито".
 3. **Сложность отмены:** Merge отменяется легко (`git revert -m 1`), Rebase требует работы с `reflog`.
 4. **Автоматизация CI/CD:** Rebase часто предпочтителен для фича-веток перед вливанием в `main` для поддержания линейности, но требует осторожности при совместной работе.
+5. **Командная политика:** В trunk-based development — rebase/squash; в Git Flow — merge с `--no-ff`.
 
 ### Стратегии ветвления (Branching Strategies)
 
 Стратегия ветвления определяет, как команда организует процесс разработки через ветки. Выбор стратегии зависит от частоты релизов, требований к стабильности и зрелости команды. Подробное описание каждой модели (Git Flow, GitHub Flow, Trunk-Based, GitLab Flow, Forking) см. в **[Рабочие процессы Git](./git_workflows.md)**.
 
+**Краткий обзор для выбора:**
+
+| Стратегия | Ветки | Релизы | Подходит для |
+|-----------|-------|--------|--------------|
+| **Trunk-Based** | `main` + короткоживущие feature | Непрерывные | Высокочастотные релизы, CI/CD, DevOps |
+| **GitHub Flow** | `main` + feature | По готовности feature | Веб-приложения, непрерывный деплой |
+| **GitLab Flow** | `main`, `pre-production`, `production` + feature | По средам | Среды стейджинга/продакшена |
+| **Git Flow** | `main`, `develop`, `feature/*`, `release/*`, `hotfix/*` | Планируемые версии | Десктоп/мобильные apps, версионирование |
+| **Forking** | Форк + PR | Различные | Open source, внешние контрибьюторы |
+
 ---
 
 ## Практические сценарии
+
+### Предварительные требования
+* **Git версии 2.23+** — для современных команд `git switch` / `git restore`.
+* **Git версии 2.56+** — для команды `git branch --delete-merged`, `git history drop`, `git refs` toolbox.
+* Инициализированный репозиторий с хотя бы одним коммитом.
+* Настроенные `user.name` и `user.email`.
 
 ### Управление ветками
 
@@ -131,6 +170,32 @@ git branch --merged
 
 # Список веток, содержащих уникальные коммиты (не слитые в текущую)
 git branch --no-merged
+
+# НОВОЕ в Git 2.56+: Массовое удаление слитых веток (safe cleanup)
+# Параметр — паттерн remote-tracking веток, например 'origin/*'
+# --dry-run показывает что бы удалилось без реального удаления
+git branch --delete-merged 'origin/*' --dry-run
+# → Would delete branch feature/login (was abc1234).
+# → Would delete branch feature/login-fix (was def5678).
+
+# Без --dry-run удаляет локальные ветки, чей tip достижим из настроенного upstream.
+# Не удаляются, если:
+# - у ветки нет настроенного upstream или upstream больше не существует;
+# - ветка открыта в каком-либо worktree;
+# - пуш в её remote обновил бы её own upstream (нельзя отличить от только что слитой);
+# - она является локальным upstream для ветки, которая не удаляется;
+# - для неё задано branch.<name>.deleteMerged = false.
+# Ветки с неразлитой работой (tip не достижим из upstream) пропускаются без предупреждения.
+git branch --delete-merged 'origin/*'
+# → Deleted branch feature/login (was abc1234).
+# → Deleted branch feature/login-fix (was def5678).
+
+# Точечная очистка по категориям
+git branch --delete-merged 'origin/feature/*' --dry-run
+git branch --delete-merged 'origin/topic/*' --dry-run
+
+# Защита ветки от авто-удаления через --delete-merged
+git config branch.feature/long-term.deleteMerged false
 
 # Создание и переход (Современные команды)
 git switch -c feature/cool-stuff
@@ -170,6 +235,12 @@ git remote -v                                                # Просмотр�
 git fetch upstream                                           # Загрузить изменения из upstream
 git merge upstream/main                                      # Влить изменения из upstream в локальную ветку
 git push upstream feature/branch                             # Отправить ветку в upstream
+
+# НОВОЕ в Git 2.56+: Управление референциями через git refs (low-level)
+git refs create refs/heads/new-topic <commit-hash>
+git refs update refs/heads/topic <new-commit-hash> [<old-commit-hash>]  # compare-and-swap
+git refs delete refs/heads/old-topic [<old-commit-hash>]
+git refs rename refs/heads/old-name refs/heads/new-name
 ```
 
 **Примечание:** Подробное описание работы с удалёнными репозиториями, включая `fetch`, `pull`, `push` и синхронизацию, см. в **[Синхронизация репозиториев](./git_synchronization.md)**.
@@ -190,11 +261,18 @@ git merge --squash <имя_ветки>
 # Использование специфической стратегии (например, octopus для 3+ веток)
 git merge branch1 branch2 branch3
 
+# Стратегия ort (по умолчанию в Git 2.33+, быстрее recursive)
+git merge -s ort <имя_ветки>
+
 # Стратегия ours (игнорировать изменения из входящей ветки)
 git merge -s ours <имя_ветки>
 
 # Отмена слияния при возникновении конфликтов
 git merge --abort
+
+# Автоматическое разрешение конфликтов в пользу "нашей" версии (для CI)
+git merge -X ours <имя_ветки>
+git merge -X theirs <имя_ветки>
 ```
 
 ### Выборочное копирование коммитов (Cherry-pick)
@@ -207,6 +285,12 @@ git cherry-pick <хэш_коммита>
 
 # Применить диапазон коммитов
 git cherry-pick A..B
+
+# Без создания коммита (для ручного редактирования)
+git cherry-pick -n <хэш_коммита>
+
+# Подписать коммит (GPG)
+git cherry-pick -s <хэш_коммита>
 ```
 
 ### Интерактивное перебазирование (Rebase Interactive)
@@ -223,6 +307,9 @@ git rebase -i HEAD~3
 * `squash` (s): объединить с предыдущим коммитом, объединяя сообщения.
 * `fixup` (f): объединить с предыдущим коммитом, отбросив сообщение текущего.
 * `drop` (d): удалить коммит.
+* `exec` (x): выполнить shell-команду (например, запустить тесты).
+* `break` (b): остановиться здесь (продолжить `git rebase --continue`).
+* `label` / `reset` / `merge`: для работы с `--rebase-merges`.
 
 ### Разрешение конфликтов при Rebase
 
@@ -238,6 +325,7 @@ git rebase -i HEAD~3
    ```
 5. **Пропуск:** Если изменения коммита больше не нужны (например, они уже есть в целевой ветке): `git rebase --skip`.
 6. **Отмена:** Если процесс стал слишком сложным: `git rebase --abort`.
+7. **Автоматизация через rerere:** Включите `git config --global rerere.enabled true` — Git запомнит ваши решения и применит их автоматически при повторных конфликтах.
 
 ### Продвинутые техники Rebase
 
@@ -265,6 +353,15 @@ git rebase --onto main feature-A feature-B
 # → Перенесет коммиты feature-B (от feature-A до конца) поверх main
 ```
 
+#### 4. НОВОЕ в Git 2.56+: Удаление коммита из истории (`git history drop`)
+Экспериментальная команда для удаления коммита с переигрыванием потомков на родитель.
+```bash
+git history drop <commit-hash>
+# Удаляет коммит, реплеит его детей на родителя
+# Обновляет индекс и working tree если HEAD сдвинулся
+# Не работает с merge-коммитами и root-коммитами
+```
+
 ### Сравнение веток
 
 ```bash
@@ -276,13 +373,19 @@ git cherry -v main
 
 # Показать различия в коде между концами двух веток
 git diff main..feature
+
+# Показать статистику изменений (файлы, строки)
+git diff --stat main..feature
+
+# Показать только имена измененных файлов
+git diff --name-only main..feature
 ```
 
 ### Поиск проблемных коммитов (Git Bisect)
 
 `git bisect` использует бинарный поиск по истории коммитов для нахождения конкретного изменения, внесшего регрессию или ошибку. Это значительно быстрее ручного перебора.
 
-**Основнойworkflow:**
+**Основной workflow:**
 
 ```bash
 # Запуск bisect с указанием "плохого" и "хорошего" коммитов
@@ -301,83 +404,25 @@ git bisect bad                 # Если коммит сломан
 git bisect reset               # Вернуться на исходную ветку
 ```
 
-**Автоматизация bisect:**
+**Автоматизация bisect (для CI/CD):**
 
 ```bash
 # Запуск bisect с автоматическим тестированием
 git bisect start HEAD v1.0
 git bisect run ./test_script.sh  # Скрипт должен вернуть 0 (good) или 1-124 (bad)
+# 125 = skip (невозможно протестировать), 127 = ошибка запуска скрипта
+```
+
+**НОВОЕ в Git 2.56+: Автоматический возврат после поиска**
+```bash
+# Вернуться на исходную ветку автоматически после нахождения (по умолчанию)
+git bisect run --reset-when-found=original ./test_script.sh
+
+# Остаться на найденном "плохом" коммите
+git bisect run --reset-when-found=found ./test_script.sh
 ```
 
 **Примечание:** Подробное описание `git bisect` и других инструментов отладки см. в **[Устранение неполадок Git](./git_troubleshooting.md)**.
-
-### Работа с несколькими ветками одновременно (Worktree)
-
-Git позволяет работать с несколькими ветками одновременно через механизм **worktree** (рабочие деревья). Это решает задачи, для которых `git stash` неудобен или недостаточен.
-
-**Сравнение stash и worktree:**
-
-| Сценарий | stash | worktree |
-|----------|-------|----------|
-| Срочный баг-фикс во время работы | Да | Да (параллельно) |
-| Сравнение двух веток в IDE | Нет | Да (два окна) |
-| Долгая параллельная работа | Нет | Да (истинная параллельность) |
-| Запуск тестов в фоне | Трудно | Да (в отдельном дереве) |
-| Проверка чужого PR/ветки | Нет | Да (отдельное дерево) |
-
-**Основные команды:**
-
-```bash
-# Создать worktree для существующей ветки
-git worktree add ../feature-work feature/cool-stuff
-
-# Создать worktree с новой веткой
-git worktree add -b hotfix/issue-123 ../hotfix main
-
-# Просмотреть все worktree
-git worktree list
-
-# Удалить worktree
-git worktree remove ../feature-work
-
-# Очистить метаданные удаленных worktree
-git worktree prune
-```
-
-**Примечание:** Подробное описание работы с worktree, включая архитектуру и продвинутые сценарии, см. в **[Git Worktree — параллельные рабочие директории](./git_worktree.md)**.
-
-### Временное хранение изменений (Stash)
-
-**Stash** — механизм временного сохранения незавершённых изменений рабочего каталога и индекса, позволяющий переключиться на другую ветку без создания «грязного» коммита.
-
-**Основные команды:**
-
-```bash
-# Сохранить изменения (рекомендуемый способ)
-git stash push -m "Описание контекста"
-
-# Сохранить все изменения (включая untracked)
-git stash push -u -m "Сохранить все"
-
-# Просмотреть список stash
-git stash list
-# → stash@{0}: On feature/auth: WIP login form
-# → stash@{1}: On main: fix naming
-
-# Применить и удалить из стека
-git stash pop stash@{0}
-
-# Применить, сохранив в стеке
-git stash apply stash@{1}
-
-# Удалить stash
-git stash drop stash@{0}
-
-# Очистить все stash
-git stash clear
-```
-
-**Примечание:** Подробное описание stash, включая флаги и продвинутые сценарии, см. в **[Git Stash — временное хранение изменений](./git_stash.md)**.
 
 ### Паттерны веток (Branch Patterns)
 
@@ -416,12 +461,115 @@ git diff main..feature/*
 
 **Примечание:** Паттерны веток используются в командах `git branch`, `git log`, `git diff`, а также в конфигурации CI/CD и hook'ов.
 
-### Ограничения и особенности
+---
 
-* **Восстановление удаленной ветки:** Если ветка была удалена случайно, ее указатель можно восстановить с помощью `git reflog`, найдя хэш последнего коммита ветки и создав ее заново: `git branch <имя> <хэш>`.
-* **Git Worktree:** Нельзя одновременно открыть (checkout/switch) одну и ту же ветку в разных рабочих директориях. Git заблокирует попытку создания второго worktree с той же веткой.
-* **Автоматизация через `rerere`:** Если включен (`git config --global rerere.enabled true`), Git запоминает ваши решения конфликтов и применяет их автоматически при повторном возникновении. Это особенно полезно при долговременных rebase, чтобы не решать одни и те же конфликты многократно.
-* **Типичные ошибки при работе с ветками:**
+## DevOps / SRE контекст
+
+### Branch Protection (Защита веток)
+Для production-веток (`main`, `production`, `release/*`) обязательна настройка защиты на стороне Git-хостинга (GitHub, GitLab, Gitea, Gogs):
+
+* **Required reviews:** Минимум 1-2 approve от code owners.
+* **Status checks:** CI pipeline должен быть зелёным (tests, lint, security scan).
+* **Require linear history:** Запрет merge commits (только squash/rebase).
+* **No force push:** Блокировка `git push --force` (разрешить только `--force-with-lease` для админов).
+* **Signed commits:** Требование GPG/SSH подписи.
+* **Dismiss stale reviews:** При новых коммитах старые approve сбрасываются.
+
+**GitHub CLI пример:**
+```bash
+gh api -X PUT repos/OWNER/REPO/branches/main/protection \
+  -f required_status_checks='{"strict":true,"contexts":["ci/tests","ci/lint"]}' \
+  -f enforce_admins=true \
+  -f required_pull_request_reviews='{"required_approving_review_count":1,"dismiss_stale_reviews":true}' \
+  -f restrictions='{}'
+```
+
+**GitLab:** Settings → Repository → Protected branches (разрешить merge только для Maintainers, push — "No one"). Через CLI: `glab api -X PUT ...` или конфигурация в `.gitlab-ci.yml` / push rules.
+
+### Стратегии для CI/CD
+
+| Сценарий | Рекомендуемая стратегия | Настройка merge |
+|----------|------------------------|-----------------|
+| **Trunk-based (DevOps)** | Короткие feature-ветки (<1 дня), rebase на main | Squash merge, linear history |
+| **GitHub Flow** | Feature → PR → main | Squash merge |
+| **GitLab Flow** | Feature → main → pre-prod → production | Merge commit (--no-ff) для среды |
+| **Git Flow** | feature → develop, release → main, hotfix → main+release | Merge commit (--no-ff) везде |
+| **Release branching** | `release/v1.2` → cherry-pick hotfixes → main + release | Merge commit для traceability |
+
+### Автоматизация очистки (Housekeeping)
+
+```bash
+# Ежедневная/еженедельная задача (cron, CI job, git maintenance)
+# 1. Удаление локальных слитых веток (Git 2.56+)
+git branch --delete-merged 'origin/*'
+
+# 2. Очистка remote-tracking ссылок
+git fetch --prune
+
+# 3. Удаление worktree'ов
+git worktree prune
+
+# 4. Сборка мусора (осторожно на продакшн-репо)
+git maintenance run  # или git gc --auto
+
+# 5. НОВОЕ в Git 2.56+: Очистка больших promisor-блобов в partial clone
+git repack -a --filter=blob:limit=1m --drop-filtered --dry-run
+git repack -a --filter=blob:limit=1m --drop-filtered
+```
+
+### Работа с форками (Forking workflow)
+
+```bash
+# 1. Добавить upstream
+git remote add upstream https://github.com/ORIGINAL/REPO.git
+
+# 2. Синхронизировать main с upstream
+git fetch upstream
+git switch main
+git merge upstream/main  # или rebase для линейности
+git push origin main
+
+# 3. Создать feature от актуального main
+git switch -c feature/my-change
+
+# 4. Отправить в свой форк
+git push -u origin feature/my-change
+
+# 5. Создать PR через UI или CLI
+gh pr create --base main --head feature/my-change --repo ORIGINAL/REPO
+```
+
+### Hotfix / Backport процесс (SRE)
+
+```bash
+# 1. Создать hotfix от production тега/ветки
+git switch -c hotfix/critical-fix v1.2.3  # или release/v1.2
+
+# 2. Исправить, закоммитить, протестировать
+# ...
+
+# 3. Влить в production ветку
+git switch release/v1.2
+git merge --no-ff hotfix/critical-fix
+git tag v1.2.4
+git push origin release/v1.2 v1.2.4
+
+# 4. Backport в main (через cherry-pick для сохранения истории)
+git switch main
+git cherry-pick <hotfix-commit-hash>
+# Или merge, если стратегия позволяет
+git merge --no-ff release/v1.2
+
+# 5. Удалить hotfix ветку
+git branch -d hotfix/critical-fix
+git push origin --delete hotfix/critical-fix
+```
+
+---
+
+## Устранение неполадок
+
+### Типичные ошибки и решения
 
 | Ошибка | Причина | Решение |
 |--------|---------|---------|
@@ -430,11 +578,49 @@ git diff main..feature/*
 | `fatal: 'xyz' is not a branch (or symlink to a branch)` | Неверное имя ветки | Проверьте имя с помощью `git branch` |
 | `error: pathspec 'xyz' did not match any branch(s) known to repository` | Попытка переключиться на несуществующую ветку | Создайте ветку (`git switch -c xyz`) или проверьте имя |
 | `fatal: refusing to merge unrelated histories` | Слияние репозиториев с независимыми историями | Используйте `git merge --allow-unrelated-histories` (осторожно) |
-| `error: src refspec xyz does not match any` | Попытка отправить несуществующую ветку | Проверьте имя ветки с помощью `git branch` |
+| `error: src refspec xyz does not match any` | Попытка отправить несуществующую ветку | Проверьте имя ветки с помощью `git branch -a` |
+| `fatal: impossible to fast-forward, will need to use --force` при `git push` | Локальная и удалённая ветки расходятся (diverged) | `git pull --rebase origin <branch>` (или `git pull --ff-only`, если локально чисто), затем `git push` |
+| `fatal: '<branch>' is already checked out at '<path>'` | Попытка открыть ветку в worktree, где она уже занята | Переключитесь с неё в том дереве, либо используйте `--detach`, либо создайте новую ветку через `-b` |
+| `error: cannot lock ref 'refs/heads/xyz'` | Конкуренция или сбой lock-файла | `rm -f .git/refs/heads/xyz.lock` и повторите; если не помогло — `git gc` |
+| `fatal: bad object <hash>` при checkout/merge | Повреждён объект или отсутствует (partial clone) | `git fetch --all` или `git fsck --full` для диагностики |
 
-### Защита веток (Branch Protection)
+### Ограничения и особенности
 
-Настраивается на GitHub/GitLab для запрета прямых изменений критических веток и требует прохождения PR/MR с проверками. Подробное описание настройки см. в **[Рабочие процессы Git](./git_workflows.md#защита-веток-branch-protection)**.
+* **Восстановление удаленной ветки:** Если ветка была удалена случайно, ее указатель можно восстановить с помощью `git reflog`, найдя хэш последнего коммита ветки и создав ее заново: `git branch <имя> <хэш>`.
+* **Git Worktree:** Нельзя одновременно открыть (checkout/switch) одну и ту же ветку в разных рабочих директориях. Git заблокирует попытку создания второго worktree с той же веткой. Подробнее см. **[Git Worktree — параллельные рабочие директории](./git_worktree.md)**.
+* **Автоматизация через `rerere`:** Если включен (`git config --global rerere.enabled true`), Git запоминает ваши решения конфликтов и применяет их автоматически при повторном возникновении. Это особенно полезно при долговременных rebase, чтобы не решать одни и те же конфликты многократно.
+* **Partial Clone:** В partial clone (`git clone --filter=blob:none`) отсутствующие блобы загружаются по требованию. Git 2.56+ позволяет очистить кэш: `git repack -a --filter=blob:limit=1m --drop-filtered`.
+* **Shallow Clone:** `git clone --depth=1` не имеет полной истории. Для работы с ветками нужно `git fetch --unshallow` или полная реклонация.
+* **Case Sensitivity:** На case-insensitive ФС (macOS, Windows) `git branch Feature` и `git branch feature` — одна ветка. На Linux — разные. Избегайте веток, отличающихся только регистром.
+
+---
+
+## Лучшие практики
+
+* **Короткоживущие ветки:** Чем дольше живёт ветка, тем выше риск конфликтов. Сливайте как можно быстрее (ideal: < 1 день для trunk-based).
+* **Описательные имена:** Используйте префиксы `feature/`, `fix/`, `hotfix/`, `release/`, `chore/`, `experiment/` для читаемости и автоматизации CI/CD.
+* **Защищайте `main`/`production`** через Branch Protection (обязательные ревью, статус-чеки, запрет force-push). Настройка см. в **[Рабочие процессы Git](./git_workflows.md#защита-веток-branch-protection)**.
+* **Осознанный выбор стратегии слияния:** squash для чистой `main`, rebase для линейности, `--no-ff` для Git Flow и release branches.
+* **Никогда не force-push в общие ветки** (`main`, `develop`, `release/*`); для своих feature-веток — только `--force-with-lease`.
+* **Удаляйте слитые ветки**, чтобы не плодить «мертвые» ссылки:
+  ```bash
+  # Удалить локально слитые в main ветки (кроме main)
+  git branch --merged main | grep -v '^main$' | xargs git branch -d
+
+  # Очистить remote-tracking ссылки на удалённые ветки
+  git fetch --prune
+
+  # Для Git 2.56+ — встроенная безопасная альтернатива:
+  git branch --delete-merged 'origin/*'
+  ```
+* **Используйте Conventional Commits:** `feat:`, `fix:`, `chore:`, `docs:` — основа чистой истории и автогенерации changelog.
+* **Для временного хранения изменений** используйте `git stash` (подробнее в **[Git Stash](./git_stash.md)**).
+* **Для параллельной работы с несколькими ветками** используйте `git worktree` (подробнее в **[Git Worktree](./git_worktree.md)**).
+* **Настройте upstream** для всех рабочих веток: `git push -u origin <branch>` — упрощает pull/push/status.
+* **Включите rerere** глобально: `git config --global rerere.enabled true` — экономит время при повторных конфликтах.
+* **Используйте `--force-with-lease` вместо `--force`:** Защищает от случайной перезаписи чужой работы.
+* **Подписывайте коммиты** (GPG/SSH): `git config --global commit.gpgsign true` — критично для безопасности供应链.
+* **Автоматизируйте housekeeping:** Добавьте `git maintenance start` или cron с `git fetch --prune` и `git branch --delete-merged`.
 
 ---
 
@@ -445,7 +631,7 @@ git diff main..feature/*
 * **[Learn Git Branching](https://learngitbranching.js.org/?locale=ru_RU):** Интерактивный визуальный тренажер.
 
 ### Связанные темы
-* [Git Merge — стратегии слияния](./git_merge_strategies.md) — recursive, ours, theirs, patience, octopus и их применение.
+* [Git Merge — стратегии слияния](./git_merge_strategies.md) — ort, recursive, ours, theirs, patience, octopus и их применение.
 * [Разрешение конфликтов](./git_conflict_resolution.md) — паттерны, инструменты, rerere при слиянии веток.
 * [Манипуляции с историей (Reset, Revert, Cherry-pick)](./git_history_manipulation.md) — откат изменений и перенос коммитов.
 * [Git Reflog](./git_reflog.md) — журнал ссылок для восстановления удалённых веток.
@@ -454,3 +640,5 @@ git diff main..feature/*
 * [Синхронизация с удаленным репозиторием](./git_synchronization.md) — push/pull веток.
 * [Git Worktree — параллельные директории](./git_worktree.md) — работа с несколькими ветками одновременно.
 * [Устранение неполадок Git](./git_troubleshooting.md) — диагностика проблем с ветками.
+* [Git Stash — временное хранение изменений](./git_stash.md) — альтернатива для кратковременного припрятывания кода.
+* [Git Tags](./git_tags.md) — разметка версий для релизных веток, SemVer, интеграция с CI/CD.

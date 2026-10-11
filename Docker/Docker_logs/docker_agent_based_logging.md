@@ -1,5 +1,7 @@
 # Агентный сбор логов Docker
 
+**Актуально для:** Docker Engine 29.x, Grafana Alloy v1.20.x, Vector 0.58.x, Fluentd v1.19.x, Filebeat 9.x
+
 ## Определения
 
 **Агентный сбор логов (Agent-based Logging)** — архитектурный подход, при котором сбор, обработка и отправка телеметрии выполняются специализированным приложением (агентом), работающим независимо от Docker Engine.
@@ -47,6 +49,15 @@ ls -la /var/run/docker.sock
 
 **Рекомендация:** Используйте прямое чтение файлов (Tail) для production — это минимизирует нагрузку на Docker daemon и обеспечивает максимальную производительность.
 
+### Механизмы отслеживания файлов (Tailing)
+
+При прямом чтении файлов агенты используют два подхода к отслеживанию изменений:
+
+1.  **inotify (Linux)**: Агент подписывается на события файловой системы через `inotify`. При добавлении новых данных в лог-файл агент получает событие и читает только новые байты. Это эффективно и не создаёт нагрузку на CPU.
+2.  **Polling (fallback)**: Если `inotify` недоступен (например, на сетевых ФС или при определённых конфигурациях), агент периодически опрашивает файл (обычно каждые 1-5 секунд), сравнивая текущий размер с сохранённым offset.
+
+**Важно при ротации Docker**: Когда Docker Engine ротирует лог-файл (переименовывает `<id>-json.log.1` и создаёт новый `<id>-json.log`), inotify продолжает работать с исходным файловым дескриптором. Агент завершает чтение старого файла, затем по событию `IN_MOVE_SELF` или по polling обнаруживает новый файл и начинает читать его с нулевого offset, сохраняя позицию в checkpoint. Если позиционный файл утерян, агент начнёт чтение сначала, что приведёт к дублированию.
+
 ### Чекпоинты (Checkpointing) и надежность
 
 Для предотвращения потери данных и дубликатов агенты используют **позиционные файлы (checkpoints)**.
@@ -74,13 +85,13 @@ ls -la /var/run/docker.sock
 
 ### Сценарий 1: Grafana Alloy (рекомендуется для Loki и Grafana Stack)
 
-В 2026 году Alloy — стандарт для стека Grafana, объединяющий возможности Promtail и OTel. Является официальным преемником Promtail (EOL весна 2026). Подробнее: **[Grafana Alloy: Обзор](../../Grafana/grafana_alloy_overview.md)**.
+В 2026 году Alloy v1.20 — стандарт для стека Grafana, объединяющий возможности Promtail и OTel. Является официальным преемником Promtail (EOL 2 марта 2026). Подробнее: **[Grafana Alloy: Обзор](../../Grafana/grafana_alloy_overview.md)**.
 
 **`docker-compose.yml` (Node-агент):**
 ```yaml
 services:
   alloy:
-    image: grafana/alloy:v1.9.0
+    image: grafana/alloy:v1.20.1
     container_name: alloy-logger
     volumes:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
@@ -134,10 +145,13 @@ loki.write "loki_backend" {
 
 **Валидация:**
 ```bash
+# Проверка синтаксиса конфигурации Alloy
+docker exec alloy-logger alloy validate /etc/alloy/config.alloy
+
 # Проверка статуса агента
 docker logs alloy-logger --tail 50
 
-# Проверка доступности Debug UI
+# Проверка метрик (Debug UI)
 curl -s http://localhost:12345/metrics | head -5
 
 # Проверка отправки логов
@@ -152,7 +166,7 @@ Vector (написан на Rust) потребляет в 10 раз меньше
 ```yaml
 services:
   vector:
-    image: timberio/vector:0.42.0-debian
+    image: timberio/vector:0.58.0-debian
     container_name: vector-logger
     volumes:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
@@ -208,7 +222,7 @@ docker exec vector-logger vector validate --config /etc/vector/vector.yaml
 docker logs vector-logger --tail 30
 ```
 
-### Сценарий 3: Fluentd (сложные энтерпайз-решения)
+### Сценарий 3: Fluentd (сложные энтерпрайз-решения)
 
 Fluentd остается стандартом для сложных энтерпрайз-решений благодаря огромному количеству плагинов (500+).
 
@@ -216,7 +230,7 @@ Fluentd остается стандартом для сложных энтерп
 ```yaml
 services:
   fluentd:
-    image: fluent/fluentd:v1.19.3-debian-1
+    image: fluent/fluentd:v1.19.3-debian-2.3
     container_name: fluentd-logger
     volumes:
       - /var/lib/docker/containers:/fluentd/log/containers:ro
@@ -243,7 +257,7 @@ services:
 <filter docker.**>
   @type record_transformer
   <record>
-    container_id ${tag_parts[2]}
+    container_id ${tag_parts[1]}
     node_name "#{Socket.gethostname}"
   </record>
 </filter>
@@ -272,17 +286,20 @@ Filebeat — максимально простое решение для инт�
 **`filebeat.yml`:**
 ```yaml
 filebeat.inputs:
-- type: container
+- type: filestream
+  id: docker-logs
+  take_over: true
   paths:
     - '/var/lib/docker/containers/*/*.log'
-  stream: all
+  parsers:
+    - container: ~
 
-processors:
-  - add_docker_metadata:
-      host: "unix:///var/run/docker.sock"
-  - decode_json_fields:
-      fields: ["message"]
-      target: "data"
+  processors:
+    - add_docker_metadata:
+        host: "unix:///var/run/docker.sock"
+    - decode_json_fields:
+        fields: ["message"]
+        target: "data"
 
 output.logstash:
   hosts: ["logstash:5044"]
@@ -292,10 +309,10 @@ output.logstash:
 ```yaml
 services:
   filebeat:
-    image: elastic/filebeat:8.15.0
+    image: docker.elastic.co/beats/filebeat:9.5.5
     container_name: filebeat-logger
     volumes:
-      - /var/lib/docker/containers:/usr/share/dockerlogs:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
       - ./filebeat/registry:/usr/share/filebeat/data
@@ -331,15 +348,14 @@ loki.process "multiline" {
 
 **Пример для Vector:**
 ```yaml
-transforms:
-  multiline:
-    type: remap
-    inputs: [docker]
-    source: |
-      # Vector обрабатывает multiline через VRL
-      if includes(["ERROR", "Exception"], .message) {
-        .group = "error"
-      }
+sources:
+  docker:
+    type: docker_logs
+    docker_host: "unix:///var/run/docker.sock"
+    multiline:
+      start_pattern: '^\d{4}-\d{2}-\d{2}'
+      mode: halt_before
+      timeout_ms: 3000
 ```
 
 ### Фильтрация логов по контейнерам
@@ -377,23 +393,91 @@ sources:
 </source>
 ```
 
+## Особенности сред и ограничения
+
+### Rootless Docker
+
+При работе в rootless-режиме (`dockerd-rootless`) Docker Engine запускается от непривилегированного пользователя. Лог-файлы хранятся в `$XDG_RUNTIME_DIR/docker/containers/` (обычно `~/.local/share/docker/containers/`), а не в `/var/lib/docker/containers/`. Агент должен:
+- Монтировать правильный путь к лог-файлам (не `/var/lib/docker/containers`).
+- Иметь права на чтение `$XDG_RUNTIME_DIR/docker/containers/` (обычно это достигается запуском агента от того же пользователя, что и `dockerd-rootless`).
+- Использовать `DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker/docker.sock` для подключения к Docker Socket.
+
+**Проверка пути к лог-файлам в rootless:**
+```bash
+# Путь к лог-файлам определяется через docker info
+docker info --format '{{.DockerRootDir}}'
+# → /home/user/.local/share/docker
+```
+
+### Docker Desktop (macOS/Windows)
+
+Docker Desktop запускает Docker Engine внутри виртуальной машины (VM). Лог-файлы хранятся на виртуальном диске VM, а не на файловой системе хоста. Это приводит к:
+- **Снижению производительности** при монтировании `/var/lib/docker/containers` через файловую систему VM.
+- **Ограничению доступа**: агент должен работать внутри той же VM или получать логи через Docker API (с задержкой).
+- **Рекомендация**: Для Development-сред используйте Docker API вместо прямого чтения файлов. Для production на macOS используйте оркестраторы (Kubernetes, Docker Swarm) на отдельном Linux-хосте.
+
+### Windows-контейнеры
+
+Windows-контейнеры используют иной драйвер логирования и формат лог-файлов:
+- Логи хранятся в `C:\ProgramData\Docker\containers\<id>\<id>-json.log`.
+- Агенты, написанные для Linux (большинство), не работают на Windows-хостах напрямую.
+- **Решение**: Используйте агент на хосте Windows (например, Fluentd Windows или Filebeat Windows), который читает логи через Docker API (`npipe:////./pipe/docker_engine`).
+
+### cgroups v2 и systemd
+
+На современных дистрибутивах (Ubuntu 22.04+, RHEL 9+, Debian 12+) используется cgroups v2. Это влияет на:
+- **Права доступа**: В cgroups v2 нет `memory.limit_in_bytes` для контейнеров в старом формате. Агенты должны использовать `memory.high` и `memory.max`.
+- **Системный сервис**: Если агент запускается как systemd-сервис на хосте, убедитесь, что `Delegate=yes` установлен в unit-файле, чтобы systemd не конфликтовал с cgroups управления Docker.
+
+**Пример unit-файла для node-агента:**
+```ini
+# /etc/systemd/system/vector-agent.service
+[Unit]
+Description=Vector Log Agent
+After=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/vector --config /etc/vector/vector.yaml
+Restart=always
+Delegate=yes
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Высокая кардинальность меток (High Cardinality)
+
+Docker-лейблы могут создавать миллионы уникальных комбинаций меток в Loki/Elasticsearch. Это приводит к:
+- **Росту потребления памяти** в хранилище.
+- **Замедлению запросов**.
+- **Превышению лимитов** на индексы.
+
+**Рекомендации:**
+- Используйте `relabel` (Alloy) или `relabel_rules` для фильтрации/нормализации меток.
+- Ограничьте количество меток, отправляемых в хранилище (например, только `container_name`, `image`, `namespace`).
+- Используйте `labeldrop` и `labelkeep` в Promtail-совместимых конфигурациях.
+
 ## Дополнительная информация
 
 ### Сравнение современных агентов (2026)
 
-| Критерий | Fluentd | Filebeat | Grafana Alloy | Vector |
-| :--- | :--- | :--- | :--- | :--- |
-| **Язык** | Ruby / C | Go | Go | Rust |
-| **Потребление RAM** | 200-500 МБ | 50-100 МБ | 100-300 МБ | 20-80 МБ |
-| **Потребление CPU** | Среднее / Высокое | Низкое | Среднее | Экстремально низкое |
-| **Сложная логика** | Плагины Ruby | Скрипты (ограничено) | River (декларативно) | VRL (очень мощно) |
-| **Multiline** | Встроенный (concat) | Встроенный | Встроенный (stage.multiline) | Встроенный |
-| **Фильтрация** | Плагины Ruby | processors | loki.process / discovery | VRL transforms |
-| **Позиционный файл** | Текстовый (`pos_file`) | JSON (registry) | JSON (`alloy-positions.json`) | JSON (`vector_positions.json`) |
-| **Disk-backed буфер** | Да (buffer_type file) | Нет | Нет (RAM-only) | Да (buffer.type disk) |
-| **Hot reload** | Да | Нет (требует restart) | Да (hot reload) | Да |
-| **Экосистема** | Максимальная (500+ плагинов) | Elastic | Grafana / OTel | Универсальная |
-| **Статус (2026)** | Актуальный | Актуальный | **Рекомендуемый** | Актуальный |
+| Критерий | Fluentd | Filebeat | Grafana Alloy | Vector | Fluent Bit |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Язык** | Ruby / C | Go | Go | Rust | C |
+| **Потребление RAM** | 200-500 МБ | 50-100 МБ | 100-300 МБ | 20-80 МБ | ~20 МБ |
+| **Потребление CPU** | Среднее / Высокое | Низкое | Среднее | Экстремально низкое | Низкое |
+| **Сложная логика** | Плагины Ruby | Скрипты (ограничено) | River (декларативно) | VRL (очень мощно) | Lua (ограничено) |
+| **Multiline** | Встроенный (concat) | Встроенный | Встроенный (stage.multiline) | Встроенный | Встроенный (parser) |
+| **Фильтрация** | Плагины Ruby | processors | loki.process / discovery | VRL transforms | grep / modify filters |
+| **Позиционный файл** | Текстовый (`pos_file`) | JSON (registry) | JSON (`alloy-positions.json`) | JSON (`vector_positions.json`) | Внутренний реестр (filesystem) |
+| **Disk-backed буфер** | Да (buffer_type file) | Нет | Нет (RAM-only) | Да (buffer.type disk) | Да (`storage.path`) |
+| **Hot reload** | Да | Нет (требует restart) | Да (hot reload) | Да | Нет (требует restart) |
+| **Экосистема** | Максимальная (500+ плагинов) | Elastic | Grafana / OTel | Универсальная | Универсальная (плагины на C) |
+| **Статус (2026)** | Актуальный | Актуальный | **Рекомендуемый** | Актуальный | Актуальный |
+
+**Fluent Bit** — легковесный агент на C (~20 МБ RAM), стандарт де-факто для Kubernetes (DaemonSet) и ресурсно-ограниченных сред. Детально: **[Fluent Bit: сбор и пересылка логов](../../Linux/SystemAdministration/Logging/fluent_bit.md)**; конфигурация и парсеры — в **[Конфигурация Fluent Bit](../../Kubernetes/MonitoringLogging/EFK/fluentbit/fluentbit_configuration.md)**.
 
 ### Рекомендации по выбору агента
 
@@ -404,6 +488,7 @@ sources:
 | **Высокая нагрузка (>10K логов/сек)** | **Vector** | Rust, нет GC, disk-backed буфер, минимум ресурсов. |
 | **Сложные Enterprise-трансформации** | **Fluentd** | 500+ плагинов, кодируемый pipeline на Ruby. |
 | **Минимум ресурсов (IoT, Edge)** | **Vector** | 20-80 МБ RAM, <1% CPU. |
+| **Kubernetes DaemonSet / очень слабые узлы** | **Fluent Bit** | ~20 МБ RAM, написан на C, стандарт для K8s. |
 | **Совместимость с OTel** | **Grafana Alloy** | Нативная поддержка OpenTelemetry Protocol. |
 
 ### Лучшие практики
@@ -413,7 +498,16 @@ sources:
 3.  **Настройте фильтрацию** — исключайте контейнеры самого агента и служебных сервисов (Prometheus, Grafana) из сбора логов.
 4.  **Настройте Multiline** для приложений, генерирующих stack traces (Java, Python, Go).
 5.  **Используйте disk-backed буфер** (Vector) для production — RAM-буфер теряет логи при перезагрузке.
-6.  **Мониторьте агента**: настройте метрики Prometheus для агента (Alloy: `:12345/metrics`, Vector: `:9598/metrics`).
+6.  **Мониторьте агента**: настройте метрики Prometheus для агента (Alloy: `:12345/metrics`, Vector: `:9598/metrics`). Пример scrape-конфигурации:
+    ```yaml
+    scrape_configs:
+      - job_name: alloy
+        static_configs:
+          - targets: ['host:12345']
+      - job_name: vector
+        static_configs:
+          - targets: ['host:9598']
+    ```
 7.  **Версионируйте конфигурацию** агента в Git и используйте `docker-compose` для воспроизводимого развертывания.
 8.  **Ротируйте локальные логи Docker** даже при использовании агента — агент читает файлы, которые может расти бесконечно. Подробнее: **[Управление ротацией логов Docker](./docker_log_rotation.md)**.
 
@@ -424,8 +518,7 @@ sources:
 3.  **Дублирование при ошибке позиционного файла**: Если Volume с позиционным файлом удалён или повреждён, агент начнёт чтение с начала всех файлов, что приведёт к массовым дубликатам в хранилище.
 4.  **Формат JSON-only**: Агенты работают с форматом JSON-драйвера Docker. Если приложение пишет бинарные данные в stdout, формат файла может быть повреждён.
 5.  **Multiline-склейка не универсальна**: Паттерны склейки зависят от формата логов приложения. Java stack traces, Python Traceback, Go panics — всё требует разных regex-паттернов.
-6.  **Docker Desktop (macOS/Windows)**: Файлы логов хранятся внутри VM, а не на файловой системе хоста. Монтирование `/var/lib/docker/containers` работает через виртуальный диск с пониженной производительностью.
-7.  **Рост позиционных файлов**: При большом количестве контейнеров (>100) позиционные файлы могут занимать >100 МБ. Регулярно очищайте устаревшие записи (Alloy делает это автоматически, Fluentd — нет).
+6.  **Рост позиционных файлов**: При большом количестве контейнеров (>100) позиционные файлы могут занимать >100 МБ. Регулярно очищайте устаревшие записи (Alloy делает это автоматически, Fluentd — нет).
 
 ### Типичные ошибки и решения
 
@@ -453,8 +546,28 @@ sources:
   # Ограничьте права на сокет (только чтение логов)
   sudo setfacl -m u:alloy:r /var/run/docker.sock
   ```
+- **AppArmor/SELinux**: Запускайте контейнеры агентов с read-only корнем и минимальными capabilities. Пример базовой конфигурации:
+  ```yaml
+  # docker-compose.yml fragment
+  services:
+    alloy:
+      image: grafana/alloy:v1.20.1
+      security_opt:
+        - no-new-privileges:true
+      read_only: true
+      tmpfs:
+        - /tmp
+        - /var/run
+      cap_drop:
+        - ALL
+  ```
+  Для AppArmor создайте кастомный профиль на основе `docker-default` с ограничениями на запись в `/var/lib/docker/containers` (только чтение). Для SELinux добавьте контекст `svirt_sandbox_file_t` к volume с позиционными файлами:
+  ```bash
+  sudo chcon -Rt svirt_sandbox_file_t ./alloy/positions
+  ```
 - **Секреты в логах**: Настройте фильтрацию для маскирования паролей, токенов и других секретов перед отправкой в хранилище.
 - **TLS для удалённых хранилищ**: Используйте HTTPS при отправке логов по сети (Loki, Elasticsearch).
+- **Сетевая изоляция**: Агенты не должны иметь исходящего доступа к интернету, если это не требуется для доступа к хранилищу. Используйте сетевые политики Docker (`docker network create --internal`) или firewall для ограничения egress.
 
 ### Производительность и масштабирование
 
@@ -468,6 +581,42 @@ sources:
 | **Disk (позиционные файлы)** | 1-10 МБ на 100 контейнеров. |
 
 **Рекомендация по масштабированию**: При >500 контейнеров на хост используйте Vector с disk-backed буфером и кластеризацией, или Alloy с clustering mode.
+
+### Очистка и откат
+
+**Отключение агентного сбора и возврат к `docker logs`:**
+
+1.  **Остановите контейнер агента**:
+    ```bash
+    docker compose down
+    # или
+    docker stop alloy-logger && docker rm alloy-logger
+    ```
+
+2.  **Удалите Volume с позиционными файлами** (если вы не планируете возобновлять сбор):
+    ```bash
+    docker volume rm alloy_positions  # или локальный каталог ./alloy/positions
+    ```
+
+3.  **Верните драйвер по умолчанию** (если меняли на уровне daemon):
+    ```bash
+    # Проверьте текущий драйвер
+    docker info --format '{{.LoggingDriver}}'
+    
+    # Верните json-file (если меняли)
+    sudo dockerd --log-driver=json-file  # временно для теста
+    # или через daemon.json:
+    # {
+    #   "log-driver": "json-file"
+    # }
+    ```
+
+4.  **Очистите конфигурацию Docker Compose** от сервиса агента.
+
+**Архивация позиционных файлов** перед удалением (для compliance):
+```bash
+tar -czf alloy-positions-backup-$(date +%Y%m%d).tar.gz ./alloy/positions
+```
 
 ### Ссылки на смежные темы
 *   **[Обзор драйверов логирования Docker](./docker_logging_drivers_overview.md)** — база и сравнение методов.

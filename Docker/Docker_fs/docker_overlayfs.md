@@ -1,5 +1,7 @@
 # Docker: Драйвер хранения OverlayFS
 
+**Актуально для:** Docker 24.x–29.x, containerd 1.7.x–2.4.x
+
 ## Определения
 
 - **OverlayFS**: Современная объединяющая файловая система (union filesystem), используемая Docker по умолчанию в большинстве дистрибутивов Linux. Она позволяет эффективно "накладывать" одну файловую систему поверх другой, создавая единое, целостное представление из нескольких слоев.
@@ -80,8 +82,8 @@
 
 ### Аппаратные и программные требования
 
-- **Ядро Linux**: версия **4.0+** для базовой поддержки OverlayFS; версия **4.18+** для работы `overlay2` поверх `overlay2` (вложенный overlay, Docker-in-Docker); версия **5.11+** для нативного `overlay` в rootless-режиме; версия **5.13+** для rootless overlay с SELinux.
-- **Docker Engine**: **20.10+** (стабильная поддержка `overlay2`); **24.0+** (рекомендуется для cgroups v2 и современных функций); **29.0+** для containerd snapshotter по умолчанию.
+- **Ядро Linux**: версия **4.0+** для базовой поддержки OverlayFS; версия **4.18+** для работы `overlay2` поверх `overlay2` (вложенный overlay, Docker-in-Docker); версия **5.11+** для нативного `overlay` в rootless-режиме; версия **5.13+** для rootless overlay с SELinux. В production-средах 2026 года преобладают ядра **6.x**.
+- **Docker Engine**: **20.10+** (стабильная поддержка `overlay2`); **24.0+** (рекомендуется для cgroups v2 и современных функций); **29.0+** для containerd snapshotter по умолчанию. Локально установлен Docker **29.8.1**.
 - **Файловая система** для `/var/lib/docker/` или `/var/lib/containerd/`:
   - **XFS**: обязательно `ftype=1`; рекомендуется `reflink=1` для ускорения сборки образов.
   - **EXT4**: поддерживается по умолчанию.
@@ -102,7 +104,7 @@ docker info | grep "Storage Driver"
 
 # Проверка версии Docker
 docker --version
-# → Docker version 27.3.1, build ce12230
+# → Docker version 29.8.1, build 4a63305
 
 # Проверка d_type для XFS
 xfs_info /var/lib/docker | grep ftype
@@ -333,6 +335,7 @@ docker info | grep -E "Storage Driver|overlay2"
 docker run -d --name overlay-validation-test alpine sleep 3600
 docker inspect overlay-validation-test | grep -E "LowerDir|UpperDir|MergedDir|WorkDir"
 # Должны присутствовать все четыре директории в /var/lib/docker/overlay2/...
+# При containerd snapshotter пути начинаются с /var/lib/containerd/...
 
 # 3. CoW работает: изменение файла в контейнере затрагивает только upperdir
 docker exec overlay-validation-test sh -c "echo 'test' > /etc/test_cow.txt"
@@ -356,7 +359,16 @@ dmesg | grep -i overlay
 df -i /var/lib/docker
 # → IUse% должен быть низким (< 80%)
 
-# 8. Проверка работы whiteout (опционально)
+# 8. Проверка дискового пространства (SRE)
+docker system df -v
+# → VOLUMES    ...    SIZE
+# → IMAGES     ...    SIZE
+# → Containers ...    SIZE
+df -h /var/lib/docker
+# → Filesystem      Size  Used Avail Use% Mounted on
+# → /dev/sda1       20G  8.5G   11G  45% /var/lib/docker
+
+# 9. Проверка работы whiteout (опционально)
 docker run --rm -it alpine sh -c "rm -f /etc/hostname && ls -la /etc"
 # → hostname отсутствует (скрыт whiteout), остальные файлы на месте
 ```
@@ -382,6 +394,12 @@ docker rm -f overlay-validation-test
 | **`docker inspect` показывает пустые `LowerDir`/`UpperDir`** | Контейнер в состоянии `RemovalInProgress`/`Dead`, или используется `--read-only` с `tmpfs` без overlay. | Проверьте `docker inspect --format '{{.State.Status}}' <id>`; для `--read-only` контейнеры без writable layer не имеют `UpperDir`. |
 | **SELinux блокирует запись в bind mount** | Отсутствуют метки `:z` (shared) или `:Z` (private) при монтировании. | Добавьте `:z` или `:Z` к опции монтирования; проверьте `getenforce`. |
 | **Rootless: `overlay` не доступен** | Ядро < 5.11 или недостаточно прав для нативного overlay. | Используйте `dockerd-rootless-setuptool.sh install` для установки `fuse-overlayfs`. |
+| **Исчерпание inodes (`df -i` показывает 100%)** | Слишком много мелких файлов в слоях или контейнерах (миллионы). | Очистите неиспользуемые ресурсы (`docker system prune -a --volumes`); при необходимости пересоздайте ФС с большим лимитом inodes. |
+| **Page Cache сжирает RAM после массового copy-up** | При запуске большого числа контейнеров одновременно ядро кэширует страницы из lowerdir. | Ожидаемое поведение; при нехватке RAM ядро вытесняет кеш. Настройте `vm.swappiness=10` и ограничьте `memory.max` для групп контейнеров. |
+| **`docker build` очень медленный на XFS без `reflink=1`** | Файловая система XFS создана без поддержки reflinks; copy-up происходит через полное копирование. | Пересоздайте ФС с опцией `-m reflink=1` или используйте `cp --reflink` для ускорения. |
+| **`docker history` показывает `<missing>` для локальных слоёв** | Слой собран в BuildKit или импортирован из реестра без локальной метаданной. | Нормальное поведение для современных сборок. Полные данные видны после локальной сборки с `--no-cache`. |
+| **Вложенный overlay в DinD нестабилен** | Ядро хоста не поддерживает nested overlay или не хватает прав `CAP_SYS_ADMIN`. | Проверьте `uname -r` ≥ 4.18; запускайте DinD с `--privileged` или предоставьте нужные capabilities. |
+| **Containerd snapshotter: `docker system df` показывает меньше, чем реально** | Часть данных хранится в `/var/lib/containerd` и не учитывается в summary `docker system df`. | Используйте `docker system df -v` для детализации; дополнительно проверяйте `df -h /var/lib/containerd`. |
 
 ## Рекомендации и очистка
 
@@ -394,6 +412,11 @@ docker rm -f overlay-validation-test
 5. **Настраивайте ротацию логов**. Если приложение пишет логи в writable layer, используйте логи-драйверы (`json-file` с `max-size`, `local`) или ограничивайте размер файлов, чтобы том не разрастался бесконтрольно.
 6. **В rootless-режиме используйте `fuse-overlayfs`** при необходимости. На ядрах Linux < 5.11 нативный overlay недоступен без привилегий; `fuse-overlayfs` работает в userspace, но с меньшей производительностью.
 7. **Для Docker Desktop (Mac/Windows)** помните, что OverlayFS работает внутри VM (HyperKit/WSL2). Named volumes находятся внутри VM и недоступны напрямую из хоста; производительность bind mounts ниже, чем у named volumes.
+8. **Мониторинг диска**: на хостах с большим количеством контейнеров (CI-раннеры, оркестраторы) регулярно проверяйте `docker system df -v` и `df -h /var/lib/docker`. Установите алерты на рост `Reclaimable` в разделе `IMAGES` и `CONTAINERS`, а также на заполнение раздела, на котором хранятся слои. Для Docker 29+ с containerd snapshotter также мониторьте `/var/lib/containerd`.
+9. **Мониторинг inodes**: отслеживайте `IUse%` через `df -i /var/lib/docker`. Высокое значение indicates риск отказа overlay2 из-за исчерпания inodes. Настройте алерты при `IUse% > 80%`.
+10. **CI/CD**: для кэширования зависимостей в пайплайнах используйте BuildKit cache mounts (`--mount=type=cache`) или registry-backed кэш (`--cache-to type=registry`), а не локальные bind mounts на хост-директорию — это обеспечивает изоляцию и переносимость между раннерами.
+11. **Политика очистки**: настройте `docker system prune` по расписанию (cron) или используйте TTL-метки (`--filter "until=24h"`) для автоматического удаления неиспользуемых ресурсов в dev-средах. В production используйте registry lifecycle policies для удаления устаревших тегов.
+12. **Аудит слоёв**: периодически запускайте `docker system df -v` и `docker history` для неиспользуемых образов, чтобы обнаружить "мертвые" слои, оставшиеся после пересборки. На хостах с containerd snapshotter проверяйте оба пути: `/var/lib/docker` и `/var/lib/containerd`.
 
 ### Очистка
 
@@ -491,9 +514,10 @@ getenforce
 
 Начиная с Docker 29.0, по умолчанию используется containerd со snapshotters (overlayfs):
 
-- **Место хранения**: `/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/` вместо `/var/lib/docker/overlay2/`.
-- **Feature flag**: при включённом `containerd-snapshotter` классический `overlay2` демона Docker не используется.
-- **Дублирование данных**: слои хранятся дважды — в сжатом виде (content store) и в распакованном (snapshotter). Это упрощает интеграцию с Kubernetes (CRI), но требует больше дискового пространства.
+- **Место хранения образов**: `/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/` вместо `/var/lib/docker/overlay2/`. Тома продолжают храниться в `/var/lib/docker/volumes/`.
+- **Принцип работы**: вместо классического драйвера `overlay2`, управляемого напрямую демоном Docker, используется механизм снапшотов containerd.
+- **Дублирование данных**: слои хранятся дважды — в сжатом виде (content store) и в распакованном (snapshotter). Это упрощает интеграцию с CRI-раннерами, но требует больше дискового пространства.
+- **Мониторинг**: для отслеживания потребления диска используйте `docker system df -v` и проверяйте оба пути: `/var/lib/docker` и `/var/lib/containerd`.
 - **Классический режим**: если feature flag отключён, продолжает использоваться `overlay2` по пути `/var/lib/docker/overlay2/`.
 
 ### Ограничение inodes
@@ -522,6 +546,19 @@ df -i /var/lib/docker
 
 **Решение:** Выносите данные в volumes, используйте `--tmpfs` для временных путей, настраивайте ротацию логов.
 
+### BuildKit и overlay
+
+BuildKit (`DOCKER_BUILDKIT=1`) использует оптимизированный механизм сборки, но результат тот же: каждый шаг `Dockerfile` создаёт слой. BuildKit может использовать `fuse-overlayfs` в certaines окружениях (например, DinD), что требует проверки поддержки в ядре.
+
+**Для SRE:** на CI-раннерах с ограниченным диском используйте `--mount=type=cache` для кэширования зависимостей вместо создания их в слоях образа. Это сокращает размер образа и ускоряет сборку.
+
+### Live-restore и overlay
+
+При включённом `live-restore` в `daemon.json` контейнеры продолжают работать после перезапуска демона Docker. В этом случае:
+- `upperdir` контейнера остаётся примонтированным, даже если демон перезапущен.
+- При остановке контейнера `upperdir` размонтируется, но данные сохраняются.
+- При удалении контейнера (`docker rm`) `upperdir` удаляется безвозвратно, независимо от `live-restore`.
+
 ## Дополнительная информация
 
 ### Производительность и лучшие практики
@@ -529,6 +566,26 @@ df -i /var/lib/docker
 Механизм Copy-on-Write не является бесплатным. Операция "copy up" вносит задержку и потребляет дисковые I/O. Поэтому для рабочих нагрузок с интенсивной записью (например, базы данных, активное логирование, сборка артефактов) **категорически не рекомендуется** хранить данные в записываемом слое контейнера.
 
 **Лучшая практика:** Для данных, которые часто изменяются, всегда используйте **[тома (volumes)](./docker_volumes.md)**. Volumes монтируются напрямую в файловую систему контейнера, обходя механизм OverlayFS и CoW, что обеспечивает нативную производительность дисковых операций.
+
+### SRE/DevOps: мониторинг и эксплуатация
+
+**Ключевые метрики для мониторинга overlay2:**
+- **Дисковое пространство**: `docker system df -v` показывает использование по образам, контейнерам и томам. В production-средах настройте алерты на рост `Reclaimable` > 20% или заполнение раздела `/var/lib/docker` > 80%.
+- **Inodes**: `df -i /var/lib/docker` — отслеживайте `IUse%`. Высокое значение указывает на риск отказа overlay2 из-за исчерпания inodes. Типичные виновники: миллионы мелких файлов в контейнерах, неограниченная ротация логов Docker, утечки временных файлов.
+- **Page Cache**: при массовом copy-up (запуск множества контейнеров одновременно) наблюдается всплеск потребления RAM. Ядро Linux автоматически вытесняет кеш при нехватке памяти; мониторьте `memory.stat` cgroups v2 для detection pressure.
+- **Количество слоёв**: `docker history <image> | wc -l` — поддерживайте < 50 для production-образов. Приближение к 128 требует немедленной оптимизации.
+
+**Автоматизация очистки:**
+```bash
+# Ежедневный cron для dev-сред
+0 2 * * * docker system prune -a --volumes --filter "until=24h" -f
+
+# На self-hosted CI-раннерах: после каждого job
+docker buildx prune -f --filter "until=1h"
+docker image prune -a -f --filter "until=24h"
+```
+
+**Для SRE:** на хостах с большим количеством контейнеров (оркестраторы, CI-раннеры) настройте мониторинг диска и inodes. Используйте `docker system df -v` для детального анализа; `docker system df` показывает только summary.
 
 ### Сравнение с другими драйверами
 
@@ -538,9 +595,25 @@ df -i /var/lib/docker
 - **containerd snapshotter**: Начиная с Docker 29.0, по умолчанию используется containerd со snapshotters (overlayfs), который является современным стандартом для containerd.
   - **Место хранения**: Слои образов перемещены в `/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/`.
   - **Принцип работы**: Вместо классического драйвера `overlay2`, управляемого напрямую демоном Docker, используется механизм снапшотов containerd.
-  - **Native OverlayFS**: containerd может использовать "native" режим OverlayFS (без использования `workdir` в некоторых сценариях или с оптимизированным монтированием), что повышает стабильность и производительность в средах Kubernetes.
-  - **Дублирование данных**: В этом режиме слои могут храниться на диске дважды: сначала в сжатом виде (content store), затем в распакованном виде (snapshotter) для использования в контейнерах. Это упрощает интеграцию с Kubernetes (CRI), но требует больше дискового пространства.
-  - Для классического Docker daemon (с отключенным feature flag `containerd-snapshotter`) по-прежнему используется `overlay2` и путь `/var/lib/docker/overlay2`.
+  - **Дублирование данных**: В этом режиме слои могут храниться на диске дважды: сначала в сжатом виде (content store), затем в распакованном виде (snapshotter) для использования в контейнерах. Это упрощает интеграцию с CRI, но требует больше дискового пространства.
+   - Для классического Docker daemon (с отключенным feature flag `containerd-snapshotter`) по-прежнему используется `overlay2` и путь `/var/lib/docker/overlay2`.
+
+**Матрица выбора storage driver:**
+
+| Драйвер | Когда использовать | Когда НЕ использовать | Особенности |
+| :--- | :--- | :--- | :--- |
+| **overlay2** | Default choice для Linux (ядро ≥ 4.18); production-нагрузки | Ядро < 4.18 без fuse-overlayfs; SELinux на ядре < 5.13 | Стандарт де-факто; требует `d_type` (XFS с `ftype=1`); лимит 128 lowerdir |
+| **fuse-overlayfs** | Rootless Docker на ядрах < 5.11; DinD без привилегий | Production с высокой нагрузкой I/O | Работает в userspace; медленнее нативного overlay2 |
+| **btrfs** | Хост на Btrfs; нужны снапшоты слоёв | Хост на ext4/XFS; production без опыта Btrfs | Нативные снапшоты; reflink copy-up; требует Btrfs-раздела для `/var/lib/docker` |
+| **zfs** | Хост на ZFS; нужны снапшоты и сжатие | Хост без ZFS; production без опыта ZFS | Сжатие и снапшоты на уровне ФС; высокое потребление RAM |
+| **devicemapper** | Legacy-системы (RHEL 7) без overlay2 | Любые новые развёртывания | Блочный уровень; требует `direct-lvm`; медленнее overlay2; deprecated |
+| **vfs** | Отладка; ФС без поддержки CoW | Production | Без CoW — каждый слой полная копия; огромный расход диска |
+| **containerd snapshotter** | Docker 29.0+ (дефолт); интеграция с CRI-раннерами | Классический Docker daemon с feature flag отключён | Слои в `/var/lib/containerd`; дублирование (content store + snapshotter) |
+
+**Feature-флаги файловых систем:**
+- **XFS `ftype=1`**: обязателен для overlay2 (иначе `cannot mount overlay: invalid argument`). Проверка: `xfs_info /var/lib/docker \| grep ftype`.
+- **XFS `reflink=1`**: ускоряет copy-up через reflinks (вместо полного копирования). Проверка: `xfs_info / \| grep reflink`.
+- **Btrfs/ZFS**: включают нативные снапшоты слоёв, но требуют соответствующей ФС для `/var/lib/docker`.
 
 ### Связанные темы
 

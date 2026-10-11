@@ -919,10 +919,9 @@ spec:
 
 **Тюнинг ArgoCD:**
 
-- `controller.args.server.side.apply` — глобально включает SSA.
-- `--status.processors` — увеличить до 50 при большом числе Application'ов.
+- `--status-processors` — увеличить до 50 при большом числе Application'ов.
 - `repoServer.replicas: 3` — для крупных манифестов.
-- `controller.diff.server.side.apply.ssa.exclusions` — список полей, исключенных из diff (status, managedFields).
+- SSA и server-side diff настраиваются на уровне приложения (sync option `ServerSideApply=true`, аннотация `argocd.argoproj.io/compare-options: ServerSideDiff=true`); глобальных ключей exclusions для diff в `argocd-cm` нет — для исключения полей из diff используйте `ignoreDifferences` (см. [Ignore Differences](../../../GitOps/ArgoCD/synchronization/ignore_differences.md)).
 
 **Тюнинг Flux:**
 
@@ -958,8 +957,8 @@ spec:
 - **[Git-автоматизация](./kustomize_git_automation.md)** — Renovate, image promotion, pre-commit.
 - **[Тестирование и валидация](./kustomize_testing_validation.md)** — conftest, snapshot, lint.
 - **[Валидация манифестов (kubeconform)](../kubeconform_overview.md)** — автоматическая проверка схем Kubernetes API.
-- **[ArgoCD: синхронизация и self-heal](../../../GitOps/ArgoCD/synchronization/synchronization.md)** — детали GitOps-модели ArgoCD.
-- **[Flux v2: Kustomize Controller](../../../GitOps/Flux/kustomize_controller.md)** — описание `Kustomization` API.
+- **[ArgoCD: синхронизация и self-heal](../../../GitOps/ArgoCD/synchronization.md)** — детали GitOps-модели ArgoCD.
+- **[Flux v2: Kustomize Controller](../../../GitOps/flux.md)** — описание `Kustomization` API.
 
 ### Внешние ресурсы
 

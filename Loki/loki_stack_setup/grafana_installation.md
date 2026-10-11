@@ -56,6 +56,7 @@ datasources:
     datasources:
       - name: Loki
         type: loki
+        uid: loki
         access: proxy
         url: http://loki-gateway.logging.svc.cluster.local:80
         isDefault: true
@@ -244,6 +245,7 @@ datasources:
     datasources:
       - name: Loki
         type: loki
+        uid: loki
         access: proxy
         url: http://loki-gateway.logging.svc.cluster.local:80
         isDefault: true
@@ -315,7 +317,7 @@ kubectl get pvc -n monitoring
 GRAFANA_TOKEN=$(kubectl get secret grafana-admin-secret -n monitoring \
   -o jsonpath='{.data.username}' | base64 -d)
 curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
-  http://grafana.monitoring.svc.cluster.local/api/datasources/name/Loki | jq '.id, .uid'
+  http://grafana.monitoring.svc.cluster.local/api/datasources/uid/loki | jq '.id, .uid'
 # → 1 / "loki"
 
 # Проверка ServiceMonitor
@@ -533,7 +535,7 @@ curl -s http://localhost:3000/metrics | grep grafana_dashboard_versions_total
 
 # Проверка живости
 curl -s http://localhost:3000/api/health
-# → {"database":"ok","status":"ok","version":"13.1.0"}
+# → {"database":"ok","status":"ok","version":"13.2.3"}
 
 # История Helm-релизов
 helm history grafana -n monitoring

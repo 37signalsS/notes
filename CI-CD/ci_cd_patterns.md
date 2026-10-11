@@ -278,10 +278,81 @@ flyway -url="$DB_URL" -user="$DB_USER" -password="$DB_PASS" \
 | :--- | :--- | :--- | :--- |
 | Canary не завершается | Analysis-гейт не получает метрики / baseline не задан | Проверить PromQL-запрос гейта (`curl .../query`), наличие данных за окно | Исправить запрос; задать эталон; снизить порог или продлить окно |
 | Флаг не переключается | Кэш конфигурации на стороне сервиса / неверный scope | `curl localhost:8080/flags` на узле | Сбросить кэш, проверить права доступа к флаг-сервису |
-| Расхождение конфигураций между env | Config не вынесен из артефакта (нарушен паттерн #5) | Сравнить env-переменные на Staging/Prod | Вынесите настройки в ConfigMap/секреты; пересоберите иммутабельный артефакт |
+| Расхождение конфигураций между env | Config не вышен из артефакта (нарушен паттерн #5) | Сравнить env-переменные на Staging/Prod | Вынесите настройки в ConfigMap/секреты; пересоберите иммутабельный артефакт |
 | Эфемерная среда не удалилась | `teardown` не отработал (падение в основном job) | Ищем висящие ВМ: `virsh list`; `systemctl list-units 'review-*'` | Использовать `on_stop`/`after_script`, которые гарантированно запускаются; добавить периодическую очистку по возрасту |
 | Проверка подписи провалена в Prod | Несовпадение ключа/идентичности или digest изменён в пути | `cosign verify` на узле, сравнить digest | Переиспользовать тот же digest (Build Once); проверить цепочку доверия ключа |
 | Перегрузка CI при TBD | Слишком частые коммиты в `main`, мало слотов раннеров | Метрика Queue Time (Prometheus) | Шардировать флот, распараллелить тесты, включить кэш зависимостей |
+
+### GitHub Actions: конкретная реализация паттернов
+
+Для GitHub Actions централизация и стандарты достигаются через reusable workflows и organization-level templates.
+
+**Reusable workflow как единый стандарт:**
+```yaml
+# .github/workflows/standard-build.yml (репозиторий-шаблон)
+name: Standard Build
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        required: false
+        type: string
+        default: '24'
+      build-command:
+        required: false
+        type: string
+        default: 'npm run build'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+      - name: Install
+        run: npm ci
+      - name: Build
+        run: ${{ inputs.build-command }}
+      - name: Test
+        run: npm test
+```
+
+**Вызов в проекте:**
+```yaml
+# .github/workflows/ci.yml
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    uses: my-org/.github/.github/workflows/standard-build.yml@main
+    with:
+      node-version: '24'
+      build-command: 'npm run build:prod'
+```
+
+**Ограничения и best practices:**
+- Глубина вложенности reusable workflows — до 10 уровней (с ноября 2025), рекомендуется не более 2–3.
+- Лимит 50 workflow'ов на один запуск (с ноября 2025).
+- `secrets: inherit` — автоматическая передача секретов; используйте явную передачу для最小 привилегий.
+- Типизация `inputs`: только `string`, `number`, `boolean` (нет `choice` и `environment` в `workflow_call`).
+
+**Policy as Code в GitHub Actions:**
+- `branch protection rules` — требование review и статус-чеков перед merge.
+- `required_status_checks` — mandatory CI job'ы перед merge.
+- `required_approvals` — минимум N ревьюеров для production-веток.
+- `restrict_pushes` — только определённые команды могут pushить в защитимые ветки.
+- CODEOWNERS — автоматическое назначение ревьюеров на основе путей файлов.
+
+**Где documented:**
+- [Официальное руководство: Reuse workflows](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows)
+- [Справочник: Reusing workflow configurations](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations)
 
 ### Лучшие практики и очистка (Best Practices & Cleanup)
 

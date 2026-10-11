@@ -42,6 +42,20 @@
 
 **Конфигурация kubeadm** — файл `/etc/kubernetes/kubeadm-config.yaml`, определяющий параметры инициализации кластера: версию API, адрес API-сервера, диапазон CIDR для подов и сервисов, провайдер облачной инфраструктуры (или `external` для bare-metal).
 
+**`etcd_deployment_type`** — переменная в `group_vars/all/all.yml`, определяющая способ развертывания etcd: `host` (по умолчанию — etcd как systemd-сервис на узлах группы `etcd`), `kubeadm` (experimental — etcd как статический под) или `docker` (etcd в контейнере). Подробности — в [документации etcd](https://kubespray.io/#/docs/operations/etcd).
+
+**`ip` и `access_ip`** — парные переменные инвентаря для каждого хоста. `ip` — адрес, на котором компоненты Kubernetes биндятся (обычно основной интерфейс); `access_ip` — адрес, по которому Ansible и другие узлы подключаются к хосту (в облаках обычно приватный IP). Если `access_ip` не задан, используется `ansible_default_ipv4.address`. Типичная ловушка в облаках: хост за NAT имеет внешний IP для SSH и внутренний для трафика кластера — тогда `ansible_host` указывает на внешний IP, а `ip`/`access_ip` — на внутренний.
+
+**`ansible_host`** — переменная Ansible в инвентаре, задающая адрес для SSH-подключения к хосту. Не путать с `ip`/`access_ip`: `ansible_host` управляет только подключением Ansible, а `ip`/`access_ip` — адресами, которые Kubernetes использует внутри кластера.
+
+**`supplementary_addresses_in_ssl_keys`** — переменная в `group_vars/all/all.yml`: список дополнительных IP-адресов и DNS-имён, включаемых в SAN (Subject Alternative Name) сертификатов API-сервера. Необходима, если API-сервер будет доступен по адресам, отличным от `ip` узлов control plane (например, по VIP или внешнему DNS-имени балансировщика).
+
+**`kube_proxy_mode`** — режим работы kube-proxy: `iptables` (по умолчанию), `ipvs` или `nftables`. Задаётся в `group_vars/all/all.yml`.
+
+**`enable_nodelocaldns`** — переменная в `group_vars/all/all.yml` (по умолчанию `false`). При значении `true` на каждом узле развёртывается DaemonSet NodeLocal DNSCache, кеширующий DNS-ответы локально для подов.
+
+**`ping_access_ip`** — переменная инвентаря: адрес, по которому Ansible проверяет доступность хоста (ICMP-пинг) перед выполнением задач. Полезна, когда `access_ip` недоступен для ping, но доступен по SSH.
+
 ---
 
 ## Основные концепции

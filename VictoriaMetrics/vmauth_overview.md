@@ -154,3 +154,4 @@ curl -s http://localhost:8427/metrics | grep -E "^vmauth_user_requests_total"
 - [VictoriaMetrics: обзор](./overview.md) — компоненты стека и роли vmauth;
 - [VictoriaLogs: мульти-тенантность и доступ](./victorialogs_internals.md);
 - [vmalert: интеграция источников](./vmalert_overview.md).
+# force reindex test

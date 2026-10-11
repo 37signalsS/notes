@@ -1,5 +1,7 @@
 # Оптимизация сборки Docker-образов
 
+**Актуально для:** Docker 24.0+ / BuildKit включён по умолчанию
+
 ## Определения
 
 - **Кэширование слоев (Layer Caching):** Механизм Docker, сохраняющий результат каждой инструкции `Dockerfile` в виде неизменяемого слоя. При повторных сборках Docker переиспользует существующие слои, если инструкция и контекст не изменились.
@@ -52,8 +54,7 @@
 | Бэкенд | Назначение | Пример использования |
 | :--- | :--- | :--- |
 | **`registry`** | Универсальный, работает везде | `--cache-to type=registry,ref=reg/cache:app,mode=max` |
-| **`gha`** | Оптимизирован для GitHub Actions | `--cache-to type=gha,mode=max` |
-| **`s3`** | Для AWS / MinIO | `--cache-to type=s3,region=eu-west-1,bucket=cache,key=app` |
+| **`s3`** | S3-совместимое объектное хранилище (MinIO, Ceph RGW, Harbor) | `--cache-to type=s3,region=us-east-1,bucket=cache,key=app,endpoint=minio.local` |
 | **`local`** | Локальная папка на хосте | `--cache-to type=local,dest=/tmp/buildx-cache,mode=max` |
 | **`inline`** | Кэш встраивается в образ (Docker Hub) | По умолчанию при `--push` |
 
@@ -65,78 +66,125 @@
 | `mode=max` | Кэш всех промежуточных слоев (включая неиспользуемые в финальном образе) | Рекомендуется для CI/CD — ускоряет повторные сборки |
 
 **Важно:** Режим `mode=max` сохраняет кэш всех промежуточных слоев, включая неиспользуемые в финальном образе стадии multi-stage. Это критично, так как при изменении только финальной стадии промежуточные стадии (builder) не пересобираются, и их кэш должен быть доступен.
+
+### Конфигурация BuildKit и управление кэшем (DevOps/SRE)
+
+Для эксплуатации в production и CI/CD необходимо понимать настройки демона BuildKit и политики управления кэшем:
+
+**Конфигурация демона Docker (`/etc/docker/daemon.json`):**
+
+```json
+{
+  "features": {
+    "buildkit": true
+  },
+  "experimental": true,
+  "builder": {
+    "gc": {
+      "enabled": true,
+      "keepStorage": "10GB",
+      "default": "72h"
+    }
+  }
+}
+```
+
+- `features.buildkit`: Включение BuildKit (по умолчанию в Docker 24.0+).
+- `builder.gc`: Политика автоматической очистки кэша BuildKit. `keepStorage` — максимальный размер кэша, `default` — время хранения неиспользуемых объектов.
+- `experimental`: Требуется для некоторых возможностей Buildx.
+
+**Драйверы buildx:**
+
+| Драйвер | Изоляция | Когда использовать |
+| :--- | :--- | :--- |
+| **`docker`** | Использует демон Docker напрямую | Локальная разработка, быстрые сборки |
+| **`docker-container`** | Изолированный контейнер с собственным демоном | CI/CD, production — стабильность и повторяемость |
+| **`kubernetes`** | Pod в Kubernetes кластере | Распределённые сборки в K8s, большое количество параллельных задач |
+
+```bash
+# Создание инстанса сборщика с изолированным драйвером (рекомендуется для CI)
+docker buildx create --use --driver docker-container --name ci-builder
+
+# Просмотр инстансов
+docker buildx ls
+# → NAME       DRIVER       STATUS
+# → ci-builder docker-container  running
+# → default    docker         running
+```
+
+**Управление кэшем:**
+
+```bash
+# Просмотр использования кэша
+docker buildx du
+# → RECLAIMABLE   SIZE
+# → 2.1GB         3.4GB
+
+# Очистка кэша старше 72 часов
+docker buildx prune --filter "until=72h"
+
+# Принудительная очистка всего кэша
+docker buildx prune --all --force
+
+# GC только для определённого инстанса
+docker buildx du --builder ci-builder
+docker buildx prune --builder ci-builder --filter "until=72h"
+```
+
+**Производительность и параллелизм:**
+
+```bash
+# Параллельные стадии multi-stage выполняются автоматически в BuildKit
+# Для явного управления параллелизмом используйте --jobs (buildx)
+docker buildx build --jobs 4 -t myapp:latest .
+
+# Ограничение ресурсов для сборщика (docker-container драйвер)
+docker buildx create --use --driver docker-container \
+  --buildkitd-flags '--debug --addr tcp://0.0.0.0:1234 --max-parallelism 4'
+```
+
+### Воспроизводимые сборки
+
+Для получения идентичных дайджестов образов при сборке из одного исходного кода используйте `SOURCE_DATE_EPOCH`:
+
+```bash
+# Фиксация временной метки для всех слоёв
+SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) docker buildx build -t myapp:latest .
+
+# Или через аргумент сборки
+docker buildx build --build-arg SOURCE_DATE_EPOCH=$(date +%s) -t myapp:latest .
+```
+
+**Реестр и политики:**
+
+- Используйте **приватный registry** с support content trust (Docker Content Trust, Notary) или **Sigstore/Cosign** для подписи образов.
+- Для air-gapped сред настроите **pull-through cache** (Harbor, Nexus, registry:3 с прокси), чтобы кэшировать базовые образы внутри периметра.
+- Включите **склейку кэша** (`--cache-to type=inline`) для базовых образов, чтобы ускорить повторные сборки на других хостах.
+
+## Предварительные требования
+
+- **Docker Engine 24.0+** (рекомендуется Docker 27.0+, где `docker buildx build` является стандартным алиасом для `docker build`).
+- **BuildKit** включён по умолчанию в Docker 24.0+. Для более ранних версий необходимо установить переменную окружения `DOCKER_BUILDKIT=1`.
+- **Плагин `docker-buildx`** установлен и активирован (`docker buildx create --use --driver docker-container` для изолированного драйвера).
+- **Достаточно дискового пространства** для кэша BuildKit: при включённом `mode=max` кэш может занимать несколько гигабайт. Рекомендуется настроить политику очистки (`docker buildx prune --filter until=72h`).
+- **Доступ к реестрам** с базовыми образами или внутренний registry с предзагруженными образами (для air-gapped сред).
+- **Для multi-platform сборок:** настроен `binfmt_misc` и эмуляторы (QEMU), либо используется кросс-компиляция нативной сборкой на хосте сборки (`--platform=$BUILDPLATFORM`).
+- **Для удалённого кэширования:** доступный registry с поддержкой manifests (Docker Hub, Harbor, Nexus, registry:3) или MinIO-совместимый объектный стор для S3-бэкенда.
+- **Для production-сборок:** настроен admission-контроллер (Kyverno/OPA) или CI-политики для проверки SBOM и подписей перед деплоем.
+
 ## Практические сценарии
 
 ### Сценарий 1: Оптимальное кэширование Node.js
 
-Использование `COPY --link` и монтирования кэша для `npm`.
-
-```dockerfile
-# syntax=docker/dockerfile:1
-FROM node:22-alpine AS builder
-WORKDIR /app
-
-# Копируем только файлы манифеста в независимый слой
-COPY --link package.json package-lock.json ./
-
-# Кэш npm не попадает в образ, но доступен при следующей сборке
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci
-
-# Копируем исходный код
-COPY --link . .
-RUN npm run build
-
-FROM nginx:alpine
-# Копируем только артефакты сборки
-COPY --from=builder --link /app/dist /usr/share/nginx/html
-```
+Детальный разбор `--mount=type=cache`, `COPY --link` и стратегий кэширования для npm: **[Инструкция RUN: кэширование и монтирования](../Instructions/build_time_commands.md#практические-сценарии)**.
 
 ### Сценарий 2: Кэширование для Python (pip)
 
-Использование Heredoc и монтирования кэша.
-
-```dockerfile
-# syntax=docker/dockerfile:1
-FROM python:3.12-slim
-WORKDIR /app
-
-COPY requirements.txt .
-
-# Heredoc для чистоты кода и монтирование кэша pip
-RUN --mount=type=cache,target=/root/.cache/pip <<EOF
-apt-get update
-apt-get install -y --no-install-recommends gcc
-pip install --no-cache-dir --requirement requirements.txt
-apt-get purge -y --auto-remove gcc
-rm -rf /var/lib/apt/lists/*
-EOF
-
-COPY . .
-CMD ["python", "app.py"]
-```
+Детальный разбор Heredoc, `--mount=type=cache` и секретов для pip: **[Инструкция RUN: кэширование и монтирования](../Instructions/build_time_commands.md#практические-сценарии)**.
 
 ### Сценарий 3: Java/Maven с сохранением .m2
 
-Maven скачивает зависимости при каждой сборке. Монтирование кэша решает эту проблему.
-
-```dockerfile
-# syntax=docker/dockerfile:1
-FROM maven:3.9-eclipse-temurin-21 AS build
-WORKDIR /app
-COPY pom.xml .
-# Предварительная загрузка зависимостей
-RUN --mount=type=cache,target=/root/.m2 \
-    mvn dependency:go-offline
-
-COPY src ./src
-RUN --mount=type=cache,target=/root/.m2 \
-    mvn package -DskipTests
-
-FROM eclipse-temurin:21-jre-alpine
-COPY --from=build /app/target/*.jar /app/app.jar
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
-```
+Детальный разбор кэширования `.m2` и стратегий для JVM-сборок: **[Инструкция RUN: кэширование и монтирования](../Instructions/build_time_commands.md#практические-сценарии)**.
 
 ### Сценарий 4: Безопасная сборка с секретами
 
@@ -144,7 +192,7 @@ ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM node:22-alpine
+FROM node:26-alpine
 WORKDIR /app
 COPY package.json ./
 # Токен монтируется только на время выполнения команды и не сохраняется в образе
@@ -154,33 +202,7 @@ RUN --mount=type=secret,id=npm_token \
 
 ### Сценарий 5: Go-приложение с кросс-компиляцией и distroless
 
-Максимально минимальный образ: кросс-компиляция + distroless.
-
-```dockerfile
-# syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
-
-# Автоматически заполняются BuildKit
-ARG TARGETOS TARGETARCH
-WORKDIR /src
-COPY go.mod go.sum ./
-
-# Кэшируем модули Go
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
-
-COPY . .
-
-# Кэшируем результат компиляции
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -o /app/server .
-
-# Финальный образ: ~5-10MB вместо ~800MB
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=builder /app/server /server
-ENTRYPOINT ["/server"]
-```
+Детальный разбор кэширования модулей Go, кросс-компиляции и distroless: **[Инструкция RUN: кэширование и монтирования](../Instructions/build_time_commands.md#практические-сценарии)**.
 
 **Валидация:**
 ```bash
@@ -201,7 +223,7 @@ time docker buildx build --platform linux/amd64,linux/arm64 -t myapp:latest .
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM rust:1.82-slim AS builder
+FROM rust:1.98-slim AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 
@@ -230,21 +252,7 @@ ENTRYPOINT ["myapp"]
 
 ### Сценарий 7: C++ с ccache
 
-```dockerfile
-# syntax=docker/dockerfile:1
-FROM ubuntu:24.04 AS builder
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential ccache
-WORKDIR /src
-COPY . .
-
-# Кэш компиляции ccache
-RUN --mount=type=cache,target=/root/.cache/ccache \
-    CC="ccache gcc" CXX="ccache g++" make -j$(nproc)
-
-FROM debian:bookworm-slim
-COPY --from=builder /src/myapp /usr/local/bin/myapp
-ENTRYPOINT ["myapp"]
-```
+Детальный разбор кэширования Cargo, заглушки `main.rs` для Rust и ccache для C++: **[Инструкция RUN: кэширование и монтирования](../Instructions/build_time_commands.md#практические-сценарии)**.
 
 ### Сценарий 8: Сборка с аттестациями (SBOM) для production
 
@@ -377,7 +385,7 @@ docker buildx prune --filter "until=72h"
 ### Проверка кэша зависимостей
 
 ```bash
-# Сборка两次 — вторая должна быть быстрее
+# Сборка дважды — вторая должна быть быстрее
 time docker build -t myapp:latest .
 # → real    0m45.2s
 
@@ -434,11 +442,11 @@ dive myapp:latest
 
 ```dockerfile
 # ПЛОХО: копируем всё из builder
-FROM alpine:3.21
+FROM alpine:3.24
 COPY --from=builder /app /app
 
 # ХОРОШО: копируем только нужный артефакт
-FROM alpine:3.21
+FROM alpine:3.24
 COPY --from=builder /app/dist /usr/share/nginx/html
 ```
 
@@ -450,7 +458,7 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM node:22-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
 
 # 1. Манифест (редко меняется)
@@ -483,16 +491,7 @@ EOF
 
 ### Ошибка 5: Кэш apt не переиспользуется
 
-**Причина:** Кэш apt хранится в `/var/cache/apt` и `/var/lib/apt`, которые попадают в слой.
-
-**Решение:** Используйте монтирование кэша:
-
-```dockerfile
-# syntax=docker/dockerfile:1
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends curl
-```
+Детальный разбор кэширования apt и решения проблемы: **[Инструкция RUN: кэширование и монтирования](../Instructions/build_time_commands.md#практические-сценарии)**.
 
 ### Ошибка 6: Медленная мультиплатформенная сборка
 
@@ -501,7 +500,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 **Решение:** Используйте кросс-компиляцию для Go/Rust:
 
 ```dockerfile
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
 ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /app .
 ```
@@ -525,17 +524,54 @@ RUN --mount=type=secret,id=db_pass \
 # Запуск сборки с секретом
 docker buildx build --secret id=db_pass,src=./db_pass.txt -t myapp .
 ```
-
 ### Ошибка 8: `docker build --check` не находит проблем
 
-**Причина:** Используется устаревший синтаксис или отключены проверки.
+Детальный разбор встроенного линтера и `check=error=true`: **[Инструкция RUN: кэширование и монтирования](../Instructions/build_time_commands.md#практические-сценарии)**.
 
-```dockerfile
-# Включение проверок и перевод предупреждений в ошибки
-# syntax=docker/dockerfile:1
-# check=error=true
-FROM node:22-alpine
-```
+## Граничные случаи и ограничения
+
+### Air-gapped среды
+
+В средах без доступа в интернет требуется:
+- Предзагрузка всех базовых образов во внутренний registry.
+- Предварительная загрузка кэша пакетных менеджеров (apt, npm, pip, maven, cargo).
+- Офлайн-сканирование Trivy/Grype с локальной базой уязвимостей.
+
+### Distroless и отладка
+
+В distroless/chiseled образах нет shell, поэтому `docker exec` недоступен. Для отладки:
+- Используйте debug-версии образов: Google Distroless — тег `:debug` (BusyBox); Chainguard — `-dev`-вариант (например, `cgr.dev/chainguard/static:latest-dev`).
+- Добавьте временную отладочную стадию в Dockerfile для сбора артефактов.
+
+### Rootless Docker и buildx
+
+В Rootless Docker (без root-прав) драйвер `docker-container` для buildx может требовать дополнительной настройки:
+- Убедитесь что `subuid/subgid` настроены для пользователя.
+- Используйте драйвер `docker` вместо `docker-container` если изоляция не требуется.
+
+### Large monorepos и контекст сборки
+
+При очень больших репозиториях (>1GB):
+- Используйте `docker build --no-cache-filter=unused` для управления кэшем.
+- Настройте `.dockerignore` для исключения нерелевантных директорий.
+- Используйте `docker buildx build --no-cache` только при необходимости полной пересборки.
+
+Полный разбор сборки в монорепозиториях (path-based контексты, shared base images, Bake для монорепо) — в **[Сборка в монорепозиториях](../../../CI-CD/Build_Systems/monorepo_build_systems.md)**.
+
+### BuildKit GC и диск
+
+При активных сборках кэш BuildKit может быстро расти:
+- Настройте `builder.gc.keepStorage` в `daemon.json` (рекомендуется 10-20GB).
+- Используйте `docker buildx prune --filter until=72h` в cron для автоматической очистки.
+- Мониторьте использование диска через `docker buildx du`.
+
+### Multi-platform эмуляция
+
+QEMU-эмуляция значительно медленнее нативной сборки:
+- Предпочитайте кросс-компиляцию для Go/Rust (`--platform=$BUILDPLATFORM`).
+- Используйте `binfmt_misc` с поддержкой `fix-binary` для ускорения.
+- Для Java/JVM используйте multi-stage с нативной платформой.
+
 ## Лучшие практики
 
 ### Сводка рекомендаций
@@ -560,7 +596,7 @@ FROM node:22-alpine
 # syntax=docker/dockerfile:1
 
 # 2. Базовый образ (стабильная версия, не latest)
-FROM node:22-alpine AS builder
+FROM node:26-alpine AS builder
 
 # 3. SHELL (если нужен pipefail)
 SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
@@ -607,47 +643,36 @@ ENTRYPOINT ["nginx", "-g", "daemon off;"]
 - [ ] Размер образа проверен через `dive` (efficiency > 90%)
 - [ ] Удалённый кэш настроен для CI/CD (`--cache-to`/`--cache-from`)
 - [ ] Кросс-компиляция используется для Go/Rust multi-platform сборок
+
 ## Дополнительная информация
 
 ### Взаимодействие с CI/CD
 
-Для сохранения кэша между запусками в CI (GitHub Actions, GitLab CI) необходимо использовать экспортеры кэша:
+Для сохранения кэша между запусками в CI необходимо использовать экспортеры кэша:
 - `--cache-from type=registry,ref=...`
 - `--cache-to type=registry,ref=...,mode=max`
 Режим `mode=max` сохраняет кэш всех промежуточных слоев, включая неиспользуемые в финальном образе стадии multi-stage.
 
-**Пример GitHub Actions:**
+**Общие принципы для любой CI-системы:**
 
-```yaml
-- name: Build and push
-  uses: docker/build-push-action@v6
-  with:
-    context: .
-    push: true
-    tags: myorg/app:${{ github.sha }}
-    cache-from: type=gha
-    cache-to: type=gha,mode=max
-    sbom: true
-    provenance: mode=max
+```bash
+# 1. Создание изолированного инстанса сборщика (рекомендуется для CI)
+docker buildx create --use --driver docker-container --name ci-builder
+
+# 2. Сборка с кэшированием и аттестациями
+docker buildx build \
+  --cache-from type=registry,ref=registry.example.com/cache \
+  --cache-to type=registry,ref=registry.example.com/cache,mode=max \
+  --sbom=true \
+  --provenance=mode=max \
+  --push -t registry.example.com/app:$CI_COMMIT_SHA .
 ```
 
-**Пример GitLab CI:**
-
-```yaml
-build:
-  stage: build
-  image: docker:27
-  services:
-    - docker:29.8-dind
-  variables:
-    DOCKER_TLS_CERTDIR: "/certs"
-  script:
-    - docker buildx create --use --driver docker-container
-    - docker buildx build \
-        --cache-from type=registry,ref=$CI_REGISTRY_IMAGE/cache \
-        --cache-to type=registry,ref=$CI_REGISTRY_IMAGE/cache,mode=max \
-        --push -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
-```
+**Ключевые рекомендации для SRE/DevOps:**
+- Используйте `docker-container` драйвер для изоляции сборок в CI.
+- Настройте политику очистки кэша на registry (`keepStorage` в `daemon.json`).
+- Включите `--check` в пайплайн для статического анализа Dockerfile.
+- Храните SBOM и provenance в registry для аудита.
 
 ### Смотрите также
 
@@ -656,3 +681,9 @@ build:
 - **[Контекст сборки и .dockerignore](../dockerfile_build_context.md)** — правила исключения файлов.
 - **[Инструменты оптимизации: dive, Scout, hadolint](../dockerfile_optimization_tools.md)** — статический и динамический анализ образов.
 - **[Инструкция RUN: кэширование и монтирования](../Instructions/build_time_commands.md)** — детальный разбор `--mount` и Heredoc.
+- **[Продвижение образов в CI/CD](../../Docker_fs/images/promotion_cicd.md)** — тегирование по SHA, promotion между стадиями, canary/blue-green по дайджесту.
+- **[Очистка и GC-стратегии](../../Docker_fs/cleanup_gc_strategies.md)** — `docker prune`, retention-политики, garbage collection registry.
+- **[Версионирование и тегирование образов](../../Docker_registries/image_versioning_and_tagging.md)** — семантическое версионирование, immutable tags, digest pinning.
+- **[Kaniko: сборка без демона](../dockerfile_kaniko.md)** — сборка образов в Kubernetes и CI без Docker-демона.
+- **[Альтернативные среды выполнения и инструменты](../../alternative_runtimes_and_tools.md)** — buildah, podman, img и другие сборщики.
+- **[Docker-in-Docker (DinD)](../../docker-in-docker.md)** — запуск Docker-демона внутри контейнера для CI-пайплайнов.

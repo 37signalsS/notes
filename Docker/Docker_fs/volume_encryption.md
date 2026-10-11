@@ -1,5 +1,7 @@
 # Шифрование томов в Docker (Encryption at Rest)
 
+**Актуально для:** Docker 24.x–29.x, containerd 1.7.x–2.4.x, cryptsetup 2.4+
+
 ## Определения
 
 - **Шифрование данных «на покое» (Encryption at Rest)** — метод защиты информации, при котором данные преобразуются в зашифрованный вид перед записью на физический носитель. Это предотвращает чтение данных в случае физической кражи диска или несанкционированного доступа к файловой системе хоста.
@@ -12,8 +14,8 @@
 
 ### Аппаратные и программные требования
 
-- **Docker Engine**: версия 20.10+ (для поддержки `--mount` и совместимости с внешними драйверами). На Docker Desktop (Mac/Windows) шифрование применяется внутри виртуальной машины и требует отдельной настройки.
-- **Ядро Linux**: версия 5.10+ (для поддержки fscrypt в ext4/f2fs) или 4.8+ (для базового OverlayFS). Для LUKS требуется версия 2.6.4+ (dm-crypt). Для ZFS native encryption требуется версия 0.8.0+.
+- **Docker Engine**: версия 24.x–29.x (локально установлен Docker 29.8.1). Для поддержки `--mount` и совместимости с внешними драйверами требуется Docker 20.10+. На Docker Desktop (Mac/Windows) шифрование применяется внутри виртуальной машины и требует отдельной настройки.
+- **Ядро Linux**: версия 5.10+ (для поддержки fscrypt в ext4/f2fs) или 4.8+ (для базового OverlayFS). Для LUKS требуется версия 2.6.4+ (dm-crypt). LUKS2 с Argon2 PBKDF рекомендуется для production и требует ядро 4.12+. Для ZFS native encryption требуется ZFS userspace 0.8.0+.
 - **Аппаратное ускорение AES**: современные процессоры (Intel Westmere 2010+, AMD Bulldozer 2011+) поддерживают набор инструкций AES-NI, который позволяет выполнять шифрование с минимальными потерями производительности (<3%). Рекомендуется проверять поддержку перед выбором алгоритма шифрования.
 - **Права доступа**: для работы с LUKS и блочными устройствами требуются права root. Для шифрования директорий через fscrypt требуются права на запись в целевую директорию.
 - **Файловая система**: для LUKS — любая (ext4, XFS, Btrfs). Для fscrypt — только ext4 или f2fs с включенной опцией `encrypt`. Для ZFS native encryption — ZFS версии 0.8.0+.
@@ -56,13 +58,13 @@ lsblk -f
 
 Docker **не имеет встроенного механизма** для прозрачного шифрования томов. Демон Docker оперирует на уровне файловой системы и делегирует задачи защиты данных:
 1. **Операционной системе** (прозрачное шифрование блочных устройств или директорий).
-2. **Облачному провайдеру** (управляемые зашифрованные диски).
+2. **Внешним хранилищам секретов и KMS** (управление ключами на выделенных серверах).
 3. **Сторонним плагинам** (Volume Drivers с поддержкой криптографии).
 
 Причины отсутствия нативного шифрования:
 - Docker следует философии «делать одну thing хорошо». Шифрование требует сложного управления ключами, аудита и интеграции с внешними KMS, что выходит за рамки функции контейнерной рантайм.
 - Шифрование на уровне файловой системы или блочного устройства является прозрачным для приложений: контейнер не должен знать, что данные шифруются. Это позволяет применять шифрование без пересборки образов.
-- Встроенное шифрование привело бы к дублированию функционала, уже предоставляемого ОС (dm-crypt, fscrypt, ZFS) и облачными провайдерами.
+- Встроенное шифрование привело бы к дублированию функционала, уже предоставляемого ОС (dm-crypt, fscrypt, ZFS).
 
 ### Методы реализации
 
@@ -70,17 +72,16 @@ Docker **не имеет встроенного механизма** для пр
 | :--- | :--- | :--- |
 | **Блочный (FDE)** | LUKS / dm-crypt | Максимальная защита, прозрачность для всех приложений |
 | **Файловый** | `fscrypt` (ext4/f2fs), ZFS Native Encryption | Выборочное шифрование отдельных директорий/датасетов |
-| **Облачный** | AWS EBS (KMS), GCP Persistent Disk | Простота настройки, интеграция с облачным KMS |
-| **Оркестрация** | Docker Swarm Secrets, K8s Secrets | Встроенная поддержка, монтирование в `tmpfs` |
-| **Плагины** | Portworx, StorageOS | Управление через Docker API/CLI |
+| **Оркестрация** | Docker Secrets, tmpfs, внешние менеджеры секретов | Встроенная поддержка, монтирование в `tmpfs` |
+| **Плагины** | Локальные драйверы томов с поддержкой криптографии | Управление через Docker API/CLI |
 
 ### Управление ключами
 
 Безопасность системы шифрования напрямую зависит от хранения ключей. Ключи **никогда** не должны храниться на том же диске, который они шифруют.
-- **KMS (Key Management Service)**: Использование AWS KMS или GCP Cloud KMS.
 - **Внешние хранилища секретов**: [HashiCorp Vault](../../Vault/overview.md) (Transit Engine).
 - **TPM (Trusted Platform Module)**: Аппаратная привязка ключей к железу сервера.
 - **Локальное хранение (Not Recommended)**: Хранение ключей на том же хосте в файле, защищенном правами доступа 0600, является крайне небезопасным вариантом, допустимым только в dev-средах.
+- **Ключевые файлы на внешних носителях**: для production-хостов храните ключевые файлы LUKS на USB-накопителе или в HSM, подключаемом только во время загрузки.
 
 ### Влияние шифрования на производительность
 
@@ -210,65 +211,7 @@ sudo cryptsetup luksAddKey /dev/loop0 /root/luks-keyfile.bin
 echo "docker_volumes_encrypted UUID=$(sudo blkid -s UUID -o value /dev/loop0) /root/luks-keyfile.bin luks" | sudo tee -a /etc/crypttab
 ```
 
-### Сценарий 2: Использование облачного шифрования (AWS EBS)
-
-Самый простой способ для облачных сред:
-
-```bash
-# Создание зашифрованного тома EBS через AWS CLI
-aws ec2 create-volume \
-  --availability-zone eu-central-1a \
-  --size 20 \
-  --volume-type gp3 \
-  --encrypted \
-  --kms-key-id alias/my-app-key \
-  --tag-specifications 'ResourceType=volume,Tags=[{Key=Name,Value=docker-volumes}]'
-# → {"VolumeId": "vol-1234567890abcdef0", ...}
-
-# Настройка Docker на использование внешнего диска:
-# 1. Подключить том к инстансу
-# 2. Отформатировать (если новый)
-sudo mkfs.ext4 /dev/xvdf
-
-# 3. Смонтировать в отдельную директорию
-sudo mkdir -p /mnt/docker-volumes
-sudo mount /dev/xvdf /mnt/docker-volumes
-
-# 4. Настроить Docker daemon.json для использования кастомного data-root
-sudo mkdir -p /etc/docker
-cat <<EOF | sudo tee /etc/docker/daemon.json
-{
-  "data-root": "/mnt/docker-volumes"
-}
-EOF
-
-# 5. Перезапуск Docker
-sudo systemctl restart docker
-
-# 6. Проверка
-docker info --format '{{.DockerRootDir}}'
-# → /mnt/docker-volumes
-```
-
-### Сценарий 3: Использование плагинов (Volume Plugins)
-
-Если плагин поддерживает шифрование, создание тома выглядит так:
-
-```bash
-docker volume create \
-  --driver secure-storage \
-  --opt encryption=true \
-  --opt key_id="alias/my-app-key" \
-  --opt size=20 \
-  my-encrypted-db-volume
-```
-
-Популярные плагины с поддержкой шифрования:
-- **Portworx**: встроенное шифрование AES-256 с KMS интеграцией.
-- **StorageOS**: шифрование томов с управлением ключами через Kubernetes secrets или внешний KMS.
-- **Rex-Ray**: поддержка шифрования через облачные провайдеры.
-
-### Сценарий 4: Файловое шифрование через fscrypt (ext4)
+### Сценарий 2: Файловое шифрование через fscrypt (ext4)
 
 `fscrypt` позволяет шифровать конкретные директории, не затрагивая весь раздел. Это удобно для защиты только директорий конкретных томов.
 
@@ -315,7 +258,7 @@ sudo chown -R root:root /var/lib/docker/volumes/my_secure_volume
 sudo fscrypt setup --key=MyKey --source=pam_passphrase /var/lib/docker/volumes
 ```
 
-### Сценарий 5: Интеграция с HashiCorp Vault (Transit Engine)
+### Сценарий 4: Интеграция с HashiCorp Vault (Transit Engine)
 
 Transit Engine в Vault позволяет реализовать шифрование данных на уровне приложения или через вспомогательные скрипты, не полагаясь только на шифрование диска. Это полезно, когда необходимо шифровать конкретные файлы внутри тома.
 
@@ -379,7 +322,7 @@ docker run -d --name my-app \
 
 Подробнее об управлении ключами см. в **[HashiCorp Vault: Обзор](../../Vault/overview.md)** и **[Руководстве по интеграции Vault с Docker](../../Vault/guides/vault_docker_integration.md)**.
 
-### Сценарий 6: Шифрование через Sidecar-контейнер (Gocryptfs)
+### Сценарий 5: Шифрование через Sidecar-контейнер (Gocryptfs)
 
 В некоторых случаях (например, в Docker Swarm или при отсутствии прав `root` на хосте) удобно использовать `sidecar`-контейнер для предоставления зашифрованной точки монтирования.
 
@@ -519,20 +462,6 @@ docker exec test-container ls -la /data/my_secure_volume
 # → (файлы видны только при разблокированной директории)
 ```
 
-### 6. Проверка облачного шифрования
-
-```bash
-# AWS EBS: проверка статуса шифрования тома
-aws ec2 describe-volumes --volume-ids vol-1234567890abcdef0 \
-  --query 'Volumes[*].Encrypted'
-# → true
-
-# Проверка привязки ключа
-aws ec2 describe-volumes --volume-ids vol-1234567890abcdef0 \
-  --query 'Volumes[*].KmsKeyId'
-# → "arn:aws:kms:eu-central-1:123456789012:key/..."
-```
-
 ## Устранение неполадок
 
 | Ошибка / Симптом | Причина |
@@ -545,9 +474,8 @@ aws ec2 describe-volumes --volume-ids vol-1234567890abcdef0 \
 | `fscrypt: filesystem does not support fscrypt` | ФС не поддерживает fscrypt или не инициализирована |
 | **Docker не стартует после монтирования зашифрованного тома** | Неправильные права на точку монтирования |
 | **Потеря ключевого файла LUKS** | Ключевой файл утерян |
-| **Sidecar gocryptfs не монтирует том** | Отсутствуют права FUSE или AppArmor блокирует |
-| **Vault Transit возвращает ошибку permission denied** | Политика Vault не разрешает доступ |
-| **Низкая производительность на AWS EBS** | Тип тома gp2 вместо gp3, или нет provisioned IOPS |
+| **Sidecar gocryptfs не монтирует том** | Отсутствуют права FUSE или AppArmor блокирует | Убедитесь, что `/dev/fuse` доступен и AppArmor/SELinux разрешает монтирование |
+| **Vault Transit возвращает ошибку permission denied** | Политика Vault не разрешает доступ | Проверьте политику Vault и токен приложения |
 
 ## Производительность и аппаратное ускорение
 
@@ -577,7 +505,7 @@ cryptsetup benchmark
 - **LUKS**: используйте `aes-xts-plain64` с размером ключа 256 или 512 бит.
 - **fscrypt**: на ext4 шифрование выполняется на уровне блочного устройства, поэтому производительность зависит от underlying ФС.
 - **ZFS**: native encryption работает на уровне dataset, но требует ZFS 0.8.0+ и аппаратного ускорения для приемлемой производительности.
-- **Облачные диски**: используйте `gp3` (AWS) или Balanced PD (GCP) с настроенным IOPS/throughput.
+- **Локальные диски**: используйте SSD/NVMe для encrypted workloads; проверяйте `lsblk` и `nvme smart-log` для verification типа накопителя.
 
 ### Влияние на Docker операции
 
@@ -636,18 +564,158 @@ docker run --rm \
   tar -czf - -C /data . | gpg --symmetric --cipher-algo AES256 -o /backup/backup.tar.gz.gpg
 ```
 
+## SRE/DevOps: мониторинг и эксплуатация
+
+### Ключевые метрики для мониторинга
+
+**Дисковое пространство:**
+```bash
+# Использование томов Docker
+docker system df -v
+# → VOLUMES    ...    SIZE
+# → IMAGES     ...    SIZE
+# → Containers ...    SIZE
+
+# Использование раздела с томами
+df -h /var/lib/docker/volumes
+# → Filesystem      Size  Used Avail Use% Mounted on
+# → /dev/mapper/docker_volumes_encrypted  20G  8.5G   11G  45% /var/lib/docker/volumes
+```
+
+**Inodes:**
+```bash
+df -i /var/lib/docker/volumes
+# → IUse% должен быть низким (< 80%)
+```
+
+**Статус шифрования:**
+```bash
+# LUKS статус
+sudo cryptsetup status docker_volumes_encrypted
+# → type: LUKS2, cipher: aes-xts-plain64, keysize: 512 bits
+
+# fscrypt статус
+sudo fscrypt status /var/lib/docker/volumes/my_secure_volume
+# → Директория зашифрована, политика активна
+```
+
+**Производительность шифрования:**
+```bash
+# Бенчмарк cryptsetup
+cryptsetup benchmark
+# → Algorithm | Key | Encryption | Decryption
+# → aes-xts    256b      1.5 GB/s         1.5 GB/s
+
+# Проверка AES-NI
+grep -E "aes|avx|avx2" /proc/cpuinfo | sort -u
+# → aes, avx, avx2
+```
+
+### Алерты и пороговые значения
+
+На production-хостах настройте следующие алерты:
+
+| Метрика | Порог | Действие |
+| :--- | :--- | :--- |
+| `Use%` раздела `/var/lib/docker/volumes` | > 80% | Расширить раздел или очистить неиспользуемые тома |
+| `IUse%` раздела | > 80% | Очистить мелкие файлы или пересоздать ФС с большим лимитом inodes |
+| `docker system df` — `Reclaimable` | > 20% | Запустить `docker system prune` |
+| `cryptsetup status` — `device` не активен | N/A | Критический алерт: зашифрованный том не смонтирован |
+| `fscrypt status` — директория не зашифрована | N/A | Критический алерт: потеря шифрования |
+| AES-NI не обнаружен | N/A | Предупреждение: производительность шифрования снижена |
+
+### Compliance и аудит
+
+Для соответствия GDPR, PCI-DSS, HIPAA:
+
+1. **Документируйте шифрование**: ведите реестр всех зашифрованных томов с указанием:
+   - Путь к устройству/директории
+   - Алгоритм и размер ключа
+   - Владелец/сервис
+   - Дата создания и последней проверки восстановления
+
+2. **Аудит доступа**: логируйте все операции с LUKS (`/var/log/cryptsetup` или auditd), монтирования (`/var/log/syslog`), и Docker volume operations (`docker events`).
+
+3. **Политика ключей**:
+   - Ротация ключей минимум раз в 90 дней
+   - Ключи LUKS хранятся отдельно от хоста (USB, HSM, Vault)
+   - Минимум 2 ключевых файла на том (основной + резервный)
+
+4. **Тестирование восстановления**: минимум раз в квартал выполняйте восстановление из бэкапа LUKS-заголовка на тестовом хосте.
+
+### Автоматизация
+
+**Cron для очистки dev-сред:**
+```bash
+# Ежедневная очистка неиспользуемых ресурсов
+0 2 * * * docker system prune -a --volumes --filter "until=24h" -f
+```
+
+**Systemd-сервис для проверки шифрования:**
+```ini
+# /etc/systemd/system/encryption-check.service
+[Unit]
+Description=Check encrypted volumes status
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/check-encryption.sh
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Скрипт проверки (`/usr/local/bin/check-encryption.sh`):**
+```bash
+#!/bin/bash
+# Проверка статуса LUKS томов
+for vol in docker_volumes_encrypted; do
+    if ! cryptsetup status $vol >/dev/null 2>&1; then
+        echo "CRITICAL: LUKS volume $vol is not active"
+        exit 1
+    fi
+done
+
+# Проверка fscrypt директорий
+for dir in /var/lib/docker/volumes/*_secure; do
+    if [ -d "$dir" ] && ! fscrypt status "$dir" >/dev/null 2>&1; then
+        echo "WARNING: fscrypt directory $dir is not encrypted"
+    fi
+done
+
+exit 0
+```
+
+### Диагностика проблем
+
+**Page Cache и безопасность:**
+- Шифрование «на покое» защищает данные на диске. Однако, когда файлы открыты, расшифрованные данные находятся в **Page Cache** ядра Linux.
+- Для полной защиты обеспечивайте безопасность физической памяти (ограничение прямого доступа к RAM, использование RAM encryption где доступно).
+- На хостах с высоким уровнем доверия используйте `mlock()` для критичных процессов через `--cap-add IPC_LOCK`.
+
+**Производительность при массовом запуске контейнеров:**
+- При одновременном запуске множества контейнеров с зашифрованными томами наблюдается всплеск I/O из-за decryption.
+- Ограничьте параллельный запуск через orchestrator (деплой по 10-20% хостов за раз).
+- Мониторьте `iostat -x 1` и `cryptsetup status` для detection bottlenecks.
+
 ## Рекомендации и очистка
 
 ### Рекомендации
 
 1. **Приоритизируйте блочное шифрование (LUKS)** для production-хостов. Оно обеспечивает максимальную прозрачность и безопасность с минимальными накладными расходами при наличии AES-NI.
-2. **Никогда не храните ключи LUKS на том же диске.** Используйте внешние носители, TPM или KMS.
+2. **Никогда не храните ключи LUKS на том же диске.** Используйте внешние носители, TPM или менеджеры секретов (Vault).
 3. **Используйте именованные тома** вместо анонимных — они видны в `docker volume ls`, имеют понятные имена и легче поддаются бэкапированию.
 4. **Не храните секреты в томах на диске без шифрования.** Для чувствительных данных используйте `tmpfs`, Docker Secrets или внешние менеджеры секретов (Vault). Подробнее: **[Управление секретами в Docker](../Docker_security/secrets_management.md)**.
 5. **Настраивайте ротацию логов.** Если приложение пишет логи в том, используйте логирование Drivers или ограничивайте размер файлов, чтобы том не разрастался бесконтрольно.
 6. **Используйте `--mount` вместо `-v`** для новых проектов. Синтаксис `--mount` более явный, поддерживает больше опций (например, `bind-propagation`, `consistency`) и защищает от опечаток в путях.
 7. **Включайте аппаратное ускорение AES в BIOS/UEFI.** Проверяйте его наличие на всех production-хостах.
 8. **Тестируйте восстановление.** Регулярно проверяйте, что бэкапы LUKS-заголовка и ключевые файлы работают.
+9. **Мониторинг диска и inodes**: на production-хостах настройте алерты на заполнение раздела `/var/lib/docker/volumes` > 80% и `IUse%` > 80%. Используйте `docker system df -v` и `df -h /var/lib/docker/volumes`.
+10. **Аудит ключей**: ведите реестр ключей LUKS/fscrypt с указанием владельца, даты создания, алгоритма и срока действия. Для Vault Transit Engine включайте аудит-логи (audit device).
+11. **Ротация ключей**: для LUKS используйте `cryptsetup luksAddKey` для добавления нового ключа и `cryptsetup luksRemoveKey` для удаления старого. Для Vault настройте автоматическую ротацию через policies.
+12. **Автоматизация проверок**: добавьте в CI/CD pipeline проверку наличия шифрования на production-хостах (`cryptsetup status` для каждого зашифрованного тома, `fscrypt status` для директорий).
+13. **Для Docker 29+ с containerd snapshotter**: убедитесь, что volumes по-прежнему монтируются из `/var/lib/docker/volumes/` и шифрование на уровне хоста продолжает работать. Containerd snapshotter не меняет пути томов.
 
 ### Очистка
 
@@ -720,7 +788,7 @@ docker system prune -a --volumes
 Docker не поддерживает встроенные квоты на размер отдельных томов. Для ограничения используйте:
 - **Файловую систему**: создайте отдельный раздел или quota на директорию `/var/lib/docker/volumes/`.
 - **Device Mapper / Btrfs**: используйте возможности Filesystem Quotas на уровне хоста.
-- **Облачные драйверы**: EBS, GCP PD имеют собственные лимиты, настраиваемые на уровне инфраструктуры.
+- **LVM**: создавайте LV фиксированного размера для групп томов с одинаковым SLA.
 
 ## Дополнительная информация
 
@@ -742,3 +810,13 @@ services:
 volumes:
   db-data:
 ```
+
+### Связанные темы
+
+- **[Управление томами в Docker](./docker_volumes.md)** — типы монтирования, управление томами, связи с OverlayFS.
+- **[Резервное копирование и восстановление](./docker_backup_restore.md)** — стратегии бэкапа томов и образов.
+- **[Драйвер хранения OverlayFS](./docker_overlayfs.md)** — взаимодействие шифрования с CoW и writable layer.
+- **[Управление секретами в Docker](../Docker_security/secrets_management.md)** — Docker Secrets, Vault integration, tmpfs для чувствительных данных.
+- **[Обзор хранилищ Linux](../../Linux/FileSystems/storage_overview.md)** — LUKS, Device Mapper, файловые системы (SSoT для общих концепций хранения).
+- **[HashiCorp Vault: Обзор](../../Vault/overview.md)** — управление ключами и секретами.
+- **[Интеграция Vault с Docker](../../Vault/guides/vault_docker_integration.md)** — практическое руководство по использованию Vault в контейнерах.

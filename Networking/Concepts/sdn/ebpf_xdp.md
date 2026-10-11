@@ -382,6 +382,133 @@ sudo bpftool prog tracelog
 # → bpf_trace_printk: packet from 10.0.0.5 to 10.0.1.10
 ```
 
+### Сценарий 6: XDP для QoS: приоритизация UDP/RTP-трафика
+
+В реальном времени аудио и видео сильно чувствительны к задержкам и джиттеру. Даже небольшие перегрузки сети могут испортить VoIP или RTP-поток. XDP позволяет классифицировать и маркировать трафик на самом раннем этапе — в драйвере NIC, до того как пакет попадает в стек ядра.
+
+eBPF-программа, загруженная в XDP, может:
+- Маркировать пакеты (например, изменять DSCP в IP-заголовке) для последующей обработки `tc`/`qdisc`.
+- Отбрасывать или редиректить трафик.
+- Собирать статистику по IP, портам или протоколам через BPF Maps.
+
+В связке с `tc` или `iptables` можно реализовать приоритизацию UDP-трафика для VoIP/RTP без изменения приложений.
+
+> **Важно:** XDP выполняется до выделения `sk_buff`, поэтому напрямую установить `skb->mark` в XDP нельзя. Для маркировки пакета в XDP изменяйте поле DSCP в IP-заголовке или используйте `tc` BPF (hook на уровне `qdisc`), где доступен `sk_buff`.
+
+#### Пример: приоритизация UDP-порта 5004 (RTP) и сбор статистики
+
+Создаём XDP-программу, которая считает пакеты по IP/портам и устанавливает DSCP EF (46) для RTP-трафика:
+
+```c
+#include <linux/bpf.h>
+#include <linux/if_ether.h>
+#include <linux/ip.h>
+#include <linux/udp.h>
+
+struct flow_key {
+    __u32 saddr;
+    __u32 daddr;
+    __u16 sport;
+    __u16 dport;
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1024);
+    __type(key, struct flow_key);
+    __type(value, __u64);
+} packet_count SEC(".maps");
+
+SEC("xdp")
+int rtp_qos(struct xdp_md *ctx) {
+    void *data_end = (void *)(long)ctx->data_end;
+    void *data = (void *)(long)ctx->data;
+
+    struct ethhdr *eth = data;
+    if (eth + 1 > data_end)
+        return XDP_PASS;
+    if (eth->h_proto != __constant_htons(ETH_P_IP))
+        return XDP_PASS;
+
+    struct iphdr *iph = data + sizeof(*eth);
+    if (iph + 1 > data_end)
+        return XDP_PASS;
+    if (iph->protocol != IPPROTO_UDP)
+        return XDP_PASS;
+
+    struct udphdr *udp = (void *)iph + iph->ihl * 4;
+    if (udp + 1 > data_end)
+        return XDP_PASS;
+
+    if (udp->dest == bpf_htons(5004)) {
+        struct flow_key key = {
+            .saddr = iph->saddr,
+            .daddr = iph->daddr,
+            .sport = udp->source,
+            .dport = udp->dest,
+        };
+        __u64 *cnt = bpf_map_lookup_elem(&packet_count, &key);
+        if (!cnt) {
+            __u64 zero = 0;
+            bpf_map_update_elem(&packet_count, &key, &zero, BPF_NOEXIST);
+        } else {
+            __sync_fetch_and_add(cnt, 1);
+        }
+
+        // Установка DSCP EF (46) в поле TOS/IP DSCP
+        __u8 tos = iph->tos;
+        iph->tos = (tos & ~0xFC) | (46 << 2);
+    }
+
+    return XDP_PASS;
+}
+
+char _license[] SEC("license") = "GPL";
+```
+
+Компиляция и загрузка:
+
+```bash
+# Компиляция
+clang -O2 -g -target bpf -c rtp_qos.c -o rtp_qos.o
+
+# Загрузка в режиме generic (для тестирования)
+sudo ip link set dev eth0 xdpgeneric obj rtp_qos.o sec xdp
+# → Expected: xdpgeneric id <prog_id> ...
+
+# Или driver-native XDP (production, требует поддержки драйвером)
+sudo ip link set dev eth0 xdp obj rtp_qos.o sec xdp
+```
+
+Проверка статистики через `bpftool`:
+
+```bash
+# Просмотр загруженных программ
+sudo bpftool prog list
+# → 12: xdp  name rtp_qos  tag ...
+
+# Дамп содержимого map
+sudo bpftool map dump id <map_id>
+# → key: ...  value: ...
+```
+
+RTP-пакеты теперь несут DSCP EF и будут обработаны с высшим приоритетом в очереди `qdisc`. Например, для приоритизации исходящего трафика с DSCP EF:
+
+```bash
+sudo tc qdisc add dev eth0 root handle 1: htb default 20
+sudo tc class add dev eth0 parent 1: classid 1:1 htb rate 1gbit
+sudo tc class add dev eth0 parent 1:1 classid 1:10 htb rate 200mbit ceil 1gbit prio 0
+sudo tc filter add dev eth0 parent 1: protocol ip prio 10 u32 match ip tos 0xb8 0xfc flowid 1:10
+```
+
+Очистка:
+
+```bash
+sudo ip link set dev eth0 xdpgeneric off
+# или
+sudo ip link set dev eth0 xdp off
+```
+
 ---
 
 ## Безопасность и ограничения

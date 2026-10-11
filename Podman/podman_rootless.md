@@ -677,3 +677,5 @@ podman system reset
 
 - **[Официальная документация Podman: Rootless](https://github.com/containers/podman/blob/main/docs/tutorials/rootless_tutorial.md)** — пошаговое руководство (англ.).
 - **[Rootless Podman networking docs](https://github.com/eriksjolund/podman-networking-docs)** — матрица способов подключения контейнера к хосту (pasta, host, socket activation).
+
+# force reindex test

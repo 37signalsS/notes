@@ -40,7 +40,7 @@
 - Рекомендация: `ip link show docker0` → проверить MTU; `ping -M do -s 1472` для валидации
 
 **Conntrack exhaustion:**
-- Таблица `nf_conntrack` имеет фиксированный размер (по умолчанию 262144 на большинстве дистрибутивов)
+- Таблица `nf_conntrack` имеет размер, зависящий от RAM хоста (buckets = totalram/16384, кап 262144; `nf_conntrack_max` вычисляется от buckets) — актуальное значение: `sysctl net.netfilter.nf_conntrack_max`
 - Docker создаёт DNAT-правила для каждого published port, что увеличивает потребление conntrack
 - При исчерпании: `dmesg | grep conntrack` → `table full, dropping packet`
 - Решение: увеличение `net.netfilter.nf_conntrack_max` и оптимизация `net.netfilter.nf_conntrack_tcp_timeout_*`
@@ -502,7 +502,7 @@ docker run -d \
   --volume=/sys:/sys:ro \
   --volume=/var/lib/docker/:/var/lib/docker:ro \
   --publish=8080:8080 \
-  gcr.io/cadvisor/cadvisor:latest
+  ghcr.io/google/cadvisor:v0.60.6
 
 # Доступ: http://localhost:8080
 # Метрики: http://localhost:8080/metrics (Prometheus format)

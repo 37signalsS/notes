@@ -251,7 +251,7 @@ work_mem = 16MB                 # На каждую операцию сорти�
 ```
 Общая RAM на соединения = max_connections × (work_mem + overhead)
 ```
-Где `overhead` ≈ 10 MB на простое соединение. Подробнее — в **[Управлении соединениями](./connection_management.md)**.
+Где `overhead` ≈ 10 MB на простое соединение. Подробнее — в **[Управлении соединениями](./connection_management.md)**. Учтите, что формула не учитывает множитель `hash_mem_multiplier`, число узлов сортировки/хеша в плане и параллельных воркеров — см. **[Оптимизация производительности PostgreSQL](./performance_tuning.md)**.
 
 ### Настройка thread_id и namespace
 

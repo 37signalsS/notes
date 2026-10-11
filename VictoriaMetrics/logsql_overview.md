@@ -488,3 +488,5 @@ sudo systemctl revert victorialogs
 - [vmalert — обзор](./vmalert_overview.md) — алертинг на основе метрик и логов;
 - [VictoriaLogs: внутреннее устройство](./victorialogs_internals.md) — архитектура хранения;
 - [Cardinality в Prometheus](../Prometheus/concepts/labels_and_cardinality.md) — фундаментальные концепции кардинальности.
+
+# force reindex test

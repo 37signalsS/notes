@@ -1,6 +1,6 @@
 # Алерты для Kubernetes-приложений — Grafana Alerting
 
-> Версия (проверено август 2026): Grafana 12.x/13.x, kube-state-metrics 2.x, кластер Kubernetes 1.25+, cAdvisor (встроен в kubelet), Prometheus Operator / kube-prometheus-stack. Алерты создаются как Grafana-managed правила, использующие Prometheus в качестве источника данных (данные скребутся из kube-state-metrics, cAdvisor и node-exporter).
+> Версия (проверено октябрь 2026): Grafana 13.3.x / 12.x (LTS), kube-state-metrics 2.x, кластер Kubernetes 1.27+, cAdvisor (встроен в kubelet), Prometheus Operator / kube-prometheus-stack 92.x. Алерты создаются как Grafana-managed правила, использующие Prometheus в качестве источника данных (данные скребутся из kube-state-metrics, cAdvisor и node-exporter). Текущая ветка — Grafana 13.3.x; 12.x — поддержка безопасности (LTS); 11.x — EOL (июнь 2026). Актуальная версия чарта kube-prometheus-stack — 92.3.0 (включает Grafana v13.5.0).
 
 ## Определения
 
@@ -12,7 +12,7 @@
 
 **Node Exporter** — стандартный экспортер для мониторинга аппаратных и системных метрик узлов кластера (диск, сеть, Load Average, память). Источник метрик `node_*`.
 
-**kube-prometheus-stack** — Helm-чарт (prometheus-community, 87.x+, OCI-артефакт), объединяющий Prometheus Operator, Prometheus, Alertmanager, Grafana, node-exporter и kube-state-metrics с набором готовых правил и дашбордов. В 2026 году — де-факто стандарт развёртывания стека мониторинга в K8s.
+**kube-prometheus-stack** — Helm-чарт (prometheus-community, 92.x+, OCI-артефакт), объединяющий Prometheus Operator, Prometheus, Alertmanager, Grafana, node-exporter и kube-state-metrics с набором готовых правил и дашбордов. В 2026 году — де-факто стандарт развёртывания стека мониторинга в K8s. Текущая версия чарта — 92.3.0 (октябрь 2026), включающая Grafana v13.5.0.
 
 **Recording Rule (Правило записи)** — предварительно вычисляемое выражение, результат которого сохраняется как новая метрика. Снижает нагрузку на источник и ускоряет оценку алертов.
 
@@ -78,7 +78,7 @@
 
 ### Предварительные требования
 
-- **Grafana:** 12.x или 13.x (OSS/Enterprise); файловый провиженинг недоступен в Grafana Cloud.
+- **Grafana:** 13.3.x или 12.x (LTS, OSS/Enterprise); файловый провиженинг недоступен в Grafana Cloud.
 - **Источник данных:** Prometheus/Mimir настроен и проверен (совпадающий `datasourceUid`). Метрики `kube_*` скребутся из kube-state-metrics, `container_*` — из cAdvisor (kubelet), `node_*` — из node-exporter.
 - **kube-state-metrics 2.x:** развёрнут и экспортирует нужные метрики (проверьте `kube_pod_container_status_waiting_reason`, `kube_node_status_condition`).
 - **Контакт-пойнты:** хотя бы один настроен (Slack/Telegram) и протестирован кнопкой Test (см. [Provisioning](../alerting/provisioning.md)).
@@ -252,7 +252,7 @@ groups:
 
 ### Группа: Ресурсы и лимиты
 
-#### Алерт: CPU Throttling (Ограничение производительности)
+#### Алерт: CPU Throttling (Ограничение производительности) {#container-cpu-throttling}
 Сигнализирует о том, что контейнер упирается в CPU Limit и его производительность искусственно ограничивается (CFS throttling срабатывает только при наличии `limits.cpu`).
 ```yaml
       - uid: container_cpu_throttling
@@ -512,10 +512,10 @@ groups:
           - refId: A
             datasourceUid: prometheus_ds_uid
             model:
-              expr: 'min(kubelet_certificate_manager_server_ttl_seconds, kubelet_certificate_manager_client_ttl_seconds) < 86400 * 7'
+              expr: 'kubelet_certificate_manager_server_ttl_seconds < 86400 * 7 or kubelet_certificate_manager_client_ttl_seconds < 86400 * 7'
               instant: true
 ```
-> Метрики `kubelet_certificate_manager_*` экспортируются самим kubelet (`/metrics`); убедитесь, что они скребутся. Для API Server/controller-manager используйте аналогичные метрики из их scrape-джобов.
+> Метрики `kubelet_certificate_manager_*` экспортируются самим kubelet (`/metrics`); убедитесь, что они скребутся. PromQL не имеет функции `min(A, B)` для двух серий — условие строится через `or`. Для API Server/controller-manager используйте аналогичные метрики из их scrape-джобов.
 
 ### Группа: Доступность экспортеров (absent)
 
@@ -609,7 +609,7 @@ contactPoints:
 
 ### Подавление зависимых алертов (Inhibition)
 
-Если узел недоступен (`NodeNotReady`), десятки `PodNotReady`/`PodCrashLooping` на нём не несут новой информации. Inhibition скрывает зависимые алерты, пока активен корневой. В Grafana 13+ правила подавления настраиваются через App Platform API (beta, без UI) или UI Alerting → Inhibition rules; подробнее и пример `curl` — в [best practices](../alerting/best_practices.md) (раздел «Стратегии подавления»). Матчеры:
+Если узел недоступен (`NodeNotReady`), десятки `PodNotReady`/`PodCrashLooping` на нём не несут новой информации. Inhibition скрывает зависимые алерты, пока активен корневой. В Grafana 13+ правила подавления настанавливаются через App Platform API (beta, без UI) — подробнее и пример `curl` в [best practices](../alerting/best_practices.md) (раздел «Стратегии подавления»). Альтернатива — внешний Alertmanager через `AlertmanagerConfig` (CRD Prometheus Operator), где inhibition описывается декларативно и имеет UI через Prometheus Operator. Матчеры:
 
 - **Source:** `alertname = NodeNotReady`, `severity = critical`.
 - **Target:** `alertname =~ "PodNotReady|PodCrashLooping|PodImagePullBackOff"`.
@@ -697,11 +697,37 @@ groups:
 - Регулярно пересматривайте алерты: удаляйте те, что не ведут к действию (борьба с alert fatigue).
 - **Очистка:** удаление правила из файла → перезагрузка провиженинга удаляет его из Grafana; перед массовыми изменениями экспортируйте текущее состояние (`GET /api/v1/provisioning/.../export`) как бэкап.
 
+### Мета-мониторинг (Monitoring the Monitoring)
+
+Мета-мониторинг — практика мониторинга самой системы оповещений. Без него «тихий» сбой доставки останется незамеченным. Полное теоретическое обоснование и чек-лист см. в [Мета-мониторинг систем наблюдаемости](../../Concepts/Observability_and_Monitoring/meta-monitoring.md).
+
+**Ключевые сигналы для Grafana Alerting (K8s):**
+
+| Сигнал | Метрика / способ | Порог |
+| :--- | :--- | :--- |
+| Падения доставки | `rate(alertmanager_notifications_failed_total[5m]) > 0` | > 0 — критично |
+| Падение KSM | `absent(kube_node_status_condition{condition="Ready"})` | > 0 — критично |
+| Падение Prometheus | `up{job="prometheus"} == 0` | > 0 — критично |
+| Падение node-exporter | `absent(up{job="kubernetes-nodes"})` | > 0 — предупреждение |
+| Количество активных Silences | UI: `Alerting → Silences` | > 5 — проверить |
+| Доля алертов без `runbook_url` | Метрика качества аннотаций | > 10% — улучшить |
+| Время последней оценки правила | UI: `Alerting → Alert rules` | > 2 интервала — проверить |
+| Ошибки провиженинга | `logger=provisioning` в логах | > 0 — проверить |
+
+**Алерты для мониторинга самой системы Grafana Alerting (отдельная группа, `interval: 5m`):**
+- `rate(alertmanager_notifications_failed_total[5m]) > 0` — падения доставки в канал, `severity: critical`.
+- `absent(kube_node_status_condition{condition="Ready"})` — падение KSM, `severity: critical`.
+- `up{job="prometheus"} == 0` — падение Prometheus, `severity: critical`.
+- Количество активных Silences больше N — проверить, нет ли забытых заглушек, `severity: info`.
+- Доля алертов без `runbook_url` превышает порог — сигнал к улучшению аннотаций, `severity: info`.
+
+Все алерты этой группы, кроме падения основных экспортеров, — `severity: info` (только в лог/дашборд, без уведомлений). Регулярно проверяйте, что мета-мониторинг работает (тестовый алерт).
+
 ## Управление алертами как кодом (Alerting as Code)
 
 Ручное редактирование алертов в UI не рекомендуется для Production-сред. Используйте следующие инструменты:
-- **Terraform/OpenTofu:** Ресурсы `grafana_alert_rule` и `grafana_notification_policy`.
-- **Grizzly:** Утилита от Grafana Labs для синхронизации YAML-описаний.
+- **Terraform/OpenTofu:** Ресурсы `grafana_alert_rule` (или `grafana_rule_group` для группы целиком) и `grafana_notification_policy`.
+- **gcx:** CLI Grafana Labs для управления ресурсами как кодом (`gcx resources pull`/`push`); заменяет устаревшие Grizzly и `grafanactl`.
 - **Prometheus Operator:** Использование Custom Resources `PrometheusRule` (если алерты вычисляются во внешнем Ruler/Alertmanager kube-prometheus-stack, а не Grafana-managed).
 - **Provisioning:** Встроенный механизм Grafana для загрузки правил из YAML-файлов при старте (см. [Provisioning](../alerting/provisioning.md) — полный справочник по структуре, политикам, contact points и mute timings).
 

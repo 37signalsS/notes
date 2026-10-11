@@ -129,7 +129,7 @@ systemctl start grafana-server
 
 ```bash
 curl -s https://grafana.example.internal/api/health
-# → {"database":"ok","status":"ok","version":"13.1.0"}
+# → {"database":"ok","status":"ok","version":"13.2.3"}
 
 # Убедиться, что дашборды и источники на месте
 curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \

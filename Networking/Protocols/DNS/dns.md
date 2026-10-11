@@ -287,7 +287,7 @@ getent hosts example.com
 
 **Причины и решение:**
 1.  **Проблема ndots:** в Kubernetes и контейнерах параметр `ndots:5` заставляет систему сначала пытаться разрешить имя как absolute (с приставкой search domain). Решение: используйте FQDN с точкой на конце (`example.com.`) или установите `ndots:1`.
-2.  **Параллельные A/AAAA запросы (musl):** в Alpine Linux (musl libc) запросы A и AAAA отправляются параллельно. Если IPv6-запрос «зависает» из-за проблем с сетью, общая задержка достигает 5 секунд. Решение: `options single-request-reopen` в `/etc/resolv.conf` или настройка `dnsConfig` в Kubernetes.
+2.  **Параллельные A/AAAA запросы (musl):** в Alpine Linux (musl libc) запросы A и AAAA отправляются параллельно. Если IPv6-запрос «зависает» из-за проблем с сетью, общая задержка достигает 5 секунд. Решение: тюнинг поддерживаемых musl опций (`options timeout:2 attempts:1` в `/etc/resolv.conf` или `dnsConfig` в Kubernetes) — опция `single-request-reopen` musl не поддерживает и игнорирует. Надёжное решение — исправить IPv6 в сети или использовать DNS-прокси (NodeLocal DNSCache, dnsmasq).
 3.  **Системный резолвер недоступен:** `systemd-resolved` не запущен или порт 53 занят другим процессом. Проверьте: `resolvectl status` и `ss -ulnp | grep :53`.
 
 ### Конфликт systemd-resolved и BIND

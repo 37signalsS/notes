@@ -1,355 +1,240 @@
 # CI/CD Cost Optimization
 
+**Актуально для:** GitLab 18.x / GitLab Runner 19.x
+
+> Область применения: on-premise / self-hosted GitLab. Публичные облака и AI-технологии в данном документе не рассматриваются.
+
 ## Определения
 
-- **CI/CD Cost Optimization** — процесс минимизации затрат на инфраструктуру CI/CD без потери производительности и качества доставки ПО
-- **Cost per Pipeline** — стоимость одного запуска пайплайна, включая compute, storage и network ресурсы
-- **Shared Runners vs Dedicated Runners** — сравнение моделей использования: общие раннеры (общий пул, меньше контроля) против выделенных (полный контроль, выше стоимость)
-- **Cache Hit Rate** — доля успешных восстановлений кэша от общего числа запусков; ключевая метрика эффективности кэширования
+**CI/CD Cost Optimization** — процесс минимизации совокупной стоимости владения (TCO) инфраструктуры CI/CD на self-hosted GitLab без потери производительности и качества доставки ПО. Включает оптимизацию compute, storage, network и лицензионных расходов.
 
-## Теоретический блок
+**Cost per Pipeline** — удельная стоимость одного запуска пайплайна, складывающаяся из потребления CPU, RAM, дискового пространства и сетевого трафика на Runner'ах и сервере GitLab.
 
-### Модели стоимости CI/CD
+**Effective Cost** — реальная стоимость вычислительных ресурсов с учётом их утилизации. Формула:
 
-**Self-hosted (собственная инфраструктура)**
-- Начальные инвестиции в серверы/ВМ
-- Операционные расходы: электричество, охлаждение, администрирование
-- Полный контроль над конфигурацией и безопасностью
-- Амортизация оборудования 3-5 лет
-
-**SaaS (облачные сервисы)**
-- Оплата по факту использования (pay-as-you-go)
-- Минимальные начальные инвестиции
-- Зависимость от провайдера и его тарифов
-- Автоматическое масштабирование
-
-**Hybrid (гибридная модель)**
-- Базовая нагрузка на self-hosted runners
-- Пиковые нагрузки на SaaS runners
-- Оптимизация стоимости через комбинирование
-- Сложность управления и мониторинга
-
-### Факторы стоимости
-
-**Compute (вычислительные ресурсы)**
-- Тип инстанса (CPU, RAM)
-- Время выполнения задач
-- Количество параллельных запусков
-- Использование artifact caching
-
-**Storage (хранилище)**
-- Docker image layers
-- Артефакты сборки
-- Логи пайплайнов
-- Время хранения данных
-
-**Network (сеть)**
-- Трафик между раннерами и реестрами
-- Загрузка зависимостей
-- Передача артефактов
-- Подключение к внешним сервисам
-
-**License (лицензии)**
-- GitLab Premium/Ultimate
-- Лицензии на ПО для сборки
-- Инструменты аналитики
-
-### Анализ стоимости Runner'ов
-
-| Тип инстанса | vCPU | RAM | Стоимость/час | Утилизация | Effective Cost |
-|---|---|---|---|---|---|
-| small | 1 | 2GB | $0.02 | 80% | $0.025 |
-| medium | 2 | 4GB | $0.04 | 60% | $0.067 |
-| large | 4 | 8GB | $0.08 | 40% | $0.20 |
-| xlarge | 8 | 16GB | $0.16 | 30% | $0.53 |
-
-**Формула эффективной стоимости:**
 ```
 Effective Cost = Nominal Cost / Utilization Rate
 ```
 
+При низкой утилизации (например, 30%) effective cost в 3+ раза превышает номинальный, что делает right-sizing Runner'ов ключевым фактором оптимизации.
+
+**Cache Hit Rate** — доля успешных восстановлений кэша от общего числа запусков. Ключевая метрика эффективности использования хранилища и сетевых ресурсов.
+
+**Artifact Retention Cost** — стоимость хранения артефактов во времени, определяемая объёмом хранилища, политиками Retention и частотой доступа.
+
+## Основные концепции
+
+### Архитектура стоимости self-hosted GitLab
+
+Стоимость инфраструктуры CI/CD в on-premise окружении состоит из четырёх компонентов:
+
+| Компонент | Источники затрат | Механизмы оптимизации |
+|:---|:---|:---|
+| **Compute** | CPU/RAM Runner'ов, время выполнения задач | Right-sizing, параллелизация, DAG, auto-scaling |
+| **Storage** | Артефакты, кэш, логи, Docker layers | Retention policies, сжатие, lifecycle, очистка |
+| **Network** | Трафик Runner ↔ GitLab, Registry, внешние зависимости | Кэширование зависимостей, remote cache, артефакты вместо кэша для больших файлов |
+| **License** | GitLab Premium/Ultimate, инструменты сборки | Оптимальный тариф, модульность пайплайнов |
+
+### Факторы, влияющие на стоимость
+
+**Compute:**
+- Тип и количество Runner'ов (concurrent, limit)
+- Утилизация CPU/RAM (utilisation rate)
+- Время выполнения задач (duration)
+- Количество параллельных запусков
+- Использование ephemeral runners vs persistent
+
+**Storage:**
+- Объём артефактов (`.statistics.build_artifacts_size`)
+- Размер кэша (локальный + remote)
+- Retention period (`expire_in`)
+- Параметр `keep_latest` (по умолчанию включён)
+- Логи пайплайнов (настраивается в Admin Area)
+
+**Network:**
+- Загрузка зависимостей (npm, pip, maven)
+- Передача артефактов между стадиями
+- Доступ к реестрам (GitLab Container Registry, Nexus, Artifactory)
+- Внешние API (Vault, scanners)
+
+**License:**
+- GitLab тариф (Free, Premium, Ultimate)
+- Количество seats
+- Включённые фичи (Compliance Frameworks, Pipeline Execution Policies, Merge Trains)
+
+### Экономика Runner'ов
+
+**Утилизация как ключевой показатель:**
+
+| Утилизация | Effective Cost | Рекомендация |
+|:---|:---|:---|
+| < 40% | 2.5x номинальной стоимости | Right-sizing или уменьшение парка |
+| 40–70% | 1.4–2.5x | Оптимальный диапазон для dedicated runners |
+| 70–85% | 1.2–1.4x | Высокая эффективность |
+| > 85% | < 1.2x | Риск очередей; рассмотрите масштабирование |
+
+**Параметры `config.toml`, влияющие на стоимость:**
+
+| Параметр | Влияние на стоимость |
+|:---|:---|
+| `concurrent` | Глобальный лимит параллельных задач; избыток ведёт к простояю |
+| `limit` (per runner) | Лимит задач на конкретный Runner; помогает балансировать нагрузку |
+| `check_interval` | Частота опроса очереди; слишком частое опрос увеличивает нагрузку на API |
+| `shutdown_timeout` | Время graceful shutdown; влияет на утилизацию ресурсов |
+| `clean_policy` / `clean_period` | Автоматическая очистка Docker ресурсов; предотвращает утечку диска |
+| `pull_policy` | `if-not-present` сокращает трафик и время загрузки образов |
+| `shm_size` | Недостаток `/dev/shm` приводит к падениям и повторам задач |
+
+### Оптимизация артефактов и хранилища
+
+**Параметр `expire_in`** — основной инструмент управления стоимостью хранения. Формат: `<число> <единица>` (`1 hour`, `7 days`, `30 days`) или `never`.
+
+| Тип артефакта | Рекомендуемый `expire_in` | Обоснование |
+|:---|:---|:---|
+| Промежуточные сборки (build) | 1–7 дней | Нужны только для последующих стадий |
+| Отчёты тестирования | 7–30 дней | Требуются для аудита и отладки |
+| Docker образы (CI artifacts) | 7 дней | В продакшен пушатся в Registry |
+| Логи пайплайнов | 7–30 дней | Доступны в UI GitLab |
+| Release артефакты | `never` или 90+ дней | Критичны для отката и аудита |
+
+**`keep_latest`** — по умолчанию GitLab сохраняет артефакты последнего успешного пайплайна в ветке независимо от `expire_in`. Это может приводить к неконтролируемому росту хранилища. Управляется в **Admin Area > CI/CD > Continuous Integration** (instance-level) или **Settings > CI/CD > Artifacts** (group/project-level, Premium+).
+
 ### Оптимизация кэша
 
-**Стратегии кэширования:**
-- `pull-push` — стандартная стратегия (загрузка + сохранение)
-- `pull` — только восстановление кэша (read-only)
-- `push` — только сохранение кэша (write-only)
-- `pull-push` с условиями — условное сохранение
+Cache hit rate напрямую влияет на стоимость:
 
-**Cache Hit Rate = (Successful Cache Restores / Total Pipeline Runs) × 100%**
+| Cache Hit Rate | Эффективность | Действие |
+|:---|:---|:---|
+| < 50% | Низкая | Ключи слишком специфичные или кэш редко используется |
+| 50–75% | Приемлемая | Есть потенциал улучшения через `cache:key:files` |
+| 75–90% | Хорошая | Стабильная работа |
+| > 90% | Отличная | Экономия времени и трафика |
 
-**Оптимальный cache hit rate:**
-- < 50% — низкая эффективность, требуется оптимизация
-- 50-75% — приемлемо, есть потенциал улучшения
-- > 75% — хорошая эффективность
-- > 90% — отличная эффективность
+**Важно:** зависимости (`node_modules`, `vendor`, `.m2`) должны кэшироваться, а не передаваться через артефакты. Передача зависимостей через артефакты создаёт архивы размером в сотни мегабайт на каждый запуск, засоряет хранилище и замедляет пайплайн.
 
-### Shared vs Dedicated Runners
+### Разделение артефактов и кэша
 
-| Критерий | Shared Runners | Dedicated Runners |
-|---|---|---|
-| Стоимость | Оплата за использование | Фиксированная оплата |
-| Масштабирование | Автоматическое | Ручное/автоматическое |
-| Конфиденциальность | Доступ к общему пулу | Полная изоляция |
-| Производительность | Зависит от нагрузки | Предсказуемая |
-| Оптимизация | Ограничена | Полная |
+Артефакты и кэш решают разные задачи:
 
-**Когда использовать dedicated:**
-- Конфиденциальный код
-- Специфические требования к производительности
-- Регуляторные требования
-- Стабильная высокая нагрузка
+| Механизм | Назначение | Надёжность | Размер |
+|:---|:---|:---|:---|
+| `cache` | Зависимости, ускоряющие повторные запуски | Best-effort | Ограничен лимитом Runner'а |
+| `artifacts` | Результаты сборки, передаваемые между стадиями | Guaranteed delivery | До 100 MB (instance default) |
 
-**Когда использовать shared:**
-- Нестабильная нагрузка (spiky)
-- Начальные проекты
-- Некритичные задачи
-- Экономия на инфраструктуре
+## Практические сценарии
 
-### Архивирование и очистка артефактов
-
-**Правила хранения:**
-- Артефакты релизов: 90 дней
-- Артефакты dev веток: 7 дней
-- Артефакты feature веток: 3 дня
-- Логи失败ших пайплайнов: 30 дней
-
-**Стратегии оптимизации:**
-- Сжатие артефактов перед сохранением
-- Исключение ненужных файлов через `paths` и `exclude`
-- Использование `expire_in` для автоматической очистки
-- Регулярный мониторинг использования хранилища
-
-### Мониторинг расходов
-
-**Ключевые метрики:**
-- Cost per pipeline
-- Cost per commit
-- Runner utilization rate
-- Cache hit rate
-- Artifact storage usage
-- Failed pipeline cost (wasted resources)
-
-**Инструменты мониторинга:**
-- GitLab CI/CD Analytics
-- Cost Allocation Reports
-- Custom dashboards (Grafana, Kibana)
-- Cloud provider billing dashboards
-
-## Практический блок
-
-### Скрипт анализа стоимости пайплайнов
+### Сценарий 1: Анализ потребления хранилища артефактов (SysAdmin)
 
 ```bash
 #!/bin/bash
-# analyze_pipeline_cost.sh
-# Анализ стоимости пайплайнов GitLab CI
+# analyze_artifact_storage.sh
+# Анализ потребления хранилища артефактами
 
 GITLAB_URL="https://gitlab.example.com"
-PROJECT_ID="12345"
-PRIVATE_TOKEN="glpat-xxxxx"
-DAYS=30
+TOKEN="$GITLAB_API_TOKEN"
 
-echo "=== Анализ стоимости пайплайнов за $DAYS дней ==="
+echo "=== Top 10 проектов по размеру артефактов ==="
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "$GITLAB_URL/api/v4/projects?order_by=build_artifacts_size&sort=desc&per_page=10" | \
+  jq '.[] | {name: .name, size: (.statistics.build_artifacts_size / 1024 / 1024 | floor), artifacts_size: .statistics.build_artifacts_size}'
 
-# Получение данных о пайплайнах
-pipelines=$(curl -s --header "PRIVATE-TOKEN: $PRIVATE_TOKEN" \
-  "$GITLAB_URL/api/v4/projects/$PROJECT_ID/pipeline?per_page=100&updated_after=$(date -d "$DAYS days ago" -Iseconds)")
-
-# Анализ по статусам
-echo -e "\n--- Статистика по статусам ---"
-echo "$pipelines" | jq -r '.[].status' | sort | uniq -c | sort -rn
-
-# Анализ длительности
-echo -e "\n--- Средняя длительность по статусам ---"
-echo "$pipelines" | jq -r 'group_by(.status) | map({status: .[0].status, avg_duration: (map(.duration) | add / length)})'
-
-# Расчет стоимости (базовая оценка)
-# Средняя стоимость часа compute: $0.05
-HOURLY_RATE=0.05
-echo -e "\n--- Оценка стоимости ---"
-echo "$pipelines" | jq -r --arg rate "$HOURLY_RATE" '
-  group_by(.status) |
-  map({
-    status: .[0].status,
-    count: length,
-    total_hours: (map(.duration) | add / 3600),
-    estimated_cost: ((map(.duration) | add / 3600) * ($rate | tonumber))
-  })'
+echo ""
+echo "=== Проверка глобальных настроек ==="
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "$GITLAB_URL/api/v4/application/settings" | \
+  jq '{artifacts_size_limit, ci_max_artifact_size, keep_latest_artifact, artifact_expired_before}'
 ```
 
-### Оптимизация Docker image size
+### Сценарий 2: Аудит retention policies
 
-**Практические рекомендации:**
-
-```yaml
-# .gitlab-ci.yml - оптимизированный Docker build
-
-build:optimized:
-  stage: build
-  image: docker:24.0
-  services:
-    - docker:24.0-dind
-  variables:
-    DOCKER_BUILDKIT: "1"
-  script:
-    # Использование multi-stage build
-    - docker build --target=production -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
-
-    # Очистка неиспользуемых образов
-    - docker image prune -f
-
-    # Сжатие и отправка
-    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
-
-# Пример Dockerfile с оптимизацией
-# FROM node:18-alpine AS builder
-# WORKDIR /app
-# COPY package*.json ./
-# RUN npm ci --only=production
-# COPY . .
-# RUN npm run build
-#
-# FROM node:18-alpine AS production
-# WORKDIR /app
-# COPY --from=builder /app/dist ./dist
-# COPY --from=builder /app/node_modules ./node_modules
-# CMD ["node", "dist/main.js"]
-```
-
-**Размер образов (до/после оптимизации):**
-
-| Образ | До | После | Экономия |
-|---|---|---|---|
-| Node.js app | 1.2GB | 180MB | 85% |
-| Python app | 950MB | 220MB | 77% |
-| Go app | 800MB | 15MB | 98% |
-
-### Правила архивации артефактов
-
-```yaml
-# .gitlab-ci.yml - правила архивации
-
-stages:
-  - build
-  - test
-  - deploy
-
-build:
-  stage: build
-  script:
-    - npm run build
-  artifacts:
-    paths:
-      - dist/
-      - build/
-    exclude:
-      - node_modules/
-      - .git/
-      - "*.log"
-    expire_in: 7 days
-    when: on_success
-
-test:unit:
-  stage: test
-  script:
-    - npm run test:unit
-  artifacts:
-    reports:
-      junit: test-results.xml
-    paths:
-      - coverage/
-    expire_in: 3 days
-
-test:integration:
-  stage: test
-  script:
-    - npm run test:integration
-  artifacts:
-    paths:
-      - test-results/
-    expire_in: 5 days
-    when: always
-
-deploy:staging:
-  stage: deploy
-  script:
-    - npm run deploy:staging
-  artifacts:
-    paths:
-      - deployment-info.json
-    expire_in: 30 days
-```
-
-### Очистка старых пайплайнов
+Проверка настроек `expire_in` и `keep_latest` на уровне group/project:
 
 ```bash
 #!/bin/bash
-# cleanup_old_pipelines.sh
-# Очистка пайплайнов старше N дней
+# audit_retention.sh
+# Аудит настроек хранения артефактов
 
 GITLAB_URL="https://gitlab.example.com"
-PROJECT_ID="12345"
-PRIVATE_TOKEN="glpat-xxxxx"
-KEEP_DAYS=30
-DRY_RUN=true
+TOKEN="$GITLAB_API_TOKEN"
+GROUP_ID="67890"
 
-echo "=== Очистка пайплайнов старше $KEEP_DAYS дней ==="
+echo "=== Retention policies для проектов группы ==="
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "$GITLAB_URL/api/v4/groups/$GROUP_ID/projects?per_page=100" | \
+  jq -r '.[] | "\(.path_with_namespace)\t\(.statistics.build_artifacts_size / 1024 / 1024 | floor) MB"'
+```
+
+### Сценарий 3: Очистка старых артефактов
+
+```bash
+#!/bin/bash
+# cleanup_old_artifacts.sh
+# Очистка артефактов через rake-задачу (self-managed)
+
+echo "=== Очистка артефактов старше 30 дней ==="
 echo "DRY_RUN: $DRY_RUN"
 
-# Получение всех пайплайнов
-page=1
-pipelines=()
-
-while true; do
-  response=$(curl -s --header "PRIVATE-TOKEN: $PRIVATE_TOKEN" \
-    "$GITLAB_URL/api/v4/projects/$PROJECT_ID/pipeline?per_page=100&page=$page")
-
-  count=$(echo "$response" | jq length)
-  if [ "$count" -eq 0 ]; then
-    break
-  fi
-
-  pipelines+=("$response")
-  page=$((page + 1))
-done
-
-# Фильтрация старых пайплайнов
-cutoff_date=$(date -d "$KEEP_DAYS days ago" -Iseconds)
-old_pipelines=()
-
-for page_data in "${pipelines[@]}"; do
-  old=$(echo "$page_data" | jq -r --arg cutoff "$cutoff_date" '
-    .[] | select(.updated_at < $cutoff) | .id')
-  old_pipelines+=($old)
-done
-
-echo -e "\nНайдено старых пайплайнов: ${#old_pipelines[@]}"
-
-# Удаление
-for pipeline_id in "${old_pipelines[@]}"; do
-  if [ "$DRY_RUN" = true ]; then
-    echo "DRY RUN: Удаление пайплайна $pipeline_id"
-  else
-    curl -s --request DELETE --header "PRIVATE-TOKEN: $PRIVATE_TOKEN" \
-      "$GITLAB_URL/api/v4/projects/$PROJECT_ID/pipelines/$pipeline_id"
-    echo "Удален пайплайн: $pipeline_id"
-  fi
-done
-
-echo -e "\nОчистка завершена"
+if [ "$DRY_RUN" = "true" ]; then
+  echo "DRY RUN: gitlab-rake gitlab:artifacts:expire"
+else
+  sudo gitlab-rake "gitlab:artifacts:expire"
+fi
 ```
 
-### Правильное использование cache policy
+Для проектов с S3-совместимым хранилищем (MinIO, Ceph RGW) настройте Lifecycle Policies для автоматического удаления объектов старше N дней.
+
+### Сценарий 4: Оптимизация Docker образов
+
+```dockerfile
+# Multi-stage build для минимизации размера образа
+FROM golang:1.22-alpine AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /app/binary
+
+FROM alpine:3.19
+RUN addgroup -g 1000 -S appgroup && adduser -u 1000 -S appuser -G appgroup
+WORKDIR /app
+COPY --from=builder /app/binary /app/binary
+USER appuser
+ENTRYPOINT ["/app/binary"]
+```
+
+| Образ | До | После | Экономия |
+|:---|:---|:---|:---|
+| Node.js | ~1.2 GB | ~180 MB | 85% |
+| Python | ~950 MB | ~220 MB | 77% |
+| Go | ~800 MB | ~15 MB | 98% |
+
+### Сценарий 5: Правильное разделение cache и artifacts
 
 ```yaml
-# .gitlab-ci.yml - стратегии кэширования
-
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   NPM_CONFIG_CACHE: "$CI_PROJECT_DIR/.cache/npm"
 
-# Кэширование зависимостей (только чтение для test stage)
+# Зависимости — через cache
+build:
+  stage: build
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .cache/npm
+      - node_modules/
+    policy: pull-push
+  script:
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 7 days
+
+# Тесты — только чтение кэша
 test:
   stage: test
   cache:
@@ -358,70 +243,12 @@ test:
         - package-lock.json
     paths:
       - .cache/npm
-      - node_modules/
     policy: pull
   script:
-    - npm ci
     - npm test
-
-# Кэширование зависимостей (чтение + запись для build stage)
-build:
-  stage: build
-  cache:
-    key:
-      files:
-        - package-lock.json
-    paths:
-      - .cache/npm
-      - node_modules/
-    policy: pull-push
-  script:
-    - npm ci
-    - npm run build
-
-# Кэширование зависимостей Python
-test:python:
-  stage: test
-  cache:
-    key:
-      files:
-        - requirements.txt
-    paths:
-      - .cache/pip
-    policy: pull
-  script:
-    - pip install -r requirements.txt
-    - pytest
-
-build:python:
-  stage: build
-  cache:
-    key:
-      files:
-        - requirements.txt
-    paths:
-      - .cache/pip
-    policy: pull-push
-  script:
-    - pip install -r requirements.txt
-    - python setup.py sdist
-
-# Кэширование Docker layers
-build:docker:
-  stage: build
-  cache:
-    key: docker-layers
-    paths:
-      - .docker-cache/
-    policy: pull-push
-  script:
-    - docker load -i .docker-cache/layers.tar || true
-    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
-    - mkdir -p .docker-cache
-    - docker save $(docker images -q) > .docker-cache/layers.tar
 ```
 
-### Анализ использования runner'ов
+### Сценарий 6: Анализ утилизации Runner'ов
 
 ```bash
 #!/bin/bash
@@ -429,90 +256,201 @@ build:docker:
 # Анализ использования GitLab runners
 
 GITLAB_URL="https://gitlab.example.com"
-PRIVATE_TOKEN="glpat-xxxxx"
-GROUP_ID="67890"
+TOKEN="$GITLAB_API_TOKEN"
 
-echo "=== Анализ использования runners ==="
+echo "=== Runner Fleet Utilization ==="
 
-# Получение runners группы
-runners=$(curl -s --header "PRIVATE-TOKEN: $PRIVATE_TOKEN" \
-  "$GITLAB_URL/api/v4/groups/$GROUP_ID/runners?per_page=100")
+RUNNERS=$(curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "$GITLAB_URL/api/v4/runners?per_page=100" | jq -r '.[] | "\(.id)\t\(.description)\t\(.status)\t\(.active)\t\(.online)\t\(.jobs_completed)"')
 
-echo -e "\n--- Список runners ---"
-echo "$runners" | jq -r '.[] | "\(.id)\t\(.description)\t\(.status)\t\(.active)"'
-
-# Статистика использования
-echo -e "\n--- Статистика использования ---"
-for runner_id in $(echo "$runners" | jq -r '.[].id'); do
-  jobs=$(curl -s --header "PRIVATE-TOKEN: $PRIVATE_TOKEN" \
-    "$GITLAB_URL/api/v4/runners/$runner_id/jobs?per_page=100")
-
-  total_jobs=$(echo "$jobs" | jq length)
-  successful=$(echo "$jobs" | jq '[.[] | select(.status == "success")] | length')
-  failed=$(echo "$jobs" | jq '[.[] | select(.status == "failed")] | length')
-  running=$(echo "$jobs" | jq '[.[] | select(.status == "running")] | length')
-
-  echo -e "\nRunner $runner_id:"
-  echo "  Всего задач: $total_jobs"
-  echo "  Успешных: $successful"
-  echo "  Неуспешных: $failed"
-  echo "  Выполняется: $running"
-  echo "  Процент успеха: $((successful * 100 / total_jobs))%"
+echo "$RUNNERS" | while IFS=$'\t' read -r id desc status active online jobs; do
+  echo "Runner $id: $desc | status=$status | active=$active | online=$online | jobs=$jobs"
 done
-
-# Рекомендации
-echo -e "\n--- Рекомендации ---"
-echo "1. Deactivate неиспользуемые runners"
-echo "2. Оптимизируйте теги для правильного маршрутизации задач"
-echo "3. Рассмотрите автоматическое масштабирование для пиковых нагрузок"
-echo "4. Настройте timeout для предотвращения зависших задач"
 ```
+
+### Сценарий 7: Настройка config.toml для оптимизации стоимости
+
+```toml
+# /etc/gitlab-runner/config.toml
+concurrent = 20              # Глобальный лимит; подбирайте под CPU/RAM хоста
+check_interval = 3
+shutdown_timeout = 30
+
+[session_server]
+  session_timeout = 1800
+  session_affinity = true
+
+[[runners]]
+  name = "docker-prod"
+  url = "https://gitlab.example.com"
+  token = "glrt-xxxxxxxxxxxx"
+  executor = "docker"
+  limit = 10                 # Лимит задач на этом Runner'е
+  max_concurrent = 10
+
+  [runners.docker]
+    image = "alpine:latest"
+    privileged = false
+    shm_size = "256m"
+    pull_policy = ["if-not-present"]
+    memory = "4g"
+    cpus = "2"
+    volumes = ["/cache", "/tmp/artifacts:/tmp/artifacts"]
+    security_opt = ["no-new-privileges"]
+
+  [runners.cache]
+    Type = "s3"
+    Shared = true
+    [runners.cache.s3]
+      ServerAddress = "minio.internal:9000"
+      BucketName = "runner-cache"
+      Insecure = false
+```
+
+### Сценарий 8: Conditional jobs для экономии
+
+```yaml
+# Пропуск лишних задач
+test:unit:
+  stage: test
+  rules:
+    - changes:
+        - src/**/*
+        - tests/**/*
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - npm run test:unit
+
+# Запуск только при изменениях в инфраструктуре
+deploy:infra:
+  stage: deploy
+  rules:
+    - changes:
+        - terraform/**/*
+        - ansible/**/*
+  script:
+    - ./deploy-infra.sh
+```
+
+## Устранение неполадок (Troubleshooting)
+
+| Проблема | Причина | Решение |
+|:---|:---|:---|
+| Высокий effective cost | Низкая утилизация Runner'ов (<40%) | Уменьшите парк или добавьте автоскейлинг; см. **[Управление парком Runner'ов](../Advanced/runner_fleet_management.md)** |
+| Хранилище артефактов растёт | `keep_latest` включён, `expire_in` не настроен | Отключите `keep_latest` в Admin Area; настройте `expire_in`; см. **[Артефакты в GitLab CI](../Advanced/gitlab_ci_caching/gitlab_ci_artifacts.md)** |
+| Низкий cache hit rate (<50%) | Слишком специфичные ключи или частое удаление кэша | Используйте `cache:key:files`; см. **[Лучшие практики кэширования](../Advanced/gitlab_ci_caching/cache_best_practices.md)** |
+| `413 Request Entity Too Large` | Размер артефакта превышает лимит | Увеличьте `ci_max_artifact_size` в Admin Area или используйте `exclude`; см. **[Артефакты в GitLab CI](../Advanced/gitlab_ci_caching/gitlab_ci_artifacts.md)** |
+| Очереди задач | `concurrent` слишком мал или Runner'ы недоступны | Увеличьте `concurrent` или добавьте Runner'ы; проверьте теги; см. **[Управление парком Runner'ов](../Advanced/runner_fleet_management.md)** |
+| Медленный пайплайн | Отсутствует DAG, нет кэширования, тяжёлые образы | Включите `needs`; кэшируйте зависимости; используйте multi-stage builds; см. **[Оптимизация производительности пайплайнов](../Advanced/pipeline_performance_optimization.md)** |
+| Артефакты не удаляются по `expire_in` | Активна опция `keep_latest` | Отключите "Keep artifacts from most recent successful jobs" |
+| Утечка диска на Runner'е | `clean_policy` не настроен, старые контейнеры/образы | Настройте `clean_policy = "always"` и `clean_period = "24h"` в `config.toml` |
+| Высокий трафик Registry | Повторная отправка одинаковых образов | Используйте `cache:from:latest` или `--cache-from` для Docker build |
+
+## Ограничения и крайние случаи (Edge Cases)
+
+1. **`keep_latest` игнорирует `expire_in`**: Артефакты последнего успешного пайплайна в ветке сохраняются независимо от срока хранения. Для проектов с ограниченным хранилищем отключайте `keep_latest` на group/project уровне (Premium+).
+
+2. **Dotenv-переменные и матричные сборки**: Переменные из `reports: dotenv` недоступны в блоке `rules` и не работают между инстансами `parallel:matrix`. Для передачи данных между матричными задачами используйте файловые артефакты или API.
+
+3. **Артефакты при `extends`**: Блок `artifacts` при `extends` перезаписывается целиком, а не сливается. Если дочерняя задача переопределяет только `paths`, остальные параметры (`expire_in`, `when`, `reports`) будут утеряны.
+
+4. **Артефакты >1 GB**: Требуют увеличения `proxy_read_timeout` и `client_max_body_size` на обратном прокси (Nginx/Apache). Для артефактов >5 GB используйте внешний Object Storage и загрузку через API.
+
+5. **`interruptible` и артефакты**: При отмене пайплайна через `auto_cancel` артефакты **не сохраняются**, даже при `when: always`. Для критичных задач используйте `interruptible: false`.
+
+6. **Multi-project артефакты**: Для `needs:project` требуется настройка Zero Trust Allowlist (GitLab 17.0+). Без неё возвращается `403 Forbidden`.
+
+7. **Закон Муи (Mooi's Law)**: Время, сэкономленное на ускорении пайплайна, часто reinvested в дополнительные проверки. Это нормальное явление; цель — не минимизировать время любой ценой, а оптимизировать bottleneck'ы с наибольшим влиянием на cost.
+
+## Валидация
+
+Проверка корректности настроек cost optimization:
+
+```bash
+# 1. Проверка лимитов артефактов
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/application/settings" | \
+  jq '.artifacts_size_limit, .ci_max_artifact_size, .keep_latest_artifact'
+
+# 2. Проверка размера артефактов проекта
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID" | \
+  jq '.statistics.build_artifacts_size'
+
+# 3. Проверка утилизации Runner'ов
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/runners?per_page=100" | \
+  jq '[.[] | select(.active == true)] | length'
+
+# 4. Мониторинг метрик GitLab Prometheus
+curl -s "http://gitlab.example.com/-/metrics" | grep gitlab_ci_artifact
+curl -s "http://gitlab.example.com/-/metrics" | grep gitlab_runner_jobs_running_total
+```
+
+## Рекомендации (Best Practices)
+
+**Инфраструктура:**
+- Right-sizing Runner'ов под профиль нагрузки (CPU/RAM по потребностям, а не по максимуму)
+- Настройка `concurrent` и `limit` в `config.toml` на основе доступных ресурсов хоста
+- Использование ephemeral runners для изоляции и предотвращения утечек состояния
+- Регулярный аудит активных Runner'ов; деактивация неиспользуемых
+
+**Хранилище:**
+- `expire_in` для всех артефактов без исключения
+- Отключение `keep_latest` для проектов с ограниченным хранилищем
+- Lifecycle Policies для Object Storage (MinIO/Ceph RGW)
+- Использование Package Registry для крупных бинарников вместо CI artifacts
+- Разделение временных и релизных артефактов
+
+**Пайплайны:**
+- DAG (`needs`) вместо последовательных стадий для сокращения времени и потребления
+- Кэширование зависимостей, артефакты — только для результатов сборки
+- `pull_policy: ["if-not-present"]` для сокращения трафика
+- Conditional jobs (`rules:changes`) для пропуска ненужных задач
+- Параллелизация тестов через `parallel:matrix`
+
+**Мониторинг:**
+- Отслеживание cache hit rate (цель >80%)
+- Мониторинг дискового пространства Runner'ов (`<80%`)
+- Алерты на рост `build_artifacts_size` проекта
+- Регулярный анализ утилизации Runner'ов
 
 ## Дополнительная информация
 
 ### Связанные темы
 
-- GitLab CI/CD Pipeline Configuration
-- Docker Multi-stage Builds
-- Kubernetes Cost Optimization
-- Cloud Cost Management (AWS/GCP/Azure)
-- FinOps Practices
-- Infrastructure as Code (Terraform, Pulumi)
-- Monitoring and Observability (Prometheus, Grafana)
-- GitOps Workflows
+- **[Артефакты в GitLab CI](../Advanced/gitlab_ci_caching/gitlab_ci_artifacts.md)** — SSoT для retention, `keep_latest`, лимитов и cleanup артефактов
+- **[Управление парком Runner'ов](../Advanced/runner_fleet_management.md)** — SSoT для Fleet Management, auto-scaling, `config.toml`
+- **[Оптимизация производительности пайплайнов](../Advanced/pipeline_performance_optimization.md)** — SSoT для DAG, кэширования, параллелизма
+- **[Лучшие практики кэширования](../Advanced/gitlab_ci_caching/cache_best_practices.md)** — SSoT для cache hit rate, ключей, стратегий
+- **[Мониторинг и метрики](../Advanced/monitoring_and_metrics.md)** — метрики Runner'ов и пайплайнов
+- **[Управление артефактами](../../artifact_management.md)** — общие концепции SBOM, retention, аттестаций
 
-### Чек-лист оптимизации стоимости
+### Чек-лист оптимизации
 
 **Инфраструктура:**
 - [ ] Проведен аудит текущих расходов на CI/CD
-- [ ] Определены неиспользуемые ресурсы
-- [ ] Настроено автоматическое масштабирование
-- [ ] Выбраны оптимальные типы инстансов
-- [ ] Настроена утилизация ресурсов (reserved instances, spot)
-
-**Пайплайны:**
-- [ ] Оптимизированы Docker образы (multi-stage, alpine)
-- [ ] Настроено кэширование зависимостей
-- [ ] Уменьшена частота запуска пайплайнов
-- [ ] Используются conditional jobs
-- [ ] Настроена parallelization для уменьшения времени выполнения
+- [ ] Определены неиспользуемые Runner'ы
+- [ ] Настроены `concurrent` и `limit` в `config.toml`
+- [ ] Настроена автоматическая очистка Docker (`clean_policy`)
+- [ ] Настроен `pull_policy: ["if-not-present"]`
 
 **Хранилище:**
-- [ ] Настроены правила архивации артефактов
-- [ ] Очищены старые артефакты и логи
-- [ ] Оптимизированы Docker registry layers
-- [ ] Настроена автоматическая очистка
+- [ ] Настроен `expire_in` для всех артефактов
+- [ ] Проверен параметр `keep_latest`
+- [ ] Настроены Lifecycle Policies для Object Storage
+- [ ] Крупные бинарники вынесены в Package Registry
+- [ ] Регулярно проводится анализ `build_artifacts_size`
+
+**Пайплайны:**
+- [ ] Используется DAG (`needs`) вместо последовательных стадий
+- [ ] Зависимости кэшируются, не передаются через артефакты
+- [ ] Настроен cache hit rate >80%
+- [ ] Используются conditional jobs (`rules:changes`)
+- [ ] Применяются multi-stage Docker builds
 
 **Мониторинг:**
-- [ ] Настроены метрики стоимости пайплайнов
-- [ ] Ведется учет cost per commit
-- [ ] Мониторится cache hit rate
-- [ ] Регулярно проводится анализ использования runners
-- [ ] Настраиваются алерты на превышение бюджета
-
-**Процессы:**
-- [ ] Внедрены best practices для написания .gitlab-ci.yml
-- [ ] Проводятся регулярные код-ревью конфигурации CI/CD
-- [ ] Документированы стандарты оптимизации
-- [ ] Обучена команда по cost optimization
-- [ ] Внедрена культура ответственности за расходы
+- [ ] Настроены метрики утилизации Runner'ов
+- [ ] Мониторится дисковое пространство
+- [ ] Настроены алерты на рост артефактов
+- [ ] Регулярно проводится анализ slow jobs

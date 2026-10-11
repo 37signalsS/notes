@@ -630,3 +630,5 @@ Notify=healthy
 
 - **[podman-systemd.unit(5)](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html)** — официальная документация Quadlet: директива `Notify=`, `HealthOnFailure`, трансляция зависимостей `[Unit]` (англ.).
 - **[podman-generate-systemd(1)](https://docs.podman.io/en/latest/markdown/podman-generate-systemd.1.html)** — флаги `--after`/`--requires`/`--new`, статус deprecation (англ.).
+
+# force reindex test

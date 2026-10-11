@@ -255,7 +255,7 @@ curl -s http://localhost:9100/metrics | grep -E '^# HELP node_'
 | `node_disk_io_time_seconds_total` | Counter | Время, в течение которого диск был занят обслуживанием I/O (Disk Utilization). |
 | `node_disk_read_bytes_total` / `node_disk_written_bytes_total` | Counter | Суммарный объем прочитанных/записанных данных на блочное устройство. |
 | `node_disk_read_time_seconds_total` / `node_disk_write_time_seconds_total` | Counter | Суммарное время чтения/записи. |
-| `node_disk_io_time_weighted_seconds_total` | Counter | Взвешенное время I/O (await). |
+| `node_disk_io_time_weighted_seconds_total` | Counter | Взвешенное время I/Os — интеграл числа операций в очереди по времени (сумма `N·(N+1)/2`). Делится на `node_disk_io_time_seconds_total` даёт среднюю глубину очереди, а на число операций — среднее время ожидания в очереди (await). |
 
 **Примеры PromQL:**
 *   **Свободное место на корневом разделе в %:**
@@ -283,10 +283,10 @@ curl -s http://localhost:9100/metrics | grep -E '^# HELP node_'
 | :--- | :--- | :--- |
 | `node_network_receive_bytes_total` | Counter | Входящий трафик (получено байт). |
 | `node_network_transmit_bytes_total` | Counter | Исходящий трафик (отправлено байт). |
-| `node_network_receive_errs_total` | Counter | Суммарное количество ошибок на уровне интерфейса при приеме. |
+| `node_network_receive_errs_total` / `node_network_transmit_errs_total` | Counter | Суммарное количество ошибок на уровне интерфейса при приёме/передаче. |
 | `node_network_up` | Gauge | Статус интерфейса (1 = Up, 0 = Down). |
 | `node_network_speed_bytes` | Gauge | Скорость интерфейса в байтах/сек (из `/sys/class/net/*/speed`). |
-| `node_network_transmit_packets_dropped_total` | Counter | Отброшенные исходящие пакеты. |
+| `node_network_receive_drop_total` / `node_network_transmit_drop_total` | Counter | Отброшенные пакеты при приёме/передаче. |
 
 **Примеры PromQL:**
 *   **Входящая скорость на интерфейсе eth0 (Мбит/сек):**

@@ -614,3 +614,5 @@ vmestimator — пассивный наблюдатель. Если vmagent не
 - [vmagent](./vmagent_overview.md) — сбор и forwarding метрик;
 - [Cardinality в Prometheus](../Prometheus/concepts/labels_and_cardinality.md) — фундаментальные концепции кардинальности;
 - [Мониторинг и алертинг](../Concepts/Observability_and_Monitoring/monitoring_alerting_recommendations.md) — методологии алертинга.
+
+# force reindex test

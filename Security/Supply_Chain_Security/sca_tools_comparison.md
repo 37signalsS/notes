@@ -16,19 +16,19 @@ SCA — это первый линия обнаружения известных
 
 ### Сравнение инструментов
 
-| Критерий | **Trivy** | **Grype** | **Snyk** | **osv-scanner** | **Syft** |
-|:--- |:--- |:--- |:--- |:--- |:--- |
-| **Тип** | Сканер + SBOM | Сканер | Платформа (SaaS + CLI) | Сканер | Генератор SBOM |
-| **Фокус** | Образы, FS, SBOM, IaC | Образы, SBOM | Код, образы, IaC, контейнеры | Зависимости (lock-файлы) | Генерация SBOM |
-| **Базы CVE** | NVD, GitHub Advisory, Alpine, Red Hat, Ubuntu | NVD, GitHub Advisory | NVD + собственная (Snyk Vuln DB) | OSV (агрегатор NVD + экосистемы) | Нет (генератор) |
-| **Reachability** | Ограниченная | Да (statistic) | Да (core) | Нет | Нет |
-| **EPSS** | Да | Нет | Да | Нет | Нет |
-| **SBOM** | Чтение (CycloneDX, SPDX) | Чтение (CycloneDX) | Чтение + генерация | Нет | Генерация (CycloneDX, SPDX) |
-| **VEX** | Да (применение) | Нет | Да | Нет | Нет |
-| **IaC scanning** | Да (Terraform, K8s, Dockerfile) | Нет | Да | Нет | Нет |
-| **Лицензия** | Apache 2.0 | Apache 2.0 | Snyk Agent (freemium) | Apache 2.0 | Apache 2.0 |
-| **Self-hosted** | Да (CLI) | Да (CLI) | Да (CLI) + SaaS | Да (CLI) | Да (CLI) |
-| **OIDC/интеграция** | GitLab, GitHub, CI | CI | GitLab, GitHub, Jira, Slack | CI | CI |
+| Критерий | **Trivy** | **Grype** | **Snyk** | **osv-scanner** | **OWASP Dependency Check** | **Syft** |
+|:--- |:--- |:--- |:--- |:--- |:--- |:--- |
+| **Тип** | Сканер + SBOM | Сканер | Платформа (SaaS + CLI) | Сканер | Сканер (многоплатформенный) | Генератор SBOM |
+| **Фокус** | Образы, FS, SBOM, IaC | Образы, SBOM | Код, образы, IaC, контейнеры | Зависимости (lock-файлы) | Java (Maven/Gradle), npm, pip, Ruby, .NET | Генерация SBOM |
+| **Базы CVE** | NVD, GitHub Advisory, Alpine, Red Hat, Ubuntu | NVD, GitHub Advisory | NVD + собственная (Snyk Vuln DB) | OSV (агрегатор NVD + экосистемы) | NVD, GitHub Advisory, Sonatype, VulnDB | Нет (генератор) |
+| **Reachability** | Ограниченная | Да (statistic) | Да (core) | Нет | Нет | Нет |
+| **EPSS** | Да | Нет | Да | Нет | Нет | Нет |
+| **SBOM** | Чтение (CycloneDX, SPDX) | Чтение (CycloneDX) | Чтение + генерация | Нет | Нет | Генерация (CycloneDX, SPDX) |
+| **VEX** | Да (применение) | Нет | Да | Нет | Нет | Нет |
+| **IaC scanning** | Да (Terraform, K8s, Dockerfile) | Нет | Да | Нет | Нет | Нет |
+| **Лицензия** | Apache 2.0 | Apache 2.0 | Snyk Agent (freemium) | Apache 2.0 | Apache 2.0 | Apache 2.0 |
+| **Self-hosted** | Да (CLI) | Да (CLI) | Да (CLI) + SaaS | Да (CLI) | Да (CLI/сервер) | Да (CLI) |
+| **OIDC/интеграция** | GitLab, GitHub, CI | CI | GitLab, GitHub, Jira, Slack | CI | Jenkins, Maven, Gradle | CI |
 
 ### Когда использовать
 
@@ -41,6 +41,7 @@ SCA — это первый линия обнаружения известных
 | Сканирование lock-файлов (npm, pip, Go) | **osv-scanner** | Быстрый, агрегирует несколько баз |
 | Корпоративная платформа (Jira, SLA, policies) | **Snyk** | Интеграция с трекерами, policy engine |
 | Air-gapped среда | **Trivy** + **Syft** | Offline-режим, локальные базы |
+| SCA для Java/Maven-проектов (Jenkins) | **OWASP Dependency Check** | Нативная интеграция с Maven/Gradle, детальные HTML-отчёты, transitive dependencies |
 
 ## Практические сценарии
 
@@ -117,7 +118,39 @@ jq '.components | length' sbom.json
 jq '.components[] | select(.purl | startswith("pkg:pypi"))' sbom.json
 ```
 
-### Сценарий 5: Комбинированный пайплайн в CI
+### Сценарий 5: SCA для Java/Maven через OWASP Dependency Check
+
+OWASP Dependency Check — инструмент для анализа зависимостей Java (Maven/Gradle), npm, pip, Ruby, .NET и других экосистем. Генерирует детальные HTML-отчёты и интегрируется в CI/CD.
+
+```bash
+# 1. Запуск через Maven plugin (рекомендуется для Java)
+mvn dependency-check:check \
+  -Dformat=ALL \
+  -DnvdApiKey=${NVD_API_KEY} \
+  -Dproject=my-app
+# → Генерирует dependency-check-report.html, .json, .xml
+
+# 2. Запуск через Docker (без Maven)
+docker run --rm \
+  -v "$PWD:/app" \
+  -v "$PWD/dc-cache:/dependency-check-data" \
+  -e NVD_API_KEY="${NVD_API_KEY}" \
+  owasp/dependency-check:latest \
+  --scan /app \
+  --format ALL \
+  --project "MyApp" \
+  --out /app/results
+```
+
+**Ключевые параметры:**
+- `--format ALL` — HTML + JSON + XML отчёты
+- `NVD_API_KEY` — ускоряет загрузку базы NVD (без ключа работает медленнее)
+- `--scan` — директория для сканирования
+- `--project` — имя проекта в отчёте
+
+**Валидация:** В `results/` появляются `dependency-check-report.html`, `.json` и `.xml`. JSON содержит детали каждой уязвимости (CVE, severity, описание, CWE).
+
+### Сценарий 6: Комбинированный пайплайн в CI
 
 ```yaml
 # GitLab CI: SCA + SBOM + VEX
@@ -168,7 +201,7 @@ sign:
   only: [main]
 ```
 
-### Сценарий 6: Offline-сканирование (air-gapped)
+### Сценарий 7: Offline-сканирование (air-gapped)
 
 ```bash
 # На машине с интернетом: экспорт баз

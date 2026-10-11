@@ -160,3 +160,4 @@ curl -s "http://localhost:8428/vmui"
 - [VictoriaMetrics: обзор](./overview.md);
 - [PromQL: селекторы и операторы](../Prometheus/concepts/promql/selectors_operators.md);
 - [vmalert: правила алертинга](./vmalert_overview.md).
+# force reindex test

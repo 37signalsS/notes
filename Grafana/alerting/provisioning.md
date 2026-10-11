@@ -1,5 +1,7 @@
 # Декларативное управление оповещениями — Provisioning
 
+> **Актуальность версий (2026):** Grafana 13.x — текущая стабильная ветка (Current), 12.x — поддержка безопасности (LTS), 11.x — EOL (июнь 2026). В Grafana 13.0+ доступен режим Single-Node Evaluation (SNE, public preview); он включается явно (`ha_single_node_evaluation = true`), по умолчанию отключён. Нативные inhibition rules доступны в beta. DMA-алерты устаревают в Grafana Cloud.
+
 ## Определения
 
 **Provisioning (Провиженинг) алертов** — методология Infrastructure as Code (IaC), позволяющая декларативно описывать все компоненты системы оповещений Grafana (правила, контакт-пойнты, политики, шаблоны) через YAML-файлы. Это исключает ручную настройку через UI и обеспечивает воспроизводимость конфигурации в разных окружениях (Dev/Stage/Prod). Актуально для Grafana 12.x и 13.x (проверено август 2026).
@@ -59,7 +61,25 @@ Grafana поддерживает файловый провиженинг сле�
 | Mute timings | `muteTimes` | `deleteMuteTimes` |
 | Notification template groups | `templates` | удаление из файла |
 
+**Дополнительные ключи для удаления:**
+
+| Ресурс | Ключ для удаления | Примечание |
+| :--- | :--- | :--- |
+| Alert rules | `deleteRules` | Явный список UID для удаления (аналогично `deleteMuteTimes`) |
+| Notification templates | `deleteTemplates` | Явный список имён шаблонных групп |
+
 > **Тишины (Silences) и правила подавления (Inhibition Rules) НЕ являются файловыми ресурсами.** Они создаются в рантайме: Silences — через UI (Alerting → Silences) или Alerting provisioning HTTP API; Inhibition Rules настраиваваются во встроенном Alertmanager через UI/API. Теоретические основы — в [Основных концепциях](../alerting/concepts.md).
+
+### Миграция DMA → GMA (Data Source-managed → Grafana-managed)
+
+Grafana поддерживает два типа алерт-правил. С точки зрения провиженинга, важно понимать разницу:
+
+| Тип | Где хранятся правила | Провиженинг через Grafana |
+| :--- | :--- | :--- |
+| **Grafana-managed (GMA)** | Внутренняя БД Grafana | Да, через `rules` в `provisioning/alerting` |
+| **Data source-managed (DMA)** | В самом источнике (Prometheus/Mimir/Loki) | Нет — управляется через `rules` источника или Mimir/Cortex tooling |
+
+**DMA устаревает (Grafana Cloud, 2026):** в новых стеках DMA-алерты по умолчанию не создаются. Импортируйте существующие DMA-правила в GMA через инструмент импорта (`Import data source-managed alerts`), чтобы они стали частью Grafana-провиженинга. Подробности — в [concepts.md](../alerting/concepts.md), раздел «Источники данных».
 
 ---
 
@@ -99,6 +119,7 @@ Grafana поддерживает файловый провиженинг сле�
 | `title` | Человекочитаемое имя алерта. |
 | `condition` | `refId` последнего шага конвейера, определяющего сработку (например, `C`). |
 | `for` | Задержка до перехода в `Alerting` (снижает дребезг). |
+| `keep_firing_for` | Удерживать алерт в `Firing` после возврата метрики в норму (например, `5m`). Предотвращает `flapping`. |
 | `noDataState` | Поведение при пустом результате: `NoData` / `Alerting` / `OK`. |
 | `execErrState` | Поведение при ошибке: `Error` / `Alerting` / `OK`. |
 | `folder` / `folderUid` | Папка Grafana, в которой живёт группа правил. |
@@ -122,6 +143,7 @@ groups:
         title: "High Error Rate API"
         condition: C
         for: 5m
+        keep_firing_for: 5m
         noDataState: NoData
         execErrState: Error
         labels:
@@ -148,9 +170,9 @@ groups:
               expression: A
           - refId: C
             datasourceUid: "__expr__"
-            model:
-              type: math
-              expression: "$B > 10"
+              model:
+                type: math
+                expression: "$B > 10"
 ```
 
 > **Важно:** `condition` должен ссылаться на последний осмысленный шаг. Если использовать `threshold` вместо `math`, шаг типа `threshold` сам формирует булев результат и указывается в `condition`.
@@ -302,9 +324,17 @@ policies:
 - **Операторы:** `=` (точное), `!=` (не равно), `=~` (regex), `!~` (regex not).
 - **Наследование:** дочерняя политика наследует `group_by` и тайминги родителя, если не переопределены.
 - **`continue: true`** — позволяет алерту матчиться также с «братьями» родителя (по умолчанию выключено: один алерт → одна политика).
+- **`override_grouping` / `override_general_timings`** — в дочерней политике можно явно переопределить `group_by` и тайминги родителя, не наследуя их.
+- **`active_time_intervals`** — противоположный Mute Timing механизм: уведомления подавляются, **если** время НЕ попадает в интервал (алертит только в указанные окна). Mute Timing имеет приоритет над Active time interval при пересечении.
 - **`mute_time_intervals`** — список имён Mute Timings; корневая политика (`receiver: grafana-default`) **не может** иметь mute times.
 - **`group_by: ['...']`** — специальное значение: отключает агрегацию (каждый алерт — отдельное уведомление); используйте только при очень низком объёме.
 - Провиженинг дерева перезаписывает **все** политики, но не затрагивает внутренние политики, созданные когда правило напрямую выбирает contact point.
+
+### Single-Node Evaluation (SNE) и провиженинг
+
+В Grafana 13.0+ доступен **SNE** (public preview). При явном включении (`ha_single_node_evaluation = true`) алерты оцениваются одним инстансом (Primary, позиция 0), остальные инстансы вычисление пропускают. Это упрощает провиженинг: не нужно думать о согласовании `Leader` через Memberlist, конфликтующих обновлениях и синхронизации state между узлами. По умолчанию режим отключён. Подробности — в [Grafana: Высокая доступность](../high_availability.md).
+
+> **Для классического HA (Grafana 12.x и ниже):** провиженинг-файлы должны быть идентичны на всех инстансах, иначе Leader-узел перезапишет конфигурацию других. Используйте `Provisioned`-метку и проверяйте `orgId`/`uid` на соответствие.
 
 ---
 
@@ -448,6 +478,47 @@ policies:
 
 После сохранения — Hot Reload (см. Сценарий 1, шаг 6). Старая ветка `critical-oncall` сохраняется, так как она явно присутствует в файле.
 
+### Сценарий 3. CI/CD: провиженинг через GitOps + валидация
+
+Для SRE-команд важен путь: код → проверка → депloy. Пример pipeline:
+
+```yaml
+# .github/workflows/alerting-provisioning.yml (упрощённо)
+name: Alerting Provisioning
+on:
+  push:
+    paths: ['grafana/provisioning/alerting/**']
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: YAML lint
+        run: |
+          pip install yamllint
+          yamllint -d relaxed grafana/provisioning/alerting/
+      - name: Проверка uid длины
+        run: |
+          grep -rE 'uid:\s*["\']?[a-zA-Z0-9_-]{41,}' grafana/provisioning/alerting/ \
+            && echo "ERROR: uid > 40 chars" && exit 1 \
+            || echo "OK: all uids <= 40 chars"
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hot Reload через Admin API
+        run: |
+          curl -X POST "http://admin:${{ secrets.GRAFANA_ADMIN_TOKEN }}@grafana.internal/api/admin/provisioning/alerting/reload"
+          # → 200 OK
+```
+
+**Ключевые моменты:**
+- `yamllint` ловит синтаксис до деплоя.
+- Проверка длины `uid` предотвращает `failed to validate` на Grafana.
+- Hot Reload через Admin API — без перезапуска контейнера.
+- Секреты (`GRAFANA_ADMIN_TOKEN`, `${SLACK_TOKEN}`) хранятся в Secrets, не в репозитории.
+
 ### Проверка корректности (Validation)
 
 - **Статус ресурсов:** UI показывает метку `Provisioned` у провиженинных правил/политик/контакт-пойнтов.
@@ -475,11 +546,27 @@ policies:
 
 - **Перезапись всего дерева политик:** правка любой ветки требует хранения полного дерева в файле; иначе неупомянутые ветки удалятся.
 - **Удаление Mute Timing:** простое удаление из `muteTimes` не удаляет ресурс — нужен явный `deleteMuteTimes`.
+- **Удаление правил/шаблонов:** аналогично — простое удаление из `rules`/`templates` не удаляет ресурс, если он был создан через API/UI; используйте `deleteRules` / `deleteTemplates`.
 - **Совпадение `name` Mute Timing с `mute_time_intervals`:** несуществующее имя в политике не глушит и не падает, но тишин не даёт — проверяйте имена.
 - **Временные зоны:** `location` в Time Interval задаёт таймзону расписания; несовпадение с локальным временем команды — частый источник «почему ночью пришло уведомление».
 - **Интерполяция не применяется** к `annotations`, `relativeTimeRange`, `data.model` правил и к `name`/`time_intervals`/`template` шаблонов и mute timings — секреты в этих полях не подставятся.
 - **`orgId` при мультитенантности:** ресурс без `orgId` попадёт в орг. по умолчанию; пересечение `uid` между оргами безопасно (изоляция по org).
 - **Grafana Cloud:** файловый провиженинг не работает — единственный путь IaC там: Terraform (`grafana` provider) или Alerting provisioning HTTP API.
+- **SNE + провиженинг (Grafana 13+):** Leader-узел применяет провиженинг-файлы; follower-инстансы не трогаются. Не нужно синхронизировать файлы между инстансами.
+- **Классический HA (Grafana 12.x):** все инстансы должны иметь одинаковые провиженинг-файлы — Leader перезапишёт конфигурацию при следующем reload.
+
+### Мониторинг провиженинга (Provisioning Monitoring)
+
+Для SRE-сценариев важно отслеживать, что провиженинг работает корректно:
+
+- **Логи:** `logger=provisioning` — ошибки загрузки YAML, конфликты `uid`, провалы Hot Reload. Проверяйте при старте и после правки:
+  ```bash
+  docker logs grafana 2>&1 | grep -i "logger=provisioning"
+  ```
+- **Состояние ресурсов:** UI → **Alerting → Alert rules / Contact points / Notification policies** — провиженинные ресурсы помечены `Provisioned`. Отсутствие метки — ресурс создан вручную (не из файла).
+- **Экспорт для сверки:** `GET /api/v1/provisioning/alert-rules/export?format=yaml` возвращает все правила в формате provisoning-файла — можно сравнить с Git-источником.
+- **Admin API статус:** `GET /api/admin/provisioning` — статус последней перезагрузки (успех/ошибка, метка времени).
+- **Alert на сбой провиженинга:** создайте правило с `execErrState: Alerting` и condition `A` на `testdata` — или используйте Grafana Alerting, чтобы отслеживать логи провиженинга через Loki (если Loki настроен как источник).
 
 ### Лучшие практики и очистка (Best Practices & Cleanup)
 
@@ -489,12 +576,19 @@ policies:
 - Держите **всё дерево политик в одном файле** и версионируйте его целиком.
 - Используйте **`${ENV}`** для секретов, не коммитьте токены в репозиторий.
 - Проверяйте контакт-пойнты кнопкой **Test** перед продакшеном; упаковывайте общие шаблоны в `templates/`.
-- **Очистка:** удаляйте устаревшие правила/контакт-пойнты из файлов (они удалятся при reload); для Mute Timings — используйте `deleteMuteTimes`. Регулярно пересматривайте дерево политик, чтобы не накапливались «мёртвые» ветки. Перед массовыми изменениями экспортируйте текущее состояние (`/api/v1/provisioning/.../export`) как бэкап.
+- **Очистка:** удаляйте устаревшие правила/контакт-пойнты из файлов (они удалятся при reload); для Mute Timings — используйте `deleteMuteTimes`, для правил — `deleteRules`, для шаблонов — `deleteTemplates`. Регулярно пересматривайте дерево политик, чтобы не накапливались «мёртвые» ветки. Перед массовыми изменениями экспортируйте текущее состояние (`/api/v1/provisioning/.../export`) как бэкап.
+- **DMA → GMA:** планируйте миграцию через инструмент импорта Grafana, чтобы все правила стали GMA и управлялись через провиженинг.
+- **CI/CD:** добавьте в CI валидацию YAML (`yamllint`) и проверку `uid` на длину ≤40 символов перед деплоем.
 
 ## Дополнительная информация
 
 **См. также:**
 
-- [Основные концепции Grafana Alerting](../alerting/concepts.md) — архитектура конвейера выражений, состояния и HA.
+- [Основные концепции Grafana Alerting](../alerting/concepts.md) — архитектура конвейера выражений, состояния, HA, SNE.
 - [Best practices по алертингу](../alerting/best_practices.md) — рекомендации по фильтрации шума и настройке `for`/интервалов.
 - [Интеграция с Telegram](../alerting/telegram-integration.md) — подробная настройка ботов и скриншотов.
+- [Алерты для Kubernetes](../alerting/kubernetes_alerts.md) — готовые правила и примеры recording rules для K8s.
+- [Grafana: Высокая доступность](../high_availability.md) — HA-архитектура, SNE, Memberlist, Leader.
+- [Рендеринг изображений](../grafana_image_rendering.md) — настройка скриншотов в уведомлениях.
+- [Мониторинг как код](../monitoring_as_code.md) — GitOps-подход к провиженинг-файлам.
+- [Провиженинг Grafana (общий)](../grafana_provisioning.md) — провиженинг дашбордов и источников данных.

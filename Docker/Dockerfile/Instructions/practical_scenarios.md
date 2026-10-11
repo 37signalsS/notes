@@ -69,43 +69,7 @@
 
 ### Сценарий 1: Взаимодействие ENTRYPOINT и CMD
 
-Критически важно помнить: переопределение `ENTRYPOINT` через `--entrypoint` **автоматически удаляет** все аргументы, заданные в `CMD` в Dockerfile.
-
-**Dockerfile:**
-```dockerfile
-ENTRYPOINT ["/usr/bin/python3"]
-CMD ["app.py", "--log-level=info"]
-```
-
-**Переопределение для отладки:**
-```bash
-# Ошибка: app.py не будет запущен, так как CMD стерт
-docker run --entrypoint /bin/bash my-image 
-
-# Правильно: передаем новый CMD явно
-docker run --entrypoint /bin/bash my-image -c "ls /app"
-
-# Правильно: передаем аргументы через CMD
-docker run my-image --log-level=debug  # Запустит: python3 app.py --log-level=debug
-```
-
-**Все комбинации:**
-
-| ENTRYPOINT в Dockerfile | CMD в Dockerfile | `docker run img` | `docker run img arg` | `docker run --entrypoint /bin/sh img` |
-| :--- | :--- | :--- | :--- | :--- |
-| Задан | Задан | ENTRYPOINT CMD | ENTRYPOINT arg | /bin/sh CMD |
-| Задан | Не задан | ENTRYPOINT | ENTRYPOINT arg | /bin/sh |
-| Не задан | Задан | CMD | arg | /bin/sh |
-| Не задан | Не задан | Ошибка | Ошибка | /bin/sh |
-
-**Docker Compose:**
-```yaml
-services:
-  app:
-    image: my-image
-    entrypoint: ["/bin/bash"]  # Сбрасывает ENTRYPOINT из Dockerfile
-    command: ["-c", "ls /app"]  # Аргументы для нового entrypoint
-```
+Переопределение `ENTRYPOINT` через `--entrypoint` автоматически удаляет аргументы из `CMD`. Детали, все комбинации и примеры: **[Инструкции Dockerfile: CMD, ENTRYPOINT и USER](./runtime_execution.md#взаимодействие-entrypoint-и-cmd)**.
 
 ### Сценарий 2: Динамическое изменение USER (Numerical UID)
 
@@ -238,6 +202,8 @@ docker run --device /dev/video0:/dev/video0 my-video-app
 docker run --cap-add=NET_ADMIN my-network-app
 docker run --cap-drop=ALL --cap-add=NET_BIND_SERVICE my-web-app
 ```
+
+GPU-нагрузки (выбор CUDA base image, CDI, multi-stage ML, Triton, MIG) — подробно в **[GPU и ML-нагрузки в Dockerfile](../dockerfile-gpu-ml.md)**.
 
 ### Сценарий 6: Использование Compose Overrides
 
@@ -633,17 +599,7 @@ build:
 
 ### Ошибка 1: CMD игнорируется при использовании --entrypoint
 
-**Проблема:** Флаг `--entrypoint` сбрасывает как ENTRYPOINT, так и CMD из Dockerfile.
-
-```bash
-# docker run --entrypoint /bin/bash myapp
-# Ошибка: CMD из Dockerfile не выполняется!
-```
-
-**Решение:** Передавайте новый CMD явно:
-```bash
-docker run --entrypoint /bin/bash myapp -c "echo 'Hello from debug'"
-```
+**Проблема:** Флаг `--entrypoint` сбрасывает как `ENTRYPOINT`, так и `CMD` из Dockerfile. Подробности и решение: **[Инструкции Dockerfile: CMD, ENTRYPOINT и USER](./runtime_execution.md#ошибка-7-entrypoint-игнорируется-при-docker-run)**.
 
 ### Ошибка 2: ENV не заменяется, а добавляется
 
@@ -730,24 +686,7 @@ services:
 
 ### Ошибка 6: --stop-signal не работает с shell-form CMD
 
-**Проблема:** При shell-form CMD (без `["cmd", "arg"]`) сигнал отправляется shell, а не приложению.
-
-```dockerfile
-# Shell-form: сигнал попадёт в /bin/sh, а не в python
-CMD python app.py
-
-# Exec-form: сигнал попадёт в python
-CMD ["python", "app.py"]
-```
-
-**Решение:** Используйте exec-form для корректной обработки сигналов:
-```dockerfile
-# ПЛОХО
-CMD python app.py
-
-# ХОРОШО
-CMD ["python", "app.py"]
-```
+**Проблема:** При shell-form CMD (без `["cmd", "arg"]`) сигнал отправляется shell, а не приложению. Детали и решение: **[Инструкции Dockerfile: CMD, ENTRYPOINT и USER](./runtime_execution.md#формы-записи-exec-против-shell)**.
 
 ### Ошибка 7: --env-file не работает с multi-line значениями
 
@@ -796,23 +735,7 @@ docker run -e APP_SECRET="$(cat secret.txt)" myapp
 
 ### Переопределение в multi-stage builds
 
-Переопределение `CMD` / `ENTRYPOINT` через `docker run` применяется **только к финальной стадии**. Промежуточные стадии игнорируются:
-
-```dockerfile
-# Стадия 1: builder
-FROM golang:1.22 AS builder
-RUN go build -o /app .
-
-# Стадия 2: runtime
-FROM alpine:3.21
-COPY --from=builder /app /app
-CMD ["/app"]  # <-- Это переопределяется через docker run
-```
-
-```bash
-# Переопределяет CMD стадии 2
-docker run myapp /bin/sh
-```
+Переопределение `CMD` / `ENTRYPOINT` через `docker run` применяется **только к финальной стадии**. Промежуточные стадии игнорируются. Подробности: **[Инструкции Dockerfile: CMD, ENTRYPOINT и USER](./runtime_execution.md#сценарий-10-multi-stage-с-differing-uid)**.
 
 ### Переопределение в Kubernetes
 

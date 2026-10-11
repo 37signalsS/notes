@@ -1,5 +1,25 @@
 # Инфраструктура как код (IaC): обзор
 
+**Актуально для:** Infrastructure as Code — паттерны и практики 2026 года
+
+## Предварительные требования
+
+### Желаемые компетенции
+*   **Системное администрирование:** Уверенная работа с Linux/Unix, понимание lifecycle сервисов (systemd), базовое сетевое администрирование (SSH, firewall, DNS).
+*   **Работа с репозиториями:** Git (ветвление, merge, code review), понимание CI/CD-пайплайнов.
+*   **Языки конфигурации:** Чтение YAML, JSON, HCL; базовое понимание Jinja2 для шаблонизации.
+
+### Инструменты
+*   **IaC-инструмент:** Terraform/OpenTofu, Ansible, SaltStack, Puppet или Chef — в зависимости от выбранного стека.
+*   **Линтеры:** `tflint`, `ansible-lint`, `yamllint`, `checkov` или `tfsec`.
+*   **Система контроля версий:** Git-репозиторий для хранения манифестов.
+*   **Среда выполнения:** Локальная или тестовая инфраструктура для проверки изменений перед применением в production.
+
+### Безопасность
+*   **Принцип наименьших привилегий:** Учетная запись, от которой запускается IaC-пайплайн, должна иметь минимально необходимые права.
+*   **Хранение секретов:** Настроен менеджер секретов (HashiCorp Vault, SOPS) или защищенные переменные окружения CI/CD.
+*   **Аудит:** Включено логирование всех применений инфраструктурных изменений.
+
 ## Определения
 
 **Инфраструктура как код (Infrastructure as Code, IaC)** — это методология управления и подготовки вычислительной инфраструктуры через машинно-читаемые файлы определений. Вместо ручной настройки серверов или использования интерактивных консолей облачных провайдеров, инженеры описывают желаемое состояние системы в коде.
@@ -25,7 +45,7 @@ IaC переносит лучшие практики разработки ПО �
 | Характеристика | Декларативный (IaC-стандарт) | Императивный (Скриптовый) |
 | :--- | :--- | :--- |
 | **Фокус** | Конечное состояние (Цель) | Процесс (Шаги) |
-| **Пример** | Terraform: `resource "instance" { count = 5 }` | Bash: `aws ec2 run-instances --count 5 ...` |
+| **Пример** | Terraform: `resource "instance" { count = 5 }` | Bash: `for i in $(seq 1 5); do create_vm ...; done` |
 | **Управление состоянием** | Инструмент отслеживает созданные ресурсы | Инженер должен сам проверять наличие ресурсов |
 | **Масштабируемость** | Изменение `count` на 10 добавит 5 новых | Скрипт может упасть или создать лишние 10 |
 | **Надежность** | Встроенная обработка зависимостей и ошибок | Требует сложной логики `if/else` в коде |
@@ -41,10 +61,8 @@ IaC переносит лучшие практики разработки ПО �
 2.  **Configuration Management (CM):**
     *   **Ansible:** Лидер в настройке ОС и приложений. Stateless-подход и отсутствие агентов делают его стандартом для пост-провижининга.
     *   **SaltStack:** Выбор для высокомасштабируемых сред благодаря событийной модели управления.
-3.  **Cloud Control Planes:**
-    *   **Crossplane:** Расширяет Kubernetes API для управления внешними облачными ресурсами (RDS, S3, VPC). Позволяет реализовать полноценный **GitOps для инфраструктуры**.
-4.  **Cloud-Specific:**
-    *   AWS CloudFormation / CDK, Azure Bicep, Google Cloud Deployment Manager. Используются в моновендорных проектах для максимальной поддержки новых фич провайдера
+3.  **Control Planes для инфраструктуры:**
+    *   **Crossplane:** Позволяет управлять внешними инфраструктурными ресурсами через декларативные манифесты. Реализует **GitOps для инфраструктуры**.
     
 ### Таксономия подходов IaC
 
@@ -72,7 +90,7 @@ IaC переносит лучшие практики разработки ПО �
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Terraform** | HCL | Stateless (remote state) | ✅ | ❌ | Создание инфраструктуры (VM, сети, DB) | Только infrastructure, не software |
 | **OpenTofu** | HCL | Stateless (remote state) | ✅ | ❌ | Open-source форк Terraform (MPL) | Меньше провайдеров, чем Terraform |
-| **Pulumi** | TS/Python/Go | Stateless (Pulumi Cloud) | ✅ | ❌ | IaC на языках общего назначения | Сложнее HCL, vendor-lock (Pulumi Cloud) |
+| **Pulumi** | TS/Python/Go | Stateless | ✅ | ❌ | IaC на языках общего назначения | Сложнее HCL, vendor-lock |
 | **Ansible** | YAML | Stateless (fact gathering) | Частично | ✅ | Настройка ОС, деплой, оркестрация | Медленнее SaltStack, limited state |
 | **SaltStack** | YAML/Jinja | Stateful (Master-Minion) | Частично | ✅ | Высокомасштабируемые среды (10K+ хостов) | Сложная архитектура, зависимость от Master |
 | **Puppet** | DSL (Puppet) | Stateful (agent + catalog) | ❌ | ✅ | Compliance, стандартные профили | Кривая обучения, сложный DSL |
@@ -93,17 +111,17 @@ IaC переносит лучшие практики разработки ПО �
 2.  **Статический анализ (Linting/Security):**
     *   `tflint`: поиск логических ошибок и неоптимальных конструкций.
     *   `checkov` / `tfsec`: сканирование на уязвимости (например, открытый 22 порт на весь мир).
-    *   `infracost`: оценка стоимости ресурсов до их создания.
+    *   `kics`: сканирование инфраструктурного кода на соответствие политикам безопасности.
 3.  **Plan (Dry Run):** Генерация плана изменений. Инструмент показывает, что будет создано, изменено или удалено.
 4.  **Approval (Code Review):** Ревью кода и плана изменений.
 5.  **Apply (Deployment):** Применение изменений через CI-раннеры с использованием временных учетных данных (например, OIDC).
-6.  **Drift Detection:** Периодический запуск `plan` в фоне. Если реальное состояние облака отличается от кода, генерируется алерт или запускается авто-исправление.
+6.  **Drift Detection:** Периодический запуск `plan` в фоне. Если реальное состояние инфраструктуры отличается от кода, генерируется алерт или запускается авто-исправление.
 
 ### Управление состоянием (State Management)
 
 Состояние (`tfstate`) — самый критичный компонент IaC.
-*   **Remote Backends:** Хранение состояния в защищенных хранилищах (S3, GCS, Terraform Cloud) с обязательным шифрованием.
-*   **State Locking:** Блокировка состояния при выполнении изменений (через DynamoDB или аналоги), чтобы предотвратить коллизии при одновременной работе нескольких инженеров.
+*   **Remote Backends:** Хранение состояния в защищенных хранилищах (объектное хранилище, специализированные сервисы) с обязательным шифрованием.
+*   **State Locking:** Блокировка состояния при выполнении изменений через специализированные сервисы блокировок, чтобы предотвратить коллизии при одновременной работе нескольких инженеров.
 *   **State Separation:** Разделение состояния на слои (Layers) по окружениям или компонентам системы. Изменение в тестовой сети не должно иметь доступа к состоянию продакшена.
 
 ### Неизменяемая инфраструктура (Immutable Infrastructure)
@@ -122,17 +140,17 @@ IaC позволяет реализовать паттерн, при котор�
 #### Стратегии управления секретами
 | Стратегия | Описание | Инструменты | Когда использовать |
 | :--- | :--- | :--- | :--- |
-| **External Secrets Manager** | Секреты хранятся во внешнем менеджере (Vault), IaC подтягивает при apply | HashiCorp Vault, AWS Secrets Manager, CyberArk | Enterprise-среды, compliance-требования |
+| **External Secrets Manager** | Секреты хранятся во внешнем менеджере (Vault), IaC подтягивает при apply | HashiCorp Vault, SOPS, GPG-зашифрованные файлы | Enterprise-среды, compliance-требования |
 | **Encrypted Files** | Секреты зашифрованы в Git, расшифровываются при apply | SOPS (Mozilla), Age, GPG | Небольшие команды, Git-ориентированный workflow |
-| **Environment Variables** | Секреты передаются через env-переменные CI/CD-раннера | GitLab CI/CD variables, GitHub Secrets | Простые пайплайны, Dev/Staging |
-| **Agent-based Injection** | Агент инжектирует секреты в контейнер/процесс при запуске | Vault Agent, ESO (External Secrets Operator) | Kubernetes, microservices |
+| **Environment Variables** | Секреты передаются через env-переменные CI/CD-раннера | CI/CD-переменные (GitLab CI/CD, GitHub Actions, Jenkins) | Простые пайплайны, Dev/Staging |
+| **Agent-based Injection** | Агент инжектирует секреты в контейнер/процесс при запуске | Vault Agent, внешние операторы секретов | Контейнерные среды, production |
 
 #### Практические рекомендации
-*   **Избегайте секретов в `terraform.tfstate`:** Используйте `sensitive = true` в ресурсах, шифрование state-файла (S3 + KMS), или Vault-backed state.
-*   **Ротация секретов:** Настройте автоматическую ротацию секретов через Vault/Secrets Manager. IaC-код должен читать актуальные секреты при каждом apply.
+*   **Избегайте секретов в `terraform.tfstate`:** Используйте `sensitive = true` в ресурсах, шифрование state-файла в remote backend, или внешний менеджер секретов.
+*   **Ротация секретов:** Настройте автоматическую ротацию секретов через Vault или аналоги. IaC-код должен читать актуальные секреты при каждом apply.
 *   **Audit-логирование:** Все обращения к секретам должны логироваться (кто, когда, какой секрет запросил).
 *   **Least Privilege:** Каждый IaC-пайплайн должен иметь доступ только к тем секретам, которые ему необходимы.
-*   **State Lock при командной работе:** Если несколько инженеров работают с одним Terraform-проектом, state lock через DynamoDB/исторический бэкенд предотвращает одновременный `apply`. Ручное изменение ресурса в консоли облака одним инженером, пока другой выполняет `terraform apply`, приводит к конфликту: Terraform перезаписывает изменение или падает с ошибкой. Решение: запретить ручные изменения или интегрировать их через `terraform import` после согласования.
+*   **State Lock при командной работе:** Если несколько инженеров работают с одним Terraform-проектом, state lock через механизм блокировок предотвращает одновременный `apply`. Ручное изменение ресурса одним инженером, пока другой выполняет `terraform apply`, приводит к конфликту: Terraform перезаписывает изменение или падает с ошибкой. Решение: запретить ручные изменения или интегрировать их через `terraform import` после согласования.
 
 ### Security в IaC (Policy as Code)
 
@@ -168,7 +186,7 @@ IaC позволяет реализовать паттерн, при котор�
 #### Цикл управления drift
 1. **Обнаружение (Detection):**
    - Регулярный запуск `terraform plan` / `ansible --check` / `salt '*' state.show_highstate`
-   - Инструменты: **driftctl** (сканирование разницы между IaC-кодом и реальностью), **Wazuh** (HIDS + compliance), **OpenSCAP** (standard compliance)
+   - Инструменты: **OpenSCAP** (standard compliance), встроенные механизмы drift detection в IaC-инструментах
    - Алертинг при обнаружении расхождений (Email, Slack, PagerDuty)
 
 2. **Исправление (Remediation):**
@@ -187,19 +205,259 @@ IaC позволяет реализовать паттерн, при котор�
 | **Terraform/OpenTofu** | `terraform plan` | Показывает, что будет изменено (Create/Update/Destroy) |
 | **Ansible** | `ansible-playbook --check` (dry-run) | Показывает, какие задачи будут выполнены |
 | **SaltStack** | `salt '*' state.show_highstate` | Показывает текущее состояние vs desired state |
-| **driftctl** | `driftctl scan` | Сканирует облако и сравнивает с IaC-состоянием |
+| **OpenSCAP** | `oscap xccdf eval` | Проверяет соответствие инфраструктуры политикам безопасности |
+
+## Операции и команды
+
+### Terraform / OpenTofu
+
+```hcl
+# main.tf — пример ресурса
+resource "local_file" "example" {
+  content  = "Hello from Terraform"
+  filename = "${path.module}/example.txt"
+}
+```
+
+```bash
+# Инициализация модулей и провайдеров
+terraform init
+
+# Форматирование кода
+terraform fmt -recursive
+
+# Валидация синтаксиса
+terraform validate
+
+# Просмотр плана изменений
+terraform plan -out=tfplan
+
+# Применение изменений
+terraform apply tfplan
+
+# Импорт существующего ресурса в state
+terraform import local_file.example /tmp/existing_file.txt
+
+# Удаление ресурсов
+terraform destroy
+```
+
+### OpenTofu (совместимый форк Terraform)
+
+```bash
+# Инициализация
+tofu init
+
+# План и применение
+tofu plan
+tofu apply
+```
+
+### Ansible
+
+```yaml
+# playbook.yml — пример плейбука
+- name: Настройка веб-серверов
+  hosts: webservers
+  become: yes
+  tasks:
+    - name: Установка Nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: yes
+
+    - name: Копирование конфигурации
+      ansible.builtin.template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+      notify: restart nginx
+
+  handlers:
+    - name: restart nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+```
+
+```bash
+# Проверка синтаксиса
+ansible-playbook playbook.yml --syntax-check
+
+# Dry-run (check mode)
+ansible-playbook playbook.yml --check --diff
+
+# Применение
+ansible-playbook playbook.yml
+
+# Ad-hoc команда
+ansible webservers -m ping
+```
+
+### SaltStack
+
+```yaml
+# /srv/salt/nginx/init.sls — пример state-файла
+install_nginx:
+  pkg.installed:
+    - name: nginx
+
+configure_nginx:
+  file.managed:
+    - name: /etc/nginx/nginx.conf
+    - source: salt://nginx/nginx.conf
+    - require:
+      - pkg: nginx
+    - watch_in:
+      - service: nginx
+
+nginx_service:
+  service.running:
+    - name: nginx
+    - enable: True
+    - watch:
+      - file: /etc/nginx/nginx.conf
+```
+
+```bash
+# Применение состояния
+salt 'web01' state.apply nginx
+
+# Проверка без применения (dry-run)
+salt 'web01' state.apply nginx test=True
+
+# Применение на группе хостов
+salt -C 'G@role:web' state.apply
+```
+
+### Puppet
+
+```puppet
+# manifests/webserver.pp — пример манифеста
+class webserver {
+  package { 'nginx':
+    ensure => installed,
+  }
+
+  file { '/etc/nginx/nginx.conf':
+    ensure  => file,
+    source  => 'puppet:///modules/webserver/nginx.conf',
+    require => Package['nginx'],
+    notify  => Service['nginx'],
+  }
+
+  service { 'nginx':
+    ensure    => running,
+    enable    => true,
+    subscribe => File['/etc/nginx/nginx.conf'],
+  }
+}
+
+# Подключение класса
+node 'web01' {
+  include webserver
+}
+```
+
+```bash
+# Валидация синтаксиса
+puppet parser validate manifests/webserver.pp
+
+# Применение локально
+sudo puppet apply manifests/webserver.pp
+
+# Запуск агента
+sudo puppet agent --test
+```
+
+### Chef
+
+```ruby
+# recipes/webserver.rb — пример рецепта
+package 'nginx' do
+  action :install
+end
+
+template '/etc/nginx/nginx.conf' do
+  source 'nginx.conf.erb'
+  variables(worker_processes: node['nginx']['worker_processes'])
+  notifies :restart, 'service[nginx]', :immediately
+end
+
+service 'nginx' do
+  action [:enable, :start]
+end
+```
+
+```bash
+# Запуск в локальном режиме
+sudo chef-client -z -o recipe[webserver]
+
+# Валидация cookbook
+chef exec cookstyle cookbooks/
+```
+
+### Валидация и тестирование
+
+```bash
+# Terraform
+terraform fmt -recursive
+terraform validate
+tflint
+
+# Ansible
+ansible-lint playbook.yml
+yamllint playbook.yml
+
+# SaltStack
+salt-lint *.sls
+
+# Puppet
+puppet-lint manifests/
+
+# Chef
+cookstyle cookbooks/
+```
 
 ## Рекомендации и лучшие практики
 
 1.  **Модульность:** Выносите типовые конструкции (настройка VPC, создание RDS) в переиспользуемые модули. Структура: `modules/<resource>/main.tf`, `modules/<resource>/variables.tf`, `modules/<resource>/outputs.tf`.
 2.  **Читаемость кода как договор:** инфраструктурный код — это договор между людьми. Если модуль или конфигурацию нельзя прочитать за 5 минут и понять, что она делает, — это прямой красный флаг. В первый же инцидент ночью вы не поймёте, что там надо чинить.
-3.  **Тегирование:** Внедряйте строгую политику тегов (`Environment`, `Owner`, `CostCenter`, `Project`) через IaC. Это критично для FinOps и мониторинга. Проверяйте теги через policy-as-code (checkov).
+3.  **Тегирование:** Внедряйте строгую политику тегов (`Environment`, `Owner`, `Project`, `Role`) через IaC. Это критично для стоимости, мониторинга и разграничения ответственности. Проверяйте теги через policy-as-code (checkov, tflint).
 4.  **Least Privilege:** CI/CD пайплайны должны иметь минимально необходимые права для создания конкретных ресурсов. Используйте OIDC для временных credentials.
 5.  **Избегайте секретов в коде:** Используйте HashiCorp Vault, SOPS/Age, или внешние менеджеры секретов. Никогда не коммитьте пароли, API keys, токены.
 6.  **Version Pinning:** Всегда фиксируйте версии провайдеров и модулей (`required_version`, `terraform.lock.hcl`). Используйте `terraform init -upgrade` для обновления.
 7.  **Тестирование:** Используйте Terratest (Go) для интеграционных тестов и Molecule для Ansible-ролей. Запускайте `terraform plan` в CI до merge в main.
 8.  **Drift Detection:** Настраивайте регулярный запуск `terraform plan` в фоне. Алерт при обнаружении расхождений между кодом и реальностью.
 9.  **Минимализм в коде:** Избегайте хардкода значений. Используйте переменные, data-блоки, и computed values. Не создавайте ресурсы, которые не используются.
+10. **Изоляция окружений:** Используйте отдельные state-файлы, workspace или директории для dev/stage/prod. Изменения в тестовой среде не должны затрагивать production.
+11. **Семантическое именование:** Ресурсы и модули должны называться по функциональному назначению (`nginx_reverse_proxy`, `postgresql_cluster`), а не по расположению (`server_01`).
+12. **Резервное копирование state:** Включите версионирование remote backend. Регулярно проверяйте возможность восстановления state-файла.
+13. **Открытие только необходимых портов:** Используйте security groups, firewall rules, политики доступа. Избегайте открытых портов 22/3389 в публичном доступе.
+14. **Шифрование данных:** Включайте шифрование для state-файлов, секретов и чувствительных данных. Используйте KMS или аналоги для управления ключами.
+15. **Change Management:** Для изменений в production (>100 узлов) используйте CAB/Change Advisory Board. Автоматизируйте предварительные проверки (lint, security scan) в CI/CD.
+16. **Observability:** Включайте метрики времени выполнения IaC-операций, успешности задач и drift-исправлений. Интегрируйте с Prometheus/Grafana.
+17. **Backup и Disaster Recovery:** Регулярно тестируйте восстановление IaC-кода и state-файлов. Документируйте процедуру восстановления.
+18. **Документация модулей:** Каждый модуль должен содержать `README.md` с описанием входных переменных, выходных данных и примером использования.
+
+## Границы и крайние случаи
+
+### Ограничения IaC
+*   **Не панацея для legacy:** IaC эффективен для нового deployments. Для уже работающих систем без документированной конфигурации требуется предварительный аудит и поэтапное внедрение.
+*   **Сложность state-файлов:** Terraform state становится единой точкой отказа. Требуется регулярное резервное копирование, блокировка при совместной работе и шифрование.
+*   **Масштабирование inventory:** При росте числа узлов (>5000) agent-based инструменты (SaltStack, Puppet) масштабируются лучше, чем agentless (Ansible через SSH).
+*   **Секреты в логировании:** Некоторые инструменты логируют переменные. Требуется настройка masking и использование `no_log` в задачах с секретами.
+
+### Типичные ошибки при внедрении
+*   **"Золотой молоток":** Выбор одного инструмента для всех задач. Terraform не заменит Ansible для конфигурации ОС, а Ansible не управляет жизненным циклом ресурсов так эффективно, как Terraform.
+*   **Отсутствие модульности:** Копипаст кода между окружениями (dev/stage/prod). Используйте модули, workspace или переменные.
+*   **Ручные изменения "на лету":** Прямой доступ к production-инфраструктуре для "быстрого фикса" приводит к drift. Используйте emergency change process с последующим обновлением IaC-кода.
+*   **Неактуальный state:** Удаление ресурсов вручную из облачной консоли без `terraform state rm` приводит к рассинхронизации.
+
+### Специальные сценарии
+*   **Гибридные окружения:** Управление частично on-premise, частично виртуализированной инфраструктурой требует унифицированных провайдеров (например, Proxmox, libvirt, VMware).
+*   **Собственная инфраструктура (Bare Metal):** Автоматизация через IPMI, iDRAC, iLO требует кастомных провайдеров или оберток над API.
+*   **Мульти-тенантные окружения:** Разделение state по командам/проектам, изоляция workspace, единый контроль доступа к репозиториям.
 
 ## Диагностика и типичные проблемы
 
@@ -211,15 +469,30 @@ IaC позволяет реализовать паттерн, при котор�
 | `Ansible: UNREACHABLE!` | Нет доступа к хосту (SSH, WinRM, firewall) | Проверить SSH-ключи, security groups, порты, `ansible -m ping` |
 | `Ansible: FAILED` | Задача не идемпотентна (command/shell без `creates`) | Добавить `creates:`, `removes:`, или переписать на модуль |
 | `Ansible: неизвестный хост` | Inventory не содержит нужный хост или hostname неправильный | Проверить inventory, `ansible-inventory --list`, dynamic inventory |
-| `Terraform: drift detected` | Ручные изменения в облаке (Manual Drift) | Обновить IaC-код и применить, или откатить ручные изменения |
+| `Terraform: drift detected` | Ручные изменения в инфраструктуре (Manual Drift) | Обновить IaC-код и применить, или откатить ручные изменения |
 | `SaltStack: minion not responding` | Минион не запущен, потеряна связь с Master | Проверить сервис `salt-minion`, конфигурацию Master, firewall |
 | `Puppet: catalogs compilation failed` | Ошибка в манифесте (syntax error, missing class) | `puppet parser validate <file>`, проверить module path |
-| `State file corrupted` | Повреждён `terraform.tfstate` или `*.tfstate.backup` | Восстановить из remote backend (S3 versioning) или backup |
+| `State file corrupted` | Повреждён `terraform.tfstate` или `*.tfstate.backup` | Восстановить из remote backend с бэкапом или резервной копией |
 | `Circular dependency` | Ресурсы ссылаются друг на друга | Переструктурировать зависимости; использовать `depends_on` осознанно |
 | `Provider version conflict` | Модуль требует другую версию провайдера | Обновить version constraints в `required_providers` |
+| `Error: backend initialization required` | Backend не инициализирован или изменен конфиг | `terraform init -reconfigure` для переинициализации бэкенда |
+| `Error: Cycle in graph` | Циклическая зависимость между ресурсами | Разорвать цикл через `depends_on` или пересмотреть архитектуру модулей |
+| `Ansible: task failed on multiple hosts` | Одинаковая ошибка на группе узлов | Проверить connectivity, факты хостов, доступность пакетов |
+| `Permission denied (publickey)` | SSH-ключ не подошел или отсутствует доступ | Проверить `ansible_ssh_private_key_file`, права на ключ, `ssh-agent` |
+| `SaltStack: job not returned` | Минион перегружен или потерял соединение | Проверить нагрузку на минионе, размер возвращаемых данных, `timeout` |
+| `Puppet: Could not request certificate` | Агент не может получить сертификат от Master | Проверить DNS/CN агента, статус CA, firewall на 8140 порту |
+| `Error: Forbidden/Unauthorized` | Учетные данные не имеют достаточных прав | Проверить права учетной записи, токен доступа, роль в CI/CD |
+| `Resource already exists` | Ресурс создан вручную и конфликтует с IaC | Импортировать ресурс в state (`terraform import`) или удалить вручную и применить |
+| `Plan differs after apply` | `apply` не достиг desired state из-за внешних изменений | Перезапустить `plan`, найти внешний фактор, обновить IaC-код |
+| `Lock timeout exceeded` | Другой инженер удерживает state lock долго | Связаться с коллегой или принудительно снять lock через `force-unlock` после подтверждения |
 
 ## Дополнительная информация
 
 ### См. также
 *   **[Модели управления конфигурацией](./configuration_management_models.md)** — Push/Pull, Declarative/Imperative, Mutable/Immutable.
+*   **[Инструменты управления конфигурацией](./configuration_management_tools.md)** — сравнение Ansible, Puppet, Chef, SaltStack, CFEngine.
+*   **[Сравнение Push и Pull моделей](./configuration_management_push_vs_pull.md)** — детальное сравнение архитектур.
+*   **[Идемпотентность](./idempotency.md)** — фундаментальное свойство IaC.
 *   **[GitOps: Обзор](../GitOps/GitOps_overview.md)** — управление инфраструктурой через Git-операторы.
+*   **[DevOps: Обзор](../Concepts/devops_overview.md)** — место IaC в методологии DevOps.
+*   **[Выбор стека DevOps](../Concepts/devops_stack_selection.md)** — методология выбора инструментов для инфраструктуры.

@@ -147,6 +147,8 @@ rm -rf /tmp/ci-restore-test
 
 ### Сценарий 4: Автоматический бэкап GitLab (self-hosted)
 
+> **Примечание:** Данный сценарий содержит краткие команды для бэкапа GitLab. Для систематического описания управления инстансом, восстановления, обновления и hardening используйте **[Управление инстансом GitLab](../../GitLab_CI/Advanced/gitlab_instance_administration.md)**.
+
 ```bash
 # 1. Создание бэкапа (включает БД, репозитории, артефакты, секреты)
 docker exec gitlab gitlab-backup create CRON=1

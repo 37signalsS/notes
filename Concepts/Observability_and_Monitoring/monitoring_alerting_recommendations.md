@@ -1,5 +1,7 @@
 # Рекомендации по мониторингу и алертингу
 
+**Актуально для:** Prometheus 3.13.x (LTS) / 3.14.x, Alertmanager 0.34.x, Zabbix 7.0 LTS / 7.4, VictoriaMetrics 1.52.x, node_exporter 1.12.x, blackbox_exporter 0.28.x
+
 ## Определения
 
 **Алерт (Alert)** -- уведомление о событии, требующем внимания оператора, генерируемое системой мониторинга при выполнении заданных условий.
@@ -267,6 +269,102 @@ tests:
               job: api
 ```
 
+### Сценарий 6: Алертинг на статической инфраструктуре (SNMP, СХД, Windows)
+
+Для систем без Prometheus-экспортёров используйте SNMP-опрос, Zabbix Agent или windows_exporter:
+
+| Компонент | Метод сбора | Пример алерта |
+| :--- | :--- | :--- |
+| **Сетевое оборудование** | SNMP (snmp_exporter) | `ifOperStatus != 1` -- интерфейс отключен |
+| **СХД / SAN** | SNMP (snmp_exporter) | `diskStatus != 0` -- деградация массива |
+| **Windows Server** | windows_exporter | `os_memory_free_bytes < 10%` -- низкая память |
+| **UPS / ИБП** | SNMP (snmp_exporter) | `upsBatteryCharge < 20` -- замена батареи |
+| **Температура в ЦОД** | SNMP (snmp_exporter) | `envTemperature > 35` -- перегрев |
+
+**Zabbix-альтернатива для статической инфраструктуры:**
+Вместо Prometheus + Alertmanager используйте Triggers + Actions в Zabbix для инфраструктуры, где SNMP-опрос устоен лучше, чем HTTP-экспортёры. Zabbix автоматически обнаруживает интерфейсы и OID через Low-Level Discovery (LLD), что снижает ручной труд при добавлении нового оборудования.
+
+**Пример SNMP-алерта через snmp_exporter + Prometheus:**
+
+```yaml
+groups:
+  - name: infrastructure_alerts
+    rules:
+      - alert: NetworkInterfaceDown
+        expr: snmp_ifOperStatus{device="switch01", ifOperStatus="1"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Интерфейс {{ $labels.ifDescr }} на {{ $labels.device }} отключен"
+          runbook_url: "https://docs.internal/runbooks/network-interface-down"
+
+      - alert: StorageArrayDegraded
+        expr: snmp_diskStatus{device="san01"} != 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "СХД {{ $labels.device }} в деградированном состоянии"
+          runbook_url: "https://docs.internal/runbooks/storage-degraded"
+```
+
+### Сценарий 7: Алертинг в air-gapped сети (без доступа в интернет)
+
+В изолированных сегментах (без интернета) необходимо:
+
+1. **Self-hosted коммуникации:** Вместо SaaS-сервисов (PagerDuty, Opsgenie) используйте self-hosted решения:
+   - **Grafana OnCall** (self-hosted) -- эскалации, ротации, расписание дежурств
+   - **GoAlert** -- open-source альтернатива с веб-интерфейсом и API
+   - **Healthchecks.io** (self-hosted) -- Dead Man's Switch для внешнего watchdog
+   - **Mattermost / Rocket.Chat** (self-hosted) -- замена Slack с webhook-интеграцией
+
+2. **Локальный DNS и хранилище образов:** Harbor (Docker Registry) + внутренний DNS для всех компонентов мониторинга.
+
+3. **Alertmanager без внешних провайдеров:** Используйте email через внутренний SMTP-сервис или webhook на внутренний Mattermost/Zulip.
+
+4. **Watchdog через внутреннюю инфраструктуру:**
+   - Второй Prometheus в смежной зоне, опрашивающий первый
+   - Внешний watchdog на dedicated-хосте с доступом к обоим сегментам
+
+**Пример Alertmanager без интернета:**
+
+```yaml
+global:
+  smtp_smarthost: 'mail.internal.example.com:25'
+  smtp_from: 'alertmanager@internal.example.com'
+
+receivers:
+  - name: 'team-oncall-email'
+    email_configs:
+      - to: 'oncall@internal.example.com'
+        send_resolved: true
+
+  - name: 'mattermost-webhook'
+    webhook_configs:
+      - url: 'http://mattermost.internal.example.com/hooks/alertmanager'
+        send_resolved: true
+
+  - name: 'watchdog-internal'
+    webhook_configs:
+      - url: 'http://watchdog.internal.example.com/ping/uuid-here'
+        send_resolved: true
+
+route:
+  receiver: 'team-oncall-email'
+  group_by: ['alertname', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - match:
+        severity: critical
+      receiver: 'mattermost-webhook'
+    - match:
+        meta_target: watchdog
+      receiver: 'watchdog-internal'
+```
+
 ---
 
 ## Обнаружение аномалий (Anomaly Detection)
@@ -342,10 +440,11 @@ deriv(metric[6h]) > 0 and predict_linear(metric[1h], 3600) > threshold
 3. Трейсы: [Explore](https://grafana.internal/explore?query={service="{{ $labels.job }}", status="error"})
 
 ## Алгоритм действий
-1. Проверить: `kubectl get pods -l app={{ $labels.job }}`
-2. Проверить логи: `kubectl logs -l app={{ $labels.job }} --tail=100`
-3. Проверить зависимости: база данных, внешние API.
-4. Если проблема после деплоя -- откат: `kubectl rollout undo deployment/{{ $labels.job }}`
+1. Проверить статус сервиса: `systemctl status <service>` или `docker ps` / `podman ps`
+2. Проверить логи: `journalctl -u <service> --since "10 minutes ago"` или `docker logs <container> --tail=100`
+3. Проверить ресурсы: `top`, `htop`, `free -h`, `df -h`, `iostat`
+4. Проверить недавние изменения: `git log --oneline -10` в репозитории конфигураций, историю деплоев
+5. Если проблема после деплоя -- откат: переключение на предыдущую версию через ваш деплойный инструмент (Ansible, deploy script, CI/CD revert)
 
 ## Контакты
 - Владелец сервиса: @team-{{ $labels.job }}
@@ -458,17 +557,86 @@ groups:
 
 ---
 
-## Дополнительная информация
+## Best Practices
+
+### Принципы проектирования алертинга
+
+1. **Алерты на симптомы, а не на причины:** Пользователь не чувствует `CPU > 90%`. Он чувствует `Latency P99 > 2s` и `Error Rate > 1%`. Симптоматические алерты стабильнее, потому что причины меняются (миграция, обновление железа), а симптомы -- нет.
+2. **Каждый алерт требует действия (Actionability):** Если на уведомление нельзя отреагировать конкретным действием -- это не алерт, а дашборд. У каждого алерта должен быть `runbook_url`.
+3. **Один алерт -- одна проблема:** Разделяйте алерты по компонентам и Severity. Не объединяйте «память заполнена на 80%» и «память заполнена на 95%» в один алерт -- это разные действия.
+4. **Используйте Severity как маршрутизацию:** Critical (звонок), Warning (Slack/Ticket), Info (лог). Не больше 3-4 уровней -- иначе дежурный путается.
+
+### Безопасность алертинга
+
+- **Защита Alertmanager API:** Включите базовую аутентификацию или TLS. Ограничьте доступ к порту 9093 только сетью мониторинга.
+- **Защита вебхуков:** Alertmanager webhook receiver может стать вектором атаки (SSRF). Используйте whitelist URL, ограничьте исходящие соединения firewall.
+- **Секреты в конфигурациях:** Токены PagerDuty, Slack, Telegram храните в Vault или environment variables, а не в plaintext в `alertmanager.yml`.
+- **Аудит изменений:** Все изменения правил алертинга проходят через Git + CI/CD. Логируйте все изменения в Alertmanager silences.
+
+### Производительность и масштабируемость
+
+- **Recording Rules для тяжелых запросов:** `histogram_quantile(rate(...[5m]))` на лету в алерте -- это нагрузка на Prometheus. Предвычисляйте через recording rules.
+- **Группировка для снижения шума:** `group_by: ['alertname', 'service', 'cluster']` вместо `group_by: ['instance', 'pod']`. Высокая кардинальность в `group_by` создает тысячи групп при массовом отказе.
+- **Интервалы повторения:** `repeat_interval: 4h` для нерешенных алертов. Чаще повторения не нужно -- дежурный и так видит алерт.
+- **Ограничение размера алерта:** В annotation не передавайте большие объемы данных. Если нужно -- ссылка на дашборд или runbook.
+
+### Эксплуатационная поддержка
+
+- **Runbook для каждого алерта SEV1/SEV2:** Без runbook алерт не сокращает MTTR, а лишь переносит нагрузку на дежурного. Шаблон: симптомы, диагностика, алгоритм действий, контакты.
+- **Мета-мониторинг алертинга:** Мониторьте `alertmanager_notifications_failed_total`, `alertmanager_silences_active`, `prometheus_rule_group_last_duration_seconds`. Без этого «тихий» сбой доставки останется незамеченным.
+- **Ежеквартальный аудит алертов:** Удаляйте неиспользуемые алерты, обновляйте пороги, проверяйте актуальность runbook. Alert budget: не более 5-10 страниц в смену на одного дежурного.
+- **Тестирование алертинга:** `promtool check rules` в CI, `promtool test rules` на исторических данных, ручные тесты раз в квартал.
+
+---
+
+## Ограничения и крайние случаи
+
+### Ограничения Pull-модели
+
+- **Зависший target:** Если экспортёр зависает и не отвечает на scrape, Prometheus ждет `scrape_timeout`, после чего помечает target как `down`. При массовом зависании пул воркеров может быть заблокирован ожиданием. **Решение:** устанавливайте `scrape_timeout` явно (менее `scrape_interval`).
+- **Фаерволы и NAT:** Pull-модель требует, чтобы Prometheus мог доставить запрос до каждого экспортёра. В сегментированных сетях (different VLAN, DMZ) нужен VPN-туннель или промежуточный шлюз.
+- **Кратковременные задачи:** Для jobs, которые живут меньше интервала сбора (cron-задачи, batch-обработка), pull-модель не подходит. Используйте Push через Pushgateway или OpenTelemetry Collector.
+
+### Ограничения Push-модели
+
+- **Overwhelming the server:** Источники могут отправить больше данных, чем сервер может обработать. Нет естественного ограничения темпа.
+- **Heartbeat vs data:** Push-агент может отправлять пустые heartbeat, когда реальных данных нет. Это скрывает проблемы.
+- **Сетевая стабильность:** При потере соединения данные буферизуются на агенте. Если буфер переполняется -- данные теряются. Требуется механизм persist-and-forward.
+
+### Ограничения Alertmanager
+
+- **Один источник истины на кластер:** Alertmanager HA-кластер работает по протоколу consensus. При потере quorum (меньше 50% + 1) кластер перестает группировать и доставлять алерты.
+- **Масштабирование:** Один Alertmanager обрабатывает до ~10k алертов/сек. При превышении нужен внешний шардинг или использование Alertmanager cluster.
+- **Cardinality в group_by:** Группировка по высококардинальным лейблам (`pod`, `instance`, `trace_id`) создает тысячи групп при массовом отказе, что приводит к OOM.
+
+### Legacy-системы и ограниченные ресурсы
+
+- **Старые ОС без systemd:** На Solaris, AIX, HP-UX `systemctl` отсутствует. Используйте legacy init-скрипты или crontab для управления службами.
+- **Микроконтроллеры и IoT:** Устройства с ограниченным CPU/RAM не могут запустить полный Prometheus-экспортёр. Используйте lightweight-агенты (Telegraf, collectd) или отправку метрик через MQTT/HTTP.
+- **Старые версии Prometheus:** Prometheus < 2.40 не поддерживает Native Histograms. На старых кластерах используйте Summary или классические гистограммы с фиксированными bucket.
+- **Ограничения хранилища:** На системах с малым диском (embedded, IoT) используйте короткий retention (7-14 дней) + удалённое хранилище (VictoriaMetrics, Mimir) для долгосрочного хранения.
+
+### Ограничения Zabbix-модели алертинга
+
+- **Масштабирование триггеров:** При >100k триггеров Zabbix Server становится bottleneck. Используйте Zabbix Proxy для распределенной обработки.
+- **Сложность зависимостей:** В Zabbix нет встроенного механизма Inhibition как в Alertmanager. Подавление вторичных алертов реализуется через Linked Triggers, что менее гибко.
+- **Отсутствие native histogram:** Zabbix хранит метрики как float/delta, без поддержки перцентилей на уровне хранилища. Для P95/P99 требуются предварительные вычисления или внешние инструменты.
+
+---
 
 ### Связанные темы
 
 - **[Методологии мониторинга](./monitoring_methodologies.md)** -- RED, USE, Golden Signals.
-- **[Алерты для Kubernetes в Grafana](../../Grafana/alerting/kubernetes_alerts.md)** -- примеры готовых правил.
 - **[Prometheus Alertmanager](../../Prometheus/alertmanager.md)** -- архитектура обработки алертов.
 - **[Prometheus Rules](../../Prometheus/rules.md)** -- recording и alerting rules.
 - **[SRE: SLO, SLI и бюджет ошибок](../sre_concepts_main.md)** -- математика надежности.
 - **[Meta-Monitoring](./meta-monitoring.md)** -- мониторинг системы мониторинга.
+- **[Zabbix: определения и концепции](../../Zabbix/definitions_and_concepts.md)** -- альтернативная модель алертинга для статической инфраструктуры.
 - **[Лучшие практики Grafana Alerting](../../Grafana/alerting/best_practices.md)** -- рекомендации для Grafana Unified Alerting.
+- **[Управление инцидентами](./incident_management.md)** -- жизненный цикл инцидента, severity taxonomy, коммуникация.
+- **[Детекция аномалий](./anomaly_detection.md)** -- статистические и ML-методы, динамические пороги.
+- **[Зрелость сервиса и готовность к production](./service_maturity_production_readiness.md)** -- production readiness checklist.
+- **[Наблюдаемость баз данных](./database_observability.md)** -- метрики, алерты, диагностика для PostgreSQL и MySQL.
 
 ### Ресурсы
 

@@ -1,5 +1,7 @@
 # Модели доставки конфигурации: Push против Pull — Сравнение
 
+**Актуально для:** Configuration Management Delivery Models — обзор 2026 года
+
 ## Определения
 
 **Модели доставки конфигурации** — это архитектурные паттерны, определяющие направление инициации соединения и поток управляющих данных между центральной системой управления конфигурацией (**Configuration Management, CM**) и целевыми узлами.
@@ -43,7 +45,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                  ЦЕНТРАЛЬНЫЙ КОНТРОЛЛЕР                      │
-│            (Control Node / CI-CD Ranrunner)                  │
+│            (Control Node / CI-CD Runner)                  │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
 │  │  ansible.cfg  │  │  inventory/  │  │  playbooks/  │      │
 │  └──────────────┘  └──────────────┘  └──────────────┘      │
@@ -439,7 +441,7 @@ ExecStart=/usr/bin/ansible-pull \
   -C stable \
   -d /opt/ansible \
   -i localhost, \
-  -e "device_type=kiosk region=eu-west" \
+   -e "device_type=kiosk region=eu-01" \
   -o \
   -s 120 \
   local.yml

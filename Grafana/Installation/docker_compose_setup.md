@@ -1,10 +1,12 @@
-# Настройка Grafana в Docker Compose — Modern Observability Stack
+# Настройка Grafana в Docker Compose
+
+**Актуально для:** Grafana 13.2.x / Prometheus 3.15.x / Grafana Alloy 1.20.x (Docker Compose CLI v2.20+ / v5, спецификация Compose)
 
 ## Определения
 
 **Grafana** — универсальная open-source платформа для аналитики, мониторинга и интерактивной визуализации данных телеметрии (метрик, логов, трассировок, профилей). Grafana не хранит собираемые данные, а выступает интерфейсом для внешних источников. По умолчанию работает на порту `3000` (протокол HTTP/HTTPS). Управление параметрами сервера осуществляется через файл `grafana.ini` или переменные окружения (формат `GF_<SECTION>_<KEY>`). См. [Обзор Grafana](../grafana_overview.md).
 
-**Docker Compose** — инструмент для декларативного описания и управления многоконтейнерными приложениями. В контексте мониторинга позволяет развернуть полный стек (Grafana + Prometheus + Alloy) одной командой. Актуальной является версия Compose Specification v5+ (плагин к Docker CLI), устаревшая утилита `docker-comply` (Python) признана EOL в 2025 году. Подробнее об основах: [Обзор Docker Compose](../../Docker/Docker_compose/docker_compose_overview.md).
+**Docker Compose** — инструмент для декларативного описания и управления многоконтейнерными приложениями. В контексте мониторинга позволяет развернуть полный стек (Grafana + Prometheus + Alloy) одной командой. Актуальными являются версии CLI Compose v2.20+/v5 (плагин к Docker CLI); устаревшая утилита `docker-compose` v1 (Python) признана EOL в июне 2023 года. Подробнее об основах: [Обзор Docker Compose](../../Docker/Docker_compose/docker_compose_overview.md).
 
 **Grafana Alloy** — универсальный агент для сбора метрик, логов, трейсов и профилей. В 2026 году является основным стандартом для сбора телеметрии, заменяя связку Promtail, Node Exporter и старые версии Grafana Agent. Alloy построен на базе OpenTelemetry Collector и использует декларативный язык конфигурации River. См. [Grafana Alloy: Обзор](../grafana_alloy_overview.md).
 
@@ -92,12 +94,13 @@ Grafana по умолчанию использует **SQLite** для хран�
 
 | Компонент | Образ | Версия | Статус |
 | :--- | :--- | :--- | :--- |
-| **Grafana** | `grafana/grafana` | 13.1.3 | Current (стабильная) |
-| **Prometheus** | `prom/prometheus` | 3.13.1 | Поддержка OTLP и Auto-tuning |
-| **Grafana Alloy** | `grafana/alloy` | 1.18.1 | Актуальный стандарт |
-| **Node Exporter** | `prom/node-exporter` | 1.12.1 | Метрики хоста (через Alloy) |
+| **Grafana** | `grafana/grafana` | 13.2.3 | Current (стабильная) |
+| **Prometheus** | `prom/prometheus` | 3.15.0 | Поддержка OTLP и Auto-tuning |
+| **Grafana Alloy** | `grafana/alloy` | 1.20.1 | Актуальный стандарт сбора телеметрии |
 
-Информация актуальна на **август 2026 года**.
+Отдельные экспортеры (Node Exporter, cAdvisor) в стек не включаются: их коллекторы встроены в Alloy (см. [Сценарий 4](#сценарий-4-конфигурация-grafana-alloy-configalloy)).
+
+Информация актуальна на **октябрь 2026 года**.
 
 ### Структура проекта
 
@@ -152,7 +155,7 @@ ALLOY_CLUSTER_ENABLED=false
 
 services:
   prometheus:
-    image: prom/prometheus:v3.13.1
+    image: prom/prometheus:v3.15.0
     container_name: monitoring-prometheus
     # Автоматический перезапуск при падении или перезагрузке хоста
     restart: unless-stopped
@@ -167,9 +170,14 @@ services:
       - '--web.enable-lifecycle'
       # Включаем прием OTLP напрямую (упрощает архитектуру)
       - '--web.enable-otlp-receiver'
-      # Автоматическая настройка лимитов памяти Go runtime (обязателен при deploy.limits)
+      # Включает Admin API (/api/v1/admin/*): снапшоты TSDB для резервного копирования.
+      # Расширяет атакованную поверхность (включая delete_series) — отключайте, если бэкапы
+      # снимаются иначе (см. Сценарий 9)
+      - '--web.enable-admin-api'
+      # Auto GOMEMLIMIT: в Prometheus v3 включён по умолчанию (ratio 0.9 от лимита контейнера).
+      # Флаг оставлен для наглядности — GOMEMLIMIT подстраивается под 2G из deploy.limits
       - '--auto-gomemlimit'
-      # Автоматическая настройка количества потоков Go
+      # Auto GOMAXPROCS: в v3 включён по умолчанию, потоки Go подстраиваются под CPU quota
       - '--auto-gomaxprocs'
     volumes:
       # Bind mount: конфигурация Prometheus (read-only для безопасности)
@@ -202,7 +210,7 @@ services:
           cpus: '1.0'
 
   alloy:
-    image: grafana/alloy:v1.18.1
+    image: grafana/alloy:v1.20.1
     container_name: monitoring-alloy
     # privileged требуется для доступа к cgroup и kernel-метрикам
     privileged: true
@@ -245,7 +253,7 @@ services:
           cpus: '0.5'
 
   grafana:
-    image: grafana/grafana:13.1.3
+    image: grafana/grafana:13.2.3
     container_name: monitoring-grafana
     # UID/GID 472 — стандартный пользователь Grafana в образе
     user: "472:472"
@@ -255,9 +263,11 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASS:-admin}
       # Отключаем самостоятельную регистрацию пользователей
       - GF_USERS_ALLOW_SIGN_UP=false
-      # Включаем интерполяцию переменных окружения в provisioning
+      # Каталог конфигураций провиженинга (путь по умолчанию в образе; задан явно для наглядности).
+      # Интерполяция ${VAR} в YAML-файлах провиженинга работает автоматически — отдельный флаг не требуется
       - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
-      # Включаем интерполяцию ${VAR} в YAML-файлах провиженинга
+      # Разрешает встраивание Grafana в iframe (например, дашборд внутри внешней системы).
+      # Ослабляет защиту от clickjacking — отключайте, если встраивание не требуется
       - GF_SECURITY_ALLOW_EMBEDDING=true
     volumes:
       # Named volume: база данных Grafana (дашборды, пользователи)
@@ -265,7 +275,7 @@ services:
       # Bind mount: конфигурации провиженинга (read-only)
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     ports:
-      # Единственный проброшенный порт стека
+      # Порт UI Grafana, проброшенный на хост для доступа пользователей
       - "3000:3000"
     depends_on:
       prometheus:
@@ -509,7 +519,7 @@ curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | {job:
 curl -s http://localhost:3000/api/health | jq .
 ```
 
-Ожидаемый вывод: `{"database": "ok", "version": "13.1.3"}`
+Ожидаемый вывод: `{"database": "ok", "version": "13.2.3"}`
 
 ```bash
 # Alloy Debug UI
@@ -525,7 +535,167 @@ curl -s http://localhost:12345/health | jq .
 3. Пароль: значение из `.env` (по умолчанию `admin`)
 4. После входа перейдите в **Connections → Data sources** — должен быть автоматически подключен источник `Prometheus`.
 
-## Безопасность и эксплуатация
+### Сценарий 8: Правила алертинга и самоконтроль стека
+
+`prometheus.yml` уже ссылается на каталог правил (`rule_files`), но по умолчанию он пуст. Ниже приведены базовые правила самоконтроля стека, работающие на метриках, которые стеку доступны «из коробки»:
+
+- `up` — результат scrape-джобов (`alloy`, `prometheus`);
+- `node_*` — метрики хоста, приходящие в Prometheus через `remote_write` из Alloy (встроенный Node Exporter);
+- `container_*` — метрики контейнеров из встроенного cAdvisor.
+
+```yaml
+# monitoring-stack/prometheus/alerts/stack.yml
+
+groups:
+  - name: stack
+    rules:
+      # Любая цель сбора недоступна (Alloy, Prometheus или сторонний экспортёр)
+      - alert: TargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Цель {{ $labels.instance }} (job={{ $labels.job }}) недоступна"
+
+      # Контейнер устойчиво потребляет более 1.5 GB рабочей памяти
+      - alert: HighMemoryContainer
+        expr: container_memory_working_set_bytes{image!=""} > 1500000000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Контейнер {{ $labels.name }} потребляет более 1.5 GB памяти"
+
+      # Осталось менее 10% места на корневом разделе хоста
+      - alert: HostDiskAlmostFull
+        expr: (node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}
+               / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}) * 100 < 10
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "На корневом разделе хоста осталось менее 10% места"
+```
+
+После сохранения файла перезапустите Prometheus или перезагрузите конфигурацию через API:
+
+```bash
+# Hot reload конфигурации и правил (работает благодаря --web.enable-lifecycle)
+curl -s -X POST http://localhost:9090/-/reload
+
+# Проверка: активные правила
+curl -s http://localhost:9090/api/v1/rules | jq '.data.groups[].rules[]?.name'
+```
+
+> **Важно:** Правила срабатывают в Prometheus (UI на порту `9090`, вкладка Alerts) даже без Alertmanager, но доставка уведомлений (email, Slack, PagerDuty, webhook) требует Alertmanager. Полный стек с Alertmanager описан в [Конфигурация Docker Compose для Prometheus](../../Prometheus/installation/docker_stack/docker-compose_config.md).
+
+### Сценарий 9: Резервное копирование и восстановление
+
+Резервному копированию подлежат два компонента с персистентными данными: TSDB Prometheus и база Grafana. Конфигурации (`compose.yml`, `prometheus.yml`, `config.alloy`, провиженинг) хранятся в Git и копий не требуют.
+
+#### Снимок TSDB Prometheus (консистентная точка)
+
+Требует флага `--web.enable-admin-api` (уже включён в `compose.yml`). Снимок создаётся через hard-link и почти мгновенен, после чего архивируется из именованного тома.
+
+```bash
+# 1) Создание снимка; ответ содержит имя каталога снимка
+SNAP=$(curl -s -X POST http://localhost:9090/api/v1/admin/tsdb/snapshot | jq -r '.data.name')
+echo "$SNAP"   # → 20261011T120000Z-8f3b2c1d...
+
+# 2) Упаковка снимка из тома prometheus_data в /backup
+docker run --rm \
+  -v monitoring-stack_prometheus_data:/prometheus \
+  -v /backup:/backup \
+  alpine tar czf /backup/prom-${SNAP}.tar.gz -C /prometheus/snapshots "${SNAP}"
+
+# 3) Удаление снимка из тома (архив уже создан)
+docker run --rm \
+  -v monitoring-stack_prometheus_data:/prometheus \
+  alpine rm -rf /prometheus/snapshots/"${SNAP}"
+```
+
+#### Полная резервная копия тома
+
+Самый надёжный вариант для одиночной инсталляции — остановка сервиса и снятие копии тома целиком. Это же покрывает и снимок.
+
+```bash
+# Prometheus
+docker compose stop prometheus
+docker run --rm -v monitoring-stack_prometheus_data:/prometheus -v /backup:/backup \
+  alpine tar czf /backup/prom-full.tar.gz -C /prometheus .
+docker compose start prometheus
+
+# Grafana (см. детали в [Резервное копирование Grafana](../grafana_backup_restore.md))
+docker compose stop grafana
+docker run --rm -v monitoring-stack_grafana_data:/var/lib/grafana -v /backup:/backup \
+  alpine tar czf /backup/grafana-full.tar.gz -C /var/lib/grafana .
+docker compose start grafana
+```
+
+> **Примечание:** Имена томов привязаны к имени проекта Docker Compose (по умолчанию — имя каталога `monitoring-stack`). Если задан `COMPOSE_PROJECT_NAME`, имя тома изменится.
+
+#### Восстановление
+
+```bash
+# Останавливаем сервис, очищаем том, распаковываем архив, запускаем снова
+docker compose stop prometheus
+docker run --rm -v monitoring-stack_prometheus_data:/prometheus -v /backup:/backup \
+  alpine sh -c 'rm -rf /prometheus/* && tar xzf /backup/prom-full.tar.gz -C /prometheus'
+docker compose start prometheus
+```
+
+Для Grafana процедура аналогична (том `monitoring-stack_grafana_data`). Перед восстановлением обязательно убедитесь, что версия Grafana в архиве и в текущем образе совместима — миграции БД не откатываются.
+
+#### Автоматизация
+
+Для регулярного бэкапа разместите шаги снимка в cron/systemd-timer. Срок хранения архивов ограничивайте, например, `find /backup -name 'prom-*.tar.gz' -mtime +14 -delete`.
+
+### Сценарий 10: Обновление версий стека и откат
+
+Перед обновлением сделайте резервную копию томов (Сценарий 9) — Grafana при старте выполняет миграции БД, которые не подлежат откату. Подробнее: [Обновление и миграция Grafana](../grafana_upgrade_migration.md).
+
+```bash
+# 1) Текущие образы
+docker compose images
+
+# 2) Обновляйте теги в compose.yml (только фиксированные версии) и фиксируйте в Git
+
+# 3) Загрузка образов
+docker compose pull
+
+# 4) Применение: пересоздаются только контейнеры с изменёнными образами
+docker compose up -d
+
+# 5) Проверка
+docker compose ps
+curl -s http://localhost:9090/api/v1/status/buildinfo | jq '.data.version'
+curl -s http://localhost:3000/api/health | jq .
+```
+
+Откат в случае проблем:
+
+```bash
+# Возврат предыдущих версий из Git и пересоздание контейнеров
+git checkout <предыдущий-коммит> -- compose.yml
+docker compose up -d
+```
+
+Для воспроизводимости и защиты от подмены образов закрепляйте digest вместо плавающего тега:
+
+```bash
+docker buildx imagetools inspect grafana/grafana:13.2.3
+# в compose.yml:
+#   image: grafana/grafana:13.2.3@sha256:<digest>
+```
+
+> **Практика:** Проверяйте совместимость связки Grafana / Prometheus / Alloy перед обновлением. Alloy и Prometheus обычно обновляются независимо, Grafana может требовать миграций БД; протокольная совместимость `remote_write` и scrape-протоколов сохраняется, но читайте release notes каждой мажорной версии.
+
+## Безопасность
+
+### Основные принципы безопасности
+
+При развёртывании стека мониторинга необходимо придерживаться принципа наименьших привилегий. Ниже приведён чек-лист, позволяющий снизить атакованную поверхность без потери функциональности.
 
 ### Чек-лист безопасности
 
@@ -538,6 +708,30 @@ curl -s http://localhost:12345/health | jq .
 | **Network Isolation** | Пробрасывайте на хост только порт Grafana (3000) и Alloy Debug UI (12345). Остальные сервисы должны общаться только внутри сети `observer-net`. |
 | **Привилегии Alloy** | `privileged: true` и `pid: host` требуются для сбора системных метрик, но расширяют атакованую поверхность. Используйте только в доверенных сетях. |
 | **Валидация конфига** | Перед запуском выполните `docker compose config` для проверки синтаксиса и итогового YAML. |
+| **Admin API Prometheus** | Флаг `--web.enable-admin-api` нужен для снапшотов TSDB, но включает и `delete_series`. Отключайте, если бэкапы снимаются без API (том целиком). |
+| **Embedding Grafana** | `GF_SECURITY_ALLOW_EMBEDDING=true` разрешает встраивание в iframe и ослабляет защиту от clickjacking. Включайте только при реальной необходимости. |
+
+## Операции и команды
+
+Для удобства ежедневной эксплуатации ниже собраны основные команды работы со стеком.
+
+| Действие | Команда / Метод |
+| :--- | :--- |
+| **Запуск стека** | `docker compose up -d` |
+| **Остановка без удаления данных** | `docker compose down` |
+| **Остановка с очисткой томов** | `docker compose down -v` (удаляет все тома с данными) |
+| **Перезапуск одного сервиса** | `docker compose restart grafana` |
+| **Просмотр логов** | `docker compose logs -f grafana` |
+| **Проверка конфига** | `docker compose config` (валидация YAML) |
+| **Просмотр финальных переменных** | `docker compose config --environment` |
+| **Проверка Prometheus** | `docker exec monitoring-prometheus promtool check config /etc/prometheus/prometheus.yml` |
+| **Hot reload конфигурации** | `curl -s -X POST http://localhost:9090/-/reload` |
+| **Снимок TSDB (бэкап)** | `curl -s -X POST http://localhost:9090/api/v1/admin/tsdb/snapshot` (требует `--web.enable-admin-api`) |
+| **Использование диска** | `docker system df`; рост томов: `docker system df -v` |
+| **Очистка неиспользуемых образов** | `docker image prune -a` |
+| **Резервное копирование данных** | `docker run --rm -v monitoring-stack_grafana_data:/data -v /backup:/backup alpine tar czf /backup/grafana.tar.gz /data` |
+
+## Troubleshooting
 
 ### Устранение неполадок
 
@@ -552,19 +746,9 @@ curl -s http://localhost:12345/health | jq .
 | **Grafana Login Fail** | Неверный пароль в `.env` | Сбросьте пароль через переменную окружения или удалите том `grafana_data` (данные потеряются) |
 | **Prometheus OOM** | Нет `--auto-gomemlimit` или лимитов | Убедитесь, что флаг `--auto-gomemlimit` присутствует и `deploy.resources.limits.memory >= 2G` |
 
-### Рекомендации по эксплуатации и очистке
 
-| Действие | Команда / Метод |
-| :--- | :--- |
-| **Запуск стека** | `docker compose up -d` |
-| **Остановка без удаления данных** | `docker compose down` |
-| **Остановка с очисткой томов** | `docker compose down -v` (удаляет все тома с данными) |
-| **Перезапуск одного сервиса** | `docker compose restart grafana` |
-| **Просмотр логов** | `docker compose logs -f grafana` |
-| **Проверка конфига** | `docker compose config` (валидация YAML) |
-| **Проверка Prometheus** | `docker exec prometheus promtool check config /etc/prometheus/prometheus.yml` |
-| **Очистка неиспользуемых образов** | `docker image prune -a` |
-| **Резервное копирование данных** | `docker run --rm -v monitoring-stack_grafana_data:/data -v /backup:/backup alpine tar czf /backup/grafana.tar.gz /data` |
+
+## Best Practices
 
 ### Граничные случаи и ограничения
 
@@ -580,10 +764,25 @@ curl -s http://localhost:12345/health | jq .
 
 6. **SELinux/AppArmor:** На RHEL-подобных системах с включенным SELinux может потребоваться добавить контекст `:z` к bind mounts: `- ./grafana:/etc/grafana:ro,z`.
 
+### Рекомендации
+
+- Всегда используйте именованные тома для персистентных данных — это гарантирует сохранность TSDB и базы Grafana при пересоздании контейнеров.
+- Придерживайтесь подхода Infrastructure as Code: храните конфигурации в Git, не вносите изменения через UI (за исключением временной отладки).
+- Старайтесь ограничивать внешний доступ только к Grafana (порт 3000). Debug UI Alloy (12345) должен быть доступен только с локального хоста.
+- Фиксируйте полные версии образов (например, `13.2.3`, а не `latest`); для supply chain — закрепляйте digest (`image@sha256:...`).
+- Перед изменением версии образов проверяйте совместимость компонентов между Grafana, Prometheus и Alloy (Сценарий 10).
+- Регулярно выполняйте резервное копирование томов Grafana и Prometheus согласно плану восстановления и проверяйте процедуру восстановления на тестовом хосте (Сценарий 9).
+- Отключайте Admin API Prometheus и embedding Grafana, если соответствующие функции не используются — это снижает атакованную поверхность.
+
 ## Дополнительная информация
 
 **См. также:**
 
+*   [Обзор Grafana](../grafana_overview.md) — основные концепции и архитектура.
 *   [Провиженинг Grafana (подробно)](../grafana_provisioning.md) — декларативное управление дашбордами и плагинами.
+*   [Резервное копирование и восстановление Grafana](../grafana_backup_restore.md) — практика работы с базой и файлами Grafana.
 *   [Высокая доступность Grafana](../high_availability.md) — развертывание с внешней БД и Redis.
+*   [Обновление и миграция Grafana](../grafana_upgrade_migration.md) — обновление и миграция между версиями.
+*   [Grafana Alloy: Обзор](../grafana_alloy_overview.md) — сбор телеметрии через Alloy.
+*   [Конфигурация Docker Compose для стека мониторинга](../../Prometheus/installation/docker_stack/docker-compose_config.md) — полный стек с Alertmanager и экспортерами.
 *   [Loki в Docker Compose](../../Loki/Docker_Compose/loki_docker_compose_setup.md) — расширение стека сбором логов.

@@ -1,5 +1,7 @@
 # Определения Downstream-пайплайнов
 
+**Актуально для:** GitLab 18.6+ / 19.x
+
 ## Определения
 
 **Downstream pipeline** — это пайплайн GitLab CI/CD, инициированный другим пайплайном. Он выполняется как независимая сущность со своим собственным графом задач, переменными и окружением, но сохраняет логическую и визуальную связь с вызвавшим его процессом.
@@ -9,7 +11,7 @@
 **Bridge Job (Задание-мост)** — ключевой архитектурный элемент в Upstream-пайплайне. Это специальный тип задачи, который не выполняется на Runner'е напрямую, а служит прокси-объектом в GitLab Rails. Его задача — отправить запрос на создание дочернего пайплайна и (опционально) отслеживать его состояние.
 
 **Техническая реализация Bridge Job:**
-- **Роль в архитектуре:** Bridge Job — это объект внутри GitLab Rails (Puma/Sidekiq), а не процесс на Runner'е. Он не потребляет слоты `concurrency` Runner'а для выполнения кода, но **учитывается в лимитах конкурентности** при использовании стратегий `mirror`/`depend` ( Bridge Job находится в статусе `running` всё время жизни downstream).
+- **Роль в архитектуре:** Bridge Job — это объект внутри GitLab Rails (Puma/Sidekiq), а не процесс на Runner'е. Он не потребляет слоты `concurrency` Runner'а для выполнения кода, но **учитывается в лимитах конкурентности** при использовании стратегий `mirror`/`depend` (Bridge Job находится в статусе `running` всё время жизни downstream).
 - **Статусы Bridge Job:** `created` → `pending` → `running` (при `mirror`/`depend`) или `success` (при fire-and-forget) → `failed`/`success`/`canceled`.
 - **Взаимодействие с шиной событий:** Bridge Job подписывается на события downstream-пайплайна через внутренний API GitLab. При завершении дочернего процесса Rails обновляет статус Bridge Job на основании выбранной стратегии (`mirror`, `depend` или без стратегии).
 
@@ -19,7 +21,7 @@
 
 1.  **Триггер:** Upstream-пайплайн достигает стадии, содержащей Bridge Job с директивой `trigger`.
 2.  **Валидация:** GitLab проверяет:
-    - **Права доступа:** Используется `CI_JOB_TOKEN` (по умолчанию) или права запустившего пайплайн пользователя. Для межпроектных триггеров обязательна настройка **Inbound Allowlist** в целевом проекте (18.0+).
+    - **Права доступа:** Используется `CI_JOB_TOKEN` (по умолчанию) или права запустившего пайплайн пользователя. Для межпроектных триггеров обязательна настройка **Inbound Allowlist** в целевом проекте (17.0+).
     - **Лимиты вложенности:** Не более **2 уровней** через `trigger` (Parent → Child → Grandchild).
     - **Корректность параметров:** Если используются `spec:inputs` — проверка типов и обязательных полей до создания пайплайна. Если `trigger:variables` — только наличие значений.
     - **Синтаксис YAML:** Парсинг дочернего файла (локального, из артефакта или проекта).
@@ -42,7 +44,7 @@
 
 ### Механизмы передачи данных (Modern vs Legacy)
 
-В современных версиях GitLab (17.7+, стандарт 18.x) рекомендуется использовать типизированные входы.
+В современных версиях GitLab (17.0+ GA) рекомендуется использовать типизированные входы.
 
 1.  **Pipeline Inputs (`spec:inputs`):**
     - **Типизация:** Поддержка `string`, `number`, `boolean`, `array`.
@@ -186,7 +188,7 @@ spec:
 deploy:
   script:
     - echo "Deploy to $[[ inputs.environment ]]"
-    - kubectl scale deployment app --replicas=$[[ inputs.replicas ]]
+    - ./deploy.sh --replicas=$[[ inputs.replicas ]]
     - if $[[ inputs.enable_audit_log ]]; then enable-audit; fi
 ```
 
@@ -249,6 +251,15 @@ rebuild-app:
 - **`needs` + `trigger`:** Задача с `trigger` не может иметь `needs` — это ограничение GitLab (Bridge Job не может быть зависимостью для других задач).
 - **Pipeline Subscriptions:** Работают только для **веток по умолчанию** (main/master). Триггер на произвольную ветку через подписки невозможен.
 
+## Edge Cases и известные проблемы
+
+- **Bridge Job завис в `pending`/`running` без downstream (GitLab 18.x):** На самоуправляемых инсталляциях GitLab 18.10+ возможен интермитентный баг, при котором Bridge Job остается в состоянии `pending` или `running`, а `downstream_pipeline` через API равен `null`. Родительский пайплайн не прогрессирует. Причина — сбой в контроллере `Ci::CreateDownstreamPipelineWorker`. Рабоaround: ручная постановка `Ci::CreateDownstreamPipelineWorker.perform_async(<bridge_id>)` через Rails console. Мониторьте паттерн `downstream_pipeline: null` через API `/bridges`.
+- **`downstream pipeline can not be created, the resulting pipeline would have been empty`:** Дочерний пайплайн не создал ни одной задачи из-за неверной конфигурации `rules` в дочернем файле. Для merge request пайплайнов дочерний файл должен иметь `workflow:rules` или `rules` для запуска задач.
+- **`Ref is ambiguous`:** Нельзя запустить multi-project пайплайн по тегу, если существует ветка с тем же именем. Используйте полный ref (например, `refs/tags/v1.0.0`) или переименуйте ветку.
+- **Переменная с `$` не интерпретируется:** При передаче переменной через `trigger:variables` символ `$` не экранируется через `$$` в downstream. Downstream продолжает воспринимать `$` как начало ссылки на переменную. Используйте заранее подготовленные значения без `$` или передавайте через `spec:inputs`.
+- **`needs:pipeline` требует строковый pipeline ID:** При использовании динамических дочерних пайплайнов ID пайплайна может парситься как integer. Ошибка: `needs:need pipeline should be a string`. Решение: заключите ID в кавычки: `pipeline: "$UPSTREAM_PIPELINE_ID"`.
+- **JWT-формат `CI_JOB_TOKEN` (GitLab 19.0+):** Начиная с GitLab 19.0, `CI_JOB_TOKEN` использует JWT по умолчанию. Legacy-формат можно включить только до релиза 20.0 через настройку группы. Убедитесь, что downstream-проекты и внешние сервисы (Vault, реестры) поддерживают JWT-валидацию.
+
 ## Диагностика и устранение неполадок
 
 | Ошибка | Возможная причина | Решение |
@@ -263,6 +274,121 @@ rebuild-app:
 | `Artifact not found` при `needs:project` | Артефакт не создан или проект не в Inbound Allowlist. | Проверьте статус задачи генерации и настройки Token Access. |
 | `inputs` ошибка при запуске | Несоответствие типов (строка вместо числа). | Проверьте `spec:inputs` дочернего пайплайна через Pipeline Lint. |
 | `circular reference detected` | Кольцевая зависимость триггеров (A → B → A). | Разорвите цикл, используйте DAG с `needs` вместо вложенных триггеров. |
+| Bridge Job завис в `pending`/`running`, `downstream_pipeline: null` | Баг GitLab 18.10+ (intermittent). `CreateDownstreamPipelineWorker` не выполнился. | Перезапустите пайплайн. Если повторяется — выполните в Rails console: `Ci::CreateDownstreamPipelineWorker.perform_async(<bridge_id>)`. Откройте issue в self-managed инсталляции. |
+| `Ref is ambiguous` при триггере по тегу | Ветка с тем же именем, что и тег. | Используйте полный ref `refs/tags/v1.0.0` или переименуйте ветку. |
+| `needs:need pipeline should be a string` | Pipeline ID в `needs:pipeline` парсится как integer. | Заключите ID в кавычки: `pipeline: "$UPSTREAM_PIPELINE_ID"`. |
+| `downstream pipeline can not be created, the resulting pipeline would have been empty` | Дочерний пайплайн не имеет запускаемых задач из-за `rules`. | Добавьте `workflow:rules` или `rules` в дочерний файл. Для MR-пайплайнов убедитесь, что дочерние задачи имеют условия запуска. |
+
+## Best Practices
+
+### Согласованность терминологии
+
+Для исключения неоднозначности в runbooks, архитектурных диаграммах и коммуникации команды используйте единые обозначения:
+
+- **Upstream / Downstream** — в операционном контексте (инциденты, мониторинг, запуски).
+- **Родительский / Дочерний** — в контексте кода и конфигурации `.gitlab-ci.yml`.
+- **Bridge Job** — полная форма; сокращение допустимо только во внутренних заметках, но не в официальной документации.
+- **Trigger Job** — задание-инициатор; используйте префикс `trigger-` в именах для фильтрации в интерфейсе GitLab.
+
+### Документирование топологии пайплайнов
+
+Включите в системную документацию и runbooks SRE-команды:
+
+- Граф зависимостей downstream-пайплайнов (кто кого триггерит, стратегии, критические пути).
+- Карта `CI_JOB_TOKEN` разрешений (какие проекты имеют доступ к каким через Inbound Allowlist).
+- Реестр стратегий: для каждого критичного триггера указано, используется ли `mirror`, `depend` или fire-and-forget, и почему.
+
+### Именование заданий-мостов
+
+При именовании Bridge Jobs следуйте паттерну `trigger-<target>-<action>`, например:
+
+```yaml
+trigger-auth-deploy:
+  trigger:
+    project: 'ops/deploy'
+    strategy: mirror
+```
+
+Это упрощает:
+- Фильтрацию в интерфейсе Pipelines и Jobs.
+- Поиск через API.
+- Аудит конфигурации при ревью MR.
+
+### SRE: Мониторинг и алертинг
+
+Включите в observability stack:
+
+- **Метрика:** Количество активных Bridge Jobs в статусе `running` (через API `/bridges`).
+- **Алерт:** Если `running` Bridge Jobs > 50% от `concurrency` Runner'а — потенциальный deadlock.
+- **Алерт:** Bridge Job завершился `failed` без явной ошибки в downstream — проверьте Inbound Allowlist и `CI_JOB_TOKEN`.
+- **Метрика:** Доля Bridge Jobs, упавших по таймауту. Целевое значение: < 5%.
+- **Алерт:** `downstream_pipeline: null` для Bridge Job в статусе `running` дольше 5 минут — возможный баг контроллера (см. Edge Cases).
+
+### SRE: Инцидент-респонс
+
+При расследовании инцидента, связанного с CI/CD:
+
+1. Определите, является ли проблема в upstream или downstream пайплайне, через `GET /projects/:id/pipelines/:pipeline_id/bridges`.
+   ```bash
+   # Ожидаемый вывод: список Bridge Jobs с полями id, name, status, downstream_pipeline
+   curl --header "PRIVATE-TOKEN: $TOKEN" \
+     "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/pipelines/$PIPELINE_ID/bridges" | \
+     jq '.[] | {id, name, status, downstream_pipeline}'
+   # → {"id": 123, "name": "trigger-auth-deploy", "status": "running", "downstream_pipeline": 456}
+   # → {"id": 124, "name": "trigger-api-test", "status": "pending", "downstream_pipeline": null}
+   ```
+2. При необходимости перезапустите downstream-пайплайн через API, не трогая upstream-конфигурацию:
+   ```bash
+   curl --request POST \
+     --header "PRIVATE-TOKEN: $TOKEN" \
+     "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/pipelines/$PIPELINE_ID/play"
+   # → 201 Created, {"id": 789, "status": "pending", ...}
+   ```
+3. При массовом падении Bridge Jobs проверьте:
+   - Состояние Inbound Allowlist в downstream-проектах.
+   - Доступность Runner'ов downstream (возможно, проблема не в триггере, а в инфраструктуре дочернего проекта).
+   - Лимиты API GitLab (rate limiting при массовых триггерах).
+4. Если Bridge Job завис в `pending`/`running` с `downstream_pipeline: null` на GitLab 18.10+:
+   - Проверьте наличие бага в self-managed инсталляции.
+   - В Rails console выполните: `Ci::CreateDownstreamPipelineWorker.perform_async(<bridge_id>)`
+   - Откройте issue с указанием версии GitLab и шагов воспроизведения.
+5. Документируйте паттерн инцидента в runbook: какой проект, какая стратегия, какой был триггер, время жизни Bridge Job, диагностические команды.
+
+### Чеклист ревью конфигурации
+
+При ревью MR, затрагивающего `.gitlab-ci.yml` с downstream-триггерами, проверьте:
+
+- [ ] Указана ли стратегия (`mirror` для критичных процессов, `depend` только с обоснованием).
+- [ ] Настроен ли `timeout` для Bridge Job с запасом 20–30%.
+- [ ] Используются ли `spec:inputs` вместо `trigger:variables` для передачи параметров.
+- [ ] Добавлен ли downstream-проект в Inbound Allowlist (для multi-project).
+- [ ] Указан ли `environment` в Bridge Job для видимости деплоя в MR.
+
+### Валидация конфигурации
+
+Перед коммитом проверяйте downstream-конфигурацию через Pipeline Lint и API:
+
+```bash
+# Валидация дочернего YAML через Pipeline Lint (GitLab 18.6+)
+curl --request POST \
+  --header "PRIVATE-TOKEN: $TOKEN" \
+  --header "Content-Type: application/json" \
+  --data '{"content": "'"$(cat ci/deploy.yml | sed 's/"/\\"/g')"'"}' \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/ci/lint"
+# → {"status": "valid", "errors": [], "warnings": []}
+
+# Проверка Bridge Jobs активного пайплайна
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/pipelines/$PIPELINE_ID/bridges" | \
+  jq '.[] | select(.status == "running") | {id, name, downstream_pipeline}'
+# → {"id": 123, "name": "trigger-auth-deploy", "downstream_pipeline": 456}
+
+# Проверка статуса downstream-пайплайна
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/pipelines/$DOWNSTREAM_ID" | \
+  jq '{id, status, ref, finished_at}'
+# → {"id": 456, "status": "success", "ref": "main", "finished_at": "2026-09-28T10:00:00Z"}
+```
 
 ## См. также
 

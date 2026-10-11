@@ -1,5 +1,7 @@
 # Dockerfile: Лучшие практики для Python
 
+**Актуально для:** Python 3.14.x, Docker 20.10+
+
 ## Определения
 
 - **Wheels (*.whl):** Предварительно скомпилированный формат дистрибуции пакетов. Позволяет избежать компиляции на этапе установки, что критично для библиотек с нативными расширениями (C/C++, Rust).
@@ -13,6 +15,13 @@
 - **pip-audit:** Инструмент для сканирования зависимостей Python на известные CVE. Работает с `requirements.txt`, `pyproject.toml` и установленными пакетами.
 
 ## Базовые концепции
+
+### Предпосылки
+
+- **Docker Engine 20.10+** с включённым BuildKit (по умолчанию в Docker Desktop и современных дистрибутивах).
+- **Python 3.14.x** — текущая стабильная версия. Для продакшена фиксируйте патч-версию в базовом образе.
+- **uv** — для ускорения установки зависимостей и детерминированных сборок.
+- **BuildKit directives** (`# syntax=docker/dockerfile:1`, `--mount=type=cache`) — требуются для примеров в этом документе.
 
 ### Специфика интерпретатора в контейнерах (2026)
 
@@ -43,16 +52,41 @@ Python 3.14+ принес значительные улучшения в про�
 | **Workspace (монорепозитории)** | Нативная поддержка | Нет | Ограниченная |
 | **Рекомендация 2026** | **Стандарт** | Legacy | Для специфичных случаев |
 
+### Оптимизация кэширования слоёв
+
+Порядок инструкций в Dockerfile напрямую влияет на эффективность кэширования:
+
+1.  **Сначала зависимости, потом код:** Копируйте `pyproject.toml`, `uv.lock` и `requirements.txt` до копирования исходного кода. Изменение кода не приведёт к переустановке зависимостей.
+2.  **Объединяйте связанные RUN:** Не разбивайте установку зависимостей на несколько `RUN` — это создаёт лишние слои.
+3.  **Очищайте кэш в том же RUN:** `apt-get clean` и удаление `/var/lib/apt/lists/*` должны быть в той же инструкции, что и `apt-get update`.
+4.  **Используйте BuildKit mounts:** Монтирование кэша (`--mount=type=cache`) ускоряет повторные сборки на 10-100 раз.
+
+**Пример неоптимального Dockerfile:**
+```dockerfile
+# ПЛОХО: каждый COPY создаёт новый слой, зависимостьи переустанавливаются при любом изменении кода
+COPY . .
+RUN pip install -r requirements.txt
+```
+
+**Пример оптимального Dockerfile:**
+```dockerfile
+# ХОРОШО: зависимости кэшируются, переустанавливаются только при изменении lock-файла
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --no-install-project
+COPY . .
+RUN uv sync --frozen --no-dev
+```
+
 ### Тюнинг рантайма и ресурсов
 
 *   **Логирование:** `PYTHONUNBUFFERED=1` гарантирует немедленный вывод логов в `stdout`/`stderr` без буферизации.
-*   **Память (cgroups v2):** Python 3.14+ лучше понимает лимиты контейнера, но для тяжелых ML/Data-приложений рекомендуется ограничивать аллокатор через `MALLOC_ARENA_MAX=2`.
+*   **Память (cgroups v2):** Python 3.14+ лучше понимает лимиты контейнера, но для ресурсоёмких приложений с высоким потреблением памяти рекомендуется ограничивать аллокатор через `MALLOC_ARENA_MAX=2`.
 *   **Оптимизация:** `PYTHONOPTIMIZE=1` удаляет инструкции `assert` и документацию (`__doc__`), что немного ускоряет работу и экономит память.
 
 **Практическое применение MALLOC_ARENA_MAX:**
 
 ```dockerfile
-# Для ML-приложений (TensorFlow, PyTorch) с высоким потреблением памяти
+# Для приложений с высокой нагрузкой на память (например, обработка больших объёмов данных)
 ENV MALLOC_ARENA_MAX=2 \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
@@ -64,7 +98,7 @@ ENV MALLOC_ARENA_MAX=2 \
 
 Python не обрабатывает системные сигналы корректно при запуске напрямую как PID 1. Проблемы:
 *   `SIGTERM` не достигает приложения (контейнер завершается через `SIGKILL` после таймаута).
-*   Зомби-процессы накапливаются (не.Charting через `wait()`).
+*   Зомби-процессы накапливаются (не reap через `wait()`).
 
 **Решения:**
 
@@ -133,6 +167,64 @@ COPY . .
 USER 10001
 CMD ["python", "app.py"]
 ```
+
+### .dockerignore для Python
+
+Файл `.dockerignore` исключает из контекста сборки временные файлы, кэши и зависимости, что ускоряет сборку и уменьшает размер образа.
+
+```dockerignore
+# Версионные контроль и IDE
+.git
+.gitignore
+.github
+.vscode
+.idea
+*.swp
+
+# Кэши и временные файлы Python
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.coverage
+htmlcov
+.mypy_cache
+.ruff_cache
+.venv
+venv
+env
+.env
+.env.*
+!.env.example
+
+# Зависимости (если не используются wheels)
+node_modules
+dist
+build
+target
+
+# Файлы сборки и артефакты
+*.egg-info
+*.whl
+wheels
+
+# Документация и тестовые данные
+docs
+tests
+testdata
+*.md
+LICENSE
+
+# CI/CD и конфигурации (если не нужны в образе)
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+```
+
+**Критически важные правила:**
+- Никогда не копируйте `.git` в образ — это увеличивает его размер и раскрывает историю коммитов.
+- Исключайте `*.pyc` и `__pycache__` — они генерируются автоматически при запуске контейнера.
+- Для production-сборок исключайте тесты, документацию и исходный код зависимостей (используйте wheels).
 
 ## Практические сценарии
 
@@ -328,7 +420,7 @@ docker inspect <container> --format='{{.State.ExitCode}}'
 
 ### Сценарий 5: Distroless Python (Максимальная безопасность)
 
-Образы `gcr.io/distroless/python3-*` содержат только интерпретатор Python и минимальные системные библиотеки. Нет shell, пакетного менеджера или стандартных утилит.
+Образы `gcr.io/distroless/python3-debian13` содержат только интерпретатор Python и минимальные системные библиотеки. Нет shell, пакетного менеджера или стандартных утилит.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
@@ -345,7 +437,7 @@ COPY . .
 RUN uv sync --frozen --no-dev
 
 # --- Финальный этап: Distroless ---
-FROM gcr.io/distroless/python3-debian12
+FROM gcr.io/distroless/python3-debian13
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
@@ -375,7 +467,7 @@ docker exec <container> apt-get --version 2>&1 || echo "apt-get не найде�
 # → apt-get не найден
 ```
 
-**Отладка Distroless:** Используйте debug-тег: `gcr.io/distroless/python3-debian12:debug` — он содержит busybox shell. Подробнее: [Отладка distroless-контейнеров](../../Docker_troubleshooting/debugging_distroless.md)
+**Отладка Distroless:** Используйте debug-тег: `gcr.io/distroless/python3-debian13:debug` — он содержит busybox shell. Подробнее: [Отладка distroless-контейнеров](../../Docker_troubleshooting/debugging_distroless.md)
 
 ### Сценарий 6: Wolfi / Chainguard Python (0 CVE)
 
@@ -490,7 +582,7 @@ trivy image my-python-app:latest --severity HIGH,CRITICAL
 
 ### Сценарий 8: Профилирование Py-Spy в контейнере
 
-Py-Spy позволяет профилировать Python-приложение без его остановки и без изменения кода. Запускается как sidecar или через `docker exec`.
+Py-Spy позволяет профилировать Python-приложение без его остановки и без изменения кода. Запускается в отдельном контейнере или через `docker exec`.
 
 **Установка в образ (для development/staging):**
 ```dockerfile
@@ -530,95 +622,15 @@ services:
     cap_add:
       - SYS_PTRACE  # Необходимо для py-spy
     security_opt:
-      - seccomp:unconfined  # Для работы вmacs
+      - seccomp:unconfined  # Для работы в macOS
 ```
 
 **Валидация:**
 ```bash
 # Проверка что py-spy установлен
 docker exec <container> py-spy --version
-# → py-spy 0.3.14
+# → py-spy 0.4.2
 ```
-
-### Сценарий 9: Kubernetes Probes для Python
-
-Настройка проверок состояния Python-приложения в Kubernetes.
-
-**Python-приложение с health endpoint:**
-```python
-# app.py
-from fastapi import FastAPI
-import psycopg2
-
-app = FastAPI()
-
-@app.get("/health/live")
-def liveness():
-    """Liveness: приложение работает (без проверки зависимостей)."""
-    return {"status": "alive"}
-
-@app.get("/health/ready")
-def readiness():
-    """Readiness: приложение готово принимать трафик."""
-    try:
-        # Проверка соединения с БД
-        conn = psycopg2.connect("postgresql://user:pass@db:5432/mydb")
-        conn.close()
-        return {"status": "ready"}
-    except Exception as e:
-        return {"status": "not ready", "error": str(e)}, 503
-```
-
-**Kubernetes манифест:**
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: python-app
-spec:
-  template:
-    spec:
-      containers:
-        - name: app
-          image: my-python-app:latest
-          ports:
-            - containerPort: 8000
-          startupProbe:
-            httpGet:
-              path: /health/live
-              port: 8000
-            failureThreshold: 30  # 30 * 2s = 60 сек на старт
-            periodSeconds: 2
-          livenessProbe:
-            httpGet:
-              path: /health/live
-              port: 8000
-            initialDelaySeconds: 0
-            periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 3
-          readinessProbe:
-            httpGet:
-              path: /health/ready
-              port: 8000
-            initialDelaySeconds: 0
-            periodSeconds: 5
-            timeoutSeconds: 3
-            failureThreshold: 3
-```
-
-**Валидация:**
-```bash
-# Проверка статуса проб
-kubectl get pods -l app=python-app
-# → NAME                        READY   STATUS    RESTARTS   AGE
-# → python-app-xxx-yyy          1/1     Running   0          5m
-
-# Детали проб
-kubectl describe pod python-app-xxx-yyy | grep -A 5 "Startup Probe"
-```
-
-Подробнее: [Пробы в Kubernetes](../../../Kubernetes/Base/probes.md)
 
 ## Безопасность и верификация
 
@@ -662,12 +674,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Диагностика
 docker stats --no-stream <container>
 # → MEM USAGE / LIMIT
-# → 480MiB / 512MiB  (почти满了)
+# → 480MiB / 512MiB  (почти полное заполнение)
 
 # Решение 1: увеличить лимит памяти
 docker run -d --memory=1g my-python-app:latest
 
-# Решение 2: ограничить аллокатор (для ML/Data приложений)
+# Решение 2: ограничить аллокатор (для ресурсоёмких приложений)
 ENV MALLOC_ARENA_MAX=2
 
 # Решение 3: найти утечку памяти
@@ -710,7 +722,7 @@ CMD ["python", "app.py"]
 
 ### Ошибка 5: Контейнер не завершается по `docker stop`
 
-**Причина:** Python не обрабатывает `SIGTERM` (垠認ная обработка сигналов).
+**Причина:** Python не обрабатывает `SIGTERM` (некорректная обработка сигналов).
 
 ```bash
 # Симптом: docker stop ждёт 10 секунд (дефолтный таймаут), затем SIGKILL
@@ -741,6 +753,155 @@ uv lock
 uv pip compile requirements.txt -o uv.lock
 ```
 
+## Логирование и мониторинг
+
+### Форматы логов
+
+Python по умолчанию выводит логи в текстовом формате. Для интеграции с централизованными системами сбора логов (ELK, Loki) используйте структурированный JSON-формат:
+
+```python
+import logging
+import json
+from pythonjsonlogger import jsonlogger
+
+logger = logging.getLogger()
+logHandler = logging.StreamHandler()
+formatter = jsonlogger.JsonFormatter(
+    "%(asctime)s %(levelname)s %(name)s %(message)s",
+    rename_fields={"levelname": "level", "asctime": "timestamp"}
+)
+logHandler.setFormatter(formatter)
+logger.addHandler(logHandler)
+logger.setLevel(logging.INFO)
+
+logger.info("Приложение запущено", extra={"version": "1.0.0", "env": "production"})
+# → {"timestamp": "2026-09-30T17:00:00", "level": "INFO", "name": "root", "message": "Приложение запущено", "version": "1.0.0", "env": "production"}
+```
+
+**Обязательные настройки для Docker:**
+- `PYTHONUNBUFFERED=1` — отключает буферизацию stdout/stderr, логи сразу попадают в `docker logs`.
+- Используйте `flush=True` в `print()` для критичных сообщений.
+
+### Ротация логов
+
+В контейнерах ротация логов должна выполняться на уровне Docker демона или через внешние сборщики, а не внутри контейнера:
+
+```bash
+# Настройка ротации демона Docker (daemon.json)
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+```
+
+### Мониторинг метрик
+
+Для сбора метрик рантайма Python-приложения используйте:
+
+- **Prometheus client** — экспорт метрик в формате Prometheus:
+  ```python
+  from prometheus_client import Counter, Gauge, start_http_server
+  
+  requests_total = Counter('requests_total', 'Total requests')
+  memory_usage = Gauge('memory_usage_bytes', 'Memory usage')
+  
+  start_http_server(8000)  # Метрики доступны на /metrics
+  ```
+
+- **cAdvisor** — сбор метрик использования ресурсов контейнера (CPU, память, сеть) без изменения кода приложения.
+
+### Алерты и пороговые значения
+
+Типичные пороги для Python-приложений в контейнерах:
+
+| Метрика | Порог | Действие |
+| :--- | :--- | :--- |
+| Использование памяти | >80% лимита | Масштабирование или оптимизация аллокатора |
+| CPU usage | >70% в течение 5 минут | Проверка на утечки или деградацию алгоритма |
+| Количество зомби-процессов | >0 | Добавление tini или исправление обработки SIGCHLD |
+| Время отклика health endpoint | >1 сек | Проверка подключения к зависимостям (БД, кэш) |
+
+## Управление данными и бэкапы
+
+### Тома Docker
+
+Для персистентного хранения данных (базы данных, загруженные файлы, кэш) используйте тома Docker:
+
+```bash
+# Создание тома
+docker volume create app-data
+
+# Запуск контейнера с томом
+docker run -d -v app-data:/app/data my-python-app:latest
+
+# Резервное копирование тома
+docker run --rm -v app-data:/source -v /backup:/backup alpine tar cf /backup/app-data.tar -C /source .
+```
+
+### Бэкап базы данных
+
+Пример резервного копирования PostgreSQL в контейнере:
+
+```bash
+# Создание дампа
+docker exec <postgres_container> pg_dump -U postgres mydb > backup.sql
+
+# Восстановление
+docker exec -i <postgres_container> psql -U postgres mydb < backup.sql
+```
+
+**Автоматизация бэкапов через cron на хосте:**
+```bash
+0 2 * * * docker exec <postgres_container> pg_dump -U postgres mydb | gzip > /backup/postgres-$(date +\%Y\%m\%d).sql.gz
+```
+
+### Восстановление после сбоя
+
+Порядок действий при потере данных:
+1. Остановите повреждённый контейнер.
+2. Восстановите том из последнего бэкапа.
+3. Запустите контейнер с восстанавливаемым томом.
+4. Проверьте целостность данных через приложение или утилиту (например, `pg_dump --schema-only` для PostgreSQL).
+
+### Управление лицензиями зависимостей
+
+Использование сторонних библиотек без проверки лицензий может привести к юридическим рискам. Интегрируйте проверку лицензий в CI/CD:
+
+```bash
+# Сканирование лицензий с помощью pip-licenses
+pip install pip-licenses
+pip-licenses --format=json --output-file=licenses.json
+
+# Или через uv
+uv run pip-licenses --format=json --output-file=licenses.json
+```
+
+**Рекомендации:**
+- Автоматически проверяйте лицензии на этапе сборки образа.
+- Исключайте зависимости с copyleft-лицензиями (GPL, AGPL), если это противоречит политике компании.
+- Ведите файл `LICENSES.md` со списком всех зависимостей и их лицензий.
+
+### Обновление базовых образов
+
+Базовые образы (`python:3.14-slim`, `wolfi` и др.) регулярно обновляются для исправления уязвимостей. Настройте автоматическую проверку актуальности:
+
+```bash
+# Проверка устаревших образов
+docker pull python:3.14-slim
+docker images | grep python
+
+# Сканирование уязвимостей в базовом образе
+trivy image python:3.14-slim --severity HIGH,CRITICAL
+```
+
+**Политика обновления:**
+- Еженедельно проверяйте наличие новых патч-версий базовых образов.
+- Используйте Dependabot или Renovate для автоматизации обновления Dockerfile.
+- Тестируйте новую версию образа в staging-среде перед деплоем в production.
+
 ## Лучшие практики
 
 ### Сводка рекомендаций
@@ -759,6 +920,10 @@ uv pip compile requirements.txt -o uv.lock
 | **Pin by digest** | `FROM python:3.14-slim@sha256:...` | Гарантия воспроизводимости |
 | **Минимальные пакеты** | `--no-install-recommends` | Уменьшает attack surface |
 | **read-only FS** | `--read-only` + tmpfs | Блокировка записи в ФС |
+| **.dockerignore** | Исключает кэш, тесты, `.git` | Ускоряет сборку, уменьшает размер контекста |
+| **hadolint** | Линтинг Dockerfile в CI | Обнаружение антипаттернов на раннем этапе |
+| **Лицензии** | Проверка лицензий зависимостей | Исключение юридических рисков |
+| **Бэкапы** | Автоматическое резервное копирование томов | Восстановление после сбоя |
 
 ### Чек-лист перед деплоем
 
@@ -772,6 +937,9 @@ uv pip compile requirements.txt -o uv.lock
 - [ ] `pip-audit` интегрирован в CI
 - [ ] HEALTHCHECK настроен и работает
 - [ ] Нет секретов в ENV, ARG или Dockerfile
+- [ ] `.dockerignore` присутствует и исключает временные файлы
+- [ ] Порядок инструкций оптимизирован для кэширования (сначала зависимости, потом код)
+- [ ] `hadolint` проходит без ошибок в CI
 
 **Запуск контейнера:**
 - [ ] `--init` или `init: true` в Compose (или tini в образе)
@@ -779,16 +947,12 @@ uv pip compile requirements.txt -o uv.lock
 - [ ] `--cap-drop=ALL` + только необходимые capabilities
 - [ ] `--security-opt=no-new-privileges`
 - [ ] Лимиты памяти установлены (`--memory`)
-- [ ] `stop_grace_period`足够的大 для graceful shutdown
+- [ ] `stop_grace_period` достаточно большой для graceful shutdown
+- [ ] Логи ротируются через демон Docker или внешний сборщик
+- [ ] Тома для персистентных данных подключены и имеют бэкапы
+- [ ] Лицензии зависимостей проверены и соответствуют политике
 
-**Kubernetes:**
-- [ ] StartupProbe с足够的 `failureThreshold` (60+ сек на старт)
-- [ ] LivenessProbe не зависит от внешних сервисов
-- [ ] ReadinessProbe проверяет зависимость от БД
-- [ ] Лимиты памяти и CPU установлены
-- [ ] SecurityContext с `runAsNonRoot: true`
-
-## Дополнительная информация
+## Логирование и мониторинг
 
 ### Смотрите также
 
@@ -796,3 +960,5 @@ uv pip compile requirements.txt -o uv.lock
 - **[Безопасность в Dockerfile](./security.md)** — аудит, сканирование CVE и работа с пользователями.
 - **[Выполнение приложений в контейнере](./container_execution.md)** — жизненный цикл процесса и сигналы.
 - **[Проблема glibc/musl](../../Docker_troubleshooting/alpine_glibc_compatibility.md)** — детали совместимости в Alpine.
+- **[Логирование Docker-контейнеров](../../Docker/Docker_logs/docker_centralized_logging.md)** — настройка ротации и централизованного сбора логов.
+- **[Управление томами Docker](../../Docker/Docker_fs/docker_volumes.md)** — персистентное хранение данных и бэкапы.

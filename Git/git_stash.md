@@ -1,5 +1,7 @@
 # Git Stash — временное хранение изменений
 
+**Актуально для:** Git 2.40+ (все фичи, включая `export`/`import` и `--label-*`). Поддержка `git stash save` устарела с Git 2.16.0; используйте `git stash push`.
+
 ## Определения
 
 **Stash (git stash)** — механизм временного сохранения незавершённых изменений рабочего каталога и индекса в отдельном хранилище (стеке), позволяющий переключиться на другую ветку без создания «грязного» коммита.
@@ -57,6 +59,32 @@ git stash apply stash@{1}
 | `-k` / `--keep-index` | Сохраняет изменения, но оставляет их в Staging Area (индексе). | Полезно для тестирования только staged изменений. |
 | `-S` / `--staged` | (Git 2.35+) Сохраняет только те изменения, что уже добавлены в индекс. | Не затрагирует рабочее дерево. |
 | `-q` / `--quiet` | Подавляет вывод сообщений об успешном выполнении. | Для использования в скриптах. |
+| `--only-untracked` | (Git 2.35+) Сохраняет только untracked файлы, tracked изменения оставляя в рабочем дереве. | Противоположность `-u`. |
+| `--pathspec-from-file` | (Git 2.36+) Читает pathspec из файла. | Полезно для автоматизации. |
+
+**Флаги, доступные только для `git stash apply` (Git 2.40+):**
+
+| Флаг | Описание | Пример |
+| :--- | :--- | :--- |
+| `--index` | Восстанавливает изменения как в рабочем дереве, так и в индексе. | `git stash apply --index` |
+| `--label-ours=<метка>` | Заменяет маркер `<<<<<<<` в конфликтах. | `--label-ours="HEAD"` |
+| `--label-theirs=<метка>` | Заменяет маркер `>>>>>>>` в конфликтах. | `--label-theirs="stash@{0}"` |
+| `--label-base=<метка>` | Заменяет маркер `|||||||` (только с `merge.conflictStyle=diff3`). | `--label-base="common"` |
+
+**Экспорт и импорт stash (Git 2.40+, commit 5b2f6e0):**
+
+```bash
+# Экспортировать все stash в цепочку коммитов (для передачи через push/fetch)
+git stash export --to-ref refs/stash-export stash@{0}
+
+# Импортировать экспортированные stash
+git stash import refs/stash-export
+
+# Экспорт без сохранения refs (для скриптов), выводит SHA
+git stash export --print stash@{0}
+```
+
+**Экспорт/импорт решает проблему:** stash локален и не передаётся через `git push`. С помощью `export`/`import` можно переносить сохранённые состояния между репозиториями (например, с рабочей машины на домашнюю) через обычные механизмы Git.
 
 ### Управление и инспекция
 
@@ -66,6 +94,9 @@ git stash show -p stash@{0}
 
 # Просмотр списка файлов, включая новые (Git 2.31+)
 git stash show --include-untracked stash@{0}
+
+# Просмотр только untracked файлов (Git 2.35+)
+git stash show --only-untracked stash@{0}
 
 # Удалить конкретную запись
 git stash drop stash@{0}
@@ -316,6 +347,40 @@ git stash show -p stash@{0}
 * После выполнения `git gc --prune=now` восстановление невозможно.
 * Reflog для stash хранится 30–90 дней (настраивается через `gc.reflogExpire`).
 
+### Сценарий 9: Перенос stash между репозиториями (экспорт/импорт, Git 2.40+)
+
+Stash локален и не передаётся через `git push`. Если нужно перенести сохранённые состояния с одной машины на другую (например, домой ↔ работа), используйте `export`/`import`.
+
+**Предусловия:** Git 2.40+, есть сохранённые stash.
+
+```bash
+# На исходной машине: экспортировать stash в цепочку коммитов
+git stash export --to-ref refs/stash-export stash@{0}
+# → Exported stash@{0} as commit <sha>
+
+# Загрузить коммит на другую машину (например, через pull/fetch)
+git fetch <remote> refs/stash-export:refs/stash-export
+
+# На целевой машине: импортировать
+git stash import refs/stash-export
+# → Imported stash@{0}
+```
+
+**Валидация:**
+```bash
+# Проверить, что stash импортирован
+git stash list
+# → stash@{0}: On main: WIP: feature-xyz
+
+# Проверить содержимое
+git stash show -p stash@{0}
+```
+
+**Edge cases:**
+* `git stash export` без аргументов экспортирует **все** stash в стеке.
+* `git stash import` добавляет импортированные stash в конец текущего стека. Для замены всех stash предварительно выполните `git stash clear`.
+* `--print` выводит SHA экспортированной цепочки без сохранения refs — удобно для скриптов.
+
 ---
 
 ## Особенности и ограничения
@@ -359,6 +424,11 @@ git stash show -p stash@{0}
 | Stash не сохраняет untracked файлы | Не использован флаг `-u`. | Используйте `git stash -u` или `git stash -a`. |
 | Stash не удаляется после pop | Применение вызвало конфликт. | Вручную выполните `git stash drop` после разрешения конфликта. |
 | `git stash` ничего не делает | Нет изменений для сохранения. | Проверьте `git status`. |
+| `fatal: ambiguous argument: 'stash@{0}'` | Stash-реф не существует (очищен или повреждён). | Создайте новый stash или восстановите через `git fsck`. |
+| `error: pathspec did not match` | Использован `pathspec`, но он не соответствует изменённым файлам. | Проверьте, что pathspec соответствует отслеживаемым файлам. |
+| `No staged changes` | Использован `--staged` без staged изменений. | Добавьте файлы в индекс или уберите флаг. |
+| `git stash export: no stash entries` | Попытка экспорта при пустом стеке. | Создайте stash или уберите флаг. |
+| `git stash import: no commits found` | Файл/реф не содержит экспортированных коммитов. | Проверьте, что реф создан через `git stash export --to-ref`. |
 
 ### Диагностика
 
@@ -409,6 +479,10 @@ git gc --prune=now
    git config gc.reflogExpireUnreachable '14 days'
    ```
 8. **Тестируйте перед stash:** Используйте `--keep-index` для тестирования staged изменений без потери unstaged.
+9. **Используйте `git stash push` вместо `git stash save`:** `save` устарел с Git 2.16.0 и не поддерживает `pathspec`.
+10. **Для переноса между машинами используйте `export`/`import`:** Stash локален. `git stash export --to-ref` + `git stash import` позволяют передавать stash через обычные `push`/`fetch`.
+11. **При конфликтах используйте `--label-*`:** `git stash apply --label-ours="HEAD" --label-theirs="stash"` упрощает идентификацию сторон в маркерах конфликта.
+12. **Ограничивайте размер stash:** Бинарные файлы сохраняются целиком в каждый stash. Используйте `.gitattributes` для фильтрации больших файлов.
 
 ---
 
@@ -424,7 +498,43 @@ git gc --prune=now
 * [Разрешение конфликтов](./git_conflict_resolution.md) — паттерны при применении stash.
 * [Устранение неполадок Git](./git_troubleshooting.md) — восстановление удалённого stash.
 
+### Конфигурация stash
+
+| Параметр | По умолчанию | Описание |
+| :--- | :--- | :--- |
+| `stash.index` | `false` | Если `true`, `git stash apply` и `git stash pop` ведут себя так, будто передан `--index`. |
+| `stash.showIncludeUntracked` | `false` | Если `true`, `git stash show` по умолчанию включает untracked файлы. |
+| `stash.showPatch` | `false` | Если `true`, `git stash show` показывает diff (patch), а не только diffstat. |
+| `stash.showStat` | `true` | Если `true`, `git stash show` показывает diffstat по умолчанию. |
+
+```bash
+# Включить восстановление индекса по умолчанию
+git config stash.index true
+
+# Показывать diff по умолчанию
+git config stash.showPatch true
+```
+
+### Ограничения
+
+- **Локальность:** Stash хранится только в `.git/refs/stash` и не синхронизируется с удалённым репозиторием. Для переноса используйте `export`/`import` (Git 2.40+).
+- **Срок жизни:** Данные не удаляются автоматически. Только `drop`, `clear` или агрессивный `git gc` (при отсутствии ссылок на объекты).
+- **Конфликты:** Если `stash pop` вызывает конфликт, запись **не удаляется** из стека автоматически.
+- **Подмодули:** Stash не сохраняет изменения в подмодулях автоматически. Используйте `git submodule foreach --recursive 'git stash'`.
+- **Sparse checkout:** Работает только с файлами, попадающими под текущие паттерны.
+- **Бинарные файлы:** Сохраняются целиком в каждый stash, что может быстро увеличить размер `.git`.
+
+### Крайние случаи
+
+1. **Конфликт при `pop --index`:** Если индекс уже содержит изменения, `pop --index` может не применить staged изменения корректно. Очистите индекс через `git reset` перед повторным применением.
+2. **`git stash` без аргументов и `pathspec`:** Команда без подкоманды равносильна `git stash push`, но pathspec разрешён только после `--`. Иначе аргументы интерпретируются как сообщение.
+3. **`git stash branch` и существующая ветка:** Если ветка с указанным именем уже существует, команда завершится ошибкой. Используйте новое имя.
+4. **`git stash export` и цепочка коммитов:** Экспортированная цепочка содержит merge-коммиты. Импорт восстанавливает только те stash, которые были экспортированы; существующие stash не затрагиваются.
+5. **Reflog stash после `clear`:** После `git stash clear` reflog ещё содержит записи до истечения `gc.reflogExpire`. Восстановление через `git fsck --unreachable` может быть возможным, если `gc` не запускалась с `--prune=now`.
+
 ### Официальные ресурсы
 
 * **Документация Git Stash:** [git-scm.com/docs/git-stash](https://git-scm.com/docs/git-stash)
 * **Pro Git Book — Stashing:** [git-scm.com/book/ru/v2/Git-инструменты-Инструменты-Git-Припрятывание-и-Очистка](https://git-scm.com/book/ru/v2/Git-инструменты-Инструменты-Git-Припрятывание-и-Очистка)
+* **Git 2.40 Release Notes — stash export/import:** [git-scm.com/docs/git-stash/2.40.0](https://git-scm.com/docs/git-stash/2.40.0)
+* **Git 2.35 Release Notes — `--staged` и `--only-untracked`:** [git-scm.com/docs/git-stash/2.35.0](https://git-scm.com/docs/git-stash/2.35.0)

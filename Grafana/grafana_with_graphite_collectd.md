@@ -99,7 +99,7 @@ Collectd собирает данные через **плагины чтения*
 
 Перед развёртыванием убедитесь, что выполнены следующие условия:
 
-- **Docker + Docker Compose** на хосте Graphite (версия Docker ≥ 20.10, Compose v2). Для Grafana используется образ `grafana/grafana:13.x` (актуальная линейка 13.1.x); для Graphite — `graphiteapp/graphite-statsd:1.1.10-1`.
+- **Docker + Docker Compose** на хосте Graphite (версия Docker ≥ 20.10, Compose v2). Для Grafana используется образ `grafana/grafana:13.x` (актуальная линейка 13.2.x); для Graphite — `graphiteapp/graphite-statsd:1.1.10-1`.
 - **Сеть:** хост(ы) с Collectd должны иметь TCP/UDP-доступ к порту `2003` хоста, где опубликован Carbon. Между Collectd и Graphite не должно быть stateful-файервола, режущего долгие соединения.
 - **Порты:** `8080` (Graphite-web UI/API), `2003` (Carbon Line TCP+UDP), `2004` (Pickle), `8125` (StatsD UDP), `3000` (Grafana) должны быть свободны на хосте или корректно проброшены.
 - **Диск:** под Whisper требуется выделенный том (объём зависит от числа метрик × retentions; см. расчёт в разделе Whisper).

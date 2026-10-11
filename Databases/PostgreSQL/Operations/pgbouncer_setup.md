@@ -1,114 +1,137 @@
-# Настройка PgBouncer для PostgreSQL (Сквозной пулинг)
+# Настройка PgBouncer для PostgreSQL
 
-> PgBouncer — это стандарт индустрии для управления пулом соединений в PostgreSQL, позволяющий масштабировать количество клиентских подключений до десятков тысяч при минимальном потреблении ресурсов.
+**Актуально для:** PgBouncer 1.21–1.26, PostgreSQL 13–18
+
+> PgBouncer — легковесный пулер соединений PostgreSQL: event-driven процесс на одно ядро, десятки тысяч клиентских сессий при сотне реальных серверных соединений. Установка, конфигурация, аутентификация и безопасность; мониторинг, failover и отказоустойчивость — в **[Эксплуатация и мониторинг PgBouncer](./pgbouncer_operations.md)**.
 
 ## Определения
 
-- **PgBouncer** — легковесный пулер соединений (connection pooler), работающий на уровне протокола PostgreSQL. Он выступает прокси-сервером между приложением и БД, снижая нагрузку на бэкенд за счет переиспользования открытых сессий.
-- **Пул соединений (Connection Pool)** — набор заранее установленных соединений с базой данных, которые распределяются между активными клиентами.
-- **Пулинг сессий (Session Pooling)** — соединение закрепляется за клиентом на всё время его сессии. Применяется редко, так как не решает проблему масштабирования при большом количестве "спящих" клиентов.
-- **Пулинг транзакций (Transaction Pooling)** — соединение возвращается в пул сразу после завершения транзакции (`COMMIT`/`ROLLBACK`). Самый эффективный и популярный режим для веб-приложений.
-- **Пулинг операторов (Statement Pooling)** — соединение возвращается в пул после каждого SQL-запроса. Не поддерживает многооператорные транзакции и используется крайне редко.
-- **Шторм соединений (Connection Storm)** — лавинообразный рост попыток подключения к БД, способный привести к исчерпанию ресурсов ОС и отказу СУБД.
+- **PgBouncer** — легковесный connection pooler для PostgreSQL, работающий на уровне протокола как прозрачный прокси между приложением и сервером: принимает клиентские подключения, аутентифицирует их сам и переиспользует пул серверных соединений.
+- **Пул соединений (Connection Pool)** — набор заранее установленных соединений с базой данных, распределяемых между активными клиентами.
+- **Пулинг сессий (Session Pooling)** — серверное соединение закреплено за клиентом до отключения клиента. Режим по умолчанию; самый безопасный, но не решает проблему масштабирования при большом числе «спящих» клиентов.
+- **Пулинг транзакций (Transaction Pooling)** — серверное соединение возвращается в пул сразу после `COMMIT`/`ROLLBACK`. Самый эффективный режим для веб-приложений.
+- **Пулинг операторов (Statement Pooling)** — соединение возвращается в пул после каждого запроса; многооператорные транзакции запрещены. Используется крайне редко.
+- **Шторм соединений (Connection Storm)** — лавинообразный рост попыток подключения к БД, способный исчерпать ресурсы ОС и привести к отказу СУБД.
+- **Админ-консоль** — виртуальная база данных `pgbouncer` с командами `SHOW`/`PAUSE`/`RELOAD` и др. для управления экземпляром.
+- **Forced user** — пользователь, зафиксированный в строке подключения секции `[databases]` (`user=...`); все клиенты базы заходят на сервер под ним, пул становится единственным для всей базы.
+- **auth_file / auth_user** — статический файл пользователей (`userlist.txt`) или механизм динамической проверки паролей через запрос к PostgreSQL.
 
 ## Предпосылки
 
-Для успешного внедрения PgBouncer требуется:
-
-1.  **Версия PostgreSQL:** 12 и выше (для поддержки SCRAM-аутентификации).
-2.  **Версия PgBouncer:** 1.21+ (критично для поддержки Prepared Statements в режиме транзакций).
-3.  **Сетевая доступность:** Открытые порты (по умолчанию 6432 для пулера и 5432 для БД).
-4.  **Права доступа:** Учетная запись с правами на чтение системных таблиц (для динамической аутентификации).
+1. **PostgreSQL 10+** (SCRAM-SHA-256); для актуальных возможностей — 13+.
+2. **PgBouncer 1.21+** — критично для протокольных Prepared Statements в режимах transaction/statement pooling (`max_prepared_statements`). Актуальная версия — **1.26.0** (2026-09-23): закрыты CVE-2026-19888, CVE-2026-6668, CVE-2026-6669; `search_path` и `default_transaction_read_only` отслеживаются по умолчанию.
+3. **Порты:** 6432 — пулер (`listen_port`, по умолчанию), 5432 — PostgreSQL. Важно: если `listen_addr` не задан, PgBouncer слушает **только Unix-сокет** — TCP-подключения не работают.
+4. **Права доступа:** отдельный пользователь ОС `pgbouncer` без shell (`/usr/sbin/nologin`); для динамической аутентификации — непривилегированная роль БД + `SECURITY DEFINER`-функция (см. ниже).
+5. **Дескрипторы:** `ulimit -n` ≥ 65536 в production; теоретический максимум дескрипторов: `max_client_conn + (max_pool_size × число_баз × число_пользователей)`.
+6. **Сетевая доступность:** приложение должно иметь доступ к `listen_addr:listen_port`; PostgreSQL — к `host` из `[databases]`.
 
 ## Основные концепции
 
-### Архитектура PgBouncer
+### Архитектура
 
-PgBouncer работает как **прозрачный прокси** на уровне протокола PostgreSQL между клиентским приложением и сервером баз данных:
-
-```
-Клиент → [PgBouncer Frontend] ⇄ [PgBouncer Backend] → PostgreSQL
+```text
+Клиент → [PgBouncer frontend: listen_addr:listen_port] ⇄ [пул серверных соединений] → PostgreSQL
 ```
 
-**Компоненты:**
-- **Frontend (Client-facing)**: принимает клиентские подключения на указанном `listen_addr:listen_port` (по умолчанию `0.0.0.0:6432`), выполняет аутентификацию и поддерживает пул клиентских сессий.
-- **Backend (Server-facing)**: поддерживает пул физических соединений к PostgreSQL, управляет их жизненным циклом.
-- **State Machine**: для каждого клиента отслеживается состояние (`any`, `used`, `archive`, `login`, `close`, `waiting`, `active`, `idle`). При переходе из `active` в `idle` в режиме транзакций соединение немедленно возвращается в пул и становится доступным для другого клиента.
-- **DNS/Service Discovery**: PgBouncer кэширует DNS на время жизни соединения. При изменении IP бэкенда (failover) используйте `RELOAD` или перезапуск, иначе старые соединения будут "висеть" на старом адресе.
+- **Single-threaded event-driven** (libevent): один процесс обслуживает одно ядро. Для использования нескольких ядер запускают несколько экземпляров на одном порту с `so_reuseport = 1` (Linux, DragonFlyBSD, FreeBSD).
+- **Frontend** — клиентские сессии; состояния клиентских соединений (`SHOW CLIENTS`): `active` (связан с серверным), `idle` (нет запросов), `waiting` (запрос ждёт серверного соединения), `active_cancel_req`, `waiting_cancel_req`.
+- **Backend** — пул серверных соединений; состояния (`SHOW SERVERS`): `active`, `idle` (свободно, готов к выдаче), `used` (простаивал дольше `server_check_delay`, требуется `server_check_query`), `tested` (выполняется `server_reset_query`/`server_check_query`), `new`, `active_cancel`, `being_canceled`.
+- **DNS** — хост из `[databases]` резолвится в момент подключения и кэшируется на `dns_max_ttl` (15 с по умолчанию). При изменении резолва старые серверные соединения закрываются при освобождении, новые идут на новый адрес — `RELOAD` для DNS-изменений **не требуется**.
+- **Жизненный цикл соединения в transaction pooling:**
+  1. Клиент начинает транзакцию (`START TRANSACTION` или первый DML/DDL).
+  2. PgBouncer выдаёт свободное серверное соединение из пула (`default_pool_size` на пару «база, пользователь»).
+  3. Запрос выполняется, результат возвращается клиенту.
+  4. На `COMMIT`/`ROLLBACK` серверное соединение немедленно возвращается в пул.
+  5. Клиентское соединение остаётся открытым, но не держит серверную сессию.
+- В отличие от application-side пулов (HikariCP, `psycopg2.pool`), PgBouncer централизован и не зависит от языка/фреймворка приложения.
 
-**Жизненный цикл соединения в transaction pooling:**
-1. Клиент инициирует `START TRANSACTION` или DML/DDL-запрос.
-2. PgBouncer выделяет свободное серверное соединение из пула (`default_pool_size`).
-3. Запрос выполняется, результат возвращается клиенту.
-4. При `COMMIT`/`ROLLBACK` серверное соединение немедленно освобождается и возвращается в пул.
-5. Клиентское соединение остается открытым и готовит следующий запрос, но без привязки к серверной сессии.
+### Зачем нужен PgBouncer
 
-**Важно:** В отличие от application-side пулов (HikariCP, psycopg2.pool), PgBouncer централизован и не зависит от языка/фреймворка приложения.
-
-### Зачем нужен PgBouncer?
-1.  **Экономия RAM**: PostgreSQL создает отдельный процесс на каждое соединение (от 10 MB RAM). PgBouncer позволяет обслуживать 10 000 клиентов через 100-200 реальных серверных процессов.
-2.  **Снижение Latency**: Исключает затраты времени на fork процесса PostgreSQL при каждом новом подключении клиента.
-3.  **Управление очередями**: Если пул переполнен, PgBouncer ставит новые запросы в очередь вместо того, чтобы "убить" БД новыми подключениями.
-4.  **Безопасный Failover**: Позволяет переключать бэкенд (например, с Primary на Replica или на новый мастер после Switchover) незаметно для приложения.
+1. **Экономия RAM:** PostgreSQL создаёт процесс на каждое соединение (порядка 5–10 MB на бэкенд). 10 000 клиентов обслуживаются через 100–200 реальных соединений.
+2. **Снижение latency:** исключается форк процесса PostgreSQL при каждом новом подключении.
+3. **Управление очередями:** при исчерпании пула запросы встают в очередь (`cl_waiting`), а не «убивают» БД новыми подключениями.
+4. **Безопасный failover:** бэкенд можно переключить (Primary → Replica, switchover) незаметно для приложения (см. `pgbouncer_operations.md`).
 
 ### Режимы работы (Pool Modes)
 
 | Характеристика | Session | Transaction | Statement |
 | :--- | :--- | :--- | :--- |
 | **Удержание соединения** | Весь период сессии | Только на время транзакции | На время одного запроса |
-| **Поддержка транзакций** | Полная | Полная | Нет |
+| **Поддержка транзакций** | Полная | Полная | Нет (многооператорные запрещены) |
 | **Временные таблицы** | Да | Нет | Нет |
-| **Prepared Statements** | Да | **Да (с версии 1.21+)** | Нет |
+| **Протокольные Prepared Statements** | Да | **Да (PgBouncer 1.21+)** | Да (1.21+) |
 | **LISTEN/NOTIFY** | Да | Нет | Нет |
-| **Когда использовать** | Session-приложения (pgAdmin, миграции), legacy-код с temp-таблицами | Веб-приложения, API, ORM (Hibernate, Prisma, Django) | Только read-only аналитика без транзакций; практически не используется |
+| **Когда использовать** | pgAdmin, миграции, legacy-код с temp-таблицами, LISTEN/NOTIFY | Веб-приложения, API, ORM (Hibernate, Prisma, Django) | Только read-only без транзакций; практически не используется |
 
-> **Важно:** Начиная с версии 1.21, PgBouncer поддерживает протокольные Prepared Statements в режиме транзакций через параметр `max_prepared_statements`.
+`pool_mode` задаётся глобально, в секции `[databases]` для базы и в секции `[users]` для пользователя — более частный уровень перекрывает глобальный.
+
+### Prepared Statements в transaction pooling
+
+Начиная с 1.21 (`max_prepared_statements`, по умолчанию **200**; `0` отключает поддержку):
+
+- PgBouncer отслеживает протокольные (расширенный протокол) именованные prepared statements: каждому уникальному тексту запроса присваивается внутреннее имя `PGBOUNCER_<id>`, общий кеш текстов запросов един для всех клиентов.
+- Если на новом серверном соединении запрос ещё не подготовлен — PgBouncer готовит его прозрачно перед выполнением; при 100 клиентах с одним запросом и `pool_size = 20` запрос парсится на сервере только 20 раз.
+- Размер LRU-кеша prepared statements — **на одно серверное соединение**; слишком маленькое значение вытесняет частые запросы, слишком большое — расходует память PostgreSQL (планы) и PgBouncer (тексты запросов).
+- SQL-команды `PREPARE`/`EXECUTE`/`DEALLOCATE` передаются напрямую; `DEALLOCATE ALL` и `DISCARD ALL` очищают отслеживаемые statements клиента.
+- При DDL, меняющем типы результата/аргументов, PostgreSQL выдаёт `ERROR: cached plan must not change result type` — лечится командой `RECONNECT` на консоли после миграции.
+- Подготовленные statements кешируются на стороне PgBouncer, а не PostgreSQL; SQL-level `PREPARE` не отслеживается.
+- Оценка памяти (из документации): 1000 активных клиентов, 200 уникальных запросов по 5 kB, `pkt_buf = 4096` → ~17 MB.
+
+Детали влияния на планировщик — в **[Планировщик и кеш планов](../Concepts/planner_internals.md)**.
 
 ### Планирование ёмкости пула (Capacity Planning)
 
 Размер пула задаётся профилем нагрузки на БД, а не числом клиентов или воркеров приложения:
 
-- `default_pool_size` — число серверных соединений на пару (база, пользователь). Для коротких OLTP-транзакций обычно 20–50.
-- `max_client_conn` — лимит **клиентских сессий** (не соединений к БД). Ограничен `ulimit -n` процесса: сумма `max_client_conn + default_pool_size × число_баз` должна быть меньше доступных дескрипторов.
-- Правило: суммарный `default_pool_size` всех пулов **меньше** `max_connections` PostgreSQL (оставляем запас на админов и миграции). Иначе PgBouncer упирается в лимит СУБД.
+- `default_pool_size` (по умолчанию **20**) — серверных соединений на пару (база, пользователь). Для коротких OLTP-транзакций обычно 20–50.
+- `max_client_conn` (по умолчанию **100**) — лимит **клиентских сессий**, а не соединений к БД. При повышении проверьте `ulimit -n`.
+- Правило: суммарный `default_pool_size` всех пулов **меньше** `max_connections` PostgreSQL — запас 30% на админов, миграции, логическую репликацию. Иначе пулер упирается в лимит СУБД.
 - Транзакционный пулинг умножает ёмкость: 10 000 клиентов при пуле 50 → ~50 реальных соединений к БД.
+- Альтернативная эвристика стартового значения — число ядер CPU (для HDD `(ядра × 2) + диски`); см. **[Масштабирование](../Concepts/scaling.md)**.
 
 #### Формулы и примеры
 
 **Минимальный `default_pool_size` для OLTP:**
-```
+
+```text
 default_pool_size ≥ (RPS × avg_latency_sec) / parallelism_factor
 ```
-где `parallelism_factor` — эффективное число параллельных запросов, которое может обработать один PostgreSQL-процесс. Обычно 1.0–2.0.
 
-Пример: 2000 RPS, средняя латентность транзакции 15 мс (0.015 с):
-```
+где `parallelism_factor` — эффективная параллельность одного PostgreSQL-процесса (обычно 1.0–2.0). Пример: 2000 RPS, средняя латентность 15 мс:
+
+```text
 (2000 × 0.015) / 1.5 ≈ 20 → default_pool_size = 25–30
 ```
 
 **Максимальный `default_pool_size`:**
-```
+
+```text
 sum(default_pool_size) ≤ max_connections × 0.7
 ```
-Запас 30% оставляется на суперпользователей, миграции, логическую репликацию и административные сессии.
 
 **`max_client_conn` под нагрузку:**
+
+```text
+max_client_conn ≤ ulimit -n − (max_pool_size × число_баз × число_пользователей) − 64
 ```
-max_client_conn ≤ ulimit -n − (default_pool_size × databases_count) − 64
-```
-Оставляем запас на файлы логов, stdin/stdout и служебные дескрипторы. Для production рекомендуем `ulimit -n = 65536`.
+
+Запас 64 дескриптора — на логи, stdin/stdout и служебные файлы.
 
 **`reserve_pool_size` при всплесках:**
-```
+
+```text
 reserve_pool_size = ceil(default_pool_size × 0.2)
 ```
-Резервный пул используется только когда обычный пул исчерпан и клиенты ждут дольше `reserve_pool_timeout` (по умолчанию 5 сек).
+
+Резервный пул подключается только когда основной исчерпан и клиент ждёт дольше `reserve_pool_timeout` (5 с по умолчанию; `0` отключает).
 
 #### Типичные ошибки capacity planning
-1. **`default_pool_size = max_connections`**: пулер полностью блокирует СУБД, не оставляя места для администрирования.
-2. **Игнорирование пиков**: если RPS растет в 3 раза утром, `default_pool_size` должен покрывать пик, а не среднее.
-3. **Слишком маленький `max_client_conn`**: при 10k+ воркерах приложения часто сталкиваются с `FATAL: too many open files`, хотя пул в БД не переполнен.
-4. **Одна база — все пользователи**: разделяйте пользователей по базам или используйте `auth_db` для изоляции нагрузок.
+
+1. **`default_pool_size = max_connections`**: пулер блокирует СУБД, не оставляя места для администрирования.
+2. **Игнорирование пиков**: `default_pool_size` должен покрывать пиковое RPS, а не среднее.
+3. **Слишком маленький `max_client_conn`**: при 10k+ воркерах приложения получают `FATAL: too many open files`, хотя пул в БД не переполнен.
+4. **Одна база — все пользователи**: разделяйте пользователей по базам или используйте `auth_user`/forced user для изоляции нагрузок.
+5. **Игнорирование `max_db_connections`/`max_user_connections`**: без них одна «горячая» база или пользователь может съесть весь пул.
 
 Общие принципы пулинга соединений — в **[Connection Pooling](../../../Networking/Concepts/connection_pooling.md)**.
 
@@ -117,186 +140,205 @@ reserve_pool_size = ceil(default_pool_size × 0.2)
 ### Установка
 
 **Ubuntu / Debian:**
+
 ```bash
 sudo apt update && sudo apt install pgbouncer -y
 ```
 
 **RHEL / CentOS / Rocky Linux:**
+
 ```bash
 sudo dnf install epel-release -y
 sudo dnf install pgbouncer -y
 ```
 
+Проверка версии:
+
+```bash
+pgbouncer -V
+# → pgbouncer 1.26.0
+```
+
 ### Конфигурация (`pgbouncer.ini`)
 
-Типовой файл конфигурации `/etc/pgbouncer/pgbouncer.ini`:
+Типовой файл `/etc/pgbouncer/pgbouncer.ini` (значения по умолчанию PgBouncer указаны в комментариях):
 
 ```ini
 [databases]
-# Шаблон: dbname = host=... port=... auth_user=...
-# * = host=127.0.0.1 port=5432
+# Шаблон: dbname = host=... port=... dbname=... user=... auth_user=...
+# "*" = host=127.0.0.1 port=5432   — fallback для любых имён баз
 myapp_db = host=10.0.0.10 port=5432 dbname=myapp_prod auth_user=pgb_auth_user
 
 [pgbouncer]
-listen_addr = 0.0.0.0
-listen_port = 6432
-unix_socket_dir = /var/run/postgresql
-user = pgbouncer
+# Сетевые настройки
+listen_addr = 0.0.0.0          # по умолчанию не задан — только Unix-сокет! "*" = все адреса
+listen_port = 6432             # по умолчанию 6432
+unix_socket_dir = /var/run/postgresql  # по умолчанию /tmp; "" отключает Unix-сокеты
+user = pgbouncer               # сброс привилегий (запуск от root) или уже работающий пользователь
 
-# Логирование
-log_connections = 0
-log_disconnections = 0
+# Логирование (все флаги по умолчанию = 1)
+log_connections = 1
+log_disconnections = 1
+log_pooler_errors = 1
 log_stats = 1
-stats_period = 60
+stats_period = 60              # период усреднения статистики, сек
+verbose = 0                    # 0–3, аналог -v
 
 # Аутентификация
-auth_type = scram-sha-256
+auth_type = scram-sha-256      # по умолчанию md5 (при SCRAM-секрете в auth_file автоматом используется SCRAM)
 auth_file = /etc/pgbouncer/userlist.txt
-# Динамическая проверка паролей через БД (рекомендуется)
+# Динамическая проверка паролей через БД (рекомендуется вместо синхронизации userlist.txt)
 auth_user = pgbouncer
 auth_query = SELECT usename, passwd FROM pgbouncer.get_auth($1)
 
 # Настройки пула
-pool_mode = transaction
-default_pool_size = 50
-reserve_pool_size = 10
-max_client_conn = 10000
+pool_mode = transaction        # по умолчанию session
+default_pool_size = 50         # по умолчанию 20
+min_pool_size = 0              # прогрев пула после простоя; 0 = disabled
+reserve_pool_size = 10         # по умолчанию 0 (disabled)
+reserve_pool_timeout = 5       # сек; 0 = disabled
+max_client_conn = 10000        # по умолчанию 100
+max_db_connections = 0         # 0 = unlimited; лимит серверных соединений на базу
+max_user_connections = 0       # 0 = unlimited; лимит серверных соединений на пользователя
 
-# Поддержка Prepared Statements (для PgBouncer 1.21+)
+# Prepared Statements (PgBouncer 1.21+; по умолчанию 200, 0 = disabled)
 max_prepared_statements = 100
 
+# Отслеживаемые параметры сессии в transaction pooling
+# (по умолчанию отслеживаются: application_name, client_encoding, DateStyle,
+#  default_transaction_read_only, IntervalStyle, scram_iterations, search_path,
+#  session_authorization, standard_conforming_strings, TimeZone)
+track_extra_parameters =
+
 # Администрирование
-admin_users = postgres, pgb_admin
-stats_users = pgb_monitor
+admin_users = pgb_admin        # полные права на консоль (по умолчанию пусто)
+stats_users = pgb_monitor      # read-only: все SHOW-команды (по умолчанию пусто)
+
+# Прочее
+server_idle_timeout = 600      # сек, по умолчанию 600; 0 = disabled
+server_lifetime = 3600         # сек, по умолчанию 3600
+server_connect_timeout = 15    # сек, по умолчанию 15
+query_wait_timeout = 120       # сек, по умолчанию 120; 0 = бесконечная очередь
 ```
 
-### Настройка динамической аутентификации (`auth_query`)
+Проверка конфига перед применением — запуск в foreground (флага `--check-config` нет; `pgbouncer -d` сразу демонизирует процесс и **не годится** для проверки):
 
-Этот метод позволяет PgBouncer проверять пароли пользователей напрямую в PostgreSQL, избавляя от необходимости вручную синхронизировать `userlist.txt`.
+```bash
+pgbouncer /etc/pgbouncer/pgbouncer.ini
+# → LOG: parsing ... / LOG: listening on ...   (ошибки парсинга выводятся сразу)
+# Ctrl-C для остановки
+```
 
-1. **В PostgreSQL (под суперпользователем):**
+### Секция `[databases]` — строки подключения
+
+Каждая строка `имя = connection_string` (формат близок к libpq, но не совпадает с ним):
+
+| Ключ | Смысл |
+| :--- | :--- |
+| `host` | IP/имя; `/путь` — Unix-сокет, `@имя` — abstract namespace (Linux/Windows); список через запятую — round-robin; по умолчанию — Unix-сокет |
+| `port` | По умолчанию 5432 |
+| `dbname` | По умолчанию — имя базы клиента |
+| `user` | Forced user: все клиенты базы идут на сервер под ним, пул единственный |
+| `password` | Пароль forced user (без него — из `auth_file`; `auth_query` не поддерживается) |
+| `auth_user` / `auth_query` / `auth_dbname` | Переопределения глобальных настроек аутентификации; `auth_query` целиком в одинарных кавычках |
+| `pool_size` / `min_pool_size` / `reserve_pool_size` | Размеры пула для базы |
+| `pool_mode` | Режим пула для базы |
+| `connect_query` | Запрос после установления соединения, до выдачи клиенту (ошибки логируются, игнорируются) |
+| `load_balance_hosts` | `round-robin` (по умолчанию) / `disable` — выбор хоста из списка для новых соединений |
+| `max_db_connections` / `max_db_client_connections` | Лимиты серверных/клиентских соединений для базы |
+| `server_lifetime` | Переопределение для базы |
+| `client_encoding` / `datestyle` / `timezone` | Запрашиваемые параметры сессии у сервера |
+
+Ключ `pgbouncer` зарезервирован за админ-консолью. Имя `*` — fallback: соединения к неописанным базам маршрутизируются по нему (пулы такого «авто»-вида освобождаются через `autodb_idle_timeout`, 3600 с).
+
+### Секция `[users]` — настройки на пользователя
+
+```ini
+[users]
+report_user = pool_mode=session pool_size=10
+readonly_user = pool_mode=transaction max_user_connections=20
+```
+
+Доступные ключи: `pool_size`, `reserve_pool_size`, `pool_mode`, `max_user_connections`, `max_user_client_connections`, `query_timeout`, `query_wait_timeout`, `idle_transaction_timeout`, `transaction_timeout`, `client_idle_timeout`. Пользователь, описанный здесь, но отсутствующий в `auth_file`, аутентифицируется через `auth_query` (если задан `auth_user`).
+
+### Динамическая аутентификация (`auth_user` + `auth_query`)
+
+PgBouncer проверяет пароли пользователей напрямую в PostgreSQL, без синхронизации `userlist.txt`. Механизм: пользователи, отсутствующие в `auth_file`, запрашиваются через `auth_query` от имени `auth_user`; пароль самого `auth_user` берётся из `auth_file`.
+
+1. **В PostgreSQL (под суперпользователем) — в каждой целевой базе** (запрос `auth_query` выполняется внутри той базы, к которой подключается клиент):
+
 ```sql
 CREATE USER pgbouncer WITH PASSWORD 'pgbouncer_secret_password';
-CREATE SCHEMA pgbouncer;
+CREATE SCHEMA pgbouncer AUTHORIZATION pgbouncer;
 
--- Функция для получения хеша пароля
+-- Функция для получения хеша пароля; SECURITY DEFINER + фиксированный search_path
+-- обязателен как защита от подмены search_path в startup-пакете (CVE-2025-12819)
 CREATE OR REPLACE FUNCTION pgbouncer.get_auth(p_usename text)
 RETURNS TABLE(usename text, passwd text) AS $$
-    SELECT usename, passwd FROM pg_catalog.pg_shadow WHERE usename=$1;
-$$ LANGUAGE sql SECURITY DEFINER;
+    SELECT rolname::text, rolpassword::text
+    FROM pg_catalog.pg_authid
+    WHERE rolname = $1 AND rolcanlogin;
+$$ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog;
 
 -- Ограничение прав
-REVOKE ALL ON FUNCTION pgbouncer.get_auth(text) FROM public;
+REVOKE ALL ON FUNCTION pgbouncer.get_auth(text) FROM PUBLIC;
 GRANT USAGE ON SCHEMA pgbouncer TO pgbouncer;
-GRANT EXECUTE ON FUNCTION pgbouncer.get_auth(text) TO pgbouncer;
 ```
 
-2. **В `userlist.txt` добавьте только самого пользователя `pgbouncer`:**
+Владелец функции должен иметь права на чтение `pg_catalog.pg_authid` (обычно суперпользователь). Прямой доступ `auth_user` к `pg_authid` требует админ-прав — документация рекомендует именно `SECURITY DEFINER`-функцию.
+
+2. **В `userlist.txt` — только пользователя `pgbouncer`:**
+
 ```text
 "pgbouncer" "SCRAM-SHA-256$4096:..."
 ```
 
-### Управление через консоль
+Формат строки `userlist.txt`: `"имя" "пароль"` — пароль открытым текстом, MD5-хеш или SCRAM-verifier. Сгенерировать файл из `pg_authid` можно скриптом `etc/mkauth.py` из дистрибутива PgBouncer.
 
-PgBouncer имеет виртуальную базу данных `pgbouncer`, к которой можно подключиться для управления.
+**Managed-серверы** (нет доступа к `pg_authid`): сгенерировать одинаковый SCRAM-verifier на обеих сторонах — `psql --echo-hidden ... \password роль` печатает verifier в консоль до отправки на сервер; вставить его в `userlist.txt` и установить через `ALTER ROLE ... PASSWORD 'verifier'`.
 
-```bash
-psql -h localhost -p 6432 -U postgres pgbouncer
-```
-
-**Основные команды:**
-- `SHOW STATS` — статистика запросов, транзакций и времени выполнения.
-- `SHOW POOLS` — состояние очередей и активных соединений.
-- `SHOW CLIENTS` / `SHOW SERVERS` — детальный список подключений.
-- `RELOAD` — мягкая перезагрузка конфигурации.
-- `PAUSE` / `RESUME` — приостановка/возобновление работы (транзакции ставятся на паузу, не обрываясь).
-
-### Мониторинг (Prometheus и SQL)
-
-Для мониторинга рекомендуется использовать `pgbouncer_exporter`. 
-
-**Ключевые метрики для алертинга:**
-1. **`pgbouncer_pools_client_waiting_connections`** — если > 0, клиенты ждут в очереди. Это критично.
-2. **`pgbouncer_pools_client_maxwait_seconds`** — время ожидания самого старого клиента в очереди.
-3. **`pgbouncer_pools_server_active_connections`** — количество занятых серверных соединений.
-4. **`pgbouncer_up`** — доступность самого сервиса.
-
-#### Консольные запросы для диагностики
+По умолчанию `auth_query`:
 
 ```sql
--- Состояние всех пулов
-SHOW POOLS;
-
--- Активные клиенты и серверные соединения
-SHOW CLIENTS;
-SHOW SERVERS;
-
--- Статистика по базам
-SHOW STATS;
-
--- Текущие лимиты и usage
-SHOW CONFIG;
-SHOW LIMITS;
+SELECT rolname, CASE WHEN rolvaliduntil < now() THEN NULL ELSE rolpassword END FROM pg_authid WHERE rolname=$1 AND rolcanlogin
 ```
 
-Пример анализа `SHOW POOLS`:
-```
- database  | cl_active | cl_waiting | sv_active | sv_idle | sv_used | sv_tested | sv_login | maxwait
------------+-----------+------------+-----------+---------+---------+-----------+----------+--------
- myapp_db  |      120  |          0 |        50 |       0 |       0 |         0 |        0 |   0.00
-```
-- `cl_active` — клиенты,currently выполняющие запрос.
-- `cl_waiting` — клиенты в очереди. Должно быть `0` в steady state.
-- `sv_active` — занятые серверные соединения. Если достигает `default_pool_size` — пул переполнен.
-- `maxwait` — время ожидания самого старого клиента в секундах. Алерт если > 2 сек.
+(требует админ-прав у `auth_user`; учитывает истечение пароля через `rolvaliduntil`).
 
-#### Дашборды и алерты (Prometheus / Grafana)
+### Аутентификация клиентов (`auth_type`)
 
-**Панель "PgBouncer Overview":**
-- `sum(pgbouncer_pools_client_waiting_connections)` — глобальная очередь.
-- `sum(pgbouncer_pools_server_active_connections) / sum(pgbouncer_databases_default_pool_size) * 100` — утилизация пула в %.
-- `histogram_quantile(0.99, sum(rate(pgbouncer_query_time_seconds_bucket[5m])) by (le))` — P99 латентности запросов.
+| `auth_type` | Поведение |
+| :--- | :--- |
+| `md5` | По умолчанию. MD5-проверка; если у пользователя SCRAM-секрет — автоматически SCRAM |
+| `scram-sha-256` | SCRAM-SHA-256; `auth_file` должен содержать SCRAM-verifier или открытый пароль |
+| `trust` | Без проверки пароля; пользователь должен существовать в `auth_file` |
+| `any` | Как `trust`, но имя пользователя игнорируется; требует forced user в `[databases]`; консоль открыта всем |
+| `cert` | TLS с валидным клиентским сертификатом; имя пользователя из CommonName |
+| `hba` | Методы из `auth_hba_file` (аналог `pg_hba.conf`): поддерживаются `local`, `host`, `hostssl`, `hostnossl`; методы — поддерживаемые `auth_type` плюс `peer` и `reject`; `peer` работает на Unix-сокете |
+| `ldap` / `pam` | Внешняя аутентификация (как в PostgreSQL); `pam` несовместим с `auth_user`, в HBA-файле не поддерживается |
 
-**Пороги алертов:**
-| Условие | Тяжесть | Описание |
-| :--- | :--- | :--- |
-| `pgbouncer_pools_client_waiting_connections > 0` | Critical | Клиенты ждут свободного соединения > 0 сек. |
-| `pgbouncer_pools_client_maxwait_seconds > 2` | Warning | Самый старый клиент в очереди ждет > 2 сек. |
-| `pgbouncer_pools_server_active_connections == default_pool_size` | Warning | Пул исчерпан, новые запросы станут в очередь. |
-| `rate(pgbouncer_total_query_time[5m]) / rate(pgbouncer_total_queries[5m]) > 0.5` | Warning | Средняя латентность запроса > 500 мс. |
-| `pgbouncer_up == 0` | Critical | PgBouncer недоступен. |
+`auth_hba_file` используется **только при `auth_type = hba`**. Ограничения формата: не поддерживаются `samerole`/`samegroup`, `samehost`/`samenetwork`, DNS-имена и доменные суффиксы в адресе; `map=` работает при `auth_type = cert` или `peer` (с `auth_ident_file`).
 
-#### Корреляция с PostgreSQL
+### TLS/SSL
 
-Сопоставляйте метрики PgBouncer с `pg_stat_activity`:
-```sql
-SELECT state, count(*) 
-FROM pg_stat_activity 
-WHERE datname = 'myapp_db' 
-GROUP BY state;
-```
-Если `cl_active` в PgBouncer высокий, а `active` в `pg_stat_activity` низкий — проблема в длительных транзакциях на стороне приложения.
+```ini
+# Шифрование трафика клиент ↔ PgBouncer (по умолчанию disable)
+client_tls_sslmode = require
+client_tls_cert_file = /etc/pgbouncer/server.crt
+client_tls_key_file = /etc/pgbouncer/server.key   # владелец pgbouncer, права 0600
 
-### Переключение бэкенда (Failover) без обрыва клиентов
-
-При смене Primary (Patroni или вручную) не разрывайте клиентов: поставьте PgBouncer на паузу (активные транзакции завершатся, новые встанут в очередь), укажите новый адрес и возобновите:
-
-```bash
-psql -h localhost -p 6432 -U postgres pgbouncer -c "PAUSE myapp_db"
-# обновить [databases] -> host=новый_primary в /etc/pgbouncer/pgbouncer.ini
-psql -h localhost -p 6432 -U postgres pgbouncer -c "RELOAD"
-psql -h localhost -p 6432 -U postgres pgbouncer -c "RESUME myapp_db"
+# Шифрование трафика PgBouncer ↔ PostgreSQL (по умолчанию prefer!)
+server_tls_sslmode = verify-full
+server_tls_ca_file = /etc/pgbouncer/ca.crt
+server_tls_cert_file = /etc/pgbouncer/client.crt
+server_tls_key_file = /etc/pgbouncer/client.key
 ```
 
-**Валидация:** `SHOW POOLS` показывает `paused=0` и рост `sv_active` на новом бэкенде; в логах отсутствуют `closing because:`.
+Режимы: `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full` (`client_tls_sslmode` по умолчанию `disable`, `server_tls_sslmode` — `prefer`). Версии: `client_tls_protocols`/`server_tls_protocols` = `secure` (TLS 1.2+). **Любое изменение TLS-настроек автоматически вызывает `RECONNECT`** — старые соединения доживают до освобождения, новые работают по новым файлам; при смене содержимого сертификатов без смены имён файлов после `RELOAD` то же самое.
 
-## Эксплуатация и надёжность
+### Hardening: systemd, лимиты, логирование
 
-### Production Hardening
-
-#### systemd unit и процесс
-
-На production-серверах PgBouncer должен работать как managed service с авторестартом:
+**systemd unit** (пакетные unitы уже есть; пример для hand-made конфигурации). `Type=notify-reload` поддерживается с PgBouncer 1.24.0 (systemd ≥ 253):
 
 ```ini
 # /etc/systemd/system/pgbouncer.service
@@ -306,10 +348,11 @@ After=network.target postgresql.service
 Wants=postgresql.service
 
 [Service]
-Type=simple
+Type=notify-reload
 User=pgbouncer
 Group=pgbouncer
-ExecStart=/usr/bin/pgbouncer -d /etc/pgbouncer/pgbouncer.ini
+# Без -d: systemd сам управляет фоновым процессом; -d требует pidfile+logfile и ломает Type=simple/notify
+ExecStart=/usr/sbin/pgbouncer /etc/pgbouncer/pgbouncer.ini
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
@@ -336,9 +379,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now pgbouncer
 ```
 
-#### ulimit и системные параметры
-
-PgBouncer — это event-driven single-threaded процесс. Его производительность зависит от числа дескрипторов и размера backlog:
+**ulimit и sysctl** — event-driven процесс ограничен числом дескрипторов и бэклогом listen-очереди (`listen_backlog`, по умолчанию 128):
 
 ```bash
 # /etc/security/limits.d/pgbouncer.conf
@@ -352,30 +393,19 @@ net.ipv4.tcp_syn_retries = 3
 net.ipv4.tcp_synack_retries = 2
 ```
 
-Применение:
 ```bash
 sudo sysctl --system
 ```
 
-#### Логирование и ротация
-
-PgBouncer пишет в stdout/stderr. В production используйте journald или external syslog:
+**Логирование и ротация.** В демон-режиме (`-d`) требуется `logfile` или `syslog`; при `logfile` после ротации нужен `kill -HUP` или `RELOAD` для переоткрытия файла:
 
 ```ini
 # pgbouncer.ini
-log_connections = 1
-log_disconnections = 1
-log_stats = 1
-stats_period = 60
 logfile = /var/log/pgbouncer/pgbouncer.log
+# syslog = 1            # альтернатива logfile; syslog_facility = daemon
 ```
 
-```bash
-sudo journalctl -u pgbouncer -f
-```
-
-Ротация логов через logrotate:
-```bash
+```ini
 # /etc/logrotate.d/pgbouncer
 /var/log/pgbouncer/*.log {
     daily
@@ -390,281 +420,127 @@ sudo journalctl -u pgbouncer -f
 }
 ```
 
-#### Zero-downtime обновление PgBouncer
+**Дополнительные hardening-настройки:**
 
-PgBouncer поддерживает **фоновый перезапуск** через SIGHUP или graceful restart:
+- `disable_pqexec = 1` — отключить Simple Query Protocol (одним пакетом можно отправить несколько запросов, что открывает класс SQL-инъекций); работает только для приложений на Extended Query Protocol.
+- `application_name_add_host = 1` — добавить адрес клиента в `application_name` при подключении (помогает искать источник плохих запросов).
+- `ignore_startup_parameters = extra_float_digits` — требуется для **pgbouncer_exporter** (и любых драйверов, шлющих неотслеживаемые параметры).
+- `peer_id` + секция `[peers]` — объединение экземпляров в группу для передачи запросов отмены между процессами (нужно при `so_reuseport` и TCP-балансировщике перед несколькими пулерами).
+- `scram_iterations = 4096` — итерации SCRAM при генерации verifier (по умолчанию 4096).
+
+**Минимальные права:**
+
+- Пользователь ОС `pgbouncer`: `/usr/sbin/nologin`, нет доступа к `/etc/postgresql`, `/var/lib/postgresql` и домашним каталогам других пользователей; ключи TLS — владелец `pgbouncer`, права `0600`.
+- Пользователь БД `pgbouncer` (для `auth_query`): только `USAGE` на схеме и `EXECUTE` на функции; никаких `SUPERUSER`/`CREATEDB`.
+
+**Аудит и compliance:** `log_connections = 1`, `log_disconnections = 1`, `log_pooler_errors = 1` — попытки аутентификации, отключения с причинами, ошибки пулера. Ключевые события для аудита: неуспешные логины, достижение лимитов (`max_client_conn`, `max_db_connections`), операции `PAUSE`/`RESUME`/`RELOAD` на консоли.
+
+### Резервное копирование конфигурации
+
+Храните `pgbouncer.ini`, `userlist.txt` (и `auth_hba_file`, если используется) в Git. Восстановление при аварии — минуты: вернуть файлы из Git, `systemctl reload pgbouncer` (SIGHUP = `RELOAD`).
+
+## Операции и команды
+
+**Командная строка:**
+
+```text
+pgbouncer [-d] [-v] [-q] [-u user] <pgbouncer.ini>
+pgbouncer -V | -h
+```
+
+- `-d` — демонизация (требует `pidfile` + `logfile`/`syslog`); для systemd **не используется**.
+- `-v` — verbosity (можно многократно; аналог `verbose = 0–3`), `-q` — не писать в stderr, `-u user` — сменить пользователя при старте.
+- `SIGHUP` — эквивалент консольной команды `RELOAD` (перечитать конфиг и `changeable`-настройки).
+
+**Админ-консоль** — полное описание команд и SHOW-запросов в **[Эксплуатация и мониторинг PgBouncer](./pgbouncer_operations.md)**. Минимально для эксплуатации конфигурации:
 
 ```bash
-# Вариант 1: HUP (если конфиг изменился)
-sudo kill -HUP $(pgrep pgbouncer)
-
-# Вариант 2: через консоль управления
-psql -h 127.0.0.1 -p 6432 -U postgres pgbouncer -c "RELOAD"
-
-# Вариант 3: обновление бинарника без обрыва клиентов
-sudo systemctl reload pgbouncer
+psql -h /var/run/postgresql -U pgb_admin pgbouncer   # Unix-сокет; или -h 127.0.0.1 -p 6432
 ```
 
-Для обновления самого бинарника на rolling infrastructure используйте **blue-green switch**:
-1. Запустите второй экземпляр PgBouncer на порту `6433` с новым бинарником.
-2. Переключите алерт/сервис/конфиг приложения на порт `6433`.
-3. Остановите старый инстанс на `6432`.
+```sql
+RELOAD;                      -- перечитать конфиг (SIGHUP)
+SHOW CONFIG;                 -- текущие значения + changeable (да/нет — можно ли менять через SET)
+SHOW DATABASES;              -- маршруты, размеры пулов, paused/disabled
+SET log_connections = 1;     -- смена changeable-настройки в рантайме
+```
 
-#### Бэкап конфигурации
+Права на консоль: `admin_users` (все команды), `stats_users` (только `SHOW`). Пользователь `pgbouncer` входит без пароля через Unix-сокет, если UID совпадает с UID процесса. Консоль поддерживает **только Simple Query Protocol** — драйверы, шлющающие все команды расширенным протоколом, на ней не работают.
 
-Храните `pgbouncer.ini`, `userlist.txt` и `hba_file` в Git. При аварии восстановление занимает минуты:
+## Валидация
+
+1. **Статус сервиса:**
 
 ```bash
-# Проверка целостности конфига перед применением
-pgbouncer -d /etc/pgbouncer/pgbouncer.ini
-# → "LOG configuration files parsed"
+systemctl status pgbouncer
+# → active (running), Main PID, LimitNOFILE=65536
 ```
 
-### Безопасность (TLS/SSL)
+2. **Тестовое подключение через пулер:**
 
-Для защиты трафика между клиентом и PgBouncer:
-
-```ini
-client_tls_sslmode = require
-client_tls_key_file = /etc/pgbouncer/server.key
-client_tls_cert_file = /etc/pgbouncer/server.crt
+```bash
+psql -h 127.0.0.1 -p 6432 -U myuser -d myapp_db -c "SELECT 1;"
+# →  ?column?
+# →  1
 ```
 
-Для защиты трафика между PgBouncer и PostgreSQL (рекомендуется в production):
+3. **Проверка маршрута и пула:**
 
-```ini
-server_tls_sslmode = verify-full
-server_tls_ca_file = /etc/pgbouncer/ca.crt
-server_tls_key_file = /etc/pgbouncer/client.key
-server_tls_cert_file = /etc/pgbouncer/client.crt
+```sql
+SHOW DATABASES;
+-- → myapp_db | 10.0.0.10 | 5432 | myapp_prod | ... pool_size=50 ... paused=0 disabled=0
+SHOW POOLS;
+-- → появляются строки (database, user) после первой нагрузки
 ```
 
-#### Управление доступом через hba_file
+4. **Проверка Prepared Statements (1.21+):** приложение выполняет подготовленные запросы без ошибок `unsupported frontend message`; в `SHOW SERVERS` поле `prepared_statements > 0`.
 
-PgBouncer поддерживает собственный файл управления доступом, аналогичный `pg_hba.conf`:
-
-```ini
-# /etc/pgbouncer/pgbouncer.ini
-hba_file = /etc/pgbouncer/hba.conf
-```
-
-Пример `hba.conf`:
-```ini
-# TYPE  DATABASE  USER  ADDRESS  METHOD
-host    all       all   10.0.0.0/8  scram-sha-256
-host    all       all   172.16.0.0/12  md5
-host    all       all   0.0.0.0/0  reject
-local   all       all                trust
-```
-
-#### Аудит и compliance
-
-Включите расширенное логирование для compliance:
-
-```ini
-log_connections = 1
-log_disconnections = 1
-log_pooler_errors = 1
-```
-
-Ключевые события для аудита:
-- Успешные и неуспешные попытки аутентификации.
-- Смена `PAUSE`/`RESUME` (кто и когда отключал пул).
-- Переключение бэкенда (`RELOAD` после смены `host=`).
-- Достижение лимитов (`max_client_conn`, `default_pool_size`).
-
-#### Минимальные права пользователя
-
-Пользователь ОС `pgbouncer` не должен иметь:
-- Доступа к оболочке (`/usr/sbin/nologin` в `/etc/passwd`).
-- Прав на запись в домашние директории других пользователей.
-- Доступа к файлам конфигурации PostgreSQL (`/etc/postgresql`, `/var/lib/postgresql`).
-
-Пользователь БД `pgbouncer` (для `auth_query`) должен иметь только:
-- `USAGE` на схеме `pgbouncer`.
-- `EXECUTE` на функции `get_auth`.
-- Никаких других прав, особенно `SUPERUSER` или `CREATEDB`.
-
-### Развертывание в Kubernetes
-В K8s PgBouncer часто используется как **Sidecar-контейнер**:
-- Приложение подключается к `localhost:6432`.
-- Снижается нагрузка на межсервисную сеть.
-- Упрощается аутентификация.
-
-Альтернатива — **PgBouncer как отдельный сервис** (Deployment + Service) для агрегации соединений от множества микросервисов.
-
-### Ограничения и особенности
-- **Prepared Statements**: В режиме транзакций работают только на протокольном уровне (не через SQL `PREPARE`).
-- **Таймауты**: Обязательно настраивайте `server_idle_timeout` (например, 600s), чтобы не держать лишние idle-соединения в БД.
-- **FDW**: При использовании Foreign Data Wrappers через PgBouncer учитывайте, что каждое внешнее обращение может занимать соединение дольше обычного.
-
-## Валидация и проверка
-
-После настройки PgBouncer выполните следующие шаги для подтверждения корректности работы:
-
-1.  **Проверка статуса сервиса:**
-    ```bash
-    systemctl status pgbouncer
-    ```
-2.  **Тестовое подключение через пулер:**
-    ```bash
-    psql -h 127.0.0.1 -p 6432 -U myuser -d myapp_db -c "SELECT 1;"
-    ```
-3.  **Проверка использования пула:**
-    Подключитесь к виртуальной базе `pgbouncer` и выполните:
-    ```sql
-    SHOW POOLS;
-    ```
-    *Ожидаемый результат:* наличие вашей базы данных в списке с активными серверными соединениями (`sv_active > 0`).
-4.  **Проверка Prepared Statements (для 1.21+):**
-    Убедитесь, что приложение успешно выполняет подготовленные запросы, а в логах PgBouncer отсутствуют ошибки типа `unsupported frontend message`.
+5. **Проверка, что трафик идёт через пулер:** `SHOW CLIENTS` показывает клиентов приложения; на PostgreSQL соединений от приложения не больше `default_pool_size` (при transaction pooling).
 
 ## Устранение неполадок
 
 | Проблема | Возможная причина | Решение |
 | :--- | :--- | :--- |
-| **`psql: error: connection failed: Connection refused`** | PgBouncer не запущен или порт 6432 закрыт. | Проверить статус через `systemctl status pgbouncer` и `ss -ntlp | grep 6432`. |
-| **`ERROR: no such user`** | Пользователь отсутствует в `userlist.txt` или в БД (при `auth_query`). | Проверить `userlist.txt` или результат `auth_query` вручную в PostgreSQL. |
-| **`ERROR: pgbouncer cannot connect to server`** | Ошибка подключения от пулера к БД (IP, порт, HBA). | Проверить логи PgBouncer и файл `pg_hba.conf` на стороне PostgreSQL. |
-| **`ERROR: prepared statement "..." already exists`** | Конфликт имен в режиме транзакций (старые версии). | Обновитесь до 1.21+ или отключите Prepared Statements в приложении. |
-| **`sv_active` достигает `default_pool_size`** | Пул переполнен, запросы встают в очередь. | Увеличьте `default_pool_size` или проанализируйте длительные транзакции в БД. |
-| **`ERROR: closing because: pgbouncer: connection pool full`** | Исчерпан лимит `max_client_conn`. | Увеличьте `max_client_conn` в `pgbouncer.ini` (зависит от `ulimit` процесса). |
-| **`client_waiting` постоянно > 0** | Клиенты ждут свободного серверного соединения. | Проверьте долгие транзакции (`pg_stat_activity`), увеличьте `default_pool_size` или добавьте реплики для чтения. |
-| **`FATAL: too many open files`** | Исчерпан лимит дескрипторов у процесса pgbouncer. | Поднимите `ulimit -n` для сервиса и убедитесь, что `max_client_conn + пулы < ulimit`. |
-| **`ERROR: cannot access temporary tables during a non-session pooling`** | Temp-таблицы не работают в режиме transaction. | Переведите этого пользователя в `session` пул или перепишите логику без temp-таблиц. |
+| **`psql: error: connection failed: Connection refused`** | PgBouncer не запущен, порт закрыт или не задан `listen_addr` (тогда работает только Unix-сокет) | `systemctl status pgbouncer`, `ss -ntlp \| grep 6432`; проверить `listen_addr` |
+| **`ERROR: no such user`** | Пользователь отсутствует в `userlist.txt` и недоступен через `auth_query` | Проверить `userlist.txt` или выполнить `auth_query` вручную в PostgreSQL |
+| **`ERROR: pgbouncer cannot connect to server`** | Ошибка подключения пулера к БД (IP, порт, `pg_hba.conf`) | Логи PgBouncer; `pg_hba.conf` на стороне PostgreSQL (см. [Установка и безопасность](../../installation_security.md)) |
+| **`FATAL: too many open files`** | Исчерпан лимит дескрипторов процесса | Поднять `ulimit -n`/`LimitNOFILE`; проверить формулу `max_client_conn + пулы < ulimit` |
+| **`ERROR: cannot access temporary tables during a non-session pooling`** | Temp-таблицы не работают в transaction/statement pooling | `pool_mode = session` для этого пользователя в `[users]` или переписать логику без temp-таблиц |
+| **`ERROR: unsupported frontend message`** | Приложение шлёт подготовленные запросы при `max_prepared_statements = 0` | Выставить `max_prepared_statements` ≥ числа уникальных запросов (по умолчанию 200) |
+| **`ERROR: permission denied for table pg_authid`** | `auth_user` без прав при прямом `auth_query` | Использовать `SECURITY DEFINER`-функцию (см. выше) |
+| **Ошибка аутентификации на managed-сервере** | PgBouncer не может прочитать SCRAM-verifier из `pg_authid` | Сгенерировать одинаковый verifier на обеих сторонах (`psql --echo-hidden ... \password`) |
+| **Задержка логина ~15 с после рестарта PostgreSQL** | `server_login_retry` (15 с по умолчанию): в паузе новые клиенты получают ошибку сразу | Плановые работы — через `PAUSE`/`RESUME` (см. `pgbouncer_operations.md`) |
+| **`server login failed` в логах с повторами** | Неверный пароль forced user / хост в `[databases]` | Проверить `password=`/`auth_file` и доступность `host:port` |
 
-## Совместимость и известные ограничения
+## Лучшие практики
 
-### ORM и драйверы
+1. **Обновиться до 1.26.0** — закрыты CVE-2026-19888/6668/6669 (DoS); версии 1.25.1/1.25.2 закрывают CVE-2025-12819 (выполнение SQL при аутентификации через подмену `search_path` в startup-пакете).
+2. **`auth_query` с фиксированным `search_path`** — `SECURITY DEFINER` + `SET search_path = pg_catalog` или полностью квалифицированные имена объектов.
+3. **Не ставить `default_pool_size = max_connections`** — запас 30% на администрирование.
+4. **`track_extra_parameters` вместо session-режима для всех** — отслеживаемые параметры сессии восстанавливаются между транзакциями и в transaction pooling.
+5. **Один пулер — один сценарий**: `LISTEN/NOTIFY` и temp-таблицы — отдельный инстанс или `pool_mode = session` в `[users]`.
+6. **Не использовать application-side pool и PgBouncer одновременно** для одних и тех же соединений — выберите один уровень.
+7. **`disable_pqexec = 1`** для приложений на Extended Query Protocol.
+8. **TLS `verify-full`** на серверном leg'е; ключи `0600`, владелец `pgbouncer`.
+9. **Конфиги в Git** + `RELOAD` после правок; `SIGHUP` = `RELOAD`.
+10. **`max_db_connections`/`max_user_connections`** для изоляции «горячих» баз и пользователей.
 
-PgBouncer совместим с большинством PostgreSQL-драйверов и ORM, но есть нюансы:
+## Очистка и откат
 
-- **Hibernate / JPA**: Используйте `hibernate.connection.provider_disables_autocommit=true` при transaction pooling, чтобы избежать лишних round-trip.
-- **Django**: `CONN_MAX_AGE = 0` (по умолчанию) не конфликтует с PgBouncer; при `> 0` убедитесь, что долгие соединения не удерживают серверные сессии.
-- **Prisma**: Поддерживает connection URL с портом 6432. Включите `preparedStatements: false` если используете PgBouncer < 1.21.
-- **SQLAlchemy**: `pool_pre_ping=True` полезен, но создает дополнительные запросы `SELECT 1`. Лучше полагаться на `server_check_query` в PgBouncer.
-- **psycopg2 / psycopg3**: Application-side пул (`ThreadedConnectionPool`) избыточен при PgBouncer. Используйте либо пул в приложении, либо PgBouncer, но не оба одновременно.
-
-### Специфические функции PostgreSQL
-
-| Функция | Session | Transaction | Statement |
-| :--- | :--- | :--- | :--- |
-| **Temporary tables** | Да | Нет | Нет |
-| **LISTEN / NOTIFY** | Да | Нет | Нет |
-| ** advisory locks (`pg_advisory_lock`)** | Да | Да (в рамках транзакции) | Нет |
-| **Large Objects (lo_*)** | Да | Да | Нет |
-| **COPY ... FROM STDIN** | Да | Да | Да |
-| **Background workers** | Да | Да | Нет |
-| **SET/RESET параметры сессии** | Да | Нет | Нет |
-
-**Рекомендации:**
-- Для `LISTEN/NOTIFY` используйте `pool_mode = session` только для этого пользователя или выделите отдельный инстанс PgBouncer.
-- Advisory locks в transaction pooling работают, но блокировка сбрасывается при завершении транзакции.
-- `SET` параметры (например, `search_path`, `work_mem`) в transaction pooling применяются только к одному запросу и не сохраняются между транзакциями.
-
-### Подготовленные выражения (Prepared Statements)
-
-Начиная с PgBouncer 1.21, поддерживаются протокольные Prepared Statements в режиме транзакций. Однако:
-
-- Они кэшируются на стороне PgBouncer, а не PostgreSQL.
-- `max_prepared_statements` ограничивает количество уникальных запросов на клиентскую сессию. При переполнении старые выражения вытесняются.
-- При использовании `auth_user` и динамической аутентификации убедитесь, что функция `get_auth` не создает prepared statements сама (используйте `SECURITY DEFINER` и простой SQL).
-
-## Оптимизация производительности
-
-### Профили нагрузки
-
-| Профиль | Характеристики | `default_pool_size` | `pool_mode` | Особенности |
-| :--- | :--- | :--- | :--- | :--- |
-| **OLTP (Web, API)** | Короткие транзакции, <50 мс | 20–50 | transaction | Prepared statements обязательны |
-| **OLAP / Аналитика** | Долгие запросы, >1 сек | 5–10 | session | Один клиент = одно соединение |
-| **Mixture (HYBRID)** | Смесь коротких и длинных | 30–60 | transaction + per-user | Длинные запросы выносятся в отдельный пул |
-| **Bulk Load / ETL** | Массовая вставка, COPY | 10–20 | session | Большие транзакции, низкая параллельность |
-
-### Таймауты и защита от зависших транзакций
-
-```ini
-# pgbouncer.ini
-server_idle_timeout = 600
-server_lifetime = 3600
-server_connect_timeout = 15
-query_timeout = 0
-idle_in_transaction_session_timeout = 0
-```
-
-- `server_idle_timeout`: закрывает idle-соединения к PostgreSQL. Экономит ресурсы БД.
-- `server_lifetime`: принудительно реконнектит серверные соединения для обхода network-level таймаутов (NAT, firewall).
-- `server_connect_timeout`: защита от зависания при подключении к недоступному бэкенду.
-- `query_timeout`: прерывает запросы, выполняющиеся дольше N секунд. Используйте осторожно — может сломать миграции.
-
-### Бенчмаркинг PgBouncer
-
-```bash
-# Установка pgbench для тестирования
-sudo apt install postgresql-contrib -y
-
-# Создание тестовой базы
-pgbench -i -s 50 myapp_db
-
-# Тест без PgBouncer (прямое подключение)
-pgbench -c 100 -j 4 -T 30 -P 1 myapp_db
-
-# Тест через PgBouncer
-pgbench -h 127.0.0.1 -p 6432 -c 100 -j 4 -T 30 -P 1 myapp_db
-```
-
-Сравнивайте TPS и латентность. PgBouncer на transaction pooling должен показывать **стабильную или более высокую** производительность при `c > 50` за счет переиспользования соединений.
-
-## Отказоустойчивость самого PgBouncer
-
-### Точка отказа (SPOF)
-
-PgBouncer сам по себе является SPOF. Production-архитектура должна учитывать его отказ:
-
-**Варианты устранения SPOF:**
-1. **HAProxy перед PgBouncer**: несколько инстансов PgBouncer за балансировщиком. При падении одного HAProxy переключает трафик.
-2. **DNS Round-Robin**: приложение подключается к `pgbouncer-01.db.internal, pgbouncer-02.db.internal`. Не рекомендуется из-за кэширования DNS и задержки переключения.
-3. **Service Mesh / Sidecar**: в Kubernetes PgBouncer как sidecar автоматически перезапускается при падении пода.
-
-### Поведение при падении PgBouncer
-
-| Сценарий | Влияние на клиент | Восстановление |
-| :--- | :--- | :--- |
-| **Убийство процесса** | Все клиенты получают `Connection refused` | systemctl restart pgbouncer; приложение retry |
-| **Падение ОС / ноды** | Аналогично убийству + потеря всех idle-соединений | failover ноды; DNS/Service переключение |
-| **Блокировка backlog** | Новые подключения отклоняются с `ECONNREFUSED` | Увеличить `somaxconn`, проверить `client_waiting` |
-| **Утечка памяти** | OOM Killer убивает процесс | Настроить `MemoryMax=512M`, добавить swap |
-
-### Graceful Shutdown
-
-При остановке PgBouncer (`systemctl stop`) активные транзакции завершаются корректно, но новые запросы отклоняются. Для graceful shutdown:
-
-```bash
-# 1. Поставить все базы на паузу
-psql -h localhost -p 6432 -U postgres pgbouncer -c "PAUSE"
-
-# 2. Дождаться завершения активных транзакций (timeout 30 сек)
-sleep 30
-
-# 3. Остановить сервис
-sudo systemctl stop pgbouncer
-```
+- **Откат конфигурации:** `git restore /etc/pgbouncer/pgbouncer.ini && systemctl reload pgbouncer`; настройки, неперезагружаемые в рантайме (`changeable = no` в `SHOW CONFIG`), требуют `systemctl restart pgbouncer`.
+- **Полное отключение пулера:** перенаправить приложение на порт PostgreSQL (5432), дождаться завершения транзакций, `systemctl stop pgbouncer` (SIGTERM = `SHUTDOWN WAIT_FOR_CLIENTS`).
+- **Отключение динамической аутентификации:** убрать `auth_user`/`auth_query` из `pgbouncer.ini`, вернуть полный `userlist.txt`, `RELOAD`.
+- **Удаление пакета:** `sudo apt remove pgbouncer` / `sudo dnf remove pgbouncer`; конфиги и логи удаляются вручную.
 
 ## Дополнительная информация
 
-### Рекомендации по эксплуатации
-1. **Версия 1.21+**: Переход на версии 1.21 и выше обязателен для использования Prepared Statements в режиме транзакций, что значительно повышает производительность ORM (Hibernate, Prisma, Django).
-2. **HBA**: Используйте `hba_file` в PgBouncer для гибкого управления доступом на уровне IP/сетей, аналогично `pg_hba.conf`.
-3. **Odyssey**: Если вам нужна многопоточность на стороне пулера (одно ядро PgBouncer перестало справляться), рассмотрите **Odyssey** (Yandex) или **PgCat**.
-4. **Systemd**: Всегда используйте managed service unit с `Restart=on-failure` и `LimitNOFILE=65536`.
-5. **TLS**: Включайте `server_tls_sslmode = verify-full` для защиты трафика между PgBouncer и PostgreSQL.
-6. **Capacity Planning**: Рассчитывайте `default_pool_size` по формуле `(RPS × avg_latency) / parallelism`, а не по числу воркеров приложения.
-7. **Monitoring**: Алертьте не только на `client_waiting`, но и на `client_maxwait_seconds > 2` и утилизацию пула > 80%.
-
-### См. также
-- **[Отказоустойчивость PostgreSQL](../Concepts/high_availability.md)** — архитектура HA-кластера.
-- **[Оптимизация производительности](./performance_tuning.md)** — общие рекомендации по тюнингу СУБД.
-- **[Сетевая связность в Kubernetes](./kubernetes_connectivity.md)** — детали использования PgBouncer как зонального прокси.
+- **[Эксплуатация и мониторинг PgBouncer](./pgbouncer_operations.md)** — админ-консоль, метрики, алерты, failover, rolling restart, бенчмарк, совместимость с ORM.
+- **[Pgpool-II](./pgpool.md)** — альтернативный middleware: пул + балансировка read + failover; когда выбирать что — сравнение в файле.
 - **[Connection Pooling: общая теория](../../../Networking/Concepts/connection_pooling.md)** — TCP keepalive, conntrack, пулы на уровне nginx/HAProxy.
-- **[Мониторинг PostgreSQL в Zabbix](../../../Zabbix/zabbix_postgresql_monitoring.md)** — особенности настройки мониторинга через пулер соединений.
-- **[Proxy Protocol](../../../Networking/Protocols/proxy_protocol.md)** — использование PgBouncer с HAProxy и сохранением реального IP клиента.
+- **[Масштабирование](../Concepts/scaling.md)** — эвристика sizing'а пула по числу ядер.
+- **[Планировщик и кеш планов](../Concepts/planner_internals.md)** — влияние transaction pooling на `Planning Time`.
+- **[Отказоустойчивость PostgreSQL](../Concepts/high_availability.md)** — архитектура HA-кластера, связка HAProxy + PgBouncer.
+- **[Установка и безопасность PostgreSQL](../../installation_security.md)** — `pg_hba.conf`, TLS, аудит.
+- **[Proxy Protocol](../../../Networking/Protocols/proxy_protocol.md)** — сохранение реального IP клиента за HAProxy.
+- **[Сетевая связность в Kubernetes](./kubernetes_connectivity.md)** — PgBouncer как прокси в кластере.
+- Официальная документация: [Configuration](https://www.pgbouncer.org/config.html), [Usage](https://www.pgbouncer.org/usage.html), [Changelog](https://www.pgbouncer.org/changelog.html).

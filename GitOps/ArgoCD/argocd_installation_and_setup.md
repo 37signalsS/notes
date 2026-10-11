@@ -641,13 +641,10 @@ spec:
 **3. Основные метрики для дашбордов:**
 | Метрика | Описание | Тип |
 | :--- | :--- | :--- |
-| `argocd_app_info` | Информация о приложении (health, sync, project) | Gauge |
-| `argocd_app_sync_total` | Количество синхронизаций (по статусам) | Counter |
-| `argocd_app_reconcile_total` | Количество реконсиляций | Counter |
-| `argocd_app_health_status` | Статус здоровья приложения | Gauge |
-| `argocd_app_sync_duration_seconds` | Длительность синхронизации | Histogram |
-| `argocd_repo_open_connections` | Активные соединения с Git | Gauge |
-| `argocd_redis_connection_pool_size` | Размер пула соединений Redis | Gauge |
+| `argocd_app_info` | Информация о приложении (labels: health_status, sync_status, project) | Gauge |
+| `argocd_app_sync_total` | Количество синхронизаций (по статусам, label `phase`) | Counter |
+| `argocd_app_reconcile` | Длительность сверки приложения, секунды | Histogram |
+| `argocd_app_sync_duration_seconds_total` | Суммарная длительность синхронизаций, секунды | Counter |
 
 **4. Grafana Dashboard:**
 ```bash

@@ -1,348 +1,191 @@
 # S3: мониторинг, алерты и cost optimization
 
+**Актуально для:** Ceph RGW (Squid 19.x / Tentacle 20.x / Umbrella 21.x)
+
+---
+
 ## 1. Определения
 
-**CloudWatch Metrics for S3** — стандартные метрики, доступные раз в сутки или раз в минуту (с оплатой). Включают размер bucket, количество объектов, количество запросов, ошибки, latency.
+**Prometheus** — система мониторинга и алертинга с открытым исходным кодом. Собирает метрики по HTTP и хранит их в time-series базе данных.
 
-**Зачем мониторинг S3:** S3 — это обычно largest consumer storage в инфраструктуре. Не monitoring = неknowledge о:
-- Растущих затратах (unexpected cost spikes).
-- Инцидентах (5xxErrors, публичный bucket).
-- Compliance violations (отсутствие шифрования, public access).
-- Capacity planning (bucket растёт без контроля).
+**Grafana** — платформа для визуализации метрик. Подключается к Prometheus и отображает дашборды в реальном времени.
 
-**S3 Storage Lens** — сервис организации-wide observability для S3. Предоставляет агрегированные метрики по bucket'ам, account, регионам.
+**RGW metrics** — метрики, экспортируемые Ceph RGW через встроенный Prometheus exporter. Доступны по endpoint `/metrics` на порту 9283 (по умолчанию).
 
-**S3 Inventory** — ежедневные/еженедельные CSV/Parquet отчёты о всех объектах в bucket.
+**RGW access logging** — механизм записи всех запросов к bucket в отдельный target bucket. Логи экспортируются в Loki/Elasticsearch для анализа.
 
-**Cost Explorer** — сервис для анализа затрат на S3 с breakdown по bucket, Storage Class, operation type.
+**Inventory report** — отчёт о всех объектах в bucket (ключ, размер, Storage Class, статус шифрования, версия). Доступен в Ceph RGW через S3 Inventory API.
 
----
+**Cost anomaly** — неожиданный рост затрат на хранилище. Обнаруживается через анализ метрик и алерты.
 
-## 2. CloudWatch Metrics
-
-### 2.1 Стандартные метрики (Basic Metrics)
-
-Доступны без дополнительной оплаты, отчёт раз в сутки:
-
-| Метрика | Описание | Статистики |
-|---------|----------|-----------|
-| `BucketSizeBytes` | Размер bucket по Storage Class | Average |
-| `NumberOfObjects` | Количество объектов | Average |
-| `AllRequests` | Общее количество запросов | Sum |
-| `GetRequests` | GET запросы | Sum |
-| `PutRequests` | PUT запросы | Sum |
-| `DeleteRequests` | DELETE запросы | Sum |
-| `HeadRequests` | HEAD запросы | Sum |
-| `4xxErrors` | Ошибки клиента (4xx) | Sum |
-| `5xxErrors` | Ошибки сервиса (5xx) | Sum |
-| `FirstByteLatency` | Задержка до первого байта | Average |
-| `TotalRequestLatency` | Общая задержка запроса | Average |
-| `ReplicationLatency` | Задержка репликации | Average |
-
-**Ограничения basic metrics:**
-- Доступны только для последних 2 недель.
-- Отчёт раз в сутки (не real-time).
-- Не включают detailed breakdown по prefix, tag, operation type.
-
-### 2.2 Detailed Metrics (Request Metrics)
-
-Предоставляют real-time данные (раз в минуту) с breakdown по:
-- Operation type (GetObject, PutObject, DeleteObject).
-- Bucket.
-- Storage Class.
-
-**Стоимость:** $0.30 за месяц за каждый bucket с включёнными detailed metrics.
-
-```bash
-# Включение detailed metrics для bucket
-aws cloudwatch put-metric-data \
-  --namespace AWS/S3 \
-  --metric-name GetRequests \
-  --dimensions BucketName=my-app-prod-assets,BucketType=StandardStorage \
-  --value 0 \
-  --timestamp $(date -u +%Y-%m-%dT%H:%M:%S)
-
-# Или через bucket configuration
-aws s3api put-bucket-metrics-configuration \
-  --bucket my-app-prod-assets \
-  --id EntireBucket \
-  --metrics-configuration '{
-    "Id": "EntireBucket",
-    "Filter": {"Prefix": ""}
-  }'
-```
-
-### 2.3 Получение метрик через CloudWatch CLI
-
-```bash
-# Получение размера bucket
-aws cloudwatch get-metric-statistics \
-  --namespace AWS/S3 \
-  --metric-name BucketSizeBytes \
-  --dimensions Name=BucketName,Value=my-app-prod-assets Name=StorageType,Value=StandardStorage \
-  --start-time $(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%S) \
-  --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
-  --period 86400 \
-  --statistics Average
-
-# Получение количества запросов
-aws cloudwatch get-metric-statistics \
-  --namespace AWS/S3 \
-  --metric-name AllRequests \
-  --dimensions Name=BucketName,Value=my-app-prod-assets \
-  --start-time $(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S) \
-  --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
-  --period 60 \
-  --statistics Sum
-```
+**Unused data** — объекты в S3, к которым нет доступа более N дней. Определяется через Inventory + Access Logs.
 
 ---
 
-## 3. Алерты (CloudWatch Alarms)
+## 2. Архитектура и базовые концепции
 
-### 3.1 Критические алерты
+### 2.1 Как работают метрики Ceph RGW в Prometheus
 
-```bash
+Ceph RGW экспортирует метрики через встроенный exporter:
+
+1. **Сбор:** RGW агрегирует данные о запросах и размере bucket.
+2. **Экспорт:** Метрики доступны по `http://<rgw-host>:9283/metrics`.
+3. **Скрапинг:** Prometheus собирает метрики с заданным интервалом (по умолчанию 15 секунд).
+4. **Retention:** Prometheus хранит данные в локальном TSDB (по умолчанию 15 дней, настраивается).
+
+### 2.2 Основные метрики RGW
+
+| Метрика | Описание | Тип |
+|---------|----------|-----|
+| `rgw_requests_total` | Общее количество запросов | Counter |
+| `rgw_requests_bytes_sent` | Отправлено байт | Counter |
+| `rgw_requests_bytes_received` | Получено байт | Counter |
+| `rgw_5xx_errors` | Ошибки 5xx | Counter |
+| `rgw_4xx_errors` | Ошибки 4xx | Counter |
+| `rgw_bucket_size_bytes` | Размер bucket | Gauge |
+| `rgw_bucket_objects` | Количество объектов | Gauge |
+| `rgw_multipart_uploads` | Незавершённые multipart uploads | Gauge |
+
+### 2.3 Ограничения модели метрик
+
+- **Детализация:** Метрики доступны в реальном времени (задержка scrape interval).
+- **Dimensions:** Метрики можно фильтровать по bucket, пользователю, операции.
+- **Retention:** Зависит от конфигурации Prometheus (по умолчанию 15 дней).
+
+---
+
+## 3. Метрики и алерты
+
+### 3.1 Prometheus метрики RGW
+
+```promql
+# Общее количество запросов за последний час
+sum(rate(rgw_requests_total[1h]))
+
+# Количество ошибок 5xx за последние 5 минут
+sum(rate(rgw_5xx_errors[5m]))
+
+# Размер bucket'а
+rgw_bucket_size_bytes{bucket="my-app-prod-assets"}
+
+# Количество объектов в bucket'е
+rgw_bucket_objects{bucket="my-app-prod-assets"}
+```
+
+### 3.2 Алерты (Prometheus Alertmanager)
+
+**Критические алерты:**
+
+```yaml
 # 1. 5xxErrors — сервисные ошибки
-aws cloudwatch put-metric-alarm \
-  --alarm-name "s3-5xx-errors-my-app-prod-assets" \
-  --alarm-description "Alert on S3 5xx errors" \
-  --metric-name 5xxErrors \
-  --namespace AWS/S3 \
-  --statistic Sum \
-  --period 300 \
-  --evaluation-periods 2 \
-  --threshold 5 \
-  --comparison-operator GreaterThanThreshold \
-  --dimensions Name=BucketName,Value=my-app-prod-assets \
-  --alarm-actions arn:aws:sns:eu-central-1:123456789012:alerts
+- alert: RGWHigh5xxErrors
+  expr: sum(rate(rgw_5xx_errors[5m])) > 5
+  for: 5m
+  labels:
+    severity: critical
+  annotations:
+    summary: "High 5xx errors on RGW"
+    description: "{{ $value }} 5xx errors per second"
 
 # 2. 4xxErrors — возможна атака или misconfiguration
-aws cloudwatch put-metric-alarm \
-  --alarm-name "s3-4xx-errors-my-app-prod-assets" \
-  --alarm-description "Alert on high 4xx errors" \
-  --metric-name 4xxErrors \
-  --namespace AWS/S3 \
-  --statistic Sum \
-  --period 300 \
-  --evaluation-periods 2 \
-  --threshold 100 \
-  --comparison-operator GreaterThanThreshold \
-  --dimensions Name=BucketName,Value=my-app-prod-assets \
-  --alarm-actions arn:aws:sns:eu-central-1:123456789012:alerts
+- alert: RGWHigh4xxErrors
+  expr: sum(rate(rgw_4xx_errors[5m])) > 100
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "High 4xx errors on RGW"
+    description: "{{ $value }} 4xx errors per second"
 
-# 3. High latency (TotalRequestLatency > 1s)
-aws cloudwatch put-metric-alarm \
-  --alarm-name "s3-high-latency-my-app-prod-assets" \
-  --alarm-description "Alert on high S3 latency" \
-  --metric-name TotalRequestLatency \
-  --namespace AWS/S3 \
-  --statistic Average \
-  --period 300 \
-  --evaluation-periods 3 \
-  --threshold 1000 \
-  --comparison-operator GreaterThanThreshold \
-  --dimensions Name=BucketName,Value=my-app-prod-assets \
-  --alarm-actions arn:aws:sns:eu-central-1:123456789012:alerts
+# 3. High latency
+- alert: RGWHighLatency
+  expr: histogram_quantile(0.95, sum(rate(rgw_request_latency_seconds_bucket[5m])) by (le)) > 1
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "High RGW latency"
+    description: "P95 latency is {{ $value }}s"
 ```
 
-### 3.2 Cost-оптимизационные алерты
+### 3.3 Валидация алертов
+
+После создания alert проверьте его состояние:
 
 ```bash
-# 1. Рост размера bucket без соответствующих запросов (возможна утечка)
-aws cloudwatch put-metric-alarm \
-  --alarm-name "s3-bucket-size-unusual-growth" \
-  --alarm-description "Alert on unusual bucket size growth" \
-  --metric-name BucketSizeBytes \
-  --namespace AWS/S3 \
-  --statistic Average \
-  --period 86400 \
-  --evaluation-periods 2 \
-  --threshold 100000000000 \
-  --comparison-operator GreaterThanThreshold \
-  --dimensions Name=BucketName,Value=my-app-prod-assets Name=StorageType,Value=StandardStorage \
-  --alarm-actions arn:aws:sns:eu-central-1:123456789012:alerts
-
-# 2. Рост количества объектов без роста размера (много маленьких файлов)
-aws cloudwatch put-metric-alarm \
-  --alarm-name "s3-object-count-high" \
-  --alarm-description "Alert on high object count" \
-  --metric-name NumberOfObjects \
-  --namespace AWS/S3 \
-  --statistic Average \
-  --period 86400 \
-  --evaluation-periods 2 \
-  --threshold 1000000 \
-  --comparison-operator GreaterThanThreshold \
-  --dimensions Name=BucketName,Value=my-app-prod-assets \
-  --alarm-actions arn:aws:sns:eu-central-1:123456789012:alerts
+# Проверка состояния alert
+curl -s http://localhost:9090/api/v1/alerts | jq '.data.alerts[] | select(.labels.alertname == "RGWHigh5xxErrors")'
 ```
 
 ---
 
-## 4. S3 Storage Lens
+## 4. Access Logging и анализ
 
-### 4.1 Включение Storage Lens
+### 4.1 Включение access logging
 
 ```bash
-# Включение Storage Lens на уровне account
-aws s3control put-storage-lens-configuration \
-  --account-id 123456789012 \
-  --config-id default \
-  --storage-lens-configuration '{
-    "AccountLevel": {
-      "BucketLevel": {
-        "ActivityMetrics": {"IsEnabled": true},
-        "PrefixLevel": {"IsEnabled": true}
-      },
-      "StorageLensGroup": {
-        "IsEnabled": true,
-        "Filter": {
-          "And": {
-            "MatchAnyPrefix": {"Prefix": ""},
-            "MatchAnyTag": {"Tag": {"Key": "env", "Value": "production"}}
-          }
-        }
+# Включение через S3 API
+aws s3api put-bucket-logging \
+  --bucket my-app-prod-assets \
+  --bucket-logging-status '{
+    "LoggingEnabled": {
+      "TargetBucket": "my-app-audit-logs",
+      "TargetPrefix": "s3-logs/my-app-prod-assets/"
+    }
+  }' \
+  --endpoint-url http://rgw:7480
+```
+
+### 4.2 RGW access log format
+
+```
+79a54df98bf4d2d9d6728775159241e1fad325b1 [06/Oct/2024:10:30:00 +0000] 192.0.2.3 arn:aws:iam::rgw:user/app-user REST.GET.OBJECT releases/app.tar.gz "PUT /releases/app.tar.gz" 200 - 1 0 "-" "" - kGkWULf+Vs5aS3RaJkFXKs3/2sM= SigV4 ECDHE-RSA-AES128-SHA TLSv1.2 - - - - - - -
+```
+
+### 4.3 Анализ access logs через Loki
+
+```logql
+# Поиск DELETE запросов
+{job="rgw-access-logs"} |= "DELETE"
+
+# Поиск 4xx/5xx ошибок
+{job="rgw-access-logs"} |~ " 4\d\d " or |~ " 5\d\d "
+
+# Агрегация по пользователям
+sum by (remote_user) (count_over_time({job="rgw-access-logs"}[1h]))
+```
+
+---
+
+## 5. Inventory и аудит
+
+### 5.1 S3 Inventory в Ceph RGW
+
+```bash
+# Настройка Inventory configuration
+aws s3api put-bucket-inventory-configuration \
+  --bucket my-app-archives \
+  --id my-inventory \
+  --inventory-configuration '{
+    "Destination": {
+      "S3BucketDestination": {
+        "Bucket": "arn:aws:s3:::my-inventory-bucket",
+        "Prefix": "inventory/",
+        "Format": "CSV"
       }
     },
     "IsEnabled": true,
-    "AwsOrg": {"Arn": "arn:aws:organizations::123456789012:organization/o-exampleorg"},
-    "DataExport": {
-      "CloudWatchMetrics": {"IsEnabled": true},
-      "S3BucketDestination": {
-        "OutputSchemaVersion": "V_1",
-        "AccountId": "123456789012",
-        "Arn": "arn:aws:s3:::my-app-audit-logs",
-        "Prefix": "storage-lens/",
-        "Format": "CSV",
-        "Encryption": {"SSES3": {}}
-      }
-    }
-  }'
+    "Schedule": {"Frequency": "Daily"},
+    "IncludedObjectVersions": "All",
+    "OptionalFields": [
+      "Size", "LastModifiedDate", "StorageClass",
+      "EncryptionStatus", "BucketKeyStatus", "ReplicationStatus"
+    ]
+  }' \
+  --endpoint-url http://rgw:7480
 ```
 
-### 4.2 Storage Lens Groups
-
-Группировка bucket'ов по criteria:
-
-```json
-{
-  "StorageLensGroup": {
-    "IsEnabled": true,
-    "Filter": {
-      "MatchAnyPrefix": {"Prefix": ["prod/", "staging/"]},
-      "MatchAnyTag": {"Tag": {"Key": "team", "Value": "platform"}},
-      "MatchObjectSize": {"MatchObjectSizeLessThan": 1048576}
-    }
-  }
-}
-```
-
-**Use cases:**
-- Мониторинг production bucket'ов отдельно от dev.
-- Отслеживание hot/cold data patterns.
-- Идентификация orphaned bucket'ов.
-
----
-
-## 5. Cost monitoring и оптимизация
-
-### 5.1 Cost Explorer
-
-```bash
-# Получение затрат на S3 по дням
-aws ce get-cost-and-usage \
-  --time-period Start=2024-01-01,End=2024-01-31 \
-  --granularity DAILY \
-  --metrics "BlendedCost" "UsageQuantity" \
-  --group-by Type=DIMENSION,Key=SERVICE \
-  --filter '{
-    "Dimensions": {
-      "Key": "SERVICE",
-      "Values": ["Amazon Simple Storage Service"]
-    }
-  }'
-```
-
-### 5.2 S3 Storage Lens для cost insights
-
-**Ключевые метрики для cost optimization:**
-- **Bytes stored** — общий объём данных.
-- **Bytes stored by Storage Class** — breakdown по Standard, IA, Glacier.
-- **Operations** — количество операций (GET, PUT, LIST) с breakdown по типу.
-- **Average object size** — выявление множества маленьких файлов (inefficient).
-
-### 5.3 Lifecycle policies для cost optimization
-
-```json
-{
-  "Rules": [
-    {
-      "ID": "OptimizeCosts",
-      "Status": "Enabled",
-      "Filter": {"Prefix": "logs/"},
-      "Transitions": [
-        {"Days": 30, "StorageClass": "STANDARD_IA"},
-        {"Days": 90, "StorageClass": "GLACIER_IR"},
-        {"Days": 365, "StorageClass": "DEEP_ARCHIVE"}
-      ],
-      "NoncurrentVersionTransitions": [
-        {"Days": 7, "StorageClass": "STANDARD_IA"},
-        {"Days": 30, "StorageClass": "GLACIER_IR"}
-      ],
-      "NoncurrentVersionExpiration": {"NoncurrentDays": 90},
-      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}
-    }
-  ]
-}
-```
-
-**Оценка экономии:**
-- Standard → Standard-IA: экономия 40–50% на хранении.
-- Standard → Intelligent-Tiering: экономия 20–40% для непредсказуемых паттернов.
-- Standard → Glacier Deep Archive: экономия 90–95% для архивных данных.
-
-### 5.4 Intelligent-Tiering
-
-Автоматическая оптимизация Storage Class на основе паттернов доступа:
-
-```bash
-# Копирование объектов в Intelligent-Tiering
-aws s3 cp s3://my-app-prod-assets/data/ s3://my-app-prod-assets/archived/ \
-  --recursive \
-  --storage-class INTELLIGENT_TIERING
-```
-
-**Когда использовать:**
-- Данные с непредсказуемым паттерном доступа.
-- Не хотите управлять lifecycle policies вручную.
-- Готовы платить за monitoring fee ($0.0025 за 1 000 объектов/месяц).
-
----
-
-## 6. Operational monitoring
-
-### 6.1 CloudWatch Logs Insights запросы
-
-```sql
--- Топ-10 bucket'ов по размеру
-| filter @message like /BucketSizeBytes/
-| stats avg(@value) as avg_size by bin(1d), @resource.bucketName
-| sort avg_size desc
-| limit 10
-
--- Ошибки по типам
-| filter @message like /4xxErrors/ or @message like /5xxErrors/
-| stats sum(@value) as errors by bin(5m), @resource.bucketName, @metricName
-| sort errors desc
-
--- Запросы по типам операций
-| filter @message like /GetRequests/ or @message like /PutRequests/
-| stats sum(@value) as requests by bin(1h), @metricName
-| render timechart
-```
-
-### 6.2 S3 Inventory анализ
+### 5.2 Анализ Inventory через Python/pandas
 
 ```python
 import pandas as pd
@@ -367,118 +210,245 @@ df['Prefix'] = df['Key'].str.split('/').str[0]
 print(df.groupby('Prefix')['Size'].sum().sort_values(ascending=False))
 ```
 
-### 6.3 AWS Config compliance
+### 5.3 Direct SQL на inventory данных
 
-```bash
-# Проверка compliance всех S3 bucket'ов
-aws configservice get-compliance-details-by-config-rule \
-  --config-rule-name s3-bucket-public-read-prohibited
+Для анализа inventory данных можно импортировать CSV в PostgreSQL или ClickHouse и выполнять SQL-запросы:
 
-# Проверка encryption compliance
-aws configservice get-compliance-details-by-config-rule \
-  --config-rule-name s3-bucket-server-side-encryption-enabled
+```sql
+-- Топ-10 prefix'ов по размеру
+SELECT
+  regexp_extract(key, '^([^/]+)/') as prefix,
+  SUM(size) as total_size,
+  COUNT(*) as object_count
+FROM s3_inventory
+WHERE bucket = 'my-app-archives'
+GROUP BY prefix
+ORDER BY total_size DESC
+LIMIT 10;
 
-# Проверка versioning compliance
-aws configservice get-compliance-details-by-config-rule \
-  --config-rule-name s3-bucket-versioning-enabled
+-- Объекты в Standard > 90 дней (candidate для lifecycle)
+SELECT
+  key,
+  size,
+  storage_class,
+  last_modified_date
+FROM s3_inventory
+WHERE bucket = 'my-app-archives'
+  AND storage_class = 'STANDARD'
+  AND last_modified_date < CURRENT_DATE - INTERVAL '90 days'
+ORDER BY size DESC
+LIMIT 100;
 ```
 
 ---
 
-## 7. Troubleshooting мониторинга
+## 6. Cost tracking
 
-### 7.1 Метрики не отображаются
+### 6.1 Метрики для cost optimization
+
+| Метрика | Описание | Использование |
+|---------|----------|---------------|
+| `rgw_bucket_size_bytes` | Размер bucket по пулам | Capacity planning |
+| `rgw_bucket_objects` | Количество объектов | Cost attribution |
+| `rgw_requests_total` | Общее количество запросов | Cost attribution |
+| `rgw_requests_bytes_sent` | Исходящий трафик | Cost attribution |
+
+### 6.2 Кастомные скрипты для cost tracking
+
+```python
+import boto3
+import pandas as pd
+from datetime import datetime
+
+s3 = boto3.client('s3',
+    endpoint_url='http://rgw:7480',
+    region_name='us-east-1'
+)
+
+# Сбор данных о bucket'ах
+buckets = s3.list_buckets()['Buckets']
+cost_data = []
+
+for bucket in buckets:
+    size = s3.get_bucket_size(Bucket=bucket['Name'])  # Если поддерживается RGW
+    objects = s3.get_bucket_objects(Bucket=bucket['Name'])
+    cost_data.append({
+        'bucket': bucket['Name'],
+        'size_gb': size / 1e9,
+        'objects': objects,
+        'date': datetime.now().isoformat()
+    })
+
+df = pd.DataFrame(cost_data)
+df.to_csv('cost-report.csv', index=False)
+```
+
+### 6.3 Lifecycle policies для cost optimization
+
+```json
+{
+  "Rules": [
+    {
+      "ID": "OptimizeCosts",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "logs/"},
+      "Transitions": [
+        {"Days": 7, "StorageClass": "WARM"},
+        {"Days": 90, "StorageClass": "COLD"}
+      ],
+      "NoncurrentVersionTransitions": [
+        {"Days": 7, "StorageClass": "WARM"},
+        {"Days": 30, "StorageClass": "COLD"}
+      ],
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 90},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}
+    }
+  ]
+}
+```
+
+**Оценка экономии:**
+- Hot (SSD) → Warm (HDD): экономия 40–50% на хранении.
+- Warm (HDD) → Cold (Archive): экономия 80–90% на хранении.
+
+---
+
+## 7. Operational monitoring
+
+### 7.1 Grafana dashboards
+
+Для Ceph RGW используйте готовые Grafana dashboards:
+- **Ceph RGW Dashboard** — метрики RGW: запросы, ошибки, latency, размер bucket'ов.
+- **Ceph Cluster Dashboard** — общие метрики кластера: OSD, PG, PgPool.
+
+### 7.2 RGW log analysis
+
+```bash
+# Просмотр логов RGW
+ceph orch logs --service=rgw.myrgw
+
+# Или напрямую через journalctl
+journalctl -u ceph-radosgw@rgw.myrgw -f
+```
+
+### 7.3 Access Logs анализ
+
+```bash
+# Ежедневный скрипт проверки аномалий
+#!/bin/bash
+# /usr/local/bin/check_rgw_anomalies.sh
+
+LOG_DIR="/var/log/ceph"
+TODAY=$(date +%Y-%m-%d)
+
+# Поиск массового удаления (> 100 DELETE за час)
+find $LOG_DIR -name "radosgw.*" -exec grep "DELETE" {} \; | \
+  awk '{print $4, $7}' | \
+  sort | uniq -c | \
+  awk '$1 > 100 {print "ALERT: " $1 " deletions by " $2}'
+
+# Поиск необычных IP
+find $LOG_DIR -name "radosgw.*" -exec grep "GET" {} \; | \
+  awk '{print $4}' | \
+  sort | uniq -c | \
+  sort -rn | head -10
+```
+
+---
+
+## 8. Troubleshooting мониторинга
+
+### 8.1 Метрики не отображаются
 
 **Причины:**
-- Bucket новый (< 48 часов для basic metrics).
-- Bucket пустой (BucketSizeBytes = 0, NumberOfObjects = 0).
-- Region mismatch при запросе метрик.
+- RGW exporter не запущен или недоступен.
+- Prometheus не может подключиться к RGW exporter (firewall, сеть).
+- Неправильный port (по умолчанию 9283).
 
-### 7.2 High latency
+**Решение:**
+```bash
+# Проверка доступности metrics endpoint
+curl -s http://rgw:9283/metrics | head -20
+
+# Проверка firewall
+iptables -L -n | grep 9283
+```
+
+### 8.2 High latency
 
 **Диагностика:**
 ```bash
-# Проверка региона bucket
-aws s3api get-bucket-location --bucket my-app-prod-assets
+# Проверка метрик RGW
+curl -s http://rgw:9283/metrics | grep rgw_request_latency
 
-# Проверка network connectivity
-mtr --tcp --port 443 s3.eu-central-1.amazonaws.com
+# Проверка сети
+mtr --tcp --port 7480 rgw.example.com
 
-# Проверка размера объекта (большие объекты = higher latency)
-aws s3api head-object --bucket my-app-prod-assets --key large-file.tar.gz
+# Проверка OSD performance
+ceph osd perf
 ```
 
 **Solutions:**
-- Используйте Transfer Acceleration для cross-region доступа.
-- Используйте CloudFront для read-heavy workloads.
 - Увеличьте parallel requests для multipart upload/download.
+- Используйте CDN для read-heavy workloads.
+- Проверьте cluster_network на congestion.
 
-### 7.3 Unexpected costs
+### 8.3 Unexpected costs
 
 **Диагностика:**
 ```bash
-# Анализ затрат по bucket'ам
-aws ce get-cost-and-usage \
-  --time-period Start=2024-01-01,End=2024-01-31 \
-  --granularity MONTHLY \
-  --metrics "BlendedCost" \
-  --group-by Type=DIMENSION,Key=RESOURCE \
-  --filter '{
-    "Dimensions": {
-      "Key": "SERVICE",
-      "Values": ["Amazon Simple Storage Service"]
-    }
-  }'
+# Анализ размера bucket'ов
+aws s3 ls s3://my-app-prod-assets/ --recursive --summarize --human-readable \
+  --endpoint-url http://rgw:7480
 
 # Поиск больших объектов
 aws s3api list-objects-v2 \
   --bucket my-app-prod-assets \
   --query 'Contents[?Size>`1073741824`].[Key, Size]' \
-  --output table
-
-# Поиск объектов без lifecycle
-aws s3api get-bucket-lifecycle-configuration --bucket my-app-prod-assets
+  --output table \
+  --endpoint-url http://rgw:7480
 ```
 
 **Common cost drivers:**
-1. **Cross-region replication traffic** — $0.02/ГБ входящего, $0.09/ГБ исходящего.
-2. **Glacier retrieval requests** — $0.01 за 1 000 запросов.
-3. **LIST requests на bucket с миллионами объектов** — $0.005 за 1 000 запросов.
-4. **S3 Select запросы** — $0.001 за 1 000 запросов + $0.0004 за 1 000 отсканированных строк.
-5. **Transfer Acceleration** — $0.04–$0.08 за ГБ.
+1. **Большие объекты в SSD пуле** — мигрируйте в HDD/Archive.
+2. **Маленькие файлы (< 1 MB)** — inefficient, рассмотрите consolidation.
+3. **Незавершённые multipart uploads** — настройте lifecycle `AbortIncompleteMultipartUpload`.
+4. **Высокий трафик** — используйте CDN для статических assets.
 
 ---
 
-## 8. Best Practices (Production Checklist)
+## 9. Best Practices (Production Checklist)
 
 ### Monitoring
-- [ ] Включены **detailed metrics** для критичных bucket'ов.
-- [ ] Настроены **CloudWatch Alarms** на 5xxErrors, 4xxErrors, high latency.
-- [ ] Включён **S3 Storage Lens** для organisation-wide visibility.
+- [ ] Включены **Prometheus RGW metrics** для всех RGW инстансов.
+- [ ] Настроены **Grafana dashboards** для визуализации.
+- [ ] Настроены **алерты** на 5xxErrors, 4xxErrors, high latency.
+- [ ] Включён **Access Logging** на всех bucket'ах.
 - [ ] Настроен **S3 Inventory** для compliance аудита.
-- [ ] Используется **CloudTrail data events** для детального аудита.
-- [ ] Включён **S3 Access Logging**.
+- [ ] Используется **Loki/Elasticsearch** для анализа access logs.
 
 ### Cost Optimization
-- [ ] Настроены **Lifecycle policies** для автоматической миграции в IA/Glacier.
-- [ ] Используется **Intelligent-Tiering** для непредсказуемых паттернов.
-- [ ] Включён **Storage Lens** для cost insights.
-- [ ] Регулярно анализируются **Cost Explorer** отчёты.
-- [ ] Настроены alerts на неожиданный рост затрат.
-- [ ] Используется **Bucket Key Enabled** для SSE-KMS (снижает стоимость на 90–99%).
+- [ ] Настроены **Lifecycle policies** для автоматической миграции между hot/warm/cold pools.
+- [ ] Включён **versioning** для критичных bucket'ов.
+- [ ] Регулярно анализируется **inventory** для обнаружения устаревших данных.
+- [ ] Мониторинг запросов (LIST на миллионы объектов = дорого).
 
 ### Reliability
-- [ ] Настроены **alarms на 5xxErrors** (инцидент при любом значении > 0).
-- [ ] Настроены **alarms на replication latency** для CRR.
+- [ ] Настроены **alerts на 5xxErrors** (инцидент при любом значении > 0).
 - [ ] Мониторится **размер bucket** и **количество объектов** (рост без причин = инцидент).
-- [ ] Регулярно проверяется **S3 Inventory** на orphaned объекты.
+- [ ] Регулярно проверяется **inventory** на orphaned объекты.
+
+### Cleanup и откат
+- [ ] Знаете, как отключить metrics: `ceph config set rgw rgw_enable_metrics false`
+- [ ] Знаете, как отключить access logging: удалите BucketLoggingStatus через API
+- [ ] Знаете, как отключить versioning: `aws s3api put-bucket-versioning --bucket <name> --versioning-configuration Status=Suspended`
+- [ ] Знаете, как удалить lifecycle: `aws s3api delete-bucket-lifecycle --bucket <name>`
 
 ---
 
-## 9. См. также
+## 10. См. также
 
 - [Amazon S3 — архитектура, протокол и эксплуатация](./overview.md)
-- [S3: распространённые операции CLI и эксплуатация](./cli-operations.md)
 - [S3: безопасность, шифрование и compliance](./security.md)
+- [S3: распространённые операции CLI и эксплуатация](./cli-operations.md)
 - [Ansible и S3: интеграция, автоматизация и эксплуатация](./ansible-integration.md)
-- [Обзор систем хранения данных (СХД)](../data_storage_overview.md)

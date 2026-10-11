@@ -9,7 +9,7 @@
 - **CDN Access Logs**: Логи HTTP-запросов, обработанных CDN. Содержат URL, статус, размер, время, IP клиента, User-Agent, Referer, Cache-Status.
 - **Logpush (Cloudflare)**: Автоматическая доставка логов CDN в хранилище (S3, GCS, R2) или аналитические системы (Datadog, Splunk, ELK).
 - **Edge Logs (Fastly)**: Реалтайм-логи с edge-узлов. Доступны через API или Stream Logs (webhook).
-- **Real User Monitoring (RUM)**: Метод сбора метрик производительности от реальных пользователей (TTFB, LCP, FID, CLS) через браузерный JavaScript.
+- **Real User Monitoring (RUM)**: Метод сбора метрик производительности от реальных пользователей (TTFB, LCP, INP, CLS) через браузерный JavaScript.
 - **Synthetic Monitoring (Синтетический мониторинг)**: Периодические HTTP-запросы из разных PoP для измерения TTFB, доступности и SSL-статуса.
 - **Distributed Tracing (Распределённый трейсинг)**: Метод отслеживания запроса через все компоненты системы (CDN → Origin → Database) с использованием trace-id.
 

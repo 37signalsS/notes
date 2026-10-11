@@ -1,12 +1,14 @@
 # Grafana: Источники данных
 
+**Актуально для:** Grafana 13.2.x / 12.x (LTS)
+
 ## Определения
 
 **Источник данных (Data Source)** — это мост между Grafana и внешней системой хранения телеметрии (метрик, логов, трассировок, профилей) или бизнес-данных. Grafana работает по принципу **Stateless Visualization**: она не хранит данные внутри себя (кроме метаданных и настроек), а выполняет запросы к источникам в реальном времени.
 
 **UID источника** — стабильный строковый идентификатор (`uid`), задаваемый явно при провиженинге. В отличие от автогенерируемого числового `id`, фиксированный `uid` гарантирует, что перекрёстные ссылки из дашбордов, алертов и корреляций не сломаются при повторном применении кода (idempotency). При импорте дашборда «по умолчанию» Grafana подставляет `uid` выбранного источника; при IaC принято использовать templated datasource `${datasource}` или явный `uid`.
 
-**Текущая версия (июль 2026):** Grafana 13.1. Платформа поддерживает более 170 официальных коннекторов и нативную интеграцию со стеком LGTM (Loki, Grafana, Tempo, Mimir). Актуальные ветки: 11.x (базовая, EOL июнь 2026), 12.x (LTS), 13.1.x (текущая).
+**Версия и поддержка:** актуальная линия — Grafana 13.2.x (последний патч 13.2.3, сентябрь 2026); 12.x — LTS (обновления безопасности), 11.x — EOL с июня 2026. В каталоге более 150 источников данных, свыше 60 из них поддерживаются Grafana Labs. Платформа обеспечивает нативную интеграцию со стеком LGTM (Loki, Grafana, Tempo, Mimir). Облачные и ИИ-возможности (Grafana Cloud, Private Data Source Connect, Grafana Assistant) в этом документе не рассматриваются.
 
 **Связанные темы:**
 - [Обзор Grafana](./grafana_overview.md) — архитектура и основные компоненты
@@ -79,12 +81,11 @@ Grafana использует нативные языки запросов каж
 
 #### Методы аутентификации
 
-В 2026 году Grafana 13.x поддерживает расширенные механизмы безопасности:
+Grafana 13.x поддерживает следующие механизмы аутентификации при подключении к источнику:
 1.  **Basic Auth:** Логин и пароль для простых интеграций.
-2.  **API Keys / Tokens:** Использование Bearer-токенов (для Grafana Cloud или SaaS-решений).
-3.  **TLS Client Auth:** Аутентификация по сертификатам (Certificate, Key, CA Cert).
-4.  **Forward OAuth Identity:** Передача токена пользователя, вошедшего в Grafana, в целевой источник.
-5.  **Service Accounts:** Использование токенов сервисных аккаунтов (замена устаревшим API-ключи) для автоматизации и Terraform.
+2.  **TLS Client Auth:** Аутентификация по сертификатам (Certificate, Key, CA Cert).
+3.  **Forward OAuth Identity:** Передача токена пользователя, вошедшего в Grafana, в целевой источник.
+4.  **Service Account Tokens / Bearer:** Токен сервисного аккаунта в заголовке `Authorization: Bearer <TOKEN>` для API и провиженинга. API-ключи (API keys) полностью устарели (deprecated с февраля 2025) и автоматически мигрированы в сервисные аккаунты — используйте сервисные аккаунты.
 
 #### Безопасное хранение (Secure JSON Data)
 
@@ -104,21 +105,16 @@ datasources:
       password: "${DB_PASSWORD}" # Значение подставляется из переменной окружения
 ```
 
-### Возможности Grafana 13.x
+### Возможности, влияющие на работу с источниками
 
-#### AI-ассистент (Grafana Assistant)
-Интегрирован в Query Editor: генерация запросов по описанию на естественном языке, объяснение сложных выражений и предложение оптимизаций PromQL/SQL.
+#### SQL-выражения (SQL Expressions)
+**Серверные выражения (server-side expressions):** Grafana получает данные от backend-источника, затем вычисляет и объединяет их на стороне сервера, перед тем как отдать на фронтенд. Позволяет выполнять join и преобразования данных из разных backend-источников (например, Prometheus и MySQL) SQL-подобным синтаксисом, без data warehouse. Включены по умолчанию, доступны в OSS и Enterprise; требуют backend-источник (frontend-only источники, например Dashboard, не поддерживаются). Ограничения: одно SQL-выражение на панель или правило алертинга, обязательна ссылка на диапазон времени, не поддерживается на 32-битных ARM-сборках Grafana.
 
-#### Private Data Source Connect (PDC)
-Позволяет безопасно подключать источники данных в приватных сетях к Grafana Cloud через исходящее соединение агента (PDC Agent), исключая необходимость открытия входящих портов. Доступно для Grafana Cloud (Enterprise).
+#### Data Correlations
+Глобальные правила связи между источниками (например, автоматическое создание ссылок на логи из графика метрик по общим лейблам). Настраиваются через `Administration → Correlations` и работают на уровне организации независимо от конкретного дашборда. Появились в Grafana 10, GA начиная с 10.3. Correlations **дополняют**, а не заменяют Derived Fields: связка «log → trace» в источнике Loki по-прежнему настраивается через **Derived Fields** (Regex по строке лога + Internal link на Tempo), а Correlations удобны для произвольных cross-source связей на уровне организации.
 
-#### SQL-выражения и трансформации
-Grafana 13 расширяет обработку данных на стороне клиента:
-- **SQL Expressions:** Возможность объединять (Join) и преобразовывать данные из разных источников (например, Prometheus и MySQL) с использованием SQL-синтаксиса в браузере.
-- **Query Caching:** Встроенное кеширование результатов для снижения нагрузки на тяжелые источники (Enterprise/Cloud).
-
-#### Data Correlations (v10+)
-Механизм, пришедший на смену Derived Fields. Позволяет определять глобальные правила связи (например, автоматическое создание ссылок на логи из графиков метрик по общим лейблам). Derived Fields в настройках Loki считаются устаревшими; предпочтительны глобальные Correlations (Admin → Correlations), работающие на уровне организации независимо от конкретного дашборда.
+#### Query Caching
+Кеширование результатов запросов на стороне Grafana для снижения нагрузки на медленные источники. Функция Grafana Enterprise; кеш-бэкенд (обычно Redis) настраивается в `grafana.ini`.
 
 ---
 
@@ -126,7 +122,7 @@ Grafana 13 расширяет обработку данных на сторон�
 
 ### Предварительные требования
 
-- **Grafana**: 11.x (минимум), 12.x (LTS) или 13.1.x (актуальная). См. [Обзор Grafana](./grafana_overview.md).
+- **Grafana**: 11.x (минимум), 12.x (LTS) или 13.2.x (актуальная). См. [Обзор Grafana](./grafana_overview.md).
 - **Сетевая доступность**: Grafana-сервер (при `Server` доступе) или браузер клиента (при `Browser` доступе) должны достигать `URL` источника (проверка `curl -v <URL>` из пода/хоста Grafana).
 - **Учётные данные**: токен/пароль/сертификат заранее подготовлены и вынесены в секреты (env-переменная, Vault, Kubernetes Secret) — не в коммите.
 - **Права RBAC**: для создания через UI — роль Editor/Admin; через API/провиженинг — `datasources:create`/Service Account с соответствующей ролью. См. [Управление пользователями и аутентификация](./grafana_user_management_and_authentication.md).
@@ -153,8 +149,9 @@ datasources:
     jsonData:
       timeInterval: "15s"
       httpMethod: "POST" # Рекомендуется для длинных PromQL запросов
-      exemplars:
-        datasourceUid: 'tempo-uid' # Связь с трассировками
+      exemplarTraceIdDestinations: # Связь с трассировками (exemplars → Tempo)
+        - name: traceID
+          datasourceUid: tempo-uid
 ```
 
 **Конфигурация для Kubernetes (Helm `values.yaml`):**
@@ -180,12 +177,12 @@ grafana:
 ```bash
 # Проверка, что источник зарегистрирован (Server-side)
 curl -s -H "Authorization: Bearer <SA_TOKEN>" \
-  http://grafana:3000/api/datasources/name/Prometheus | jq '.id, .uid'
+  http://grafana:3000/api/datasources/uid/prometheus-prod | jq '.id, .uid'
 # → 1 / "prometheus-prod"
 
 # Быстрый запрос к Prometheus через прокси Grafana
 curl -s -H "Authorization: Bearer <SA_TOKEN>" \
-  "http://grafana:3000/api/datasources/proxy/prometheus-prod/api/v1/query?query=up" \
+  "http://grafana:3000/api/datasources/proxy/uid/prometheus-prod/api/v1/query?query=up" \
   | jq '.status'
 # → "success"
 ```
@@ -242,7 +239,7 @@ curl -s -H "Authorization: Bearer <SA_TOKEN>" \
 
 **Типичные проблемы:**
 - Ссылка TraceID не кликабельна — неверный Regex (не совпадает с форматом лога) или не выбран Data source Tempo в Internal Link.
-- Навигация не работает в дашбордах — используйте глобальные Correlations вместо legacy Derived Fields.
+- Навигация не работает — проверьте поле **Query** (`${__value.raw}`) в целевом Tempo-источнике; для произвольных cross-source связей используйте глобальные Correlations.
 
 ### Сценарий 3: Настройка InfluxDB v2 (Flux)
 
@@ -294,7 +291,7 @@ datasources:
 **Валидация:**
 ```bash
 curl -s -H "Authorization: Bearer <SA_TOKEN>" \
-  "http://grafana:3000/api/datasources/proxy/mimir-lts/api/v1/query?query=up" \
+  "http://grafana:3000/api/datasources/proxy/uid/mimir-lts/api/v1/query?query=up" \
   | jq '.status'
 # → "success"
 ```
@@ -303,7 +300,7 @@ curl -s -H "Authorization: Bearer <SA_TOKEN>" \
 - `401/403` от Mimir — не задан `httpHeaderName1`/`httpHeaderValue1` или тенант не существует.
 - Перепутан `url` — Mimir query-frontend слушает `/prometheus` (или `/api/prom`), проверьте ingress.
 
-### Сценарий 5: Управление источником данных как код (Terraform / Grizzly)
+### Сценарий 5: Управление источником данных как код (Terraform / gcx)
 
 При подходе Monitoring as Code источники описываются декларативно и применяются через CI/CD. См. [Monitoring as Code](./monitoring_as_code.md).
 
@@ -327,12 +324,20 @@ resource "grafana_data_source" "prometheus" {
 }
 ```
 
-**Grizzly (`grc`):**
+**gcx (Grafana CLI):**
 ```bash
-# Применение всех источников из каталога (см. grafana_plugins.md)
-grc apply -f datasources/
+# Выгрузка ресурсов Grafana (дашборды, папки и др.) в локальные YAML
+gcx resources pull -p ./resources -o yaml
+# Применение локальных изменений обратно в Grafana
+gcx resources push -p ./resources
 # → список синхронизированных ресурсов
+
+# Обнаружение источников и запросы к ним (read-only, не декларативное управление)
+gcx datasources list
+gcx datasources query <DS_UID> 'up'
 ```
+
+*`gcx` — актуальная CLI Grafana Labs (пришла на смену `grafanactl`, который, в свою очередь, заменил Grizzly). Источники данных доступны в `gcx` для чтения и запросов (`gcx datasources list/get/query`); декларативное управление источниками выполняйте через YAML-провиженинг или Terraform.*
 
 **Ожидаемый результат:** `terraform apply` создаёт/обновляет источник; повторный запуск идемпотентен благодаря фиксированному `uid`.
 
@@ -348,6 +353,40 @@ terraform apply  # → Apply complete! Resources: 1 added
 
 ---
 
+## Устранение неполадок
+
+| Симптом | Возможная причина | Решение |
+| :--- | :--- | :--- |
+| **"Context deadline exceeded"**| Медленный запрос или малый таймаут | Увеличьте HTTP-таймаут источника (`jsonData.timeout`, переопределяет `dataproxy.timeout` в `grafana.ini`); для Prometheus — `queryTimeout` (query timeout, по умолчанию `60s`). |
+| **"404 Not Found"** | Неверный URL или путь в API | Проверьте доступность источника изнутри пода/контейнера Grafana (`curl -v`). |
+| **"Unauthorized"** | Неверные токены или истек срок действия | Проверьте `secureJsonData` и настройки RBAC для Service Account. |
+| **"No data" на малых зумах** | Интервал запроса меньше скрейп-интервала | Установите корректный `Min Step` или используйте переменную `$__rate_interval`. |
+| **"CORS policy" (Browser access)** | Бэкенд не разрешает Origin клиента | Переключитесь на `Server (proxy)` или настройте CORS на бэкенде. |
+| **"Bad gateway (502)"** | Grafana не достигает `URL` (DNS/порт/сеть) | Проверьте `curl -v <URL>` из пода Grafana; firewall/Service. |
+| **"Data source is not working"** | Бэкенд недоступен или неверны creds | Проверьте доступность и `secureJsonData`; см. лог `logger=tsdb`. |
+| **"Forbidden" при создании** | Нет прав RBAC | Назначьте роль Editor / `datasources:create` сервисному аккаунту. |
+| **Пустые результаты (Mimir/Influx)** | Неверный тенант / org / bucket | Сверьте `httpHeaderValue1`, `organization`, `defaultBucket`. |
+
+**Диагностика:** основные ошибки видны в логах Grafana (`logger=provisioning` для файлов, `logger=tsdb`/`logger=dataproxy` для запросов). Проверка связности — `curl -v <URL>` непосредственно из пода Grafana (или хоста при `Browser` доступе). Точечная проверка одного источника — `GET /api/datasources/uid/:uid/health`.
+
+## Рекомендации по эксплуатации
+
+- **Используйте `Server (proxy)` доступ** по умолчанию — скрывает секреты от клиента и снимает требование CORS на бэкенде.
+- **Фиксируйте `uid`** для всех провиженинг-источников, чтобы ссылки из дашбордов и алертов оставались стабильными.
+- **Устанавливайте `editable: false`** в провиженинг-конфигурациях, чтобы ручные правки в UI не создавали конфигурационный дрейф (Git остаётся источником правды).
+- **Храните секреты вне Git**: через env-переменные (`${VAR}`), Vault, SOPS или Kubernetes Secret; никогда не коммитьте пароли в `secureJsonData` как есть.
+- **Минимальные привилегии**: для CI/CD и API используйте выделенный Service Account с ролью Editor (или кастомной ролью `datasources:create/query`), токен ротируйте.
+- **Соглашение об именовании**: понятные стабильные имена (`Prometheus`, `Loki`) упрощают выбор источника в дашбордах и шаблонах `${datasource}`.
+
+## Ограничения и особые случаи
+
+- **Browser (direct) доступ** требует корректного CORS на бэкенде и непригоден для приватных секретов (они попадают в браузер клиента).
+- **Proxy не для всех типов**: ряд enterprise-коннекторов поддерживает только `Server (proxy)` или только определённый режим — сверяйте документацию конкретного плагина (см. [Плагины Grafana](./grafana_plugins.md)).
+- **Derived Fields и Correlations дополняют друг друга**: Derived Fields (Regex по строке лога + Internal link) — для ссылок «log → trace» в источнике Loki; глобальные Correlations (с 10.3) — для произвольных cross-source связей на уровне организации.
+- **Mixed-источник** объединяет данные на одной панели, но не поддерживает cross-source joins внутри одного запроса (для join используйте SQL Expressions).
+- **Секреты в `Browser` режиме**: не используйте `secureJsonData` с приватными credentials при `access: browser` — они становятся доступны на клиенте.
+- **Версионность**: синтаксис `jsonData`/`secureJsonData` и доступность фич (SQL Expressions, Correlations) различаются между 11/12/13 — фиксируйте версию Grafana в CI-образе.
+
 ## Дополнительная информация
 
 ### Популярные источники данных и области применения
@@ -361,44 +400,25 @@ terraform apply  # → Apply complete! Resources: 1 added
 | **PostgreSQL** | SQL | Визуализация бизнес-метрик из реляционных БД |
 | **Elasticsearch / OpenSearch**| Логи/Поиск | Глубокий полнотекстовый анализ и поиск |
 
-### Рекомендации по эксплуатации
+### Data Source HTTP API
 
-- **Используйте `Server (proxy)` доступ** по умолчанию — скрывает секреты от клиента и снимает требование CORS на бэкенде.
-- **Фиксируйте `uid`** для всех провиженинг-источников, чтобы ссылки из дашбордов и алертов оставались стабильными.
-- **Устанавливайте `editable: false`** в провиженинг-конфигурациях, чтобы ручные правки в UI не создавали конфигурационный дрейф (Git остаётся источником правды).
-- **Храните секреты вне Git**: через env-переменные (`${VAR}`), Vault, SOPS или Kubernetes Secret; никогда не коммитьте пароли в `secureJsonData` как есть.
-- **Минимальные привилегии**: для CI/CD и API используйте выделенный Service Account с ролью Editor (или кастомной ролью `datasources:create/query`), токен ротируйте.
-- **Соглашение об именовании**: понятные стабильные имена (`Prometheus`, `Loki`) упрощают выбор источника в дашбордах и шаблонах `${datasource}`.
-
-### Устранение неполадок
-
-| Симптом | Возможная причина | Решение |
+| Метод | Эндпоинт | Назначение |
 | :--- | :--- | :--- |
-| **"Context deadline exceeded"**| Медленный запрос или малый таймаут | Увеличьте `queryTimeout` в настройках источника или `dataproxy.timeout` в `grafana.ini`. |
-| **"404 Not Found"** | Неверный URL или путь в API | Проверьте доступность источника изнутри пода/контейнера Grafana (`curl -v`). |
-| **"Unauthorized"** | Неверные токены или истек срок действия | Проверьте `secureJsonData` и настройки RBAC для Service Account. |
-| **"No data" на малых зумах** | Интервал запроса меньше скрейп-интервала | Установите корректный `Min Step` или используйте переменную `$__rate_interval`. |
-| **"CORS policy" (Browser access)** | Бэкенд не разрешает Origin клиента | Переключитесь на `Server (proxy)` или настройте CORS на бэкенде. |
-| **"Bad gateway (502)"** | Grafana не достигает `URL` (DNS/порт/сеть) | Проверьте `curl -v <URL>` из пода Grafana; firewall/Service. |
-| **"Data source is not working"** | Бэкенд недоступен или неверны creds | Проверьте доступность и `secureJsonData`; см. лог `logger=tsdb`. |
-| **"Forbidden" при создании** | Нет прав RBAC | Назначьте роль Editor / `datasources:create` сервисному аккаунту. |
-| **Пустые результаты (Mimir/Influx)** | Неверный тенант / org / bucket | Сверьте `httpHeaderValue1`, `organization`, `defaultBucket`. |
+| GET | `/api/datasources` | Список всех источников (без пагинации; по умолчанию не более 5000) |
+| GET | `/api/datasources/uid/:uid` | Источник по `uid` |
+| POST | `/api/datasources` | Создать источник (право `datasources:create`) |
+| PUT | `/api/datasources/uid/:uid` | Обновить существующий (право `datasources:write`) |
+| DELETE | `/api/datasources/uid/:uid` | Удалить (право `datasources:delete`) |
+| GET | `/api/datasources/proxy/uid/:uid/*` | Проксирование запросов к источнику |
+| GET | `/api/datasources/uid/:uid/health` | Проверка работоспособности источника |
+| GET | `/api/datasources/uid/:uid/resources/*` | Ресурсы плагина источника |
+| POST | `/api/ds/query` | Универсальный запрос к backend-источнику |
 
-**Диагностика:** основные ошибки видны в логах Grafana (`logger=provisioning` для файлов, `logger=tsdb`/`logger=dataproxy` для запросов). Проверка связности — `curl -v <URL>` непосредственно из пода Grafana (или хоста при `Browser` доступе).
-
-### Ограничения и особые случаи
-
-- **Browser (direct) доступ** требует корректного CORS на бэкенде и непригоден для приватных секретов (они попадают в браузер клиента).
-- **Proxy не для всех типов**: ряд enterprise-коннекторов поддерживает только `Server (proxy)` или только определённый режим — сверяйте документацию конкретного плагина (см. [Плагины Grafana](./grafana_plugins.md)).
-- **PDC (Private Data Source Connect)** доступен только для Grafana Cloud (Enterprise); в self-hosted используйте VPN/VPC и `Server (proxy)`.
-- **Derived Fields устарели**: предпочтительны глобальные Data Correlations (с версии 10), работающие на уровне организации.
-- **Mixed-источник** объединяет данные на одной панели, но не поддерживает cross-source joins внутри одного запроса (для join используйте SQL Expressions в 13.x).
-- **Секреты в `Browser` режиме**: не используйте `secureJsonData` с приватными credentials при `access: browser` — они становятся доступны на клиенте.
-- **Версионность**: синтаксис `jsonData`/`secureJsonData` и доступность фич (SQL Expressions, PDC, Correlations) различаются между 11/12/13 — фиксируйте версию Grafana в CI-образе.
+Чтение требует права `datasources:read` (scope `datasources:*`). Эндпоинты `/api/datasources/name/:name` и `/api/datasources/id/:name` помечены как deprecated. Начиная с Grafana 13 эндпоинты `/api` постепенно вытесняются маршрутом `/apis`; legacy-маршруты продолжают работать, но больше не развиваются.
 
 ### См. также
 
 - [Провиженинг Grafana](./grafana_provisioning.md) — файловое управление источниками
-- [Monitoring as Code](./monitoring_as_code.md) — Terraform/Grizzly для источников
+- [Monitoring as Code](./monitoring_as_code.md) — Terraform/gcx для источников
 - [Плагины Grafana](./grafana_plugins.md) — типы Data Source коннекторов
 - Официальная документация: https://grafana.com/docs/grafana/latest/datasources/

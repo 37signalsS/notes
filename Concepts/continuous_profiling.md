@@ -23,7 +23,7 @@
 | **Block Profile** | Время ожидания каналов и semaphores (Go). | Диагностика горутинных блокировок. | Низкий (~1%) |
 | **Off-CPU Profile** | Время, когда процесс НЕ выполнялся на CPU (I/O, sleep, locks). | Диагностика долгих запросов при низком CPU usage. | Средний (~2-3%) |
 
-**Off-CPU vs CPU profiling:** Традиционный CPU profile показывает только функции, которые «сжигают» CPU. Но если запрос длится 5 секунд, а CPU utilization — 5%, проблема不在 в CPU, а в Off-CPU времени (ожидание I/O, блокировки, network latency). Off-CPU profiling показывает, где процесс проводит время вне CPU, что критично для диагностики tail latency.
+**Off-CPU vs CPU profiling:** Традиционный CPU profile показывает только функции, которые «сжигают» CPU. Но если запрос длится 5 секунд, а CPU utilization — 5%, проблема не в CPU, а в Off-CPU времени (ожидание I/O, блокировки, network latency). Off-CPU profiling показывает, где процесс проводит время вне CPU, что критично для диагностики tail latency.
 
 ### Классификация по способу внедрения
 
@@ -86,7 +86,7 @@ curl -s http://localhost:6060/debug/pprof/heap -o heap.prof
 go tool pprof -http=:8080 cpu.prof
 ```
 
-**Для continuous profiling в production** рекомендуется использовать eBPF-подход (Alloy/Pyroscope) вместо pprof pull-модели, чтобы избежать открытия pprof端口 в публичном контуре.
+**Для continuous profiling в production** рекомендуется использовать eBPF-подход (Alloy/Pyroscope) вместо pprof pull-модели, чтобы избежать открытия pprof-порта в публичном контуре.
 
 **Java (async-profiler + JFR):**
 Java-приложения профилируются через `async-profiler` (для on-demand) или JFR (Java Flight Recorder, для continuous).
@@ -135,14 +135,13 @@ py-spy record --native -o native_flame.svg --duration 30 --pid <PID>
 **Для continuous profiling Python** используйте eBPF-подход (Alloy/Pyroscope) или интеграцию через `pyroscope-python-sdk`:
 
 ```python
-from pyroscope import PyroscopeAgent
-from pyroscope.odot import tag
+from pyroscope import PyroscopeAgent, tag
 
 # Настройка continuous profiling
 PyroscopeAgent.configure(
     application_name="my-python-app",
     server_address="http://pyroscope:4040",
-    tags=tag服和服务(
+    tags=tag(
         "service_name", "my-python-app",
         "environment", "production",
     ),
@@ -338,7 +337,9 @@ RUN apk add --no-cache ca-certificates
 COPY --from=builder /app/myapp /usr/local/bin/myapp
 
 # Не удалять отладочные символы для профилирования!
-# Использовать -trimpath=false при сборке для production
+# -s -w выше удаляет таблицу символов и DWARF — для профилируемого сервиса
+# собирайте без них. -trimpath на символизацию не влияет: он убирает только
+# пути файловой системы. Подробнее: profiling_deep_dive.md, раздел «Символизация»
 EXPOSE 6060
 CMD ["myapp"]
 ```
@@ -365,7 +366,7 @@ CMD ["myapp"]
 4.  **Мониторьте сам overhead:** Добавьте алерт на рост CPU utilization >2% после включения profiling.
 5.  **Храните профили с ограниченным TTL:** Не храните профили дольше 30 дней (consumes significant storage).
 6.  **Tag everything:** `service_name`, `version`, `environment`, `host` — без тегов профили бесполезны.
-7.  **Не публикуйте pprof端口:** Используйте только eBPF-подход для production или ограничьте доступ через firewall.
+7.  **Не публикуйте pprof-порт:** Используйте только eBPF-подход для production или ограничьте доступ через firewall.
 
 ### Настройка retention в Pyroscope
 
@@ -461,7 +462,7 @@ groups:
 
 ### Символизация (Symbolication)
 Без отладочных символов профили бесполезны (вместо имен функций будут адреса вроде `0x400f12`).
-*   **Go:** Не используйте флаги `-s -w` при сборке для продакшена, если планируете профилировать. Используйте `-trimpath=false` для сохранения путей исходного кода.
+*   **Go:** Символизацию ломают флаги `-s -w`: они удаляют таблицу символов и DWARF, поэтому внешний бэкенд не может сопоставить профиль с бинарником. `-trimpath` на символизацию не влияет — он удаляет только пути файловой системы (полезно для воспроизводимых сборок). Со сведения 1.9 `runtime/pprof` встраивает имена функций в сам профиль, но бинарник для внешней символизации по-прежнему нужен.
 *   **Java:** Используйте `async-profiler` с `-f <output>` вместо `-o flame` для получения HTML-файлов. Для JFR убедитесь, что `-XX:+PreserveFramePointer` включен.
 *   **Python:** `py-spy` не требует символов — он работает через `/proc/<pid>/maps` и DWARF.
 *   **C++/Rust:** Обеспечьте доступ профилировщика к `.debug` файлам или загружайте их в Pyroscope Symbol Server. При сборке используйте `-g` (gcc) или `-C debuginfo=2` (rustc).

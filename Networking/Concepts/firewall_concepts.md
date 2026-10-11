@@ -496,7 +496,7 @@ cat /proc/sys/net/netfilter/nf_conntrack_count
 # Пример: Запретить доступ к контейнеру на порту 8080 со всех адресов, кроме 192.168.1.0/24
 sudo iptables -I DOCKER-USER -i eth0 ! -s 192.168.1.0/24 -p tcp --dport 8080 -j DROP
 
-# Для nftables (Docker 28+ с firewall-backend: nftables):
+# Для nftables (Docker 29+ с firewall-backend: nftables):
 sudo nft add rule inet filter forward_filter ip daddr 172.17.0.2 tcp dport 8080 ip saddr != 192.168.1.0/24 drop
 ```
 

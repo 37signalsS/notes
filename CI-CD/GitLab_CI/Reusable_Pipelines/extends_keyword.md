@@ -1,5 +1,7 @@
 # GitLab CI: Механизм `extends`
 
+**Актуально для:** GitLab CI 19.x; минимальные версии отдельных возможностей указаны в таблице версий.
+
 ## Определения
 
 **`extends`** — ключевое слово GitLab CI, предназначенное для наследования конфигурации от одного или нескольких «скрытых» заданий. Этот механизм является фундаментом для реализации принципа DRY (Don't Repeat Yourself) в пайплайнах, позволяя создавать модульные, расширяемые и легко сопровождаемые конфигурации. Работает на этапе компиляции пайплайна (Stage 3 зрелости CI/CD).
@@ -56,12 +58,12 @@
 
 | Компонент | Минимальная версия | Рекомендуемая версия |
 | :--- | :--- | :--- |
-| GitLab | 11.3 | 17.x+ |
-| GitLab Runner | 12.0 | 17.x+ |
-| `!reference` | 14.3 | 17.2+ (индексы массивов) |
+| GitLab | 11.3 | 19.x |
+| GitLab Runner | 12.0 | 19.x+ |
+| `!reference` | 13.9 | 17.2+ (индексы массивов); 19.x+ (`artifacts:paths`, `artifacts:exclude`, `cache:paths`) |
 | `inputs` + `extends` | 16.0 | 17.x+ |
-| `id_tokens` (OIDC) | 16.0+ | 17.x+ |
-| `secrets` (Secrets Manager) | 19.2+ GA | — |
+| `id_tokens` (OIDC) | 15.7 | 16.4+ (глобально через `default:`) |
+| `secrets` (Secrets Manager) | 13.4 (Vault); 19.0 (native, public beta) | 19.x (`gitlab_secrets_manager`; Limited Availability на gitlab.com с 19.3; GA не объявлена) |
 
 ## Основные концепции
 
@@ -160,9 +162,9 @@ build-app:
 
 - **`needs` (DAG):** `extends` не наследует зависимости `needs` автоматически. Каждое задание должно определять свои `needs` самостоятельно, либо наследовать их через `extends` как часть структуры.
 - **`default` (Глобальные настройки):** Значения из `extends` имеют приоритет над глобальными настройками `default`.
-- **`id_tokens` (v17.x+):** Рекомендуется выносить конфигурацию OIDC/JWT аутентификации в базовые шаблоны (`.auth_base`), чтобы проекты могли безопасно подключаться к ресурсам через `extends`.
+- **`id_tokens` (OIDC):** Синтаксис для отдельного задания доступен с GitLab 15.7, а с 16.4 блок `id_tokens` можно задавать глобально в `default:` — тогда он применяется ко всем заданиям и наследуется через `extends`. Устаревшие переменные `CI_JOB_JWT`/`CI_JOB_JWT_V2` удалены в 17.0 — используйте только `id_tokens`. Рекомендуется выносить конфигурацию OIDC/JWT аутентификации в базовые шаблоны (`.auth_base`), чтобы проекты могли безопасно подключаться к ресурсам через `extends`.
 - **`rules` внутри `include`:** Условное подключение шаблонов (`include:rules`) выполняется **до** обработки `extends`, что позволяет подключать шаблоны динамически.
-- **`secrets` (v19.x+):** Конфигурация динамического извлечения секретов из внешних менеджеров не наследуется через `extends` — каждый шаблон должен определять свои `secrets` явно.
+- **`secrets` (Vault / Secrets Manager):** Динамическое извлечение секретов через ключ `secrets` (Vault — с 13.4; native GitLab Secrets Manager, ключ `gitlab_secrets_manager`, — public beta с GitLab 19.0). Работа полагается на корректно настроенные `id_tokens`; проверяйте итоговую конфигурацию `glab ci config compile` и объявляйте секреты в тех заданиях, где они действительно нужны.
 
 ### Сравнение с другими механизмами переиспользования
 
@@ -259,7 +261,7 @@ test_integration:
   script:
     - pytest tests/integration
   services:
-    - postgres:16
+    - postgres:18
   variables:
     POSTGRES_DB: test_db
 ```
@@ -274,7 +276,8 @@ test_integration:
 # ci-templates/deploy.yml
 .deploy-base:
   stage: deploy
-  image: bitnami/kubectl:latest
+  image: registry.k8s.io/kubectl:v1.37.0
+  entrypoint: [""]
   variables:
     ENVIRONMENT: "undefined"
   script:
@@ -424,13 +427,13 @@ special_test_v2:
 
 ```bash
 # Просмотр полной (развернутой) конфигурации
-glab ci lint --show-expanded
+glab ci config compile
 
 # Проверка синтаксиса с имитацией переменных
-glab ci lint --dry-run --variable CI_PIPELINE_SOURCE=merge_request_event
+glab ci lint --dry-run --ref <branch>
 
 # Экспорт полного YAML для анализа
-glab ci lint --show-expanded > full_pipeline.yml
+glab ci config compile > full_pipeline.yml
 cat full_pipeline.yml | grep -A5 "test-unit"
 ```
 
@@ -473,22 +476,159 @@ deploy_production:
   when: manual
 ```
 
-## Валидация и отладка
+### Сценарий 9: Миграция с этапа Include на extends
+
+Ключевой переход эволюции — превращение «монолитного» шаблона (этап 2) в библиотеку скрытых заданий (этап 3). Ниже показан рефакторинг без изменения поведения для потребителей.
+
+**До: монолитный шаблон, где каждый job дублирует подготовку окружения**
+```yaml
+# ci-templates/backend.yml (этап 2)
+build-backend:
+  stage: build
+  image: docker:29.8
+  services:
+    - docker:29.8-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
+
+test-backend:
+  stage: test
+  image: docker:29.8
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
+  services:
+    - postgres:18
+  script:
+    - npm test
+```
+
+**После: декомпозиция на атомарные скрытые задания и сборка через `extends`**
+```yaml
+# ci-templates/backend.yml (этап 3)
+.docker-login:
+  image: docker:29.8
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
+
+.docker-base:
+  extends: .docker-login
+  stage: build
+  variables:
+    DOCKER_BUILDKIT: "1"
+
+build-backend:
+  extends: .docker-base
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
+
+test-backend:
+  extends: .docker-login
+  stage: test
+  services:
+    - postgres:18
+  script:
+    - npm test
+```
+
+**Порядок миграции (devops-практика):**
+1. **Аудит дублирования:** `grep -n "before_script" ci-templates/*.yml` — одинаковые блоки подготовки станут кандидатами на вынос.
+2. **Декомпозиция:** вынесите повторяющиеся блоки (`image`, `before_script`, `tags`, `cache`) в атомарные скрытые задания; каждый блок отвечает за одну зону ответственности.
+3. **Сборка иерархии:** соберите задания через `extends` и проверьте, что итоговый YAML идентичен прежнему (`glab ci config compile`, сравнение diff).
+4. **Семантическая фиксация:** закрепите новую версию шаблона SemVer-тегом (`v3.0.0`) и обновите `ref` в `include:project` у пилотного проекта.
+5. **Canary-роллаут:** распространяйте на группы/инстанс постепенно (пилотный проект → группа → весь инстанс), отслеживая статус пайплайнов. Откат — переключение `ref` на прежний тег.
+
+> **Правило:** на этапе 3 потребители работают только с именами скрытых заданий (`extends: .docker-login`), а не с их содержимым. Интерфейс шаблона — имена скрытых заданий и переменные, которые они ожидают.
+
+## Управление библиотекой шаблонов
+
+### Модель владения и ответственности
+
+При организации централизованной библиотеки шаблонов разделите ответственность по слоям:
+
+| Слой | Владелец | Примеры ключей | Ответственность |
+| :--- | :--- | :--- | :--- |
+| **1. Инфраструктура** | SRE / Platform-команда | `tags`, `interruptible`, `retry`, `resource_group` | Стабильность раннеров, SLA, геораспределение |
+| **2. Технологический стек** | DevOps-команда | `image`, `services`, `cache`, `before_script`, `id_tokens` | Базовый образ, инструменты, кеширование |
+| **3. Конкретная задача** | Разработчики | `script`, `artifacts`, `rules`, `environment` | Бизнес-логика, тесты, деплой |
+
+Каждый слой видит только задания своего уровня и ниже. Изменение ключа на уровне 1 автоматически распространяется на все проекты, потребляющие шаблон.
+
+### Версионирование и канареечный роллаут
+
+**Политика SemVer для шаблонов:**
+- `MAJOR`: переименование скрытого задания, удаление переменной, breaking change в структуре `extends`
+- `MINOR`: добавление нового скрытого задания, добавление опциональной переменной
+- `PATCH`: исправление ошибок в скриптах, обновление базового образа внутри той же версии
+
+**Канареечный роллаут:**
+1. Создайте SemVer-тег в центральном репозитории (`v3.1.0`).
+2. Подключите тег в одном пилотном проекте (`ref: v3.1.0`).
+3. Наблюдайте 3–5 пайплайнов.
+4. При отсутствии регрессий — обновите `ref` в группе проектов.
+5. При проблемах — мгновенный откат через переключение `ref` на предыдущий тег.
+
+Никогда не используйте `ref: main` в продакшене — обновление шаблона может сломать сотни пайплайнов одновременно.
+
+### Сериализация и предотвращение гонок
+
+`extends` не предоставляет гарантий взаимного исключения. Если несколько заданий через общий шаблон работают с одним ресурсом (реестр, кеш раннера, база данных), добавьте `resource_group`:
+
+```yaml
+.docker-push-base:
+  resource_group: docker-registry
+
+build-app:
+  extends: .docker-push-base
+  script:
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+
+build-api:
+  extends: .docker-push-base
+  script:
+    - docker push $CI_REGISTRY_IMAGE_API:$CI_COMMIT_SHORT_SHA
+```
+
+`resource_group` гарантирует, что задания не будут выполняться параллельно и конфликтовать за запись в общий ресурс.
+
+### Очистка и жизненный цикл
+
+**Регулярный аудит (ежеквартально):**
+- `rg "extends: \.old-template" ci-templates/` — поиск ссылок на устаревшие скрытые задания.
+- Удаляйте скрытые задания, на которые нет ссылок в течение 2 релизов.
+- Удаляйте старые SemVer-теги через политику очистки реестра (`Package Registry cleanup`).
+
+**Жизненный цикл версии шаблона:**
+1. Создание ветки `release/vX.Y.Z` в репозитории шаблонов.
+2. MR с изменениями проходит валидацию (`glab ci lint`, `glab ci config compile`).
+3. Мерж в `main` и создание тега.
+4. Потребление через `ref: vX.Y.Z`.
+5. Поддержка только последних 2 мажорных версий; более старые удаляются с предупреждением за 90 дней.
+
+### Compliance и аудит
+
+- Все изменения в шаблонах проходят через MR с обязательным ревью.
+- Используйте **Pipeline Execution Policies** (GitLab 17.3+) для принудительного подключения сканеров безопасности (SAST, Secret Detection, License Compliance) ко всем проектам группы. Политики нельзя отключить через `extends`.
+- Ведение `CHANGELOG.md` в репозитории шаблонов: каждое изменение интерфейса (имя скрытого задания, новая переменная) фиксируется с указанием типа изменения (major/minor/patch).
+- Для критичных шаблонов (деплой, секреты) настройте защиту ветки `main` и mandatory approvals.
+
+## Дополнительная информация
 
 ### Инструменты валидации
 
 | Инструмент | Назначение | Команда / Доступ |
 | :--- | :--- | :--- |
 | **Pipeline Editor** | Визуальный просмотр раскрытого YAML с подсветкой ошибок интерполяции `inputs`. | Web UI → CI/CD → Pipeline Editor → вкладка «View merged YAML» |
-| **GitLab CLI (`glab`)** | Локальная проверка синтаксиса и раскрытие `include`/`extends`/`inputs`. | `glab ci lint` / `glab ci lint --show-expanded` |
+| **GitLab CLI (`glab`)** | Локальная проверка синтаксиса и раскрытие `include`/`extends`/`inputs`. | `glab ci lint` / `glab ci config compile` |
 | **CI Lint API** | Программная проверка через HTTP (для использования в CI-пайплайнах шаблонов). | `POST /api/v4/projects/:id/ci/lint` |
-| **Dry Run (v16.11+)** | Глубокая валидация, имитирующая создание пайплайна. Проверяет права, наличие образов, корректность `rules`. | `glab ci lint --dry-run --variable CI_PIPELINE_SOURCE=merge_request_event` |
+| **Dry Run (v16.11+)** | Глубокая валидация, имитирующая создание пайплайна. Проверяет права, наличие образов, корректность `rules`. | `glab ci lint --dry-run --ref <branch>` |
 
 ### Чек-лист валидации
 
 Перед коммитом убедитесь:
 - [ ] `glab ci lint` проходит без ошибок.
-- [ ] `glab ci lint --show-expanded` показывает корректный раскрытый YAML.
+- [ ] `glab ci config compile` показывает корректный раскрытый YAML.
 - [ ] Блок `spec:inputs` заполнен и синтаксически верен (для компонентов).
 - [ ] Все внутренние ссылки (относительные пути) проверены и работают.
 - [ ] Создан релиз с тегом SemVer (для компонентов CI/CD Catalog).
@@ -520,7 +660,7 @@ curl --request POST \
 
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
-| `circular reference detected` | Кольцевое наследование (`A extends B, B extends A`). | Разорвите цепочку `extends` или используйте `!reference`. Проверьте всю цепочку через `glab ci lint --show-expanded`. |
+| `circular reference detected` | Кольцевое наследование (`A extends B, B extends A`). | Разорвите цепочку `extends` или используйте `!reference`. Проверьте всю цепочку через `glab ci config compile`. |
 | `exceeded max levels` | Глубина наследования `extends` > 11 уровней. | Упростите иерархию шаблонов. Старайтесь не превышать 3–4 уровня вложенности. |
 | `unknown extends` | Родительский шаблон не найден в текущем контексте. | Проверьте опечатки или наличие `include` с нужным файлом. Убедитесь, что `include` подключает нужный файл. |
 | `script: can't be blank` | Переопределение `script` пустым значением или его отсутствие в родителе. | Если переопределяете `script`, обязательно укажите хотя бы одну команду. |
@@ -533,10 +673,162 @@ curl --request POST \
 ### Логика диагностики
 
 При ошибке с `extends` следуйте алгоритму:
-1. **Проверьте итоговый YAML:** `glab ci lint --show-expanded` — видны ли задания после слияния.
+1. **Проверьте итоговый YAML:** `glab ci config compile` — видны ли задания после слияния.
 2. **Проверьте приоритеты:** Локальные задания всегда важнее включенных через `include`.
 3. **Проверьте типы данных:** Массивы заменяются целиком, словари сливаются.
 4. **Проверьте версию:** Убедитесь, что `ref` в `include:project` указывает на SemVer-тег, а не на ветку.
+
+## Наследование обработки ошибок и поведения задания
+
+При использовании `extends` ключи управления ошибками (`retry`, `allow_failure`, `when`, `timeout`) наследуются от родительского скрытого задания. Важно понимать механизм слияния для каждого ключа.
+
+### `retry`
+
+Определяет количество повторных попыток при падении задания.
+
+**Поведение при extends:**
+- Если родительское задание имеет `retry`, дочернее наследует его автоматически.
+- Если дочернее задание переопределяет `retry`, родительское значение **полностью замещается**.
+- Для частичного изменения используйте `!reference`.
+
+**Пример наследования:**
+```yaml
+# Родительский шаблон
+.base-build:
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+# Дочернее задание: наследует retry как есть
+build-app:
+  extends: .base-build
+  script: docker build -t app .
+
+# Дочернее задание: переопределяет retry полностью
+build-legacy:
+  extends: .base-build
+  retry:
+    max: 5
+    when: always
+  script: make build-legacy
+```
+
+### `allow_failure`
+
+Позволяет заданию завершиться с состоянием `failed` без остановки пайплайна.
+
+**Поведение при extends:**
+- Наследуется от родителя как булево значение или объект с `exit_codes`.
+- Дочернее задание может переопределить `allow_failure: false`, чтобы сделать задание критичным.
+- Важно: если родительское задание имеет `allow_failure: true`, дочернее наследует это поведение. Явно задавайте `allow_failure: false` для критичных заданий.
+
+**Пример:**
+```yaml
+# Родительский шаблон (некритичные тесты)
+.base-test:
+  allow_failure: true
+  script: npm test
+
+# Дочернее задание (критичные тесты)
+critical-tests:
+  extends: .base-test
+  allow_failure: false
+  script: npm run test:critical
+```
+
+### `when`
+
+Определяет условия выполнения задания.
+
+**Поведение при extends:**
+- Наследуется как строка (`on_success`, `on_failure`, `always`, `manual`, `delayed`, `never`).
+- Дочернее задание может переопределить `when`.
+- В комбинации с `rules` (рекомендуется): `when` игнорируется, если заданы `rules`.
+
+**Пример:**
+```yaml
+# Родительский шаблон (ручной деплой)
+.base-deploy:
+  stage: deploy
+  when: manual
+  script: ./deploy.sh
+
+# Дочернее задание (автоматический деплой в staging)
+deploy-staging:
+  extends: .base-deploy
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: always
+```
+
+### `timeout`
+
+Максимальное время выполнения задания.
+
+**Поведение при extends:**
+- Наследуется от родителя как строка (например, `30m`).
+- Дочернее задание может увеличить или уменьшить `timeout`.
+- Глобальный `timeout` в `default:` имеет наивысший приоритет.
+
+**Пример:**
+```yaml
+# Родительский шаблон
+.base-build:
+  timeout: 15m
+  script: make build
+
+# Дочернее задание (долгая сборка)
+build-heavy:
+  extends: .base-build
+  timeout: 45m
+  script: make build-heavy
+```
+
+### Комбинированный пример
+
+```yaml
+# shared/ci-templates/templates/deployment-base.yml
+.deploy-base:
+  stage: deploy
+  image: alpine:3.24
+  retry:
+    max: 3
+    when:
+      - runner_system_failure
+  allow_failure: false
+  timeout: 10m
+  environment:
+    name: production
+    url: https://app.example.com
+
+# Проект: кастомизация под конкретное окружение
+deploy-production:
+  extends: .deploy-base
+  environment:
+    name: production
+    url: https://app.example.com
+  script: ./deploy.sh production
+
+deploy-staging:
+  extends: .deploy-base
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: always
+  allow_failure: true
+  timeout: 5m
+  environment:
+    name: staging
+    url: https://staging.example.com
+```
+
+### Рекомендации
+
+1. **Явно задавайте `allow_failure: false`** для критичных заданий, даже если родительский шаблон имеет `allow_failure: true`.
+2. **Используйте `retry` для нестабильных операций** (сетевые вызовы, интеграционные тесты). Для компиляции и сборки `retry: 0` (по умолчанию).
+3. **Комбинируйте `timeout` с `resource_group`** для предотвращения зависаний: `timeout` отключает задание, `resource_group` обеспечивает мьютекс.
+4. **Избегайте `when: always`** без `rules` — это может привести к запуску заданий в нежелательных окружениях. Используйте `rules` для точного контроля.
 
 ## Особенности и ограничения
 
@@ -558,7 +850,7 @@ curl --request POST \
 
 | Недостаток | Описание | Решение |
 | :--- | :--- | :--- |
-| **Скрытая сложность** | При глубокой вложенности (>3 уровней) сложно понять итоговый `script` без спецсредств. | Используйте Pipeline Editor / `glab ci lint --show-expanded`. |
+| **Скрытая сложность** | При глубокой вложенности (>3 уровней) сложно понять итоговый `script` без спецсредств. | Используйте Pipeline Editor / `glab ci config compile`. |
 | **Хрупкость** | Изменение структуры родительского шаблона может привести к неожиданному поведению. | Используйте SemVer для версионирования шаблонов. |
 | **Замена массивов** | Массивы (`script`, `rules`, `tags`) не дополняются, а полностью замещаются. | Для обхода используйте `!reference`. |
 | **Лимит вложенности** | Максимум 11 уровней наследования. | Практический лимит — 3–4 уровня. |
@@ -572,6 +864,7 @@ curl --request POST \
 - **[Механизм include](./include_keyword.md)** — детальный справочник по подключению внешних файлов.
 - **[CI/CD Catalog: компоненты](./ci_cd_catalog_components.md)** — создание и управление библиотеками компонентов.
 - **[CI/CD Catalog: ограничения](./ci_cd_catalog_limits.md)** — системные лимиты вложенности, размера и inputs.
+- **[Сервисные контейнеры](./services_and_service_containers.md)** — `services:`, DinD, health checks, aliases в reusable templates.
 - **[Валидация и версионирование](../Advanced/pipeline_validation_and_versioning.md)** — методы проверки корректности конфигурации.
 - **[Отладка и устранение неполадок](../Advanced/debugging_and_troubleshooting.md)** — инструменты и техники диагностики.
 - **[Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)** — управление данными внутри иерархий `extends`.

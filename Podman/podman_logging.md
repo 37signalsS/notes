@@ -212,7 +212,7 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:11.1.0
+    image: grafana/grafana:13.2.3
     container_name: grafana
     volumes:
       - grafana_data:/var/lib/grafana
@@ -555,3 +555,5 @@ podman logs my-app
 - **[Vector](../../Vector/vector_overview.md)** — обзор Vector
 - **[Podman logs](./podman_basic_commands.md)** — CLI-команды Podman
 - **[Podman secrets](./podman_secrets.md)** — управление секретами
+
+# force reindex test

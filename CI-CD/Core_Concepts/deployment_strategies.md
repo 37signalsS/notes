@@ -407,4 +407,113 @@ psql -c "SELECT column_name FROM information_schema.columns WHERE table_name='or
 - **[Наблюдаемость пайплайнов](./pipeline_observability.md)** — метрики для решений о breaker.
 - **[Оптимизация затрат в CI/CD](./cost-optimization.md)** — управление стоимостью инфраструктуры при раскатке.
 - **[Expand-Contract](../../Databases/Concepts/migrations/expand_contract.md)** — обратно-совместимые миграции баз данных.
+
+### GitHub Actions: конкретная реализация стратегий развертывания
+
+Для GitHub Actions развертывание реализуется через `environment` с защитными правилами и job'ы, управляемые триггерами.
+
+**Environment protection rules:**
+- **`environment: production`** — именованная среда с настройками защиты.
+- **`deployment_branch_policy`** — ограничение веток, которые могут деплоить в environment.
+- **`deployment_review`** — требование approval перед деплоем (для production).
+- **Секреты и переменные environment'ов** — изолированы от других сред.
+
+**Пример: Canary через GitHub Actions + HAProxy runtime API:**
+```yaml
+# .github/workflows/deploy-canary.yml
+name: Deploy Canary
+on:
+  workflow_dispatch:
+    inputs:
+      canary_weight:
+        description: 'Canary weight (%)'
+        required: true
+        default: 10
+        type: number
+
+jobs:
+  canary:
+    runs-on: self-hosted
+    environment: production
+    steps:
+      - name: Set canary weight
+        run: |
+          echo "set server app_servers/stable1 weight $((100-${{ inputs.canary_weight }}))" \
+            | socat - UNIX-CONNECT:/var/run/haproxy.sock
+          echo "set server app_servers/canary1 weight ${{ inputs.canary_weight }}" \
+            | socat - UNIX-CONNECT:/var/run/haproxy.sock
+      - name: Wait for observation window
+        run: sleep 300   # 5 мин окна наблюдения
+      - name: Check SLO
+        run: |
+          ERROR_RATE=$(curl -s "http://prometheus.internal:9090/api/v1/query" \
+            --data-urlencode 'query=sum(rate(http_errors_total[5m])) / sum(rate(http_requests_total[5m]))' \
+            | jq -r '.data.result[0].value[1]')
+          if (( $(echo "$ERROR_RATE > 0.02" | bc -l) )); then
+            echo "::error::Error rate $ERROR_RATE exceeds SLO. Aborting..."
+            exit 1
+          fi
+```
+
+**Пример: Blue/Green через переключение environment'ов:**
+```yaml
+# .github/workflows/deploy-blue-green.yml
+name: Deploy Blue-Green
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  deploy-green:
+    runs-on: self-hosted
+    environment: green   # активная среда — blue, неактивная — green
+    steps:
+      - name: Deploy to Green
+        run: ./deploy.sh green ${{ github.ref_name }}
+      - name: Health check
+        run: curl -fsS https://green.internal/healthz
+      - name: Switch traffic (manual approval)
+        if: success
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: lb.internal
+          script: |
+            echo "set server app_servers/blue weight 0" | socat - UNIX-CONNECT:/var/run/haproxy.sock
+            echo "set server app_servers/green weight 100" | socat - UNIX-CONNECT:/var/run/haproxy.sock
+```
+
+**Пример: Rollback через workflow_dispatch:**
+```yaml
+# .github/workflows/rollback.yml
+name: Rollback
+on:
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Версия для отката'
+        required: true
+        type: string
+
+jobs:
+  rollback:
+    runs-on: self-hosted
+    environment: production
+    steps:
+      - name: Execute rollback
+        run: |
+          echo "Rolling back to ${{ inputs.target_version }}"
+          ./rollback.sh ${{ inputs.target_version }}
+      - name: Verify rollback
+        run: |
+          curl -fsS https://app.internal/healthz
+          echo "Rollback verified"
+```
+
+**Особенности GitHub Actions для deployment:**
+- **`GITHUB_TOKEN` с `permissions: contents: write`** — нужен для обновления манифестов в GitOps-репозитории.
+- **`id-token: write`** — необходим для OIDC-аутентификации в облаке (AWS, GCP, Azure) без статических секретов.
+- **`environment` approval** — добавляет время в Lead Time, но является критической защитой для production.
+- **`concurrency` с `cancel-in-progress`** — предотвращает одновременные деплои одной среды.
+- **Self-hosted runner'ы** — требуются для доступа к внутренним сетям, которые недоступны из GitHub-hosted runner'ов.
+- **[Capacity Planning для CI/CD](./capacity_planning.md)** — расчёт мощностей раннеров, реестров и CI-серверов.
 - **[Балансировка нагрузки HTTP](../../Networking/Protocols/HTTP/http_load_balancing.md)** — механика весов, health checks и traffic splitting на Nginx/HAProxy.

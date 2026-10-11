@@ -1,5 +1,7 @@
 # Валидация и версионирование пайплайнов GitLab CI/CD
 
+**Актуально для:** GitLab 19.x / GitLab Runner 19.x
+
 ## Определения
 
 **Валидация пайплайнов** — комплексный процесс проверки синтаксиса (YAML Lint), логической целостности (DAG, зависимости) и контекстуальной корректности конфигурации. Выполняется на нескольких уровнях: от локальной проверки в IDE до серверной валидации через API.
@@ -14,9 +16,19 @@
 
 **Версионирование шаблонов (Infrastructure as Code)** — практика применения фиксированных меток (теги SemVer, commit SHA) к подключаемым YAML-ресурсам для предотвращения каскадных сбоев при обновлении инструментов.
 
-**Pipeline Execution Policies** — корпоративный механизм (GitLab 17.x–19.x) для принудительного внедрения задач безопасности и комплаенса, которые невозможно пропустить или переопределить на уровне проекта.
+**Pipeline Execution Policies** — корпоративный механизм (GitLab 19.x) для принудительного внедрения задач безопасности и комплаенса, которые невозможно пропустить или переопределить на уровне проекта.
 
 **Validation Gates** — промежуточные проверки внутри пайплайна, блокирующие дальнейшее выполнение (например, деплой) при обнаружении логических ошибок в сгенерированных конфигурациях.
+
+## Предварительные требования
+
+- **GitLab 19.x** — требуется для доступа к полному функционалу CI Lint API с поддержкой `dry_run: true` (доступен с 16.11+), Pipeline Execution Policies и компонентов CI/CD Catalog.
+- **GitLab Runner 19.x** — исполнитель пайплайнов, на котором запускаются задачи валидации.
+- **GitLab CLI (`glab`) 2.x+** — инструмент для локальной валидации, компиляции конфигурации и dry-run без коммита.
+- **curl и jq** — для прямого вызова CI Lint API из скриптов и автоматизации.
+- **yamllint** — для статической проверки синтаксиса YAML на этапе pre-commit.
+- **Права доступа** — PAT или `CI_JOB_TOKEN` с областью `api` для вызова CI Lint API из пайплайна.
+- **Доступ к GitLab API** — URL сервера (`CI_API_V4_URL`) и токен должны быть доступны в окружении валидации.
 
 ## Основные концепции
 
@@ -61,7 +73,7 @@
 ```yaml
 validate_pipeline_logic:
   stage: .pre
-  image: alpine:3.21
+  image: alpine:3.24.2
   script:
     - apk add --no-cache curl jq
     - |
@@ -133,9 +145,9 @@ workflow:
 ```bash
 # 1. Проверка синтаксиса с имитацией переменных MR
 glab ci lint --dry-run --variable CI_PIPELINE_SOURCE=merge_request_event
+      # 2. Получение финального YAML со всеми разрешенными !reference и extends
 
-# 2. Получение финального YAML со всеми разрешенными !reference и extends
-glab ci lint --show-expanded > processed-config.yml
+      glab ci config compile > processed-config.yml
 
 # 3. Валидация конкретного файла (например, сгенерированного скриптом)
 glab ci lint path/to/generated-ci.yml
@@ -161,7 +173,7 @@ repos:
 ✓ CI Lint passed
 ```
 
-**Ожидаемый результат `glab ci lint --show-expanded`:**
+**Ожидаемый результат `glab ci config compile`:**
 ```yaml
 # Полный YAML после обработки всех include, extends, !reference, inputs
 stages:
@@ -336,9 +348,9 @@ validate_mr_config:
         echo "ОШИБКА: Dry Run не пройден для target=$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
         exit 1
       fi
-      
       # 3. Проверка expand (все include/extends развернуты)
-      glab ci lint --show-expanded > /tmp/expanded.yml
+
+      glab ci config compile > /tmp/expanded.yml
       YAML_SIZE=$(wc -c < /tmp/expanded.yml)
       if [ "$YAML_SIZE" -gt 5242880 ]; then
         echo "ОШИБКА: Expanded YAML превышает 5 МБ ($YAML_SIZE bytes)"
@@ -381,7 +393,7 @@ validate_mr_config:
 - **Pipeline Editor (Merged YAML):** Главный инструмент для понимания того, что "видит" сервер. Доступен через `CI/CD > Editor`.
 - **Variables Trace:** Используйте `export` в тестовой задаче для проверки итогового значения версий шаблонов.
 - **CI Lint API:** Прямой вызов API для проверки конфигурации вне контекста пайплайна.
-- **glab ci lint --show-expanded:** Просмотр полного YAML после обработки всех include, extends, !reference.
+- **glab ci config compile:** Просмотр полного YAML после обработки всех include, extends, !reference.
 
 ```bash
 # Просмотр всех переменных с указанием источника
@@ -418,9 +430,9 @@ else
   echo "  glab не установлен"
 fi
 
-echo "--- 3. Проверка glab ci lint --show-expanded ---"
+echo "--- 3. Проверка glab ci config compile ---"
 if command -v glab &>/dev/null; then
-  glab ci lint --show-expanded > /tmp/expanded.yml 2>/dev/null
+  glab ci config compile > /tmp/expanded.yml 2>/dev/null
   YAML_SIZE=$(wc -c < /tmp/expanded.yml)
   echo "  Размер expanded YAML: ${YAML_SIZE} bytes"
   if [ "$YAML_SIZE" -gt 5242880 ]; then
@@ -459,6 +471,30 @@ echo "=== Диагностика завершена ==="
 | **Pre-commit и `include:project`** | Pre-commit не может проверить `include:project` без доступа к GitLab | Используйте CI Lint API в pre-commit hook вместо локального glab |
 | **Runtime-валидация bridge jobs** | Дочерние пайплайны не валидируются родительским CI Lint | Добавьте CI Lint в `.pre` стадию дочернего пайплайна |
 | **`yamllint` и GitLab CI YAML** | Стандартные правила yamllint могут ругаться на GitLab CI specific syntax | Используйте `-d relaxed` или настройте `.yamllint` |
+
+## Лучшие практики
+
+### SRE-ориентированные практики
+
+- **Метрики валидации:** Отслеживайте долю успешных валидаций (`validation_success_rate`). Алерт при падении ниже 95% за 24 часа — это указывает на регрессию в шаблонах или сбой CI Lint API.
+- **Детект дрейфа конфигурации:** Храните `expanded.yml` артефактом в `.pre` стадии и сравнивайте с baseline. Расхождения >5% должны запускать review.
+- **Изоляция валидации Production:** Запускайте валидацию Production-пайплайнов в отдельной группе с повышенными правами. Это предотвращает утечку секретов и каскадные сбои.
+- **Fallback при недоступности CI Lint:** Если API недоступен (5xx/timeout), разрешайте merge только после ручного approval. Настройте `EXTERNAL_VALIDATION_SERVICE_TIMEOUT` на адекватное значение (по умолчанию 5 секунд).
+- **Аудит изменений:** Включите audit log для `.gitlab-ci.yml` и шаблонов. Каждое изменение должно иметь traceable author и MR IID.
+
+### SysAdmin-ориентированные практики
+
+- **Резервное копирование конфигурации:** Архивируйте `.gitlab-ci.yml` и все `include`-файлы в отдельный репозиторий с триггером на каждый push. Это обеспечивает точку отката при деградации шаблонов.
+- **Управление токенами:** Ротируйте PAT, используемые для CI Lint API, каждые 90 дней. Храните их в Vault или GitLab CI/CD Variables с флагом `protected`.
+- **Логирование валидации:** Включайте логи CI Lint API (`gitlab_workhorse` и `gitlab-rails`) с уровнем `info` для аудита. Храните логи минимум 90 дней.
+- **Ограничение ресурсов валидации:** Ограничьте время выполнения задачи валидации (например, `timeout: 10m`), чтобы зависший CI Lint не блокировал очередь Runner'ов.
+- **Верификация после обновления GitLab:** После каждого minor-обновления GitLab запускайте batch-валидацию всех критических пайплайнов. Недостаточная валидация после обновления — частая причина каскадных сбоев.
+
+### Проверка корректности валидации
+
+- **Success rate:** `successful_validations / total_validations`. Цель: > 95%.
+- **Expanded YAML growth:** Сравнивайте размер `expanded.yml` между коммитами. Рост >20% без соразмерного увеличения функциональности — признак неконтролируемого роста конфигурации.
+- **Время валидации:** Измеряйте latency CI Lint API. Цель: < 3 секунды для типовых конфигураций. Рост latency указывает на перегрузку shared runners или слишком большое дерево `include`.
 
 ## Дополнительная информация
 

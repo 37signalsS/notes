@@ -245,7 +245,7 @@ Type=notify
 NotifyAccess=all
 ExecStart=/usr/bin/docker run --rm --name docker-registry \
     -v /opt/registry/data:/var/lib/registry \
-    registry:2
+    registry:3
 ExecStop=/usr/bin/docker stop docker-registry
 
 [Install]
@@ -451,7 +451,7 @@ journalctl -u app-container.service -n 50 --no-pager
 | Контейнер завершается при старте | Отсутствует `network-online.target` или образ еще не pulled. | Добавьте `After=network-online.target`. Используйте `ExecStartPre=` для `docker pull`. |
 | `Type=notify` таймаут | Приложение не отправляет READY=1 или `NotifyAccess=` ограничен. | Установите `NotifyAccess=all`. Проверьте монтирование сокета и переменную `$NOTIFY_SOCKET`. |
 | Логи дублируются | Конфликт между journald и драйвером `json-file`. | Настройте `log-driver=journald` в `/etc/docker/daemon.json` для исключения дублирования. |
-| `docker stop` не завершает контейнер | Процесс внутри контейнера игнорирует SIGTERM. | Увеличьте `TimeoutStopSec=` или добавьте `STOPSIGNAL SIGRTMIN+3` в Dockerfile. |
+| `docker stop` не завершает контейнер | Процесс внутри контейнера не обрабатывает `SIGTERM`. Для контейнера с `systemd` как PID 1 причина иная: `SIGTERM` означает `daemon-reexec`, а не остановку. | Увеличьте `TimeoutStopSec=`; для systemd-контейнера добавьте `STOPSIGNAL SIGRTMIN+3` в Dockerfile. См. [docker_systemd.md](../../../Docker/docker_systemd.md). |
 | Ошибка `cgroup: cannot set cgroup` | Используется cgroup v1 или неправильный драйвер. | Проверьте: `stat -fc %T /sys/fs/cgroup/`. Убедитесь, что Docker использует `cgroupfs` или `systemd` driver. |
 | Контейнер не стартует после перезагрузки | Отсутствует `WantedBy=multi-user.target` или юнит не включен. | Выполните: `systemctl daemon-reload && systemctl enable --now app-container.service`. |
 | Конфликт портов | Порт уже занят другим сервисом на хосте. | Проверьте: `ss -tlnp | grep :80`. Используйте `docker port` для проверки. |

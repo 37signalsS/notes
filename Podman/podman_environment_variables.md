@@ -543,3 +543,5 @@ grep -iE 'password|secret|token|key|api_key' /tmp/all_envs.txt
 - **[Podman Update](https://docs.podman.io/en/latest/markdown/podman-update.1.html)** (англ.) — параметры изменения созданных контейнеров.
 - **[podman-systemd.unit](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html)** (англ.) — ключи `Environment`, `EnvironmentFile`, `EnvironmentHost` в Quadlet.
 - **[Systemd Environment](https://www.freedesktop.org/software/systemd/man/systemd.exec.html#Environment)** (англ.) — архитектура ENV в systemd-юнитах.
+
+# force reindex test

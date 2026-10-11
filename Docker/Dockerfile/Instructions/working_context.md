@@ -1,5 +1,7 @@
 # Инструкции Dockerfile: WORKDIR и SHELL
 
+**Актуально для:** Docker 20.10+, BuildKit 23.0+
+
 ## Определения
 
 **`WORKDIR`** — инструкция Dockerfile, устанавливающая текущий рабочий каталог для всех последующих инструкций `RUN`, `CMD`, `ENTRYPOINT`, `COPY` и `ADD`. Она действует аналогично команде `cd`, но в отличие от неё, эффект `WORKDIR` сохраняется между слоями сборки и применяется ко всем последующим инструкциям, а не только к текущему `RUN`.
@@ -448,7 +450,7 @@ RUN curl -fsSL https://example.com/app.tar.gz | tar xz \
 
 ### Сценарий 8: NVM и Node.js через SHELL
 
-NVM (Node Version Manager) — shell-функция, требующая特殊ной настройки в non-interactive оболочке:
+NVM (Node Version Manager) — shell-функция, требующая специальной настройки в non-interactive оболочке:
 
 ```dockerfile
 FROM ubuntu:22.04
@@ -476,7 +478,7 @@ RUN node --version && npm --version
 Создание wrapper-скрипта для логирования всех команд сборки:
 
 ```dockerfile
-FROM rust:1.75
+FROM rust:1.98
 
 # Создание скрипта логирования
 RUN echo '#!/bin/bash \
@@ -702,6 +704,27 @@ USER node
 # 8. CMD/ENTRYPOINT
 CMD ["node", "src/server.js"]
 ```
+
+### Валидация в CI/CD
+
+Проверка корректности `WORKDIR` и `SHELL` должна быть частью пайплайна:
+
+```bash
+# 1. Проверка WORKDIR в собранном образе
+docker inspect --format='{{.Config.WorkingDir}}' myimage:latest
+# Ожидаем: /app
+
+# 2. Линтинг Dockerfile (hadolint)
+hadolint Dockerfile
+# Или через BuildKit checks:
+docker build --check .
+
+# 3. Проверка оболочки в multi-stage сборке
+docker build --target builder -t myapp:builder .
+docker inspect --format='{{.Config.Env}}' myapp:builder | grep SHELL
+```
+
+**Рекомендация:** Интегрируйте `hadolint` или `docker build --check` в CI/CD на этапе сборки. Для enforcement политик используйте `# check=error=true` в Dockerfile.
 
 ## Граничные случаи и ограничения
 

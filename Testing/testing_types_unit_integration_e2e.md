@@ -183,7 +183,8 @@ jobs:
 - name: Run Jest unit tests
   run: npx jest --coverage --maxWorkers=2 --reporters=jest-junit
   env:
-    JEST_JUNIT_OUTPUT: reports/junit.xml
+    JEST_JUNIT_OUTPUT_DIR: reports
+    JEST_JUNIT_OUTPUT_NAME: junit.xml
 ```
 
 **Go:**

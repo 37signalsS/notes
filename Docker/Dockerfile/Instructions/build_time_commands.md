@@ -1,5 +1,7 @@
 # Инструкция Dockerfile: RUN
 
+**Актуально для:** Docker 20.10+
+
 ## Определения
 
 **Инструкция `RUN`** — директива Dockerfile, которая выполняет команды в новом слое поверх текущего образа и фиксирует (commit) результаты. Это основной инструмент для установки системных пакетов, сборки зависимостей и конфигурации окружения на этапе подготовки образа.
@@ -230,7 +232,7 @@ docker build --secret id=npm_token,src=$HOME/.npm_token -t myapp .
 | :--- | :--- | :--- |
 | Из файла | `--secret id=key,src=./key.txt` | Статические ключи, токены |
 | Из переменной | `--secret id=key,env=API_KEY` | Переменные окружения CI |
-| С数千ью по умолчанию | `--secret id=key` | SSH-ключи, gpg |
+| С ключом по умолчанию | `--secret id=key` | SSH-ключи, gpg |
 
 #### SSH Mount
 
@@ -252,12 +254,12 @@ docker build --ssh default -t myapp .
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM golang:1.22 AS builder
+FROM golang:1.27 AS builder
 WORKDIR /build
 COPY . .
 RUN go build -o /app/server .
 
-FROM alpine:3.21
+FROM alpine:3.24
 # Используем gcc из builder для дополнительной компиляции
 RUN --mount=type=bind,from=builder,source=/usr/bin/gcc,target=/usr/bin/gcc \
     gcc -o helper helper.c
@@ -295,7 +297,7 @@ RUN --network=host curl http://localhost:8080/health
 
 ```dockerfile
 # syntax=docker/dockerfile:1.5
-FROM alpine:3.21
+FROM alpine:3.24
 RUN --link apk add --no-cache curl
 # Если базовый образ изменится, этот слой не будет пересобран
 ```
@@ -308,7 +310,7 @@ RUN --link apk add --no-cache curl
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM node:22-alpine
+FROM node:26-alpine
 WORKDIR /app
 COPY package*.json ./
 
@@ -331,7 +333,7 @@ RUN --mount=type=cache,target=/root/.npm \
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache openssh-client git
 RUN mkdir -p -m 0600 ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
 
@@ -363,7 +365,7 @@ RUN apk update && apk add curl
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM golang:1.24-alpine AS builder
+FROM golang:1.27-alpine AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 
@@ -403,7 +405,7 @@ docker build --secret id=pip_conf,src=./pip.conf -t myapp .
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM maven:3.9-eclipse-temurin-25 AS build
 WORKDIR /app
 COPY pom.xml .
 
@@ -420,7 +422,7 @@ RUN --mount=type=cache,target=/root/.m2 \
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM rust:1.82-slim AS builder
+FROM rust:1.98-slim AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 
@@ -479,7 +481,7 @@ grep -A 5 "error:" build.log
 docker history myapp --no-trunc
 
 # Запуск промежуточного образа для отладки
-# (нужно добавить有意альную ошибку или использовать breakpoint)
+# (нужно добавить реальную ошибку или использовать breakpoint)
 docker run -it --rm $(docker build -q .) /bin/bash
 ```
 
@@ -615,10 +617,10 @@ RUN echo "debug" && false  # Должно остановить
 Каждая стадия multi-stage сборки имеет свой контекст. `RUN` не может обращаться к файлам из другой стадии без `COPY --from` или `--mount=type=bind,from=stage`:
 
 ```dockerfile
-FROM node:22 AS builder
+FROM node:26 AS builder
 RUN npm run build
 
-FROM alpine:3.21
+FROM alpine:3.24
 # ОШИБКА: /app/dist не существует в этой стадии
 RUN ls /app/dist
 
@@ -658,10 +660,10 @@ RUN ["echo", "Hello directly"]
 `RUN` не может обращаться к предыдущим стадиям по имени. Используйте `--from` в `COPY`:
 
 ```dockerfile
-FROM golang:1.22 AS builder
+FROM golang:1.27 AS builder
 RUN go build -o /app/server .
 
-FROM alpine:3.21
+FROM alpine:3.24
 # Нельзя: RUN --from=builder ... (нет такого синтаксиса)
 # Можно: COPY --from=builder /app/server /app/server
 COPY --from=builder /app/server /app/server
@@ -714,7 +716,7 @@ BuildKit использует граф зависимостей (LLB) вмест
 
 ```dockerfile
 # Стадия сборки: тяжёлые зависимости
-FROM golang:1.22 AS builder
+FROM golang:1.27 AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends gcc
 RUN go build -o /app/server .
 
@@ -723,6 +725,119 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /app/server /server
 ENTRYPOINT ["/server"]
 ```
+
+## Валидация
+
+### Проверка метаданных образа
+
+```bash
+# Просмотр истории слоёв
+docker history myapp:latest --no-trunc
+
+# Проверка размера образа
+docker images myapp:latest --format "{{.Size}}"
+```
+
+### Проверка кэширования слоёв
+
+```bash
+# Первая сборка (холодный кэш)
+time docker build -t myapp:latest .
+
+# Вторая сборка (горячий кэш)
+time docker build -t myapp:latest .
+
+# Ожидание: вторая сборка должна быть значительно быстрее
+# Если нет — проверьте порядок инструкций и digest lock-файлов
+```
+
+### Проверка mount-монтирований
+
+```bash
+# Сборка с выводом прогресса для диагностики
+DOCKER_BUILDKIT=1 docker build --progress=plain -t myapp . 2>&1 | tee build.log
+
+# Проверка, что кэш pip не попал в слой
+docker run --rm myapp:latest python -c "import sys; print(sys.path)"
+
+# Проверка, что секрет не сохранён в образе
+docker history myapp:latest --no-trunc | grep -i secret || echo "Секреты не найдены в истории"
+```
+
+### Проверка multi-stage сборки
+
+```bash
+# Сравнение размеров стадий
+docker buildx build --target builder -t myapp:builder .
+docker buildx build -t myapp:final .
+
+docker images myapp
+# → REPOSITORY   TAG      SIZE
+# → myapp        builder  1.2GB   (стадия сборки)
+# → myapp        final    15MB    (финальный образ)
+# → Экономия: ~99%
+```
+
+### Проверка air-gapped сборки
+
+```bash
+# Сборка без доступа к сети
+docker build --network=none -t myapp:airgap .
+
+# С зависимостями из локального контекста
+docker build --network=none --build-arg PIP_INDEX_URL=file:///deps -t myapp:airgap .
+```
+
+## Граничные случаи и ограничения
+
+### BuildKit отключён (legacy builder)
+
+Без `DOCKER_BUILDKIT=1` расширения `--mount`, Heredoc, `--link` и `check=error` игнорируются.
+
+```bash
+# Проверка активного builder
+docker buildx version
+
+# Включение BuildKit
+export DOCKER_BUILDKIT=1
+```
+
+### Rootless Docker
+
+В rootless-режиме `--mount=type=cache` и `--mount=type=tmpfs` работают, но `--mount=type=ssh` требует настройки `XDG_RUNTIME_DIR`. UID-мэппинг влияет на владельцев кэша.
+
+```bash
+# Проверка rootless-режима
+docker info | grep -i rootless
+
+# Сборка в rootless
+docker build --build-arg BUILDER_UID=$(id -u) -t myapp .
+```
+
+### Ограничения Kaniko
+
+Kaniko игнорирует `--mount`, `--network`, `--security`. Используйте `--cache=true` для простого кэширования.
+
+### Air-gapped окружения
+
+Для сборок без исходящего интернета:
+1. Используйте `COPY --from` вместо `git clone` через SSH
+2. Предварительно загрузите зависимости в локальный контекст
+3. Используйте `--network=none` для проверки изоляции
+
+### Reproducible builds
+
+Фиксация временных меток для идентичных дайджестов:
+
+```dockerfile
+# syntax=docker/dockerfile:1
+ARG SOURCE_DATE_EPOCH=1672531200
+RUN touch -d @$SOURCE_DATE_EPOCH /app/binary
+```
+
+### Параллелизм и ресурсы
+
+BuildKit параллелит независимые стадии, но `RUN` внутри одной стадии выполняется последовательно. Для ограничения ресурсов используйте флаги `docker buildx build --cpu-period` и `--cpu-quota`.
 
 ### Kaniko и RUN
 

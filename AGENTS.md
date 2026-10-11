@@ -160,7 +160,7 @@ When creating a new SSoT file or bringing an existing one to the standard, apply
 - All headings in Russian; technology names and established terms in headings in English
 - Code blocks with language; commands with expected output (`# → result`)
 - Technical terms in English, explanations in Russian
-- Inline links only; "See also" — maximum 2–3 links
+- Inline links only; "See also" — include only directly relevant links
 
 ### 0.8 Content Integrity Rules — the single verification rule
 
@@ -408,8 +408,8 @@ When template compliance and content quality conflict, keep the content. When de
   - **Prohibited in knowledge-base files:** the phrase `SSoT (Single Source of Truth)` and its variants (`SSoT`, `Single Source of Truth`) — this is an internal meta-concept used only in this instruction file; when describing content hierarchy in knowledge-base files, use neutral terms
   - **Prohibited in knowledge-base files:** reliability scores and update dates — see §7, which is the authoritative statement of this rule.
 - **Links:** inline only (`[text](url)`)
-- **"See also" section:** 2–3 curated links maximum; lists of >5 links are prohibited
-- **Post-edit link audit:** after completing any edit, count links in the document. If a "See also" / "Related documents" / "См. также" block exceeds 3 links, trim it to the 2–3 most directly relevant links. Do not leave oversized link lists as “useful context.”
+- **"See also" section:** include only directly relevant links; do not add irrelevant links to pad the list
+- **Post-edit link audit:** after completing any edit, remove only broken or clearly irrelevant links. Do not trim a list solely based on length.
 
 ---
 
@@ -587,3 +587,5 @@ The knowledge base's primary value is retrieval, not only maintenance. This sect
 
 **Which of #5 and #6 applies.** The two overlap, and the overlap decided a real case: whether filling an applicable §5 content dimension is Documentation Quality (#5) or "template completeness" (#6). It is **#5**. #6 means that a heading with nothing substantive under it is a defect and that short-and-real beats long-and-padded; it does **not** excuse a file that is structurally compliant and missing every prerequisite, every expected output, and every cleanup instruction. Reading #6 as a licence to leave §5 uncovered made §5 unenforceable in practice — the demotions in §5 are about *how* a dimension is satisfied, and §0.14 Rule 2a is the cause that makes filling it legitimate.
 
+
+# force reindex test

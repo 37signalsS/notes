@@ -1,5 +1,7 @@
 # GitHub Actions: Управление секретами
 
+**Актуально для:** GitHub Actions, октябрь 2026 (actions/checkout v7; aws-actions/configure-aws-credentials v6; hashicorp/vault-action v4, runtime Node 24; лимит секретов 48 КБ)
+
 Управление секретами в GitHub Actions обеспечивает безопасное хранение, маскирование и передачу конфиденциальных данных (пароли, API-ключи, токены) в процессы автоматизации. Секреты шифруются с использованием библиотеки `libsodium` (алгоритм `curve25519-xsalsa20-poly1305`) и передаются исполнителю (`runner`) только в зашифрованном виде, расшифровываясь непосредственно в памяти процесса.
 
 Общие принципы управления секретами на уровне всей CI/CD-практики (ротация, зонирование, Zero Trust) — [Обзор DevSecOps](../CI-CD/DevSecOps/secrets_management.md); этот файл концентрируется на механике именно GitHub Actions.
@@ -36,7 +38,37 @@
 
 **Важно**: Воркфлоу, запущенные из форков (Pull Requests от внешних контрибьюторов), по умолчанию **не имеют доступа** к секретам базового репозитория. Исключение — `GITHUB_TOKEN`, который выдаётся в режиме read-only. Штатный безопасный паттерн привилегированной обработки форк-PR (через `workflow_run`) разобран в [Events_Jobs_Steps](./Events_Jobs_Steps.md#сценарий-6-безопасная-постобработка-форк-pr-workflow_run).
 
+С 2026 года платформа ужесточает защиту по умолчанию на двух уровнях: `actions/checkout` v7 отказывается чекаутить код форк-PR внутри привилегированных событий `pull_request_target`/`workflow_run` без явного `allow-unsafe-pr-checkout` (бэкпорт во всех поддерживаемых мажорных версиях — с 16 июля 2026), а workflow execution protections своей дефолтной политикой с 2 ноября 2026 блокируют событие `pull_request_target` в публичных репозиториях. Контекст и настройка политик — [Core_Concept](./Core_Concept.md#безопасность-и-управление-доступом).
+
 Ещё одно штатное ограничение: воркфлоу, запущенные событиями Dependabot (например, `pull_request` от Dependabot-ветки), **не получают ни одного секрета**, включая секреты уровня репозитория. Для их нужд существует отдельный набор Dependabot Secrets.
+
+### Управление секретами из CLI (gh)
+
+Терминальный рабочий процесс — основной инструмент инженера эксплуатации: значения подставляются из файлов и STDIN, не попадая в историю шелла и журналы других процессов.
+
+```bash
+# Создание/обновление: репозиторий, окружение, организация
+gh secret set NPM_TOKEN < npm.token.txt                      # значение из STDIN, а не из аргументов
+gh secret set DB_PASSWORD --env production                   # environment-secret
+gh secret set GITHUB_ACCESS_TOKEN --org my-org --visibility all
+# → Set secret GITHUB_ACCESS_TOKEN for my-org (все репозитории)
+gh secret list                                              # секреты репозитория
+gh secret list --org my-org                                 # организация (колонка UPDATED — время последней ротации)
+gh secret delete NPM_TOKEN --env production                 # удаление с любого уровня (--org для организации)
+
+# Массовая загрузка из dotenv-файла (формат KEY=value)
+gh secret set -f .env.production
+gh secret set -f - < .env.development                       # из STDIN — файл не читается оболочкой
+```
+
+Ключевые правила работы из CLI:
+
+- Значение всегда передаётся из STDIN или через `--body`, никогда аргументом команды — иначе оно попадает в `ps`, историю шелла и журналы аудита ОС.
+- Видимость org-секрета задаётся при создании флагом `-v/--visibility {all|private|selected}` (по умолчанию `private`); для `selected` доступ определяет список `--repos repo-a,repo-b`, а `--no-repos-selected` создаёт секрет, недоступный ни одному репозиторию.
+- `-a/--app dependabot` создаёт секрет в пространстве имён Dependabot; `-a/--app actions` — обычный Actions-секрет (по умолчанию).
+- `--no-store` печатает локально зашифрованное значение в Base64 без сохранения на GitHub — полезно для проверки передаваемых данных.
+- Доступы: изменения секрета репозитория — права записи в репозитории, окружения — админ репозитория организации (владелец личного репозитория), организации — админ организации.
+- Массовое обновление секрета: `gh secret set` перезаписывает значение целиком; «частичного» обновления не существует.
 
 ### Управление GITHUB_TOKEN
 
@@ -106,6 +138,7 @@ steps:
     run: example-command "$SUPER_SECRET"
   ```
 - **Секреты не попадают автоматически внутрь контейнеров и сервисов задачи**: в `container.services` передавайте их явным образом через `env` сервиса.
+- **Многострочные значения**: секреты могут содержать переносы строк (PEM-ключи, полные конфиги). В `env:`/`with:` корректно передавайте их YAML-блоком `|`. Маскирование работает только по точному совпадению всей строки значения — не собирайте секрет из частей в скрипте и не выводите отдельные строки: это ломает и формат, и цензуру.
 
 ### Технические лимиты (2026)
 
@@ -176,7 +209,7 @@ jobs:
       contents: read
     steps:
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v6 # актуальная мажорная версия (v6.2.x, июль 2026)
+        uses: aws-actions/configure-aws-credentials@v6 # актуальная мажорная версия (v6.3.x, сентябрь 2026)
         with:
           role-to-assume: arn:aws:iam::123456789:role/github-actions-role
           aws-region: us-east-1
@@ -367,5 +400,7 @@ gh secret list
 
 - **[Официальное руководство: Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions)** — создание секретов на всех уровнях, работа с большими и бинарными секретами.
 - **[Справочник: Secrets reference](https://docs.github.com/en/actions/reference/security/secrets)** — именование, лимиты, список автоматически маскируемых форматов.
+- **[Controlling who can execute workflows](https://docs.github.com/en/actions/how-tos/administer/control-workflow-execution)** — workflow execution protections и дефолтная блокировка `pull_request_target` в публичных репозиториях (с 2 ноября 2026).
+- **[gh secret set](https://cli.github.com/manual/gh_secret_set)** — справочник CLI-управления секретами (repository/environment/organization, Dependabot).
 
 Смежные темы внутри базы знаний: [Синтаксис Workflow](./Workflow_Syntax.md) (доступность контекстов `secrets` и `vars` в выражениях), [Переиспользуемые рабочие процессы](./Reusable_Workflows.md) (передача секретов между воркфлоу), [Сетевая безопасность](./network-security.md) (OIDC и контроль трафика), [Обзор DevSecOps](../CI-CD/DevSecOps/secrets_management.md) (общие принципы ротации и зонирования).

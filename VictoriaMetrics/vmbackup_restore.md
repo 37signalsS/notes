@@ -182,3 +182,4 @@ ls -la /victoria-metrics-data/ | head
 - [Kubernetes: VictoriaLogs + operator](./../Kubernetes/MonitoringLogging/victorialogs_k8s_setup.md) — helm/cronjob-схема бэкапа;
 - [DR: аварийное восстановление](./disaster_recovery.md) — сценарии потери нод/кластера, RPO/RTO;
 - [HTTP API: снапшоты](./http_api_reference.md) — `/snapshot/create`, `/snapshot/list`.
+# force reindex test

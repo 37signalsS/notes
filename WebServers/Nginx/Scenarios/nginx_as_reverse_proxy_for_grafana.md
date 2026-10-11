@@ -66,7 +66,7 @@ Grafana должна «знать» внешний URL для корректно
 | :--- | :--- | :--- |
 | **ОС** | Debian 12 (Bookworm), Ubuntu 22.04/24.04 (Jammy/Noble), RHEL/Rocky 9 | Другие дистрибутивы на основе Debian/RHEL также поддерживаются |
 | **Nginx** | Версия 1.27+ | Рекомендуется `nginx-full` (Debian/Ubuntu) |
-| **Grafana** | Версия 13.1.x (OSS или Enterprise) | 12.x — LTS; 11.x — EOL (июнь 2026) |
+| **Grafana** | Версия 13.2.x (OSS или Enterprise) | 12.x — LTS; 11.x — EOL (июнь 2026) |
 | **Сеть** | Доступ от Nginx до порта `3000` на Grafana-узлах | При HA — несколько адресов upstream |
 | **Права** | root или пользователь с правами sudo | Для управления Nginx и firewall |
 | **DNS** | A-запись `grafana.example.com` → IP-frontend Nginx | Или `/etc/hosts` для тестовых сред |
@@ -475,9 +475,9 @@ sudo nginx -s quit
 | **Reload конфигурации** | `systemctl reload grafana-server` | Перечитывание `grafana.ini` (не все параметры поддерживают reload). |
 | **Перезапуск** | `systemctl restart grafana-server` | Полный перезапуск процесса. |
 | **Логи в реальном времени** | `journalctl -u grafana-server -f` | Мониторинг логов службы. |
-| **Сброс пароля admin** | `grafana-cli admin reset-admin-password <new_password>` | Требует доступа к консоли сервера. |
+| **Сброс пароля admin** | `grafana cli admin reset-admin-password <new_password>` | Требует доступа к консоли сервера. |
 | **Проверка здоровья API** | `curl -s http://localhost:3000/api/health` | Должен вернуть `{"database":"ok","memory":"ok"}`. |
-| **Список плагинов** | `grafana-cli plugins ls` | Проверка установленных расширений. |
+| **Список плагинов** | `grafana cli plugins ls` | Проверка установленных расширений. |
 
 ### Диагностика Nginx upstream
 

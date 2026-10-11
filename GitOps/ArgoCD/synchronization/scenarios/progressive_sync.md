@@ -1,87 +1,139 @@
-# Argo CD — прогрессивная синхронизация (Rolling Sync)
+# Argo CD — прогрессивная синхронизация (Progressive Syncs / Rolling Sync)
 
-> **Актуальность (2026):** В версии Argo CD v3.x прогрессивная синхронизация стала неотъемлемой частью контроллера **ApplicationSet**. Она позволяет управлять развертыванием приложений в масштабах сотен кластеров, обеспечивая безопасность через поэтапную раскатку и автоматическую блокировку при обнаружении деградации здоровья ресурсов.
-
-## Предварительные требования
-
-Перед настройкой прогрессивной синхронизации необходимо убедиться в следующем:
-
-1. **Версия Argo CD:** v3.x (рекомендуется v3.5+ для полной поддержки `andOperator` и расширенного Health Gating).
-2. **ApplicationSet Controller:** Активен и работает (в v3.x встроен по умолчанию).
-3. **Генераторы:** Понимание работы генераторов ApplicationSet (List, Cluster, Git, Matrix) — от них зависит, какие приложения будут синхронизироваться.
-4. **Метки кластеров (Labels):** Кластеры должны иметь правильные labels для фильтрации в `matchExpressions` (например, `environment: production`, `region: eu-central-1`).
-5. **Health Checks:** Базовое понимание проверок здоровья Argo CD. Для кастомных проверок требуется опыт написания Lua-скриптов.
-6. **AppProject:** Убедитесь, что проект создан и в него входят целевые приложения.
+**Актуально для:** Argo CD v3.3+ (Progressive Syncs — Beta-фича с v3.3.0; фича существовала и в более ранних версиях в статусе alpha под названием «progressive rollouts»)
 
 ## Определения
 
-**Прогрессивная синхронизация (Progressive Sync)** — стратегия развертывания в рамках `ApplicationSet`, при которой обновления применяются к группам приложений последовательно, а не одновременно.
+**Progressive Syncs** — механизм контроллера ApplicationSet, управляющий порядком создания и обновления приложений, порождённых ApplicationSet. Приложения обновляются группами (шагами), а не все одновременно.
 
-**Rolling Sync** — конкретный алгоритм прогрессивной синхронизации, имитирующий поведение `RollingUpdate` в Kubernetes, но на уровне пар "Приложение-Кластер".
+**RollingSync** — стратегия создания/обновления (`spec.strategy.type: RollingSync`): приложения группируются по меткам через `matchExpressions`, группы обновляются последовательно.
 
-**Health Gating (Барьер здоровья)** — механизм контроля, который разрешает переход к следующему этапу (шагу) синхронизации только в том случае, если все приложения текущего этапа достигли статуса `Healthy`. Если хотя бы одно приложение переходит в `Degraded`, прогресс останавливается.
+**AllAtOnce** — стратегия создания/обновления по умолчанию: все приложения обновляются одновременно (поведение ApplicationSet без Progressive Syncs).
 
-**Blast Radius (Радиус поражения)** — концепция ограничения масштаба потенциального сбоя. Прогрессивная синхронизация минимизирует этот радиус, обновляя сначала малую группу кластеров (Canary).
+**Шаг (step)** — группа приложений, отобранных одним набором `matchExpressions`. Переход к следующему шагу возможен только после того, как все приложения текущего шага достигнут состояния `Healthy`.
 
-**Canary Deployment** — стратегия развертывания, при которой обновление сначала применяется к малой группе кластеров (Canary), и только после проверки здоровья распространяется на остальные.
+**maxUpdate** — лимит одновременно обновляемых приложений внутри шага: целое число или процент (например, `10%`). По умолчанию `100%` (все отобранные приложения сразу).
 
-**Progressive Rollout** — поэтапное распространение изменений по группам кластеров с контролем здоровья на каждом шаге.
+**Health Gating (барьер здоровья)** — правило перехода между шагами: шаг считается завершённым, когда каждое его приложение имеет статус здоровья `Healthy` и статус синхронизации `Synced` для целевой ревизии.
+
+**deletionOrder** — стратегия удаления (`spec.strategy.deletionOrder`): `AllAtOnce` (по умолчанию) или `Reverse` — удаление приложений в обратном порядке шагов.
+
+**Blast Radius (радиус поражения)** — масштаб потенциального сбоя. Progressive Syncs минимизируют его, обновляя сначала малую группу кластеров (Canary).
+
+**Canary Deployment** — стратегия развертывания, при которой обновление сначала применяется к малой группе кластеров, и только после проверки здоровья распространяется на остальные.
 
 ## Базовые концепции
 
-### Механика работы Rolling Sync
+### Механика работы RollingSync
 
-При активации стратегии `RollingSync` в `ApplicationSet`, процесс синхронизации меняется фундаментально:
+Контроллер ApplicationSet отслеживает состояние каждого порождённого приложения в `status.applicationStatus` ApplicationSet. Для каждого приложения ведётся конечный автомат:
 
-1.  **Оркестрация вместо автоматики:** Стандартный флаг `syncPolicy.automated` внутри шаблона приложения игнорируется. Решение о запуске синхронизации принимает контроллер `ApplicationSet`.
-2.  **Группировка по шагам (Steps):** Весь набор генерируемых приложений разбивается на логические группы с помощью селекторов `matchExpressions`.
-3.  **Контроль параллелизма (maxUpdate):** Параметр определяет, сколько приложений *внутри одного шага* могут находиться в процессе обновления одновременно. Может быть числом (например, `1`) или процентом (`10%`).
-4.  **Остановка при сбое:** Если приложение переходит в статус `Degraded`, контроллер останавливает прогресс. Дальнейшие шаги не выполняются, пока проблема не будет устранена (или пока приложение не будет исключено из набора).
+1. **Waiting** — целевая ревизия или спецификация приложения изменились (или приложение newly selected шагом).
+2. **Pending** — контроллер инициировал синхронизацию приложения.
+3. **Progressing** — операция синхронизации завершилась (любым результатом: успехом, ошибкой или сбоем), либо приложение имеет ошибки, мешающие синхронизации. Приложения с ошибками тоже переводятся в `Progressing` — повторные попытки возлагаются на политику `retry` самого приложения, а не на ApplicationSet.
+4. **Healthy** — приложение `Healthy` и `Synced` на целевой ревизии.
+
+Шаг завершается только когда **все** его приложения в `Healthy`. Если хотя бы одно приложение «застряло» (например, в `Degraded`), раскатка останавливается на этом шаге — контроллер не переходит к следующему, пока проблема не будет устранена.
+
+Дополнительные свойства RollingSync (из документации и исходников контроллера):
+
+- **Триггер синхронизации** — контроллер запускает синхронизацию точно так же, как это делает UI или CLI: записывает поле `operation` в статус приложения. Поэтому RollingSync **учитывает Sync Windows** так же, как если бы пользователь нажал «Sync» в UI, и **сохраняет политику `retry`** приложения.
+- **Автосинк принудительно отключается** у всех порождённых приложений; если в шаблоне задан `syncPolicy.automated`, в логах контроллера появляются предупреждения.
+- **Захват внешних изменений** — RollingSync реагирует на статус `OutOfSync` управляемых приложений, поэтому изменения, внесённые вне ApplicationSet (например, правка ресурса в кластере), тоже улавливаются.
+- **Приложения вне шагов** — приложение, не отобранное ни одним `matchExpressions`, получает шаг `-1` и **исключается** из раскатки; его нужно синхронизировать вручную (CLI/UI).
+- **Поддерживаемые ресурсы** — Deployments, DaemonSets, StatefulSets и Argo Rollouts: приложение переходит в `Progressing`, пока поды развёртываются. Поддерживается любой ресурс с health check, способным сообщать `Progressing`.
+- **Hooks** — Argo CD Resource Hooks поддерживаются и рекомендуются для сценариев, где Argo Rollouts не подходит (например, smoke-тест после изменения DaemonSet).
 
 ### Включение и настройка
 
-В Argo CD v3.x функционал включен по умолчанию. Однако для тонкой настройки контроллера используются параметры в `argocd-cmd-params-cm`:
+Progressive Syncs — Beta-фича (с v3.3.0), **не включена по умолчанию**. Активируется одним из способов:
+
+1. Флаг `--enable-progressive-syncs` в аргументах контроллера ApplicationSet.
+2. Переменная `ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS=true` в окружении контроллера ApplicationSet.
+3. Параметр в ConfigMap `argocd-cmd-params-cm`:
 
 ```yaml
 data:
-  # Интервал проверки здоровья приложений для прогрессивной синхронизации
-  applicationsetcontroller.progressive.sync.requeue.interval.seconds: "30"
+  applicationsetcontroller.enable.progressive.syncs: "true"
 ```
 
-### Взаимодействие с другими механизмами
+### Стратегии создания и удаления
 
-#### Progressive Sync и Sync Windows
+ApplicationSet различает две независимые стратегии:
 
-Окна синхронизации ([Sync Windows](./sync_windows.md)) проверяются для каждого приложения отдельно. Контроллер ApplicationSet не управляет окнами синхронизации. Если приложение попадает в Deny окно, оно не будет синхронизировано до открытия Allow окна.
+- **Создание/обновление** (`spec.strategy.type`): `AllAtOnce` (по умолчанию) или `RollingSync`.
+- **Удаление** (`spec.strategy.deletionOrder`): `AllAtOnce` (по умолчанию) или `Reverse`.
 
-**Важно:** Если во время выполнения шага одно из приложений попадает в Deny окно, контроллер ожидает его, не блокируя остальные приложения шага (если `maxUpdate > 1`).
+`deletionOrder: Reverse` удаляет приложения в обратном порядке шагов — приложения поздних шагов удаляются раньше ранних. Полезно при выводе из эксплуатации зависимых сервисов (сначала фронтенд, потом бэкенд). Требования: `type: RollingSync` и заданные `rollingSync.steps`. Контроллер гарантирует наличие finalizer на ApplicationSet и удерживает его, пока все дочерние приложения не будут удалены, — ApplicationSet не исчезнет раньше своих приложений.
 
-#### Progressive Sync и Manual Sync
+```yaml
+spec:
+  strategy:
+    type: RollingSync
+    deletionOrder: Reverse # удаление в обратном порядке шагов
+    rollingSync:
+      steps:
+        - matchExpressions:
+            - key: envLabel
+              operator: In
+              values: [env-dev] # Шаг 1: создаётся первым, удаляется последним
+        - matchExpressions:
+            - key: envLabel
+              operator: In
+              values: [env-prod] # Шаг 2: создаётся вторым, удаляется первым
+```
 
-Ручная синхронизация ([Manual Sync](./manual_sync.md)) применяется к конкретному приложению, а не ко всем группам. Контроллер ApplicationSet не управляет ручными синхронизациями. Если вы вручную нажмете "Sync" на приложении, которое еще не подошло по очереди, оно будет синхронизировано, но это может нарушить логику `maxUpdate` текущего шага.
+### Семантика matchExpressions
 
-**Рекомендация:** Используйте ручную синхронизацию только для экстренных случаев. Для плановых обновлений полагайтесь на автоматический прогресс.
+- Приложение отбирается шагом, когда **все** `matchExpressions` шага истинны (AND между выражениями).
+- Внутри одного выражения `In`/`NotIn` истинны при совпадении **хотя бы с одним** значением (OR внутри `values`).
+- Поддерживаются **только операторы `In` и `NotIn`** — другие операторы (например, `Exists`) отвергаются валидацией, и приложение не попадает в шаг.
+- При пересечении `In` и `NotIn` **приоритет у `NotIn`**.
+- Пустой шаг (не отобрало ни одного приложения) фиксируется как проблема конфигурации в условиях ApplicationSet.
 
-#### Progressive Sync и Hooks/Waves
+### maxUpdate
 
-Прогрессивная синхронизация работает на уровне приложений, а [Sync Waves и Hooks](./sync_waves_hooks.md) — на уровне ресурсов внутри приложения. Эти механизмы дополняют друг друга:
+- Целое число или процентная строка (`10%`); не указан — `100%` (все отобранные приложения одновременно).
+- Проценты **округляются вниз**, но для значений `>0%` результат не меньше 1 приложения.
+- `maxUpdate: 0` — ни одно приложение шага не синхронизируется (шаг блокируется).
+- Невалидное значение — предупреждение в логах, логика `maxUpdate` для шага игнорируется (обновляются все отобранные приложения).
 
-- **Волны:** Управляют порядком ресурсов *внутри* одного приложения (Namespace → Deployment → Service → Ingress).
-- **Прогрессивная синхронизация:** Управляет порядком *между* приложениями (Canary → Staging → Production).
+## Взаимодействие с другими механизмами
 
-**Пример:** При движении от Canary к Staging контроллер ApplicationSet сначала дождется `Healthy` для всех приложений Canary, затем запустит синхронизацию для Staging. Внутри каждого приложения ресурсы будут применяться в порядке, определенном Sync Waves.
+### Progressive Sync и Sync Windows
 
-#### Progressive Sync и Auto Sync
+Синхронизация инициируется через поле `operation` — так же, как при нажатии «Sync» в UI. Поэтому окна синхронизации ([Sync Windows](./sync_windows.md)) проверяются для каждого приложения индивидуально, с учётом AppProject приложения.
 
-Стандартный флаг `syncPolicy.automated` внутри шаблона приложения игнорируется. Автоматическая синхронизация ([Auto Sync](./auto_sync.md)) управляется контроллером ApplicationSet. Если вам нужна автоматическая синхронизация для конкретного приложения вне контекста progressive sync, используйте отдельный ApplicationSet без стратегии `RollingSync`.
+**Следствие:** приложение, попавшее в Deny-окно, не начнёт синхронизацию, а шаг не завершится, пока оно не станет `Healthy` — раскатка фактически приостанавливается на таком приложении. Планируйте раскатку внутри Allow-окон.
 
-#### Progressive Sync и Ignore Differences
+### Progressive Sync и Manual Sync
 
-Игнорирование различий ([Ignore Differences](../ignore_differences.md)) работает на уровне приложения и не влияет на прогрессивную синхронизацию. Если настроены `ignoreDifferences`, контроллер ApplicationSet не будет учитывать эти различия при проверке здоровья.
+Ручная синхронизация ([Manual Sync](./manual_sync.md)) приложения возможна в любой момент — контроллер зафиксирует операцию и продолжит отслеживать приложение по своему конечному автомату. Но приложение синхронизируется вне очереди, что нарушает замысел поэтапности. Рекомендуется использовать только для экстренных случаев.
 
-#### Progressive Sync и SelfHeal/Prune
+### Progressive Sync и Hooks/Waves
 
-Само-синхронизация (`selfHeal`) и удаление ресурсов (`prune`) не工作的 в контексте progressive sync, так как `syncPolicy.automated` игнорируется. Контроллер ApplicationSet управляет всем процессом. Если вам нужен `selfHeal` или `prune`, рассмотрите использование отдельного ApplicationSet без стратегии `RollingSync`.
+Прогрессивная синхронизация работает на уровне приложений, а [Sync Waves и Hooks](./sync_waves_hooks.md) — на уровне ресурсов внутри приложения. Механизмы дополняют друг друга:
+
+- **Волны:** управляют порядком ресурсов *внутри* одного приложения (Namespace → Deployment → Service → Ingress).
+- **Прогрессивная синхронизация:** управляет порядком *между* приложениями (Canary → Staging → Production).
+
+**Пример:** при переходе от Canary к Staging контроллер ApplicationSet дождётся `Healthy` для всех приложений Canary, затем запустит синхронизацию Staging. Внутри каждого приложения ресурсы применяются в порядке Sync Waves.
+
+### Progressive Sync и Auto Sync
+
+`syncPolicy.automated` в шаблоне приложения **игнорируется**: RollingSync принудительно отключает autosync у порождённых приложений (с предупреждениями в логах). Автоматическая синхронизация ([Auto Sync](./auto_sync.md)) управляется контроллером ApplicationSet. Если приложению нужен autosync вне контекста Progressive Syncs — используйте отдельный ApplicationSet без `RollingSync`.
+
+### Progressive Sync и SelfHeal/Prune
+
+`selfHeal` и `prune` являются частью `syncPolicy.automated`, поэтому при RollingSync они тоже отключены у порождённых приложений. Контроллер ApplicationSet управляет процессом синхронизации целиком. Если нужны `selfHeal`/`prune` — отдельный ApplicationSet без стратегии `RollingSync`.
+
+### Progressive Sync и Ignore Differences
+
+`spec.ignoreApplicationDifferences` на ApplicationSet (и `ignoreDifferences` в шаблоне) влияет на вычисление `OutOfSync` и на сравнение спецификаций — то есть на то, какие изменения переводят приложение в `Waiting`. На health-статус и гейтинг `Healthy` игнорирование различий не влияет.
+
+### Progressive Sync и Retry
+
+При запуске синхронизации применяется `syncPolicy.retry` приложения: неудачная операция повторяется по политике приложения, а не по логике ApplicationSet («повторять неудачные синхронизации — задача retry приложения, а не appset»).
 
 ## Практические сценарии
 
@@ -99,6 +151,7 @@ spec:
   - clusters: {} # Использовать все подключенные кластеры
   strategy:
     type: RollingSync
+    deletionOrder: Reverse
     rollingSync:
       steps:
         # Шаг 1: Один кластер для проверки (Canary)
@@ -107,15 +160,12 @@ spec:
               operator: In
               values: [canary]
           maxUpdate: 1
-        
-        # Шаг 2: Все тестовые окружения (параллельно)
+        # Шаг 2: Все тестовые окружения (параллельно, maxUpdate не указан = 100%)
         - matchExpressions:
             - key: environment
               operator: In
               values: [staging]
-          # maxUpdate не указан = 100%
-          
-        # Шаг 3: Весь Production (по 10% за раз)
+        # Шаг 3: Весь Production (по 10% за раз, округление вниз, но не менее 1)
         - matchExpressions:
             - key: environment
               operator: In
@@ -124,6 +174,8 @@ spec:
   template:
     metadata:
       name: '{{name}}-service'
+      labels:
+        environment: '{{name}}' # Метка, по которой отбираются шаги
     spec:
       project: default
       source:
@@ -134,6 +186,8 @@ spec:
         server: '{{server}}'
         namespace: production
 ```
+
+**Важно:** приложения, не попавшие ни в один шаг (кластеры без подходящей метки `environment`), исключаются из раскатки и требуют ручной синхронизации.
 
 ### Сценарий 2: Мультирегиональная раскатка
 
@@ -154,24 +208,7 @@ rollingSync:
       maxUpdate: 1
 ```
 
-### Сценарий 3: Использование Lua для кастомного здоровья
-
-Если стандартных Health Checks Kubernetes недостаточно (например, для проверки прогрева кэша или состояния БД), используйте кастомные проверки в `argocd-cm`.
-
-```yaml
-data:
-  resource.customizations.health.argoproj.io_Application: |
-    hs = {}
-    if obj.status ~= nil then
-      if obj.status.health ~= nil then
-        hs.status = obj.status.health.status
-        hs.message = obj.status.health.message
-      end
-    end
-    return hs
-```
-
-### Сценарий 4: Progressive Sync с List Generator
+### Сценарий 3: Progressive Sync с List Generator
 
 Использование статического списка кластеров для точного контроля порядка раскатки.
 
@@ -202,6 +239,7 @@ spec:
         environment: production
   strategy:
     type: RollingSync
+    deletionOrder: Reverse
     rollingSync:
       steps:
       - matchExpressions:
@@ -222,6 +260,8 @@ spec:
   template:
     metadata:
       name: '{{cluster}}-myapp'
+      labels:
+        environment: '{{environment}}'
     spec:
       project: default
       source:
@@ -238,7 +278,7 @@ spec:
 - Возможность точной настройки `maxUpdate` для каждого шага
 - Простота отладки и понимания
 
-### Сценарий 5: Progressive Sync с Git Generator
+### Сценарий 4: Progressive Sync с Git Generator
 
 Динамическое добавление кластеров при появлении новых папок в Git-репозитории.
 
@@ -257,6 +297,7 @@ spec:
       - path: clusters/*
   strategy:
     type: RollingSync
+    deletionOrder: Reverse
     rollingSync:
       steps:
       - matchExpressions:
@@ -277,6 +318,8 @@ spec:
   template:
     metadata:
       name: '{{path.basename}}-app'
+      labels:
+        environment: '{{path.basename}}'
     spec:
       project: default
       source:
@@ -293,9 +336,9 @@ spec:
 - Автоматическое удаление приложений при удалении папок из Git
 - Единый источник правды (Git)
 
-### Сценарий 6: Progressive Sync с Matrix Generator
+### Сценарий 5: Progressive Sync с Matrix Generator
 
-Комбинирование двух генераторов для создания произвольных комбинаций "Приложение × Кластер".
+Комбинирование двух генераторов для создания произвольных комбинаций «Приложение × Кластер».
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -322,6 +365,7 @@ spec:
             environment: production
   strategy:
     type: RollingSync
+    deletionOrder: Reverse
     rollingSync:
       steps:
       - matchExpressions:
@@ -332,6 +376,8 @@ spec:
   template:
     metadata:
       name: '{{path.basename}}-{{cluster}}'
+      labels:
+        environment: '{{environment}}'
     spec:
       project: default
       source:
@@ -344,179 +390,107 @@ spec:
 ```
 
 **Преимущества Matrix Generator:**
-- Создание комбинаций "N приложений × M кластеров"
+- Создание комбинаций «N приложений × M кластеров»
 - Динамическое добавление как приложений, так и кластеров
 - Гибкость в настройке
 
-### Сценарий 7: Health Gating с кастомными проверками
+### Сценарий 6: Health Gating с кастомными проверками
 
-Использование Lua-скриптов для проверки состояния внешних ресурсов (БД, кэш, очереди).
+Если стандартных Health Checks Kubernetes недостаточно, используйте кастомные проверки в `argocd-cm`. Реальный пример из документации — health check для `cert-manager.io/Certificate` по условию `Ready`:
 
 ```yaml
 data:
-  resource.customizations.health.postgresql_operator_PostgreSQL: |
+  resource.customizations.health.cert-manager.io_Certificate: |
     hs = {}
     if obj.status ~= nil then
-      if obj.status.PostgreSQLClusterStatus == "ClusterInHealthyState" then
-        hs.status = "Healthy"
-        hs.message = "PostgreSQL cluster is healthy"
-      else
-        hs.status = "Degraded"
-        hs.message = "PostgreSQL cluster is not healthy"
+      if obj.status.conditions ~= nil then
+        for i, condition in ipairs(obj.status.conditions) do
+          if condition.type == "Ready" and condition.status == "False" then
+            hs.status = "Degraded"
+            hs.message = condition.message
+            return hs
+          end
+          if condition.type == "Ready" and condition.status == "True" then
+            hs.status = "Healthy"
+            hs.message = condition.message
+            return hs
+          end
+        end
       end
     end
+
+    hs.status = "Progressing"
+    hs.message = "Waiting for certificate"
     return hs
 ```
 
-**Пример использования в ApplicationSet:**
+**Важно:** кастомные Health Checks напрямую влияют на прогресс — если хотя бы одно приложение переходит в `Degraded` из-за кастомной проверки, шаг никогда не завершится, и раскатка остановится.
 
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: ApplicationSet
-metadata:
-  name: db-dependent-app
-spec:
-  generators:
-  - clusters: {}
-  strategy:
-    type: RollingSync
-    rollingSync:
-      steps:
-      - matchExpressions:
-          - key: environment
-            operator: In
-            values: [canary]
-        maxUpdate: 1
-      - matchExpressions:
-          - key: environment
-            operator: In
-            values: [production]
-        maxUpdate: 10%
-  template:
-    metadata:
-      name: '{{name}}-db-app'
-    spec:
-      project: default
-      source:
-        repoURL: https://github.com/my-org/manifests.git
-        targetRevision: HEAD
-        path: db-app
-      destination:
-        server: '{{server}}'
-        namespace: production
-```
+Синтаксис ключа: `resource.customizations.health.<group>_<kind>`; для ресурсов без API-группы (например, `PersistentVolumeClaim`) префикс `<group>_` опускается. Подробнее — в [документации по Health Assessment](https://argo-cd.readthedocs.io/en/stable/operator-manual/health/).
 
-**Важно:** Кастомные Health Checks влияют на progression. Если хотя бы одно приложение переходит в `Degraded` из-за кастомной проверки, прогресс останавливается.
+### Сценарий 7: Реакция на деградацию во время раскатки
 
-### Сценарий 8: Rollback при деградации
+**Симптомы:** приложение в `Degraded`, раскатка остановлена на шаге, следующие шаги не выполняются.
 
-Действия при обнаружении деградации во время progressive sync.
+**Диагностика:**
 
-**Симптомы:**
-- Приложение переходит в статус `Degraded`
-- Прогресс останавливается
-- Следующие шаги не выполняются
-
-**Действия:**
-
-1. **Диагностика:**
 ```bash
-# Просмотр состояния ApplicationSet
-kubectl get applicationset <name> -n argocd -o yaml
+# Состояние раскатки: статусы приложений по шагам
+kubectl get applicationset <name> -n argocd -o json \
+  | jq -r '.status.applicationStatus[] | "\(.application) \(.status) step=\(.step) \(.message)"'
 
-# Просмотр состояния приложения
+# Условия ApplicationSet (RolloutProgressing, проблемы конфигурации)
+kubectl get applicationset <name> -n argocd -o jsonpath='{.status.conditions[*].type}{"\n"}'
+
+# Состояние конкретного приложения
 argocd app get <app-name>
 
-# Просмотр логов контроллера
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller | grep -i "degraded"
+# Логи контроллера ApplicationSet
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-applicationset-controller | grep -i "degraded\|progressive"
 ```
 
-2. **Исправление:**
+**Исправление:**
+
 ```bash
-# Исправить проблему в Git (рекомендуется)
+# Исправить проблему в Git (рекомендуется) — раскатка продолжится автоматически
 git commit -m "fix: correct resource configuration"
 git push
 
-# Или откатить к предыдущей версии
-argocd app rollback <app-name> <revision>
+# Или откатить приложение к предыдущей ревизии по History ID
+argocd app history <app-name>            # найти ID
+argocd app rollback <app-name> <ID>      # ID опущен — откат к предыдущей версии
 ```
 
-3. **Принудительное продолжение (экстренное):**
-```bash
-# Принудительная синхронизация конкретного приложения
-argocd app sync <app-name> --force
-
-# Или удалить ApplicationSet и создать заново
-kubectl delete applicationset <name> -n argocd
-kubectl apply -f applicationset.yaml
-```
-
-**Важно:** Принудительное продолжение может привести к нестабильности. Используйте только в экстренных случаях.
-
-### Сценарий 9: Принудительная синхронизация приложения
-
-Обход progressive sync для конкретного приложения (экстренные случаи).
+**Принудительное продолжение (экстренное):**
 
 ```bash
-# 1. Найти приложение в ApplicationSet
-argocd app list | grep <app-name>
-
-# 2. Принудительная синхронизация
+# Принудительная синхронизация конкретного приложения (--force = повторное применение всех ресурсов)
 argocd app sync <app-name> --force
-
-# 3. Проверить статус
-argocd app get <app-name>
 ```
 
-**Важно:** Это нарушает логику progressive sync. Используйте только для экстренных фиксов. После исправления вернитесь к стандартному процессу.
+**Важно:** принудительное продолжение выводит приложение из очереди раскатки и может привести к нестабильности. Используйте только в экстренных случаях, после исправления вернитесь к стандартному процессу.
 
-### Сценарий 10: Progressive Sync и Sync Windows
+### Сценарий 8: Вывод из эксплуатации в обратном порядке
 
-Взаимодействие progressive sync с окнами синхронизации.
+Удаление приложений в порядке, обратном раскатке — сначала зависимые сервисы, потом те, от кого они зависят.
 
 ```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: ApplicationSet
-metadata:
-  name: windows-aware-rollout
-  namespace: argocd
-spec:
-  generators:
-  - clusters: {}
-  strategy:
-    type: RollingSync
-    rollingSync:
-      steps:
+strategy:
+  type: RollingSync
+  deletionOrder: Reverse
+  rollingSync:
+    steps:
       - matchExpressions:
-          - key: environment
+          - key: tier
             operator: In
-            values: [canary]
-        maxUpdate: 1
+            values: [backend] # Удаляется последним
       - matchExpressions:
-          - key: environment
+          - key: tier
             operator: In
-            values: [production]
-        maxUpdate: 10%
-  template:
-    metadata:
-      name: '{{name}}-app'
-    spec:
-      project: production-project
-      source:
-        repoURL: https://github.com/my-org/manifests.git
-        targetRevision: HEAD
-        path: app
-      destination:
-        server: '{{server}}'
-        namespace: production
+            values: [frontend] # Удаляется первым
 ```
 
-**Поведение:**
-- Если на AppProject настроены Deny окна, каждое приложение проверяется индивидуально
-- Приложение в Deny окне не синхронизируется, но не блокирует остальные
-- Если все приложения шага в Deny окне, прогресс останавливается
-
-**Рекомендация:** Настройте Allow окна для рабочих часов, чтобы progressive sync работал в предсказуемое время.
+**Поведение:** контроллер удаляет приложения шаг за шагом в обратном порядке (опрос каждые ~10 секунд), удерживает finalizer ApplicationSet до полного удаления всех приложений. При удалении самого ApplicationSet с `deletionOrder: AllAtOnce` дочерние приложения удаляются одновременно (через garbage collection по ownerReference).
 
 ## Технический справочник
 
@@ -524,43 +498,37 @@ spec:
 
 | Параметр | Тип | Описание |
 | :--- | :--- | :--- |
-| `matchExpressions` | List | Стандартные селекторы Kubernetes для фильтрации приложений. |
-| `maxUpdate` | Int/String | Лимит одновременно обновляемых приложений (число или %). |
-| `andOperator` | Boolean | (v3.2+) Если `true`, требует совпадения всех условий в шаге. |
+| `spec.strategy.type` | String | Стратегия создания/обновления: `AllAtOnce` (по умолчанию) или `RollingSync`. |
+| `spec.strategy.deletionOrder` | String | Стратегия удаления: `AllAtOnce` (по умолчанию) или `Reverse` (только с `RollingSync` и заданными `steps`). |
+| `rollingSync.steps[].matchExpressions` | List | Селекторы меток порождённых приложений. Только операторы `In`/`NotIn`; AND между выражениями, OR внутри `values`, приоритет `NotIn`. |
+| `rollingSync.steps[].maxUpdate` | Int/String | Лимит одновременно обновляемых приложений в шаге: число или процент. По умолчанию `100%`; проценты округляются вниз (минимум 1 при `>0%`); `0` блокирует шаг; невалидное значение игнорируется с предупреждением. |
 
 ### Параметры контроллера ApplicationSet
 
-| Параметр | Описание | По умолчанию |
+| Флаг / env / параметр в `argocd-cmd-params-cm` | Описание | По умолчанию |
 | :--- | :--- | :--- |
-| `applicationsetcontroller.progressive.sync.requeue.interval.seconds` | Интервал проверки здоровья приложений | `30` |
-| `applicationsetcontroller.namespaces` | Пространства имен для управления | `""` (все) |
-| `applicationsetcontroller.requeue.duration` | Интервал повторной проверки | `3m` |
+| `--enable-progressive-syncs` / `ARGOCD_APPLICATIONSET_CONTROLLER_ENABLE_PROGRESSIVE_SYNCS` / `applicationsetcontroller.enable.progressive.syncs` | Включить Progressive Syncs | `false` |
+| `--refresh-grace-period-seconds` / `ARGOCD_APPLICATIONSET_CONTROLLER_REFRESH_GRACE_PERIOD_SECONDS` | Минимальный grace-период перед тем, как прогрессивная синхронизация начнёт обновлять устаревшие приложения | `30` |
+| `--applicationset-namespaces` / `ARGOCD_APPLICATIONSET_CONTROLLER_NAMESPACES` | Пространства имён для управления ApplicationSet | все |
+| `--concurrent-reconciliations` / `ARGOCD_APPLICATIONSET_CONTROLLER_CONCURRENT_RECONCILIATIONS` | Макс. одновременных reconciliations | `10` |
+| `--concurrent-application-updates` / `ARGOCD_APPLICATIONSET_CONTROLLER_CONCURRENT_APPLICATION_UPDATES` | Одновременных create/update/delete приложений на один reconcile | `1` |
+| `--cache-sync-period` / `ARGOCD_APPLICATIONSET_CONTROLLER_CACHE_SYNC_PERIOD` | Период принудительной синхронизации кеша с API-сервером | `10h` |
+| `--metrics-applicationset-labels` | Список меток приложений, добавляемых в метрику `argocd_applicationset_labels` | пусто |
 
-### CLI-команды
+### Статус ApplicationSet
 
-```bash
-# Просмотр состояния ApplicationSet
-kubectl get applicationset -n argocd
-kubectl get applicationset <name> -n argocd -o yaml
+Контроллер ведёт статус раскатки в `status.applicationStatus` — запись на каждое приложение:
 
-# Просмотр приложений, созданных ApplicationSet
-argocd app list -l app.kubernetes.io/part-of=<appset-name>
+| Поле | Описание |
+| :--- | :--- |
+| `application` | Имя порождённого приложения |
+| `status` | Состояние в конечном автомате: `Waiting`, `Pending`, `Progressing`, `Healthy` |
+| `step` | Номер шага (1-based); `-1` — приложение не отобрано ни одним шагом |
+| `targetRevisions` | Целевые ревизии, для которых ожидается синхронизация |
+| `lastTransitionTime` | Время последнего перехода состояния |
+| `message` | Человекочитаемое описание последнего перехода |
 
-# Просмотр состояния конкретного приложения
-argocd app get <app-name>
-
-# Принудительная синхронизация (экстренное)
-argocd app sync <app-name> --force
-
-# Откат к предыдущей версии
-argocd app rollback <app-name> <revision>
-
-# Просмотр логов контроллера
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller -f
-
-# Просмотр событий
-kubectl get events -n argocd --field-selector involvedObject.name=<app-name>
-```
+Условия (`status.conditions`) сообщают о ходе раскатки (`RolloutProgressing`) и о проблемах конфигурации (невалидный `maxUpdate`, пустые шаги).
 
 ## Диагностика и мониторинг
 
@@ -570,11 +538,17 @@ kubectl get events -n argocd --field-selector involvedObject.name=<app-name>
 # Список ApplicationSet
 kubectl get applicationset -n argocd
 
-# Состояние конкретного ApplicationSet
+# Полное состояние (стратегия, шаги, статусы приложений, условия)
 kubectl get applicationset <name> -n argocd -o yaml
 
-# Список приложений, созданных ApplicationSet
-argocd app list -l app.kubernetes.io/part-of=<appset-name>
+# Приложения, созданные ApplicationSet — через ownerReference
+# (ApplicationSet не добавляет порождённым приложениям собственных меток;
+#  метки приложения задаются только в template.metadata.labels)
+kubectl get applications -n argocd -o json \
+  | jq -r '.items[] | select(.metadata.ownerReferences[]?.kind == "ApplicationSet" and .metadata.ownerReferences[]?.name == "<appset-name>") | .metadata.name'
+
+# То же через метку из шаблона, если она задана (например, environment)
+argocd app list -l environment=canary
 
 # Состояние конкретного приложения
 argocd app get <app-name>
@@ -588,90 +562,88 @@ kubectl logs -n argocd -l app.kubernetes.io/name=argocd-applicationset-controlle
 
 # Логи контроллера приложений (ошибки синхронизации)
 kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller | grep -i "error\|degraded"
-
-# Логи с фильтрацией по ApplicationSet
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-applicationset-controller | grep <appset-name>
 ```
 
 ### Мониторинг через Prometheus
 
 | Метрика | Описание |
 | :--- | :--- |
-| `argocd_app_info` | Информация о приложении (включая статус здоровья). |
-| `argocd_app_sync_total` | Общее количество синхронизаций. |
-| `argocd_app_reconcile_total` | Количество реконсиляций. |
-| `argocd_app_health_status` | Статус здоровья приложения. |
+| `argocd_app_info` | Информация о приложении; labels `sync_status`, `health_status`. |
+| `argocd_app_sync_total` | Общее количество синхронизаций (label `phase`). |
+| `argocd_app_reconcile` | Гистограмма длительности сверки, секунды. |
+| `argocd_applicationset_labels` | Метки ApplicationSet (раскрываются флагом `--metrics-applicationset-labels`). |
 
 **Пример PromQL-запроса для поиска деградированных приложений:**
+
 ```promql
-argocd_app_info{health_status="Degraded"} * on(name) group_left()
+argocd_app_info{health_status="Degraded"}
 argocd_app_sync_total{phase="Error"} > 0
 ```
 
 ### Пошаговая диагностика
 
-1. **Проверьте ApplicationSet:** `kubectl get applicationset <name> -o yaml` — убедитесь, что стратегия `RollingSync` настроена правильно.
-2. **Просмотрите приложения:** `argocd app list -l app.kubernetes.io/part-of=<appset-name>` — проверьте статус каждого приложения.
-3. **Проверьте здоровье:** `argocd app get <app-name>` — найдите приложения в статусе `Degraded`.
-4. **Просмотрите логи:** `kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller` — найдите ошибки.
-5. **Исправьте проблему:** Исправьте конфигурацию в Git или откатите к предыдущей версии.
+1. **Проверьте ApplicationSet:** `kubectl get applicationset <name> -n argocd -o yaml` — стратегия `RollingSync`, шаги, условия (`RolloutProgressing`, ошибки конфигурации).
+2. **Просмотрите статусы приложений:** `status.applicationStatus` — найдите приложения, не достигшие `Healthy`, и их `message`.
+3. **Проверьте здоровье:** `argocd app get <app-name>` — статус `Degraded`, `Progressing` или ошибки ресурсов.
+4. **Проверьте окна синхронизации:** если приложение `Pending` и не синхронизируется — возможно, оно попало в Deny-окно своего AppProject.
+5. **Просмотрите логи:** контроллер ApplicationSet (прогресс раскатки) и контроллер приложений (ошибки синхронизации).
+6. **Исправьте проблему:** исправьте конфигурацию в Git или откатите приложение (`argocd app rollback`); раскатка продолжится автоматически.
 
 ## Лучшие практики
 
 ### Настройка для Production
 
-1. **Используйте `maxUpdate: 1` для первого шага (Canary):** Обновляйте только один кластер для проверки.
-2. **Используйте `maxUpdate: 10%` для Production:** Не обновляйте более 10% кластеров за раз.
-3. **Настройте Health Checks:** Убедитесь, что кастомные проверки здоровья корректно отражают состояние приложения.
-4. **Комбинируйте с Sync Windows:** Настройте Allow окна для рабочих часов, чтобы progressive sync работал в предсказуемое время.
+1. **Используйте `maxUpdate: 1` для первого шага (Canary):** обновляйте только один кластер для проверки.
+2. **Используйте `maxUpdate: 10%` для Production:** не обновляйте более 10% кластеров за раз.
+3. **Настройте Health Checks:** кастомные проверки должны корректно отражать состояние приложения — от них зависит гейтинг.
+4. **Комбинируйте с Sync Windows:** настройте Allow-окна для рабочих часов, чтобы раскатка проходила в предсказуемое время.
+5. **Используйте `deletionOrder: Reverse`:** при выводе из эксплуатации зависимости удалялись в правильном порядке.
+6. **Настройте `syncPolicy.retry`:** неудачные операции повторяются по политике приложения, не останавливая раскатку на временных сбоях.
 
 ### Безопасность
 
-- **Ограничьте `maxUpdate`:** Не используйте `100%` для Production — это может привести к глобальному прому.
-- **Используйте `andOperator: true`:** Для точной фильтрации приложений по нескольким условиям.
-- **Настройте RBAC:** Ограничьте доступ к ApplicationSet только авторизованным пользователям.
-- **Мониторинг:** Настройте алерты на основе Prometheus-метрик для отслеживания деградации.
+- **Ограничьте `maxUpdate`:** не используйте `100%` для Production — это может привести к глобальному простою.
+- **Настройте RBAC:** ограничьте доступ к ApplicationSet только авторизованным пользователям.
+- **Мониторинг:** настройте алерты на основе Prometheus-метрик для отслеживания деградации.
 
 ### Масштабирование
 
-- **Для больших инфраструктур:** Используйте Git Generator или Matrix Generator для динамического управления кластерами.
-- **Для малых инфраструктур:** Используйте List Generator для точного контроля.
-- **Разделяйте ApplicationSet:** Не используйте один ApplicationSet для всех приложений — разделите по функциональным группам.
+- **Для больших инфраструктур:** используйте Git Generator или Matrix Generator для динамического управления кластерами.
+- **Для малых инфраструктур:** используйте List Generator для точного контроля.
+- **Разделяйте ApplicationSet:** не используйте один ApplicationSet для всех приложений — разделите по функциональным группам.
 
 ## Ограничения и edge cases
 
 ### Ограничения
 
-1. **Прогрессивная синхронизация работает только с ApplicationSet:** Невозможно использовать с отдельными Application.
-2. **`syncPolicy.automated` игнорируется:** Автоматическая синхронизация управляется контроллером ApplicationSet.
-3. **Зависимость от метаданных:** Прогрессивная синхронизация критически зависит от правильной разметки (labels) кластеров в Argo CD.
-4. **Прерывание:** Если вы вручную нажмете "Sync" на приложении, которое еще не подошло по очереди, оно будет синхронизировано, но это может нарушить логику `maxUpdate` текущего шага.
+1. **Прогрессивная синхронизация работает только с ApplicationSet:** невозможно использовать с отдельными Application.
+2. **`syncPolicy.automated` игнорируется:** autosync (включая `selfHeal` и `prune`) отключается у порождённых приложений.
+3. **Зависимость от метаданных:** раскатка критически зависит от правильной разметки (labels) приложений, заданной в `template.metadata.labels`.
+4. **Только `In`/`NotIn`:** другие операторы в `matchExpressions` шага отвергаются валидацией.
+5. **Не интегрируется с Rollout-контроллерами:** механизм работает только со здоровьем управляемых приложений, а не с нативным ReplicaSet controller или Argo Rollouts (хотя ресурсы Argo Rollouts поддерживаются через их health check).
 
 ### Edge Cases
 
-1. **Конфликт с Manual Sync:** Ручная синхронизация приложения, которое еще не подошло по очереди, может нарушить логику `maxUpdate`.
-2. **Приложение в Deny окне:** Если приложение попадает в Deny окно, оно не синхронизируется, но не блокирует остальные приложения шага.
-3. **Нет правил Allow:** Если в проекте нет Allow окон, progressive sync работает всегда (при условии отсутствия Deny).
-4. **Удаление ApplicationSet во время прогресса:** Если ApplicationSet удален во время выполняющейся синхронизации, операция завершится, но новые синхронизации будут невозможны.
-5. **Конфликт с другими ApplicationSets:** Если ресурс управляется несколькими ApplicationSets, возникает конфликт. Используйте `FailOnSharedResource=true`.
-6. **Лимит ресурсов:** Argo CD имеет внутренние лимиты на количество управляемых ресурсов. Для очень больших приложений (>1000 ресурсов) рекомендуется разбивать на несколько ApplicationSets.
+1. **Приложение вне шагов (step `-1`):** исключено из раскатки, требует ручной синхронизации. Проверяйте, что все целевые приложения отобраны хотя бы одним шагом.
+2. **Приложение в Deny-окне:** синхронизация не начнётся, шаг не завершится — раскатка приостанавливается на таком приложении до открытия Allow-окна.
+3. **Нет правил Allow:** если в проекте нет Allow-окон, progressive sync работает всегда (при условии отсутствия Deny).
+4. **Ручной sync вне очереди:** приложение синхронизируется раньше срока; контроллер зафиксирует операцию, но порядок раскатки нарушается.
+5. **Удаление ApplicationSet во время прогресса:** при `deletionOrder: Reverse` дочерние приложения удаляются в обратном порядке шагов, finalizer удерживается до завершения; при `AllAtOnce` — одновременно через GC.
+6. **Смена стратегии с `RollingSync` на `AllAtOnce`:** контроллер очищает `status.applicationStatus` раскатки.
+7. **Невалидный `maxUpdate`:** шаг обновляется без ограничения параллелизма, в логах — предупреждение, в условиях ApplicationSet — ошибка конфигурации.
+8. **Конфликт общих ресурсов:** если один ресурс управляется несколькими приложениями, используйте Application sync option `FailOnSharedResource=true` (описана в [sync-options](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/)); отдельного поля ApplicationSet для этого нет.
+9. **Grace-период обновления:** изменённые приложения не начинают обновление раньше, чем истечёт `--refresh-grace-period-seconds` (30 с по умолчанию) — защита от слишком частых обновлений при бурных изменениях.
 
 ## Дополнительная информация
-
-### Важные нюансы
-- **Зависимость от метаданных:** Прогрессивная синхронизация критически зависит от правильной разметки (labels) кластеров в Argo CD.
-- **Прерывание:** Если вы вручную нажмете "Sync" на приложении, которое еще не подошло по очереди, оно будет синхронизировано, но это может нарушить логику `maxUpdate` текущего шага.
 
 ### См. также
 - **[Синхронизация Argo CD: Обзор](../../synchronization.md)** — общие принципы.
 - **[Автоматическая синхронизация](./auto_sync.md)** — стандартный режим деплоя.
 - **[Ручная синхронизация](./manual_sync.md)** — селективный деплой и аудит изменений.
-- **[Волны и хуки](./sync_waves_hooks.md)** — управление порядком ресурсов внутри одного кластера.
+- **[Волны и хуки](./sync_waves_hooks.md)** — управление порядком ресурсов внутри одного приложения.
 - **[Окна синхронизации](./sync_windows.md)** — политики запрета деплоя в праздники и выходные.
 - **[Игнорирование различий](../ignore_differences.md)** — настройка jqPath и managedFieldsManagers.
-- [Argo CD ApplicationSet: Rolling Sync Docs](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Progressive-Syncs/)
-
-### Ссылки
-- [Официальная документация: Progressive Syncs](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Progressive-Syncs/)
+- **[ApplicationSet](../../argocd_applicationsets.md)** — генераторы и шаблоны.
+- [Argo CD Progressive Syncs Docs](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Progressive-Syncs/)
 - [Argo CD ApplicationSet Generators](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators/)
 - [Argo CD Health Assessment](https://argo-cd.readthedocs.io/en/stable/operator-manual/health/)

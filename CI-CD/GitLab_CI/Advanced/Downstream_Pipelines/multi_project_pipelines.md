@@ -1,5 +1,7 @@
 # Межпроектные пайплайны (Multi-project Pipelines)
 
+**Актуально для:** GitLab 18.6+ / 19.x
+
 ## Определения
 
 **Межпроектный пайплайн (Multi-project Pipeline)** — это тип downstream-пайплайна, который запускается в отдельном проекте GitLab. 
@@ -23,7 +25,7 @@
 
 ### Безопасность и модель Zero Trust (v18.x)
 
-В современных версиях GitLab (18.0+) безопасность межпроектных взаимодействий строится на модели **Zero Trust**. По умолчанию доступ одного проекта к другому через `CI_JOB_TOKEN` запрещен.
+В современных версиях GitLab (17.0+) безопасность межпроектных взаимодействий строится на модели **Zero Trust**. По умолчанию доступ одного проекта к другому через `CI_JOB_TOKEN` запрещен.
 
 1.  **Inbound Allowlist (Обязательно):** Чтобы Проект А мог запустить триггер или скачать артефакты из Проекта Б, Проект Б должен явно добавить Проект А в список разрешенных. 
     *Путь: `Settings > CI/CD > Job Token Permissions > Allow access to the following projects`.*
@@ -255,7 +257,7 @@ rebuild-app:
 
 ## Рекомендации по эксплуатации
 
-1. **Настраивайте Inbound Allowlist** для каждого проекта, который получает триггеры — это обязательно для GitLab 18.0+.
+1. **Настраивайте Inbound Allowlist** для каждого проекта, который получает триггеры — это обязательно для GitLab 17.0+.
 2. **Используйте Fine-grained Permissions** (18.3+) для ограничения scope `CI_JOB_TOKEN` только необходимыми правами.
 3. **Избегайте PAT** — передача персональных токенов через переменные небезопасна. Используйте `CI_JOB_TOKEN` или `id_tokens` (OIDC).
 4. **Мониторьте Bridge Jobs** через API (`GET /api/v4/projects/:id/pipelines/:pipeline_id/bridges`) для раннего обнаружения deadlock.
@@ -263,6 +265,101 @@ rebuild-app:
 6. **Используйте `strategy: mirror`** для критических процессов (деплой, security-сканирование).
 7. **Разделяйте зоны ответственности** — application-команда не должна иметь доступ к infrastructure-проектам.
 8. **Настройте `interruptible: false`** для критических downstream-пайплайнов, чтобы предотвратить их отмену при auto-cancel родителя.
+
+## Edge Cases и известные проблемы
+
+- **Удаление или перемещение downstream-проекта:** Если целевой проект удален или перемещен в другой subgroup, Bridge Job завершается ошибкой `Project not found` или `404`. Решение: обновите путь `trigger:project` и повторно добавьте upstream в Inbound Allowlist нового пути.
+- **Устаревшие записи в Inbound Allowlist:** При переименовании или удалении upstream-проекта запись в Allowlist остается привязанной к ID проекта. Это может создавать ложное чувство безопасности. Решение: регулярно ревьюьте список разрешенных проектов через `Settings > CI/CD > Token Access`.
+- **`needs:project` с недоступным проектом:** Если downstream-проект становится приватным или удален, задача с `needs:project` падает с `403 Forbidden` или `404 Not Found`. Решение: добавьте проверку доступности проекта или используйте `trigger:project` с `strategy: mirror` для явного контроля ошибок.
+- **Pipeline Subscriptions при изменении пути проекта:** Подписка привязана к полному пути проекта. При перемещении проекта в другой subgroup или группу подписка перестает работать без явного удаления и пересоздания. Решение: после реорганизации групп проверяйте и обновляйте все подписки.
+- **Cross-group триггеры и изменение прав доступа:** При удалении участника из upstream-проекта или изменении его роли триггеры продолжают работать до истечения кэша Job Token (до 5 минут). Решение: перезапустите Bridge Job после изменений в правах доступа.
+- **Artifact include с пересекающимися путями:** При использовании `include: artifact` из другого проекта артефакт должен существовать в конкретном pipeline. Если задача-генератор упала в другом pipeline, Bridge Job завершается с `Artifact not found`. Решение: используйте `needs:project` с `artifacts: true` для явной зависимости или проверяйте наличие артефакта через API.
+
+### SRE: Инцидент-респонс
+
+При расследовании инцидента, связанного с межпроектными пайплайнами:
+
+1. Проверьте доступность downstream-проекта через API:
+   ```bash
+   curl --header "PRIVATE-TOKEN: $TOKEN" \
+     "https://gitlab.example.com/api/v4/projects/$DOWNSTREAM_PROJECT_ID" | \
+     jq '{id, path, path_with_namespace, visibility, default_branch}'
+   # → {"id": 456, "path": "deploy", "path_with_namespace": "ops/deploy", "visibility": "private", "default_branch": "main"}
+   ```
+
+2. Проверьте статус Inbound Allowlist в downstream-проекте:
+   ```bash
+   # Через UI: Settings > CI/CD > Token Access
+   # Через API проверьте права доступа к проекту
+   curl --header "PRIVATE-TOKEN: $TOKEN" \
+     "https://gitlab.example.com/api/v4/projects/$DOWNSTREAM_PROJECT_ID/members" | \
+     jq '.[] | {username, access_level}'
+   ```
+
+3. Получите список Bridge Jobs родительского пайплайна:
+   ```bash
+   curl --header "PRIVATE-TOKEN: $TOKEN" \
+     "https://gitlab.example.com/api/v4/projects/$PARENT_PROJECT_ID/pipelines/$PIPELINE_ID/bridges" | \
+     jq '.[] | {id, name, status, downstream_pipeline}'
+   # → [{"id": 101, "name": "trigger-deploy", "status": "failed", "downstream_pipeline": {"id": 456}}]
+   ```
+
+4. Для cross-group сценариев проверьте rate limiting и доступность API:
+   ```bash
+   curl --header "PRIVATE-TOKEN: $TOKEN" \
+     "https://gitlab.example.com/api/v4/projects/$PARENT_PROJECT_ID/pipelines/$PIPELINE_ID" | \
+     jq '{status, message, duration}'
+   ```
+
+5. Документируйте паттерн инцидента: upstream проект, downstream проект, статус Allowlist, стратегия триггера, время возникновения и диагностические команды.
+
+### Compliance и аудит
+
+- **Реестр cross-project триггеров:** Ведите реестр всех межпроектных триггеров с указанием upstream/downstream проектов, группы, стратегии (`mirror`/`depend`/fire-and-forget) и обоснования выбора. Обновляйте при каждом изменении конфигурации или реорганизации групп.
+- **Аудит Inbound Allowlist:** Для каждого downstream-проекта регулярно проверяйте список разрешенных upstream-проектов. Удаляйте устаревшие записи при реорганизации групп или изменении зон ответственности.
+- **Cross-group duty separation:** Разделите права на изменение cross-project триггеров (Platform/DevOps team) и права на запуск пайплайнов (application teams). Используйте group-level Protected Branches для критичных проектов.
+- **Аудит переменных:** Проверяйте, что через `trigger:variables` не передаются секреты в downstream-проекты. Используйте `spec:inputs` для передачи только типизированных несекретных параметров.
+- **Ведение логов:** Включите аудит доступа к Token Access в GitLab (`Settings > CI/CD > Token Access > Audit log`). Это позволяет отслеживать изменения в Allowlist.
+
+### Очистка и откат
+
+- **Удаление устаревших Inbound Allowlist записей:** При реорганизации групп удалите неактуальные записи из `Settings > CI/CD > Token Access` downstream-проектов. Это предотвращает несанкционированный доступ через старые разрешения.
+- **Очистка orphaned Bridge Jobs:** При удалении downstream-проекта Bridge Jobs в upstream остаются в статусе `failed` или `running`. Отмените их через API:
+  ```bash
+  curl --request POST --header "PRIVATE-TOKEN: $TOKEN" \
+    "https://gitlab.example.com/api/v4/projects/$PARENT_PROJECT_ID/pipelines/$PIPELINE_ID/cancel"
+  ```
+- **Откат cross-project триггера:** Для временного отключения используйте `rules: []` или `when: never` в Bridge Job. Это безопаснее, чем удаление конфигурации, так как сохраняет историю изменений.
+- **Удаление Pipeline Subscriptions:** При перемещении upstream-проекта удалите старую подписку в downstream-проекте и создайте новую под новым путем.
+- **Валидация после отката:** После отката триггера проверяйте, что upstream-пайплайн не пытается запустить отключенный триггер, и что downstream-проект остается в стабильном состоянии.
+
+### Disaster Recovery
+
+- **Fallback при недоступности downstream-проекта:** Если downstream-проект удален или недоступен, подготовьте резервный `.gitlab-ci.yml` в upstream-проекте для выполнения критичных задач напрямую.
+- **Восстановление после удаления проекта:** При восстановлении проекта из резервной копии обновите путь `trigger:project` и повторно добавьте upstream в Inbound Allowlist.
+- **Cross-namespace migration:** При перемещении проекта между группами обновите все `trigger:project` пути в upstream-проектах и пересоздайте Inbound Allowlist записи.
+- **Аварийный запуск через API:** Для критичных сервисов используйте Pipeline Triggers API для запуска downstream-пайплайна в обход Bridge Job:
+  ```bash
+  curl --request POST --header "PRIVATE-TOKEN: $TOKEN" \
+    --form "ref=main" \
+    --form "variables[SERVICE_ID]=auth-api" \
+    "https://gitlab.example.com/api/v4/projects/$DOWNSTREAM_PROJECT_ID/trigger/pipeline"
+  ```
+- **Резервное копирование Inbound Allowlist:** Экспортируйте список разрешенных проектов для каждого downstream-проекта через UI или API для быстрого восстановления после сбоя.
+
+### Self-managed инсталляции
+
+- **Group-level Job Token permissions:** На self-managed инсталляциях настройте group-level `CI_JOB_TOKEN` scope для общих групп проектов. Это упрощает управление доступом для множества downstream-проектов и снижает операционную нагрузку.
+- **Мониторинг PostgreSQL:** Метаданные cross-project пайплайнов хранятся в `ci_bridges`, `ci_pipelines` и `ci_builds`. Мониторьте целостность связей:
+  ```sql
+  SELECT b.id, b.name, b.status, p.id AS pipeline_id, p.status AS pipeline_status
+  FROM ci_bridges b
+  JOIN ci_pipelines p ON b.downstream_pipeline_id = p.id
+  WHERE p.project_id != $PARENT_PROJECT_ID;
+  ```
+- **Мониторинг Sidekiq:** Мониторьте очередь `create_downstream_pipeline` на задержки, особенно при массовых cross-project триггерах. При высокой нагрузке увеличьте количество воркеров Sidekiq для предотвращения блокировки создания downstream-пайплайнов.
+- **Версионирование GitLab:** Убедитесь, что все проекты в цепочке используют совместимые версии GitLab. Использование `spec:inputs` требует GitLab 17.0+, а `strategy: mirror` с агрегацией Security Reports — 18.6+/18.9+.
+- **Резервные Runner'ы:** Для cross-project триггеров настройте Runner'ы с высокой доступностью. Bridge Job блокирует concurrency-слот при `mirror`, поэтому недостаток Runner'ов приводит к deadlock.
 
 ## См. также
 

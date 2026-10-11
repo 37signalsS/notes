@@ -1,22 +1,32 @@
 # Отказоустойчивый кластер PostgreSQL (Patroni, etcd, HAProxy)
 
+**Актуально для:** Patroni 4.1.x / PostgreSQL 14–18 (Patroni поддерживает PostgreSQL 9.3–18; etcd 3.5)
+
 ## Определения
 
-**Patroni** — высокодоступный шаблон (Python-приложение) для управления кластерами PostgreSQL. Обеспечивает автоматический Failover, управление конфигурацией и мониторинг состояния инстансов. Он «оборачивает» процесс БД, превращая его в управляемый компонент HA-стека.
+**Patroni** — Python-шаблон (агент) для построения HA-кластеров PostgreSQL. «Обёртывает» процесс БД: управляет запуском/остановкой PostgreSQL, репликацией, выбором лидера и предоставляет REST API для балансировщиков и мониторинга. Начинался как fork Governor (проект Zalando). В качестве DCS поддерживает etcd, Consul, ZooKeeper, Kubernetes (Lease API) и Raft (встроенный).
 
-**etcd** — распределенное отказоустойчивое хранилище типа «ключ-значение». Используется Patroni как **DCS (Distributed Configuration Store)** для хранения состояния кластера, конфигурации и реализации механизма распределенных блокировок (Leader Election) на базе алгоритма консенсуса **Raft**. Детали защиты от двух лидеров — в **[Обзоре Raft в etcd](../../../etcd/raft_consensus.md#механизм-против-двух-лидеров-anti-split-brain)**.
+**DCS (Distributed Configuration Store)** — распределённое консистентное хранилище, в котором Patroni хранит состояние кластера (конфигурацию, позиции WAL/LSN узлов) и реализует распределённую блокировку (**Leader Lock**). Детали консенсуса и защиты от двух лидеров — в [Обзоре Raft в etcd](../../../etcd/raft_consensus.md#механизм-против-двух-лидеров-anti-split-brain).
 
-**Watchdog** — механизм защиты («сторожевой таймер»), принудительно перезагружающий ОС в случае зависания Patroni или потери связи с DCS. Это гарантирует, что узел не останется мастером в изолированном состоянии, исключая возникновение **Split Brain**.
+**Leader Lock / TTL** — ключ в DCS со сроком жизни `ttl` (по умолчанию 30 с). Мастер обязан обновлять его чаще, чем раз в `loop_wait` (по умолчанию 10 с). Истечение ключа — триггер автоматического failover.
 
-**Failover** — автоматический процесс переключения ролей в кластере при выходе из строя мастера.
+**Watchdog** — сторожевой таймер (Linux watchdog device, `/dev/watchdog`). Patroni сбрасывает таймер после каждого успешного обновления Leader Lock; при зависании Patroni таймер истекает и ядро принудительно перезагружает узел, гарантированно освобождая лидерство.
 
-**Switchover** — плановый и контролируемый перенос роли мастера на один из резервных узлов (например, для обслуживания железа или обновления ядра ОС).
+**Failover** — автоматическое или ручное переключение роли при аварии мастера. Возможна потеря данных (незафиксированные и асинхронные транзакции).
 
-**Fencing (Изоляция)** — метод принудительного отсечения старого мастера от ресурсов, чтобы предотвратить одновременную запись с двух узлов.
+**Switchover** — плановое контролируемое переключение роли (обслуживание железа, обновление ядра ОС). При синхронной репликации гарантирует RPO=0.
 
-## Архитектура стека
+**Fencing (изоляция)** — принудительное отсечение старого мастера от записи: Patroni останавливает PostgreSQL (или переводит в read-only) при невозможности подтвердить лидерство в DCS.
 
-Типовая схема включает 3 узла базы данных для обеспечения кворума в DCS.
+**STONITH (Shoot The Other Node In The Head)** — аппаратный/hypervisor-level fencing (IPMI/iDRAC/iLO, BMC watchdog): принудительное отключение проигравшего узла при split-brain.
+
+**Split Brain** — состояние, при котором два и более узла одновременно считают себя Primary и принимают запись. Для PostgreSQL необратимо: таймлайны расходятся, автоматический слияние невозможно.
+
+## Базовые концепции
+
+### Архитектура стека
+
+Типовая схема — 3 узла (нечётный кворум для DCS):
 
 ```text
       [ Клиент / Приложение ]
@@ -25,162 +35,75 @@
                |
       [ HAProxy + Keepalived ] (2-3 ноды)
                |
-    -----------------------
-    |          |          |
-[ Узел 1 ] [ Узел 2 ] [ Узел 3 ]
-| Patroni| | Patroni| | Patroni|
-| Postgre| | Postgre| | Postgre|
-|Watchdog| |Watchdog| |Watchdog|
-    \          |          /
-     \--- [ etcd кластер ] ---/
+     -----------------------
+     |          |          |
+ [ Узел 1 ] [ Узел 2 ] [ Узел 3 ]
+ | Patroni | | Patroni | | Patroni |
+ | Postgre| | Postgre| | Postgre|
+ |Watchdog| |Watchdog| |Watchdog|
+     \          |          /
+      \--- [ etcd кластер ] ---/
 ```
 
-### Роли компонентов
+**Роли компонентов:**
 
-1.  **PostgreSQL:** Непосредственно хранение и обработка данных. Работает в режиме `Primary` (чтение/запись) или `Replica` (только чтение, асинхронная или синхронная репликация).
-2.  **Patroni:**
-    -   Запускает и управляет процессом PostgreSQL.
-    -   Удерживает **Leader Lock** в etcd через периодические Heartbeats (обычно каждые 10 секунд, настраивается через `loop_wait`).
-    -   Взаимодействует с ядром через `/dev/watchdog` для обеспечения безопасности на уровне ОС.
-    -   Предоставляет REST API для проверок состояния (порты 8008 по умолчанию: `/master`, `/replica`, `/primary`).
-3.  **etcd:**
-    -   Хранит конфигурацию кластера и текущую позицию WAL (LSN) каждого узла.
-    -   Служит механизмом блокировок (Locks) для предотвращения ситуации "Split Brain".
-    -   Обеспечивает консистентность состояния кластера.
-4.  **HAProxy:**
-    -   Опрашивает REST API Patroni на каждом узле.
-    -   Узел, вернувший HTTP 200 на эндпоинт `/master` (или `/primary`), помечается как `UP` в пуле для записи.
-    -   Узлы, вернувшие 200 на `/replica`, могут использоваться для балансировки запросов на чтение (Read Scaling).
+1. **PostgreSQL** — хранение и обработка данных. Работает как `Primary` (чтение/запись) или `Replica` (только чтение, streaming-репликация).
+2. **Patroni** — запускает и управляет процессом PostgreSQL; удерживает Leader Lock в DCS через heartbeats (`loop_wait`); взаимодействует с `/dev/watchdog`; предоставляет REST API (порт 8008 по умолчанию).
+3. **etcd (DCS)** — хранит конфигурацию кластера, текущие позиции WAL (LSN) узлов и Leader Lock; обеспечивает консистентность и кворум (Raft). Альтернативы: Consul, ZooKeeper, Kubernetes Lease API.
+4. **HAProxy** — опрашивает REST API Patroni: узел, вернувший HTTP 200 на `/primary` (или `/` или `/read-write`), попадает в пул для записи; узлы с 200 на `/replica` — в пул для чтения (Read Scaling).
 
-## Механизмы защиты: Watchdog и Fencing
+### Как работает выбор лидера и защита от Split Brain
 
-Критически важно предотвратить ситуацию, когда два узла одновременно считают себя мастерами (Split Brain).
+1. **Leader Lock (DCS-кворум).** Только узел, успешно захвативший и обновляющий Leader Key, может быть Primary. При сетевой партиции кворум сохраняется только у majority-части etcd — меньшинство не может ни выбрать, ни удержать лидера.
+2. **Watchdog.** Активируется Patroni **до** промоции в Primary; если активация невозможна, а `watchdog.mode: required` — узел **отказывается** становиться лидером. При зависании Patroni (OOM, 100% CPU, зависание hypervisor) таймер истекает и ядро перезагружает узел. По умолчанию watchdog настроен истечь на 5 с раньше TTL (`safety_margin`), что оставляет HA-циклу `ttl - safety_margin - loop_wait` секунд на завершение до принудительного сброса. Значение `safety_margin: -1` устанавливает тайм-аут watchdog в `ttl // 2` — гарантия срабатывания при любых обстоятельствах. В состоянии `pause` watchdog отключается.
+3. **Fencing.** Если обновление Leader Lock невозможно, Patroni останавливает PostgreSQL (или демотирует его), поэтому узел не может принимать запись без кворума DCS.
+4. **`primary_start_timeout` (по умолчанию 300 с)** — время, которое Primary может «восстанавливаться» после сбоя, прежде чем будет инициирован failover. Худшее время failover при отказе мастера: `loop_wait + primary_start_timeout + loop_wait` (с дефолтами — до ~320 с; при `primary_start_timeout: 0` — около `loop_wait`). Это компромисс RTO vs. риск потери данных: чем быстрее failover, тем выше шанс промоции отстающей реплики.
+5. **`maximum_lag_on_failover`** (по умолчанию 1048576 байт) — максимальный лаг реплики (в байтах), при котором она допускается к участию в выборах лидера.
 
-### Split Brain в Patroni: детальный разбор
+**Программный vs аппаратный Watchdog.** `softdog` (kernel module) защищает от зависаний процессов и большинства сбоев ядра и достаточен для большинства случаев; он зависит от работоспособности ядра и не спасает при hard lockup или аппаратном сбое. Hardware-watchdog на BMC (iDRAC/iLO/IPMI) независим от ОС — предпочтителен на физических серверах.
 
-**Split Brain** — состояние, при котором в кластере одновременно существует два или более активных Primary (мастера), принимающих запись. В PostgreSQL это приводит к необратимой порче данных, так как репликационная связь между двумя Primary невозможна (PostgreSQL не поддерживает Multi-Primary).
+### Синхронный режим (RPO=0)
 
-#### Сценарии возникновения
+`synchronous_mode` принимает значения `off`, `on`, `quorum` (quorum-based sync replication, PostgreSQL 10+). В этом режиме Patroni сам управляет `synchronous_standby_names`, и в выборах лидера участвуют только последний известный лидер или синхронные реплики — успешно зафиксированные транзакции не теряются при failover.
 
-1.  **Партиция сети DCS:** Узел-мастер продолжает работать, но теряет связь с etcd/Consul. Patroni на этом узле не может обновить Leader Key (TTL истекает), но сам процесс PostgreSQL остается доступным для записи. В этот момент другая часть кластера, имеющая кворум DCS, выбирает нового мастера. Теперь два узла пишут данные параллельно.
-2.  **Ошибка Fencing:** Patroni определяет, что связь с DCS потеряна, но по какой-то причине не останавливает PostgreSQL (например, сбой в скрипте fencing, ошибка прав доступа, зависание процесса). Узел продолжает принимать запись, в то время как DCS уже выбрала нового лидера.
-3.  **Потеря кворума etcd:** При падении 2 узлов etcd из 3-х оставшийся узел не может получить кворум. Patroni на каждом узле PostgreSQL не может определить, является ли он лидером, и в зависимости от конфигурации может либо остановить БД, либо продолжить работу в `read-only`, либо перейти в состояние `promoted` без подтверждения DCS.
-4.  **Грязный перезапуск ( unclean restart ):** После потери питания узел перезагружается быстрее, чем DCS фиксирует его состояние. Patroni запускается, видит отсутствие лидера в DCS и promotes себя, хотя старый мастер тоже уже жив и считает себя Primary.
+- `synchronous_node_count` (по умолчанию 1) — сколько синхронных standby требуется.
+- `synchronous_mode_strict: true` — при отсутствии доступной синхронной реплики **запись блокируется** (вместо автоматического отключения синхронности). Без `strict` Patroni временно переводит коммиты в асинхронный режим, пока нет подходящей sync-реплики.
 
-#### Последствия
+### Статическая и динамическая конфигурация
 
-- **Необратимая рассинхронизация данных:** два Primary имеют разные наборы транзакций, которые невозможно автоматически слить.
-- **Клиенты видят разные данные:** часть запросов идет на старый мастер, часть — на новый. Транзакционная согласованность нарушается.
-- **Сложность восстановления:** требуется ручной анализ WAL, выбор "истории победителя" и принудительный сброс старого мастера.
+- **Статическая** (`patroni.yml` на каждом узле) — адреса DCS, `data_dir`, порты, учётные записи. Изменяется в файле и применяется через `patronictl reload` (аналог SIGHUP).
+- **Динамическая** (хранится в DCS) — `ttl`, `loop_wait`, `maximum_lag_on_failover`, `postgresql.parameters` и пр. Изменяется через `patronictl edit-config` или `PATCH /config` и применяется на всех узлах. Параметры, требующие перезапуска PostgreSQL (например, `max_connections`), помечаются флагом `pending_restart` до выполнения `patronictl restart`.
 
-#### Детекция
+## Предварительные требования
 
-**Через логи Patroni:**
-```bash
-# Признак: узел потерял лидерство, но БД остается running
-grep -i "cluster is not running in standalone mode" /var/log/patroni/patroni.log
-grep -i "failed to acquire leader lock" /var/log/patroni/patroni.log
-grep -i "running as a standalone" /var/log/patroni/patroni.log  # опасный сигнал
-```
+- **ОС:** Ubuntu 22.04+ / RHEL 8+ (Rocky/Alma 9); Python 3.9+ для Patroni 4.x.
+- **Узлы:** нечётное число (3 или 5) для PostgreSQL + etcd; обычно co-located на одних хостах. 2 узла etcd не дают кворума при отказе одного — недопустимо.
+- **Watchdog:** `modprobe softdog`, доступен `/dev/watchdog` с правами пользователя Patroni (`chown postgres /dev/watchdog`); на железных серверах — BMC-watchdog.
+- **Сеть:** порты 5432 (DB), 8008 (REST API), 2379 (etcd client), 2380 (etcd peer); стабильная связь между узлами (латентность < 10 мс, потери < 0.1%); синхронизация времени (NTP).
+- **PostgreSQL:** одинаковые `max_connections`, `max_wal_senders`, `max_replication_slots` на всех узлах; `wal_level: replica` минимум (`logical` — только если нужна логическая репликация); для `pg_rewind` (возврат старого мастера репликой) необходимы data checksums (`initdb --data-checksums`) или `wal_log_hints: on`.
+- **Учётные записи:** Patroni требует superuser и replication-пользователя; рекомендуется `password_encryption: scram-sha-256`.
 
-**Через REST API Patroni:**
-```bash
-# На каждом узле
-curl -s http://localhost:8008/patroni | jq .role
-# Должно быть: "leader" только на одном узле. Если "leader" на двух и более — split-brain.
+## Практические сценарии
 
-curl -s http://localhost:8008/patroni | jq .state
-# "running" + "role": "leader" = потенциальная проблема, если других лидеров нет
-```
-
-**Через PostgreSQL:**
-```sql
--- На каждом узле
-SELECT pg_is_in_recovery();
--- false = Primary. Если false на двух узлах одновременно — критично.
-
-SELECT pg_current_wal_lsn();
--- Сравните LSN между узлами. Если оба Primary имеют разные LSN и оба не в recovery — проблема.
-```
-
-**Через HAProxy:**
-```bash
-echo "show stat" | socat /var/run/haproxy.sock stdio | grep -i postgres
-# В колонке status может быть "UP" для нескольких мастеров одновременно
-```
-
-#### Восстановление после Split Brain
-
-Алгоритм зависит от того, обнаружена ли проблема сразу или найдена постфактум:
-
-**Сценарий A: Обнаружено сразу (два узла в состоянии Primary)**
-1.  **Остановить один из узлов** через IPMI/iDRAC/iLO/VMware console (аппаратное fencing). Нельзя просто выключить PostgreSQL, так как это может не сработать.
-2.  **На выжившем узле проверить данные:**
-    ```bash
-    sudo -u postgres psql -c "SELECT count(*) FROM critical_table;"
-    ```
-3.  **На stopped узле очистить data_dir** и перезапустить Patroni — он автоматически сделает `basebackup` от нового мастера.
-4.  **Аудит:** проверьте, какие транзакции на stopped узле могли быть потеряны. Сравните `pg_wal` на обоих узлах.
-
-**Сценарий B: Обнаружено постфактум (уже есть расхождение данных)**
-1.  **Выбрать победителя:** узел с более актуальными данными (больше WAL LSN или более полный набор таблиц).
-2.  **На проигравшем узле:**
-    ```bash
-    sudo systemctl stop patroni
-    sudo -u postgres rm -rf /var/lib/postgresql/data/*
-    sudo systemctl start patroni
-    ```
-3.  **Проверка консистентности:** после восстановления убедитесь, что `pg_stat_replication` показывает здоровое состояние.
-
-**Важно:** Не пытайтесь автоматизировать recovery из split-brain. Каждый случай требует ручного анализа.
-
-1.  **Watchdog (Software/Hardware):** Patroni периодически "кормит" собаку (сбрасывает таймер `/dev/watchdog`). Если Patroni зависнет (например, из-за 100% CPU или OOM), таймер истечет, и Watchdog вызовет немедленную перезагрузку (Kernel Panic / Reboot), гарантированно освобождая лидерский ключ.
-2.  **Fencing:** Если узел теряет связь с etcd, Patroni немедленно переводит PostgreSQL в режим `read-only` или выключает его. Это регулируется параметром `master_start_timeout`. Если Patroni не может подтвердить лидерство в течение заданного времени, он обязан остановить БД.
-3.  **DCS Quorum (Raft):** etcd обеспечивает, что только одна часть кластера может выбрать лидера. При partition только majority-сторона сохраняет кворум и может принимать решения. Minority сторона блокирует все операции записи.
-4.  **STONITH (Shoot The Other Node In The Head):** Аппаратный или hypervisor-level fencing. В облачных средах (AWS, GCP, Azure) Patroni может интегрироваться с cloud API для принудительного отключения узла (например, `ec2-stop-instances`).
-5.  **`maximum_lag_on_failover`:** Параметр Patroni, предотвращающий повышение реплики, если отставание от мастера превышает порог. Это защищает от promotion реплики с устаревшими данными в момент partition.
-
-## Механизм Failover
-
-Процесс переключения ролей происходит по следующему алгоритму:
-
-1.  **Сбой мастера:** Мастер (Узел 1) падает или теряет сетевую связность с DCS.
-2.  **Истечение TTL:** Leader Key в etcd имеет время жизни (TTL, обычно 30с). Поскольку Patroni на Узле 1 не может его обновить, ключ удаляется автоматически.
-3.  **Выборы:** Patroni на репликах (Узел 2 и 3) замечают отсутствие мастера и начинают процесс выбора. Узел с наиболее актуальными данными (максимальным LSN) захватывает новый Leader Key.
-4.  **Смена роли:** Выбранная реплика (например, Узел 2) переходит в режим `Master`.
-5.  **Переключение трафика:** HAProxy при очередной проверке (раз в 2-3 секунды) видит, что Узел 1 недоступен, а Узел 2 теперь отвечает на запрос `/master`. Трафик мгновенно перенаправляется на Узел 2.
-
-## Обеспечение отказоустойчивости балансировщика
-
-Сам HAProxy может стать единой точкой отказа. Методы защиты:
-
--   **Keepalived (VRRP):** Несколько нод HAProxy разделяют один **Virtual IP (VIP)**. При падении активной ноды VIP переезжает на резервную за миллисекунды.
--   **DNS Round Robin:** За одним DNS-именем закреплено несколько IP-адресов балансировщиков. Клиент пробует их по очереди (менее надежно, зависит от TTL DNS).
--   **Headless Service (в Kubernetes):** Если приложение в K8s, оно может обращаться к Patroni напрямую через сервис, который обновляет свои Endpoints на основе проверок Patroni API.
-
----
-
-## Практическая реализация
-
-### 1. Подготовка окружения (Prerequisites)
-
-- **ОС:** Рекомендуется Ubuntu 22.04+ или RHEL 8+.
-- **Watchdog:** Убедитесь, что модуль `softdog` загружен (`modprobe softdog`) и доступен файл `/dev/watchdog`.
-- **Сеть:** Открытые порты 5432 (DB), 8008 (API), 2379 (etcd).
-
-### 2. Установка (на примере Ubuntu)
+### 1. Установка
 
 ```bash
-# PostgreSQL и Patroni
-sudo apt install postgresql-16 python3-patroni python3-etcd3
-# Или через pip для свежих версий
-pip install patroni[etcd3]
+# Debian/Ubuntu (пакет называется patroni)
+sudo apt install postgresql-16 patroni etcd haproxy
 
-# etcd (на 3-х узлах для кворума)
-sudo apt install etcd
+# Или свежая версия через pip (Patroni 4.x)
+pip install "patroni[etcd3,psycopg3]"   # extras: etcd3, consul, zookeeper, kubernetes, raft, aws, systemd
+
+patroni --version                          # → Patroni 4.1.5
 ```
 
-### 3. Пример конфигурации `patroni.yml`
+etcd ставится на все 3 узла; настройка кластера etcd описана в [Конфигурации и деплое etcd](../../../etcd/configuration_and_deployment.md). Проверка:
+
+```bash
+etcdctl endpoint health --cluster          # → все узлы "healthy"
+```
+
+### 2. Конфигурация `patroni.yml` (узел 1)
 
 ```yaml
 scope: pg_cluster
@@ -199,12 +122,14 @@ bootstrap:
     ttl: 30
     loop_wait: 10
     retry_timeout: 10
-    maximum_lag_on_failover: 1048576 # 1MB
+    maximum_lag_on_failover: 1048576
     postgresql:
-      use_pg_rewind: true
+      use_pg_rewind: true        # по умолчанию false; требует data-checksums или wal_log_hints
       parameters:
-        wal_level: logical
+        wal_level: replica
         max_connections: 100
+        max_wal_senders: 10
+        max_replication_slots: 10
   initdb:
   - encoding: UTF8
   - data-checksums
@@ -214,6 +139,9 @@ postgresql:
   connect_address: 10.0.0.1:5432
   data_dir: /var/lib/postgresql/16/main
   bin_dir: /usr/lib/postgresql/16/bin
+  pg_hba:                                    # Patroni сам генерирует pg_hba.conf
+  - host replication replicator 10.0.0.0/24 scram-sha-256
+  - host all all 10.0.0.0/24 scram-sha-256
   authentication:
     replication: {username: replicator, password: rep_pass}
     superuser: {username: postgres, password: super_pass}
@@ -223,12 +151,29 @@ watchdog:
   device: /dev/watchdog
 ```
 
-### 4. Настройка Health Check в HAProxy
+Запуск на каждом узле (имя и `connect_address` — свои):
+
+```bash
+sudo systemctl enable --now patroni
+sudo systemctl status patroni                # → active (running)
+journalctl -u patroni -f                     # логи Patroni (stdout/journal, если не задан logfile)
+```
+
+### 3. Health Check в HAProxy
 
 ```haproxy
 listen postgres_master
     bind *:5432
-    option httpchk GET /master
+    option httpchk GET /primary
+    http-check expect status 200
+    default-server inter 2s fall 3 rise 2
+    server pg_node_1 10.0.0.1:5432 check port 8008
+    server pg_node_2 10.0.0.2:5432 check port 8008
+    server pg_node_3 10.0.0.3:5432 check port 8008
+
+listen postgres_replicas
+    bind *:5433
+    option httpchk GET /replica
     http-check expect status 200
     default-server inter 2s fall 3 rise 2
     server pg_node_1 10.0.0.1:5432 check port 8008
@@ -236,202 +181,178 @@ listen postgres_master
     server pg_node_3 10.0.0.3:5432 check port 8008
 ```
 
-### 5. Сценарий: Синхронная репликация (Zero Data Loss)
+Полезные эндпоинты для проверок: `/primary` (200 только у лидера с лидерским ключом), `/replica` (200 у здоровой реплики без тега `noloadbalance`), `/replica?lag=10MB` (дополнительная проверка лага), `/sync` (синхронный standby), `/health` (PostgreSQL запущен), `/liveness` и `/readiness?lag=&mode=apply|write` (для зондирования), `/patroni` (JSON-статус узла), `/metrics` (Prometheus).
 
-Если бизнес-требования запрещают потерю даже одной транзакции (RPO=0):
+Отказоустойчивость самого HAProxy: **Keepalived (VRRP)** с плавающим VIP между 2–3 нодами (переезд за миллисекунды) или DNS с коротким TTL (менее надёжно). В Kubernetes — обращение к Patroni напрямую через сервис; см. [Zalando Postgres Operator](./zalando_postgres_operator.md).
 
-```yaml
-# Через patronictl edit-config
-postgresql:
-  parameters:
-    synchronous_commit: "on"
-  use_pg_rewind: true
-  synchronous_mode: true
-  synchronous_node_count: 1 # Минимум одна реплика должна подтвердить запись
-```
-*Внимание: Если ни одна реплика не доступна, мастер перестанет принимать запись (заблокирует транзакции) до восстановления связности.*
-
-### 6. Сценарий: Обслуживание кластера (Maintenance Mode)
-
-Для проведения технических работ без срабатывания failover:
+### 4. Switchover (плановое переключение)
 
 ```bash
-# Пауза автоматики
-patronictl -c /etc/patroni.yml pause pg_cluster
-
-# Теперь можно безопасно останавливать сервисы
-sudo systemctl stop patroni
-
-# Снятие паузы
-patronictl -c /etc/patroni.yml resume pg_cluster
+patronictl -c /etc/patroni.yml switchover pg_cluster --candidate pg_node_2
+# → Current cluster topology ... Successfully switched over to "pg_node_2"
 ```
 
-### 7. Интеграция Patroni с S3 (WAL-архивирование и бэкапы)
+Кандидат необязателен — тогда в выборах участвуют все здоровые узлы. Switchover можно запланировать (`--scheduled <timestamp>`), отменить — `patronictl flush pg_cluster switchover`.
 
-Patroni нативно поддерживает интеграцию с S3-совместимыми хранилищами для WAL-архивирования и создания бэкапов через **pgBackRest** или **WAL-G**.
-
-**Конфигурация WAL-G с S3 в Patroni (DCS):**
-
-```yaml
-# patronictl edit-config
-postgresql:
-  parameters:
-    archive_mode: "on"
-    archive_command: "wal-g wal-push %p"
-    restore_command: "wal-g wal-fetch %f %p"
-  
-  # Настройки pgBackRest (альтернатива WAL-G)
-  pgbackrest:
-    command: /usr/bin/pgbackrest --stanza=main archive-push %p
-    keep_data: true
-    no_params: true
-  
-  # Или использование pgBackRest для полных бэкапов
-  recovery_conf:
-    restore_command: "pgbackrest --stanza=main archive-get %f %p"
-```
-
-**Переменные окружения для доступа к S3:**
+### 5. Failover (аварийное переключение)
 
 ```bash
-# Должны быть доступны процессу PostgreSQL
-export WALG_S3_PREFIX=s3://bucket-name/path/to/wal
-export AWS_ACCESS_KEY_ID=<key>
-export AWS_SECRET_ACCESS_KEY=<secret>
-export AWS_ENDPOINT_URL=https://s3.yandexcloud.net  # Для Yandex Cloud
-export AWS_S3_FORCE_PATH_STYLE=true  # Важно для MinIO и Yandex Cloud
+patronictl -c /etc/patroni.yml failover pg_cluster --candidate pg_node_2 --force
 ```
 
-**Принцип работы:**
-1.  Каждый WAL-файл при завершении (16 МБ) автоматически загружается в S3.
-2.  При failover/switchover новая реплика может восстановить недостающие WAL-сегменты из S3.
-3.  Полные бэкапы (через `pgbackrest backup` или `wal-g backup-push`) также загружаются в S3.
-4.  **Point-in-Time Recovery (PITR):** Позволяет восстановить базу на любой момент времени, используя полный бэкап + WAL-архив из S3.
+`--candidate` обязателен. Предназначен для нездорового кластера (нет лидера, нет sync-standby); **может привести к потере данных**, если кандидат отстаёт — в здоровом кластере используйте switchover. Автоматический failover запускается по истечении TTL Leader Key без участия оператора.
 
-**Patroni + S3 внутри Kubernetes:**
-При развертывании Patroni в Kubernetes (через Zalando Operator или чарты), доступ к S3 осуществляется через:
-- **Kubernetes Secret** с ключами доступа, монтируемый как volume или переменные окружения.
-- **IAM-роли для Service Account (IRSA в AWS, Workload Identity в GCP)** — более безопасный подход без хранения статических ключей.
+### 6. Синхронная репликация (Zero Data Loss)
 
----
+```bash
+patronictl -c /etc/patroni.yml edit-config pg_cluster
+```
+```yaml
+postgresql:
+  synchronous_mode: "on"
+  synchronous_mode_strict: "true"   # блокирует запись при отсутствии sync-реплики
+  synchronous_node_count: 1
+```
 
-## Устранение неисправностей (Troubleshooting)
+*Внимание: с `strict` при потере единственной синхронной реплики мастер перестаёт принимать запись до восстановления связности; без `strict` коммиты временно становятся асинхронными.*
+
+### 7. Maintenance Mode (обслуживание без срабатывания failover)
+
+```bash
+patronictl -c /etc/patroni.yml pause pg_cluster --wait   # → Success: cluster management is paused
+sudo systemctl stop patroni                              # безопасно останавливать узлы
+patronictl -c /etc/patroni.yml resume pg_cluster         # автоматика возобновлена
+```
+
+### 8. Перезапуск, reload, пересборка реплики
+
+```bash
+patronictl -c /etc/patroni.yml reload pg_cluster          # применить изменённый patroni.yml (SIGHUP)
+patronictl -c /etc/patroni.yml restart pg_cluster --pending --force   # только узлы с pending_restart
+patronictl -c /etc/patroni.yml reinit pg_cluster pg_node_3 --from-leader --wait --force  # пересобрать data_dir
+```
+
+Прямой `pg_ctl restart` / `systemctl restart postgresql` обходит Patroni и ломает управление состоянием — используйте `patronictl restart/reload`.
+
+### 9. DR: standby cluster (репликация кластера на удалённую площадку)
+
+```bash
+patronictl -c /etc/patroni.yml demote-cluster pg_cluster --host 10.1.0.10 --port 5432 --primary-slot-name pg_cluster --force
+# кластер становится standby-cluster, следующим за удалённым Primary
+patronictl -c /etc/patroni.yml promote-cluster pg_cluster --force   # обратное преобразование
+```
+
+### 10. WAL-архивирование и бэкапы
+
+Patroni сам по себе не заменяет бэкапы: он обеспечивает HA и failover, но не PITR. WAL-архивирование (`archive_mode`/`archive_command`) и полные бэкапы настраиваются через динамическую конфигурацию (`postgresql.parameters`) с помощью **pgBackRest** или **WAL-G**; интеграция pgBackRest с Patroni нативна (секция `postgresql.pgbackrest`). Подробности, конфигурации и сценарии восстановления — в [Бэкапах и восстановлении](../Concepts/backup_and_recovery.md) (SSoT по бэкапам) и [Автоматизации бэкапов](./backup_automation.md).
+
+### 11. Деактивация кластера (cleanup)
+
+```bash
+patronictl -c /etc/patroni.yml remove pg_cluster
+# → потребует ввести имя кластера, "Yes I am aware" и имя лидера; удаляет информацию кластера из DCS
+```
+
+Перед удалением остановите Patroni на всех узлах. Удаление единичного узла: остановите `patroni` на нём — его ключ в DCS истечёт через `ttl`, а репликационный слот удалится через `member_slots_ttl` (30 мин по умолчанию).
+
+## Валидация
+
+```bash
+patronictl -c /etc/patroni.yml list pg_cluster
+# + Cluster: pg_cluster (7277694203142172922) -+-----------+----+-------------+-----+------------+-----+
+# | Member    | Host          | Role  | State    | TL | Receive LSN | Lag | Replay LSN | Lag |
+# | pg_node_1 | 10.0.0.1:5432 | Leader | running  | 5  |             |     |            |     |
+# | pg_node_2 | 10.0.0.2:5432 | Replica | streaming| 5  | 0/40004E8   | 0   | 0/40004E8  | 0   |
+# +-------------+----------------+---------+-----------+----+-------------+-----+------------+-----+
+
+curl -s http://localhost:8008/patroni | jq .role,.state,.timeline
+# → "primary" (только на лидере) / "replica"; "running"; номер таймлайна
+
+curl -s http://localhost:8008/metrics | grep -E 'patroni_primary|patroni_postgres_running|patroni_cluster_unlocked'
+# → patroni_primary{scope="pg_cluster",name="pg_node_1"} 1
+# → patroni_postgres_running{...} 1
+# → patroni_cluster_unlocked{...} 0        (0 = кластер заблокирован лидером — нормально)
+
+patronictl -c /etc/patroni.yml history pg_cluster   # → история failover/switchover: TL, LSN, Reason, Timestamp, New Leader
+```
+
+SQL-проверки на каждом узле:
+
+```sql
+SELECT pg_is_in_recovery();                          -- → false только на одном узле (Primary)
+SELECT pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn();  -- → t на догнавшей реплике
+SELECT application_name, state, sync_state FROM pg_stat_replication;  -- → streaming, sync_state = async/quorum/sync
+```
+
+HAProxy: `echo "show stat" | socat /var/run/haproxy.sock stdio | grep postgres` — в колонке status не более одного `UP` среди мастер-пула.
+
+## Устранение неисправностей
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| **Cluster has no leader** | etcd недоступен или потерян кворум. | Проверьте доступность `etcd` на порту 2379. Проверьте кворум: `etcdctl endpoint health`. |
-| **Watchdog reboot loop** | Patroni не успевает сбросить таймер из-за нагрузки. | Увеличьте приоритет процесса Patroni (`nice -n -20`). Проверьте `loop_wait` и `ttl`. |
-| **Node won't start (data_dir)** | Остались файлы от старого кластера. | Очистите `data_dir` (только для реплик!) и дайте Patroni сделать `basebackup`. |
-| **Multiple Primaries** | Отсутствие Watchdog или ошибка Fencing. | 1) Аппаратно отключить проигравший узел. 2) Очистить его `data_dir`. 3) Проверить `watchdog: mode: required`. |
-| **Split-brain после network partition** | Часть узлов изолирована, но DCS кворум сохранен в другой части. | Patroni автоматически завершит устаревшего лидера при восстановлении связи, если настроен Watchdog. |
-| **Patroni не останавливает PostgreSQL при потере DCS** | Некорректный скрипт fencing или `master_start_timeout` слишком большой. | Уменьшите `master_start_timeout` до 30-60 сек. Проверьте права на выполнение fencing-скрипта. |
-| **etcd: lost leader, but PostgreSQL still running** | Patroni завис на обновлении DCS, но не завершил БД. | Настройте `loop_wait` и `ttl` соответствующими друг другу (`ttl` должно быть больше `loop_wait` минимум в 2 раза). |
+| **Cluster has no leader** | etcd недоступен или потерян кворум | `etcdctl endpoint health --cluster -w table`; проверьте кворум etcd (нечётное число узлов); восстановление etcd — в [etcd: аварийное восстановление](../../../etcd/emergency_recovery.md) |
+| **Failover затягивается (~5 мин)** | `primary_start_timeout` по умолчанию 300 с — Primary «восстанавливается» до триггера failover | Уменьшите `primary_start_timeout` (вплоть до 0 — мгновенный failover) при готовности рисковать данными; помните компромисс RTO/данные |
+| **Watchdog reboot loop** | Patroni не успевает сбросить таймер (нагрузка, нехватка ресурсов) | Приоритет процесса (`nice`/`ionice`), ресурсы VM; проверьте правило `loop_wait + 2*retry_timeout <= ttl`; для тестов `soft_noboot=1` (таймер только логируется в dmesg) |
+| **Node won't start (data_dir)** | Остались файлы старого кластера | Только для реплик: `patronictl reinit <cluster> <member> --force` — Patroni снимет basebackup |
+| **Multiple Primaries** | Не сработали Watchdog/Fencing | 1) аппаратно отключить проигравший узел (IPMI/BMC); 2) очистить его `data_dir` и перезапустить Patroni (basebackup от нового мастера); 3) проверить `watchdog: mode: required`; 4) аудит потерь по WAL/`patronictl history` |
+| **Patroni не останавливает PostgreSQL при потере DCS** | Watchdog не активен / нет прав на `/dev/watchdog` | Проверьте `ls -l /dev/watchdog` и `lsmod \| grep softdog`; `watchdog: mode: required` |
+| **Реплика не участвует в выборах** | Лаг > `maximum_lag_on_failover`, тег `nofailover`, или таймлайн меньше кластерного (`check_timeline`) | `patronictl list` покажет лаг; ускорьте диски реплики или поднимите порог; снимите тег |
+| **`pending_restart` не снимается** | Параметры требуют перезапуска PostgreSQL | `patronictl restart <cluster> --pending --force` |
+| **Реплика навсегда отстала** | Слот удалён после `member_slots_ttl` (30 мин), WAL переработан | `patronictl reinit`; для постоянных слотов — секция `slots` в конфиге |
+| **pg_rewind не срабатывает при возврате узла** | Нет data checksums и `wal_log_hints: off` | Инициализируйте кластер с `--data-checksums` (или включите `wal_log_hints`) — иначе Patroni снимает полную basebackup |
 
----
+## Пограничные случаи
 
-## Мониторинг и предотвращение Split-Brain
+- **Потеря кворума etcd** (упали 2 из 3 узлов): оставшийся узел не может обновить Leader Lock — Patroni останавливает PostgreSQL на всех узлах (watchdog при необходимости перезагружает узел). Кластер недоступен до восстановления etcd; это корректное поведение, защита от split-brain, а не дефект.
+- **DCS failsafe mode** (`failsafe_mode: true`): бывший лидер может продолжить работу как Primary при недоступности DCS — только для специфических DR-сценариев, повышает риск split-brain; по умолчанию выключен.
+- **Чётное число узлов**: 2 узла etcd теряют кворум при отказе любого одного — используйте 3 или 5.
+- **Синхронный режим без `strict`**: при отсутствии sync-standby коммиты временно становятся асинхронными (доступность важнее гарантии); с `strict` — запись блокируется (гарантия важнее доступности).
+- **`/replica` и теги**: эндпоинт возвращает 200 только при отсутствии тега `noloadbalance` — так узел исключают из пула чтения без остановки репликации. Теги `nofailover` (не участвует в выборах), `clonefrom` (предпочитается для basebackup), `nostream` (не копирует постоянные логические слоты).
+- **Постоянные слоты** (`slots` в динамическом конфиге): сохраняются при failover/switchover; физические синхронизируются на все узлы каждые `loop_wait` секунд. Внимание: постоянные логические слоты синхронизируются только от Primary — их использование на репликах вызывает неограниченный рост `pg_wal`.
+- **Логи Patroni**: по умолчанию в systemd journal (`journalctl -u patroni`); файл — при заданном `logfile` в `patroni.yml`.
+- **Kubernetes как DCS**: Patroni может использовать Lease API Kubernetes вместо etcd — см. [Zalando Postgres Operator](./zalando_postgres_operator.md); эндпоинты `/liveness` и `/readiness` предназначены для зондов K8s.
 
-### Ключевые метрики и проверки
+## Лучшие практики
 
-| Метрика / Проверка | Инструмент | Порог | Значение |
-| :--- | :--- | :--- | :--- |
-| `patroni_must_up` | Prometheus / curl | 1 | Patroni жив на всех узлах. |
-| `etcd_health` | `etcdctl endpoint health` | healthy | Все узлы etcd доступны. |
-| `pg_is_in_recovery` | SQL-запрос | false только на одном узле | Если `false` на двух и более — split-brain. |
-| `patroni_role` | REST API `/patroni` | `leader` только на одном | Два `leader` = катастрофа. |
-| `replication_lag` | `patronictl list` | < `maximum_lag_on_failover` | Большой лаг при падении мастера = риск потери данных при failover. |
-| `watchdog_status` | `cat /proc/watchdog` или `wd_keepalive` | 1 | 0 = Watchdog не активен. |
+1. **`watchdog: mode: required`** — обязательно в production; `off`/`automatic` оставляют окно для split-brain.
+2. **Правило таймеров**: `loop_wait + 2 * retry_timeout <= ttl` (дефолты 10 + 2×10 = 30 удовлетворяют ему); `ttl` минимум 20 с, `retry_timeout` минимум 3 с.
+3. **Нечётный кворум** 3 (или 5) узлов etcd + PostgreSQL; регулярно тестируйте switchover — это плановое обслуживание, а не авария.
+4. **Не правьте `postgresql.conf` вручную** — только через `patronictl edit-config` / `PATCH /config`; иначе конфигурация расойдётся между узлами.
+5. **Мониторинг** (Prometheus-метрики `/metrics`): `patroni_primary` (1 ровно на одном узле), `patroni_postgres_running`, `patroni_xlog_replayed_location` (лаг), `patroni_cluster_unlocked`, `patroni_dcs_last_seen` (свежесть связи с DCS), `patroni_pending_restart`, `patroni_is_paused`.
+6. **Автоматическая проверка split-brain** (cron/systemd timer):
 
-### Автоматические проверки (Cron/Systemd)
+    ```bash
+    #!/bin/bash
+    # /usr/local/bin/patroni_splitbrain_check.sh
+    PRIMARIES=$(for node in 10.0.0.1 10.0.0.2 10.0.0.3; do
+        curl -sf http://$node:8008/patroni | jq -r .role
+    done | grep -c '^primary$')
 
-```bash
-#!/bin/bash
-# /usr/local/bin/patroni_splitbrain_check.sh
-LEADERS=$(for node in 10.0.0.1 10.0.0.2 10.0.0.3; do
-    curl -sf http://$node:8008/patroni | jq -r .role
-done | grep -c leader)
+    if [ "$PRIMARIES" -gt 1 ]; then
+        echo "CRITICAL: Multiple primaries detected ($PRIMARIES)" | mail -s "PATRONI SPLIT-BRAIN" ops@example.com
+        exit 2
+    elif [ "$PRIMARIES" -eq 0 ]; then
+        echo "WARNING: No primary detected" | mail -s "PATRONI NO PRIMARY" ops@example.com
+        exit 1
+    fi
+    echo "OK: Single primary"
+    ```
 
-if [ "$LEADERS" -gt 1 ]; then
-    echo "CRITICAL: Multiple leaders detected ($LEADERS)" | mail -s "PATRONI SPLIT-BRAIN" ops@example.com
-    exit 2
-elif [ "$LEADERS" -eq 0 ]; then
-    echo "WARNING: No leader detected" | mail -s "PATRONI NO LEADER" ops@example.com
-    exit 1
-fi
-echo "OK: Single leader"
-```
-
-### Рекомендации по конфигурации
-
-1.  **`watchdog: mode: required`** — обязателен в production. Никогда не используйте `off` или `automatic` на production-базах.
-2.  **`ttl` и `loop_wait`:** `ttl` должен быть минимум в 2-3 раза больше `loop_wait`. Рекомендуется `ttl: 30`, `loop_wait: 10`.
-3.  **`master_start_timeout`:** Установите 30-60 секунд. Если узел не может подтвердить лидерство за это время — он должен остановить БД, а не ждать вечно.
-4.  **Четное число узлов PostgreSQL:** Используйте 3 или 5 узлов. 2 узла дают риск split-brain при network partition (кворум etcd из 2 узлов невозможен).
-5.  **Сетевая изоляция:** Убедитесь, что между узлами PostgreSQL и etcd есть стабильная связь с латентностью < 10 мс и packet loss < 0.1%.
-6.  **Аппаратный Watchdog:** На физических серверах используйте IPMI/iDRAC/iLO Watchdog Timer. Программный (`softdog`) работает, но менее надежен при kernel panic.
-
----
-
-## Вопросы на собеседованиях
-
-1.  **Что такое Split Brain в контексте Patroni?**
-    - Состояние, при котором два узла одновременно считают себя мастерами. Приводит к порче данных, так как PostgreSQL не поддерживает multi-primary.
-
-2.  **Как Patroni предотвращает Split Brain?**
-    - DCS (etcd) с алгоритмом Raft обеспечивает, что только один узел может владеть Leader Lock.
-    - Watchdog: при зависании Patroni ядро перезагружает узел.
-    - Fencing: при потере связи с DCS узел переводит БД в read-only или останавливает.
-    - STONITH: аппаратное отключение проигравшего узла.
-
-3.  **Что такое Fencing и зачем он нужен?**
-    - Метод принудительного отсечения старого мастера от ресурсов (остановка PostgreSQL, перезагрузка узла). Гарантирует, что старый мастер не может продолжать запись после того как новый мастер уже выбран.
-
-4.  **Чем отличается software Watchdog от hardware Watchdog?**
-    - Software (`softdog`): работает на уровне kernel module, сбрасывается из userspace. Не защищает при kernel panic или OOM.
-    - Hardware: интегрирован в BMC (iDRAC/iLO/IPMI). Срабатывает даже при kernel panic. Более надежен, но требует поддержки железа.
-
-5.  **Что такое `master_start_timeout` и как он помогает?**
-    - Максимальное время, которое Patroni ждет перед тем как остановить PostgreSQL, если не может подтвердить лидерство в DCS. Защищает от "мертвого мастера", который продолжает писать, но не может обновить TTL.
-
-6.  **Что такое `maximum_lag_on_failover`?**
-    - Порог отставания реплики (в байтах), при превышении которого реплика не может быть повышена до мастера. Защищает от потери данных при failover, если реплика не дождалась всех WAL-сегментов.
-
-7.  **Как обнаружить, что в кластере два мастера?**
-    - `SELECT pg_is_in_recovery()` — должен возвращать `false` только на одном узле.
-    - `curl http://<node>:8008/patroni | jq .role` — `leader` должен быть только на одном узле.
-    - `patronictl list` — показывает статус каждого узла.
-
-8.  **Что делать, если вы обнаружили Split Brain?**
-    - Немедленно остановить один из мастеров (аппаратно или через hypervisor).
-    - На выжившем узле проверить целостность данных.
-    - На stopped узле очистить `data_dir` и позволить Patroni сделать `basebackup`.
-    - Провести аудит потерь данных.
-
-9.  **Почему 2 узла для PostgreSQL + Patroni — плохая идея?**
-    - При 2 узлах etcd + 2 узлах PostgreSQL потеря одного узла приводит к потере кворума. Patroni не может выбрать лидера. Используйте минимум 3 узла.
-
-10. **В чем разница между Failover и Switchover?**
-    - Failover: автоматическое или ручное переключение при аварии старого мастера. Может привести к потере данных (uncommitted transactions).
-    - Switchover: плановый перенос роли. Синхронная репликация гарантирует RPO=0.
-
-| Фактор | PostgreSQL в Kubernetes | PostgreSQL на ВМ |
-| :--- | :--- | :--- |
-| **Управление** | Через операторы (Zalando, CloudNativePG). | Ручное или через Ansible (Patroni). |
-| **Автоматизация** | Встроена в оператор (самоисцеление, бэкапы). | Требует настройки внешних инструментов (Barman, WAL-G). |
-| **Команда** | Подходит для продуктовых команд (DevOps-style). | Предпочтительно при наличии выделенного отдела DBA. |
-| **Сложность** | Высокая (требует глубокого знания K8s Networking/Storage). | Средняя (классический стек). |
-| **Fencing** | Lease API Kubernetes (облачный). | Аппаратный/Программный Watchdog. |
-
----
+7. **Бэкап etcd** — без DCS кластер неуправляем: стратегии резервного копирования etcd — в [Backup strategies for etcd](../../../etcd/backup_strategies.md).
+8. **Безопасность REST API**: привязывайте `restapi.listen` к внутреннему интерфейсу или настраивайте `restapi.authentication`; дамп состояния и управление кластером доступны через API.
+9. **План отката** при switchover: обратный switchover на прежний узел (`patronictl switchover --candidate <старый_мастер>`) после проверки работоспособности нового лидера.
 
 ## Дополнительная информация
 
 **См. также:**
 
-- [Отказоустойчивость PostgreSQL](../Concepts/high_availability.md) — теория RPO/RTO и механизмы DCS.
-- [Репликация в PostgreSQL](../Concepts/replication.md) — SSoT по типам репликации.
-- [Обзор etcd](../../../etcd/architecture-and-concepts.md) — архитектура хранилища конфигураций.
-- [Zalando Postgres Operator](./zalando_postgres_operator.md) — эксплуатация стека в Kubernetes.
+- [Отказоустойчивость PostgreSQL](../Concepts/high_availability.md) — теория RPO/RTO, жизненный цикл failover, сравнение Patroni/CloudNativePG/repmgr.
+- [Репликация в PostgreSQL](../Concepts/replication.md) — типы репликации, слоты, `pg_rewind`.
+- [Обзор etcd](../../../etcd/architecture-and-concepts.md) — архитектура DCS; [Raft и консенсус](../../../etcd/raft_consensus.md) — механизм против двух лидеров.
+- [Бэкапы и восстановление](../Concepts/backup_and_recovery.md) — WAL-архивирование, PITR, pgBackRest/WAL-G.
+- [Zalando Postgres Operator](./zalando_postgres_operator.md) — тот же стек в Kubernetes.
 - [Безопасная установка СУБД](../../installation_security.md) — общие принципы защиты баз данных.
 
-**Инструменты:** `Patroni`, `etcd`, `HAProxy`, `Keepalived`, `Watchdog`, `patronictl`.
+**Инструменты:** `Patroni`, `etcd`, `HAProxy`, `Keepalived`, `Watchdog (softdog/BMC)`, `patronictl`, `pgBackRest`, `WAL-G`.
+
+**Внешние источники:** [Patroni documentation](https://patroni.readthedocs.io/) (configuration, REST API, patronictl, watchdog), [GitHub patroni/patroni](https://github.com/patroni/patroni) (release notes).

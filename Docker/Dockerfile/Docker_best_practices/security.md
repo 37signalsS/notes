@@ -1,5 +1,7 @@
 # Безопасность в Dockerfile
 
+**Актуально для:** Docker 24.x / BuildKit включён по умолчанию
+
 ## Определения
 
 - **Поверхность атаки (Attack Surface):** Совокупность всех установленных пакетов, активных процессов, открытых портов и доступных утилит в контейнере, которые могут быть использованы для эксплولاتции.
@@ -9,10 +11,20 @@
 - **SBOM (Software Bill of Materials):** Машиночитаемый перечень всех компонентов и зависимостей образа, необходимый для аудита безопасности и соответствия стандартам (например, CycloneDX).
 - **Hardening (Укрепление):** Процесс настройки образа для минимизации уязвимостей (удаление лишнего ПО, ограничение прав файловой системы).
 - **Distroless / Chiseled:** Минималистичные образы, не содержащие менеджеров пакетов, shell и стандартных утилит Linux, что сводит поверхность атаки к абсолютному минимуму.
+- **Rootless Docker:** Режим запуска демона Docker без прав root на хосте, предотвращающий компрометацию хоста при взломе демона. В 2026 году является рекомендованным стандартом для production-сред.
+- **SELinux (Security-Enhanced Linux):** Мандатный контроль доступа (LSM) в RHEL/CentOS/Fedora, работающий по принципу enforcing/permitting по политикам. Docker применяет профиль `container_t` по умолчанию, дополняющий AppArmor на Debian-системах.
+- **gVisor (runsc):** Песочница для контейнеров, в которой системные вызовы обрабатываются пользовательским ядром, а не напрямую ядром хоста. Повышает изоляцию для untrusted-кода.
+- **Kata Containers:** Контейнеры, запущенные внутри легковесных виртуальных машин (QEMU/Cloud-Hypervisor), обеспечивающие аппаратную изоляцию.
+- **Sandboxed Runtime:** Обобщающий термин для runtimes с повышенной изоляцией (gVisor, Kata, Firecracker).
+- **.dockerignore:** Файл, исключающий файлы из контекста сборки. Без него в образ могут попасть секреты (`.env`, `*.pem`, `id_rsa`), кэши и артефакты разработки.
+- **Docker Content Trust (DCT/Notary):** Механизм подписывания и верификации образов (устаревший, заменён на Cosign/Sigstore). Сохраняется для обратной совместимости.
+- **Userns-remap:** Механизм маппинга UID 0 (root) внутри контейнера на непривилегированного пользователя хоста (например, UID 100000), предотвращающий эскалацию привилегий при побеге из контейнера.
+- **Air-gapped среда:** Инфраструктура с физической изоляцией от внешних сетей. Требует предварительной загрузки образов и обновлений сканеров CVE.
+- **Cgroups v2:** Современная версия Control Groups (стандарт по умолчанию с Docker 24+). Позволяет ограничивать CPU, RAM, I/O и количество процессов (pids-limit) для защиты от DoS-атак.
 - **Linux Capabilities:** Механизм ядра Linux, разделяющий права суперпользователя (root) на отдельные полномочия (например, `NET_BIND_SERVICE`, `SYS_PTRACE`). Docker по умолчанию отключает опасные capabilities (например, `CAP_SYS_TIME`, `CAP_NET_ADMIN`), и позволяет настраивать набор через `--cap-add`/`--cap-drop`.
-- **Seccomp (Secure Computing):** Механизм фильтрации системных вызовов, ограничивающий контейнер только безопасным набором сискеов. Docker применяет профиль `docker-default` по умолчанию, который блокирует ~44 опасных вызовов.
+- **Seccomp (Secure Computing):** Механизм фильтрации системных вызовов, ограничивающий контейнер только безопасным набором системных вызовов. Docker применяет профиль `docker-default` по умолчанию, который блокирует ~44 опасных вызовов.
 - **AppArmor:** Мандатный контроль доступа (LSM) в Ubuntu/Debian, ограничивающий доступ процесса к файлам, сетевым портам и capabilities на уровне политик. Docker применяет профиль `docker-default` по умолчанию.
-- **User Namespace Remapping (Userns):** Механизм маппинга UID 0 (root) внутри контейнера на непривилегированного пользователя хоста (например, UID 100000), предотвращающий эскалацию привилегий при побеге из контейнера.
+- **SELinux (Security-Enhanced Linux):** Мандатный контроль доступа (LSM) в RHEL/CentOS/Fedora. Docker применяет профиль `container_t` по умолчанию, дополняющий AppArmor на Debian-системах.
 - **VEX (Vulnerability Exploitability eXchange):** Формат аттестаций, позволяющий разработчику официально заявить, что конкретная CVE не влияет на продукт (например, из-за отсутствия вызова уязвимой функции), устраняя ложные срабатывания сканеров.
 
 ## Базовые концепции
@@ -24,6 +36,7 @@
 2.  **Выбор базового образа:** Предпочитайте `scratch` (пустой образ), `distroless` или `alpine` полноразмерным образам типа `ubuntu` или `debian`.
 3.  **Удаление лишнего:** Если в образе остались пакетные менеджеры, удаляйте их кэши и временные файлы в том же слое `RUN`, где они были созданы.
 4.  **Изоляция зависимостей:** Используйте `COPY --link` и монтирование кэша (`--mount=type=cache`), чтобы зависимости не попадали в слои образа.
+5.  **`.dockerignore`:** Исключайте из контекста сборки секреты (`.env`, `*.pem`, `id_rsa`, `*.key`), кэши (`node_modules`, `.git`) и артефакты разработки. Отсутствие `.dockerignore` — частая причина утечки секретов в образы.
 
 ### Изоляция и привилегии
 
@@ -35,6 +48,10 @@
 - **Capabilities:** Используйте `--cap-drop=ALL` для удаления всех привилегий и `--cap-add` только для необходимых (например, `NET_BIND_SERVICE` для привязки к портам < 1024).
 - **No-new-privileges:** Флаг `--security-opt=no-new-privileges` блокирует получение дополнительных прав дочерними процессами через SUID/SGID бинарники.
 - **Seccomp:** Профиль `docker-default` включён по умолчанию. Избегайте `--security-opt seccomp=unconfined` в production.
+- **AppArmor / SELinux:** Дополнительные мандатные контролы доступа (LSM). Docker применяет профили `docker-default` (AppArmor) и `container_t` (SELinux) по умолчанию. Детали: **[Укрепление контейнеров](../../Docker_security/container_hardening.md)**.
+- **Rootless Docker:** Запуск демона и контейнеров от непривилегированного пользователя хоста — стандарт де-факто для production 2026. Предотвращает компрометацию хоста при взломе демона. Детали: **[Защита хоста и демона](../../Docker_security/host_daemon_hardening.md)**.
+- **Resource Limits (Cgroups v2):** Ограничивайте CPU (`--cpus`), память (`--memory`, `--memory-swap`), I/O и количество процессов (`--pids-limit`) для защиты от DoS-атак. Отключение свопа (`--memory-swap` равным `--memory`) делает производительность предсказуемой. Детали: **[Укрепление контейнеров](../../Docker_security/container_hardening.md)**.
+- **Sandboxed Runtimes (gVisor/Kata):** Для multi-tenancy и untrusted-кода используйте gVisor (`runsc`) или Kata Containers для аппаратной изоляции. Детали: **[Укрепление контейнеров](../../Docker_security/container_hardening.md#5-sandboxed-runtimes-повышенная-изоляция)**.
 
 ### Безопасность цепочки поставок (Supply Chain)
 
@@ -46,10 +63,27 @@
 
 ### Сетевая безопасность контейнера
 
+Сеть — одна из наиболее уязвимых поверхностей контейнера. Docker v28+ закрывает по умолчанию входящий трафик из LAN к IP-адресам контейнеров на неопубликованные порты, но это защита от внешних соседей, а не сегментация: между контейнерами одной bridge-сети все порты остаются доступны, поэтому явная сегментация обязательна.
+
 - **Привязка к localhost:** Используйте `-p 127.0.0.1:80:80` вместо `-p 80:80` для сервисов, не требующих внешнего доступа.
 - **Открытые порты:** Каждый открытый порт — потенциальная точка атаки. Документируйте и минимизируйте количество портов.
-- **Docker networks:** Используйте изолированные сети для разных групп сервисов (frontend, backend, database) вместо общей сети `bridge`.
-- **DNS-отравление:** В контейнерах DNS-настройки могут быть перехвачены. Используйте конкретные DNS-серверы для критичных сервисов.
+- **Изолированные Docker networks:** Используйте отдельные сети для разных групп сервисов (frontend, backend, database) вместо общей сети `bridge`. Включите `--icc=false` для блокировки межконтейнерного взаимодействия внутри одной сети.
+- **Внутренние сети (`--internal`):** Для сервисов, не требующих исходящего доступа в интернет (например, базы данных), используйте `docker network create --internal db-net`. Это блокирует весь внешний трафик.
+- **DNS-безопасность:** Контейнеры наследуют DNS от хоста. Для критичных сервисов указывайте конкретные DNS-серверы через `--dns` и включайте DNSSEC (`--dns-opt edns0 trust-ad`), чтобы предотвратить DNS-отравление.
+- **Шифрование Overlay-сетей:** В Docker Swarm используйте `--opt encrypted` для IPSec-шифрования трафика между узлами кластера.
+- **Docker socket:** Никогда не монтируйте `/var/run/docker.sock` напрямую в продакшене. Используйте `docker-socket-proxy` с минимальными правами. Детали: **[Защита хоста и демона](../../Docker_security/host_daemon_hardening.md)**.
+- **Сетевая политика (NetworkPolicy):** В Kubernetes используйте NetworkPolicy для сегментации трафика между подами. Детали: **[Сетевые политики Docker](../../Docker_network/docker_network_policies.md)**.
+
+## Предварительные требования
+
+- **Docker** версии 24.x или новее (Cgroups v2, BuildKit по умолчанию, Rootless стабильный).
+- **Docker Compose** версии 2.x (для определения сетей, tmpfs и security-opt в `compose.yaml`).
+- **Kubernetes** версии 1.28+ (для Pod Security Standards `restricted` и RuntimeDefault seccomp).
+- **Linux Kernel** версии 5.19+ (полная поддержка Cgroups v2, User Namespaces, Landlock).
+- **Rootless mode** (опционально, но рекомендуется): требует ядро >= 5.11 и настройки `userns`.
+- **ОС хоста:** Ubuntu 22.04+/Debian 12+ (AppArmor), RHEL 9+/Fedora 40+ (SELinux enforcing).
+- **Инструменты для валидации:** `trivy`, `hadolint`, `dockle`, `cosign`, `docker scout` (см. раздел валидации).
+
 ## Практические сценарии
 
 ### Сценарий 1: Укрепление образа (Hardening)
@@ -311,6 +345,157 @@ spec:
                       operator: Equals
                       value: "https://github.com/owner/repo/.github/workflows/ci.yml"
 ```
+
+### Сценарий 9: Ограничение ресурсов (Cgroups v2)
+
+Запуск контейнера с жёсткими лимитами CPU, памяти и процессов для защиты от DoS-атак.
+
+```bash
+docker run -d \
+  --memory="512m" \
+  --memory-swap="512m" \
+  --cpus="0.5" \
+  --pids-limit 100 \
+  --ulimit nofile=1024:2048 \
+  --cap-drop=ALL \
+  --cap-add=NET_BIND_SERVICE \
+  --security-opt=no-new-privileges \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  -p 3000:3000 \
+  my-app:latest
+```
+
+**Валидация:**
+```bash
+# Проверка лимитов
+docker inspect <container> --format '{{.HostConfig.Memory}}'
+# → 536870912 (512 MiB)
+
+# Проверка pids-limit
+docker inspect <container> --format '{{.HostConfig.PidsLimit}}'
+# → 100
+
+# Тест OOM: запуск с недостаточной памятью
+docker run --memory="128m" my-app:latest stress --vm 1 --vm-bytes 200M
+# → killed (OOM)
+```
+
+### Сценарий 10: Air-gapped среда (без доступа к интернет)
+
+В изолированной инфраструктуре образы и обновления сканеров должны быть предварительно загружены.
+
+```bash
+# 1. Предварительная загрузка базовых образов во внутренний registry
+docker pull alpine:3.21
+docker tag alpine:3.21 registry.internal/alpine:3.21
+docker push registry.internal/alpine:3.21
+
+# 2. Загрузка базы данных Trivy для офлайн-сканирования
+trivy image --download-db-only --db-repository registry.internal/trivy-db
+
+# 3. Сборка с использованием внутреннего registry
+docker build --build-arg BASE_IMAGE=registry.internal/alpine:3.21 -t my-app:latest .
+
+# 4. Сканирование в air-gapped среде
+trivy image --db-repository registry.internal/trivy-db my-app:latest
+
+# 5. Генерация SBOM офлайн
+syft registry.internal/my-app:latest -o cyclonedx-json > sbom.json
+```
+
+**Docker Compose для air-gapped:**
+```yaml
+services:
+  app:
+    build:
+      context: .
+      args:
+        BASE_IMAGE: registry.internal/python:3.12-slim
+    image: registry.internal/my-app:latest
+```
+
+### Сценарий 11: .dockerignore для безопасности
+
+Исключение секретов и артефактов разработки из контекста сборки.
+
+```dockerignore
+# Секреты
+.env
+*.pem
+*.key
+id_rsa
+*.p12
+secrets/
+
+# Кэши и зависимости
+node_modules
+__pycache__
+.git
+.gitlab-ci.yml
+.dockerignore
+
+# Артефакты разработки
+dist
+build
+coverage
+*.log
+tmp/
+temp/
+```
+
+**Валидация:**
+```bash
+# Проверка что секреты не попали в образ
+docker build -t test-app .
+docker run --rm test-app ls -la /app/.env 2>&1
+# → ls: cannot access '/app/.env': No such file or directory
+
+# Проверка размера контекста сборки (BuildKit)
+docker build --no-cache --progress=plain . 2>&1 | grep "transferring context"
+# → #5 transferring context: 2.048kB done (проверьте что нет лишних файлов)
+```
+
+### Сценарий 12: Запуск через gVisor (Sandboxed Runtime)
+
+Для untrusted-кода или multi-tenancy с повышенными требованиями к изоляции.
+
+```bash
+# 1. Установка gVisor
+curl -fsSL https://gvisor.dev/launch | bash
+
+# 2. Запуск Docker демона с поддержкой runsc
+# В /etc/docker/daemon.json:
+cat <<EOF | sudo tee /etc/docker/daemon.json
+{
+  "runtimes": {
+    "runsc": {
+      "path": "/usr/local/bin/runsc"
+    }
+  }
+}
+EOF
+sudo systemctl restart docker
+
+# 3. Запуск контейнера через gVisor
+docker run --runtime=runsc --rm my-untrusted-app:latest
+
+# 4. Проверка что используется runsc
+docker inspect <container> --format '{{.HostConfig.Runtime}}'
+# → runsc
+```
+
+**Валидация:**
+```bash
+# Попытка монтирования /proc (заблокировано gVisor)
+docker run --runtime=runsc --rm alpine mount -t proc proc /proc 2>&1
+# → mount: /proc: permission denied.
+
+# Проверка доступных системных вызовов
+docker run --runtime=runsc --rm strace -c alpine true
+# → только разрешённые syscalls
+```
+
 ## Валидация и диагностика
 
 ### Проверка Dockerfile
@@ -343,6 +528,10 @@ dockle my-app:latest
 # Docker Scout — рекомендации и CVE
 docker scout quickview my-app:latest
 docker scout cves my-app:latest --only-severity critical,high
+
+# Copacetic — патчинг образа без пересборки
+trivy image --format json --output report.json my-app:latest
+copa patch --image my-app:latest --report report.json --tag patched
 ```
 
 ### Проверка read-only и привилегий
@@ -568,8 +757,14 @@ docker buildx build \
 | **Distroless** | Для production Go/Java/Python | Минимальная поверхность атаки |
 | **SBOM + Provenance** | `--sbom=true --provenance=mode=max` | Аудит и комплаенс |
 | **Image Signing** | Cosign/Sigstore | Гарантия целостности образа |
-| **Seccomp** | `docker-default` (по умолчанию) | Блокировка опасных сискеов |
-| **AppArmor** | `docker-default` (по умолчанию) | Мандатный контроль доступа |
+| **Seccomp** | `docker-default` (по умолчанию) | Блокировка опасных системных вызовов |
+| **AppArmor/SELinux** | `docker-default`/`container_t` (по умолчанию) | Мандатный контроль доступа |
+| **Rootless Docker** | Запуск демона без root на хосте | Предотвращение компрометации хоста |
+| **Resource Limits** | `--memory`, `--cpus`, `--pids-limit` | Защита от DoS-атак |
+| **.dockerignore** | Исключение секретов и кэшей | Предотвращение утечки данных в образ |
+| **Network Isolation** | Отдельные сети, `--internal`, `--icc=false` | Сегментация и минимизация поверхности |
+| **Sandboxed Runtime** | gVisor/Kata для untrusted-кода | Аппаратная/пользовательская изоляция ядра |
+| **Copacetic** | Патчинг CVE без пересборки | Быстрое исправление уязвимостей |
 
 ### Порядок инструкций в безопасном Dockerfile
 
@@ -622,6 +817,7 @@ ENTRYPOINT ["node", "dist/server.js"]
 - [ ] Multi-stage: финальная стадия не содержит инструменты сборки
 - [ ] Базовый образ зафиксирован по SHA256 дайджесту
 - [ ] SUID/SGID биты удалены
+- [ ] `.dockerignore` исключает секреты и артефакты разработки
 - [ ] Нет секретов в `ENV`, `ARG` или `COPY`
 - [ ] Используется `--mount=type=secret` для секретов сборки
 - [ ] `--no-install-recommends` при установке пакетов
@@ -631,15 +827,62 @@ ENTRYPOINT ["node", "dist/server.js"]
 - [ ] `--read-only` с tmpfs для временных данных
 - [ ] `--cap-drop=ALL` + только необходимые capabilities
 - [ ] `--security-opt=no-new-privileges`
+- [ ] `--memory`, `--cpus`, `--pids-limit` заданы
+- [ ] `--memory-swap` равен `--memory` (отключение свопа)
 - [ ] Привязка портов к localhost (если не нужен внешний доступ)
-- [ ] Изолированные Docker networks для разных сервисов
+- [ ] Изолированные Docker networks, `--icc=false` или `--internal`
+- [ ] Конкретные `--dns` и DNSSEC для критичных сервисов
 
 **Сборка и доставка:**
 - [ ] `--sbom=true` и `--provenance=mode=max` включены
-- [ ] Образ подписан через Cosign
+- [ ] Образ подписан через Cosign/Sigstore
 - [ ] Trivy/Dockle не выявил критических проблем
+- [ ] SBOM проверен (Copacetic для быстрого патчинга без пересборки)
 - [ ] Удалённый кэш настроен для CI/CD
 - [ ] Admission-контроллер (Kyverno/OPA) проверяет подписи перед запуском
+
+## Граничные случаи и ограничения
+
+### Distroless и отладка
+
+В distroless/chiseled образах нет shell и стандартных утилит, поэтому невозможно войти в контейнер через `docker exec`. Для отладки используйте:
+- Debug-версии образов: Google Distroless — тег `:debug` (BusyBox); Chainguard — `-dev`-вариант (например, `cgr.dev/chainguard/static:latest-dev`).
+- Multi-stage: отладка в builder stage, production в distroless.
+- `kubectl debug` с эфемерными контейнерами (Kubernetes).
+
+### Rootless Docker и User Namespaces
+
+Rootless mode несовместим с некоторыми возможностями:
+- Нельзя монтировать `cgroups` напрямую.
+- Некоторые storage drivers (devicemapper, btrfs) требуют дополнительной настройки.
+- `--privileged` не работает в Rootless контейнерах (это не баг, а фича).
+
+### Air-gapped среды
+
+В изолированных инфраструктурах:
+- Предварительно загружайте все базовые образы во внутренний registry.
+- Кэшируйте базы данных CVE для Trivy/Grype.
+- SBOM и подписи генерируются офлайн и хранятся в реестре.
+- Copacetic не работает без доступа к репозиториям исправлений.
+
+### gVisor/Kata Containers
+
+- gVisor имеет ограниченную поддержку network-драйверов (не работает с `macvlan`).
+- Kata Containers требует поддержки KVM на хосте и имеет больший overhead (~100MB на контейнер).
+- Оба runtime несовместимы с `--privileged` и некоторыми capabilities.
+
+### Resource Limits и OOM
+
+- При достижении `--memory` limit Docker убивает контейнер с кодом 137 (SIGKILL).
+- `--memory-swap` равный `--memory` отключает swap для контейнера, делая производительность предсказуемой.
+- `--pids-limit` защищает от fork-бомб, но слишком низкое значение ( < 50) может сломать приложения с пулом потоков.
+
+### Docker Content Trust (DCT)
+
+DCT (Notary) является устаревшим механизмом. В 2026 году рекомендуется Cosign/Sigstore:
+- DCT подписывает теги, а не дайджесты (уязвим к tag mutation).
+- Cosign подписывает дайджесты, что обеспечивает неизменяемость.
+- Миграция с DCT на Cosign: **[Подписание и верификация образов](../../Docker_security/image_signature_and_verification.md)**.
 
 ## Дополнительная информация
 
@@ -685,6 +928,11 @@ jobs:
 - **[Сканирование уязвимостей](../../Docker_security/vulnerability_scanning.md)** — настройка Trivy и Grype в пайплайнах.
 - **[SBOM для Docker](../../Docker_security/docker_sbom.md)** — форматы и способы генерации состава ПО.
 - **[Укрепление контейнеров](../../Docker_security/container_hardening.md)** — AppArmor, Seccomp и Capabilities.
-- **[Безопасность цепочки поставок](../../Security/Supply_Chain_Security/overview.md)** — стандарты SLSA и защита от атак на зависимости.
+- **[Безопасность цепочки поставок](../../../Security/Supply_Chain_Security/overview.md)** — стандарты SLSA и защита от атак на зависимости.
 - **[Подписание и верификация образов](../../Docker_security/image_signature_and_verification.md)** — использование Cosign и Sigstore.
 - **[Изоляция Linux](../../Concepts/linux_isolation.md)** — namespaces, cgroups, capabilities и rootfs.
+- **[Docker Bench for Security (CIS)](../../Docker_security/docker_bench_cis.md)** — аудит конфигурации хоста и демона по CIS Benchmark.
+- **[Защита хоста и демона](../../Docker_security/host_daemon_hardening.md)** — rootless, userns-remap, защита `/var/run/docker.sock`.
+- **[SSH-agent в rootless Docker](../../Docker_security/ssh-agent-rootless.md)** — доступ к приватным репозиториям без экспозиции ключа.
+- **[Мониторинг безопасности в Runtime](../../Docker_security/runtime_monitoring.md)** — Falco, Tetragon, eBPF-детектирование аномалий.
+- **[Антипаттерны Dockerfile](../dockerfile-anti-patterns.md)** — каталог антипаттернов: размер, безопасность, сборка, runtime.

@@ -1,5 +1,7 @@
 # Файлы версий — Version Files
 
+**Актуально для:** mise 2026.10.x, asdf 0.20.x (с 0.16.0, 2025-01, asdf переписан на Go), актуальные релизы rustup, direnv, tfenv (проверено 2026-10)
+
 ## Определения
 
 **Version Files** (файлы версий) — конфигурационные файлы, содержащие сведения о конкретной версии языка программирования, рантайма, библиотеки или системного инструмента, необходимых для работы проекта.
@@ -10,7 +12,7 @@
 
 **Environment Parity (Паритет окружений):** Принцип, при котором локальная среда разработчика максимально приближена к продакшену. Файлы версий являются первым шагом к паритету, фиксируя рантаймы и CLI-инструменты.
 
-**Override (Переопределение):** Локальное изменение версии инструмента для конкретной директории без модификации глобального конфига. Может быть явным (через `.tool-versions.local`) или неявным (через переменную окружения `MISE_NODE_VERSION`).
+**Override (Переопределение):** Локальное изменение версии инструмента для конкретной директории без модификации глобального конфига. Может быть явным (через `.mise.local.toml` в mise) или неявным (через переменную окружения `MISE_NODE_VERSION`, `ASDF_NODEJS_VERSION`).
 
 ---
 
@@ -21,11 +23,11 @@
 #### 1. Специализированные (Mono-language)
 Ориентированы на один конкретный стек. Обычно создаются и читаются специализированным менеджером версий:
 
-- `.node-version` / `.nvmrc` — Node.js. Поддерживается `nvm`, `fnm`, `mise`, `asdf`. Формат: строка с версией (например, `20.12.2`) или диапазон (`lts/*`).
+- `.node-version` / `.nvmrc` — Node.js. Поддерживается `nvm`, `fnm`, `mise`, `asdf`. Формат: точная версия (`20.12.2`), частичная версия (`20` или `20.12` — последняя доступная из линейки) или алиас (`node`, `lts/*`, `lts/hydrogen`). semver-диапазоны `nvm` не поддерживает (в нём нет парсера semver); диапазоны умеет `mise`. `nvm` ищет `.nvmrc`, затем `.node-version`, поднимаясь по директориям; файл должен заканчиваться переводом строки.
 - `.ruby-version` — Ruby (rbenv, rvm, mise, asdf).
-- `.python-version` — Python (pyenv, uv, mise, asdf). Формат: точная версия (`3.12.3`) или алиас (`latest`, `system`).
-- `.java-version` — Java (jenv, mise). Используется для переключения между JDK-дистрибутивами (Adoptium, Oracle, Azul).
-- `.jenv-version` — Java (jenv). В отличие от `.java-version`, позволяет задавать точный путь к JDK или использовать 32-битную версию.
+- `.python-version` — Python (pyenv, uv, mise, asdf). Формат: точная версия (`3.12.3`) или `system` (в pyenv — системный интерпретатор).
+- `.java-version` — Java (jenv, mise). Используется для переключения между JDK-дистрибутивами (Temurin/Adoptium, Oracle, Azul); команда `jenv local` записывает выбранную версию в этот файл.
+- `.jenv-version` — устаревший файл jenv (до введения `.java-version`). Для обратной совместимости jenv его читает, но `.java-version` в той же директории имеет приоритет. Алиасы jenv кодируют дистрибутив и разрядность (например, `temurin64-21.0.2`).
 - `rust-toolchain.toml` — Rust (rustup). Позволяет фиксировать не только версию, но и компоненты (clippy, rust-src, rustfmt), канал (`stable`, `beta`, `nightly`) и профиль (`minimal`, `complete`).
 - `.sdkmanrc` — JVM-стек и инструменты сборки (Gradle, Maven, Spring Boot). Поддерживается `sdkman`.
 - `go.mod` — хотя это файл зависимостей, директива `go 1.x` используется инструментами (`g`, `goenv`) для выбора рантайма.
@@ -34,35 +36,33 @@
 - `.haskell-version` — Haskell (ghcup, mise, asdf).
 - `.swift-version` — Swift (swiftenv, mise).
 - `.erlang-version` — Erlang (kerl, asdf).
-- `.dotnet-tools.json` — .NET CLI tools (`dotnet tool`). Хранит версии глобальных инструментов (например, `dotnet-ef`, `paket`).
-- `.terraform-version` — Terraform (tfenv, mise). Поддерживает диапазоны (`>= 1.8, < 2.0`).
+- `.config/dotnet-tools.json` — .NET CLI local tools. Манифест локальных инструментов (создаётся командой `dotnet new tool-manifest`, устанавливается `dotnet tool install` без `--global`, восстанавливается `dotnet tool restore`). Глобальные инструменты (`~/.dotnet/tools`, per-user) манифеста не имеют.
+- `.terraform-version` — Terraform (tfenv, mise). Формат tfenv: точная версия (`1.8.5`), `latest`, `latest:<regex>`, `latest-allowed` / `min-required` (разрешают версию по `required_version` из `.tf`-файлов). tfenv не парсит semver-диапазоны; диапазоны (`>= 1.8, < 2.0`) поддерживает mise.
 - `.lua-version` — Lua (luaver, mise, asdf).
-- `.nodeenv` — Python-пакет, но иногда используется как маркер версии Node в проектах.
 
 #### 2. Универсальные (Polyglot / Modern)
 Управляют всем стеком проекта в одном месте. Используются многоязычными менеджерами:
 
 - `.tool-versions` — стандарт, введенный `asdf`, поддерживаемый `mise`. Формат: `tool version` (по одному инструменту на строку).
-- `.mise.toml` — расширенный формат для `mise`. Поддерживает диапазоны версий, переменные окружения (`[env]`) и задачи (`[tasks]`). TOML-синтаксис позволяет задавать условные конфигурации через `if`.
-- `.rtx.toml` — устаревшее название для `.mise.toml` (до переименования проекта `rtx` → `mise`). Обратная совместимость сохраняется.
+- `.mise.toml` — расширенный формат для `mise` (также читается как `mise.toml`, `mise/config.toml`, `.mise/config.toml`, `.config/mise.toml`). Поддерживает диапазоны версий, переменные окружения (`[env]`) и задачи (`[tasks]`, в том числе условные через `if`). Личные некоммитируемые переопределения — в `.mise.local.toml`.
+- `.rtx.toml` — устаревшее название конфига (проект `rtx` → `mise`, 2024). Поддержка объявлена deprecated и в списке конфигов актуальных версий mise отсутствует — переименуйте в `mise.toml`.
 - `.envrc` — файл для `direnv`. Позволяет загружать не только переменные, но и активировать окружения через хуки (например, `use flake` для Nix, `layout python` для виртуальных окружений).
-- `.direnvrc` — глобальный конфиг `direnv` в `~/.config/direnv/`. Определяет пользовательские функции `layout_*` и глобальные правила безопасности.
+- `direnvrc` — глобальный конфиг `direnv` в `~/.config/direnv/direnvrc` (или `$XDG_CONFIG_HOME/direnv/direnvrc`). Bash-код, загружаемый перед каждым `.envrc`: пользовательские функции `layout_*` и расширения stdlib. Дополнительно подгружаются файлы `~/.config/direnv/lib/*.sh`; настройки самого `direnv` — в `direnv.toml`.
 
 ### Сравнение менеджеров версий
 
 | Инструмент | Языки | Файлы | Особенности |
 | :--- | :--- | :--- | :--- |
-| **asdf** | Все (плагины) | `.tool-versions` | Стандарт индустрии, огромная база плагинов. Медленные шимы на Bash. |
-| **mise** | Все | `.mise.toml`, `.tool-versions` | На Rust (очень быстрый), встроенный task runner, заменяет direnv, обратная совместимость с `.rtx.toml`. |
+| **asdf** | Все (плагины) | `.tool-versions` | Стандарт индустрии, огромная база плагинов. С 0.16.0 (2025-01) переписан на Go: один бинарник, 2–20x быстрее Bash-версии; плагины остались на Bash. |
+| **mise** | Все | `.mise.toml`, `.tool-versions` | На Rust (очень быстрый), встроенный task runner, заменяет direnv. `.rtx.toml` — deprecated, в актуальных версиях не читается. |
 | **nvm / fnm** | Node.js | `.nvmrc`, `.node-version` | Узкая специализация, высокая стабильность. `fnm` написан на Rust и работает быстрее `nvm`. |
 | **pyenv / uv** | Python | `.python-version` | `pyenv` компилирует Python из исходников (медленно); `uv` скачивает бинарники (быстро) и заменяет `pip`, `pipx`, `venv`. |
 | **rustup** | Rust | `rust-toolchain.toml` | Официальный инструмент, глубокая интеграция с cargo. Поддерживает override в поддиректориях. |
-| **jenv** | Java | `.java-version`, `.jenv-version` | Управляет версиями JDK. Поддерживает 32-битные архитектуры и разные дистрибутивы. |
+| **jenv** | Java | `.java-version` | Управляет версиями JDK; алиасы кодируют дистрибутив и разрядность (например, `temurin64-21.0.2`). |
 | **sdkman** | JVM / Build | `.sdkmanrc` | Менеджер для JVM-языков и инструментов сборки (Gradle, Maven, Kotlin, Groovy). Только Unix. |
 | **direnv** | Все (окружение) | `.envrc` | Не управляет версиями напрямую, но активирует окружение при входе в директорию. Может вызывать `mise` или `asdf` внутри себя. |
-| **fnm** | Node.js | `.nvmrc`, `.node-version` | Быстрая альтернатива `nvm` на Rust. Поддерживает `.node-version` и `.nvmrc`. |
-| **g** | Go | `(отсутствует)` | Менеджер версий Go без файла версий — работает через аргументы командной строки. |
-| **tfenv** | Terraform | `.terraform-version` | Специализированный менеджер для Terraform. Поддерживает диапазоны версий. |
+| **g** | Go | `go.mod` | Менеджер Go без собственного файла версий: автоматическое переключение по директиве `go` в `go.mod`, иначе через CLI (`g use 1.19.10`). |
+| **tfenv** | Terraform | `.terraform-version` | Специализированный менеджер для Terraform. Форматы `latest`, `latest:<regex>`, `latest-allowed`, `min-required` (без semver-диапазонов). |
 
 ### Механизм работы: Шиммы (Shims) vs Динамический PATH
 
@@ -172,17 +172,17 @@ mise current
 # → terraform 1.8.5
 # → kubectl 1.30.0
 
-# asdf
+# asdf (0.16+: вывод в 4 колонки — инструмент, версия, источник, установлен)
 asdf current
-# → nodejs 20.12.2 (set by /path/to/project/.tool-versions)
-# → python 3.12.3 (set by /path/to/project/.tool-versions)
+# → nodejs 20.12.2 /path/to/project/.tool-versions true
+# → python 3.12.3 /path/to/project/.tool-versions true
 ```
 
 ### Сценарий 2: Расширенный конфиг с .mise.toml (задачи, env, диапазоны)
 Подходит для проектов, где нужно не только фиксировать версии, но и автоматизировать рутинные операции.
 
 **Предварительные требования:**
-- Установленный `mise` (версия 2024+).
+- Установленный `mise` (Calver-версии, 2024+).
 - Оболочка с активацией `mise`.
 
 **Шаг 1: Создание .mise.toml**
@@ -238,7 +238,7 @@ mise run tf-lint
 
 # Проверка версий
 mise which terraform
-# → ~/.local/share/mise/installs/terraform/1.8.4/bin/terraform
+# → ~/.local/share/mise/installs/terraform/1.8.5/bin/terraform
 ```
 
 **Валидация:**
@@ -261,18 +261,24 @@ mise current
 
 **mise:**
 ```bash
-# При изменении .mise.toml или первом входе инструмент запросит подтверждение
+# При первом входе mise запрашивает доверие интерактивно.
+# Без терминала (editor, CI) команда завершается ошибкой:
+# error: Config files in /path/to/project are not trusted
+
 # Если вы доверяете файлу:
 mise trust .mise.toml
 
-# Если файл из непроверенного источника — НЕ ВЫПОЛНЯЙТЕ trust
-# Команда mise с новым недоверенным .mise.toml:
-mise x python -- python -c "print('ok')"
-# → error: .mise.toml is not trusted. Run `mise trust .mise.toml` to trust it.
+# Статус доверия для текущей директории и всех родительских:
+mise trust --show
 
-# Отозвать доверие (если файл был изменен без вашего ведома)
+# Отозвать явное доверие (если файл был изменён без вашего ведома):
 mise trust --untrust .mise.toml
+
+# Пропустить файл и игнорировать его впредь:
+mise trust --ignore .mise.toml
 ```
+
+> **Нюанс:** конфиг, содержащий только `min_version`, записи `[tools]` с простыми версиями и `[tasks]` без `secrets`, доверия не требует (кроме paranoid mode). Команды `mise run`, `mise exec` и шорткаты задач доверяют активный конфиг автоматически.
 
 **direnv:**
 ```bash
@@ -305,7 +311,10 @@ direnv deny
 
 ```dockerfile
 # Dockerfile
-FROM node:$(cat .node-version)-slim AS builder
+# Командная подстановка $(cat ...) в директиве FROM недопустима —
+# версию передаём через ARG и --build-arg
+ARG NODE_VERSION=20.12.2
+FROM node:${NODE_VERSION}-slim AS builder
 
 WORKDIR /app
 COPY package*.json ./
@@ -314,7 +323,7 @@ RUN npm ci --only=production
 COPY . .
 RUN npm run build
 
-FROM node:$(cat .node-version)-slim
+FROM node:${NODE_VERSION}-slim
 WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
@@ -323,10 +332,10 @@ CMD ["node", "dist/main.js"]
 
 **Валидация:**
 ```bash
-# Собрать образ
-docker build -t myapp:$(cat .node-version) .
-# → Step 1/6 : FROM node:20.12.2-slim AS builder
-# → 20.12.2-slim: Pulling from library/node
+# Собрать образ, подставив версию из файла
+docker build --build-arg NODE_VERSION="$(cat .node-version)" -t myapp:$(cat .node-version) .
+# → #1 [internal] load build definition from Dockerfile
+# → #3 [internal] load metadata for docker.io/library/node:20.12.2-slim
 
 # Запустить и проверить версию Node внутри контейнера
 docker run --rm myapp:$(cat .node-version) node -v
@@ -336,20 +345,27 @@ docker run --rm myapp:$(cat .node-version) node -v
 **Dockerfile с использованием `.mise.toml` (multi-stage):**
 
 ```dockerfile
-# Этап 1: Сборка с помощью mise
+# Этап 1: сборка с точными версиями инструментов из .mise.toml
 FROM python:3.12-slim AS builder
 
-# Установка mise
-RUN pip install mise
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl https://mise.jdx.dev/install.sh | sh
+ENV PATH="/root/.local/share/mise/shims:${PATH}"
 
-# Копируем файлы версий
-COPY .tool-versions .mise.toml ./
-RUN mise install
+WORKDIR /app
+COPY .mise.toml ./
+RUN mise install          # устанавливает точные версии из [tools]
 
-# Этап 2: Финальный образ
+COPY . .
+RUN python -m build       # реальная сборка проекта
+
+# Этап 2: финальный образ
 FROM python:3.12-slim
-COPY --from=builder /root/.local/share/mise/installs/python/3.12.3/bin/python3.12 /usr/local/bin/python3.12
+WORKDIR /app
 COPY --from=builder /app/dist ./dist
+# При необходимости перенести конкретный инструмент из mise:
+# COPY --from=builder /root/.local/share/mise/installs/yq/4.44.1/bin/yq /usr/local/bin/
 CMD ["python3.12", "dist/main.py"]
 ```
 
@@ -401,10 +417,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # v4 — актуальная мажорная версия action; устанавливает asdf и
+      # инструменты из закоммиченного .tool-versions (вход tool_versions
+      # нужен только если файла нет в репозитории — это содержимое файла, а не путь)
       - name: Setup asdf
-        uses: asdf-vm/actions/install@v3
-        with:
-          tool_versions: .tool-versions
+        uses: asdf-vm/actions/install@v4
 
       - name: Run tests
         run: |
@@ -437,44 +454,49 @@ test:
 ```
 
 ### Сценарий 6: Локальные переопределения
-Иногда разработчику нужно временно использовать другую версию инструмента для отладки, не меняя глобальный конфиг.
+Иногда разработчику нужно временно использовать другую версию инструмента для отладки, не меняя общий конфиг.
+
+> **Важно:** файла `.tool-versions.local` не существует — ни asdf, ни mise его не читают. Локальные переопределения делаются через `.mise.local.toml` (mise), переменные окружения или команду записи версии в проектный файл.
 
 **Способы переопределения (по приоритету, от высшего к низшему):**
 
 1. **Переменная окружения (самый высокий приоритет):**
 ```bash
-# Переопределить версию Node для одной команды
-NODE_VERSION=18.20.0 node -v  # → v18.20.0
+# Переопределить версию Node для одной команды (mise)
+MISE_NODE_VERSION=18.20.0 node -v  # → v18.20.0
+
+# Аналоги для других менеджеров:
+# ASDF_NODEJS_VERSION=18.20.0 ...   (asdf)
+# TFENV_TERRAFORM_VERSION=1.8.5 ... (tfenv)
+# JENV_VERSION=21.0.2 ...           (jenv)
 ```
 
-2. **Локальный файл проекта (для asdf/mise):**
+2. **Локальный некоммитируемый файл (mise):**
 ```bash
-# .tool-versions.local (должен быть в .gitignore)
-nodejs 18.20.0
-python 3.11.9
-
-# Файл автоматически подхватывается asdf/mise
-```
-
-3. **Временный override для asdf:**
-```bash
-# Установить версию только для текущей директории
-asdf local nodejs 18.20.0
-
-# Проверить
-asdf current nodejs
-# → nodejs 18.20.0 (set by /path/to/project/.tool-versions)
-```
-
-4. **Временный override для mise:**
-```bash
-# Установить версию только для текущей директории
-mise use node@18.20.0
+# Личные версии — в .mise.local.toml (должен быть в .gitignore)
+mise use --env local node@18.20.0
+# → записывает nodejs = "18.20.0" в .mise.local.toml
 
 # Проверить
 mise current nodejs
-# → nodejs 18.20.0 (set by .mise.toml)
+# → nodejs 18.20.0 (set by .mise.local.toml)
 ```
+`mise use node@18.20.0` без `--env local` пишет в ближайший общий конфиг (обычно `.mise.toml`) — коммите этот файл только если версия общая для команды.
+
+**direnv:** локальные переопределения через `.envrc.local` — добавьте в `.envrc` строку `source_env_if_exists .envrc.local` и игнорируйте `.envrc.local` в git.
+
+3. **Запись версии в проектный файл (asdf):**
+```bash
+# asdf 0.16+ (Go): команды asdf local/asdf global заменены на asdf set
+asdf set nodejs 18.20.0
+
+# Проверить
+asdf current nodejs
+# → nodejs 18.20.0 /path/to/project/.tool-versions true
+```
+Для asdf <0.16 (Bash) команда `asdf local nodejs 18.20.0` работает как раньше. Обходной путь для изолированного файла в asdf — переменная `ASDF_DEFAULT_TOOL_VERSIONS_FILENAME`.
+
+**asdf без своего локального файла:** у asdf нет нативного аналога `.mise.local.toml`; `asdf set` пишет прямо в `.tool-versions` текущей директории.
 
 ### Сценарий 7: Совмещение с Nix (flake.nix)
 Современный подход к абсолютно воспроизводимым средам. Может сосуществовать с `mise` через интеграцию в `.envrc`.
@@ -523,11 +545,11 @@ use flake
 # Проверить, что менеджер версий активен
 which terraform
 # → ~/.local/share/mise/shims/terraform  (mise)
-# → ~/.pyenv/shims/terraform             (pyenv)
+# → ~/.asdf/shims/terraform              (asdf)
 # → /usr/local/bin/terraform             (не используется менеджер)
 
 # Проверить конфигурационный файл
-ls -la .tool-versions .mise.toml .python-version .nvmrc
+ls -la .tool-versions .mise.toml .mise.local.toml .python-version .nvmrc
 
 # Проверить вывод текущих версий
 mise current
@@ -609,8 +631,22 @@ git ls-files | grep -E 'version|tool-versions|mise.toml|nvmrc'
 
 **Решение:**
 - Зафиксировать версию runner в CI (`runs-on: ubuntu-22.04`).
-- Использовать pinned версии в CI-шагах (`actions/checkout@v4` вместо `@v4` — конкретный хэш).
+- Пинить версии CI-шагов полным SHA коммита (`actions/checkout@<полный-sha>`) вместо плавающего тега (`@v4`) — защита от подмены тега.
 - Добавить шаг верификации версий в пайплайн.
+
+### Проблема 5: `asdf local: command not found` после обновления
+**Симптом:** после обновления asdf до 0.16+ команды `asdf local` и `asdf global` не найдены.
+
+**Причина:** asdf 0.16.0 (2025-01) — полный рерайт на Go; `asdf local` и `asdf global` заменены на `asdf set`. Вывод `asdf current` тоже изменился (4 колонки вместо 3).
+
+**Решение:**
+```bash
+# Было (asdf < 0.16):              Стало (asdf 0.16+):
+# asdf local nodejs 20.12.2        → asdf set nodejs 20.12.2        (в .tool-versions текущей директории)
+# asdf global nodejs 20.12.2       → asdf set --home nodejs 20.12.2  (в домашнем .tool-versions)
+# asdf shell nodejs 20.12.2        → ASDF_NODEJS_VERSION=20.12.2 ...  (переменная в текущем шелле)
+```
+Другие ломающие изменения 0.16: дефисные команды убраны (`asdf list-all` → `asdf list all`, `asdf plugin-add` → `asdf plugin add`), команда `asdf update` удалена (обновление — только через пакетный менеджер ОС или ручную замену бинарника). Инструкция по миграции: [asdf-vm.com/guide/upgrading-to-v0-16](https://asdf-vm.com/guide/upgrading-to-v0-16.html).
 
 ---
 
@@ -618,23 +654,16 @@ git ls-files | grep -E 'version|tool-versions|mise.toml|nvmrc'
 
 ### Белые пятна и рекомендации
 
-- **Git и .gitignore:** Файлы версий **ОБЯЗАТЕЛЬНО** должны быть в репозитории. Исключение — локальные переопределения (например, `.tool-versions.local`, `.mise.local.toml`, `.python-version.local`), которые стоит добавить в `.gitignore`.
-- **.gitignore паттерны:**
+- **Git и .gitignore:** Файлы версий **ОБЯЗАТЕЛЬНО** должны быть в репозитории. В `.gitignore` попадают только локальные переопределения:
 ```gitignore
-# Версионные файлы — коммитим
-.tool-versions
-.mise.toml
-.mise.toml.local.example
-.envrc
-rust-toolchain.toml
-
 # Локальные переопределения — игнорируем
-.tool-versions.local
 .mise.local.toml
 .envrc.local
 .python-version.local
 .terraform-version.local
 ```
+Коммитируемые файлы (`.tool-versions`, `.mise.toml`, `.envrc`, `rust-toolchain.toml`, `.config/dotnet-tools.json`) в `.gitignore` попадать не должны — строка с таким именем в `.gitignore` проигнорирует файл целиком.
+- **Ключевое слово `latest`:** не используйте `latest` в `.tool-versions` — `asdf install` не умеет его разрешать в файле (работает только в аргументах командной строки). Фиксируйте точные версии, иначе воспроизводимость окружения теряется.
 - **Nix (flake.nix):** Современный подход к абсолютно воспроизводимым средам. Может сосуществовать с `mise` через интеграцию в `.envrc`. При использовании Nix файлы версий могут дублировать конфигурацию — выбирайте один источник истины.
 - **Devcontainers:** Файл `devcontainer.json` часто дополняет файлы версий, описывая не только рантайм, но и расширения IDE и системные зависимости. DevContainer может использовать файлы версий через `postCreateCommand`.
 - **Corepack (Node.js):** Современная альтернатива `nvm` для управления версиями `npm`, `yarn`, `pnpm`. Использует `package.json` поле `"packageManager"` и не требует отдельного файла версий.
@@ -644,7 +673,7 @@ rust-toolchain.toml
 
 - **Медленная компиляция pyenv:** Компиляция Python из исходников может занимать 5–15 минут. Используйте `pyenv install --list` для проверки доступных версий и `uv` для быстрого скачивания бинарников.
 - **Плагины asdf:** Не все плагины поддерживают все ОС (macOS, Linux, WSL). Перед добавлением инструмента проверьте совместимость плагина.
-- **Windows:** Многие менеджеры версий (asdf, pyenv, mise) имеют ограниченную поддержку Windows. Для Windows используйте `nvm-windows`, `scoop` или WSL2.
+- **Windows:** `pyenv` и `asdf` (плагины — Bash-скрипты) не работают на Windows нативно — используйте `pyenv-win`, `nvm-windows`, `scoop` или WSL2. `mise` работает на Windows нативно (`winget install jdx.mise`), но инструменты из asdf-плагинов на ней не запускаются — только core-бэкенды (`aqua`, `github`, `http`, `npm`, `vfox`) и сами Windows-совместимые инструменты.
 - **Версии в lock-файлах:** Файлы версий управляют версиями инструментов, но не гарантируют идентичность зависимостей. Для этого требуются lock-файлы (`package-lock.json`, `poetry.lock`, `Cargo.lock`, `go.sum`).
 
 ### Процедура миграции между менеджерами
@@ -652,24 +681,26 @@ rust-toolchain.toml
 При переходе с одного менеджера на другой:
 
 ```bash
-# 1. Экспорт текущих версий
-asdf list > current-versions.txt
-mise current > current-versions.txt
+# 1. Экспорт текущих версий (для сверки)
+asdf current > asdf-versions.txt
+mise current > mise-versions.txt
 
-# 2. Удаление старого менеджера
-brew uninstall asdf  # или удаление вручную
-
-# 3. Установка нового менеджера
+# 2. Установка нового менеджера
 curl https://mise.jdx.dev/install.sh | sh
 
-# 4. Перенос конфигурации
-# Для .tool-versions → .mise.toml автоматически поддерживается
-cp .tool-versions .mise.toml
+# 3. Перенос конфигурации
+# mise нативно читает .tool-versions — конвертация не требуется.
+# При желании переписать конфиг вручную в .mise.toml (TOML-синтаксис,
+# формат несовместим побайтово — cp .tool-versions .mise.toml некорректен):
+#   [tools]
+#   nodejs = "20.12.2"
 
-# 5. Верификация
+# 4. Верификация
 mise install
 mise current
 ```
+
+> **Миграция asdf 0.15 → 0.16+:** см. раздел «Проблема 5» и [upgrading-to-v0-16](https://asdf-vm.com/guide/upgrading-to-v0-16.html) — меняется не только менеджер, но и синтаксис команд.
 
 ---
 
@@ -686,7 +717,9 @@ mise current
 
 - [mise documentation](https://mise.jdx.dev/)
 - [asdf-vm guide](https://asdf-vm.com/)
+- [asdf upgrade guide 0.16 (Go rewrite)](https://asdf-vm.com/guide/upgrading-to-v0-16.html)
 - [rustup specification](https://rust-lang.github.io/rustup/overrides.html#the-toolchain-file)
 - [direnv manual](https://direnv.net/)
 - [nvm GitHub](https://github.com/nvm-sh/nvm)
 - [pyenv GitHub](https://github.com/pyenv/pyenv)
+- [tfenv GitHub](https://github.com/tfutils/tfenv)

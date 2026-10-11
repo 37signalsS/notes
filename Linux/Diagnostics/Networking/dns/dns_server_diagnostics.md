@@ -219,7 +219,7 @@ ss -unp | grep :53 | wc -l
 watch -n1 "sysctl net.netfilter.nf_conntrack_count"
 ```
 
-**Решение:** Увеличить `net.netfilter.nf_conntrack_max`, использовать DNS over TCP, настроить `single-request-reopen` на клиентах.
+**Решение:** Увеличить `net.netfilter.nf_conntrack_max`, использовать DNS over TCP, настроить `single-request-reopen` на glibc-клиентах (musl/Alpine игнорирует эту опцию).
 
 ### Сценарий 7: Unbound — DNSSEC SERVFAIL для легитимных доменов
 

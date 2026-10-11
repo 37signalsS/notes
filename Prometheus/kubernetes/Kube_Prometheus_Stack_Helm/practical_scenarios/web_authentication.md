@@ -716,7 +716,7 @@ kubectl delete networkpolicy --all -n monitoring
 | **WAL corruption при аварийном отключении** | Prometheus стартует с пустым WAL, метрики за последние 2 часа потеряны | Настройте `--storage.tsdb.min-block-duration` и `--storage.tsdb.max-block-duration` для частого сброса блоков. |
 | **etcd v2 (устаревший)** | Operator v0.70+ требует etcd v3; миграция обязательна | Обновите кластер до etcd v3 перед установкой. |
 | **Prometheus 3.0 + legacy validation** | При использовании старых дашбордов с кириллицей в именах метрик возможен отказ Admission Webhook | Установите аргумент `--name-validation-scheme=legacy` в deployment Operator. |
-| **Grafana: сброс пароля admin** | При утечке пароля admin требуется сброс без доступа к UI | `kubectl exec -it <grafana-pod> -n monitoring -- grafana-cli admin password <new_password>` |
+| **Grafana: сброс пароля admin** | При утечке пароля admin требуется сброс без доступа к UI | `kubectl exec -it <grafana-pod> -n monitoring -- grafana cli admin reset-admin-password <new_password>` |
 | **Alertmanager auth rotation** | При смене пароля в Secret Alertmanager перезапускается, алерты могут потеряться на 10-30с | Используйте rolling update с `maxUnavailable: 0` и preStop hook для drain. |
 | **OAuth2-proxy за firewall** | IdP недоступен из кластера, OAuth2-proxy возвращает `502` | Разрешите egress к доменам IdP через NetworkPolicy или NAT gateway. |
 | **mixed auth (Ingress + native)** | Двойная аутентификация может привести к путанице и двойным запросам credentials | Выбирайте один уровень: либо Ingress, либо нативный. |

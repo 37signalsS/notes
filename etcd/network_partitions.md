@@ -80,17 +80,12 @@ curl -s http://localhost:2379/metrics | grep etcd_network_peer_round_trip_time_s
 
 ### CheckQuorum (v3.4+)
 
-Лидер периодически проверяет, получает ли он ответы от большинства узлов:
+Лидер периодически проверяет, получает ли он ответы от большинства узлов. Включён по умолчанию в etcd 3.4+ во всех режимах запуска (`CheckQuorum: true` в `startNode`/`restartNode`/`restartAsStandaloneNode`, `etcdserver/raft.go`, тег v3.4.13); CLI-флага `--check-quorum` в etcd нет (настройка raft-уровневая, не пользовательская).
 
-```bash
-# Включить CheckQuorum (включён по умолчанию в 3.4+)
-etcd --check-quorum=true
-```
-
-**Если CheckQuorum отключён:**
+**Если CheckQuorum отключён (только в кастомных встраиваниях raft с `CheckQuorum: false`):**
 - Лидер может оставаться в меньшинстве, "притворяясь", что он лидер.
 - Клиенты, подключённые к нему, получают `Unavailable` или `DeadlineExceeded`.
-- Это предотвращает "зависание" запросов на изолированном лидере.
+- Включённый CheckQuorum предотвращает "зависание" запросов на изолированном лидере.
 
 ### Pre-Vote (v3.5+)
 
@@ -190,8 +185,8 @@ etcd **автоматически** восстанавливается посл�
 ## Best Practices
 
 - **Чётное число узлов — антипаттерн:** При 2-2 partition кластер полностью блокируется.
-- **Multi-AZ:** Размещайте узлы в разных AZ, но убедитесь, что RTT < 50 ms.
-- **Heartbeat interval > RTT:** Если RTT между AZ = 30 ms, `heartbeat-interval` должен быть ≥ 100 ms.
+- **Multi-zone:** Размещайте узлы в разных зонах отказа, но убедитесь, что RTT < 50 ms.
+- **Heartbeat interval > RTT:** Если RTT между зонами = 30 ms, `heartbeat-interval` должен быть ≥ 100 ms.
 - **Election timeout ≥ 10× heartbeat:** Предотвращает ложные выборы при джиттере.
 - **Мониторинг leader changes:** `rate(etcd_server_leader_changes_seen_total[15m]) > 3` — алерт.
 - **Chaos Engineering:** Регулярно тестируйте partition resilience в staging.
@@ -210,5 +205,5 @@ etcd **автоматически** восстанавливается посл�
 ## См. также
 
 * **[Raft консенсус](./raft_consensus.md)** — детали алгоритма и выборов.
-* **[Кластеризация и восстановление](./clustering_and_recovery.md)** — Multi-AZ и HA-топологии.
+* **[Кластеризация и восстановление](./clustering_and_recovery.md)** — multi-zone и HA-топологии.
 * **[Систематический troubleshooting](./troubleshooting.md)** — playbook для partition.

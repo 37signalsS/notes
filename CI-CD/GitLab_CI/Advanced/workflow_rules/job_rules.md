@@ -1,5 +1,7 @@
 # Правила запуска задач (rules)
 
+**Актуально для:** GitLab 17.x–19.x
+
 ## Определения
 
 **`rules`** — современный и рекомендуемый способ декларативного управления жизненным циклом задач в GitLab CI/CD. Директива позволяет гибко определять условия включения задачи в пайплайн, изменять её параметры (переменные, зависимости, статус ошибки) и режим запуска на основе контекста выполнения.
@@ -74,13 +76,21 @@ next_job:
     - if: '$UPSTREAM_VERSION == "1.0"' # $UPSTREAM_VERSION не будет видна здесь, если она из dotenv
 ```
 
-**Приоритет переменных (Rank в версии 19.x):**
-При использовании `rules:variables` GitLab соблюдает строгую иерархию (от высшего к низшему):
-1. Ручной запуск (Web UI / API).
-2. Переменные задачи (`job:variables`).
-3. **Переменные правила (`rules:variables`)**.
-4. Входные параметры (`spec:inputs`).
-5. Глобальные переменные пайплайна (`variables`).
+**Приоритет переменных (GitLab 19.x):**
+При использовании `rules:variables` GitLab соблюдает строгую иерархию. В контексте файла `.gitlab-ci.yml` переменные правила занимают приоритет над переменными задачи, но ниже внешних источников (от высшего к низшему):
+
+1. Переменные политик выполнения пайплайна (Pipeline execution policy).
+2. Переменные пайплайна: ручной запуск (Web UI / API), триггеры, расписания, upstream-пайплайны.
+3. Переменные проекта (`project variables`).
+4. Переменные группы (`group variables`).
+5. Переменные инстанса (`instance variables`).
+6. Переменные из `artifacts:reports:dotenv` предыдущих задач.
+7. Переменные задачи (`job:variables`).
+8. **Переменные правила (`rules:variables`)** — внутри matching-правила.
+9. Переменные `workflow:rules:variables`.
+10. Глобальные переменные пайплайна (`variables` на верхнем уровне).
+11. Deployment variables.
+12. Предопределённые переменные GitLab (`CI_*`).
 
 ## Практические сценарии
 
@@ -276,7 +286,7 @@ ansible:lint:
   rules:
     - changes:
         paths: ["ansible/**/*"]
-        compare_to: 'main'
+        compare_to: 'refs/heads/main'
 
 ansible:deploy:staging:
   stage: deploy
@@ -314,7 +324,7 @@ salt:validate:
   rules:
     - changes:
         paths: ["salt/**/*"]
-        compare_to: 'main'
+        compare_to: 'refs/heads/main'
 
 salt:apply:
   stage: apply
@@ -341,7 +351,7 @@ network:validate:
   rules:
     - changes:
         paths: ["configs/**/*"]
-        compare_to: 'main'
+        compare_to: 'refs/heads/main'
 
 network:deploy:
   stage: deploy
@@ -541,7 +551,7 @@ deploy:production:
 
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
-| **changes не срабатывает** | Отсутствует `compare_to` для обычных пушей | Добавьте `compare_to: 'main'` или используйте `$CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
+| **changes не срабатывает** | Отсутствует `compare_to` для обычных пушей | Добавьте `compare_to: 'refs/heads/main'` или используйте `$CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
 | **Сравнение с собой** | `compare_to` указывает на текущую ветку | Убедитесь, что `compare_to` указывает на БАЗОВУЮ ветку, а не на текущую |
 | **Неверный ref** | `compare_to` принимает только полные refs | Используйте `refs/heads/main`, а не `main` |
 
@@ -640,7 +650,7 @@ rules:
 rules:
   - changes:
       paths: ["src/**/*"]
-      compare_to: 'main'
+      compare_to: 'refs/heads/main'
     when: on_success
   - when: never
 ```
@@ -652,7 +662,7 @@ rules:
   - if: '$CI_COMMIT_BRANCH == "main"'
     changes:
       paths: ["deploy/**/*"]
-      compare_to: 'main'
+      compare_to: 'refs/heads/main'
     when: manual
   - when: never
 ```
@@ -704,4 +714,12 @@ rules:
 - **[Основы GitLab CI/CD](../../Concepts/gitlab_ci_basics.md)** — базовые принципы и синтаксис.
 - **[Продвинутые рабочие процессы](../gitlab_ci_advanced_workflow.md)** — описание `workflow`, `auto_cancel` и оптимизация.
 - **[Справочник директив](./directives_definitions.md)** — детализация смежных ключевых слов.
-- **[Построение DAG с needs](./dag_with_needs.md)** — глубокое погружение в зависимости.
+- **[Обзор Runner и Executor](../gitlab_ci_runners_executors.md)** — типы executor'ов и конфигурация.
+- **[Окружения и развертывания](../../Concepts/environments_and_deployments.md)** — protected environments, approvals, rollback.
+- **[Кэширование и артефакты](../gitlab_ci_caching/caching_overview.md)** — стратегии кэширования.
+- **[Артефакты в GitLab CI](../gitlab_ci_caching/gitlab_ci_artifacts.md)** — artifacts, reports, retention policies.
+- **[Родительско-дочерние пайплайны](../Downstream_Pipelines/parent_child_pipelines.md)** — trigger и parent-child паттерны.
+- **[Compliance и Audit](../compliance_and_audit.md)** — compliance frameworks и approval rules.
+- **[CI/CD Catalog компоненты](../../Reusable_Pipelines/ci_cd_catalog_components.md)** — публикация и использование компонентов.
+- **[Container Registry](../container_registry.md)** — интеграция Registry с CI/CD.
+- **[Pipeline Schedules](../pipeline_schedules.md)** — cron-расписания и Scheduled Execution Policies.

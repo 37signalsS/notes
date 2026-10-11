@@ -1,78 +1,91 @@
 # Argo CD — игнорирование различий и принудительная синхронизация
 
-> **Актуальность (2026):** В версии Argo CD v3.x механизмы сравнения ресурсов (diffing) стали более интеллектуальными благодаря глубокой интеграции с **Server-Side Apply (SSA)**. Основным методом игнорирования динамических изменений стал `managedFieldsManagers`, который заменяет ручное перечисление полей через JSON Pointers в 90% случаев.
+**Актуально для:** Argo CD v3.5.x / master. Версионные отличия: `managedFieldsManagers` — с v2.3 (PR #7869, декабрь 2021); server-side diff (`--server-side-diff`, `compare-options: ServerSideDiff=true`) — с v3.5.
 
 ## Предварительные требования
 
 Перед настройкой `ignoreDifferences` необходимо убедиться в следующем:
 
-1. **Версия Argo CD:** v2.6+ (рекомендуется v3.x для полной поддержки `managedFieldsManagers` и Server-Side Diff).
-2. **Доступ к кластеру:** У приложения Argo CD есть права на чтение метаданных ресурсов (`get`, `list`, `watch`).
-3. **Понимание источника изменений:** Определите, какой контроллер или вебхук мутирует ресурс (HPA, cert-manager, Service Mesh, облачный провайдер). Это критично для выбора метода игнорирования.
-4. **Server-Side Apply (рекомендуется):** Для v3.x рекомендуется включить SSA на уровне кластера или приложения — это упрощает управление `managedFields` и делает `managedFieldsManagers` более предсказуемым.
+1. **Версия Argo CD:** `ignoreDifferences` с `jsonPointers`/`jqPathExpressions` доступен во всех актуальных версиях; `managedFieldsManagers` — с v2.3; server-side diff — с v3.5.
+2. **Доступ к кластеру:** у приложения Argo CD есть права на чтение ресурсов (`get`, `list`, `watch`) — без них diff не строится.
+3. **Определён источник изменений:** нужно знать, какой контроллер или мутирующий вебхук меняет ресурс (HPA, cert-manager, сервисный меш, оператор) и как он записывается в `metadata.managedFields`.
+4. **Понимание причины `OutOfSync`:** типичные причины (см. раздел «Базовые концепции») — лишние поля, удаляемые ресурсы, мутации вебхуков, нестабильный рендер Helm, переупорядочивание полей контроллером. Игнорирование применяется только когда причину нельзя исправить в Git.
 
 ## Определения
 
-**Игнорирование различий (Ignore Differences)** — механизм Argo CD, позволяющий исключать конкретные поля или целые группы полей ресурсов из процесса сравнения (diffing). Это предотвращает ложные срабатывания статуса `OutOfSync` для полей, которые изменяются внешними контроллерами, мутирующими вебхуками или автоматикой облачных провайдеров.
+**Игнорирование различий (Ignore Differences)** — механизм Argo CD, исключающий конкретные поля или группы полей ресурсов из процесса сравнения (diffing). Предотвращает ложные срабатывания статуса `OutOfSync` для полей, которые изменяются внешними контроллерами или мутирующими вебхуками.
 
-**Принудительная синхронизация (Force Sync)** — режим, при котором Argo CD использует команду `kubectl apply --force`. Это приводит к удалению и повторному созданию ресурса, если обычное обновление (patch/update) невозможно из-за конфликтов или наличия неизменяемых (immutable) полей.
+**Принудительная синхронизация (Force Sync)** — режим синхронизации, при котором Argo CD удаляет и пересоздаёт ресурс (sync option `Force=true`, аналог `kubectl delete` + `create`). Применяется, когда обычное обновление (apply/patch) некорректно применяется к ресурсу с неизменяемыми полями.
 
-**managedFieldsManagers** — метод игнорирования, основанный на метаданных `managedFields` в Kubernetes. Позволяет Argo CD автоматически игнорировать любые изменения, внесенные указанным контроллером (менеджером), не требуя ручного указания путей к полям. Метод основан на механизме field ownership, который отслеживает, какой актор (controller, operator, пользователь) управляет каждым полем ресурса.
+**managedFieldsManagers** — метод игнорирования по владельцу поля: Argo CD исключает из diff все поля, которыми в `metadata.managedFields` live-ресурса владеет указанный менеджер. Метод основан на механизме field management Kubernetes, который отслеживает, какой актор (controller, operator, пользователь) управляет каждым полем ресурса.
 
-**Server-Side Diffing** — режим, при котором вычисление разницы между Git и кластером делегируется API-серверу Kubernetes. Это позволяет учитывать работу всех мутирующих вебхуков (например, инъекцию sidecar-контейнеров) до проведения сравнения. При включении этого режима Argo CD получает уже «финальное» состояние ресурса после работы всех admission-контроллеров.
+**Server-Side Diff** — режим вычисления diff (v3.5+), при котором желаемое состояние применяется к kube-apiserver в dry-run режиме, и diff считается по результату применения. Учитывает defaulting и работу мутирующих вебхуков API-сервера.
+
+**RespectIgnoreDifferences** — sync option (default `false`), заставляющий Argo CD учитывать `ignoreDifferences` не только при вычислении diff, но и при применении состояния во время синхронизации.
 
 ## Базовые концепции
 
-### Методы настройки игнорирования
+### Почему ресурс может быть OutOfSync
 
-Argo CD предлагает три способа идентификации полей для исключения:
+Официальная документация выделяет пять причин, которые невозможно исправить в Git и для которых предназначено игнорирование:
 
-1.  **managedFieldsManagers (Рекомендуемый):** Опирается на то, *кто* изменил поле. Самый надежный метод для систем типа HPA, cert-manager или облачных контроллеров. Преимущество — автоматическое покрытие всех полей, которыми управляет указанный менеджер, без необходимости перечислять каждый путь. Недостаток — не работает, если контроллер не использует SSA или не записывает `managedFields`.
+1. **Лишние/неизвестные поля** в манифесте: API-сервер отбрасывает их при чтении live-состояния, и diff показывает «отсутствующее» поле.
+2. **Ресурсы, требующие удаления**, при отключённом pruning.
+3. **Мутирующий вебхук** изменяет объект после его создания (инъекция sidecar, подпись `caBundle`).
+4. **Нестабильный рендер Helm**: шаблонные функции вроде `randAlphaNum` генерируют разные данные при каждом `helm template`.
+5. **Переупорядочивание полей контроллером**: HPA-контроллер переупорядочивает `spec.metrics` в определённом порядке (kubernetes issue #74099). Обход: упорядочить `spec.metrics` в Git так, как предпочитает контроллер.
 
-2.  **jqPathExpressions:** Опирается на логику JQ. Позволяет выбирать элементы в списках по условию (например, контейнер с конкретным именем в массиве `containers`). Гибкий метод для сложных структур данных. Преимущество — возможность фильтрации по значениям внутри списков. Недостаток — более сложный синтаксис, выше риск ошибок в выражениях.
+### Методы идентификации полей
 
-3.  **jsonPointers:** Опирается на RFC6901. Классический метод указания жесткого пути к полю (например, `/spec/replicas`). Преимущество — простота и предсказуемость. Недостаток — не поддерживает динамические условия и работу со списками (кроме указания индекса).
+Argo CD предлагает три способа указания исключаемых полей (можно комбинировать в одном правиле):
 
-**Критерии выбора метода:**
+1. **managedFieldsManagers** — опирается на *кто* изменил поле. Автоматически покрывает все поля указанного менеджера без перечисления путей. Ограничение: требует, чтобы мутирующий актор записывался в `managedFields` под ожидаемым именем менеджера.
+2. **jqPathExpressions** — JQ-выражения, позволяют выбирать элементы списков по содержимому (например, контейнер с конкретным именем в массиве `containers`). Argo CD оборачивает выражение в `del(...)` и удаляет выбранные узлы.
+3. **jsonPointers** — пути по RFC 6901 (например, `/spec/replicas`), применяются как JSON Patch `remove` (RFC 6902). Простой и предсказуемый метод для фиксированных полей.
 
 | Сценарий | Рекомендуемый метод | Причина |
 | :--- | :--- | :--- |
-| Контроллер масштабирования (HPA) | `managedFieldsManagers` | HPA всегда использует `kube-controller-manager` |
-| Service Mesh (Istio, Linkerd) | `jqPathExpressions` | Sidecar-контейнеры добавляются динамически в массив |
-| Фиксированное поле (replicas, clusterIP) | `jsonPointers` | Простой путь, не изменяется структурой |
-| Облачный провайдер (GKE, AWS) | `managedFieldsManagers` | Контроллеры записывают `managedFields` |
-| Kyverno / OPA Gatekeeper | `managedFieldsManagers` или `jqPathExpressions` | Зависит от типа мутации |
+| Контроллер масштабабирования (HPA) | `managedFieldsManagers` | Документированный паттерн для `kube-controller-manager` |
+| Сервисный меш (Istio, Linkerd) | `jqPathExpressions` | Sidecar добавляется динамически в массив контейнеров |
+| Фиксированное поле (`replicas`, аннотация) | `jsonPointers` | Простой путь, не зависит от структуры |
+| Политика мутации (Kyverno, OPA) | `managedFieldsManagers` или `jqPathExpressions` | Зависит от того, как контроллер записывает мутации |
 
-### Уровни конфигурации
+**Группа и тип ресурса:** `group` — имя Kubernetes API-группы без версии (пустая строка или `""` для core-группы); `kind` — тип ресурса. Группа и тип сопоставляются как glob-выражения, поэтому поддерживаются шаблоны: `group: '*'`, `kind: '*'`. Правило можно сузить до конкретного ресурса полями `name` и `namespace`.
 
-- **Локальный (Application level):** Правила описываются внутри манифеста `Application` в секции `spec.ignoreDifferences`. Применяются только к конкретному приложению. Подходит для специфичных правил, которые не должны распространяться на другие приложения.
+**Экранирование:** символ `/` в имени поля (например, в аннотации `node-role.kubernetes.io/worker`) кодируется как `~1`: `/metadata/labels/node-role.kubernetes.io~1worker`.
 
-- **Глобальный (System level):** Настраивается в ConfigMap `argocd-cm`. Позволяет задать общие правила (Customizations) для всех приложений в кластере на основе Group/Kind ресурсов. Формат ключа: `resource.customizations.ignoreDifferences.<group>_<kind>`. Для всех ресурсов одного типа используется `resource.customizations.ignoreDifferences.all`.
+### Уровни конфигурации и их взаимодействие
 
-**Приоритет:** Локальные правила переопределяют глобальные. Если правило задано и на уровне Application, и в `argocd-cm`, применяется правило из Application.
+- **Локальный (Application level):** правила в секции `spec.ignoreDifferences` манифеста `Application`. Применяются только к данному приложению.
+- **Глобальный (System level):** ключи `resource.customizations.ignoreDifferences.<group>_<kind>` и `resource.customizations.ignoreDifferences.all` в ConfigMap `argocd-cm`. Применяются ко всем приложениям экземпляра Argo CD.
+
+**Взаимодействие:** уровни **объединяются (union), а не переопределяют друг друга**. Системные правила добавляются к правилам приложения, и оба набора применяются при нормализации diff (реализация: `NewIgnoreNormalizer` в `util/argo/normalizers/diff_normalizer.go` добавляет системные правила в список приложения). Локальное правило не отключает и не заменяет глобальное — если оба уровня задают пути для одного Group/Kind, исключаются оба набора полей.
+
+### Статус diff по умолчанию и `resource.compareoptions`
+
+Поле `status` большинства ресурсов **не участвует в diff по умолчанию**: ключ `resource.compareoptions` в `argocd-cm` поддерживает параметр `ignoreResourceStatusField` со значениями `crd` (только CustomResourceDefinition), `all` (все ресурсы — **default**) и `none` (выключено). Если состояние `status` намеренно используется как часть желаемого конфига (не рекомендуется), поведение меняется через этот ключ; документация рекомендует `crd` вместо `none`, поскольку `status` CRD часто коммитится в Git.
+
+Там же задаётся `ignoreAggregatedRoles: true` — игнорировать изменения `rules`, вызванные Aggregated ClusterRoles (RBAC-агрегация).
 
 ### Параметр RespectIgnoreDifferences
 
-По умолчанию `ignoreDifferences` влияет только на визуальный статус (превращает `OutOfSync` в `Synced`). Однако при запуске синхронизации Argo CD по умолчанию попытается привести поле в соответствие с Git.
+По умолчанию `ignoreDifferences` влияет **только на вычисление diff** (и, соответственно, на статус `Synced`/`OutOfSync`). На этапе синхронизации желаемое состояние применяется как есть: patch строится трёхсторонним слиянием live-состояния, желаемого состояния и аннотации `kubectl.kubernetes.io/last-applied-configuration`, что может вернуть игнорируемое поле к значению из Git.
 
-Чтобы Argo CD **не перезаписывал** игнорируемые поля во время автоматической или ручной синхронизации, необходимо установить параметр `RespectIgnoreDifferences=true` в `syncOptions`.
-
-**Важно:** Если `RespectIgnoreDifferences=true` не установлен, Argo CD будет пытаться применить значение из Git даже для игнорируемых полей при каждой синхронизации. Это может привести к конфликтам с внешними контроллерами.
+Чтобы Argo CD **не перезаписывал** игнорируемые поля при автоматической или ручной синхронизации, устанавливается sync option `RespectIgnoreDifferences=true` (default `false`).
 
 ### Взаимодействие с Server-Side Apply (SSA)
 
-При использовании SSA каждый контроллер, мутирующий ресурс, получает уникальный идентификатор менеджера в `metadata.managedFields`. Argo CD v3.x по умолчанию использует SSA для синхронизации, что делает `managedFieldsManagers` наиболее надежным методом.
+При использовании SSA (sync option `ServerSideApply=true`) каждый контроллер, мутирующий ресурс, получает идентификатор менеджера в `metadata.managedFields`, что делает `managedFieldsManagers` предсказуемым.
 
-**Рекомендация:** Для новых приложений всегда включайте `ServerSideApply=true` в `syncOptions`. Это обеспечит:
-- Корректное разделение полей между контроллерами
-- Предсказуемое поведение `managedFieldsManagers`
-- Отсутствие конфликтов при одновременном управлении полями разными системами
+Однако `managedFields` заполняются при **любой** записи через API-сервер (начиная с Kubernetes 1.16), а не только при SSA: при client-side apply менеджером выступает клиент (например, `kubectl-client-side-apply`), при обновлениях контроллером — имя его field manager. Поэтому `managedFieldsManagers` работает и без SSA — при условии, что мутирующий актор записывается в `managedFields` под известным именем. SSA лишь делает имена менеджеров стабильными и явными.
+
+**Рекомендация:** для новых приложений `ServerSideApply=true` в `syncOptions` обеспечивает корректное разделение полей между контроллерами и предсказуемое поведение `managedFieldsManagers`.
 
 ## Практические сценарии
 
-### Сценарий 1: Совместная работа с HPA (v3.x Way)
+### Сценарий 1: Совместная работа с HPA
 
-Вместо перечисления поля `replicas`, мы доверяем контроллеру, управляющему масштабированием. HPA использует `kube-controller-manager` как менеджер полей, поэтому все изменения количества реплик автоматически игнорируются.
+HPA-контроллер (компонент `kube-controller-manager`) управляет `spec.replicas` Deployment. Правило по менеджеру полей покрывает все поля, которыми владеет `kube-controller-manager`:
 
 ```yaml
 spec:
@@ -80,22 +93,26 @@ spec:
   - group: apps
     kind: Deployment
     managedFieldsManagers:
-    - kube-controller-manager # HPA управляется этим менеджером
+    - kube-controller-manager
   syncPolicy:
     syncOptions:
     - RespectIgnoreDifferences=true
 ```
 
-**Проверка:** После применения убедитесь, что поле `replicas` в `metadata.managedFields` содержит менеджера `kube-controller-manager`:
+Это тот же паттерн, что в официальной документации и примере `argocd-cm.yaml` (`resource.customizations.ignoreDifferences.all: managedFieldsManagers: [kube-controller-manager]`).
+
+**Проверка:** убедитесь, что поле `replicas` действительно принадлежит менеджеру `kube-controller-manager`:
 
 ```bash
-kubectl get deployment <name> -o jsonpath='{.metadata.managedFields[*].manager}' | tr ' ' '\n' | grep kube-controller
-# → result: kube-controller-manager
+kubectl get deployment <name> -o jsonpath='{range .metadata.managedFields[*]}{.manager}{"\n"}{end}' | sort -u
+# → result: kube-controller-manager (среди менеджеров)
 ```
 
-### Сценарий 2: Игнорирование мутаций Service Mesh (Istio/Linkerd)
+Если в кластере HPA обновляет scale через другой менеджер, правило не сработает — имя менеджера зависит от версии Kubernetes и способа обновления, его всегда нужно проверять по `managedFields`.
 
-Системы Service Mesh внедряют sidecar-контейнеры и аннотации, которые отсутствуют в Git. Поскольку sidecar добавляется динамически в массив контейнеров, используется `jqPathExpressions` для точного указания контейнера по имени.
+### Сценарий 2: Игнорирование мутаций сервисного меша (Istio/Linkerd)
+
+Сервисные меши внедряют sidecar-контейнеры и аннотации, которых нет в Git. Поскольку sidecar добавляется динамически в массив контейнеров, используется `jqPathExpressions` для выбора элемента по имени:
 
 ```yaml
 spec:
@@ -119,79 +136,30 @@ spec:
     - .spec.template.metadata.annotations["linkerd.io/proxy-version"]
 ```
 
-### Сценарий 3: Глобальное игнорирование системных аннотаций
+### Сценарий 3: Игнорирование мутаций вебхуков (официальный пример)
 
-Настройка в `argocd-cm` для исключения «шума» от облачных провайдеров (например, GKE/AWS/Yandex Cloud). Эти аннотации и метки добавляются автоматически и не должны влиять на статус синхронизации.
+Канонический случай из документации — поле `caBundle` в `MutatingWebhookConfiguration`, которое подписывает API-сервер/контроллер и которое невозможно зафиксировать в Git:
 
 ```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: argocd-cm
 data:
-  resource.customizations.ignoreDifferences.all: |
+  resource.customizations.ignoreDifferences.admissionregistration.k8s.io_MutatingWebhookConfiguration: |
+    jsonPointers:
+    - /webhooks/0/clientConfig/caBundle
     jqPathExpressions:
-      - .metadata.annotations["cloud.google.com/gke-installed-by"]
-      - .metadata.labels["managed-by-external-system"]
+    - .webhooks[0].clientConfig.caBundle
+    managedFieldsManagers:
+    - kube-controller-manager
 ```
 
-**Для AWS EKS:**
+Тот же приём применяется к любым аннотациям и меткам, которые добавляет мутирующий вебхук: правило задаётся в `argocd-cm` один раз для конкретного Group/Kind и распространяется на все приложения.
 
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: argocd-cm
-data:
-  resource.customizations.ignoreDifferences.apps_Deployment: |
-    jqPathExpressions:
-      - .metadata.annotations["eks.amazonaws.com/compute-type"]
-      - .metadata.labels["eks.amazonaws.com/pod-identity-association"]
-```
+### Сценарий 4: cert-manager
 
-### Сценарий 4: Принудительное обновление неизменяемых полей
-
-Если в Git изменилось поле, которое Kubernetes запрещает обновлять (например, `spec.selector` в `Service` или `spec.clusterIP`), синхронизация завершится ошибкой.
-
-**Решение через CLI:**
-
-```bash
-argocd app sync <app-name> --force
-```
-
-**Решение в коде (использовать с осторожностью):**
-
-```yaml
-spec:
-  syncPolicy:
-    syncOptions:
-    - Force=true # Приведет к удалению и пересозданию ресурса
-```
-
-> **Внимание:** `Force=true` удаляет и пересоздает ресурс. Это может привести к даунтайму для Stateless-приложений и потере данных для StatefulSet. Используйте только когда `Replace=true` недостаточно.
-
-**Альтернатива — `Replace=true`:**
-
-```yaml
-spec:
-  syncPolicy:
-    syncOptions:
-    - Replace=true # Использует kubectl replace вместо apply
-```
-
-`Replace=true`.performicts с `kubectl replace`, который перезаписывает весь ресурс. Подходит для ресурсов с неизменяемыми полями, но не приводит к удалению.
-
-### Сценарий 5: Интеграция с cert-manager
-
-cert-manager автоматически добавляет и обновляет аннотации и TLS-секреты. Используйте `managedFieldsManagers` для игнорирования изменений от cert-manager.
+cert-manager добавляет аннотации к выдаваемым Secret и обновляет TLS-секреты. Аннотации `cert-manager.io/certificate-name` и `cert-manager.io/issuer-name` в Secret — типичный источник шума diff:
 
 ```yaml
 spec:
   ignoreDifferences:
-  - group: cert-manager.io
-    kind: Certificate
-    managedFieldsManagers:
-    - cert-manager-certificates-issuer
   - group: ""
     kind: Secret
     jqPathExpressions:
@@ -199,9 +167,11 @@ spec:
     - .metadata.annotations["cert-manager.io/issuer-name"]
 ```
 
-### Сценарий 6: Настройка для Reloader (Stakater)
+Для ресурсов `cert-manager.io/Certificate`, где drift вносится самим cert-manager, сначала определите имя менеджера (`kubectl get certificate <name> -o jsonpath='{.metadata.managedFields[*].manager}'`) и, если оно стабильно, добавьте его в `managedFieldsManagers` — имена менеджеров cert-manager зависят от версии и не являются частью стабильного контракта.
 
-Reloader автоматически перезапускает поды при изменении ConfigMap/Secret. Он добавляет аннотацию `reloader.stakater.com/last-reloaded-from`, которая создает «шум» в diff.
+### Сценарий 5: Настройка для Reloader (Stakater)
+
+Reloader перезапускает поды при изменении ConfigMap/Secret и добавляет аннотацию `reloader.stakater.com/last-reloaded-from`, создающую шум в diff:
 
 ```yaml
 spec:
@@ -212,77 +182,165 @@ spec:
     - /spec/template/metadata/annotations/reloader.stakater.com~1last-reloaded-from
 ```
 
-> **Примечание:** Тильда `~1` используется в JSON Pointer для экранирования слеша `/` в имени аннотации.
+> **Примечание:** `~1` — экранирование слеша `/` в имени аннотации по RFC 6901.
 
-### Сценарий 7: Игнорирование status-блока для CRD
+### Сценарий 6: Принудительное обновление неизменяемых полей
 
-Многие Custom Resources имеют динамический блок `status`, который обновляется контроллером. Игнорирование всего блока предотвращает бесконечный `OutOfSync`.
+Если в Git изменилось поле, которое Kubernetes запрещает обновлять (например, `spec.selector` в `Service` или `spec.clusterIP`), обычная синхронизация завершится ошибкой.
+
+**Решение через CLI:**
+
+```bash
+argocd app sync <app-name> --force
+```
+
+**Решение в манифесте (использовать с осторожностью):**
+
+```yaml
+spec:
+  syncPolicy:
+    syncOptions:
+    - Force=true # Приведет к удалению и пересозданию ресурса
+```
+
+> **Внимание:** `Force=true` удаляет и пересоздаёт ресурс — возможен даунтайм для Stateless-приложений и потеря данных для StatefulSet. Применяйте только когда `Replace=true` недостаточно. **С SSA `Force` не работает:** при `ServerSideApply=true` `kubectl apply --server-side` не поддерживает `--force`, поэтому `Force=true` игнорируется, а ресурс применяется с `--force-conflicts`.
+
+**Альтернатива — `Replace=true`:**
+
+```yaml
+spec:
+  syncPolicy:
+    syncOptions:
+    - Replace=true # Использует kubectl replace вместо apply
+```
+
+`Replace=true` применяет `kubectl replace`, который перезаписывает весь ресурс целиком. Подходит для ресурсов с неизменяемыми полями, но не приводит к удалению.
+
+### Сценарий 7: CRD с динамическим status
+
+Поле `status` CRD **по умолчанию не участвует в diff** (`ignoreResourceStatusField: all` — default), поэтому отдельное игнорирование `/status` обычно избыточно. Оно требуется, только если в `argocd-cm` явно задано `ignoreResourceStatusField: none` или правило сужено до `crd`, а `status` конкретного CR всё ещё попадает в diff:
 
 ```yaml
 spec:
   ignoreDifferences:
-  - group: "*"
-    kind: "*"
+  - group: example.com
+    kind: MyResource
     jsonPointers:
     - /status
 ```
 
-> **Внимание:** Глобальное игнорирование `/status` для всех ресурсов может скрыть важные изменения. Рекомендуется указывать конкретные Group/Kind.
+> **Внимание:** если `status` коммитится в Git и должен учитываться, документация рекомендует `ignoreResourceStatusField: crd` (а не `none`) — так `status` обычных ресурсов остаётся игнорируемым, а CRD остаются отслеживаемыми.
+
+### Сценарий 8: Именованные правила для конкретного ресурса
+
+Правило можно сузить до одного ресурса по `name` и `namespace` — например, когда только один Deployment в приложении мутируется оператором:
+
+```yaml
+spec:
+  ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    name: guestbook
+    namespace: default
+    jsonPointers:
+    - /spec/replicas
+```
 
 ## Технический справочник
 
-### Типичные менеджеры полей (Managers)
+### Структура правила ignoreDifferences
 
-| Система | Имя менеджера (`managedFieldsManagers`) | Примечание |
-| :--- | :--- | :--- |
-| **Horizontal Pod Autoscaler** | `kube-controller-manager` | Управляет полем `spec.replicas` |
-| **cert-manager** | `cert-manager-certificates-issuer` | Управляет Certificate и Secret |
-| **Kyverno** | `kyverno` | Мутирует ресусы по политикам |
-| **OPA Gatekeeper** | `gatekeeper` | Мутирует ресусы по политикам |
-| **Argo CD (SSA)** | `argocd-controller` | При использовании Server-Side Apply |
-| **Cloud Controllers** | `cloud-controller-manager` | Управляет LB, PV и облачными аннотациями |
-| **Istio** | `istio-sidecar-injector` | Инжектирует sidecar-контейнеры |
-| **Prometheus Operator** | `prometheus-operator` | Управляет ServiceMonitor и другими CRD |
-| **External Secrets** | `external-secrets` | Управляет секретами из внешних хранилищ |
+| Поле | Описание |
+| :--- | :--- |
+| `group` | API-группа без версии; core-группа — `""`; поддерживаются glob-шаблоны (`'*'`) |
+| `kind` | Тип ресурса; поддерживаются glob-шаблоны |
+| `name` | (опционально) сужает правило до ресурса с данным именем |
+| `namespace` | (опционально) сужает правило до namespace |
+| `jsonPointers` | Список путей RFC 6901; `/` в именах кодируется как `~1` |
+| `jqPathExpressions` | Список JQ-выражений; Argo CD применяет `del(<expression>)` |
+| `managedFieldsManagers` | Список имён менеджеров из `metadata.managedFields` |
 
-### Server-Side Diffing (Оптимизация)
+### Ключи argocd-cm
 
-Для ресурсов с огромным количеством динамических правок (например, `CustomResourceDefinitions`) рекомендуется включить Server-Side Diffing в `argocd-cm`:
+| Ключ | Описание |
+| :--- | :--- |
+| `resource.customizations.ignoreDifferences.<group>_<kind>` | Правила для конкретного Group/Kind (например, `apps_Deployment`) |
+| `resource.customizations.ignoreDifferences.all` | Правила для всех ресурсов всех приложений |
+| `resource.compareoptions` | `ignoreResourceStatusField: crd\|all\|none` (default `all`), `ignoreAggregatedRoles: true` |
+| `resource.customizations.ignoreResourceUpdates.<group>_<kind>` / `.all` | Смежный механизм: поля, изменения которых не должны запускать реконсиляцию приложения (jsonPointers/jqPathExpressions) |
+| `resource.ignoreResourceUpdatesEnabled` | Включает/выключает правила ignoreResourceUpdates (default `true`) |
+
+### Смежный механизм: ignoreResourceUpdates
+
+`ignoreDifferences` влияет на diff и статус. `resource.customizations.ignoreResourceUpdates` решает другую задачу: изменения перечисленных полей live-ресурса не вызывают обновление кэша и реконсиляцию приложения (например, `resourceVersion` или аннотации HPA `autoscaling.alpha.kubernetes.io/*`). Включается параметром `resource.ignoreResourceUpdatesEnabled: "true"` (default) и настраивается тем же синтаксисом (`jsonPointers`, `jqPathExpressions`).
+
+### knownTypeFields: CRD, переиспользующие типы Kubernetes
+
+Некоторые CRD переиспользуют структуры из Kubernetes API (например, `argoproj.io/Rollout` включает `core/v1/PodSpec`). Кастомные маршаллеры могут сериализовать поля иначе и порождать ложный drift — классический пример `IntOrString`: `cpu: 100m` превращается в `cpu: 0.1`. Решение — указать, какие поля использует встроенные типы:
 
 ```yaml
 data:
-  # Включение SSA для всех ресурсов по умолчанию
-  server.side.apply.enabled: "true"
+  resource.customizations.knownTypeFields.argoproj.io_Rollout: |
+    - field: spec.template.spec
+      type: core/v1/PodSpec
 ```
 
-Это позволит Argo CD видеть «финальное» состояние ресурса после работы всех вебхуков, что радикально сокращает список необходимых `ignoreDifferences`.
+Полный список поддерживаемых типов — в `util/argo/normalizers/diffing_known_types.txt`, дополнительно `core/Quantity` и `meta/v1/Duration`.
 
-**Глобальное включение Server-Side Diff:**
+### Таймаут JQ-выражений
 
-```yaml
-data:
-  # Включает сравнение на стороне сервера для всех приложений
-  controller.diff.mode: "server-side"
-```
-
-**Включение для конкретного приложения ( через аннотации):**
+Вычисление `jqPathExpressions` ограничено одной секундой по умолчанию. При ошибке «JQ patch execution timed out» на сложных выражениях таймаут расширяется ключом `ignore.normalizer.jq.timeout` в ConfigMap `argocd-cmd-params-cm`:
 
 ```yaml
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  annotations:
-    argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true
+  name: argocd-cmd-params-cm
+data:
+  ignore.normalizer.jq.timeout: '5s'
 ```
 
-### Сравнение методов игнорирования
+### Server-Side Diff (v3.5+)
 
-| Критерий | managedFieldsManagers | jqPathExpressions | jsonPointers |
-| :--- | :--- | :--- | :--- |
-| **Простота настройки** | Высокая | Средняя | Высокая |
-| **Гибкость** | Средняя | Высокая | Низкая |
-| **Покрытие полей** | Все поля менеджера | Указанные выражения | Указанные пути |
-| **Зависимость от SSA** | Да | Нет | Нет |
-| **Работа со списками** | Автоматически | Да (через select) | Только по индексу |
-| **Рекомендация (2026)** | Рекомендуется | Для сложных случаев | Для простых полей |
+Server-side diff вычисляет diff, выполняя server-side apply желаемого состояния в dry-run режиме против kube-apiserver. Результат учитывает defaulting полей и мутации admission-вебхуков — diff строится по «финальному» состоянию, а не по исходному манифесту.
+
+Включается тремя способами:
+
+1. **CLI:** `argocd app diff <app-name> --server-side-diff` (флаг появился в v3.5; есть также `--server-side-diff-concurrency` и `--server-side-diff-max-batch-kb` для настройки параллелизма и размера батча).
+2. **Аннотация приложения:** `argocd.argoproj.io/compare-options: ServerSideDiff=true`.
+3. **Неявно:** для ресурсов с sync option `ServerSideApply=true` (в новых версиях).
+
+**Особенности:**
+- Требует поддержки dry-run на стороне repo-server; когда dry-run runner недоступен (например, `argocd app diff` без server-side generation), Argo CD автоматически откатывается к клиентскому трёхстороннему/двустороннему diff.
+- При фактическом запуске server-side diff клиентская полная нормализация (включая `ignoreDifferences` и `knownTypeFields`) **пропускается** — нормализация выполняется после dry-run apply на стороне сервера.
+- CLI-флаг `--server-side-generate` используется вместе с `--local`: отправляет локальные манифесты на сервер для генерации перед diff.
+
+### Compare-options аннотация
+
+Аннотация `argocd.argoproj.io/compare-options` принимает значения (через запятую):
+
+- **`IgnoreExtraneous`** — исключает «лишний» ресурс из общего статуса синхронизации (например, ресурс, сгенерированный инструментом, Kustomize `configMapGenerator`). Влияет **только на sync status**: если health ресурса деградирован, приложение всё равно будет degraded.
+- **`ServerSideDiff=true`** (v3.5+) — включает server-side diff для приложения (см. выше).
+
+### Диагностические команды
+
+```bash
+# Diff приложения (в CI — с кодом возврата при наличии различий)
+argocd app diff <app-name>
+argocd app diff <app-name> --exit-code --diff-exit-code 20
+
+# Server-side diff (v3.5+)
+argocd app diff <app-name> --server-side-diff
+
+# Менеджеры полей ресурса
+kubectl get <resource> <name> -o jsonpath='{range .metadata.managedFields[*]}{.manager}{"\n"}{end}'
+
+# Статус и синхронизация приложения
+argocd app get <app-name>
+
+# Логи контроллера
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
+```
 
 ## Диагностика и устранение неисправностей
 
@@ -290,41 +348,20 @@ metadata:
 
 | Проблема | Симптомы | Вероятная причина | Решение |
 | :--- | :--- | :--- | :--- |
-| **Бесконечный `OutOfSync`** | Приложение постоянно в статусе `OutOfSync`, несмотря на `ignoreDifferences` | Неверный путь в `jsonPointers` или `jqPathExpressions` | Проверьте diff через `argocd app diff <name>` |
-| **Игнорирование не работает** | Изменения все еще отображаются в diff | Не установлен `RespectIgnoreDifferences=true` | Добавьте `RespectIgnoreDifferences=true` в `syncOptions` |
-| **Конфликт с HPA** | Argo CD пытается вернуть количество реплик | Не настроено игнорирование для `kube-controller-manager` | Добавьте `managedFieldsManagers: [kube-controller-manager]` |
-| **Ошибка при синхронизации** | `error:unable to find match` | Несуществующий путь в `jqPathExpressions` | Проверьте JQ-выражение через `jq` локально |
-| **Лишние ресурсы удаляются** | Kyverno/Reloader создают ресурсы, которые Argo CD пытается удалить | Не настроена политика Prune | Добавьте `Prune=false` в syncOptions или аннотацию `argocd.argoproj.io/sync-options: Prune=false` |
-
-### Диагностические команды
-
-```bash
-# Просмотр diff для приложения
-argocd app diff <app-name>
-
-# Просмотр diff с учетом Server-Side Apply
-argocd app diff <app-name> --server-side
-
-# Просмотр managedFields ресурса
-kubectl get <resource> <name> -o jsonpath='{.metadata.managedFields}' | jq
-
-# Просмотр конкретного менеджера
-kubectl get deployment <name> -o jsonpath='{.metadata.managedFields[*].manager}'
-
-# Проверка текущего статуса приложения
-argocd app get <app-name>
-
-# Просмотр логов контроллера Argo CD
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
-```
+| **Бесконечный `OutOfSync`** | Приложение постоянно `OutOfSync` несмотря на `ignoreDifferences` | Неверный путь в `jsonPointers`/`jqPathExpressions` или неверное имя менеджера | `argocd app diff <name>` — покажет конкретные поля; сверьте имя менеджера с `managedFields` |
+| **Игнорирование не влияет на синхронизацию** | Статус `Synced`, но поле возвращается к значению из Git | Не установлен `RespectIgnoreDifferences=true` | Добавьте `RespectIgnoreDifferences=true` в `syncOptions` |
+| **Конфликт с HPA** | Argo CD пытается вернуть число реплик | Не настроено игнорирование для менеджера, владеющего `spec.replicas` | Найдите менеджера через `managedFields` и добавьте в `managedFieldsManagers` |
+| **Ошибка при нормализации** | `JQ patch execution timed out` | Сложное JQ-выражение превышает таймаут 1с | `ignore.normalizer.jq.timeout` в `argocd-cmd-params-cm` |
+| **Ложный drift в CRD** | `100m` ↔ `0.1`, различия в форматировании | CRD переиспользует встроенные типы K8s | `resource.customizations.knownTypeFields.<group>_<kind>` |
+| **Лишние ресурсы удаляются** | Ресурсы, созданные вне Git, удаляются при синхронизации | Включён pruning | `Prune=false` в `syncOptions` |
 
 ### Пошаговая диагностика
 
 1. **Проверьте diff:** `argocd app diff <name>` — покажет, какие именно поля различаются.
-2. **Определите источник изменений:** `kubectl get <resource> <name> -o yaml | grep managedFields` — покажет, какой контроллер управляет каждым полем.
-3. **Проверьте JQ-выражение локально:** `echo '<json>' | jq '<expression>'` — убедитесь, что выражение возвращает ожидаемый результат.
-4. **Проверьте статус приложения:** `argocd app get <name>` — убедитесь, что `ignoreDifferences` применено.
-5. **Просмотрите логи:** `kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller` — найдите ошибки синхронизации.
+2. **Определите источник изменений:** `kubectl get <resource> <name> -o yaml | grep managedFields` — какой контроллер управляет каждым полем.
+3. **Проверьте JQ-выражение локально:** `echo '<json>' | jq 'del(<expression>)'` — убедитесь, что выражение выбирает нужные узлы.
+4. **Проверьте статус приложения:** `argocd app get <name>` — применилось ли правило.
+5. **Просмотрите логи контроллера:** `kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller` — ошибки нормализации и синхронизации.
 
 ## Валидация и проверка работоспособности
 
@@ -334,7 +371,7 @@ kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
 # 1. Примените манифест Application
 kubectl apply -f application.yaml
 
-# 2. Дождитесь обновления статуса (до 3 минут по умолчанию)
+# 2. Дождитесь обновления статуса (или принудительно обновите через --refresh)
 argocd app get <name> --refresh
 
 # 3. Проверьте, что статус стал Synced
@@ -355,7 +392,7 @@ argocd app get <name> --refresh
 argocd app get <name> | grep Status
 # → result: Status: Synced
 
-# 4. Убедитесь, что поле НЕ было возвращено в Git-значение
+# 4. Убедитесь, что поле НЕ было возвращено в Git-значение (при RespectIgnoreDifferences=true)
 kubectl get deployment <name> -o jsonpath='{.spec.replicas}'
 # → result: 5 (не значение из Git)
 ```
@@ -363,73 +400,65 @@ kubectl get deployment <name> -o jsonpath='{.spec.replicas}'
 ### Проверка для `jqPathExpressions`
 
 ```bash
-# 1. Проверьте JQ-выражение локально на примере ресурса
+# 1. Проверьте выражение на live-ресурсе
 kubectl get deployment <name> -o json | jq '.spec.template.spec.containers[] | select(.name == "istio-proxy")'
-# → result: Должен вернуть объект контейнера
+# → result: объект контейнера
 
-# 2. Если выражение не работает, проверьте синтаксис
-echo '{"containers":[{"name":"app"},{"name":"istio-proxy"}]}' | jq '.containers[] | select(.name == "istio-proxy")'
+# 2. Проверьте обёртку del(), которую применяет Argo CD
+echo '{"containers":[{"name":"app"},{"name":"istio-proxy"}]}' | jq 'del(.containers[] | select(.name == "istio-proxy"))'
+# → result: {"containers":[{"name":"app"}]}
 ```
 
 ## Лучшие практики
 
 ### Приоритет методов
 
-1. **Используйте `managedFieldsManagers`** как метод по умолчанию для v3.x. Он автоматически покрывает все поля менеджера и не требует обновления при изменении структуры ресурса.
-2. **Переключайтесь на `jqPathExpressions`** только когда нужна фильтрация по значениям внутри списков (например, конкретный контейнер в массиве).
-3. **Используйте `jsonPointers`** только для простых, фиксированных полей (например, `/spec/replicas`, `/status`).
+1. **`managedFieldsManagers`** — когда мутирующий актор известен и стабильно записывается в `managedFields`: покрывает все поля менеджера и не требует обновления при изменении структуры ресурса.
+2. **`jqPathExpressions`** — когда нужна фильтрация по значениям внутри списков (конкретный контейнер, элемент массива).
+3. **`jsonPointers`** — для простых фиксированных полей (`/spec/replicas`, конкретная аннотация).
 
 ### Безопасность
 
-- **Не игнорируйте поля безопасности:** Не исключайте из diff поля `securityContext`, `runAsNonRoot`, `readOnlyRootFilesystem` и подобные — это может скрыть критические нарушения.
-- **Используйте минимальные правила:** Вместо глобального `kind: "*"` указывайте конкретные Group/Kind.
-- **Ревью через PR:** Любые изменения в `ignoreDifferences` должны проходить code review, так как это влияет на видимость drift в кластере.
+- **Не игнорируйте поля безопасности:** не исключайте `securityContext`, `runAsNonRoot`, `readOnlyRootFilesystem` и подобные — это скрывает критические отклонения.
+- **Минимальные правила:** вместо глобальных `kind: '*'` указывайте конкретные Group/Kind и, по возможности, сужайте `name`/`namespace`.
+- **Ревью через PR:** изменения `ignoreDifferences` влияют на видимость drift в кластере и должны проходить code review.
+- **Помните про границы механизма:** `ignoreDifferences` влияет только на diff и статус `OutOfSync`. Health-статус ресурса (Healthy/Degraded) определяется отдельно и игнорированием не изменяется.
 
 ### Масштабирование
 
-- **Для ApplicationSet:** Задавайте `ignoreDifferences` в шаблоне ApplicationSet, чтобы правила применялись ко всем приложениям.
-- **Для мультикластерных сред:** Используйте глобальные правила в `argocd-cm` для единообразия.
-- **Для кастомных CRD:** Всегда добавляйте `managedFieldsManagers` для контроллера, который управляет вашим CRD.
+- **Для ApplicationSet:** задавайте `ignoreDifferences` в шаблоне ApplicationSet, чтобы правила применялись ко всем порождённым приложениям.
+- **Для единообразия:** общие правила (вебхуки, системные аннотации) выносите в `argocd-cm` — они объединяются с локальными правилами приложений.
+- **Для кастомных CRD:** проверьте, записывает ли оператор свои поля в `managedFields`, и добавьте его менеджера; для CRD с переиспользованием встроенных типов настройте `knownTypeFields`.
 
 ### Мониторинг
 
-- **Настраивайте алерты** на длительный статус `OutOfSync` — это может указывать на неправильно настроенное игнорирование.
-- **Используйте Resource Health Checks** для визуализации состояния ресурсов в UI Argo CD.
-- **Регулярно проверяйте** `managedFields` ресурсов — контроллеры могут обновляться и менять имена менеджеров.
+- Настраивайте алерты на длительный статус `OutOfSync` — это может указывать на неправильно настроенное игнорирование.
+- Регулярно проверяйте `managedFields` ресурсов: обновления контроллеров могут менять имена менеджеров.
 
 ## Ограничения и edge cases
 
-### Ограничения
-
-1. **`managedFieldsManagers` не работает без SSA:** Если контроллер не использует Server-Side Apply, его изменения не попадают в `managedFields`. В этом случае используйте `jqPathExpressions` или `jsonPointers`.
-
-2. **Нет поддержки условий:** Argo CD не поддерживает условное игнорирование (например, «игнорировать поле только если значение > 100»). Все правила безусловны.
-
-3. **Игнорирование не влияет на Health Checks:** `ignoreDifferences` влияет только на diff и статус `OutOfSync`. Статус здоровья ресурса (Healthy/Degraded) определяется отдельно.
-
-4. **Конфликт с SelfHeal:** Если включены и `ignoreDifferences`, и `SelfHeal=true`, Argo CD может пытаться «починить» поля, которые не игнорируются. Убедитесь, что игнорируемые поля действительно исключены из diff.
-
-### Edge Cases
-
-1. **Ресурс без managedFields:** Некоторые ресурсы (например, Secret, созданный через `kubectl create secret`) могут не иметь `managedFields`. В этом случае `managedFieldsManagers` не работает.
-
-2. **Множественные менеджеры одного поля:** Если одно поле управляется несколькими контроллерами (редкий случай), Argo CD игнорирует изменения от всех указанных менеджеров.
-
-3. **Удаление managedFields:** Если контроллер удаляет запись из `managedFields` (например, при обновлении), Argo CD может начать отслеживать ранее игнорируемые поля.
-
-4. **Helm и managedFields:** При использовании Helm через Argo CD может возникать конфликт менеджеров. Рекомендуется использовать `--atomic` и `--cleanup-on-fail` в Helm-аргументах.
-
-5. **Cross-namespace ресурсы:** `ignoreDifferences` работает только в рамках одного Application. Для кросс-namespace ресурсов (например, ClusterRoleBinding) настройте глобальные правила.
+1. **Правила безусловны:** Argo CD не поддерживает условное игнорирование (например, «игнорировать поле только если значение > 100»).
+2. **Именем менеджера управляет контроллер:** `managedFieldsManagers` работает только для менеджеров, реально присутствующих в `managedFields`. Если контроллер не записывает поле (или использует другое имя), правило не применяется — имя нужно проверять в целевом кластере.
+3. **Множественные менеджеры одного поля:** если поле принадлежит нескольким менеджерам, Argo CD игнорирует изменения от всех перечисленных в правиле менеджеров.
+4. **Удаление записи managedFields:** если контроллер перестаёт владеть полем (например, при обновлении), ранее игнорируемые поля снова начинают отслеживаться.
+5. **Ресурсы без managedFields:** объекты, созданные до обновления кластера до Kubernetes 1.16, могут не содержать `managedFields` — для них работают только `jsonPointers`/`jqPathExpressions`.
+6. **Сужение по name/namespace:** правило без `name`/`namespace` применяется ко всем ресурсам данного Group/Kind в приложении; для кластерных ресурсов (ClusterRoleBinding и т.п.) namespace не указывается.
+7. **Взаимодействие с SelfHeal:** при `selfHeal: true` дрейфующие поля возвращаются к Git-состоянию; чтобы SelfHeal не перезаписывал игнорируемые поля, используйте `RespectIgnoreDifferences=true`.
+8. **Server-side diff и нормализация:** когда server-side diff фактически выполняется (v3.5+), клиентская нормализация с `ignoreDifferences` пропускается — diff считается после dry-run apply. Учитывайте это при отладке: результат `argocd app diff --server-side-diff` может отличаться от клиентского diff.
 
 ## Дополнительная информация
 
 ### См. также
 - [Синхронизация Argo CD: Обзор](../synchronization.md)
 - [Автоматическая синхронизация и Self-Heal](./scenarios/auto_sync.md)
+- [Отслеживание ресурсов](../argocd_resource_tracking.md)
 - [Диагностика и Troubleshooting](../argocd_troubleshooting_and_monitoring.md)
 - [Интеграция Kyverno и Argo CD](../../../Kubernetes/Security/kyverno/argo-cd.md)
+- [ignoreDifferences для Crossplane](../../../GitOps/Crossplane/gitops_integration.md)
 
 ### Ссылки
-- [Argo CD Documentation: Diff Customization](https://argo-cd.readthedocs.io/en/stable/user-guide/diff-customization/)
-- [Kubernetes: Server-Side Apply Managed Fields](https://kubernetes.io/docs/reference/using-api/server-side-apply/#field-management)
+- [Argo CD Documentation: Diffing Customization](https://argo-cd.readthedocs.io/en/stable/user-guide/diffing/)
+- [Argo CD Documentation: Compare Options](https://argo-cd.readthedocs.io/en/stable/user-guide/compare-options/)
+- [Argo CD Documentation: Sync Options](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/)
+- [Kubernetes: Server-Side Apply and field management](https://kubernetes.io/docs/reference/using-api/server-side-apply/#field-management)
 - [RFC 6901: JavaScript Object Notation (JSON) Pointer](https://datatracker.ietf.org/doc/html/rfc6901)

@@ -214,7 +214,7 @@ filter {
 output {
   elasticsearch {
     hosts => ["elasticsearch:9200"]
-    index => "samba-audit-%{+YYYY.MM.dd}"
+    index => "samba-audit-%{{yyyy.MM.dd}}"
   }
 }
 ```
@@ -426,6 +426,6 @@ journalctl -u logstash -f | grep samba
 ## См. также
 
 - [Wazuh: Обзор](../../../../Security/Tools/wazuh.md) — платформа SIEM.
-- [ELK Stack](../../../../ELK_Stack/overview.md) — стек для логов.
-- [Syslog: Настройка](../../../../Linux/Networking/Protocols/syslog.md) — сбор логов.
-- [Auditd: Аудит системы](../../../../Linux/Security/auditd/overview.md) — аудит Linux.
+- [ELK Stack](../../../../ELK_Stack/elk_stack_overview.md) — стек для логов.
+- [Syslog: Настройка](../../../../Networking/Protocols/syslog.md) — сбор логов.
+- [Auditd: Аудит системы](../../../../Linux/SystemAdministration/Logging/auditd.md) — аудит Linux.

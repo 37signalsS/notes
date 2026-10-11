@@ -1,18 +1,20 @@
 # Практические примеры CI/CD пайплайнов в GitLab
 
+**Актуально для:** GitLab 19.x
+
 ## Определения
-
-**GitLab Agent for Kubernetes (KAS)** — сервис интеграции, обеспечивающий безопасный двусторонний канал связи (**CI/CD Tunnel**) между GitLab и кластером. Исключает необходимость хранения `KUBECONFIG` в переменных и позволяет использовать RBAC кластера напрямую через пайплайн.
-
-**id_tokens (OIDC)** — современный механизм генерации временных JWT-токенов для федерации идентичности (Workload Identity Federation). Позволяет аутентифицироваться в облаках (AWS, GCP) или хранилищах секретов (Vault) без использования долгоживущих паролей.
 
 **Quality Gates (Ворота качества)** — набор автоматизированных критериев (покрытие тестами, отсутствие уязвимостей CVE, соответствие линтам), которые должны быть выполнены для продвижения артефакта на следующий этап деплоя.
 
-**Docker-in-Docker (dind)** — паттерн запуска Docker-демона внутри контейнера задачи. Необходим для выполнения команд `docker build` и `docker push` в изолированных средах.
+**Docker-in-Docker (dind)** — паттерн запуска Docker-демона внутри контейнера задачи. Необходим для выполнения команд `docker build` и `docker push` в изолированных средах CI.
 
 **SBOM (Software Bill of Materials)** — формализованный список всех компонентов и зависимостей приложения, необходимый для обеспечения безопасности цепочки поставок (Supply Chain Security).
 
-**Атомарный деплой (Atomic Deployment)** — метод обновления приложения, при котором изменения вступают в силу одновременно, а при любой ошибке происходит автоматический откат к предыдущему стабильному состоянию (например, флаг `--atomic` в Helm).
+**Атомарный деплой (Atomic Deployment)** — метод обновления приложения, при котором изменения вступают в силу одновременно, а при любой ошибке происходит автоматический откат к предыдущему стабильному состоянию.
+
+**id_tokens (OIDC)** — современный механизм генерации временных JWT-токенов для федерации идентичности (Workload Identity Federation). Позволяет аутентифицироваться в HashiCorp Vault или других системах хранения секретов без использования долгоживущих паролей.
+
+**GitLab CI Components** — версионируемые фрагменты конфигурации пайплайна из официального каталога GitLab, заменяющие устаревшие `include:template` и обеспечивающие единообразное применение лучших практик.
 
 ## Основные концепции
 
@@ -20,16 +22,16 @@
 
 Современный пайплайн в GitLab строится по модульному принципу:
 1.  **Подготовка (Prepare):** Динамическая генерация конфигурации, установка зависимостей с использованием кэширующих прокси.
-2.  **Валидация (Quality Gates):** Параллельный запуск линтеров, статического анализа (SAST) и проверки секретов.
+2.  **Валидация (Quality Gates):** Параллельный запуск линтеров, статического анализа и проверки секретов.
 3.  **Сборка и Аттестация:** Создание Docker-образа с генерацией SBOM и подписью артефакта (стандарт SLSA).
-4.  **Многоуровневое тестирование:** Unit-тесты, интеграционные тесты в Service Containers и DAST-сканирование.
-5.  **Доставка (CD):** Развертывание в различные среды (Dev, Staging, Prod) с использованием GitOps или Push-модели.
+4.  **Многоуровневое тестирование:** Unit-тесты, интеграционные тесты в Service Containers.
+5.  **Доставка (CD):** Развертывание в различные среды (Dev, Staging, Prod) с использованием GitLab Flow или Push-модели.
 
 ### Безопасность и изоляция
 
-*   **Zero Trust:** Использование `id_tokens` для всех внешних интеграций.
 *   **Изоляция сред:** Разделение раннеров по тегам для разных уровней критичности (например, выделенные ноды для Prod-деплоя).
 *   **Маскирование секретов:** Использование переменных типа `File` для предотвращения случайного вывода паролей в логи.
+*   **Protected Runners:** Использование защищенных раннеров, которые запускают задачи только из защищенных веток.
 
 ## Практические сценарии
 
@@ -39,83 +41,98 @@
 
 | Компонент | Требование | Проверка |
 | :--- | :--- | :--- |
-| **GitLab** | Версия 17.0+ (рекомендуется 19.x) | `Help -> About` в UI |
-| **GitLab Runner** | Версия 16.0+, Docker Executor | `gitlab-runner --version` |
+| **GitLab** | Версия 19.x | `Help -> About` в UI |
+| **GitLab Runner** | Версия 19.3.x, Docker Executor | `gitlab-runner --version` |
 | **Container Registry** | Включен в настройках проекта | Deploy -> Container Registry |
 | **Docker-in-Docker** | Runner настроен с `privileged = true` | `config.toml` раннера |
 | **Переменные** | `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS`, `GITLAB_API_TOKEN` добавлены в CI/CD -> Variables | CI/CD -> Variables |
-| **Kubernetes** | Kubectl доступен (для сценария 1) | `kubectl cluster-info` |
-| **SSH-доступ** | SSH-ключ добавлен на целевой сервер (для сценария 2) | `ssh $USER@$HOST echo ok` |
+| **SSH-доступ** | SSH-ключ добавлен на целевой сервер (для сценариев деплоя) | `ssh $USER@$HOST echo ok` |
 
 **Общие рекомендации:**
 - Используйте отдельные Runner'ы для разных сред (Dev/Staging/Prod) с соответствующими тегами.
 - Все секреты должны быть типа `masked` и `protected` в CI/CD Variables.
 - Для продакшен-деплоев всегда используйте `when: manual` в rules.
+- Используйте `default:`-блок для общих настроек (образ, теги, кэш) вместо устаревших глобальных ключевых слов.
 
-### Сценарий 1: Деплой в Kubernetes через Агент (KAS) и Helm
+### Сценарий 1: Multi-stage build с BuildKit и параллельным тестированием
 
-Это наиболее безопасный и рекомендуемый метод интеграции в 2026 году.
+Оптимизированная сборка Docker-образа с использованием BuildKit и параллельного запуска линтера и тестов.
 
 ```yaml
 stages:
+  - lint
+  - test
   - build
   - deploy
+
+default:
+  tags:
+    - docker-runner
 
 variables:
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
   FULL_IMAGE: $CI_REGISTRY_IMAGE:$IMAGE_TAG
-  KUBE_CONTEXT: "my-group/infra/k8s-connection:prod-agent"
+  DOCKER_BUILDKIT: 1
 
-# Сборка с использованием BuildKit для ускорения
-build_job:
+lint:
+  stage: lint
+  image: python:3.13-slim
+  script:
+    - pip install ruff
+    - ruff check src/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+unit-tests:
+  stage: test
+  image: python:3.13-slim
+  script:
+    - pip install pytest pytest-cov
+    - pytest --junitxml=report.xml --cov=src/ --cov-report=xml:coverage.xml
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+build-image:
   stage: build
-  image: docker:29.8
-  services: [docker:29.8-dind]
+  image: docker:27.0
+  services:
+    - docker:27.0-dind
   variables:
-    DOCKER_BUILDKIT: 1
+    DOCKER_HOST: tcp://docker:2375
   script:
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_JOB_TOKEN" "$CI_REGISTRY"
     - >
-      docker build 
+      docker build
         --build-arg BUILDKIT_INLINE_CACHE=1
         --cache-from $CI_REGISTRY_IMAGE:latest
-        -t $FULL_IMAGE 
-        -t $CI_REGISTRY_IMAGE:latest .
+        -t $FULL_IMAGE
+        -t $CI_REGISTRY_IMAGE:latest
+        -f Dockerfile.prod
+        src/
     - docker push $FULL_IMAGE
     - docker push $CI_REGISTRY_IMAGE:latest
-  tags: [docker-runner]
-
-deploy_k8s:
-  stage: deploy
-  image: dtzar/helm-kubectl:3.15
-  id_tokens:
-    K8S_TOKEN:
-      aud: https://kubernetes.default.svc.cluster.local
-  script:
-    - kubectl config use-context $KUBE_CONTEXT
-    - >
-      helm upgrade --install my-app ./charts/app
-        --namespace production
-        --set image.tag=$IMAGE_TAG
-        --wait --atomic --timeout 10m
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-  tags: [secure-deploy-runner]
 ```
 
-### Сценарий 2: Деплой на Docker-хост по SSH (Hardened Method)
+### Сценарий 2: Деплой на bare metal/VM через SSH с systemd и health check
 
-Сценарий для проектов, не использующих Kubernetes. Включает проверку `known_hosts` и использование `ssh-agent`.
+Сценарий для деплоя на выделенные серверы без использования контейнерной оркестрации. Включает проверку `known_hosts`, использование `ssh-agent`, управление systemd-сервисом и health check.
 
 ```yaml
-deploy_ssh:
+deploy-prod:
   stage: deploy
-  image: alpine:3.20
+  image: alpine:3.21
   before_script:
     - apk add --no-cache openssh-client
     - eval $(ssh-agent -s)
-    # SSH_PRIVATE_KEY должна быть типа File для безопасности
     - chmod 600 "$SSH_PRIVATE_KEY"
     - ssh-add "$SSH_PRIVATE_KEY"
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
@@ -127,12 +144,21 @@ deploy_ssh:
         docker pull $FULL_IMAGE &&
         docker stop my-app || true &&
         docker rm my-app || true &&
-        docker run -d --name my-app -p 80:8080 --restart always $FULL_IMAGE
+        docker run -d --name my-app -p 5000:5000 --restart always $FULL_IMAGE
       "
+    - >
+      ssh $SSH_USER@"$PRODUCTION_IP" "
+        sleep 5 &&
+        curl -f http://localhost:5000/health || exit 1
+      "
+  environment:
+    name: production
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
-  tags: [docker-runner]
+  timeout-minutes: 30
+  retry: 2
+  interruptible: true
 ```
 
 ### Сценарий 3: Автоматизация Merge Request и нотификации через API
@@ -149,7 +175,7 @@ variables:
 
 create_mr_auto:
   stage: automation
-  image: curlimages/curl:latest
+  image: curlimages/curl:8.11
   script:
     - |
       RESPONSE=$(curl --silent --request POST "$GL_PROJECT_API/merge_requests" \
@@ -168,13 +194,13 @@ create_mr_auto:
 
 notify_mr:
   stage: notify
-  image: curlimages/curl:latest
+  image: curlimages/curl:8.11
   needs: [create_mr_auto]
   script:
     - |
       curl --request POST "$GL_PROJECT_API/merge_requests/$MR_IID/notes" \
         --header "PRIVATE-TOKEN: $GITLAB_API_TOKEN" \
-        --form "body= Пайплайн запущен. Результаты тестов будут доступны здесь: $CI_PIPELINE_URL"
+        --form "body=Пайплайн запущен. Результаты тестов будут доступны здесь: $CI_PIPELINE_URL"
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH'
 ```
@@ -202,10 +228,12 @@ test_python:
         coverage_format: cobertura
         path: coverage.xml
   allow_failure: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
 container_security:
   stage: scan
-  image: 
+  image:
     name: aquasec/trivy:0.74.0
     entrypoint: [""]
   script:
@@ -217,6 +245,7 @@ container_security:
     paths: [report.json]
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  allow_failure: true
 ```
 
 ### Сценарий 5: Динамические Parent-Child пайплайны (Монорепозитории)
@@ -224,8 +253,12 @@ container_security:
 Оптимизация времени выполнения за счет запуска задач только для изменившихся модулей.
 
 ```yaml
+stages:
+  - generate
+  - trigger
+
 generate-config:
-  stage: .pre
+  stage: generate
   image: python:3.13-slim
   script:
     - python3 scripts/generate-pipeline-config.py > child-pipeline.yml
@@ -233,24 +266,102 @@ generate-config:
     paths: [child-pipeline.yml]
 
 trigger-modules:
-  stage: build
+  stage: trigger
   trigger:
     include:
       - artifact: child-pipeline.yml
         job: generate-config
     strategy: depend
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
 ```
+
+## Архитектура Runner для Sysadmin
+
+Для администратора инфраструктуры важно понимание конфигурации Runner на уровне хоста. GitLab Runner хранит настройки в `/etc/gitlab-runner/config.toml`.
+
+### Ключевые параметры config.toml для Docker Executor
+
+```toml
+concurrent = 4
+check_interval = 3
+
+[[runners]]
+  name = "docker-runner"
+  url = "https://gitlab.example.com/"
+  token = "glrt-xxxxxxxx"
+  executor = "docker"
+  limit = 2
+  [runners.docker]
+    image = "docker:27.0"
+    privileged = true
+    volumes = ["/cache", "/var/run/docker.sock:/var/run/docker.sock"]
+    shm_size = "1gb"
+    pull_policy = ["if-not-present"]
+    allowed_images = ["docker:27.0", "docker:27.0-dind", "python:3.13-slim"]
+  [runners.cache]
+    Type = "s3"
+    Path = "runner-cache"
+    Shared = true
+    [runners.cache.s3]
+      server_address = "s3.example.com"
+      bucket_name = "gitlab-runner-cache"
+      bucket_location = "us-east-1"
+```
+
+**Пояснение параметров:**
+- `concurrent` — глобальное ограничение параллельных задач на менеджере.
+- `limit` — максимальное количество задач, выполняемых раннером одновременно (0 = без ограничения).
+- `privileged` — разрешение на запуск привилегированных контейнеров (обязательно для dind).
+- `shm_size` — размер разделяемой памяти для Docker (важно для сборки больших образов).
+- `pull_policy` — стратегия загрузки образов; `if-not-present` ускоряет выполнение за счет локального кэша.
+- `allowed_images` — белый список образов, разрешенных для выполнения (безопасность).
+
+### Валидация Runner
+
+```bash
+# Проверка статуса Runner'ов
+gitlab-runner list
+# → docker-runner: Executor=docker, Token=glrt-xxxx, Limit=2
+
+# Проверка конфигурации
+gitlab-runner verify
+# → Runner is up and ready to accept jobs
+
+# Просмотр логов Runner'а
+journalctl -u gitlab-runner -f
+# → time="2026-09-28T10:00:00Z" level=info msg="Starting runner" ...
+```
+
+## Валидация и проверка
+
+Для подтверждения успешной настройки выполните следующие действия:
+1.  **CI Lint:** В интерфейсе GitLab перейдите в **CI/CD > Editor** и нажмите **Validate**. Убедитесь, что синтаксис корректен и все `extends`/`include` раскрыты.
+2.  **Проверка статуса пайплайна:** В интерфейсе GitLab (Build -> Pipelines) все стадии должны быть отмечены зеленым цветом.
+3.  **Просмотр артефактов:** Убедитесь, что в задаче `unit-tests` появился вкладка **Tests** с результатами `pytest`.
+4.  **Проверка Registry:** Перейдите в **Deploy -> Container Registry**. Там должен появиться новый образ с тегом (коротким SHA коммита).
+5.  **Проверка Runner'ов:** Выполните на хосте с Runner'ом:
+    ```bash
+    gitlab-runner list
+    # → docker-runner: Executor=docker, Token=glrt-xxxx, Limit=2
+    ```
+6.  **Проверка connectivity:** Убедитесь, что Runner может подключаться к GitLab:
+    ```bash
+    gitlab-runner verify
+    # → Runner is up and ready to accept jobs
+    ```
 
 ## Технические нюансы и Безопасность
 
 ### Интеграция с Vault через OIDC
-С выходом GitLab 17.x и переходом к 19.x использование `id_tokens` для аутентификации в Vault является обязательным стандартом. Это позволяет джобе получить временный токен Vault без хранения секретов в GitLab.
+С выходом GitLab 17.x и переходом к 19.x использование `id_tokens` для аутентификации в HashiCorp Vault является обязательным стандартом. Это позволяет джобе получить временный токен Vault без хранения секретов в GitLab.
 
 ### Оптимизация кэширования
 Используйте `cache:key:files` для привязки кэша к файлам манифестов (например, `package-lock.json` или `uv.lock`). Это гарантирует, что кэш будет пересобираться только при изменении зависимостей.
 
 ### Использование CI/CD Components (Catalog)
 В 2026 году рекомендуется заменять стандартные `include:template` на компоненты из каталога. Это обеспечивает версионирование логики пайплайна.
+
 ```yaml
 include:
   - component: $CI_SERVER_FQDN/gitlab-components/sast/sast@2.1.0
@@ -261,43 +372,61 @@ include:
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
 | **dind: job failed to start** | Runner не в привилегированном режиме | Включите `privileged = true` в `config.toml` раннера и перезапустите его. |
-| **MR API returns 403** | Недостаточно прав у токена | Проверьте Scope токена (`api`) и права пользователя (должен быть Maintainer). |
-| **KAS context not found** | Агент не авторизован в проекте | Проверьте настройки авторизации в `config.yaml` агента и привязку агента к проекту. |
 | **SSH deploy hangs** | Нет ответа от `ssh-agent` | Убедитесь, что `eval $(ssh-agent -s)` выполнен в той же джобе и ключ добавлен через `ssh-add`. |
 | **Coverage не отображается** | Неверный формат отчета | GitLab 19.x требует формат Cobertura XML для визуализации покрытия. |
-| **Helm upgrade --atomic failed** | Таймаут деплоя или ошибка в манифестах | Увеличьте `--timeout` или проверьте шаблоны Helm: `helm template ./charts/app`. |
 | **Container Registry 401 Unauthorized** | Истекший или неверный токен | Используйте `CI_JOB_TOKEN` (auto-generated) вместо личных Access Tokens. |
-| **Kubernetes: pods CrashLoopBackOff** | Ошибка в приложении или конфигурации | Проверьте логи: `kubectl logs <pod-name> -n production`. Частая причина — отсутствие `HEALTHCHECK` или неверный `entrypoint`. |
 | **SSH: Host key verification failed** | `SSH_KNOWN_HOSTS` не содержит fingerprint сервера | Выполните `ssh-keyscan -H $PRODUCTION_IP` и обновите переменную. |
 | **Dynamic pipeline: child-pipeline.yml not found** | Артефакт не был создан или устарел | Убедитесь, что `generate-config` завершился успешно и `artifacts:paths` содержит `child-pipeline.yml`. |
 | **Merge Request не создается автоматически** | Ветка уже имеет активный MR или нет прав | Проверьте, нет ли существующего MR через API: `GET /merge_requests?source_branch=$CI_COMMIT_BRANCH`. |
 | **Cache не восстанавливается** | Неверный `key` или изменение файлов манифеста | Используйте `cache:key:files` с привязкой к `package-lock.json` или `uv.lock`. |
+| **Runner: OOMKilled** | Недостаточно RAM на хосте | Увеличьте `limit` в `config.toml` или добавьте swap. Проверьте: `docker inspect <runner_container>`. |
+| **cannot allocate memory (DinD)** | `shm_size` слишком мал | Установите `shm_size = "1gb"` в `config.toml` или `--shm-size=1g` в `docker run`. |
+| **Permission denied (Docker)** | Runner не имеет прав на Docker Socket | Проверьте, что volume `/var/run/docker.sock:/var/run/docker.sock` смонтирован в `config.toml`. |
+| **ModuleNotFoundError** | Зависимость не установлена в образе | Проверьте, добавлен ли пакет в `pyproject.toml` и выполнен ли `pip install`. |
+| **Runner: job timeout** | Задача превысила `timeout-minutes` | Увеличьте таймаут или оптимизируйте скрипт (кэширование, параллелизм). |
+
+### Sysadmin Troubleshooting
+
+> **Примечание:** Данный раздел содержит краткие решения для типичных проблем инстанса. Для систематического troubleshooting, управления базами данных и hardening используйте:
+> * **[Управление инстансом GitLab](../Advanced/gitlab_instance_administration.md)**
+> * **[Безопасность и закрепление GitLab Server](../Advanced/gitlab_server_security_hardening.md)**
+> * **[Управление базами данных GitLab](../Advanced/gitlab_database_management.md)**
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **Gitaly: 502 Bad Gateway** | Недостаточно RAM или перегрузка диска | Проверьте логи: `gitlab-ctl tail gitaly`. Увеличьте RAM или добавьте swap. |
+| **PostgreSQL 17: connection refused** | База данных остановлена или переполнена | Проверьте статус: `gitlab-ctl status postgresql`. Проверьте disk usage: `df -h`. |
+| **Sidekiq: backlog growing** | Недостаточно воркеров или блокирующие задачи | Проверьте очередь: `gitlab-rails runner 'puts Sidekiq::Queue.all.map(&:size).sum'`. |
+| **SELinux/AppArmor блокирует dind** | Политика безопасности блокирует контейнеры | На RHEL/CentOS/Fedora добавьте опции `:z` или `:Z` для томов, или отключите SELinux для тестирования. |
+| **Runner не подключается к GitLab** | Брандмауэр или DNS | Проверьте connectivity: `curl -I $CI_SERVER_URL`. Проверьте DNS: `nslookup gitlab.example.com`. |
 
 ## Лучшие практики (Best Practices)
 
 **Безопасность:**
 - Используйте `CI_JOB_TOKEN` для всех операций с Container Registry — токен автоматически истекает после задачи.
 - Все секреты (SSH-ключи, API-токены) должны быть типа `masked` и `protected` в CI/CD Variables.
-- Используйте `id_tokens` (OIDC) для интеграции с Vault и Kubernetes — это стандарт 2026 года.
-- Для Kubernetes-деплоев используйте RBAC с минимальными привилегиями: только `deployments` и `services` в целевом namespace.
-- Никогда не храните `KUBECONFIG` в переменных — используйте GitLab Agent (KAS).
+- Используйте `id_tokens` (OIDC) для интеграции с HashiCorp Vault — это стандарт 2026 года.
+- Никогда не храните секреты в переменных типа `Variable` — используйте `File` для ключей.
+- Ограничьте `allowed_images` в `config.toml` — разрешайте только доверенные образы.
 
 **Производительность:**
 - Используйте `cache:key:files` для привязки кэша к файлам зависимостей.
 - Включите BuildKit (`DOCKER_BUILDKIT=1`) для ускорения сборки Docker-образов.
 - Используйте `needs:` для параллельного запуска независимых задач.
 - Для монорепозиториев используйте Parent-Child пайплайны — запускайте задачи только для изменившихся модулей.
+- Используйте `default:`-блок в `.gitlab-ci.yml` для DRY и соответствия GitLab 19.x.
 
 **Надёжность:**
-- Всегда используйте `--atomic` при `helm upgrade` — автоматический откат при ошибке.
-- Добавьте `HEALTHCHECK` в Dockerfile для корректной работы с оркестраторами.
+- Добавьте `HEALTHCHECK` в Dockerfile для корректной работы с оркестраторами (Docker Compose, systemd).
 - Используйте `timeout-minutes` к задачам для защиты от бесконечных пайплайнов.
-- Пинайте версии образов: `docker:29.8` вместо `docker:latest`.
+- Пинкуйте версии образов: `docker:27.0` вместо `docker:latest`.
+- Для продакшен-деплоев всегда используйте `when: manual` в rules.
+- Добавьте `retry: 2` для задач, зависящих от внешних сетей (SSH, API).
 
 **Деплой:**
-- Для продакшен-деплоев всегда используйте `when: manual` в rules.
-- Используйте `--wait` при `helm upgrade` для ожидания готовности всех подов.
-- Настройте `rollback` через `helm rollback` или `helm undo` для быстрого отката.
+- Используйте `resource_group` для предотвращения одновременного деплоя в одну и ту же среду.
+- Всегда проверяйте health endpoint после деплоя (`curl -f http://localhost:5000/health`).
+- Настройте `rollback` через повторный деплой предыдущего тега для быстрого отката.
 
 ## Очистка артефактов (Cleanup)
 
@@ -317,27 +446,59 @@ curl -s "https://gitlab.example.com/api/v4/projects/$CI_PROJECT_ID/registry/repo
   --header "PRIVATE-TOKEN: $GITLAB_API_TOKEN"
 ```
 
-**Откат Kubernetes-деплоя:**
+**Очистка кэша Runner'а:**
 ```bash
-# Просмотр истории релизов
-helm history my-app -n production
-
-# Откат к предыдущей версии
-helm rollback my-app 0 -n production
-
-# Откат к конкретной версии
-helm rollback my-app <revision_number> -n production
+# На хосте с Runner'ом
+gitlab-runner cache-clear
+# или вручную
+rm -rf /var/cache/gitlab-runner/*
 ```
 
-**Откат SSH-деплоя:**
+**Очистка артефактов через GitLab UI:**
+1. Перейдите в **CI/CD > Pipelines**.
+2. Выберите пайплайн и нажмите **Delete**.
+3. Включите **Delete associated pipeline branches** и **Keep artifacts** по необходимости.
+
+## Мониторинг
+
+**Базовый мониторинг Runner'а:**
 ```bash
-# На целевом сервере — запуск предыдущего Docker-образа
-ssh $SSH_USER@$PRODUCTION_IP << 'EOF'
-docker stop my-app && docker rm my-app
-docker pull $CI_REGISTRY_IMAGE:previous_tag
-docker run -d --name my-app -p 80:8080 --restart always $CI_REGISTRY_IMAGE:previous_tag
-EOF
+# Статус Runner'а
+gitlab-runner list
+# → docker-runner: Executor=docker, Token=glrt-xxxx, Limit=2
+
+# Проверка конфигурации
+gitlab-runner verify
+# → Runner is up and ready to accept jobs
+
+# Просмотр логов Runner'а
+journalctl -u gitlab-runner -f
+# → time="2026-09-28T10:00:00Z" level=info msg="Starting runner" ...
 ```
+
+**Мониторинг инфраструктуры GitLab (Sysadmin):**
+```bash
+# Общий статус инстанса
+gitlab-ctl status
+# → run: gitaly: (pid 1234) 1s
+# → run: postgresql: (pid 1235) 1s
+# → run: sidekiq: (pid 1236) 1s
+
+# Логи Gitaly (хранилище репозиториев)
+gitlab-ctl tail gitaly
+# → time="2026-09-28T10:00:00Z" level=info msg="Received RPC" ...
+
+# Размер очереди Sidekiq
+gitlab-rails runner 'puts Sidekiq::Queue.all.map(&:size).sum'
+# → 42
+
+# Проверка диска (критично для Registry и Gitaly)
+df -h /var/opt/gitlab
+# → Filesystem      Size  Used Avail Use% Mounted on
+# → /dev/sda1       100G   85G   15G  85% /
+```
+
+> **Примечание:** Для систематического мониторинга и управления компонентами GitLab используйте **[Управление инстансом GitLab](../Advanced/gitlab_instance_administration.md)** и **[Sidekiq: глубинное погружение](../Advanced/gitlab_sidekiq_deep_dive.md)**.
 
 ## Граничные случаи (Edge Cases)
 
@@ -358,7 +519,7 @@ deploy_prod:
 - При быстром пуше нескольких коммитов подряд MR API может вернуть 409 Conflict. Добавьте `retry: 2` к задаче создания MR.
 
 **Ограничения Container Registry:**
-- По умолчанию GitLab ограничивает размер образа (по умолчанию ~5 ГБ). Настройте через `registry.available_size` в `gitlab.yml`.
+- По умолчанию GitLab ограничивает размер образа (по умолчанию ~5 ГБ). Настройте через `registry.available_size` в `gitlab.rb`.
 
 **Одновременный доступ к Vault:**
 - При параллельных задачах, запрашивающих секреты из Vault, используйте `id_tokens` с уникальным `aud` для каждой задачи, чтобы избежать конфликтов токенов.
@@ -369,4 +530,7 @@ deploy_prod:
 
 - **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — архитектура и стадии пайплайна.
 - **[Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)** — управление доступом и безопасность переменных.
+- **[Регистрация GitLab Runner](../Tutorials/runner_registration.md)** — установка и конфигурация Runner'ов.
 - **[Родительско-дочерние пайплайны](../Advanced/Downstream_Pipelines/parent_child_pipelines.md)** — декомпозиция монорепозиториев и оптимизация.
+- **[Оптимизация производительности пайплайнов](../Advanced/pipeline_performance_optimization.md)** — кэширование, параллелизм, ресурсные группы.
+- **[Отладка и устранение неполадок](../Advanced/debugging_and_troubleshooting.md)** — диагностика проблем в CI/CD.

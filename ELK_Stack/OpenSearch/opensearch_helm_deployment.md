@@ -1,5 +1,7 @@
 # OpenSearch: Развертывание в Kubernetes с помощью Helm
 
+**Актуально для:** Helm-чарт 3.9.x (chart 3.x = OpenSearch 3.x); Operator v3.0.0 GA (25 сентября 2026). Версионные отличия (2.12, 2.18, 3.0) отмечены в тексте.
+
 > Эта заметка является частью обзора [OpenSearch](./opensearch_overview.md) и детально рассматривает процесс развертывания кластера в Kubernetes с использованием официального Helm-чарта, включая настройку отказоустойчивости, безопасности и мониторинга. Первоисточник параметров чарта — [Artifact Hub](https://artifacthub.io/packages/helm/opensearch-project-helm-charts/opensearch) и [репозиторий helm-charts](https://github.com/opensearch-project/helm-charts).
 
 ## Определения
@@ -7,10 +9,10 @@
 * **Helm-чарт OpenSearch**: официальный пакет для автоматизации развертывания и управления жизненным циклом OpenSearch в Kubernetes. Репозиторий публикует два чарта: `opensearch/opensearch` (сам кластер) и `opensearch/opensearch-dashboards` (визуализация). Версии чарта следуют за версиями приложения (chart 3.x = app 3.x).
 * **Cluster Manager (ранее Master)**: роль узла, ответственного за координацию кластера. В Helm-чарте настраивается через параметр `roles: [cluster_manager]`.
 * **NodeGroup**: группа однотипных узлов, развертываемая одним релизом чарта как отдельный StatefulSet. Имена ресурсов строятся по шаблону `<clusterName>-<nodeGroup>-<ordinal>`; параметр `nodeGroup` по умолчанию — `master`.
-* **initContainers**: вспомогательные контейнеры, выполняемые до запуска основного процесса. Используются для настройки `vm.max_map_count` (привилегированный `sysctl-init`) и прав доступа к тому данных (`fsgroup-volume`, отключается `persistence.enableInitChown: false`). Через `extraInitContainers` добавляются пользовательские шаги, например установка плагинов.
+* **initContainers**: вспомогательные контейнеры, выполняемые до запуска основного процесса. Чарт создает `fsgroup-volume` (права на томе данных, отключается `persistence.enableInitChown: false`), `sysctl` (привилегированный, выставляет `vm.max_map_count`, включается `sysctlInit.enabled: true`), `configfile` (копирует конфигурацию из ConfigMap) и `keystore` (создает keystore и добавляет в него секреты, при заданном параметре `keystore`). Через `extraInitContainers` добавляются пользовательские шаги, например установка плагинов.
 * **PodDisruptionBudget (PDB)**: ресурс Kubernetes, гарантирующий наличие минимального количества доступных подов при плановом обслуживании узлов. Чарт создает PDB с `maxUnavailable: 1` для каждой NodeGroup.
 * **ServiceMonitor**: ресурс Prometheus Operator для автоматического обнаружения эндпоинтов метрик OpenSearch. Включается параметром `serviceMonitor.enabled: true`; метрики плагина-экспортера отдаются по пути `/_prometheus/metrics`.
-* **Remote-Backed Storage (RBS)**: конфигурация OpenSearch 2.15+, позволяющая использовать объектные хранилища (S3/GCS/Azure) как основной уровень хранения через Helm-конфигурацию. Задается атрибутами узла `node.attr.remote_store.*` и включается только при бутстрапе кластера. В документации ветки 3.x именуется **remote store**.
+* **Remote-Backed Storage (RBS)**: конфигурация OpenSearch (экспериментально с 2.14, production-ready с 2.15), позволяющая использовать объектные хранилища (S3/GCS/Azure) как основной уровень хранения через Helm-конфигурацию. Задается атрибутами узла `node.attr.remote_store.*` и включается только при бутстрапе кластера. В документации ветки 3.x именуется **remote store**.
 * **securityConfig**: секция чарта для управления конфигурацией плагина безопасности. По умолчанию применяется небезопасная демонстрационная конфигурация (известные пароли) — перед продакшеном обязательна замена через секреты или inline-конфигурацию.
 
 ## Основные концепции
@@ -26,16 +28,17 @@
 3.  **Ingest**: выделенные узлы для тяжелых пайплайнов обработки данных.
 4.  **Dashboards**: отдельный чарт для визуализации.
 
-Минимальное развертывание (по умолчанию) — один релиз из трех подов с полным набором ролей (`nodeGroup: master`), чего достаточно для dev/staging. Для production каждая группа — отдельный релиз со своим `values.yaml`.
+Минимальное развертывание (по умолчанию) — один релиз из трех подов с ролями по умолчанию (`master, ingest, data, remote_cluster_client`; `master` — устаревший псевдоним `cluster_manager`, который чарт 3.x все еще использует в дефолтах), чего достаточно для dev/staging. Для production каждая группа — отдельный релиз со своим `values.yaml`.
 
-Механика обнаружения узлов: каждый релиз создает headless-сервис для discovery (порт 9300). Если имя группы cluster manager отличается от `master`, обязательно задайте `masterService` во всех релизах кластера — иначе поды будут искать сервис `<clusterName>-master` и не соберутся в кластер. Параметр `podManagementPolicy: Parallel` (умолчание чарта) запускает поды StatefulSet одновременно, чтобы узлы могли обнаружить друг друга без долгой последовательной прокрутки.
+Механика обнаружения узлов: каждый релиз создает headless-сервис для discovery (порт 9300). Чарт выставляет `discovery.seed_hosts` в значение `<masterService>-headless` и автоматически формирует `cluster.initial_master_nodes` из ординалов подов группы (`<clusterName>-<nodeGroup>-<ordinal>`) — для групп с ролью `master` при `singleNode: false`. Если имя группы cluster manager отличается от `master`, обязательно задайте `masterService` во всех релизах кластера — иначе поды будут искать сервис `<clusterName>-master` и не соберутся в кластер. Параметр `podManagementPolicy: Parallel` (умолчание чарта) запускает поды StatefulSet одновременно, чтобы узлы могли обнаружить друг друга без долгой последовательной прокрутки.
 
 ### Жизненный цикл подов и обновления
 
 *   **StatefulSet + PDB**: чарт разворачивает StatefulSet с PDB (`maxUnavailable: 1`) — при дренировании Kubernetes-узла одновременно недоступен максимум один под группы.
 *   **updateStrategy**: по умолчанию `RollingUpdate` — StatefulSet обновляет поды по одному и ждет `green`. Значение `OnDelete` дает полный ручной контроль последовательности (полезно при крупных апгрейдах мажорных версий).
 *   **terminationGracePeriod** (по умолчанию 120 c): время на корректную остановку процесса — завершение индексации, вывод шарда из размещения. При большом числе шардов на узле увеличьте значение, иначе под будет убит по SIGKILL с последующим дорогим восстановлением.
-*   **Probes**: чарт определяет liveness/readiness/startup пробы на HTTP API. Startup probe защищает медленный старт тяжелых узлов (восстановление шардов), readiness исключает под из балансировки до готовности принимать запросы.
+*   **Probes**: startup и readiness пробы — TCP-проверка порта 9200 (startup: `initialDelaySeconds: 5`, `periodSeconds: 10`, `failureThreshold: 30` — суммарно до 5 минут на старт; readiness: `periodSeconds: 5`, `timeoutSeconds: 3`, `failureThreshold: 3`). Liveness по умолчанию отключен (`livenessProbe: {}`) — включайте его явно с осторожностью: Kubernetes не должен перезапускать узел во время долгих GC-пауз или восстановления шардов. Startup probe защищает медленный старт тяжелых узлов, readiness исключает под из балансировки до готовности принимать запросы.
+*   **Конфигурация и перезапуск**: изменение `config.opensearch.yml` или `securityConfig.config.data` меняет аннотации `configchecksum`/`securityconfigchecksum` в шаблоне пода — StatefulSet автоматически прокручивает поды при изменении конфигурации. Параметр `masterTerminationFix: true` добавляет sidecar, который при SIGTERM дожидается, пока узел снимет роль cluster manager, прежде чем завершиться — ускоряет переизбрание при дренировании manager-узлов (по умолчанию `false`).
 
 ### Сетевое взаимодействие и Ingress
 
@@ -44,6 +47,8 @@
     * **Best Practice**: установка аннотации `nginx.ingress.kubernetes.io/proxy-body-size: "50m"` для поддержки больших Bulk-запросов.
     * **Timeouts**: увеличение `proxy-read-timeout` до 300с для тяжелых поисковых запросов.
     * Для TLS-бэкенда (когда сам OpenSearch обслуживает HTTPS) контроллеру nginx нужна аннотация `nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"` либо терминирование TLS на ingress с обычным HTTP к подам.
+
+Чарт имеет встроенную поддержку Ingress (`ingress.enabled: false` по умолчанию; `ingressClassName` для Kubernetes >= 1.18, `hosts`, `tls`, аннотации) — альтернатива ручным манифестам.
 
 ### Мониторинг и обсервабилити
 
@@ -70,6 +75,8 @@ serviceMonitor:
 ```
 
 Для scheme https настройте `tlsConfig`; для аутентификации скрейпера — `basicAuth` с существующим Secret. Готовый Grafana-дашборд для этого плагина — [ID 20827](https://grafana.com/grafana/dashboards/20827-opensearch/).
+
+**Gotcha**: чарт по умолчанию работает по HTTPS (demo-сертификаты Docker-образа), а `serviceMonitor.scheme` по умолчанию `http` — при дефолтной конфигурации скрейпер не соберет метрики, пока вы не переключите scheme на `https` и не настройте `tlsConfig` (или `insecureSkipVerify` для самоподписанных сертификатов).
 
 * **Безопасность**: рекомендуется создать отдельного пользователя в OpenSearch с ролью `cluster:monitor/prometheus/metrics` для сбора метрик — не используйте учетную запись администратора в конфигурации скрейпера.
 
@@ -122,8 +129,10 @@ kubectl get pods -w
 # → os-dev-opensearch-master-0   1/1   Running   0   4m
 
 # Проверка API из пода кластера
+# Дефолтный деплой использует demo-конфигурацию Docker-образа:
+# самоподписанные TLS-сертификаты (отсюда https и флаг -k) и обязательный OPENSEARCH_INITIAL_ADMIN_PASSWORD
 kubectl run curl --rm -it --image=curlimages/curl -- \
-  curl -ku admin:MyStr0ngP@ssw0rd https://os-dev-opensearch-master:9200
+  curl -k -u admin:MyStr0ngP@ssw0rd https://os-dev-opensearch-master:9200
 # → {"cluster_name":"opensearch-cluster","version":{"number":"3.x.x",...},"tagline":"The OpenSearch Project: https://opensearch.org/"}
 ```
 
@@ -284,7 +293,7 @@ topologySpreadConstraints:            # равномерность по зона
       rolesMappingSecret: os-roles-mapping
     ```
 
-    Ключи секции: `actionGroupsSecret`, `configSecret` (для config.yml), `internalUsersSecret`, `rolesSecret`, `rolesMappingSecret`, `tenantsSecret`.
+    Ключи секции: `actionGroupsSecret`, `configSecret` (для config.yml), `internalUsersSecret`, `rolesSecret`, `rolesMappingSecret`, `tenantsSecret`. Определять одновременно `config.data` и `config.securityConfigSecret` нельзя — рендеринг чарта падает с явной ошибкой (`Only one of .Values.securityConfig.config.data and .Values.securityConfig.config.securityConfigSecret may be defined`). При `dataComplete: true` (по умолчанию) Secret монтируется целиком в каталог конфигурации; при `false` — файлы по одному через `subPath`.
 3.  **Частичное обновление одним внешним Secret**: `securityConfig.config.securityConfigSecret: <имя>` — монтируется один внешний Secret; удобно, когда нужно переопределить единственный файл (например, internal_users.yml).
 
 Хеш пароля генерируется утилитой `hash.sh` из образа (см. полный цикл создания пользователей в [Администрирование OpenSearch](./opensearch_administration.md)). Независимо от способа, переменная `OPENSEARCH_INITIAL_ADMIN_PASSWORD` (через `extraEnvs`) обязательна начиная с OpenSearch 2.12 — без нее контейнер не стартует.
@@ -321,7 +330,7 @@ helm upgrade os-data-hot opensearch/opensearch -f values-data-hot.yaml
 # 2. Наблюдаем за прокруткой подов и здоровьем кластера
 kubectl get pods -l app.kubernetes.io/instance=os-data-hot -w
 kubectl run curl --rm -it --image=curlimages/curl -- \
-  curl -ku admin:*** https://os-mgr-opensearch-master:9200/_cluster/health?pretty
+  curl -k -u admin:*** https://os-mgr-opensearch-master:9200/_cluster/health?pretty
 # → "status":"green","relocating_shards":0
 ```
 
@@ -348,7 +357,7 @@ PUT _cluster/settings
 
 Уточнения по механизму чарта: идоматичный способ задать heap — параметр `opensearchJavaOpts` (умолчание `-Xmx512M -Xms512M`, пробрасывается в контейнер тем же механизмом переменных окружения); эквивалентно работает `extraEnvs` с `OPENSEARCH_JAVA_OPTS`. Heap = половина лимита памяти пода (8Gi памяти → 4g heap): вторая половина нужна страничному кэшу ОС для Lucene и вне-heap памяти JVM. Гарантированный QoS защищает поды OpenSearch от вытеснения при давлении на Kubernetes-узел — вытесняемый search-кластер деградирует заметно дороже, чем лишние неиспользованные резервы.
 
-Хранение: чарт разворачивает PVC из `volumeClaimTemplate` (по умолчанию `30Gi`; меняйте размер и `storageClassName`). Права на томе выставляет initContainer `fsgroup-volume` (управляется `persistence.enableInitChown`) — не отключайте его без понимания, иначе под уйдет в цикл из-за недоступности каталога данных.
+Хранение: чарт разворачивает PVC из `volumeClaimTemplate` (по умолчанию `8Gi`, `accessModes: [ReadWriteOnce]`; меняйте размер и `storageClassName`). Права на томе выставляет initContainer `fsgroup-volume` (управляется `persistence.enableInitChown`) — не отключайте его без понимания, иначе под уйдет в цикл из-за недоступности каталога данных.
 
 ### Устранение неполадок
 
@@ -361,6 +370,9 @@ PUT _cluster/settings
 | Ошибка `max virtual memory areas vm.max_map_count [65530] is too low` | sysctl не выставлен на Kubernetes-узле | `sysctlInit.enabled: true` (требует привилегий) или выставите vm.max_map_count=262144 на узлах через DaemonSet |
 | Поды в Pending | Недостаточно ресурсов или нет подходящего StorageClass | `kubectl describe pod <имя>` → события; проверьте requests и наличие storageClass в persistence |
 | Dashboards не видит кластер (502/503) | Несоответствие `masterService` имени сервиса группы cluster manager | Сверьте имя headless-сервиса (`kubectl get svc`) со значением `masterService` во всех релизах |
+| Медленный старт подов в namespace с большим числом сервисов | Переменные окружения из service links инжектируются в каждый под | `enableServiceLinks: false` |
+| Ошибка рендеринга `Only one of .Values.securityConfig.config.data and ... may be defined` | Одновременно заданы `securityConfig.config.data` и `securityConfig.config.securityConfigSecret` | Оставьте только один способ задания конфигурации безопасности |
+| Поды группы в Pending при `antiAffinity: "hard"` | Hard anti-affinity не позволяет разместить два пода группы на одном Kubernetes-узле; узлов меньше, чем `replicas` | Уменьшите `replicas`, добавьте узлы или переключите группу на `soft` |
 
 ## Дополнительная информация
 
@@ -368,35 +380,50 @@ PUT _cluster/settings
 
 | Параметр | По умолчанию | Назначение |
 | :--- | :--- | :--- |
+| `clusterName` | `opensearch-cluster` | Имя кластера и часть имен ресурсов |
 | `replicas` | `3` | Число подов в NodeGroup |
 | `nodeGroup` | `master` | Имя группы; часть имен всех ресурсов |
-| `masterService` | `""` | Имя сервиса discovery; обязателен при nodeGroup != master |
+| `masterService` | `<clusterName>-master` | Имя сервиса discovery; обязателен при nodeGroup != master |
 | `singleNode` | `false` | Режим одного узла; форсирует replicas=1 |
-| `roles` | все роли | Список ролей узлов группы |
-| `antiAffinity` | `hard` | hard/soft/custom (+ `customAntiAffinity`, ключ `antiAffinityTopologyKey`) |
+| `roles` | `[master, ingest, data, remote_cluster_client]` | Список ролей группы (`master` — устаревший псевдоним `cluster_manager`) |
+| `antiAffinity` | `soft` | hard/soft/custom (+ `customAntiAffinity`; `antiAffinityTopologyKey` — `kubernetes.io/hostname`) |
 | `opensearchJavaOpts` | `-Xmx512M -Xms512M` | Настройки JVM, прежде всего heap |
-| `persistence.size` | `30Gi` | Размер PVC из volumeClaimTemplate |
+| `image.tag` | `""` (→ `Chart.AppVersion`) | Тег образа; не задан — берется из версии чарта |
+| `resources.requests` | `1000m` / `100Mi` | CPU/memory по умолчанию — задавайте явно |
+| `persistence.size` | `8Gi` | Размер PVC из volumeClaimTemplate (`accessModes: [ReadWriteOnce]`) |
+| `podSecurityContext` / `securityContext` | `fsGroup: 1000, runAsUser: 1000` / drop ALL capabilities, `runAsNonRoot: true` | Харденинг пода и контейнера по умолчанию |
+| `startupProbe` / `readinessProbe` / `livenessProbe` | tcpSocket 9200 (5/10/30) / tcpSocket 9200 (5/3/3) / `{}` (отключен) | Пробы; liveness включается явно |
 | `sysctlVmMaxMapCount` / `sysctlInit.enabled` | `262144` / `false` | vm.max_map_count и привилегированный initContainer |
 | `updateStrategy` | `RollingUpdate` | Или `OnDelete` для ручной прокрутки |
 | `maxUnavailable` | `1` | Лимит PDB на группу |
 | `terminationGracePeriod` | `120` | Секунды на корректную остановку |
+| `masterTerminationFix` | `false` | Sidecar, дожидающийся снятия роли master перед завершением пода |
+| `protocol` / `httpPort` / `transportPort` / `metricsPort` | `https` / `9200` / `9300` / `9600` | Протокол и порты сервиса (пробы — TCP на `httpPort`) |
+| `service.type` | `ClusterIP` | Тип сервиса OpenSearch |
+| `keystore` | `[]` | Секреты, маппируемые в `opensearch.keystore` |
+| `enableServiceLinks` | `true` | `false` ускоряет старт в namespace с множеством сервисов |
+| `extraObjects` | `[]` | Дополнительные K8s-манифесты из values |
+| `rbac.create` / `networkPolicy.create` / `ingress.enabled` | `false` / `false` / `false` | Встроенные ресурсы чарта (RBAC, NetworkPolicy, Ingress) |
 | `plugins.{enabled,installList,removeList}` | `false/[]/[]` | Управление сторонними плагинами |
-| `serviceMonitor.enabled` | `false` | ServiceMonitor для Prometheus Operator (path `/_prometheus/metrics`) |
+| `serviceMonitor.enabled` | `false` | ServiceMonitor для Prometheus Operator (path `/_prometheus/metrics`, scheme `http` — см. gotcha выше) |
 | `securityConfig.enabled` | `true` | Применение конфигурации безопасности (demo по умолчанию) |
 
 ### Helm-чарт против Kubernetes Operator
 
-Альтернативный путь развертывания — [OpenSearch Kubernetes Operator](https://github.com/opensearch-project/opensearch-k8s-operator) (версия 3.0, январь 2026: quorum-safe rolling restarts, multi-namespace поддержка, hot-reload TLS-сертификатов):
+Альтернативный путь развертывания — [OpenSearch Kubernetes Operator](https://github.com/opensearch-project/opensearch-k8s-operator): v3.0.0 GA — 25 сентября 2026 (alpha — 26 января 2026), поддерживает OpenSearch 2.19.2 → latest 3.x. Установка: `helm repo add opensearch-operator https://opensearch-project.github.io/opensearch-k8s-operator/`. Идет миграция API-группы с `opensearch.opster.io` на `opensearch.org` — обе поддерживаются, `opensearch.opster.io` deprecated (подробности — в Migration Guide оператора).
+
+Ключевые возможности Operator 3.0 (проверены по release notes и User Guide): quorum-safe rolling restarts и SmartScaler по умолчанию (прероллинговые проверки: кворум 2/3 cluster manager, health green, readiness StatefulSet; один под за итерацию; порядок data → coordinating → cluster manager), hot-reload TLS-сертификатов, online volume expansion, multi-namespace, установка плагинов на фазе bootstrap, управление Dashboards, масштабирование per node pool.
 
 | Критерий | Helm-чарт | Operator |
 | :--- | :--- | :--- |
 | Сложность внедрения | Низкая (привычный GitOps-поток) | Выше (CRD + контроллер) |
-| Масштабирование | Ручное (helm upgrade) | Декларативное через CR |
-| Rolling upgrades | Базовый контроль (OnDelete/RollingUpdate) | Умный drain, quorum-safe restarts |
-| Управление безопасностью | Через секреты и securityadmin.sh | CRD-автоматизация |
-| Мульти-кластер | Отдельный релиз на группу | Один CR на кластер |
+| Масштабирование | Ручное (helm upgrade) | Декларативное через CR, per node pool |
+| Rolling upgrades | Базовый контроль (OnDelete/RollingUpdate) | Quorum-safe restarts с проверками, SmartScaler |
+| Управление безопасностью | Через секреты и securityadmin.sh | CRD-автоматизация, TLS hot-reload |
+| Хранилище | PVC из volumeClaimTemplate | Online volume expansion |
+| Мульти-кластер | Отдельный релиз на группу | Один CR на кластер, multi-namespace |
 
-Чарт остается выбором по умолчанию для команд со зрелым GitOps-процессом; Operator — когда нужны автоматизированные жизненные циклы и интеграция TLS-ротации.
+Чарт остается выбором по умолчанию для команд со зрелым GitOps-процессом; Operator — когда нужны автоматизированные жизненные циклы, безопасные рестарты и ротация TLS.
 
 ### Очистка окружения
 
@@ -412,6 +439,7 @@ kubectl delete pvc -l app.kubernetes.io/name=opensearch   # необратимо
 ---
 ## См. также
 
-* **[Администрирование OpenSearch](./opensearch_administration.md)** — управление индексами, безопасность, remote store и снимки.
+* **[Администрирование OpenSearch](./opensearch_administration.md)** — управление индексами, безопасность, remote store.
+* **[OpenSearch: Snapshots и Disaster Recovery](./opensearch-disaster-recovery.md)** — снапшоты, Snapshot Management, план восстановления.
 * **[OpenSearch: Обзор системы](./opensearch_overview.md)** — архитектура и ключевые компоненты.
 * **[Развертывание Ansible](./opensearch_ansible_deployment.md)** — альтернатива для виртуальных машин без Kubernetes.

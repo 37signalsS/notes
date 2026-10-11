@@ -138,7 +138,7 @@
 - **Observability** — фундамент, без которого FDRT, CFR и Rework Rate невозможно измерить честно. См. **[Наблюдаемость](../../Concepts/Observability_and_Monitoring/observability_definitions.md)** и **[Наблюдаемость пайплайнов](./pipeline_observability.md)**.
 - **Chaos Engineering** выявляет слабые места до деплоя, снижая CFR и улучшая FDRT. См. **[Интеграция Chaos и DORA](../../Chaos_Engineering/chaos_engineering_metrics.md#интеграция-с-dora)**.
 - **Configuration Management (Sysadmin)** — Ansible, Puppet, Chef, Salt позволяют версионировать инфраструктурные изменения и вести их учет как деплои, что даёт честные метрики для на-premise сред.
-- **Change Management (ITIL/Sysadmin)** — formal Change Advisory Board (CAB) часто замедляет Deployment Frequency. Современный подход — заменить CAB на peer review + automated canary + fast rollback, чтобы не жертвовать скоростью ради контроля.
+- **Change Management (ITIL/Sysadmin)** — formal Change Advisory Board (CAB) часто замедляет Deployment Frequency. Современный подход — заменить CAB на peer review + automated canary + fast rollback, чтобы не жертвовать скоростью ради контроля. Подробнее: **[Управление изменениями и CAB](./change_management.md)**.
 
 ### Почему скорость и стабильность — не компромисс
 
@@ -223,6 +223,72 @@ pipeline {
 ```
 
 Для готовых графиков используется плагин **DORA Metrics Plugin** (читает историю builds) либо экспорт событий в Prometheus через Pushgateway. Валидация: после прогона проверьте, что в `deploys.log` появилась строка со `status=success` и корректным `sha`.
+
+### Сценарий 2b: GitHub Actions — сбор DORA из Workflow Runs API
+
+GitHub Actions не имеет встроенного DORA-дашборда, но собирает метрики через REST API на основе `workflow_run` и `check_run` объектов. Депloy-события фиксируются в job'е через `GITHUB_REPOSITORY`, `GITHUB_SHA` и `GITHUB_RUN_ID`.
+
+**Шаг 1: Фиксация события деплоя в workflow:**
+```yaml
+name: Deploy
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Целевая среда'
+        required: true
+        default: 'staging'
+        type: choice
+        options: [staging, production]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Deploy
+        id: deploy
+        run: |
+          ./deploy.sh ${{ inputs.environment }}
+      - name: Record deploy event
+        if: always()
+        run: |
+          STATUS="${{ steps.deploy.outcome }}"
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "$TIMESTAMP deploy sha=$GITHUB_SHA env=${{ inputs.environment }} status=$STATUS" \
+            >> /var/log/deploys.log
+          # Или отправка в систему учёта инцидентов/метрик
+```
+
+**Шаг 2: Сбор метрик через GitHub API (сценарий для SRE/DevOps):**
+```bash
+# Deployment Frequency за последний месяц (по successful runs)
+curl -s -H "Authorization: token $GITHUB_TOKEN" \
+  "https://api.github.com/repos/<OWNER>/<REPO>/actions/runs?branch=main&status=success&per_page=100" \
+  | jq '[.data_runs[] | .created_at] | length'
+
+# Lead Time: разница между created_at workflow_run и commit timestamp
+# (требуется дополнительная корреляция с git log)
+```
+
+**Шаг 3: Автоматический сбор в пайплайне через `gh run list`:**
+```bash
+# Сбор CFR за последние 100 запусков
+TOTAL=$(gh run list --limit 100 --json conclusion --jq 'length')
+FAILURES=$(gh run list --limit 100 --json conclusion \
+  --jq '[.[] | select(.conclusion == "failure")] | length')
+CFR=$(echo "scale=2; $FAILURES * 100 / $TOTAL" | bc)
+echo "Change Failure Rate: $CFR%"
+```
+
+**Валидация:** проверьте, что `deploy` job фиксирует `status=success` только при успешном завершении deploy-шага (через `if: always()` и `steps.deploy.outcome`). Если статус фиксируется до проверки health check, CFR будет занижен.
+
+**Особенности GitHub Actions:**
+- **Workflow Run** ≠ **Deployment**. Один workflow_run может включать несколько деплоев (например, staging + production). Договоритесь, что деплоем считается отдельный job с `environment: production`.
+- **`environment` protection rules** (требуют approval) влияют на Lead Time — время ожидания approval добавляется в метрику.
+- **`concurrency` с `cancel-in-progress`** может искажать Deployment Frequency: отменённые старые runs не считаются, но могут маскировать проблему перегрузки runner'ов.
+- **Метрики runner'ов** (для self-hosted): Queue Time берётся из разницы `created_at` и `started_at` в ответе API, либо из метрик `actions-runner-controller` (ARC) при использовании Kubernetes.
 
 ### Сценарий 3: Sysadmin — сбор из системных логов деплоя (без CI-платформы)
 

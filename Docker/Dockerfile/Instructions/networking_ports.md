@@ -1,5 +1,7 @@
 # Инструкция Dockerfile: EXPOSE
 
+**Актуально для:** Docker 20.10+
+
 ## Определения
 
 **Инструкция `EXPOSE`** — декларативная директива Dockerfile, которая информирует Docker о том, что контейнер будет прослушивать определенные сетевые порты во время выполнения. Она фиксирует "сетевой контракт" образа, описывая порты и протоколы, которые приложение внутри контейнера ожидает для взаимодействия.
@@ -37,10 +39,9 @@
 # Один порт (TCP по умолчанию)
 EXPOSE 80
 
-# Порт с указанием протокола (TCP, UDP или SCTP)
+# Порт с указанием протокола (TCP, UDP)
 EXPOSE 53/udp
 EXPOSE 53/tcp
-EXPOSE 2905/sctp
 
 # Диапазон портов
 EXPOSE 8000-8010/tcp
@@ -91,6 +92,7 @@ docker exec mycontainer curl -sf http://localhost:8080/health
 ### Взаимодействие с IPv6 и Rootless Docker
 
 - **IPv6:** Инструкция работает на уровне L4 (порты/протоколы) и не зависит от версии IP. Маршрутизация IPv6 настраивается на уровне Docker-демона. Для публикации портов на IPv6 используйте `-p [::]:8080:80`.
+  - **Docker 27.x:** Включён `ip6tables` по умолчанию для bridge-сетей. Опубликованные порты (`-p`) защищены цепочками iptables; для прямого маршрутинга IPv6 без NAT используйте `com.docker.network.bridge.gateway_mode_ipv6=routed` при создании сети.
 - **Rootless Docker:** В Rootless-режиме Docker не может пробрасывать порты ниже 1024 (privileged ports) на хост-интерфейсы без дополнительных настроек ОС (например, `sysctl net.ipv4.ip_unprivileged_port_start=0`). Рекомендуется использовать порты >= 1024 или настраивать sysctl.
 
 ### Влияние на кэширование слоёв
@@ -98,7 +100,7 @@ docker exec mycontainer curl -sf http://localhost:8080/health
 `EXPOSE` **не инвалидирует** кэш последующих инструкций, так как не модифицирует файловую систему. Однако изменение `EXPOSE` меняет конфигурацию образа и, следовательно, **Image Digest**:
 
 ```dockerfile
-# Изменение EXPOSE не пересоздаёт кэш для后续 RUN
+# Изменение EXPOSE не пересоздаёт кэш для последующих RUN
 EXPOSE 80      # Слой 1: метаданные
 RUN apt-get update  # Кэш не сброшен
 EXPOSE 443     # Слой 2: метаданные (Digest изменился)
@@ -210,7 +212,50 @@ services:
       - "8080:80"  # Доступен и с хоста, и внутри сети
 ```
 
-### Сценарий 4: Multi-stage сборка с EXPOSE
+### Сценарий 4: Top-level `expose` в Docker Compose (Compose spec)
+
+В Docker Compose Specification существует два уровня `expose`:
+- **Service-level** (внутри `services.<name>.expose`) — доступен только для сервисов в той же сети.
+- **Top-level** (в корне `expose`) — применяется ко всем сервисам, у которых нет собственного `ports`.
+
+```yaml
+# Top-level expose: все сервисы без ports получают эти порты "внутренние"
+expose:
+  - "5432"
+  - "6379"
+  - "8080"
+
+services:
+  db:
+    image: postgres:16
+    # ports не объявлён -> порт 5432 доступен только внутри сети
+
+  cache:
+    image: redis:7-alpine
+    # ports не объявлён -> порт 6379 доступен только внутри сети
+
+  api:
+    build: .
+    ports:
+      - "80:8080"  # Этот сервис переопределяет top-level expose
+    # ports объявлён -> top-level expose для этого сервиса не действует
+```
+
+**Разница с service-level `expose`:**
+
+```yaml
+services:
+  db:
+    image: postgres:16
+    expose:
+      - "5432"   # Только для db; другие сервисы не получают доступ автоматически
+
+# VS top-level:
+expose:
+  - "5432"       # Все сервисы без ports получают этот порт
+```
+
+### Сценарий 5: Multi-stage сборка с EXPOSE
 
 В multi-stage сборке `EXPOSE` определяется в финальной стадии (runtime):
 
@@ -229,7 +274,7 @@ EXPOSE 8080
 CMD ["./app"]
 ```
 
-### Сценарий 5: Несколько портов (приложение + дебаг)
+### Сценарий 6: Несколько портов (приложение + дебаг)
 
 Приложения часто используют несколько портов — основной для трафика и дополнительный для отладки:
 
@@ -256,7 +301,7 @@ docker run -p 3000:3000 -p 9229:9229 myapp
 # Подключение отладчика к localhost:9229
 ```
 
-### Сценарий 6: Микросервисная архитектура с internal-only портами
+### Сценарий 7: Микросервисная архитектура с internal-only портами
 
 В микросервисной архитектуре некоторые порты должны быть доступны только внутри кластера:
 
@@ -286,7 +331,7 @@ services:
       - db_password
 ```
 
-### Сценарий 7: Порт 80/443 и привилегированные порты
+### Сценарий 8: Порт 80/443 и привилегированные порты
 
 В Linux порты ниже 1024 требуют привилегий root. Если приложение запускается от непривилегированного пользователя, используйте порты >= 1024:
 
@@ -311,7 +356,7 @@ CMD ["node", "src/server.js"]
 docker run --cap-add=NET_BIND_SERVICE -p 80:80 myapp
 ```
 
-### Сценарий 8: EXPOSE и UFW (конфликт и решение)
+### Сценарий 9: EXPOSE и UFW (конфликт и решение)
 
 UFW и Docker конфликтуют — Docker обходит UFW через iptables. Порт, опубликованный через `-p`, будет доступен несмотря на UFW:
 
@@ -322,13 +367,17 @@ docker run -p 8080:80 nginx
 # Решение 1: Привязка к localhost
 docker run -p 127.0.0.1:8080:80 nginx
 
-# Решение 2: Настройка Docker daemon (Docker 20.10+)
+# Решение 2: Использование DOCKER-USER chain (рекомендуется)
+# Правила в DOCKER-USER применяются ДО правил Docker и не перезаписываются
+sudo iptables -I DOCKER-USER -i eth0 -p tcp --dport 8080 -j DROP
+
+# Решение 3: Отключение iptables в daemon (не рекомендуется для production)
 # В /etc/docker/daemon.json:
 # { "iptables": false }
 # ВНИМАНИЕ: это отключает проброс портов для ВСЕХ контейнеров!
 ```
 
-### Сценарий 9: EXPOSE с -P в CI/CD (динамические порты для тестов)
+### Сценарий 10: EXPOSE с -P в CI/CD (динамические порты для тестов)
 
 В CI/CD удобно использовать динамические порты для параллельного тестирования:
 
@@ -345,7 +394,7 @@ for i in 1 2 3 4 5; do
 done
 ```
 
-### Сценарий 10: Docker Desktop и проброс портов
+### Сценарий 11: Docker Desktop и проброс портов
 
 В Docker Desktop (macOS/Windows) проброс портов работает через виртуальную машину. При публикации порта Docker Desktop создает прокси от хоста до VM:
 
@@ -360,6 +409,70 @@ curl http://localhost:8080  # Работает
 # GUI: Dashboard -> Containers -> Ports
 # CLI: docker ps --format "table {{.Names}}\t{{.Ports}}"
 ```
+
+## Валидация
+
+### Проверка метаданных EXPOSE в образе
+
+```bash
+# Просмотр экспонированных портов через inspect
+docker image inspect --format '{{json .Config.ExposedPorts}}' myimage
+# → {"80/tcp":{},"443/tcp":{}}
+
+# Проверка конкретного порта
+docker image inspect --format '{{index .Config.ExposedPorts \"80/tcp\"}}' myimage
+# → {}
+```
+
+### Проверка опубликованных портов в контейнере
+
+```bash
+# Список всехpublished-портов
+docker ps --format "table {{.Names}}\t{{.Ports}}"
+# NAMES    PORTS
+# mynginx  0.0.0.0:8080->80/tcp
+
+# Через inspect
+docker inspect --format '{{json .NetworkSettings.Ports}}' mycontainer
+# → {"80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]}
+
+# Узнать конкретный порт для контейнера
+docker port mycontainer 80
+# → 0.0.0.0:8080
+```
+
+### Проверка слушающих портов внутри контейнера
+
+```bash
+# TCP-порты
+docker exec mycontainer ss -tlnp
+# → LISTEN 0 128 0.0.0.0:8080 0.0.0.0:* users:(("node",pid=1,fd=28))
+
+# UDP-порты
+docker exec mycontainer ss -ulnp
+# → UNCONN 0 0 0.0.0.0:53 0.0.0.0:* users:(("dnsmasq",pid=5,fd=3))
+
+# Проверка конкретного порта через curl
+docker exec mycontainer curl -sf http://localhost:8080/health
+# → {"status":"ok"}
+```
+
+### Проверка доступности с хоста
+
+```bash
+# Доступ по localhost
+curl -s -o /dev/null -w "%{http_code}" http://localhost:8080
+# → 200
+
+# Проверка через netcat (TCP)
+nc -zv localhost 8080
+# → Connection succeeded!
+
+# Проверка через netcat (UDP)
+nc -zuv localhost 53
+# → Connection succeeded!
+```
+
 ## Типичные ошибки и их решение
 
 ### Ошибка 1: Connection Refused после добавления EXPOSE
@@ -457,7 +570,7 @@ RUN go build -o app
 
 # Stage 2: EXPOSE должен быть здесь
 FROM alpine
-EXPOSE 8080  # Это имеет效力
+EXPOSE 8080  # Это имеет действие
 COPY --from=builder /app .
 CMD ["./app"]
 ```
@@ -633,6 +746,34 @@ docker inspect --format '{{json .Config.ExposedPorts}}' newimage
 docker export mycontainer > container.tar
 # EXPOSE не экспортируется — это файловая система без метаданных
 ```
+
+### EXPOSE и режимы сети (`--network`)
+
+Режим сети, выбранный через `--network`, определяет, как EXPOSE и публикация портов работают на практике:
+
+| Режим | Поведение EXPOSE | Доступность портов |
+| :--- | :--- | :--- |
+| **`bridge`** (по умолчанию) | EXPOSE работает как обычно | Доступ через `-p`/`-P` |
+| **`host`** | EXPOSE не имеет эффекта | Порт приложения доступен напрямую на хосте (без `-p`) |
+| **`none`** | EXPOSE не имеет эффекта | Сеть отключена; порты недоступны |
+| **`container:<id>`** | EXPOSE не имеет эффекта | Порт приложения разделяется с целевым контейнером |
+
+```bash
+# bridge (стандартный режим): EXPOSE + -p работают
+docker run -d --name web --network bridge -p 8080:80 nginx
+
+# host: EXPOSE игнорируется, порт 80 доступен напрямую на хосте
+docker run -d --name web --network host nginx
+# curl http://localhost:80 -> работает без -p
+
+# none: нет сети вообще
+docker run -d --name isolated --network none myapp
+
+# container: общая сеть с другим контейнером
+docker run -d --name app1 --network container:web nginx
+```
+
+> **Важно для SRE:** В режиме `host` приложение получает доступ ко всем интерфейсам хоста. Это повышает производительность (отсутствие NAT), но снижает изоляцию. Используйте `--network=host` только для высоконагруженных сервисов с контролируемым доступом (например, через `firewalld`/`iptables` на хосте).
 
 ### EXPOSE в Swarm mode
 

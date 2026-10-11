@@ -84,7 +84,7 @@ curl -sI https://grafana.example.internal/api/health
 # → set-cookie: grafana_session=...; Path=/; HttpOnly; Secure; SameSite=Lax
 
 curl -s https://grafana.example.internal/api/health
-# → {"commit":"...","database":"ok","version":"13.1.0","status":"ok"}
+# → {"commit":"...","database":"ok","version":"13.2.3","status":"ok"}
 ```
 
 Если на странице входа нет кнопки «Sign up» — `allow_sign_up` применён. Cookie с флагом `Secure` означает `cookie_secure = true`.
@@ -141,7 +141,7 @@ disable_login_form = false # не скрываем форму полностью
 signout_redirect_url = https://grafana.example.internal/
 ```
 
-Для полной блокировки локального входа (только SSO) выставляют `disable_login_form = true`, но это опасно при недоступности провайдера — оставьте запасной вход для Grafana Admin через `grafana-cli` сбросом пароля.
+Для полной блокировки локального входа (только SSO) выставляют `disable_login_form = true`, но это опасно при недоступности провайдера — оставьте запасной вход для Grafana Admin через `grafana cli` сбросом пароля.
 
 ### Сценарий 4. Аудит и защита от перебора
 
@@ -207,7 +207,7 @@ enabled = true
 
 - Сохраняйте предыдущий `grafana.ini` (например, `grafana.ini.bak`) перед правкой.
 - Откат: восстановите бэкап конфига, перезапустите службу, проверьте `/api/health`.
-- При невозможности входа после `disable_login_form = true` — сбросьте пароль Grafana Admin через `grafana-cli admin reset-admin-password <new>` и временно верните `disable_login_form = false`.
+- При невозможности входа после `disable_login_form = true` — сбросьте пароль Grafana Admin через `grafana cli admin reset-admin-password <new>` и временно верните `disable_login_form = false`.
 
 ### Актуальность и статус
 

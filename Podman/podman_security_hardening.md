@@ -452,3 +452,5 @@ sign:
 - **[Trivy](../../Security/Tools/security_tools.md)** — инструменты безопасности
 - **[Cosign/Sigstore](../../Security/Tools/sigstore.md)** — подпись образов
 - **[SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)** — анализ зависимостей
+
+# force reindex test

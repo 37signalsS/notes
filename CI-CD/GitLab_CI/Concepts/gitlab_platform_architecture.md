@@ -1,5 +1,7 @@
 # Архитектура и масштабирование GitLab
 
+**Актуально для:** GitLab 17.x–19.x
+
 ## Определения
 
 * **Omnibus GitLab** — официальный пакет (deb/rpm), содержащий GitLab и все его зависимости. Управляется утилитой `gitlab-ctl`. Оптимален для большинства self-hosted инсталляций.
@@ -8,45 +10,107 @@
 * **Puma** — веб-сервер Ruby, обрабатывающий основной API и веб-интерфейс GitLab. Использует многопоточную модель для параллельной обработки запросов.
 * **GitLab Runner** — агент, выполняющий задачи CI/CD. Опрашивает GitLab Server по HTTP(S) и запускает задания в различных окружениях (Docker, Kubernetes, Shell).
 * **Gitaly** — Git RPC сервис, обеспечивающий доступ к репозиториям. Все операции с файловой системой Git проходят через этот слой.
-* **Gitaly Cluster (RAFT)** — современная (v17+) архитектура высокой доступности для Git-данных. Использует протокол консенсуса Raft для репликации без участия внешнего прокси Praefect.
+* **Gitaly Cluster (RAFT)** — архитектура высокой доступности для Git-данных (v17+). Использует протокол консенсуса Raft для репликации. **Примечание:** Gitaly Cluster поддерживается только на виртуальных машинах; развертывание в Kubernetes не поддерживается.
+* **Praefect** — прокси-слой для Gitaly Cluster, управляющий маршрутизацией запросов и репликацией.
 * **Sidekiq** — многопоточный фоновый обработчик задач на Ruby. Отвечает за асинхронные процессы: отправку уведомлений, обработку пайплайнов, чистку кэша.
 * **GitLab Orbit** — графовая база данных контекста жизненного цикла ПО (v19.x). Индексирует связи между кодом, тикетами и пайплайнами для обеспечения трассировки и аналитики.
 * **ClickHouse** — колоночная СУБД, используемая в GitLab (v19.x+) для хранения и быстрой обработки аналитических данных, таких как метрики DORA и логи безопасности.
 * **GitLab Geo** — решение для территориально распределенных команд. Позволяет создавать read-only зеркала инстанса в разных регионах для ускорения Git-операций и обеспечения DRP (Disaster Recovery).
+* **Valkey** — высокопроизводительное in-memory хранилище (форк Redis), используемое в GitLab 19.x как основной механизм кэширования и брокер сообщений для Sidekiq. В 19.0 поддержка Redis 6 удалена; рекомендуется Valkey 7.2+ или Redis 7.2+.
+* **Patroni** — кластерный менеджер для PostgreSQL, обеспечивающий автоматический failover и репликацию в конфигурациях высокой доступности.
+* **Consul** — система обнаружения сервисов и конфигурации, используемая для координации узлов PostgreSQL и Gitaly Cluster в HA-конфигурациях.
 
-## Основные концепции
+## Предварительные требования
 
-### Компоненты системы
+### Версия GitLab и поддержка функций
 
-GitLab представляет собой микросервисную экосистему, где каждый компонент отвечает за свою область:
+| Функция | Минимальная версия | Примечание |
+| :--- | :--- | :--- |
+| Omnibus GitLab (базовый) | 11.0+ | Установка через пакетный менеджер |
+| `gitlab-ctl` | 11.0+ | Инструмент управления инстансом |
+| Gitaly Cluster (RAFT) | 17.0+ | Высокая доступность Git-данных на VM |
+| Valkey 7.2+ | 19.0+ | Замена Redis в качестве кэша и брокера |
+| PostgreSQL 17 | 19.0+ | Минимально поддерживаемая версия БД |
+| Envoy Gateway | 19.0+ | Сетевая точка входа для Helm-инсталляций |
+| GitLab Orbit | 19.x | Графовая аналитика на ClickHouse |
+| Kubernetes-интеграция (KAS) | 17.x+ | Агент для кластеров K8s |
 
-* **Nginx / Envoy Gateway:** Входная точка трафика. В Cloud Native инсталляциях (v19.x) Envoy Gateway заменяет Nginx Ingress для поддержки расширенных функций балансировки и безопасности.
-* **GitLab Rails (Puma/Workhorse):** Ядро приложения. Puma обрабатывает веб-запросы и API. Workhorse — легковесный прокси, обрабатывающий «тяжелые» HTTP-запросы (артефакты, Git LFS).
-* **PostgreSQL 17:** Хранение метаданных: пользователи, проекты, задачи, права доступа.
-* **Valkey 7.2+:** Хранилище сессий, кэша и очередей задач Sidekiq (замена Redis).
-* **Gitaly Cluster:** Сервис доступа к репозиториям. Масштабируется горизонтально через шардирование или кластеризацию.
-* **Registry:** Встроенный Container Registry для хранения Docker-образов.
-* **Object Storage:** Внешнее S3-совместимое хранилище (MinIO, Ceph RADOS Gateway) для всех Stateless-данных: артефакты, бэкапы, LFS.
+### Необходимые знания
 
-### Механизм выполнения задач (CI/CD)
+- Структура GitLab CI/CD, стадии (stages) и правила запуска (`rules`)
+- Основы GitLab CI/CD Variables и Protected/Masked переменные
+- Принципы DORA-метрик и их связи с окружениями
+- Базовое понимание Kubernetes Namespaces, Services и Ingress (для сценариев с кластером)
+- Основы администрирования Linux: systemd, логирование, сетевые порты
+
+### Требования к инфраструктуре
+
+| Компонент | Минимум | Рекомендация Production |
+| :--- | :--- | :--- |
+| CPU | 4 vCPU | 8+ vCPU |
+| RAM | 16 ГБ | 32+ ГБ |
+| Диск | 100 ГБ SSD | 500+ ГБ NVMe |
+| Сеть | 1 Гбит/с | 10 Гбит/с с низкой задержкой |
+
+## Архитектура и принципы работы
+
+### Взаимодействие компонентов
+
+GitLab построен на микросервисной архитектуре, где каждый компонент отвечает за свою область. Взаимодействие происходит через внутренние API и RPC-вызовы.
+
+**Поток запросов:**
+
+1. **Внешний запрос** (HTTP/HTTPS или SSH) поступает на точку входа (Nginx или Envoy Gateway).
+2. **Веб-сервер** (Puma) обрабатывает API и веб-интерфейс.
+3. **Workhorse** проксирует «тяжелые» запросы (артефакты, Git LFS, репозитории) соответствующим сервисам.
+4. **GitLab Shell** обрабатывает Git-операции по SSH, обращаясь к Gitaly.
+5. **Gitaly** выполняет низкоуровневые Git-операции и управляет хранилищем.
+6. **Sidekiq** обрабатывает асинхронные фоновые задачи (уведомления, пайплайны, очистка).
+7. **PostgreSQL** хранит метаданные (пользователи, проекты, права, пайплайны).
+8. **Valkey** управляет сессиями, кэшем и очередями Sidekiq.
+
+### Модель выполнения CI/CD
 
 GitLab Server формирует очередь заданий, которые выбирают **GitLab Runners**. Взаимодействие происходит по Pull-модели: раннеры опрашивают сервер по HTTP(S).
 
-**Масштабирование через GitLab Runner Operator:**
+**Масштабирование через Kubernetes:**
 В крупных инфраструктурах используется запуск в Kubernetes, где за каждую джобу отвечает отдельный под.
-*   **Изоляция:** Каждый запуск происходит в "чистом" контейнере, что исключает конфликты зависимостей между разными пайплайнами.
-*   **Динамические ресурсы:** Под создается только на время выполнения задачи, потребляя ресурсы кластера ровно столько, сколько указано в лимитах джобы.
-*   **Автомасштабирование:** Kubernetes автоматически распределяет поды раннеров по свободным нодам кластера.
+* **Изоляция:** Каждый запуск происходит в "чистом" контейнере, исключая конфликты зависимостей между пайплайнами.
+* **Динамические ресурсы:** Под создается только на время выполнения задачи, потребляя ресурсы кластера ровно столько, сколько указано в лимитах джобы.
+* **Автомасштабирование:** Kubernetes автоматически распределяет поды раннеров по свободным нодам кластера.
+
+### Целостность данных и доступность
+
+* **Gitaly Cluster:** Использует Raft-консенсус для репликации Git-данных между тремя и более узлами. Обеспечивает консистентность даже при выходе из строя одной зоны.
+* **PostgreSQL HA:** Patroni + Consul обеспечивают автоматический failover без единой точки отказа.
+* **Geo-репликация:** Для территориально распределенных команд создаются read-only зеркала инстанса.
+
+## Компоненты системы
+
+| Компонент | Назначение | Тип |
+| :--- | :--- | :--- |
+| **Nginx / Envoy Gateway** | Входная точка трафика, SSL-termination, маршрутизация | Stateless |
+| **GitLab Rails (Puma)** | Ядро приложения: API, веб-интерфейс, бизнес-логика | Stateless |
+| **Workhorse** | Прокси для тяжелых HTTP-запросов (артефакты, LFS, репозитории) | Stateless |
+| **GitLab Shell** | Обработка SSH-соединений для Git-операций | Stateless |
+| **Gitaly** | RPC-сервис для операций с репозиториями | Stateful |
+| **Sidekiq** | Фоновая обработка задач | Stateless |
+| **PostgreSQL 17+** | Хранение метаданных | Stateful |
+| **Valkey 7.2+** | Кэш, сессии, очереди Sidekiq | Stateful |
+| **Registry** | Хранение Docker-образов | Stateful |
+| **ClickHouse** | Аналитические данные, метрики DORA | Stateful |
+| **Prometheus** | Сбор метрик компонентов | Stateless |
+| **Grafana** | Визуализация метрик | Stateless |
 
 ### Варианты развертывания
 
 | Метод | Особенности | Рекомендация |
 | :--- | :--- | :--- |
-| **Omnibus (Package)** | Простая установка и обновление. Полный контроль над компонентами. | **Production (Single Node / Distributed)** |
-| **Cloud Native Hybrid** | Rails/Sidekiq в Kubernetes, Gitaly Cluster и БД на виртуальных машинах. | **Enterprise HA / Large Scale** |
-| **Helm Chart / Operator** | Полное развертывание в Kubernetes. Gitaly в K8s пока только в шардированном режиме. | **Kubernetes-native (Scaling focus)** |
+| **Omnibus (Package)** | Простая установка и обновление. Полный контроль над компонентами. | Production (Single Node / Distributed) |
+| **Hybrid** | Rails/Sidekiq в Kubernetes, Gitaly Cluster и БД на виртуальных машинах. | Enterprise HA / Large Scale |
+| **Helm Chart / Operator** | Полное развертывание в Kubernetes. Gitaly в K8s не поддерживается для HA; рекомендуется VM. | Kubernetes-native (Scaling focus) |
 
-### Управление через Omnibus
+## Управление через Omnibus
 
 Основным инструментом управления является утилита `gitlab-ctl`. Все настройки хранятся в файле `/etc/gitlab/gitlab.rb`.
 
@@ -81,133 +145,13 @@ GitLab Server формирует очередь заданий, которые �
 * **PostgreSQL HA:** Кластер под управлением **Patroni** и **Consul**, обеспечивающий автоматический failover и отсутствие единой точки отказа в слое данных.
 * **Kubernetes-деплой:** Rails и Sidekiq запускаются в Kubernetes (для быстрого горизонтального масштабирования), в то время как Gitaly и БД остаются на выделенных VM (для стабильной производительности дисковой подсистемы).
 
-### 4. Резервное копирование и восстановление
+### 4. Управление инстансом
 
-Автоматизация бэкапов критичных данных GitLab.
-
-```bash
-# Создание полного бэкапа
-sudo gitlab-backup create CRON=1
-
-# Настройка автоматического бэкапа (crontab)
-echo "0 2 * * * /opt/gitlab/bin/gitlab-backup create CRON=1" | sudo crontab -
-
-# Восстановление из бэкапа
-sudo gitlab-ctl stop puma sidekiq
-sudo gitlab-backup restore BACKUP=1234567890
-sudo gitlab-ctl restart
-```
-
-**Важные файлы для бэкапа:**
-
-```bash
-# Обязательные файлы
-/etc/gitlab/gitlab-secrets.json    # Ключи шифрования
-/etc/gitlab/gitlab.rb              # Конфигурация
-
-# Дополнительные данные
-/var/opt/gitlab/git-data/          # Git-репозитории
-/var/opt/gitlab/backups/           # Бэкапы БД
-```
-
-### 5. Обновление GitLab
-
-Пошаговая процедура обновления с проверкой совместимости.
-
-```bash
-# 1. Проверка текущей версии
-sudo gitlab-rake gitlab:env:info
-
-# 2. Резервное копирование перед обновлением
-sudo gitlab-backup create
-
-# 3. Обновление пакета (Debian/Ubuntu)
-sudo apt update && sudo apt install gitlab-ce
-
-# 4. Применение миграций
-sudo gitlab-ctl reconfigure
-
-# 5. Проверка статуса
-sudo gitlab-ctl status
-sudo gitlab-rake gitlab:check SANITIZE=true
-```
-
-**Порядок обновления:**
-1. Прочитайте [changelog](https://about.gitlab.com/releases/) для версии назначения.
-2. Проверьте совместимость PostgreSQL и Redis/Valkey.
-3. Обновляйте по одной минорной версии за раз.
-4. Протестируйте на staging-окружении.
-
-### 6. Настройка мониторинга через Prometheus
-
-Интеграция с внешним Prometheus для централизованного мониторинга.
-
-```yaml
-# prometheus.yml
-scrape_configs:
-  - job_name: 'gitlab'
-    static_configs:
-      - targets: ['gitlab.example.com:9090']
-    metrics_path: '/-/metrics'
-    bearer_token: 'YOUR_GITLAB_API_TOKEN'
-
-  - job_name: 'gitlab-runners'
-    static_configs:
-      - targets: ['runner1.example.com:9252', 'runner2.example.com:9252']
-```
-
-**Ключевые метрики для алертинга:**
-
-```yaml
-# alerts.yml
-groups:
-  - name: gitlab
-    rules:
-      - alert: GitLabPumaDown
-        expr: up{job="gitlab"} == 0
-        for: 1m
-        labels:
-          severity: critical
-
-      - alert: GitLabHighLatency
-        expr: gitlab_workflow_duration_seconds > 5
-        for: 5m
-        labels:
-          severity: warning
-```
+Подробное руководство по управлению GitLab инстансом: бэкап, восстановление, обновление, управление секретами — описано в **[Управление инстансом GitLab](../Advanced/gitlab_instance_administration.md)**.
 
 ### 7. Оптимизация производительности
 
-Настройка параметров для повышения отзывчивости.
-
-```ruby
-# /etc/gitlab/gitlab.rb
-
-# Puma (веб-сервер)
-puma['worker_processes'] = 4
-puma['threads_max'] = 16
-
-# Sidekiq (фоновые задачи)
-sidekiq['max_concurrency'] = 20
-
-# Gitaly (Git-операции)
-gitaly['configuration'] = {
-  concurrency: [
-    { rpc: "/gitaly.SmartHTTPService/PostReceivePack", max_per_repo: 3 }
-  ],
-  storage: [
-    { name: "default", path: "/var/opt/gitlab/git-data/repositories" }
-  ]
-}
-
-# PostgreSQL
-postgresql['shared_buffers'] = "4GB"
-postgresql['work_mem'] = "16MB"
-
-# Valkey
-valkey['maxmemory'] = "8gb"
-valkey['maxmemory-policy'] = "allkeys-lru"
-```
+Параметры настройки Puma, Sidekiq, Gitaly, PostgreSQL и Valkey описаны в **[Управлении инстансом GitLab](../Advanced/gitlab_instance_administration.md)** и **[Управлении базами данных GitLab](../Advanced/gitlab_database_management.md)**.
 
 ### 8. Настройка GitLab Runner (Docker Compose)
 
@@ -251,20 +195,37 @@ docker exec -it gitlab-runner gitlab-runner register \
   --locked="false"
 ```
 
+## Граничные случаи
+
+### Ограничения и нюансы
+
+1. **Gitaly в Kubernetes:** Gitaly Cluster (HA с RAFT-репликацией) поддерживается только на виртуальных машинах. Развертывание в Kubernetes возможно только в шардированном режиме без кластеризации.
+
+2. **Valkey и Redis:** Начиная с GitLab 19.0, поддержка Redis 6 удалена. Для новых инсталляций используйте Valkey 7.2+ или Redis 7.2+.
+
+3. **Envoy Gateway в Helm-инсталляциях:** Начиная с GitLab 19.0, Gateway API с Envoy Gateway становится стандартом для Helm Chart. NGINX Ingress остаётся доступным до версии 20.0.
+
+4. **PostgreSQL 17 minimum:** Начиная с GitLab 19.0, PostgreSQL 17 является минимально поддерживаемой версией. При обновлении с 18.x убедитесь, что БД обновлена до 17+.
+
+5. **Память для Puma и Shared Memory:** В Docker-инсталляциях стандартный `shm_size` (64MB) недостаточен для Puma и системы метрик. Рекомендуется минимум 1GB, иначе возникают ошибки 502/504.
+
+6. **Sidekiq queue buildup:** При высокой нагрузке очередь Sidekiq может расти из-за недостаточной параллельности или блокировок в БД. Увеличьте `sidekiq['max_concurrency']` и проверьте долгие запросы.
+
+7. **Gitaly и дисковые задержки:** Gitaly критичен к задержкам диска. Использование HDD или сетевых хранилищ с высокой задержкой приводит к таймаутам Git-операций и деградации UI.
+
+8. **Geo-репликация и задержки:** При настройке GitLab Geo учтите, что репликация асинхронная. Secondary-ноды могут отставать на несколько секунд, что влияет на актуальность данных в read-only сценариях.
+
 ## Дополнительная информация
 
-### Использование Object Storage (S3)
+### Хранилище данных
 
-Переход на S3 решает несколько критических задач:
-
-1. **Независимость от дисков:** Позволяет горизонтально масштабировать Rails-ноды без использования NFS.
-2. **Синхронизация Sidekiq:** Гарантирует доступность артефактов при обработке задач на разных серверах.
-3. **Оптимизация БД:** Хранение метаданных и диффов в S3 снижает нагрузку на PostgreSQL.
+Для on-prem инфраструктур рекомендуется использовать объектные хранилища (MinIO, Ceph RADOS Gateway) для артефактов, бэкапов и LFS-объектов. Это позволяет горизонтально масштабировать Rails-ноды без использования NFS.
 
 ### Опыт эксплуатации и рекомендации
 
 * **Registry Separation:** Рекомендуется использовать внешний Container Registry (например, Harbor) или выносить встроенный Registry за пределы основного инстанса.
-* **Gitaly на Kubernetes:** На текущий момент (19.x) Gitaly в K8s поддерживает только шардирование. Для полноценного HA с репликацией данных рекомендуется Gitaly Cluster на виртуальных машинах.
+* **Gitaly на выделенных серверах:** Gitaly требует быстрых NVMe-дисков и выделенных ресурсов. Размещение на общих VM с другими компонентами приводит к contention по дискам и памяти.
+* **SSD/NVMe обязательны:** Gitaly крайне чувствителен к задержкам диска. HDD приводит к таймаутам Git-операций и деградации UI.
 
 ### Мониторинг и наблюдаемость
 
@@ -294,44 +255,41 @@ sudo gitlab-ctl status
 
 ### Диагностика и устранение неполадок
 
-#### Типичные ошибки и их решения
-
-| Ошибка | Причина | Решение |
-|:---|:---|:---|
-| **502 Bad Gateway** | Puma не отвечает или перегружен | Проверьте статус Puma: `sudo gitlab-ctl status puma`. Увеличьте `puma['worker_processes']` в `gitlab.rb`. |
-| **504 Gateway Timeout** | Workhorse не может дождаться ответа от Puma | Увеличьте таймауты в `gitlab.rb`: `workhorse['api_queue_duration']`. |
-| **Gitaly high latency** | Проблемы с диском или сеть | Проверьте I/O: `iostat -x 1`. Убедитесь, что используется SSD/NVMe. |
-| **Sidekiq queue buildup** | Медленная обработка задач | Увеличьте `sidekiq['max_concurrency']`. Проверьте логи: `sudo gitlab-ctl tail sidekiq`. |
-| **PostgreSQL connection limit** | Исчерпан лимит соединений | Увеличьте `max_connections` или оптимизируйте запросы. |
-| **Valkey memory overflow** | Исчерпан лимит памяти | Увеличьте `maxmemory` или настройте eviction policy. |
-
-**Методы диагностики:**
-
-```bash
-# Просмотр логов конкретного компонента
-sudo gitlab-ctl tail puma
-sudo gitlab-ctl tail sidekiq
-sudo gitlab-ctl tail gitaly
-
-# Проверка использования ресурсов
-sudo gitlab-ctl metrics | grep -E "puma|sidekiq|gitaly"
-
-# Тестирование connectivity
-sudo gitlab-rake gitlab:check
-```
+Подробные сценарии troubleshooting, типичные ошибки и диагностические команды описаны в **[Управлении инстансом GitLab](../Advanced/gitlab_instance_administration.md)** и **[Безопасности и закреплении GitLab Server](../Advanced/gitlab_server_security_hardening.md)**.
 
 ### Лучшие практики
 
-1. **Регулярно обновляйте GitLab** — безопасности и исправления ошибок выходят в каждом релизе.
-2. **Настройте мониторинг** — используйте встроенный Prometheus/Grafana для отслеживания метрик.
-3. **Бэкапьте конфигурацию** — файл `gitlab-secrets.json` критичен для восстановления.
-4. **Используйте SSD/NVMe** — Gitaly крайне чувствителен к задержкам диска.
-5. **Ограничьте ресурсы** — настройте лимиты CPU/RAM для Docker-контейнеров.
-6. **Тестируйте обновления** — сначала обновляйте на staging-окружении.
-7. **Документируйте изменения** — ведите журнал изменений конфигурации.
+Базовые рекомендации по управлению инстансом, бэкапу, обновлению и безопасности перечислены в **[Управлении инстансом GitLab](../Advanced/gitlab_instance_administration.md)** и **[Администрировании GitLab в масштабе](../Advanced/gitlab_administration_at_scale.md)**.
+
+### Критичные изменения последних версий
+
+* **19.0**: Минимальная версия PostgreSQL повышена до 17. Поддержка Redis 6 удалена; рекомендуется Valkey 7.2+ или Redis 7.2+.
+* **19.0**: В Helm-инсталляциях Envoy Gateway становится стандартом вместо NGINX Ingress.
+* **19.x**: Gitaly Cluster не поддерживается в Kubernetes; требуется развертывание на VM.
+* **19.x**: Появление GitLab Orbit и ClickHouse для аналитики жизненного цикла ПО.
+* **18.x**: Удаление поддержки legacy-интеграций Kubernetes на базе сертификатов в пользу GitLab Agent (KAS).
 
 ### Смотрите также
 
+* **[Установка Self-Hosted GitLab CE](../../Tutorials/self_hosted_installation.md)** — практическое руководство по развертыванию.
 * **[Интеграция с Kubernetes](../Advanced/gitlab_kubernetes_integration_guide.md)** — развертывание GitLab в Kubernetes-кластерах.
-* **[Официальные Reference Architectures](https://docs.gitlab.com/ee/administration/reference_architectures/)** — эталонные схемы масштабирования.
 * **[GitOps и GitLab](../../../GitOps/GitOps_overview.md)** — архитектурные подходы к доставке ПО.
+* **[Регистрация GitLab Runner](../../Tutorials/runner_registration.md)** — настройка CI/CD после установки GitLab.
+* **[GitLab + Runner через Docker Compose](../../Tutorials/gitlab_runner_docker_compose.md)** — готовый стек для быстрого старта.
+* **[Управление инстансом GitLab](../Advanced/gitlab_instance_administration.md)** — бэкап, восстановление, обновление.
+* **[Обновление и обслуживание GitLab](../Advanced/gitlab_upgrades_and_maintenance.md)** — zero-downtime обновления, blue-green, maintenance.
+* **[Безопасность и закрепление GitLab Server](../Advanced/gitlab_server_security_hardening.md)** — закрепление ОС, SSL/TLS, защита API.
+* **[Управление базами данных GitLab](../Advanced/gitlab_database_management.md)** — PostgreSQL и Valkey/Redis.
+* **[Sidekiq: глубинное погружение](../Advanced/gitlab_sidekiq_deep_dive.md)** — управление очередями и воркерами.
+* **[Gitaly: глубинное погружение](../Advanced/gitlab_gitaly_deep_dive.md)** — конфигурация и производительность.
+* **[Администрирование GitLab в масштабе](../Advanced/gitlab_administration_at_scale.md)** — распределённые архитектуры и масштабирование.
+* **[Управление Package Registry GitLab](../Advanced/gitlab_package_registry_administration.md)** — администрирование пакетов.
+* **[Мониторинг и метрики GitLab CI/CD](../Advanced/monitoring_and_metrics.md)** — Prometheus, Grafana, алертинг.
+* **[Наблюдаемость пайплайнов GitLab CI/CD](./gitlab_ci_observability.md)** — DORA-метрики, дашборды, OpenTelemetry.
+* **[Container Registry в GitLab CI/CD](../Advanced/container_registry.md)** — управление образами, cleanup, signing.
+* **[Сканирование безопасности в GitLab CI/CD](./gitlab_ci_security_scanning.md)** — SAST/DAST/Secret Detection.
+* **[Compliance и Audit в GitLab CI/CD](../Advanced/compliance_and_audit.md)** — Pipeline Execution Policies.
+* **[Внешняя аутентификация GitLab](../Advanced/gitlab_external_auth.md)** — LDAP, SAML, OIDC.
+* **[Capacity Planning для GitLab CI/CD](../Advanced/gitlab_capacity_planning.md)** — планирование мощности CI/CD инфраструктуры.
+* **[Монорепозитории в GitLab CI/CD](../Advanced/gitlab_monorepo_ci.md)** — стратегии CI/CD для монорепозиториев.
+* **[GitLab Dogfooding](../Advanced/gitlab_dogfooding.md)** — использование GitLab для разработки GitLab.

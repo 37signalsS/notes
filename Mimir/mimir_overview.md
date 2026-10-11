@@ -959,7 +959,7 @@ datasources:
 
 ```bash
 curl -s -H "Authorization: Bearer <SA_TOKEN>" \
-  "http://grafana:3000/api/datasources/proxy/mimir-lts/api/v1/query?query=up" \
+  "http://grafana:3000/api/datasources/proxy/uid/mimir-lts/api/v1/query?query=up" \
   | jq '.status'
 # → "success"
 ```

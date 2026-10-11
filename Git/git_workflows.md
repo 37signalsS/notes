@@ -1,5 +1,7 @@
 # Рабочие процессы в Git
 
+**Актуально для:** Git 2.56.x (локально проверено на 2.54.0). Модели воркфлоу не зависят от версии Git; версионные возможности (`git switch` — с 2.23, `git branch --delete-merged` — с 2.56) указаны в тексте.
+
 ## Определения
 
 **Рабочий процесс Git (Git Workflow)** — согласованный набор правил и шагов, определяющий, как команда разработчиков использует Git для совместной работы. Он регламентирует управление ветками, внесение изменений и выпуск релизов. Рабочий процесс — это не инструмент, а **социальный контракт команды**: он описывает, кто, когда и как имеет право изменять общий код, и как изменения попадают из рабочей станции разработчика в production.
@@ -85,6 +87,19 @@ gh api -X PUT repos/OWNER/REPO/branches/main/protection \
 
 **GitLab — аналогично через Settings → Repository → Protected branches** (разрешить merge только для Maintainers, push — «No one»). Через CLI: `glab api -X PUT ...` или конфигурация в `.gitlab-ci.yml` / push rules.
 
+**Self-hosted Git-сервер (без GitHub/GitLab):** защита реализуется на стороне сервера — конфигурацией bare-репозитория и серверными хуками. Настройки применяются ко всем пушам в репозиторий:
+
+```bash
+# В bare-репозитории на сервере:
+git config receive.denyNonFastForwards true   # запрет нелинейных обновлений (force-push)
+git config receive.denyDeletes true           # запрет удаления веток через push
+git config receive.denyCurrentBranch refuse   # запрет пуша в checkoutнутую ветку (non-bare)
+# → любой нарушающий пуш отклоняется receive-pack с ошибкой
+```
+
+* **Зачем:** `receive.*` — единственный способ защитить ветки на голом Git-сервере (bare-репозиторий, доступ по SSH); без них защита зависит только от дисциплины участников.
+* **Обязательное ревью и CI-чеки** на self-hosted сервере реализуются серверным хуком `pre-receive` (отклоняет пуш, если обновление ref не прошло внешние проверки) либо платформами управления (Gitea, Gerrit, GitLab CE). Подробнее про хуки: [Git Hooks](./git_hooks.md).
+
 ### Методы слияния Pull/Merge Request (Merge Strategies)
 
 При закрытии PR/MR платформы предлагают различные стратегии интеграции, влияющие на историю:
@@ -129,7 +144,7 @@ gh api -X PUT repos/OWNER/REPO/branches/main/protection \
 
 ### 1. Git Flow (Классическая модель)
 
-Строгая, многоуровневая модель для проектов с фиксированным циклом релизов (десктопное ПО, мобильные приложения, Enterprise). Популярность составляет около 20% рынка. Релиз в этой модели воспринимается как значимое событие («Event»). Рекомендуемая стратегия слияния — **merge commit с `--no-ff`** (сохраняет ветку в истории).
+Строгая, многоуровневая модель для проектов с фиксированным циклом релизов (десктопное ПО, мобильные приложения, Enterprise). Релиз в этой модели воспринимается как значимое событие («Event»). Рекомендуемая стратегия слияния — **merge commit с `--no-ff`** (сохраняет ветку в истории).
 
 * **Ветки:**
   * `main` — только стабильный код production-качества.
@@ -161,7 +176,7 @@ git switch develop
 git merge --no-ff feature/auth   # Принудительный merge commit для сохранения контекста
 # → Merge made by the 'recursive' strategy.
 git branch -d feature/auth
-# → Deleted branch feature/auth (was a1b2c3d).
+# → Deleted branch feature/auth (was f4e5d6c).
 
 # Старт релиза
 git switch -c release/1.2.0 develop
@@ -180,7 +195,7 @@ git branch -d release/1.2.0
 
 ### 2. GitHub Flow (Непрерывная доставка)
 
-Максимально простая и самая популярная модель (40–50% рынка). Идеально подходит для веб-приложений, SaaS и Open Source проектов с Continuous Delivery. Рекомендуемая стратегия слияния — **squash** (один коммит на PR в чистой истории `main`).
+Максимально простая модель для веб-приложений, SaaS и Open Source проектов с Continuous Delivery. Рекомендуемая стратегия слияния — **squash** (один коммит на PR в чистой истории `main`).
 
 * **Принципы:**
   * `main` (или `master`) — всегда стабильная ветка, готовая к развертыванию.
@@ -200,7 +215,7 @@ git branch -d release/1.2.0
 
 ### 3. GitLab Flow (Окружения и релизы)
 
-Гибридная модель, ориентированная на соответствие кода инфраструктурным окружениям. Популярна в компаниях с жестким контролем качества и комплаенсом (банки, MedTech). Рыночная доля составляет 10–15%. Рекомендуемая стратегия слияния — обычный **merge** между ветками окружений (с сохранением контекста продвижения).
+Гибридная модель, ориентированная на соответствие кода инфраструктурным окружениям. Популярна в компаниях с жестким контролем качества и комплаенсом (банки, MedTech). Рекомендуемая стратегия слияния — обычный **merge** между ветками окружений (с сохранением контекста продвижения).
 
 * **Принципы:**
   * Код продвигается строго последовательно по веткам окружений: `main` → `test` → `pre-production` → `production`.
@@ -218,14 +233,14 @@ git branch -d release/1.2.0
 
 ### 4. Trunk-Based Development (Высокая динамика)
 
-«Формула-1» в мире ветвления: работа в единой основной ветке с максимально быстрой интеграцией. Используется высокопроизводительными командами (20–30% рынка). Рекомендуемая стратегия слияния — **rebase / fast-forward** (строго линейная история `main`).
+«Формула-1» в мире ветвления: работа в единой основной ветке с максимально быстрой интеграцией. Используется высокопроизводительными командами. Рекомендуемая стратегия слияния — **rebase / fast-forward** (строго линейная история `main`).
 
 * **Принципы:**
   * Разработчики вливают изменения в `main` (trunk) несколько раз в день (непрерывная интеграция).
   * Ветки живут считанные часы (максимум полдня-день).
   * Использование **Feature Flags** (фиче-флагов) обязательно для скрытия незавершенного функционала (код в проде, но функционал выключен).
 * **Плюсы:**
-  * **Максимальная скорость:** согласно отчету DORA, команды использующие TBD показывают лучшие результаты по всем ключевым метрикам:
+  * **Максимальная скорость:** исследования DORA (State of DevOps) показывают, что команды, следующие TBD, стабильно достигают лучших результатов по ключевым метрикам доставки: elite-исполнители, выполняющие цели по надёжности, используют TBD в 2.3 раза чаще, чем аутсайдеры ([DORA: Trunk-based development](https://dora.dev/capabilities/trunk-based-development/)).
       * **Deployment Frequency** (Частота деплоев) — значительно выше.
       * **Lead Time for Changes** (Время цикла изменений) — значительно ниже.
       * **Change Failure Rate** (Доля неудачных изменений) — ниже за счет маленьких коммитов.
@@ -245,6 +260,7 @@ git branch -d release/1.2.0
   * Высокое покрытие автоматизированными тестами (Unit, Integration) — это критическое условие.
   * Развитая система Continuous Integration (CI) с жесткими Quality Gates.
   * Обязательное использование Feature Flags для крупных фич.
+* **Измеримые цели (критерии DORA):** не более **3 активных веток** в репозитории, вливание в trunk **не реже одного раза в день**, отсутствие code freeze и отдельных integration-фаз. Число активных веток считается командой `git for-each-ref --format='%(refname:short) %(committerdate:short)' refs/heads` (фильтруя по свежести коммита) и может отслеживаться как KPI команды.
 
 ### 5. Forking Workflow (Открытое ПО)
 
@@ -274,7 +290,7 @@ git rebase upstream/main
 
 # Публикация обновленного main в свой форк
 git push -f origin main
-# → + a1b2c3d...e5f6g7h main -> main (forced update)
+# → + 8d0e412...f4e5d6c main -> main (forced update)
 ```
 
 > **Важно:** `git push -f` в форк безопасен, так как форк — ваша личная копия. Никогда не делайте force-push в общие ветки (`upstream/main`).
@@ -286,6 +302,7 @@ git push -f origin main
 В реальности многие команды не следуют «учебнику» на 100%, а адаптируют воркфлоу:
 
 * **TBD + Release Branches:** разработчики часто интегрируются в `main`, но для выпуска релиза создается отдельная ветка, где код стабилизируется перед деплоем.
+* **Merge queue / merge train:** при высокой нагрузке на `main` платформы сериализуют слияния — каждый PR/MR проверяется не изолированно, а на фоне изменений всех заявок впереди него в очереди (GitHub merge queue — временные ref-ы `gh-readonly-queue/*` и событие `merge_group`; GitLab merge train — с GitLab 12.0). Закрывает «семантические конфликты»: два PR по отдельности зелёные, но в сумме ломают `main`. Критично для TBD с большими командами.
 * **Дифференцированный доступ:** основная команда работает по TBD, а внешние контрибьюторы или другие отделы используют Pull Request'ы как дополнительный защитный барьер.
 * **GitHub Flow с релизными тегами:** использование тегов на ветке `main` для фиксации версий и триггера CI/CD процессов, что добавляет стабильности простой модели.
 
@@ -293,12 +310,12 @@ git push -f origin main
 
 ## Сравнение рабочих процессов
 
-| Модель | Сложность | Частота релизов | Популярность | Требования к CI/CD | Основная ниша | Рекомендуемое слияние |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **GitHub Flow** | Низкая | Постоянная (CD) | 40-50% | Высокие (проверка PR) | SaaS, Web, Open Source | Squash |
-| **Trunk-Based** | Средняя | Очень высокая | 20-30% | **Максимальные** | Высокотехнологичные стартапы | Rebase / FF |
-| **Git Flow** | Высокая | Редкая (релизы) | ~20% | Низкие (ручная работа) | Desktop, Mobile, Enterprise | Merge `--no-ff` |
-| **GitLab Flow** | Средняя | Средняя/CD | 10-15% | Средние (Multi-stage) | Банки, MedTech, Комплаенс | Merge между env |
+| Модель | Сложность | Частота релизов | Требования к CI/CD | Основная ниша | Рекомендуемое слияние |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **GitHub Flow** | Низкая | Постоянная (CD) | Высокие (проверка PR) | SaaS, Web, Open Source | Squash |
+| **Trunk-Based** | Средняя | Очень высокая | **Максимальные** | Высокотехнологичные стартапы | Rebase / FF |
+| **Git Flow** | Высокая | Редкая (релизы) | Низкие (ручная работа) | Desktop, Mobile, Enterprise | Merge `--no-ff` |
+| **GitLab Flow** | Средняя | Средняя/CD | Средние (Multi-stage) | Банки, MedTech, Комплаенс | Merge между env |
 
 **Когда НЕ стоит выбирать:**
 
@@ -374,7 +391,7 @@ git switch -c hotfix/1.2.1
 
 # 2. Исправление и коммит
 git commit -am "fix: patch critical auth bypass"
-# → [hotfix/1.2.1 e5f6g7h] fix: patch critical auth bypass
+# → [hotfix/1.2.1 e5f6a7b] fix: patch critical auth bypass
 
 # 3. Слияние в main + тег релиза
 git switch main
@@ -387,13 +404,15 @@ git merge --no-ff hotfix/1.2.1 -m "Merge hotfix 1.2.1 into develop"
 git branch -d hotfix/1.2.1
 
 # 5. Публикация всех изменений и тега
-git push origin main develop --tags
+# --atomic: ветки и теги попадут в origin все разом или не попадут вовсе
+git push --atomic origin main develop --tags
 # → To github.com/owner/repo
-# →    a1b2c3d..v1.2.1  main -> main
+# →    a1b2c3d..f4e5d6c  main -> main
+# →    c3d4e5f..e5f6a7b  develop -> develop
 # → * [new tag]         v1.2.1 -> v1.2.1
 ```
 
-**Валидация:** `git branch --contains v1.2.1` показывает и `main`, и `develop` — фикс не потерян для будущих релизов.
+**Валидация:** `git branch --contains v1.2.1` показывает и `main`, и `develop` — фикс не потерян для будущих релизов. `git push --atomic` гарантирует, что релизный пуш не «разорвётся» надвое: без него при ошибке сети в `origin` могут попасть ветки без тега, и CI-триггер на тег не сработает.
 
 ### Сценарий 3: Forking Workflow — вклад в Open Source
 
@@ -460,7 +479,7 @@ git rebase --continue
 
 # Ветка — ваша, не общая => force-push допустим (предпочтительно --force-with-lease)
 git push --force-with-lease origin feature/x
-# → + abc1234...e5f6g7h feature/x -> feature/x (forced update)
+# → + abc1234...f4e5d6c feature/x -> feature/x (forced update)
 # PR автоматически обновляется, конфликт исчезает
 ```
 
@@ -474,71 +493,23 @@ git log --oneline --merges -5
 # → a1b2c3d Merge pull request #123 from feature/broken
 
 # Безопасный откат: создаёт новый коммит, отменяющий слияние (история не переписывается)
-git revert -m 1 a1b2c3d -m "Revert #123: broken feature"
-# → [main xyz9876] Revert #123: broken feature
+# -m 1 — обязательно для merge-коммитов: выбирает первого родителя (целевую ветку,
+# обычно main) как основу для отмены; сообщение открывается в редакторе
+git revert -m 1 a1b2c3d
+# → [main f4e5d6c] Revert "Merge pull request #123 from feature/broken"
 git push origin main
-# →    a1b2c3d..xyz9876  main -> main
+# →    a1b2c3d..f4e5d6c  main -> main
 ```
+
+> **Важно:** без `-m <parent-number>` команда завершится ошибкой `error: commit ... is a merge but no -m option was given` — Git не может угадать, какой из двух родителей считать «прямой линией». Сообщение по умолчанию формируется автоматически (`Revert "<исходное сообщение>"`); флаг `--no-edit` отключает редактор, а `--no-commit` оставляет откат в индексе для ручной правки.
 
 Подробнее про переписывание и откат истории — в **[Манипуляции с историей (Reset, Revert, Cherry-pick)](./git_history_manipulation.md)**.
 
 ## Инструменты командной строки
 
-### GitHub CLI (`gh`)
+Работа с PR/MR из терминала (`gh pr create/review/merge`, `glab mr create/approve/merge`), проверка статуса CI (`gh pr checks`), переключение на ветку чужого PR (`gh pr checkout`), TUI-клиенты (`lazygit`, `tig`) и диагностика пайплайнов описаны в **[Инструменты Git — сценарии](./git_tools.md)**.
 
-```bash
-# Создать Pull Request
-gh pr create --fill --web
-# → Opening github.com/user/repo/pull/new/branch in your browser
-
-# Список открытых PR
-gh pr list
-# → #123  feat: add auth  [feature/auth]
-# → #124  fix: bug in ui  [fix/ui]
-
-# Просмотр изменений в PR
-gh pr diff 123
-# → diff --git a/src/auth.js b/src/auth.js ...
-
-# Одобрение PR
-gh pr review 123 --approve
-# → Approved pull request #123
-
-# Слияние: выбор стратегии
-gh pr merge 123 --squash --delete-branch     # схлопнуть в 1 коммит
-gh pr merge 123 --rebase --delete-branch     # линейно, без merge-коммита
-gh pr merge 123 --merge                       # обычный merge commit
-
-# Локально переключиться на ветку PR (для проверки)
-gh pr checkout 123
-# → branch 'feature/auth' set up to track 'origin/feature/auth'
-```
-
-### GitLab CLI (`glab`)
-
-```bash
-# Создать Merge Request
-glab mr create -f -w
-# → https://gitlab.com/user/repo/-/merge_requests/45
-
-# Список MR
-glab mr list
-# → !45  Add logging  (feature/logs)
-
-# Одобрение MR
-glab mr approve 45
-# → Approved Merge Request !45
-
-# Слияние MR
-glab mr merge 45 --squash --yes
-# → Merged Merge Request !45
-```
-
-Подробное руководство по использованию CLI для диагностики пайплайнов см. в разделе **[Отладка и устранение неполадок в GitLab CI/CD](../CI-CD/GitLab_CI/Advanced/debugging_and_troubleshooting.md)**.
-
-### Инструменты для Trunk-Based Development
-
-* **TBD Flow** — CLI-инструмент для автоматизации типичных задач TBD (фиксация в main, создание короткоживущих веток, контроль конвенций коммитов).
+Работа с GitHub CLI (`gh`) для управления PR, Releases, Actions, Codespaces и прямыми API-вызовами — в **[dedicated файле](../Github_CI/github_cli.md)**.
 
 ---
 
@@ -553,6 +524,7 @@ glab mr merge 45 --squash --yes
 | Случайный коммит/пуш в `main` | Нет защиты ветки | Безопасно: `git revert <hash>` + push. Рискованно (только если никто не скачал): `git reset --hard HEAD~1` + `git push -f` |
 | Счётчик «ahead/behind» растёт | Забыли забрать/слить изменения | `git pull --ff-only` (или `git merge --ff-only`) для выравнивания |
 | Force-push сломал историю коллегам | Force-push в общую ветку | Избегать; использовать `--force-with-lease`; восстановить через `git reflog` у пострадавших |
+| `error: commit <hash> is a merge but no -m option was given` | `git revert` применён к merge-коммиту без `-m` | Указать основного родителя: `git revert -m 1 <hash>` (1 — первый родитель, обычно целевая ветка слияния) |
 | Форк «уехал» от upstream | Давно не синхронизировали | `git fetch upstream && git rebase upstream/main && git push -f origin main` |
 
 ---
@@ -579,6 +551,8 @@ git worktree prune
 # → (вывод отсутствует при успехе)
 ```
 
+> **Для Git 2.56+** есть встроенная безопасная альтернатива — `git branch --delete-merged '<remote>/<pattern>'` (можно с `--dry-run` для предварительного просмотра). Команда удаляет локальные ветки, чей tip достижим из настроенного upstream, и автоматически пропускает: ветки без настроенного upstream (или с удалённым upstream), ветки, открытые в любом worktree, ветки, пуш в которые обновил бы их own upstream, локальные upstream-ветки для оставшихся веток, и ветки с `branch.<name>.deleteMerged = false`. Ветки с неразлитой работой (tip не достижим из upstream) пропускаются без предупреждения — удаление только через `git branch -D`. Подробнее см. в **[Ветвление в Git](./git_branching.md#управление-ветками)**.
+
 Подробнее про worktree — в **[Git Worktree — параллельные директории](./git_worktree.md)**.
 
 ---
@@ -590,6 +564,7 @@ git worktree prune
 * **[GitHub Flow](https://docs.github.com/en/get-started/using-github/github-flow)** — документация от GitHub.
 * **[Git Flow](https://nvie.com/posts/a-successful-git-branching-model/)** — оригинальная статья Винсента Дриссена.
 * **[Trunk-Based Development](https://trunkbaseddevelopment.com/)** — подробное руководство по TBD.
+* **[DORA: Trunk-based development](https://dora.dev/capabilities/trunk-based-development/)** — измеримые критерии TBD и метрики доставки (DORA/State of DevOps).
 
 ### Связанные темы
 

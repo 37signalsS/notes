@@ -132,3 +132,4 @@ curl -s http://vmstorage-0:8482/flags | grep -E "retentionFilter|streamAggr"
 - [metricsql_reference.md](./metricsql_reference.md) — Enterprise-функции MetricsQL;
 - [vmbackup/vmrestore](./vmbackup_restore.md) — бэкап и ротация (vmbackupmanager);
 - [Операции с кластером](./cluster_operations.md) — storage node groups, RF.
+# force reindex test

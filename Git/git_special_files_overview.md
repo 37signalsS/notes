@@ -73,7 +73,7 @@ Git применяет конфигурацию, анализируя файлы
 | **`.gitmessage`** | Шаблон сообщения коммита | [git_commit_template.md](./git_commit_template.md) |
 | **`.editorconfig`** | Настройки стиля кода (конвенция) | [editorconfig.md](./editorconfig.md) |
 | **`.github/`**, **`.gitlab/`** | Специфичные настройки платформ (CI/CD) | [git_forge_directories.md](./git_forge_directories.md) |
-| **`.git/info/exclude`** | Локальные исключения (не версионируется) | [git_ignore.md](./git_ignore.md#сценарий-3-настройка-локальных-исключений) |
+| **`.git/info/exclude`** | Локальные исключения (не версионируется) | [git_ignore.md](./git_ignore.md#сценарий-5-использование-git_common_dirinfoexclude) |
 
 ### Быстрая справка: типичные паттерны .gitignore
 
@@ -87,6 +87,8 @@ Git применяет конфигурацию, анализируя файлы
 | `dist/` | Директорию сборки |
 | `.DS_Store` | Служебные файлы macOS |
 | `Thumbs.db` | Служебные файлы Windows |
+
+**Полный синтаксис и расширенные примеры см. в [Игнорирование файлов в Git](./git_ignore.md#синтаксис-паттернов-и-нюансы).**
 
 ---
 
@@ -157,7 +159,7 @@ git check-ignore -v config/local.yml
 # → .git/info/exclude:1:*.local  config/local.yml
 ```
 
-**Примечание:** Файл `.git/info/exclude` не коммитится и не распространяется между разработчиками. Подробнее — в [Игнорирование файлов в Git](./git_ignore.md#сценарий-3-настройка-локальных-исключений).
+**Примечание:** Файл `.git/info/exclude` не коммитится и не распространяется между разработчиками. Подробнее — в [Игнорирование файлов в Git](./git_ignore.md#сценарий-5-использование-git_common_dirinfoexclude).
 
 ### Сценарий 5: Синхронизация .gitattributes и .editorconfig
 
@@ -213,7 +215,7 @@ git config commit.template .gitmessage
 
 - **Необязательность:** Большинство конвенций требуют установки дополнительных инструментов (gitlint, pre-commit) или ручной настройки разработчиком.
 - **Разнообразие:** Разные команды могут использовать разные имена файлов (например, `.keep` вместо `.gitkeep`).
-- **Версии Git:** Некоторые функции (например, оптимизированные `**` паттерны в `.gitignore`) доступны только в Git 2.50+.
+- **Версии Git:** Некоторые функции (например, документация `$GIT_COMMON_DIR/info/exclude` для worktrees) доступны только в Git 2.55+.
 - **Платформы:** Поддержка `.mailmap` на GitHub/GitLab ограничена (см. [Маппинг авторов](./git_mailmap.md#особенности-инструментов)).
 
 ### Рекомендации по использованию
@@ -235,4 +237,4 @@ git config commit.template .gitmessage
 
 - [Конфигурация Git (`git config`)](./git_configuration.md) — уровни настроек.
 - [Прочие соглашения (.gitkeep и др.)](./git_other_conventions.md) — файлы, не являющиеся частью Git.
-- [Версионирование файлов (version_files.md)](./version_files.md) — файлы VERSION, CHANGELOG.
+- [Версионные файлы (version_files.md)](./version_files.md) — `.tool-versions`, `.mise.toml`, `.nvmrc`, `.python-version` и файлы менеджеров версий.

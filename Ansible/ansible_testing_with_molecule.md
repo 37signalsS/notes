@@ -492,7 +492,7 @@ ansible-lint .
 | 3 | **systemd отсутствует** | `service_facts` пуст, `Exited (255)` | Docker без init-процесса | Образы `geerlingguy/docker-*-ansible`, `command: /sbin/init`, монтирование cgroups |
 | 4 | **Idempotence failed** | `changed > 0` на повторном запуске | `command`/`shell` без `changed_when` | Добавить `changed_when: false` или `creates`/`removes` |
 | 5 | **Config not found** | `glob 'molecule/default/molecule.yml' failed` | Запуск вне корня роли | `cd ~/my_role && molecule test` |
-| 6 | **cgroup v2** | Контейнеры с systemd не стартуют | Несовместимость cgroup v2 | `--cgroupns=host` в параметрах драйвера |
+| 6 | **cgroup v2** | Контейнеры с systemd не стартуют: `Failed to create /init.scope control group: Read-only file system` | Docker монтирует `/sys/fs/cgroup` в read-only при `--cgroupns=private` | `--cgroupns=host` **вместе с** `-v /sys/fs/cgroup:/sys/fs/cgroup:rw`; подробнее — в [docker_systemd.md](../Docker/docker_systemd.md) |
 | 7 | **No such file** | `FAILED! => {"msg": "No such file"}` | Неверный путь в `converge.yml` | Проверить `name` в `include_role` |
 | 8 | **Docker pull timeout** | `i/o timeout` при pull образа | Сеть / Docker Hub недоступен | Mirror registry или локальный registry |
 | 9 | **Permission denied login** | `Error: Permission denied` | Контейнер удалён или нет доступа к Docker | `molecule create`, проверить `docker ps` |

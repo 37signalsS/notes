@@ -1,22 +1,40 @@
+# S3: безопасность, шифрование и compliance
+
+**Актуально для:** Ceph RGW (Squid 19.x / Tentacle 20.x / Umbrella 21.x)
+
+---
+
+## 1. Определения
+
 **Data at Rest** — данные, хранящиеся на диске (в S3 bucket). Требуют защиты от несанкционированного доступа.
 
-**Почему это важно:** Data at rest включает все объекты в S3 — бэкапы баз данных, артефакты сборок, логи, конфигурации с секретами. При компрометации AWS account или bucket credentials злоумышленник получает прямой доступ к этим данным. Шифрование at rest защищает даже при физическом доступе к дискам или логическом доступе к bucket.
+**Почему это важно:** Data at rest включает все объекты в S3 — бэкапы баз данных, артефакты сборок, логи, конфигурации с секретами. При компрометации credentials злоумышленник получает прямой доступ к этим данным. Шифрование at rest защищает даже при физическом доступе к дискам или логическому доступу к bucket.
 
 **Data in Transit** — данные при передаче между клиентом и S3. Требуют шифрования через TLS.
 
 **Почему это важно:** Без TLS credentials, объекты и metadata передаются в открытом виде. В corporate сети или интернете это позволяет перехватить секреты (access key, secret key) или содержимое объектов. TLS 1.2+ обязателен для всех S3 операций в production.
 
-**SSE-S3** — Server-Side Encryption с ключами, управляемыми Amazon S3. AES-256.
+**SSE-S3** — Server-Side Encryption с ключами, управляемыми самой S3-совместимой реализацией. AES-256.
 
-**SSE-KMS** — Server-Side Encryption с ключами из AWS KMS. Поддерживает rotation, аудит, granular permissions.
+**SSE-KMS** — Server-Side Encryption с ключами из внешнего или встроенного Key Management Service. В Ceph RGW — через `rgw crypto` или HashiCorp Vault. Поддерживает rotation ключей, аудит, granular permissions.
 
-**SSE-C** — Server-Side Encryption с ключами от клиента. Amazon не хранит ключ.
+**SSE-C** — Server-Side Encryption с ключами от клиента. Сервис не хранит ключ.
 
 **Client-Side Encryption** — шифрование на стороне клиента до загрузки в S3.
 
 **Object Lock** — WORM-механизм, защищающий объекты от удаления/изменения в течение заданного срока.
 
 **Immutability** — свойство данных, при котором они защищены от любого изменения или удаления (даже администратором).
+
+**CORS (Cross-Origin Resource Sharing)** — механизм, позволяющий браузерам выполнять запросы к S3 bucket с других origins.
+
+**Presigned URL** — подписанный URL, дающий ограниченный по времени доступ к объекту без раскрытия credentials.
+
+**Path-style addressing** — стиль адресации, при котором bucket указан в пути URL: `https://s3.example.com/bucket-name/key`. Стандарт для Ceph RGW.
+
+**rgw crypto** — встроенный механизм шифрования Ceph RGW. Поддерживает SSE-KMS с внешним Vault или внутренним ключом.
+
+**HashiCorp Vault** — внешний KMS для управления ключами шифрования. Интегрируется с Ceph RGW через `rgw crypto` plugin.
 
 ---
 
@@ -26,26 +44,54 @@
 
 S3 использует **multi-layered security model**:
 
-1. **Network layer:** TLS 1.2+ для всех операций, VPC Endpoints (Gateway/Interface) для изоляции трафика.
-2. **Identity layer:** IAM principals (users, roles, groups), Bucket Policies, ACL.
-3. **Encryption layer:** SSE-S3, SSE-KMS, SSE-C, Client-Side Encryption.
+1. **Network layer:** TLS 1.2+ для всех операций, изоляция трафика через firewall / network policies.
+2. **Identity layer:** Access keys, роли, bucket policies, ACL.
+3. **Encryption layer:** SSE-S3, SSE-KMS (rgw crypto / Vault), SSE-C, Client-Side Encryption.
 4. **Data layer:** Object Lock, Versioning, Replication, Lifecycle.
-5. **Audit layer:** CloudTrail, Access Logging, S3 Inventory, Config Rules.
+5. **Audit layer:** Access Logging, application-level audit, metrics, OPA policies.
 
 **Почему multi-layered:** Защита в глубину (defense in depth). Даже если один слой скомпрометирован (например, credentials украдены), другие слои (encryption, network isolation, audit) ограничивают ущерб. В production все слои должны быть включены, а не только один.
 
-### 2.2 Shared Responsibility Model
+### 2.2 Аутентификация и авторизация
 
-| Ответственность | AWS (S3 service) | Customer (вы) |
-|----------------|------------------|---------------|
-| **Инфраструктура** | Data centers, сеть, hardware | — |
-| **Шифрование at rest** | SSE-S3 (опционально) | SSE-KMS ключи, Client-side encryption |
-| **Шифрование in transit** | TLS endpoint | TLS configuration, certificate validation |
-| **Доступ** | IAM service | IAM policies, Bucket Policies, ACL |
-| **Данные** | — | Classification, retention, deletion |
-| **Аудит** | CloudTrail logs | Log analysis, alerting, incident response |
+**Аутентификация:**
+- **Access Key + Secret Key** — статические credentials для сервисных аккаунтов.
+- **STS / временные credentials** — краткоживущие ключи, выдаваемые внешним сервисом (HashiCorp Vault, LDAP, OIDC). Рекомендуются для production.
+- **Signature v4** — алгоритм подписи запросов. Все S3-совместимые реализации его поддерживают.
+- **IAM-подобные роли** — встроенные роли в Ceph RGW для разделения обязанностей.
 
-**Почему это важно:** Shared Responsibility Model определяет границы ответственности. AWS отвечает за security *of* the cloud (инфраструктура), вы отвечаете за security *in* the cloud (данные, доступ, конфигурация). Ошибки в вашей части (неправильный bucket policy, отключенное шифрование) — это ваша ответственность.
+**Авторизация:**
+- **Bucket Policy** — JSON-документ на уровне bucket, определяющий кто и что может делать.
+- **IAM Policy / пользовательские политики** — политики, привязанные к identity (пользователь, роль, сервисный аккаунт).
+- **ACL** — устаревший механизм контроля доступа на уровне объекта. В новых deployment'ах отключается (`BucketOwnerEnforced`).
+
+**Path-style addressing:**
+- **Path-style:** `https://s3.example.com/bucket-name/key` — bucket в пути. Используется для self-hosted реализаций. Ceph RGW по умолчанию использует path-style или поддерживает оба режима.
+
+**Почему это важно:** Неправильный стиль адресации — частая причина 403 Forbidden при работе с self-hosted S3. При настройке SDK/CLI явно указывайте `path_style: true` для внутренних хранилищ.
+
+### 2.3 CORS
+
+CORS позволяет браузерам выполнять запросы к S3 bucket с других origins. Критично для web-приложений, загружающих файлы напрямую в S3.
+
+```json
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": ["https://app.example.com", "https://admin.example.com"],
+      "AllowedMethods": ["GET", "PUT", "POST", "DELETE"],
+      "AllowedHeaders": ["*"],
+      "ExposeHeaders": ["ETag", "x-amz-version-id"],
+      "MaxAgeSeconds": 3000
+    }
+  ]
+}
+```
+
+**Важно:**
+- `AllowedOrigins: ["*"]` с `AllowedMethods: ["PUT"]` опасен — любой сайт может загружать данные в ваш bucket.
+- Для production ограничьте origins конкретными доменами.
+- `MaxAgeSeconds` кэширует preflight-ответ, уменьшая latency для браузера.
 
 ---
 
@@ -54,76 +100,65 @@ S3 использует **multi-layered security model**:
 ### 3.1 Server-Side Encryption (SSE)
 
 **SSE-S3:**
-- Ключи управляются Amazon S3 service.
+- Ключи управляются самой S3-совместимой реализацией (Ceph RGW).
 - AES-256 шифрование.
-- Бесплатно (включено в стоимость S3).
+- Бесплатно (включено в стоимость хранилища).
 - Нет rotation, нет granular audit.
 - Подходит для non-sensitive данных.
 
-**SSE-KMS (рекомендуется для production):**
-- Ключи управляются через AWS KMS.
-- Поддерживает automatic key rotation (ежегодно).
-- Аудит через CloudTrail (кто, когда, какой ключ использовал).
-- Granular permissions (`kms:GenerateDataKey`, `kms:Decrypt`, `kms:Encrypt`).
+**SSE-KMS (рекомендуется для production) — Ceph RGW:**
+- Встроенный KMS через `rgw crypto` или интеграция с HashiCorp Vault.
+- Настройка через `radosgw-admin` или Ceph Dashboard.
+- Поддерживает automatic key rotation (через Vault).
+- Аудит использования ключей.
+- Granular permissions.
 - Возможность импорта собственных ключей (BYOK - Bring Your Own Key).
-- Дополнительная стоимость: $0.03 за 10 000 запросов к KMS + $1 за активный ключ/месяц.
 
 **SSE-C:**
 - Клиент предоставляет ключ для каждого запроса.
-- Amazon не хранит ключ.
+- Сервис не хранит ключ.
 - Используется для compliance требований, когда провайдер не должен иметь доступ к ключам.
 - **Важно:** если потеряете ключ — потеряете данные. Нет rotation.
 
 **Зачем выбирать SSE-KMS вместо SSE-S3:**
 - **Контроль над ключами:** Вы управляете ключами, можете их отозвать, посмотреть историю использования.
-- **Аудит:** CloudTrail логирует каждое использование ключа (кто, когда, для какого объекта).
-- **Rotation:** Автоматическая ротация ключей раз в год без повторного шифрования всех объектов.
+- **Аудит:** Логируется каждое использование ключа (кто, когда, для какого объекта).
+- **Rotation:** Автоматическая ротация ключей без повторного шифрования всех объектов.
 - **Compliance:** Многие стандарты (PCI DSS, HIPAA) требуют контроля над ключами шифрования.
 
-### 3.2 Настройка SSE-KMS
+### 3.2 Настройка SSE-KMS (Ceph RGW)
 
 ```bash
-# Создание KMS key
-aws kms create-key \
-  --description "KMS key for S3 state encryption" \
-  --key-usage ENCRYPT_DECRYPT \
-  --enable-key-rotation
+# Включение rgw crypto в Ceph config
+ceph config set mgr mgr/radosgw/enable_cors true
+ceph config set rgw rgw_crypt_require_ssl false
 
-# Создание alias
-aws kms create-alias \
-  --alias-name alias/terraform-state-key \
-  --target-key-id $(aws kms create-key --query 'KeyMetadata.KeyId' --output text)
-
-# Включение SSE-KMS на bucket
-aws s3api put-bucket-encryption \
-  --bucket my-app-prod-assets \
-  --server-side-encryption-configuration '{
-    "Rules": [{
-      "ApplyServerSideEncryptionByDefault": {
-        "SSEAlgorithm": "aws:kms",
-        "KMSMasterKeyID": "arn:aws:kms:eu-central-1:123456789012:alias/terraform-state-key"
-      },
-      "BucketKeyEnabled": true
-    }]
-  }'
+# Или интеграция с HashiCorp Vault
+# Настройка в ceph.conf:
+# [client.rgw]
+# rgw crypt vault addr = https://vault.example.com:8200
+# rgw crypt vault token = s.XXXXXX
+# rgw crypt vault secret engine = transit
 ```
 
-**Bucket Key Enabled:**
-- Включает S3 Bucket Key — Amazon управляет ключом данных на уровне bucket,减少 KMS запросы.
-- Снижает стоимость на 90–99% для high-volume workloads.
-- Поддерживается для SSE-KMS.
+**KMS key rotation в Ceph RGW:**
+```bash
+# Если используется Vault — rotation выполняется через Vault API:
+vault write -force transit/keys/my-rgw-key/rotate
 
-**Почему Bucket Key важен для cost optimization:** Без Bucket Key каждый запрос к S3 (PUT, GET) требует отдельного вызова KMS для генерации/дешифрования ключа данных. Для bucket с 1 млн запросов/день это $300/месяц только на KMS. С Bucket Key Amazon кэширует ключ данных на уровне bucket, и KMS вызывается только раз в несколько часов.
+# RGW автоматически подхватывает новый ключ при следующей операции
+```
 
 ### 3.3 Client-Side Encryption
 
 ```python
 import boto3
-from botocore.client import Config
-import base64
 from cryptography.fernet import Fernet
 
-s3 = boto3.client('s3', config=Config(signature_version='s3v4'))
+s3 = boto3.client('s3',
+    endpoint_url='http://rgw:7480',
+    region_name='us-east-1'
+)
 
 # Шифрование перед загрузкой
 key = Fernet.generate_key()
@@ -136,34 +171,41 @@ with open('sensitive-data.tar.gz', 'rb') as f:
 s3.put_object(
     Bucket='my-app-prod-assets',
     Key='encrypted/sensitive-data.tar.gz.enc',
-    Body=encrypted_data,
-    ServerSideEncryption='aws:kms',
-    SSEKMSKeyId='arn:aws:kms:eu-central-1:123456789012:alias/my-key'
+    Body=encrypted_data
 )
 
-# Сохранение ключа в KMS или Vault
+# Сохранение ключа в Vault или внешнем KMS
 # Никогда не храните ключ рядом с зашифрованными данными!
 ```
 
 **Use cases:**
-- Compliance требования (PCI DSS, HIPAA), когда провайдер не должен иметь доступ к ключам.
+- Compliance требования, когда провайдер не должен иметь доступ к ключам.
 - Defense in depth: дополнительный слой защиты поверх SSE-KMS.
-
-**Почему client-side encryption — это extreme measure:** Client-side encryption даёт максимальный контроль, но требует:
-- Управления ключами на стороне клиента (где хранить? как ротировать?).
-- Обработки шифрования/дешифрования на каждом клиенте.
-- Отладки проблем с шифрованием в production.
-
-Для большинства production-систем SSE-KMS достаточно. Client-side encryption используется только в высокорегулируемых отраслях (финансы, медицина).
 
 ---
 
-## 4. IAM Policies
+## 4. IAM Policies и контроль доступа
 
 ### 4.1 Bucket Policy
 
-Bucket Policy — JSON-документ на уровне bucket, определяющий кто и что может делать.
+Bucket Policy — JSON-документ на уровне bucket, определяющий кто и что может делать. Синтаксис совместим с AWS IAM Policy grammar, поэтому примеры ниже работают в Ceph RGW.
 
+**Для Ceph RGW:**
+```bash
+# Создание пользователя с policy
+radosgw-admin user create \
+  --uid="my-user" \
+  --display-name="My Service User" \
+  --system
+
+# Применение bucket policy через S3 API
+aws s3api put-bucket-policy \
+  --bucket my-app-prod-assets \
+  --policy file://bucket-policy.json \
+  --endpoint-url http://rgw:7480
+```
+
+**Пример bucket policy:**
 ```json
 {
   "Version": "2012-10-17",
@@ -171,64 +213,17 @@ Bucket Policy — JSON-документ на уровне bucket, определ
     {
       "Sid": "AllowListBucket",
       "Effect": "Allow",
-      "Principal": {
-        "AWS": "arn:aws:iam::123456789012:role/terraform-ci"
-      },
+      "Principal": {"AWS": "arn:aws:iam::rgw:user/my-user"},
       "Action": "s3:ListBucket",
       "Resource": "arn:aws:s3:::my-app-prod-assets",
-      "Condition": {
-        "StringLike": {"s3:prefix": "releases/*"}
-      }
+      "Condition": {"StringLike": {"s3:prefix": "releases/*"}}
     },
     {
       "Sid": "AllowReadWriteReleases",
       "Effect": "Allow",
-      "Principal": {
-        "AWS": "arn:aws:iam::123456789012:role/terraform-ci"
-      },
-      "Action": [
-        "s3:GetObject",
-        "s3:PutObject",
-        "s3:DeleteObject"
-      ],
+      "Principal": {"AWS": "arn:aws:iam::rgw:user/my-user"},
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
       "Resource": "arn:aws:s3:::my-app-prod-assets/releases/*"
-    },
-    {
-      "Sid": "DenyUnencryptedUploads",
-      "Effect": "Deny",
-      "Principal": "*",
-      "Action": "s3:PutObject",
-      "Resource": "arn:aws:s3:::my-app-prod-assets/*",
-      "Condition": {
-        "StringNotEquals": {"s3:x-amz-server-side-encryption": "aws:kms"}
-      }
-    },
-    {
-      "Sid": "DenyInsecureTransport",
-      "Effect": "Deny",
-      "Principal": "*",
-      "Action": "s3:*",
-      "Resource": [
-        "arn:aws:s3:::my-app-prod-assets",
-        "arn:aws:s3:::my-app-prod-assets/*"
-      ],
-      "Condition": {
-        "Bool": {"aws:SecureTransport": "false"}
-      }
-    },
-    {
-      "Sid": "DenyPublicAccess",
-      "Effect": "Deny",
-      "Principal": "*",
-      "Action": "s3:*",
-      "Resource": [
-        "arn:aws:s3:::my-app-prod-assets",
-        "arn:aws:s3:::my-app-prod-assets/*"
-      ],
-      "Condition": {
-        "Bool": {"aws:PrincipalIsAWSService": "false"},
-        "StringNotEquals": {"aws:PrincipalAccount": "123456789012"}
-      }
     }
   ]
 }
@@ -253,55 +248,45 @@ Bucket Policy — JSON-документ на уровне bucket, определ
         "arn:aws:s3:::my-app-prod-assets",
         "arn:aws:s3:::my-app-prod-assets/*"
       ]
-    },
-    {
-      "Sid": "KMSAccess",
-      "Effect": "Allow",
-      "Action": [
-        "kms:Decrypt",
-        "kms:GenerateDataKey",
-        "kms:DescribeKey"
-      ],
-      "Resource": "arn:aws:kms:eu-central-1:123456789012:alias/terraform-state-key"
     }
   ]
 }
 ```
 
-### 4.3 VPC Endpoint (Private Link)
+### 4.3 Presigned URLs
 
-```bash
-# Создание Gateway VPC Endpoint для S3
-aws ec2 create-vpc-endpoint \
-  --vpc-id vpc-12345678 \
-  --service-name com.amazonaws.eu-central-1.s3 \
-  --route-table-id rtb-12345678 \
-  --policy file://endpoint-policy.json
+Presigned URLs дают ограниченный по времени доступ к объекту без раскрытия credentials. Все S3-совместимые SDK поддерживают генерацию presigned URL.
 
-# Endpoint policy (ограничивает доступ только к определённым bucket)
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
-        "s3:GetObject",
-        "s3:PutObject"
-      ],
-      "Resource": [
-        "arn:aws:s3:::my-app-prod-assets/*",
-        "arn:aws:s3:::my-app-prod-assets"
-      ]
-    }
-  ]
-}
+**Для Ceph RGW через Python (boto3):**
+```python
+import boto3
+from botocore.client import Config
+
+s3 = boto3.client('s3',
+    endpoint_url='http://rgw:7480',
+    region_name='us-east-1',
+    config=Config(signature_version='s3v4')
+)
+
+# Генерация presigned URL для GET
+url = s3.generate_presigned_url(
+    'get_object',
+    Params={'Bucket': 'my-bucket', 'Key': 'releases/app.tar.gz'},
+    ExpiresIn=3600
+)
+
+# Генерация presigned URL для PUT
+url = s3.generate_presigned_url(
+    'put_object',
+    Params={'Bucket': 'my-bucket', 'Key': 'uploads/file.tar.gz'},
+    ExpiresIn=3600
+)
 ```
 
-**Преимущества:**
-- Трафик не покидает AWS network (нет internet gateway, NAT gateway).
-- Снижение latency.
-- Повышение security (изоляция в VPC).
+**Зачем presigned URLs:**
+- Безопасная передача временного доступа клиентам без выдачи постоянных credentials.
+- Загрузка файлов из браузера/мобильного приложения напрямую в S3, минуя backend.
+- Ограничение по времени и IP.
 
 ---
 
@@ -315,16 +300,15 @@ aws ec2 create-vpc-endpoint \
 | **Можно сократить retention** | Да (с special permission) | Нет |
 | **Использование** | Operational flexibility | Regulatory compliance (SEC 17a-4, FINRA) |
 
-### 5.2 Настройка Object Lock
+### 5.2 Настройка Object Lock в Ceph RGW
 
 ```bash
-# Включение Object Lock при создании bucket (нельзя включить позже!)
-aws s3api create-bucket \
-  --bucket my-app-prod-assets \
-  --object-lock-enabled-for-bucket \
-  --region eu-central-1
+# Включение Object Lock через radosgw-admin
+radosgw-admin bucket create \
+  --bucket=my-app-prod-assets \
+  --object-lock-enabled
 
-# Настройка retention по умолчанию
+# Настройка retention через S3 API
 aws s3api put-object-lock-configuration \
   --bucket my-app-prod-assets \
   --object-lock-configuration '{
@@ -335,32 +319,19 @@ aws s3api put-object-lock-configuration \
         "Days": 30
       }
     }
-  }'
-
-# Загрузка объекта с retention period
-aws s3api put-object \
-  --bucket my-app-prod-assets \
-  --key backups/etcd-snapshot.db \
-  --body ./etcd-snapshot.db \
-  --object-lock-mode COMPLIANCE \
-  --object-lock-retain-until-date 2026-12-31T23:59:59.000Z \
-  --server-side-encryption aws:kms
+  }' \
+  --endpoint-url http://rgw:7480
 ```
 
 ### 5.3 Legal Hold
 
 ```bash
-# Установка Legal Hold (бессрочная защита от удаления)
+# Установка Legal Hold через API
 aws s3api put-object-legal-hold \
   --bucket my-app-prod-assets \
   --key backups/etcd-snapshot.db \
-  --legal-hold Status=ON
-
-# Снятие Legal Hold
-aws s3api put-object-legal-hold \
-  --bucket my-app-prod-assets \
-  --key backups/etcd-snapshot.db \
-  --legal-hold Status=OFF
+  --legal-hold Status=ON \
+  --endpoint-url http://rgw:7480
 ```
 
 **Разница Legal Hold vs Retention:**
@@ -371,36 +342,12 @@ aws s3api put-object-legal-hold \
 
 ## 6. Audit и мониторинг
 
-### 6.1 CloudTrail data events
+### 6.1 Access Logging
+
+S3 Access Logging — механизм записи всех запросов к bucket в отдельный target bucket. Доступен во всех S3-совместимых реализациях включая Ceph RGW.
 
 ```bash
-# Включение data events для S3
-aws cloudtrail put-event-selectors \
-  --trail-name my-trail \
-  --event-selectors '[
-    {
-      "ReadWriteType": "All",
-      "IncludeManagementEvents": true,
-      "DataResources": [
-        {
-          "Type": "AWS::S3::Object",
-          "Values": ["arn:aws:s3:::my-app-prod-assets/*"]
-        }
-      ]
-    }
-  ]'
-```
-
-**Data events log:**
-- `GetObject` — чтение объектов.
-- `PutObject` — загрузка объектов.
-- `DeleteObject` — удаление объектов.
-- `RestoreObject` — восстановление из Glacier.
-
-### 6.2 Access Logging
-
-```bash
-# Включение access logging
+# Включение через S3 API
 aws s3api put-bucket-logging \
   --bucket my-app-prod-assets \
   --bucket-logging-status '{
@@ -408,41 +355,38 @@ aws s3api put-bucket-logging \
       "TargetBucket": "my-app-audit-logs",
       "TargetPrefix": "s3-logs/my-app-prod-assets/"
     }
-  }'
+  }' \
+  --endpoint-url http://rgw:7480
 ```
 
-**Log format:**
-```
-79a54df98bf4d2d9d6728775159241e1fad325b1 [06/Oct/2024:10:30:00 +0000] 192.0.2.3 arn:aws:sts::123456789012:assumed-role/terraform-ci/my-role REST.GET.OBJECT releases/app.tar.gz "PUT /releases/app.tar.gz" 200 - 1 0 "-" "" - kGkWULf+Vs5aS3RaJkFXKs3/2sM= SigV4 ECDHE-RSA-AES128-SHA TLSv1.2 - - - - - -
-```
-
-### 6.3 S3 Inventory
+### 6.2 radosgw-admin audit
 
 ```bash
-# Настройка S3 Inventory для compliance аудита
-aws s3api put-bucket-inventory-configuration \
-  --bucket my-app-prod-assets \
-  --id security-inventory \
-  --inventory-configuration '{
-    "Destination": {
-      "S3BucketDestination": {
-        "Bucket": "arn:aws:s3:::my-app-audit-logs",
-        "Prefix": "inventory/",
-        "Format": "CSV"
-      }
-    },
-    "IsEnabled": true,
-    "Schedule": {"Frequency": "Daily"},
-    "IncludedObjectVersions": "All",
-    "OptionalFields": [
-      "Size",
-      "LastModifiedDate",
-      "StorageClass",
-      "EncryptionStatus",
-      "ObjectLockLegalHoldStatus",
-      "ObjectLockRetainUntilDate"
-    ]
-  }'
+# Просмотр операций через radosgw-admin
+radosgw-admin user stats --uid="app-user"
+radosgw-admin bucket stats --bucket="my-app-prod-assets"
+radosgw-admin client list
+radosgw-admin log list
+```
+
+### 6.3 OPA Policies + Access Log Analysis
+
+Подробное описание OPA policies, скриптов compliance monitoring и анализа access logs приведено в:
+- [S3: compliance-мониторинг и анализ доступа](./access-analyzer.md)
+
+Там содержатся готовые Rego-политики для Ceph RGW, Python-скрипты для анализа логов, bash-скрипты для compliance проверок и интеграция с CI/CD.
+
+### 6.4 Инвентаризация и сканирование
+
+Для compliance аудита и инвентаризации объектов используйте:
+- **radosgw-admin bucket stats** — статистика bucket в Ceph RGW.
+- **aws s3api list-objects-v2** — перечисление объектов.
+- **Python/pandas** — анализ CSV inventory отчётов.
+
+**Пример rclone scan:**
+```bash
+# Сканирование bucket и вывод CSV отчёта
+rclone ls s3://my-app-prod-assets --max-depth 1 > inventory.csv
 ```
 
 ---
@@ -454,16 +398,15 @@ aws s3api put-bucket-inventory-configuration \
 **Требования для S3:**
 - Шифрование данных at rest (SSE-KMS) — Requirement 3.
 - Шифрование данных in transit (TLS 1.2+) — Requirement 4.
-- Access control (IAM, Bucket Policy) — Requirement 7.
-- Audit logging (CloudTrail, S3 Access Logs) — Requirement 10.
-- Regular scanning (S3 Inventory, AWS Config) — Requirement 11.
+- Access control (Bucket Policy, IAM) — Requirement 7.
+- Audit logging (Access Logs, application audit) — Requirement 10.
+- Regular scanning (inventory, compliance checks) — Requirement 11.
 
 ### 7.2 HIPAA
 
 **Требования для S3:**
 - Шифрование at rest (SSE-KMS) и in transit (TLS).
 - Access logging и audit trails.
-- Business Associate Agreement (BAA) с AWS.
 - Object Lock для immutability audit logs.
 
 ### 7.3 SEC Rule 17a-4 / FINRA
@@ -474,10 +417,11 @@ aws s3api put-bucket-inventory-configuration \
 - Immutability: данные не могут быть изменены или удалены.
 - Audit trail всех операций.
 
+**Для Ceph RGW:**
 ```bash
-# Настройка для SEC 17a-4 compliance
+# Настройка retention policy
 aws s3api put-object-lock-configuration \
-  --bucket my-app-prod-assets \
+  --bucket my-locked-bucket \
   --object-lock-configuration '{
     "ObjectLockEnabled": "Enabled",
     "Rule": {
@@ -486,7 +430,8 @@ aws s3api put-object-lock-configuration \
         "Days": 1095
       }
     }
-  }'
+  }' \
+  --endpoint-url http://rgw:7480
 ```
 
 ---
@@ -498,157 +443,138 @@ aws s3api put-object-lock-configuration \
 **Сценарий 1: Публичный bucket**
 
 ```bash
-# 1. Немедленное действие: включить Block Public Access
-aws s3api put-public-access-block \
-  --bucket compromised-bucket \
-  --public-access-block-configuration '{
-    "BlockPublicAcls": true,
-    "IgnorePublicAcls": true,
-    "BlockPublicPolicy": true,
-    "RestrictPublicBuckets": true
-  }'
+# 1. Немедленное действие: отозвать публичный доступ
+aws s3api put-bucket-policy \
+  --bucket my-app-prod-assets \
+  --policy '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::my-app-prod-assets/*"
+    }]
+  }' \
+  --endpoint-url http://rgw:7480
 
-# 2. Удалить публичный bucket policy
-aws s3api delete-bucket-policy --bucket compromised-bucket
-
-# 3. Проверить access logs на аномалии
-aws s3 cp s3://audit-logs/s3-logs/compromised-bucket/ ./logs/ --recursive
-
-# 4. Проверить CloudTrail events
-aws cloudtrail lookup-events \
-  --lookup-attributes AttributeKey=ResourceName,AttributeValue=arn:aws:s3:::compromised-bucket \
-  --start-time 2024-01-01 --end-time 2024-01-15
+# 2. Проверить access logs на аномалии
+grep "GET.*my-app-prod-assets" /var/log/ceph/radosgw.*.log | tail -50
 ```
 
 **Сценарий 2: Утечка данных (data exfiltration)**
 
 ```bash
 # 1. Отозвать compromised credentials
-aws iam delete-access-key --user-name compromised-user --access-key-id AKIA...
+radosgw-admin user rm --uid="compromised-user" --purge-data
 
-# 2. Проверить S3 access logs на аномальные GET запросы
-grep "GET.*sensitive-data" s3-access-log* | awk '{print $1}' | sort | uniq -c | sort -rn
+# 2. Проверить access logs на аномальные GET запросы
+grep "GET.*sensitive-data" /var/log/ceph/radosgw.*.log | awk '{print $1}' | sort | uniq -c | sort -rn
 
-# 3. Проверить CloudTrail для идентификации source IP
-aws cloudtrail lookup-events \
-  --lookup-attributes AttributeKey=EventName,AttributeValue=GetObject \
-  --start-time 2024-01-01 --end-time 2024-01-15 \
-  --query 'Events[*].[CloudTrailEvent.EventSource, CloudTrailEvent.RequestParameters.bucketName, CloudTrailEvent.SourceIPAddress]' \
-  --output text | grep compromised-bucket
+# 3. Проверить source IP в access logs
+grep "sensitive-data" /var/log/ceph/radosgw.*.log | awk '{print $4}' | sort | uniq -c | sort -rn
 ```
 
-### 8.2 AWS Config Rules
+### 8.2 Compliance monitoring
 
-```bash
-# Включение AWS Config для S3 compliance monitoring
-aws configservice put-config-rule \
-  --config-rule file://config-rules.json
+Подробное руководство по continuous compliance monitoring приведено в:
+- [S3: compliance-мониторинг и анализ доступа](./access-analyzer.md)
 
-# Проверка compliance
-aws configservice get-compliance-details-by-config-rule \
-  --config-rule-name s3-bucket-public-read-prohibited
-```
-
-**Полезные Config Rules:**
-- `s3-bucket-public-read-prohibited` — запрещает публичный доступ.
-- `s3-bucket-ssl-requests-only` — требует HTTPS.
-- `s3-bucket-server-side-encryption-enabled` — требует шифрования.
-- `s3-bucket-versioning-enabled` — требует versioning.
-- `s3-bucket-logging-enabled` — требует access logging.
-- `s3-bucket-object-lock-enabled` — требует Object Lock.
+Там описаны OPA policies, скрипты проверок, интеграция с Prometheus/Grafana и алерты для Ceph RGW.
 
 ---
 
 ## 9. Backup и disaster recovery
 
-### 9.1 S3 Cross-Region Replication (CRR)
+Подробное руководство по настройке multisite репликации, runbook'ам инцидентов, preventive controls и drill-testing приведено в:
+- [S3: disaster recovery runbook](./dr-runbook.md)
+
+### 9.1 Массовые операции
 
 ```bash
-# Создание replication IAM role
-aws iam create-role \
-  --role-name s3-replication-role \
-  --assume-role-policy-document '{
-    "Version": "2012-10-17",
-    "Statement": [{
-      "Effect": "Allow",
-      "Principal": {"Service": "s3.amazonaws.com"},
-      "Action": "sts:AssumeRole"
-    }]
-  }'
-
-# Настройка replication
-aws s3api put-bucket-replication \
-  --bucket my-app-prod-assets \
-  --replication-configuration '{
-    "Role": "arn:aws:iam::123456789012:role/s3-replication-role",
-    "Rules": [{
-      "ID": "ReplicateToDR",
-      "Status": "Enabled",
-      "Priority": 1,
-      "Destination": {
-        "Bucket": "arn:aws:s3:::my-app-dr-bucket",
-        "StorageClass": "STANDARD_IA",
-        "EncryptionConfiguration": {
-          "ReplicaKmsKeyID": "arn:aws:kms:us-east-1:123456789012:alias/dr-key"
-        }
-      },
-      "Filter": {"Prefix": ""}
-    }]
-  }'
-```
-
-### 9.2 S3 Batch Operations
-
-```bash
-# Создание job для массового копирования
-aws s3control create-job \
-  --account-id 123456789012 \
-  --operation '{"S3PutObjectCopy": {"TargetResource": "arn:aws:s3:::my-app-dr-bucket", "CannedAccessControlList": "private"}}' \
-  --report '{"Bucket": "arn:aws:s3:::my-app-audit-logs", "Format": "Report_CSV_20180820", "Enabled": true, "Prefix": "batch-reports/"}' \
-  --manifest '{"Spec": {"Format": "S3BatchOperations_CSV_20180820", "Fields": ["Bucket", "Key"]}, "Location": {"ObjectArn": "arn:aws:s3:::my-app-prod-assets/manifest.csv", "ETag": "ETAG"}}' \
-  --description "DR replication job" \
-  --priority 10 \
-  --role-arn arn:aws:iam::123456789012:role/s3-batch-ops-role
+# Массовое копирование bucket'а через aws-cli
+aws s3 sync s3://my-app-prod-assets s3://my-app-dr-bucket \
+  --endpoint-url http://rgw:7480 \
+  --progress
 ```
 
 ---
 
-## 10. Security best practices (Production Checklist)
+## 10. Performance tuning для Ceph RGW
+
+### 10.1 Именование объектов (prefix naming)
+
+S3-совместимые хранилища используют hash-таблицы для распределения объектов. При частом доступе к объектам с одинаковым prefix'ом возникает hotspot.
+
+**Рекомендации:**
+- Используйте случайный префикс (2-8 hex символов) в начале ключа: `a3f2/releases/app.tar.gz`.
+- Для временно-именоваемых объектов добавляйте timestamp: `20240928/releases/app.tar.gz`.
+- Избегайте последовательных имён: `log-0001`, `log-0002` — создают hotspot.
+
+### 10.2 Multipart upload tuning
+
+**Минимальный размер части:** 5MB (S3 API). Для Ceph RGW с высокой задержкой увеличивайте до 16-64MB.
+
+```bash
+# Настройка через Ceph config
+ceph config set rgw rgw_multipart_part_size 65536
+```
+
+### 10.3 Сетевая оптимизация
+
+- **HTTP/2** — поддержка в RGW. Включает multiplexing и header compression.
+- **Keep-Alive** — переиспользование соединений. Включается по умолчанию в большинстве SDK.
+- **DNS round-robin** — для распределения нагрузки между node'ами кластера.
+- **CDN** — для статических assets (артефакты, образы). CDN кэширует объекты на edge, снижая latency.
+
+### 10.4 Monitoring и алерты
+
+Для Ceph RGW используйте:
+- **Prometheus + RGW exporter** — метрики из встроенных exporter'ов.
+- **Grafana dashboards** — визуализация метрик RGW.
+- **Алерты:** 5xx ошибки, высокая latency, отсутствие шифрования, публичный доступ.
+
+---
+
+## 11. Security best practices (Production Checklist)
 
 ### Data Protection
-- [ ] Включён **SSE-KMS** для всех bucket'ов с sensitive данными.
-- [ ] Используется **Bucket Key Enabled** для снижения стоимости KMS.
+- [ ] Включён **SSE-KMS** для всех bucket'ов с sensitive данными (через rgw crypto или Vault).
 - [ ] Для compliance: настроен **Object Lock** (Compliance или Governance).
 - [ ] Включён **Versioning** для защиты от случайного удаления.
-- [ ] Настроены **Lifecycle policies** для автоматического управления Storage Class.
+- [ ] Настроены **Lifecycle policies** для автоматического управления Storage Class (hot/warm/cold pools).
+- [ ] Для high-volume workloads настроено multipart upload tuning.
 
 ### Access Control
 - [ ] Включён **Block Public Access** на уровне account и bucket.
-- [ ] Используются **IAM Roles** (OIDC) вместо статических ключей.
+- [ ] Используются **краткоживущие credentials** (STS, Vault, OIDC) вместо статических ключей.
 - [ ] Настроена **Bucket Policy** с explicit Deny для неавторизованного доступа.
-- [ ] Используется **VPC Endpoint** для изоляции трафика.
+- [ ] Используется **path-style addressing** для внутренних хранилищ.
 - [ ] Отключены **ACL** (`BucketOwnerEnforced`).
 
 ### Audit & Monitoring
-- [ ] Включён **CloudTrail data events** для всех S3 операций.
-- [ ] Включён **S3 Access Logging**.
-- [ ] Настроены **AWS Config Rules** для compliance monitoring.
-- [ ] Используется **S3 Inventory** для регулярного аудита.
-- [ ] Настроены alerts на аномалии (публичный доступ, нешифрованные загрузки).
+- [ ] Включён **Access Logging**.
+- [ ] Настроены **Prometheus/Grafana** для метрик и алертов.
+- [ ] Используется **inventory scanning** (radosgw-admin bucket stats, aws s3api list-objects-v2) для регулярного аудита.
+- [ ] Настроены alerts на аномалии (публичный доступ, нешифрованные загрузки, высокий объём ошибок).
 
 ### Incident Response
 - [ ] Документирован playbook для security incident (публичный bucket, утечка данных).
-- [ ] Настроены automated alerts через CloudWatch/SNS.
 - [ ] Регулярно тестируется восстановление state/data из backup.
-- [ ] Настроен процесс rotation credentials (OIDC, IAM Roles).
+- [ ] Настроен процесс rotation credentials.
+- [ ] Настроены алерты на аномалии через Prometheus Alertmanager или аналоги.
+
+### Performance & Cost
+- [ ] Настроено prefix naming для избежания hotspot'ов.
+- [ ] Настроен multipart upload tuning для загрузки больших файлов.
+- [ ] Используется CDN для статических assets.
+- [ ] Настроены lifecycle policies для автоматического перехода между hot/warm/cold pools.
 
 ---
 
-## 11. См. также
+## 12. См. также
 
 - [Amazon S3 — архитектура, протокол и эксплуатация](./overview.md)
 - [S3: распространённые операции CLI и эксплуатация](./cli-operations.md)
 - [S3: мониторинг, алерты и cost optimization](./monitoring.md)
 - [Ansible и S3: интеграция, автоматизация и эксплуатация](./ansible-integration.md)
-- [Обзор систем хранения данных (СХД)](../data_storage_overview.md)
 - [Ceph RGW: S3-совместимое хранилище на базе Ceph](../../../Kubernetes/Storage/Ceph/ceph_rgw_s3.md)

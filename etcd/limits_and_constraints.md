@@ -1,55 +1,88 @@
 # Лимиты и ограничения etcd
 
-**etcd** имеет жёсткие ограничения по размеру данных, производительности и конфигурации. Их понимание необходимо для capacity planning, troubleshooting и проектирования production-архитектуры.
+**Актуально для:** etcd 3.6.x / 3.7.x (значения 3.5.x указаны отдельно там, где различаются; v3.4 EOL с 2026-05-15)
+
+**etcd** имеет жёсткие ограничения по размеру данных, производительности и конфигурации. Их понимание необходимо для capacity planning, troubleshooting и проектирования production-архитектуры. Официальная документация (System limits) определяет etcd как хранилище «small key value pairs typical for metadata» — все лимиты ниже следуют из этой модели использования.
 
 ## Определения
 
 | Термин | Описание |
 | :--- | :--- |
-| **quota-backend-bytes** | Максимальный размер файла BoltDB (по умолчанию 2 ГБ, максимум 8 ГБ). |
-| **max-request-bytes** | Максимальный размер одного gRPC-запроса (по умолчанию 1.5 MB). |
-| **WAL segment size** | Размер одного сегмента WAL (64 MB по умолчанию). |
-| **snapshot-count** | Количество ревизий между автоматическими снапшотами (10 000 в v3.6+, 100 000 в v3.5). |
-| **treeIndex memory** | Память, занимаемая B-деревом в оперативной памяти (примерно 150–300 байт на ключ). |
-| **Page size** | Размер страницы BoltDB (4 КБ). |
-| **Max keys** | Ограничено RAM и DB size. Практический лимит ~10–20 млн ключей при 8 ГБ БД. |
+| **quota-backend-bytes** | Квота на размер backend-файла BoltDB. Default: 2 ГБ (флаг `0` = low space quota). 8 ГБ — рекомендуемый максимум: при большем значении etcd предупреждает при старте. |
+| **max-request-bytes** | Максимальный размер одного gRPC-запроса целиком (ключ + значение + накладные расходы протокола). Default: 1.5 MiB (1572864 байт). |
+| **max-txn-ops** | Максимальное число операций в одной транзакции. Default: 128. |
+| **max-snapshots / max-wals** | Число хранимых файлов снапшотов и сегментов WAL. Default: 5 / 5 (`0` = без ограничения). |
+| **snapshot-count** | Число коммитов между автоматическими снапшотами: 10 000 в 3.6+, 100 000 в 3.5. |
+| **WAL segment size** | Размер одного сегмента WAL — 64 MiB, зашито в код etcd, не настраивается. |
+| **treeIndex** | B-дерево в оперативной памяти, сопоставляющее ключи с ревизиями; ~150–300 байт на ключ (практическая оценка). |
+| **Page size** | Размер страницы BoltDB — 4 КБ (размер страницы ОС). |
+| **NOSPACE** | Кластерный аларм при достижении квоты: кластер переходит в режим обслуживания, принимающий только чтения и удаления. |
+| **RangeStream** | (3.7+) Потоковая передача больших результатов чанками вместо буферизации всего ответа — снижает пиковое потребление памяти на больших range-запросах. |
 
 ---
 
 ## Основные концепции
 
-### Лимиты размера
+### Лимиты размера запроса
 
 | Параметр | Значение | Последствия превышения |
 | :--- | :--- | :--- |
-| **Max value size** | 1.5 MB (`--max-request-bytes`) | Ошибка `etcdserver: request is too large` |
-| **Max key size** | Аналогично value size | Ошибка `etcdserver: request is too large` |
-| **Max DB size** | 8 GB (практический лимит) | `NOSPACE` alarm, блокировка записи |
-| **Max WAL size** | Ограничен только диском | Медленное восстановление, много сегментов |
-| **Max snapshot size** | Ограничен DB size | Долгий restore, возможен OOM при apply |
+| **Max request size** | 1.5 MiB (`--max-request-bytes`) | `etcdserver: request is too large` |
+| **Max txn ops** | 128 (`--max-txn-ops`) | `etcdserver: too many operations in txn request` |
+| **Max concurrent streams** | не ограничено (`--max-concurrent-streams`, default `math.MaxUint32`) | — |
+| **Клиентский лимит отправки** | 2.0 MiB (etcd clientv3 `MaxCallSendMsgSize`) | клиент не отправит запрос больше 2 MiB |
+| **Клиентский лимит приёма** | `math.MaxInt32` (clientv3 `MaxCallRecvMsgSize`; gRPC-дефолт 4 MB переопределён) | практически отсутствует; сработает только при явном занижении |
 
-**Почему 8 GB — практический лимит:**
-- bbolt (BoltDB форк) использует B+ tree на диске.
-- При > 8 GB начинается деградация производительности (фрагментация, длительный startup).
-- `quota-backend-bytes` по умолчанию 2 GB, максимум 8 GB.
-- При approached 8 GB требуется external etcd или разделение кластеров.
+**Почему лимит на весь запрос, а не на значение:** etcd проверяет размер сериализованного gRPC-сообщения целиком — ключ, значение и служебные поля протокола. Отдельного лимита на ключ нет: ключ должен помещаться в запрос вместе со значением.
 
-### Лимиты производительности
+**Почему не стоит повышать без необходимости:** etcd обрабатывает транзакции серийно, а большие запросы реплицируются и применяются целиком — крупные entry'и повышают latency для остальных запросов (см. [предложение pipeline](./proposal_pipeline.md)). Официальная документация предупреждает: более крупные запросы работают, но могут повышать latency других запросов.
 
-| Метрика | Норма (NVMe, 3-node) | Критично |
+**Клиентские лимиты:** при повышении `--max-request-bytes` выше 2 MiB необходимо поднять `MaxCallSendMsgSize` в clientv3 (default 2.0 MiB), иначе клиент не отправит запрос. `MaxCallRecvMsgSize` в clientv3 имеет default `math.MaxInt32`, поэтому ответы принимаются без ограничения и поднимать его не требуется — только если он был явно занижен. Подробности — в [Клиентской интеграции](./client_integration.md).
+
+### Лимиты хранилища
+
+| Параметр | Значение | Последствия |
 | :--- | :--- | :--- |
-| **Writes/sec** | 10 000–15 000 | > 20 000 (leader overload) |
-| **Reads/sec** | 50 000+ (с Watch Cache) | Зависит от клиента |
-| **WAL fsync p99** | < 10 ms | > 100 ms (leader flapping) |
-| **Backend commit p99** | < 25 ms | > 100 ms |
-| **Peer RTT p99** | < 50 ms | > 100 ms (election risk) |
-| **Watch connections** | 10 000+ (с watch cache) | > 50 000 (FD exhaustion) |
+| **quota-backend-bytes** | default 2 ГБ; 8 ГБ — рекомендуемый максимум | При достижении квоты — аларм `NOSPACE` |
+| **Max DB size (практический)** | 8 ГБ — предел стабильной работы bbolt | Деградация: фрагментация, длительный startup, риск OOM |
+| **Max snapshot size** | ограничен размером БД | Долгий restore, возможен OOM при apply |
 
-### Лимиты ключей и памяти
+**Почему 8 ГБ — практический лимит:**
+- bbolt (форк BoltDB) использует B+ tree на диске и memory-maps db-файл: большая квота = больше виртуальной памяти процесса.
+- При > 8 ГБ деградирует производительность: фрагментация, длительный startup (загрузка freelist), риск OOM.
+- 8 ГБ — не жёсткий запрет: etcd стартует с бо́льшей квотой, но предупреждает об этом при старте. Стабильная работа выше 8 ГБ не гарантируется.
+- При приближении к 8 ГБ — разделение keyspace между кластерами (например, Events отдельно) или external etcd.
 
-**Примерный расчёт памяти для treeIndex:**
+**Поведение при NOSPACE:** etcd поднимает кластерный аларм и переходит в режим обслуживания, принимающий только чтения и удаления; запись отклоняется с ошибкой `mvcc: database space exceeded`. Квота проверяется на двух уровнях: на API-уровне (раннее отклонение) и на уровне Apply (поднятие аларма). Восстановление: compaction → defrag всех членов → `etcdctl alarm disarm` (см. [MVCC и компакция](./mvcc_versioning_and_compaction.md), [Maintenance API](./maintenance_api.md)).
+
+### Лимиты снапшотов и WAL
+
+| Параметр | Значение | Влияние |
+| :--- | :--- | :--- |
+| **WAL segment size** | 64 MiB (не настраивается) | Больше сегментов = дольше восстановление |
+| **snapshot-count** | 10 000 (3.6+), 100 000 (3.5) | Меньше = чаще снапшоты, больше нагрузка на диск/CPU |
+| **max-snapshots / max-wals** | 5 / 5 (`0` = unlimited) | Старые файлы удаляются после создания нового снапшота |
+| **Размер WAL между снапшотами** | зависит от объёма записей, а не от числа ревизий | При интенсивной записи WAL растёт быстрее, чем отсекается `snapshot-count` |
+| **Compaction retention** | 5m — дефолт kube-apiserver (`--etcd-compaction-interval`); на стороне etcd `--auto-compaction-retention` = 0 (выключено) | Агрессивная компакция = меньше истории ревизий, меньше БД |
+
+**Экономия памяти в 3.6:** снижение дефолта `--snapshot-count` с 100 000 до 10 000 и более частая компакция Raft-истории снизили среднее потребление памяти минимум на 50%. Если в конфигурации осталось явное `--snapshot-count=100000` от 3.5 — выигрыш теряется; удалите override (см. [совместимость версий](./version_compatibility.md)).
+
+### Лимиты соединений и gRPC
+
+| Параметр | Значение | Влияние |
+| :--- | :--- | :--- |
+| **Файловые дескрипторы** | лимит ОС (`LimitNOFILE`); etcd предупреждает при 80% | Исчерпание = новые соединения закрываются сразу после accept |
+| **grpc-keepalive-min-time** | 5s | Минимальный интервал ping от клиента; ниже — сервер отклоняет |
+| **grpc-keepalive-interval / timeout** | 2h / 20s | Пинги сервера для проверки живости соединения |
+| **Watch-соединения** | ограничены FD-лимитом, отдельным флагом не настраиваются | Десятки тысяч watchers требуют поднятого `ulimit -n` |
+
+Тюнинг ОС (ionice, sysctl, FD, heartbeat/election) — в [тюнинге ядра](./kernel_tuning.md).
+
+### Лимиты памяти
+
+**Расчёт treeIndex:**
 ```
-treeIndex memory ≈ keys_count × 250 bytes
+treeIndex memory ≈ keys_count × 250 bytes   (оценка 150–300 байт на ключ)
 ```
 
 | Количество ключей | treeIndex memory | Общая RAM (с запасом) |
@@ -57,18 +90,25 @@ treeIndex memory ≈ keys_count × 250 bytes
 | 100 000 | ~25 MB | 4 GB |
 | 1 000 000 | ~250 MB | 8 GB |
 | 10 000 000 | ~2.5 GB | 16 GB |
-| 50 000 000 | ~12.5 GB | 32 GB (не рекомендуется) |
+| 50 000 000 | ~12.5 GB | 32 GB (не рекомендуется — разделяйте кластеры) |
 
-**Правило:** При > 10 млн ключей рассмотрите разделение на несколько etcd-кластеров (например, Events отдельно).
+**Правило:** при > 10 млн ключей рассмотрите разделение на несколько кластеров (Events — отдельно). Практический предел — ~10–20 млн ключей при 8 ГБ БД.
 
-### Лимиты WAL и снапшотов
+**Состав RAM:** `RAM ≈ treeIndex + BoltDB cache + WAL buffer + overhead`. bbolt memory-maps db-файл, поэтому страницы БД учитываются ОС в page cache; RSS процесса растёт с treeIndex и числом открытых страниц. Минимум для production: < 1M ключей — 8 GB RAM; 1M–10M — 16 GB; > 10M — 32 GB или разделение кластеров.
 
-| Параметр | Значение | Влияние |
+### Лимиты производительности
+
+| Метрика | Норма | Критично |
 | :--- | :--- | :--- |
-| **WAL segment size** | 64 MB | Больше сегментов = дольше восстановление |
-| **snapshot-count** | 10 000 (v3.6+) | Меньше = чаще создание снапшотов, больше CPU/диск |
-| **Max WAL before snapshot** | Ограничен snapshot-count | При 10 000 ревизиях WAL ~ 64–128 MB |
-| **Compaction retention** | 5m (K8s default) | Агрессивная компакция = меньше истории, меньше БД |
+| **WAL fsync p99** (`etcd_disk_wal_fsync_duration_seconds`) | < 10 ms (порог etcd-perf / OpenShift) | > 20 ms — диск не рекомендуется для etcd |
+| **Backend commit** (`etcd_disk_backend_commit_duration_seconds`) | сопоставимо с fsync | устойчиво высокие значения → высокая latency запросов, нестабильность кластера |
+| **Peer RTT p99** (`etcd_network_peer_round_trip_time_seconds`) | ≤ election-timeout / 10 (при дефолте 1000 ms — ≤ 100 ms) | > 100 ms — риск выборов лидера |
+| **Failed proposals** (`etcd_server_proposals_failed_total`) | 0 | рост = перегрузка или потеря кворума |
+| **Slow apply** (`etcd_server_slow_apply_total`) | 0 | рост = диск не успевает за apply |
+| **Writes/sec** | нет универсальной нормы — замеряется `benchmark` (см. [бенчмаркинг](./benchmarking.md)) | рост `etcd_server_proposals_failed_total` |
+| **Reads/sec** | зависит от hardware и клиента; watch cache API-сервера снимает большую часть нагрузки на чтение | — |
+
+Таймеры heartbeat/election (100 ms / 1000 ms по умолчанию) и их связь с RTT — в [тюнинге ядра](./kernel_tuning.md) и [Raft-консенсусе](./raft_consensus.md).
 
 ---
 
@@ -78,26 +118,26 @@ treeIndex memory ≈ keys_count × 250 bytes
 
 **Формула:**
 ```
-db_size ≈ keys_count × avg_key_size × 3 (overhead для MVCC)
+db_size ≈ keys_count × avg_key_size × 3   (overhead для MVCC-истории)
 ```
 
 **Пример 1:** K8s кластер на 1000 подов
 - Ключей: ~50 000 (pods, services, configmaps, secrets, endpoints)
 - Средний размер: ~200 байт
 - `db_size ≈ 50 000 × 200 × 3 = 30 MB`
-- **Итого:** 30 MB — comfortably в пределах 8 GB.
+- **Итого:** 30 MB — значительно в пределах квоты.
 
 **Пример 2:** K8s кластер на 5000 подов
 - Ключей: ~300 000
 - `db_size ≈ 300 000 × 200 × 3 = 180 MB`
-- С учетом истории (compaction 5m): ~500 MB–1 GB.
-- **Итого:** 1 GB — хорошо.
+- С учётом истории (compaction 5m): ~500 MB–1 GB.
+- **Итого:** ~1 GB — комфортно.
 
 **Пример 3:** K8s кластер на 20 000 подов с Events
 - Ключей: ~2 000 000 (включая Events)
 - `db_size ≈ 2 000 000 × 200 × 3 = 1.2 GB`
 - С Events: может достигать 3–4 GB.
-- **Итого:** 4 GB —接近 к 8 GB лимиту. Рассмотреть External Events etcd.
+- **Итого:** 4 GB — около половины лимита 8 ГБ. Рассмотрите вынос Events в отдельный кластер (`--etcd-servers-overrides=/events#...`).
 
 ### Capacity Planning: расчёт RAM
 
@@ -110,14 +150,53 @@ RAM ≈ treeIndex + BoltDB cache + WAL buffer + overhead
 - **1M–10M ключей:** 16 GB RAM
 - **> 10M ключей:** 32 GB RAM (или разделение кластеров)
 
-### Когда переходить на External etcd
+### Когда переходить на external etcd / разделение кластера
 
 | Симптом | Действие |
 | :--- | :--- |
-| `db_total_size` > 6 GB | Планировать migration на external etcd |
-| > 5000 подов | Рассмотреть external etcd + прокси |
-| `etcd_server_lease_object_count` > 1M | Оптимизировать leases или разделить кластер |
-| `watch store is out of space` часто | Увеличить watch cache на API-сервере или разделить кластер |
+| `etcd_mvcc_db_total_size_in_bytes` > 70–80% квоты | Планировать migration или вынос части keyspace |
+| > 5000 подов с Events в том же etcd | Вынести Events в отдельный кластер |
+| Число leases (`etcdctl lease list`) > 1M | Оптимизировать leases или разделить кластер |
+| Рост `etcd_server_proposals_failed_total` при нормальных дисках | Разделить кластер или оптимизировать клиентов |
+
+---
+
+## Валидация
+
+Проверка текущих лимитов и приближения к ним (предполагается настроенный `etcdctl` и доступные endpoints):
+
+```bash
+# Текущий размер БД и версия по всем членам кластера
+etcdctl endpoint status --cluster -w table
+# → +----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+# → |    ENDPOINT    |        ID        | VERSION | DB SIZE | IS LEADER | IS LEARNER | RAFT TERM | RAFT INDEX | RAFT APPLIED INDEX | ERRORS |
+# → +----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+# → | 10.0.0.11:2379 | 8e9e05c52164694d |  3.7.1  |  1.2 GB |   false   |     false  |     2     |     9      |         9          |        |
+
+# Текущая квота и размер БД через метрики
+curl -s http://localhost:2379/metrics | grep -E 'etcd_server_quota_backend_bytes|etcd_mvcc_db_total_size'
+# → etcd_server_quota_backend_bytes 2147483648        # 2 ГБ — дефолт
+# → etcd_mvcc_db_total_size_in_bytes 1288490188       # ~1.2 ГБ (выделено)
+# → etcd_mvcc_db_total_size_in_use_in_bytes 966367640 # ~0.9 ГБ (живые данные)
+
+# Активные алармы (NOSPACE и др.)
+etcdctl alarm list
+# → (пустой вывод = алармов нет)
+
+# Дефолты флагов в установленной версии
+etcd --help 2>&1 | grep -E 'quota-backend-bytes|max-request-bytes|max-txn-ops|snapshot-count'
+# → --quota-backend-bytes '0'     # 0 = low space quota (2 ГБ)
+# → --max-request-bytes '1572864' # 1.5 MiB
+# → --max-txn-ops '128'
+# → --snapshot-count '10000'      # в 3.6+; в 3.5 — '100000'
+
+# Использование файловых дескрипторов
+curl -s http://localhost:2379/metrics | grep -E 'process_open_fds|process_max_fds'
+# → process_open_fds 312
+# → process_max_fds 1048576       # 312/1048576 ≈ 3% — норма; предупреждение etcd при 80%
+```
+
+**Критерии нормы:** `db_total_size` < 70% квоты; алармов нет; `process_open_fds` < 80% лимита; p99 `etcd_disk_wal_fsync_duration_seconds` < 10 ms.
 
 ---
 
@@ -125,27 +204,46 @@ RAM ≈ treeIndex + BoltDB cache + WAL buffer + overhead
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| `request is too large` | Объект > `max-request-bytes` | Увеличить флаг или разбить объект |
-| `database space exceeded` | `db_total_size` > `quota-backend-bytes` | Defrag + compact или увеличить квоту |
-| OOM при старте | treeIndex слишком большой для RAM | Увеличить RAM или уменьшить количество ключей |
-| Медленный restore | WAL слишком большой | Уменьшить `snapshot-count` |
-| Высокое использование FD | Слишком много watch-соединений | Увеличить `LimitNOFILE` или оптимизировать clients |
+| `etcdserver: request is too large` | Запрос (ключ + значение) > `max-request-bytes` | Разбить объект (ConfigMap/Secret) или увеличить флаг на сервере и клиенте |
+| `etcdserver: too many operations in txn request` | > 128 операций в транзакции | Разбить транзакцию на батчи или увеличить `--max-txn-ops` |
+| `etcdserver: database space exceeded` / NOSPACE | `db_total_size` ≥ `quota-backend-bytes` | Compaction → defrag всех членов → `etcdctl alarm disarm`; затем увеличить квоту (макс. 8 ГБ) |
+| OOM при старте | treeIndex / freelist слишком велики для RAM | Увеличить RAM; defrag (уменьшает freelist); уменьшить число ключей |
+| Медленный restore | Большой снапшот + WAL | Уменьшить `--snapshot-count` (чаще снапшоты); для больших БД — снапшоты уровня хранилища (LVM) |
+| Исчерпание FD | Много watch-соединений | Поднять `LimitNOFILE` (см. [тюнинг ОС](./kernel_tuning.md)); оптимизировать клиентов |
+| Клиент не отправляет запрос > 2 MiB | clientv3 `MaxCallSendMsgSize` default 2.0 MiB | Поднять клиентский лимит отправки |
+| Клиент не принимает ответ > 4 MiB | grpc-go `MaxCallRecvMsgSize` default 4 MB | Поднять клиентский лимит приёма |
 
 ---
 
 ## Best Practices
 
-- **Не ждите NOSPACE:** Алерт на 70% заполнения квоты.
-- **Defrag перед увеличением квоты:** Сначала освободите место, потом увеличивайте лимит.
-- **Не превышайте 8 GB:** bbolt стабильно работает до 8 GB. При превышении — external etcd.
-- **Мониторьте treeIndex:** `process_resident_memory_bytes` должен быть > 2× treeIndex estimated size.
-- **Разделяйте кластеры при > 10M ключей:** Events, Critical resources (pods/secrets) — в разные кластеры.
+- **Не ждите NOSPACE:** алерт на 70% заполнения квоты (`etcd_mvcc_db_total_size_in_bytes / etcd_server_quota_backend_bytes`).
+- **Defrag перед увеличением квоты:** сначала compaction + defrag, потом увеличивайте лимит.
+- **Не превышайте 8 ГБ стабильно:** bbolt стабильно работает до 8 ГБ; при приближении — разделяйте keyspace между кластерами.
+- **Мониторьте фрагментацию:** разрыв между `etcd_mvcc_db_total_size_in_bytes` и `etcd_mvcc_db_total_size_in_use_in_bytes` (см. [внутреннее устройство хранения](./storage_internals.md)).
+- **Разделяйте кластеры при > 10M ключей:** Events и критические ресурсы (pods/secrets) — в разные кластеры.
+- **Убирайте устаревшие override:** явное `--snapshot-count=100000` от 3.5 отключает оптимизацию памяти 3.6+.
+
+---
+
+## Граничные случаи
+
+- **8 ГБ — рекомендация, не запрет:** etcd стартует с квотой > 8 ГБ, но предупреждает при старте; стабильная работа выше 8 ГБ не гарантируется.
+- **Клиентские лимиты не растут автоматически:** повышение `--max-request-bytes` требует настройки `MaxCallSendMsgSize` (clientv3) и `MaxCallRecvMsgSize` (grpc-go) на стороне клиентов.
+- **WAL между снапшотами не фиксирован:** его размер определяется объёмом записей, а не `snapshot-count`; при интенсивной записи WAL может расти быстрее, чем отсекается.
+- **RangeStream (3.7+):** большие range-запросы передаются чанками — пиковая память на большие выборки больше не буферизуется целиком; keys-only запросы читаются только из treeIndex.
+- **snapshotLimitByte:** в 3.7.1 / 3.6.14 исправлена инициализация лимита размера снапшота (ранее в некоторых конфигурациях снапшоты могли расти без ограничения) — обновитесь, если снапшоты аномально велики.
 
 ---
 
 ## См. также
 
-* **[Архитектура и основные концепции](./architecture-and-concepts.md)** — аппаратные требования.
-* **[Мониторинг etcd](./etcd_monitoring.md)** — метрики размера БД и фрагментации.
-* **[Прокси-режим и масштабирование](./proxy_mode.md)** — capacity planning формулы.
-* **[Внутреннее устройство хранения](./storage_internals.md)** — page size, CoW, fragmentation.
+* **[Архитектура и основные концепции](./architecture-and-concepts.md)** — аппаратные требования, HA, кворум.
+* **[Мониторинг etcd](./etcd_monitoring.md)** — метрики размера БД, фрагментации, алертинг.
+* **[Внутреннее устройство хранения](./storage_internals.md)** — page size, CoW, freelist, дефрагментация.
+* **[MVCC, версионирование и компакция](./mvcc_versioning_and_compaction.md)** — история ревизий, NOSPACE.
+* **[Maintenance API](./maintenance_api.md)** — alarm list/disarm, defrag, snapshot.
+* **[Тюнинг ядра и ОС](./kernel_tuning.md)** — FD-лимиты, heartbeat/election, ionice.
+* **[Бенчмаркинг](./benchmarking.md)** — замер пропускной способности.
+* **[Прокси-режим и масштабирование](./proxy_mode.md)** — масштабирование нагрузки через gRPC proxy.
+* **[Совместимость версий](./version_compatibility.md)** — дефолты 3.5 vs 3.6, миграция.

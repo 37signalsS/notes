@@ -25,7 +25,7 @@ ETCDCTL_API=3 etcdctl --endpoints=$ENDPOINT \
   get /registry/secrets/default/my-secret --print-value-only | python3 -c "import sys,base64; print(base64.b64decode(sys.stdin.read()).decode())"
 ```
 
-**Лимиты размера:** Максимальный размер одного объекта в etcd составляет **1 MiB** (настраивается через `--max-request-bytes` в etcd). Попытка создания секрета большего размера приведет к ошибке `RequestEntityTooLarge`. Этот лимит включает метаданные и Base64-представление данных.
+**Лимиты размера:** Kubernetes ограничивает отдельный Secret **1 MiB**. Серверный лимит etcd на запрос по умолчанию — **1.5 MiB** (`--max-request-bytes`), и в запрос входят метаданные и Base64-представление данных. Попытка создания секрета большего размера приведет к ошибке `RequestEntityTooLarge`.
 
 **Ревизии и компакция:** Каждое изменение секрета создает новую ревизию в etcd. Для предотвращения бесконечного роста БД используется процесс **Compaction** (удаление старых ревизий) и **Defragmentation** (освобождение места на диске).
 

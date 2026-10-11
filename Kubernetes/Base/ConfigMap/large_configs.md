@@ -386,7 +386,7 @@ kubectl get configmap -A -o json | jq -r '
 |---|---|---|
 | `--max-request-bytes` | 1.5 MiB (по умолчанию) | Максимальный размер запроса к etcd |
 | Рекомендация по размеру объекта | 1 MiB | Для обеспечения производительности |
-| `quota-backend-bytes` | 8 GiB (по умолчанию) | Общий размер хранилища etcd |
+| `quota-backend-bytes` | 2 GiB (по умолчанию), 8 GiB — рекомендуемый максимум | Общий размер хранилища etcd |
 
 > Подробнее: [etcd Storage](../../Base/secrets/etcd_storage.md), [etcd Overview](../../Concepts/etcd_overview.md)
 

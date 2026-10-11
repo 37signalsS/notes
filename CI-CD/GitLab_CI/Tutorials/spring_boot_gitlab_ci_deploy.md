@@ -1,12 +1,16 @@
 # Деплой Spring Boot в GitLab CI/CD с использованием Docker
 
+**Актуально для:** GitLab 19.x / GitLab Runner 19.x / Java 21
+
+Практическое руководство по организации CI/CD пайплайна для Spring Boot приложения: сборка, сканирование, миграции БД и деплой через SSH на целевой сервер с использованием Docker Compose.
+
+---
+
 ## Определения
 
 **Spring Boot** — современный Java-фреймворк для создания автономных микросервисов. В контексте CI/CD требует разделения этапов компиляции (JDK + Maven/Gradle) и исполнения (JRE).
 
-**GitLab Agent for Kubernetes (KAS)** — рекомендуемый в 2026 году механизм интеграции, обеспечивающий безопасный **CI/CD Tunnel** без передачи статических `KUBECONFIG`.
-
-**id_tokens (OIDC)** — механизм генерации временных JWT-токенов для федерации идентичности. Используется для безопасной аутентификации в HashiCorp Vault или облачных провайдерах без хранения паролей в GitLab.
+**id_tokens (OIDC)** — механизм генерации временных JWT-токенов для федерации идентиности. Используется для безопасной аутентификации между компонентами CI/CD без хранения статических паролей в GitLab Variables.
 
 **Kaniko** — инструмент для сборки Docker-образов «внутри» контейнера (userspace). Является стандартом безопасности, так как не требует привилегированного доступа к `/var/run/docker.sock`.
 
@@ -14,9 +18,11 @@
 
 **Quality Gates (Ворота качества)** — набор автоматизированных проверок (Unit-тесты, линтеры, сканеры CVE), которые блокируют продвижение артефакта при несоблюдении критериев качества.
 
+**Docker-in-Docker (DinD)** — технология, позволяющая собирать и запускать Docker-образы внутри контейнера. В данном руководстве используется через проброс сокета `/var/run/docker.sock` или сервис `docker:dind`.
+
 ## Основные концепции
 
-### Архитектура пайплайна (Lifecycle 2026)
+### Архитектура пайплайна (Lifecycle)
 
 Современный процесс доставки Spring Boot приложения ориентирован на безопасность и скорость обратной связи:
 
@@ -24,7 +30,7 @@
 ┌────────┐     ┌──────────┐     ┌───────┐     ┌─────────┐     ┌────────┐
 │ Commit │────▶│ Validate │────▶│ Build │────▶│ Scan/QA │────▶│ Deploy │
 └────────┘     └──────────┘     └───────┘     └─────────┘     └────────┘
-                  │ (Checkstyle)   │ (Kaniko)    │ (Trivy)       │ (SSH/K8s)
+                  │ (Checkstyle)   │ (Kaniko)    │ (Trivy)       │ (SSH)
                   ▼                ▼             ▼               ▼
                Linter           Artifact      SBOM/CVE        Production
 ```
@@ -36,21 +42,39 @@
 3.  **Безопасность рантайма:** Запуск Java-приложения от имени непривилегированного пользователя (`non-root`) — критическое требование безопасности.
 4.  **Миграции БД:** Изменения схемы (Flyway/Liquibase) должны выполняться **до** запуска приложения, но **после** успешной сборки артефакта.
 
+### Безопасность и риски Docker Socket
+
+Проброс `/var/run/docker.sock` внутрь контейнера Runner'а дает ему права суперпользователя на хост-системе.
+*   **Dev-окружение:** Допустимо для локальных тестов и сборки образов.
+*   **Production:** Категорически запрещено. Используйте изолированные виртуальные машины или Kaniko для сборки без привилегий.
+
+### Хранение данных и артефактов
+
+GitLab Registry и артефакты пайплайна требуют управления жизненным циклом:
+*   **Registry:** Хранит Docker-образы. По умолчанию не ограничивает количество тегов — требуется политика очистки.
+*   **Artifacts:** Временные файлы (JUnit-отчеты, SBOM). Имеют встроенное TTL (`artifacts:expire_in`).
+*   **Cache:** Зависимости Maven/Gradle. По умолчанию не имеют TTL — требует периодической очистки.
+
 ## Практические сценарии
 
 ### Предварительные требования
 
 **Окружение:**
-- **Runner:** GitLab Runner с тегом `docker-runner`.
-- **Target:** Сервер с Docker 27.0+ и поддержкой SSH-ключей.
-- **Java:** Версия 21 (LTS).
+*   **Runner:** GitLab Runner с тегом `docker-runner` (Docker Executor).
+*   **Target:** Сервер с Docker 27.0+ и поддержкой SSH-ключей.
+*   **Java:** Версия 21 (LTS).
+
+**Аппаратные ресурсы:**
+*   **RAM:** 8 ГБ (минимум 4 ГБ для Runner'а).
+*   **Диск:** SSD, минимум 20 ГБ свободного места для образов и кэша.
 
 **Переменные CI/CD (Settings > CI/CD > Variables):**
 | Переменная | Тип | Назначение |
 | :--- | :--- | :--- |
 | `SSH_PRIVATE_KEY` | **File** | Приватный ключ для деплоя. |
 | `SSH_KNOWN_HOSTS` | Variable | Отпечаток (fingerprint) целевого сервера. |
-| `DB_URL` / `DB_PASS` | Variable | Учетные данные для миграций. |
+| `DB_URL` / `DB_USER` / `DB_PASS` | Variable | Учетные данные для миграций. |
+| `SERVER_USER` / `SERVER_HOST` | Variable | Целевой сервер для деплоя. |
 
 ### Шаг 1: Оптимизированный Dockerfile (Multi-stage + Security)
 
@@ -82,8 +106,12 @@ RUN useradd -m -u 10001 springuser && \
 # Копируем только артефакт
 COPY --from=builder /app/target/*.jar app.jar
 
+# Healthcheck для Docker
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8080/actuator/health || exit 1
+
 USER 10001
-ENV JAVA_OPTS="-Xmx512m -Xms256m"
+ENV JAVA_OPTS="-Xmx512m -Xms256m -XX:MaxRAMPercentage=75.0 -XX:+UseG1GC"
 EXPOSE 8080
 
 # Использование exec-формы для корректной передачи сигналов (SIGTERM)
@@ -122,6 +150,7 @@ unit_tests:
     when: always
     reports:
       junit: target/surefire-reports/*.xml
+    expire_in: 1 week
   tags: [docker-runner]
 
 # 2. Безопасная сборка образа
@@ -138,6 +167,7 @@ build_image:
       --destination "${CI_REGISTRY_IMAGE}:latest"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  tags: [docker-runner]
 
 # 3. Сканирование на уязвимости и SBOM
 vulnerability_scan:
@@ -150,8 +180,11 @@ vulnerability_scan:
     reports:
       cyclonedx: sbom.json
     paths: [report.json]
+    expire_in: 1 week
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  tags: [docker-runner]
+  allow_failure: false
 
 # 4. Миграция базы данных
 database_migrate:
@@ -162,13 +195,17 @@ database_migrate:
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
+  tags: [docker-runner]
 
 # 5. Деплой через SSH
 deploy_ssh:
   stage: deploy
   image: docker:29.8
+  services:
+    - docker:29.8-dind
   variables:
-    DOCKER_HOST: "ssh://${SERVER_USER}@${SERVER_HOST}"
+    DOCKER_HOST: "tcp://docker:2376"
+    DOCKER_TLS_CERTDIR: "/certs"
   before_script:
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
     - echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
@@ -183,6 +220,44 @@ deploy_ssh:
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
+  tags: [docker-runner]
+```
+
+### Шаг 3: Docker Compose для целевого сервера
+
+На целевом сервере создайте `docker-compose.yml`:
+
+```yaml
+services:
+  app:
+    image: ${IMAGE_NAME}
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_DATASOURCE_URL=${DB_URL}
+      - SPRING_DATASOURCE_USERNAME=${DB_USER}
+      - SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD}
+      - JAVA_OPTS=-Xmx512m -Xms256m -XX:MaxRAMPercentage=75.0
+    volumes:
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 ```
 
 ## Валидация и проверка
@@ -195,17 +270,41 @@ deploy_ssh:
     # Ожидаемый результат: {"status":"UP"}
     ```
 3.  **Logs Validation:** Проверьте логи контейнера на наличие ошибок запуска: `docker logs -f app_container_name`.
+4.  **Smoke Test:** Проверьте ключевые эндпоинты приложения: `curl -f http://server-host:8080/api/health`.
 
 ## Технические нюансы и Тюнинг
 
 ### Работа с Testcontainers
+
 Если ваши интеграционные тесты используют **Testcontainers**, раннеру необходим доступ к Docker. В Docker Executor это достигается через:
-- Использование сервиса `docker:dind`.
+- Использование сервиса `docker:dind` в пайплайне.
 - Или проброс сокета (менее безопасно).
 Подробнее см. **[Testcontainers: Роль в CI/CD](../../../Testing/testcontainers_overview.md)**.
 
 ### Оптимизация памяти JVM
+
 В контейнере Java должна "видеть" лимиты Docker. В Java 17+ это работает автоматически, но рекомендуется явно задавать `-XX:MaxRAMPercentage=75.0`, чтобы JVM не пыталась захватить всю память хост-системы.
+
+### Ротация логов Docker
+
+На хосте Runner'а настройте ротацию логов через `daemon.json`:
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+```
+
+### Очистка кэша Maven
+
+Периодически очищайте кэш на Runner'е для предотвращения переполнения диска:
+```bash
+docker system prune -af
+docker volume prune -af
+```
 
 ### Устранение неполадок (Troubleshooting)
 
@@ -217,7 +316,7 @@ deploy_ssh:
 | **Flyway Checksum Mismatch** | Изменен существующий скрипт миграции | Никогда не меняйте старые файлы миграций — создавайте новые. Откат: `flyway repair`. |
 | **Maven: No compiler is provided** | JDK не найден в контейнере Builder | Убедитесь, что базовый образ содержит JDK (не JRE). Используйте `maven:3.9-eclipse-temurin-21-jammy`. |
 | **Kaniko: Failed to get credential** | Container Registry авторизация не настроена | Проверьте переменные `CI_REGISTRY_USER` и `CI_JOB_TOKEN`. GitLab автоматически предоставляет токен для встроенного Registry. |
-| **Container屡次重启 (CrashLoopBackOff)** | Приложение падает при старте | Проверьте логи: `docker logs <container>`. Частые причины: невалидный `SPRING_DATASOURCE_URL`, отсутствие миграций, нехватка памяти. |
+| **Container repeatedly перезапускается (CrashLoopBackOff)** | Приложение падает при старте | Проверьте логи: `docker logs <container>`. Частые причины: невалидный `SPRING_DATASOURCE_URL`, отсутствие миграций, нехватка памяти. |
 | **Image not found в Registry** | Имя образа не совпадает или Registry недоступен | Проверьте `IMAGE_NAME` переменную. Убедитесь, что `docker login` проходит успешно в before_script. |
 | **Testcontainers: Cannot connect to Docker** | Docker-in-Docker не настроен или Socket не проброшен | Добавьте сервис `docker:dind` или пробросьте `/var/run/docker.sock`. Укажите `DOCKER_HOST: tcp://docker:2375`. |
 | **Flyway: Connection refused** | База данных недоступна из контейнера Runner'а | Проверьте `DB_URL` — используйте внутренний адрес Docker-сети, а не `localhost`. Убедитесь, что PostgreSQL запущен и доступен. |
@@ -227,23 +326,24 @@ deploy_ssh:
 ## Лучшие практики (Best Practices)
 
 **Безопасность:**
-- Используйте Kaniko вместо DinD для сборки образов — это исключает необходимость `privileged = true`.
-- Все敏感ные переменные (БД, SSH-ключи) храните в CI/CD Variables с флагами `masked` и `protected`.
-- Регулярно обновляйте базовые образы (Eclipse Temurin, Maven) — это закрывает CVE в зависимостях.
-- Добавьте сканирование Trivy как **обязательный** этап — блокируйте деплой при критических уязвимостях.
-- Используйте SBOM для аудита цепочки поставок (Supply Chain Security).
+*   Используйте Kaniko вместо DinD для сборки образов — это исключает необходимость `privileged = true`.
+*   Все секретные переменные (БД, SSH-ключи) храните в CI/CD Variables с флагами `masked` и `protected`.
+*   Регулярно обновляйте базовые образы (Eclipse Temurin, Maven) — это закрывает CVE в зависимостях.
+*   Добавьте сканирование Trivy как **обязательный** этап — блокируйте деплой при критических уязвимостях.
+*   Используйте SBOM для аудита цепочки поставок (Supply Chain Security).
 
 **Производительность:**
-- Кэшируйте `.m2/repository` между запусками пайплайна — это сокращает время сборки на 50-80%.
-- Используйте `dependency:go-offline` в Maven для предзагрузки зависимостей в отдельном слое Docker.
-- В Dockerfile копируйте `pom.xml` перед `src` — это максимизирует кэширование слоёв.
-- Настройте `JAVA_OPTS` с учётом лимитов Docker: `-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC`.
+*   Кэшируйте `.m2/repository` между запусками пайплайна — это сокращает время сборки на 50-80%.
+*   Используйте `dependency:go-offline` в Maven для предзагрузки зависимостей в отдельном слое Docker.
+*   В Dockerfile копируйте `pom.xml` перед `src` — это максимизирует кэширование слоёв.
+*   Настройте `JAVA_OPTS` с учётом лимитов Docker: `-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC`.
 
 **Надёжность:**
-- Используйте `when: manual` для деплоя — это предотвращает автоматический деплой из ветки feature.
-- Пинайте версии образов (Kaniko, Maven, Trivy) вместо `latest` — это гарантирует воспроизводимость.
-- Добавьте Smoke-тест после деплоя — проверяйте Actuator Health и ключевые эндпоинты.
-- Настройте `retry: 2` для сканирования и деплоя — нестабильные сети могут прервать задачу.
+*   Используйте `when: manual` для деплоя — это предотвращает автоматический деплой из ветки feature.
+*   Пинайте версии образов (Kaniko, Maven, Trivy) вместо `latest` — это гарантирует воспроизводимость.
+*   Добавьте Smoke-тест после деплоя — проверяйте Actuator Health и ключевые эндпоинты.
+*   Настройте `retry: 2` для сканирования и деплоя — нестабильные сети могут прервать задачу.
+*   Используйте `depends_on` с `condition: service_healthy` для зависимостей от баз данных.
 
 ## Очистка и откат (Cleanup)
 
@@ -290,21 +390,28 @@ curl --request DELETE --header "PRIVATE-TOKEN: $TOKEN" \
   "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/pipelines/$PIPELINE_ID/artifacts"
 ```
 
+**Очистка кэша Runner'а:**
+```bash
+# На хосте Runner'а
+docker system prune -af --filter "until=168h"
+docker volume prune -af --filter "label!=keep"
+```
+
 ## Граничные случаи (Edge Cases)
 
 **Мульти-Maven модуль:**
-- Если проект состоит из нескольких Maven-модулей, настройте кэширование на уровне корня: `key: "$CI_COMMIT_REF_SLUG"` и `paths: ["./**/.m2/repository"]`.
-- Сборка: `mvn clean package -pl module-name -am` (с зависимостями).
+*   Если проект состоит из нескольких Maven-модулей, настройте кэширование на уровне корня: `key: "$CI_COMMIT_REF_SLUG"` и `paths: ["./**/.m2/repository"]`.
+*   Сборка: `mvn clean package -pl module-name -am` (с зависимостями).
 
 **Монорепозиторий:**
-- Используйте `rules:changes` для запуска пайплайна только при изменении relevant files:
+*   Используйте `rules:changes` для запуска пайплайна только при изменении relevant files:
   ```yaml
   rules:
     - changes: ["src/**", "pom.xml", "Dockerfile"]
   ```
 
 **Несколько целевых серверов:**
-- Деплой на несколько серверов через SSH-ключ и `parallel`:
+*   Деплой на несколько серверов через SSH-ключ и `parallel`:
   ```yaml
   deploy:
     stage: deploy
@@ -314,22 +421,66 @@ curl --request DELETE --header "PRIVATE-TOKEN: $TOKEN" \
   ```
 
 **Горячий restart без даунтайма:**
-- Используйте `docker compose up -d --remove-orphans` вместо `down && up` для минимизации даунтайма.
-- Настройте `HEALTHCHECK` в Dockerfile для автоматического удаления из LB при падении.
+*   Используйте `docker compose up -d --remove-orphans` вместо `down && up` для минимизации даунтайма.
+*   Настройте `HEALTHCHECK` в Dockerfile для автоматического удаления из LB при падении.
 
 **Отладка Jenkins vs GitLab CI:**
-- В GitLab CI нет `sh -x` для отладки — используйте `set -x` в начале script для отладки.
-- Артефакты (`artifacts:paths`) доступны только в UI пайплайна, а не на сервере.
+*   В GitLab CI нет `sh -x` для отладки — используйте `set -x` в начале script для отладки.
+*   Артефакты (`artifacts:paths`) доступны только в UI пайплайна, а не на сервере.
+
+## Мониторинг и логирование
+
+**Просмотр логов:**
+```bash
+# Логи Runner'а
+docker logs gitlab-runner --tail 100 -f
+
+# Логи контейнера приложения
+docker logs app_container_name --tail 100 -f
+
+# Логи Docker Compose
+docker compose logs -f --tail=100
+```
+
+**Проверка состояния компонентов:**
+```bash
+# Статус контейнеров
+docker compose ps
+
+# Проверка диска и inodes на хосте
+df -h
+df -i
+
+# Проверка размера Docker volumes
+docker system df -v
+```
+
+**Активные задачи и метрики:**
+```bash
+# Количество запущенных задач Runner'а
+docker exec -it gitlab-runner gitlab-runner list
+
+# Размер кэша Maven
+du -sh .m2/repository
+```
 
 ## Дополнительная информация
 
-### Мониторинг
+### Мониторинг приложения
+
 Интегрируйте Spring Boot Actuator с Micrometer для сбора метрик в формате Prometheus. См. руководство по **[Prometheus: Сбор метрик Java](../../../Prometheus/overview.md)**.
 
+Настройте в `application.properties`:
+```properties
+management.endpoints.web.exposure.include=health,info,metrics,prometheus
+management.endpoint.health.show-details=always
+```
+
 ### Смотрите также
-- **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовый синтаксис и ключевые концепции.
-- **[Сборка с Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)** — безопасная сборка Docker-образов без привилегий.
-- **[Переменные и секреты GitLab](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)** — OIDC, маскирование и vault-интеграция.
-- **[Регистрация GitLab Runner](../Tutorials/runner_registration.md)** — настройка Docker Executor и 10 сценариев.
-- **[GitLab Runner через Docker Compose](../Tutorials/gitlab_runner_docker_compose.md)** — готовый стек для быстрого старта.
-- **[Тестирование с Testcontainers](../../../Testing/testcontainers_overview.md)** — интеграционные тесты в CI/CD.
+
+*   **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовый синтаксис и ключевые концепции.
+*   **[Сборка с Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)** — безопасная сборка Docker-образов без привилегий.
+*   **[Переменные и секреты GitLab](../../../CI-CD/GitLab_CI/Concepts/gitlab_ci_variables_secrets.md)** — маскирование и управление секретами.
+*   **[Регистрация GitLab Runner](../Tutorials/runner_registration.md)** — настройка Docker Executor и 10 сценариев.
+*   **[GitLab Runner через Docker Compose](../Tutorials/gitlab_runner_docker_compose.md)** — готовый стек для быстрого старта.
+*   **[Тестирование с Testcontainers](../../../Testing/testcontainers_overview.md)** — интеграционные тесты в CI/CD.

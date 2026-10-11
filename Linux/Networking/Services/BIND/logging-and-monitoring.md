@@ -289,7 +289,7 @@ filter {
 output {
   elasticsearch {
     hosts => ["elasticsearch.internal:9200"]
-    index => "dns-logs-%{+YYYY.MM.dd}"
+    index => "dns-logs-%{{yyyy.MM.dd}}"
   }
 }
 ```
@@ -633,8 +633,8 @@ du -sh /var/log/named/*
 
 ### Связанные разделы
 
-*   [Мониторинг DNS](../../../Networking/Protocols/DNS/dns_monitoring.md) — архитектура мониторинга, Blackbox Exporter, алертинг.
+*   [Мониторинг DNS](../../../../Networking/Protocols/DNS/dns_monitoring.md) — архитектура мониторинга, Blackbox Exporter, алертинг.
 *   [BIND: Обзор](./overview.md) — архитектура и роли серверов.
 *   [BIND: DoT/DoH сервер](./dot-doh-server.md) — шифрование DNS-трафика.
-*   [Grafana: Dashboard](../../../Grafana/grafana-dashboards.md) — визуализация метрик.
-*   [Prometheus: Alerting](../../../Grafana/alerting/best_practices.md) — лучшие практики алертинга.
+*   [Grafana: Dashboard](../../../../Grafana/grafana-dashboards.md) — визуализация метрик.
+*   [Prometheus: Alerting](../../../../Grafana/alerting/best_practices.md) — лучшие практики алертинга.

@@ -21,7 +21,7 @@
 | Компонент | Образ | Версия | Примечание |
 |---|---|---|---|
 | **Prometheus** | `prom/prometheus` | v3.13.1 | Поддержка OTLP и Auto-tuning |
-| **Grafana** | `grafana/grafana` | v13.1.1 | Современный UI и Alloy-интеграция |
+| **Grafana** | `grafana/grafana` | v13.2.3 | Современный UI и Alloy-интеграция |
 | **Alertmanager** | `prom/alertmanager` | v0.33.1 | API v2, расширенная маршрутизация |
 | **Node Exporter** | `prom/node-exporter` | v1.12.1 | Метрики хоста (Linux/UNIX) |
 | **cAdvisor** | `ghcr.io/google/cadvisor` | v0.60.5 | Метрики ресурсов контейнеров |
@@ -265,7 +265,7 @@ services:
       - monitoring-net
 
   cadvisor:
-    image: ghcr.io/google/cadvisor:v0.60.5
+    image: ghcr.io/google/cadvisor:v0.60.6
     container_name: monitoring-cadvisor
     restart: unless-stopped
     security_opt:
@@ -293,7 +293,7 @@ services:
       - monitoring-net
 
   grafana:
-    image: grafana/grafana:13.1.1
+    image: grafana/grafana:13.2.3
     container_name: monitoring-grafana
     restart: unless-stopped
     user: "472:472"

@@ -1,61 +1,75 @@
 # PostgreSQL в Kubernetes (CloudNativePG)
 
+**Актуально для:** CloudNativePG 1.30.x (текущий релиз 1.30.1, сентябрь 2026; 1.28.x — EOL 30.06.2026, 1.29.x — EOL 29.09.2026), PostgreSQL 14–18 (версия по умолчанию в операторе 1.30 — 18.4), Kubernetes 1.29+ (оператор 1.30 поддерживает до 1.36). Нативная интеграция бэкапов в object storage (`barmanObjectStore`) deprecated с 1.26 в пользу CNPG-I плагина.
+
 ## Определения
 
-**CloudNativePG (CNPG)** — это специализированный Kubernetes-оператор с открытым исходным кодом, предназначенный для управления полным жизненным циклом кластеров PostgreSQL. В отличие от традиционных решений (Patroni), CNPG изначально спроектирован для Kubernetes, используя его внутренние механизмы (API Server, Etcd) для обеспечения отказоустойчивости и управления состоянием.
+**CloudNativePG (CNPG)** — Kubernetes-оператор с открытым исходным кодом (CNCF Sandbox, изначально разработан EDB) для полного жизненного цикла кластеров PostgreSQL: bootstrapping, конфигурация, высокая доступность, failover, бэкапы и подключение. В отличие от Patroni, не требует внешнего DCS — координация идёт через Kubernetes API.
 
-**Инстанс-менеджер (Instance Manager)** — легковесный процесс (написанный на Go), который запускается внутри каждого пода PostgreSQL вместо стандартного `init` процесса. Он отвечает за мониторинг локальной БД, управление конфигурацией и выполнение команд оператора, исключая зависимость от внешних инструментов типа SSH.
+**Instance Manager** — процесс на Go, работающий как PID 1 в каждом пода PostgreSQL вместо стандартного `init`. Мониторит локальную БД, управляет конфигурацией и выполняет команды оператора — без SSH и sidecar-процессов.
 
-**Декларативное управление БД** — подход, при котором администратор описывает в YAML-файле желаемое состояние кластера (версия, количество реплик, параметры тюнинга), а оператор непрерывно приводит текущее состояние к целевому (Reconciliation Loop).
+**Декларативное управление (Reconciliation Loop)** — администратор описывает желаемое состояние в YAML-ресурсе (`Cluster`), оператор непрерывно приводит текущее состояние к целевому.
 
-**Volume Snapshot** — технология мгновенного создания копии данных на уровне хранилища (CSI). CNPG использует снапшоты для быстрого развертывания новых реплик (Seeding) и ускоренного восстановления.
+**Volume Snapshot** — мгновенная копия тома на уровне CSI. CNPG использует снапшоты для бэкапов (без object storage) и для seed-инга новых кластеров из существующих данных.
+
+**CNPG-I (CloudNativePG Interface)** — плагинный интерфейс для бэкапов; официально поддерживаемый плагин — Barman Cloud (в object storage). Позволяет интегрировать сторонние средства резервного копирования.
+
+**Primary Lease (1.30+)** — примитив выбора первичного на базе Kubernetes Lease: инстанс-менеджер держит Lease, и PostgreSQL стартует только при его наличии — закрывает временное окно при restart первичного.
 
 ## Базовые концепции
 
-### Архитектура: Cloud Native vs Legacy HA
-Традиционные кластеры PostgreSQL на ВМ полагаются на **Patroni + etcd/Consul** для выбора мастера. В Kubernetes это создает "проблему матрешки" (база для базы). 
-CNPG решает это иначе:
-- **Кворум через Kubernetes API:** Оператор использует `Lease` объекты Kubernetes для отслеживания лидера.
-- **Отсутствие Sidecar:** Логика управления находится в основном процессе пода (Instance Manager), что упрощает диагностику и снижает потребление ресурсов.
-- **Интеграция с K8s Service:** Мастер и реплики доступны через нативные Service, которые автоматически переключаются при сбоях.
+### Архитектура: почему оператор, а не Patroni на Kubernetes
+Традиционный HA-кластер на ВМ полагается на **Patroni + etcd/Consul** — в Kubernetes это «проблема матрешки» (stateful-стек ради stateful-стека). Теория DCS и Patroni: [Отказоустойчивость](../Concepts/high_availability.md). CNPG решает это иначе:
+- **Кворум через Kubernetes API:** лидерство и выбор первичного — через ресурсы `Lease` (с 1.30 — выделенный примитив primary Lease).
+- **Логика в основном процессе:** Instance Manager как PID 1 пода — проще диагностика и меньше потребление ресурсов.
+- **Нативные Service:** мастер и реплики доступны через стандартные Kubernetes Service; переключение отражается на EndpointSlice автоматически (детали — [Сетевая связность](./kubernetes_connectivity.md)).
+- **Не использует StatefulSet:** оператор управляет PVC напрямую (custom pod controller). StatefulSet достаточен для простых случаев без автоматического failover — критерии выбора: [StatefulSet: лучшие практики](../../../Kubernetes/Base/StatefulSet/statefulset_best_practices.md).
 
-### Жизненный цикл и обновление (Rolling Updates)
-CNPG минимизирует время простоя при обслуживании:
-1. **Switchover-first:** При обновлении образа или изменении параметров, требующих перезапуска, оператор сначала корректно переключает роль `Primary` на здоровую реплику.
-2. **Graceful Shutdown:** Мастер дожидается завершения текущих транзакций перед остановкой.
-3. **Автоматический Rejoin:** Старый мастер после обновления автоматически восстанавливается как реплика через `pg_rewind`.
+### Обновления (Rolling Updates)
+Rolling update запускается при: изменении `imageName`, изменения списка extension-образов (`.spec.postgresql.extensions`), обновлении Image Catalog (1.29+) или изменении параметров, требующих restart.
+- **`spec.primaryUpdateStrategy`:** `unsupervised` (default — полностью автоматически) / `supervised` (пауза после обновления реплик — завершение вручную через плагин).
+- **`spec.primaryUpdateMethod`:** `restart` (default с 1.20 — автоматический restart пода первичного; если невозможно, игнорируется и выполняется switchover) / `switchover` (promoted инстанс гарантированно уже на новой версии образа).
+- **Ограничение:** при `primaryUpdateMethod: switchover` нельзя одновременно менять образ и параметры PostgreSQL — оператор отклонит такое обновление ошибкой валидации.
+- **In-place обновление Instance Manager** (с 1.10, по умолчанию отключено): PostgreSQL не перезапускается и switchover не требуется, но под меняется после старта — нарушает чистоту immutability.
 
-### Стратегии хранения и QoS
-Для Production-баз данных критически важно обеспечить предсказуемую производительность:
-- **Guaranteed QoS:** Всегда устанавливайте `requests` равными `limits`. Это предотвращает вытеснение (Eviction) пода при нехватке ресурсов на узле.
-- **Local Persistent Volumes:** Для максимальной производительности (минимальный latency) рекомендуется использовать локальные NVMe диски, хотя это требует ручного управления привязкой к узлам через Affinity.
+### Хранилище и QoS
+- **Guaranteed QoS:** всегда `requests` = `limits` — предотвращает eviction пода при дефиците ресурсов на узле.
+- **Отдельный том для WAL** (`walStorage`): WAL пишется последовательно, данные — random; разделение даёт параллельный I/O.
+- **Local Persistent Volumes** для минимального latency: требуют `volumeBindingMode: WaitForFirstConsumer` и привязки к узлам через Affinity.
+- **Шифрование at rest** делегируется Storage Class — уточняйте возможности CSI-драйвера.
+- Перед production: бенчмарк хранилища и БД — `kubectl cnpg fio` и `kubectl cnpg pgbench`.
 
-## Предварительные требования
-*   Кластер Kubernetes версии 1.29+ (Noble/Jammy на узлах).
-*   Установленный **cert-manager** (рекомендуется для управления TLS).
-*   Поддержка **CSI-драйвером** функций VolumeSnapshot (для быстрых бэкапов).
-*   Плагин `kubectl-cnpg` для удобства администрирования.
+## Предпосылки
+* Кластер Kubernetes >= 1.29 (оператор 1.30 поддерживает до 1.36).
+* `kubectl` и `helm` — оператор устанавливает свои RBAC, webhook и CRD через Helm-чарт.
+* Storage Class с поддержкой **CSI VolumeSnapshot** — для снапшот-бэкапов (иначе доступны только бэкапы в object storage через плагин).
+* **cert-manager не обязателен:** по умолчанию оператор сам выпускает сертификаты (operator-managed CA, автообновление за 7 дней до истечения, срок действия 90 дней). cert-manager нужен только для user-provided сертификатов (`serverTLSSecret`, `serverCASecret`, `clientCASecret`).
+* Плагин `kubectl-cnpg` для администрирования.
+* Значения в примерах (`premium-rwo-ssd`, `200Gi`, `pg-prod`) — placeholders, заменить на свои.
 
 ## Практические сценарии
 
 ### Шаг 1: Установка оператора
 
 ```bash
-# Добавление репозитория
+# Добавление репозитория и установка оператора с PodMonitor для Prometheus
 helm repo add cloudnative-pg https://cloudnative-pg.github.io/charts
-
-# Установка оператора с включенным PodMonitor для Prometheus
 helm upgrade --install cnpg cloudnative-pg/cloudnative-pg \
   --namespace cnpg-system --create-namespace \
   --set monitoring.podMonitor.enabled=true
+# → Deployed cnpg-cloudnative-pg; CRD clusters.postgresql.cnpg.io created
 
 # Установка плагина управления
 kubectl krew install cnpg
+# → plugin cnpg installed
+
+kubectl get pods -n cnpg-system
+# → cnpg-controller-manager-... 1/1 Running
 ```
 
-### Шаг 2: Манифест Production-кластера (PostgreSQL 18)
+Текущий Helm-чарт: 0.29.1 (AppVersion 1.30.0). **Внимание:** `helm uninstall` не удаляет CRD; удаление CRD каскадно уничтожает все Cluster-ресурсы вместе с данными в PVC.
 
-Этот манифест реализует лучшие практики 2026 года: изоляцию, безопасность и отказоустойчивость.
+### Шаг 2: Манифест Production-кластера (PostgreSQL 18)
 
 ```yaml
 apiVersion: postgresql.cnpg.io/v1
@@ -64,13 +78,12 @@ metadata:
   name: pg-prod
 spec:
   instances: 3
-  imageName: ghcr.io/cloudnative-pg/postgresql:18
-  
-  # Синхронная репликация (гарантия отсутствия потери данных)
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4  # pinned minor, не плавающий :18
+
+  # Синхронная репликация: один sync-standby
   minSyncReplicas: 1
   maxSyncReplicas: 1
 
-  # Аутентификация (современный стандарт SCRAM)
   bootstrap:
     initdb:
       database: app_db
@@ -78,48 +91,50 @@ spec:
       secret:
         name: pg-app-user-creds
 
-  # Тюнинг PostgreSQL параметров
   postgresql:
     parameters:
-      shared_buffers: "1Gi"
+      shared_buffers: "1Gi"    # ~25% от 8Gi
       max_connections: "500"
-      log_statement: "all"
-      # Использование AIO из PG 18 (если ядро Linux поддерживает)
-      io_direct: "data,wal"
+      log_statement: "ddl"     # не "all" в production
+      io_direct: "data,wal"    # PG 18+, AIO при поддержке ядра
 
-  # Хранилище с использованием снапшотов
   storage:
     size: 200Gi
-    storageClass: premium-rwo-ssd
+    storageClass: premium-rwo-ssd  # ← placeholder, заменить
 
-  # Ресурсы (Guaranteed QoS)
+  # Отдельный том WAL (опционально)
+  # walStorage:
+  #   size: 50Gi
+
   resources:
-    requests:
-      cpu: "4"
-      memory: "8Gi"
-    limits:
-      cpu: "4"
-      memory: "8Gi"
+    requests: {cpu: "4", memory: "8Gi"}
+    limits:   {cpu: "4", memory: "8Gi"}   # Guaranteed QoS
 
-  # Разнесение по разным зонам доступности
   affinity:
     enablePodAntiAffinity: true
-    topologyKey: topology.kubernetes.io/zone
+    topologyKey: topology.kubernetes.io/zone  # on-prem: kubernetes.io/hostname
 
-  # Бэкапы в S3 (Cloud-native PITR)
+  # Бэкапы на Volume Snapshot (CSI, без object storage)
   backup:
-    barmanObjectStore:
-      destinationPath: "s3://backups/pg-prod"
-      endpointURL: "https://s3.yandexcloud.net"
-      s3Credentials:
-        accessKeyId: { name: s3-creds, key: ID }
-        secretAccessKey: { name: s3-creds, key: SECRET }
-      wal:
-        compression: gzip
+    volumeSnapshot:
+      className: csi-hostpath-snapclass  # ← placeholder, заменить
+      online: true                        # hot backup (default)
+      onlineConfiguration:
+        immediateCheckpoint: true
+
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: restart
 ```
 
-### Шаг 3: Настройка Pooler (PgBouncer)
-Для работы с сотнями микросервисов необходимо использовать пулер соединений. CNPG позволяет создать его как нативный ресурс.
+```bash
+kubectl apply -f cluster.yaml
+kubectl get cluster pg-prod
+# → pg-prod   3   18.4   ...   Running
+```
+
+### Шаг 3: Пулер (PgBouncer)
+
+CNPG создаёт PgBouncer как нативный ресурс `Pooler` (Deployment). Теория пулинга, режимы и sizing: [PgBouncer](./pgbouncer_setup.md); PgBouncer как прокси в кластере — [Сетевая связность](./kubernetes_connectivity.md).
 
 ```yaml
 apiVersion: postgresql.cnpg.io/v1
@@ -130,7 +145,7 @@ spec:
   cluster:
     name: pg-prod
   instances: 3
-  type: rw # Доступ к мастеру (или 'ro' для реплик)
+  type: rw            # rw | ro
   pgbouncer:
     poolMode: transaction
     parameters:
@@ -138,69 +153,142 @@ spec:
       default_pool_size: "50"
 ```
 
-### Шаг 4: Управление расписанием бэкапов
+Внимание: при transaction pooling таймауты сессий на стороне PostgreSQL (`idle_session_timeout`) опасны — пулер держит сессии открытыми между транзакциями (предупреждение из документации PostgreSQL 14+).
+
+### Шаг 4: Расписание бэкапов
+
 ```yaml
 apiVersion: postgresql.cnpg.io/v1
 kind: ScheduledBackup
 metadata:
   name: pg-prod-daily
 spec:
-  schedule: "0 0 2 * * *" # Ежедневно в 2 часа ночи
+  schedule: "0 0 2 * * *"   # ежедневно в 02:00
+  method: volumeSnapshot      # volumeSnapshot | plugin | barmanObjectStore (deprecated)
+  immediate: true             # немедленный первый бэкап
+  backupOwnerReference: self
   cluster:
     name: pg-prod
 ```
 
-### Шаг 5: Операционные задачи через kubectl-cnpg
+* **volumeSnapshot** — чистый Kubernetes (CSI), object storage не нужен; основной выбор для on-prem. Снапшоты по умолчанию сохраняются после удаления Backup-объекта (`snapshotOwnerReference: none`).
+* **plugin** — CNPG-I Barman Cloud Plugin в object storage. Self-hosted вариант — S3-совместимое хранилище (например, MinIO), см. [Disaster Recovery](../../../Concepts/disaster_recovery.md).
+* **WAL archive без базового бэкапа бесполезен** — PITR требует base backup + WAL.
+* Теория бэкапов и PITR: [Автоматизация бэкапов](./backup_automation.md), [Backup and Recovery](../Concepts/backup_and_recovery.md).
 
-**Проверка статуса кластера:**
-```bash
-kubectl cnpg status pg-prod
-# Показывает роль каждого пода, лаг репликации и статус WAL
-```
+### Шаг 5: Операционные задачи (kubectl cnpg)
 
-**Подключение к psql:**
-```bash
-kubectl cnpg psql pg-prod -- -d app_db
-```
+| Задача | Команда |
+| :--- | :--- |
+| Статус кластера, LSN-лаги, WAL archiving | `kubectl cnpg status pg-prod` |
+| Подключение psql | `kubectl cnpg psql pg-prod -- -d app_db` |
+| Switchover (плановое обслуживание) | `kubectl cnpg promote pg-prod pg-prod-2` |
+| Rollout restart кластера / одного инстанса | `kubectl cnpg restart pg-prod [pg-prod-2]` |
+| Reconciliation (применить ConfigMap мониторинга) | `kubectl cnpg reload pg-prod` |
+| Окно обслуживания для всех кластеров | `kubectl cnpg maintenance set --all-namespaces` |
+| On-demand бэкап | `kubectl cnpg backup pg-prod` |
+| Холодный снапшот (fencing standby) | `kubectl cnpg snapshot pg-prod` |
+| Диагностика | `kubectl cnpg report pg-prod`, `kubectl cnpg logs pg-prod` |
+| Major upgrade | окно `kubectl cnpg maintenance` + смена `imageName` |
 
-**Безопасный Switchover (плановое обслуживание):**
-```bash
-kubectl cnpg switchover pg-prod --target pg-prod-2
-```
+`kubectl cnpg status` показывает: точку восстановимости, состояние WAL archiving (из `pg_stat_archiver`) и таблицу репликации (Sent/Write/Flush/Replay LSN, лаги, Sync State). Switchover выполняется командой `promote` — отдельной команды `switchover` в текущем плагине нет.
+
+## Мониторинг
+
+* PodMonitor устанавливается при `--set monitoring.podMonitor.enabled=true`; метрики Instance Manager — основа для Prometheus/Grafana. Дашборды, алерты, wait events: [Наблюдаемость](./observability.md).
+* С 1.30 — TLS для метрик Pooler (`.spec.monitoring.tls.enabled`).
+* **Безопасность:** экспортер метриков работает от роли `cnpg_metrics_exporter` с привилегиями только `pg_monitor` — фикс CVE-2026-44477 (Critical, CVSS 9.4, privilege escalation в metrics exporter). При использовании веток 1.28.x/1.29.x обновитесь минимум до 1.28.3/1.29.1.
+* Сетевая связность, аннотации Service (Topology Aware Routing, `trafficDistribution: PreferClose`), mTLS с cert-manager: [Сетевая связность](./kubernetes_connectivity.md).
 
 ## Устранение неполадок (Troubleshooting)
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| `Pending` поды | Нехватка ресурсов или отсутствие PVC в нужной зоне. | Проверьте `kubectl describe pod` и наличие свободных PV в AZ. |
-| `WAL archiving failing` | Ошибка доступа к S3 или неверные ключи. | Проверьте логи оператора: `kubectl logs -n cnpg-system deploy/cnpg-controller-manager`. |
-| `OOM Killed` | Postgres потребил больше памяти, чем лимит K8s. | Проверьте `shared_buffers` + `work_mem * max_connections`. Увеличьте лимит RAM. |
-| `Instance manager connection error` | Проблемы с сетевыми политиками или Cilium. | Разрешите трафик между подами кластера по порту 8000 (внутренний API CNPG). |
+| Поды `Pending` | Нет ресурсов на узлах или нет свободного PV в зоне | `kubectl describe pod`; проверить PV и Storage Class |
+| `OOMKilled` | PostgreSQL превысил лимит памяти K8s | Считать `shared_buffers` + `work_mem × max_connections`; увеличить limits (Guaranteed QoS) |
+| `WAL archiving failing` | Недоступен endpoint бэкапа или неверные креды | `kubectl logs -n cnpg-system deploy/cnpg-controller-manager`; секция WAL в `kubectl cnpg status` |
+| Failover «завис», первичный не переключается | Primary не проходит проверку `/pg/status` | Событие `PrimaryStatusCheckFailed`: `kubectl describe cluster pg-prod` (1.30+) |
+| Нет снапшот-бэкапов | Storage Class не поддерживает CSI VolumeSnapshot | Проверить VolumeSnapshotClass; или перейти на method: plugin |
+| Нет сети между подами | NetworkPolicy/Cilium блокирует трафик | Разрешить 5432 между инстансами кластера и от Pooler |
 
 ## Пограничные случаи и ограничения
 
 ### Крупные базы (>5 ТБ)
-На таких объемах `pg_basebackup` через сеть может длиться сутки. 
-- **Решение:** Используйте **Volume Snapshots** для создания кластера. Это сокращает время инициализации реплики с часов до минут.
-- В манифесте: `bootstrap.recovery.volumeSnapshot.name`.
+`pg_basebackup` по сети может длиться сутки. Решение — **seed из Volume Snapshot** (минуты вместо часов). Корректное поле (не `bootstrap.recovery.volumeSnapshot.name`, как в устаревших примерах):
 
-### Миграция с других операторов
-Миграция с Zalando или ручного кластера выполняется через `bootstrap.externalClusters`. CNPG подключится к старому мастеру как реплика и выполнит полную синхронизацию данных.
+```yaml
+bootstrap:
+  recovery:
+    source: pg-prod
+    volumeSnapshots:
+      storage:
+        name: pg-prod-data-snapshot
+        kind: VolumeSnapshot
+        apiGroup: snapshot.storage.k8s.io
+      # walStorage: ...   # если WAL на отдельном томе — снапшот и для него
+```
+
+Ограничение: при создании реплик после восстановления из снапшота оператор может откатиться к `pg_basebackup` (медленнее) — онлайн-бэкапы и PVC-cloning в процессе развития.
+
+### PITR
+Восстановление — это bootstrapping **нового** кластера, не in-place операция: `bootstrap.recovery` + `recoveryTarget.targetTime` + WAL archive (plugin/object storage).
+
+### Миграция с других операторов и ВМ
+`bootstrap.externalClusters` — CNPG подключается к старому мастеру как реплика и синхронизирует данные (pg_basebackup). Сценарий VM→Kubernetes без простоя: [Бесшовная миграция](./zero_downtime_migration.md). Сравнение с Zalando Postgres Operator: [Zalando Postgres Operator](./zalando_postgres_operator.md).
+
+### Одиночный инстанс
+Для кластера с `instances: 1` значение `primaryUpdateStrategy: supervised` не поддерживается — только `unsupervised`; приложения переподключаются при любом обновлении.
+
+## Лучшие практики
+
+* Pin версии образа (`...:18.4`), не плавающий тег `:18`.
+* Guaranteed QoS; отдельный WAL-том для нагруженных БД.
+* `log_statement: ddl` вместо `all` в production.
+* Проверять бэкапы восстановлением (PITR в изолированный кластер), а не только наличием снапшотов.
+* Обновлять оператор вовремя (CVE-2026-44477); перед upgrade читать release notes — некоторые версии требуют ручных шагов.
+* Бенчмарк хранилища (`kubectl cnpg fio`) перед production.
+
+## Очистка и откат
+
+* **Откат образа:** вернуть прежний `imageName` в манифесте — оператор выполнит rolling update в обратную сторону.
+* **Удаление кластера:** `kubectl delete cluster pg-prod` — PVC по умолчанию сохраняются (данные не теряются); удаляйте PVC вручную после подтверждения.
+* **Удаление оператора:** `helm uninstall cnpg -n cnpg-system` не удаляет CRD; удаление CRD каскадно уничтожает все Cluster и их данные — сначала сделайте бэкап.
+
+## Валидация
+
+```bash
+kubectl cnpg status pg-prod
+# → Status: Cluster in healthy state; Primary instance: pg-prod-1
+
+kubectl cnpg psql pg-prod -- -c "SELECT pg_is_in_recovery();"
+# → pg_is_in_recovery: f   (на первичном; t — на реплике)
+
+kubectl cnpg pgbench pg-prod -c 20 -j 4 -T 30   # встроенный pgbench
+# → transaction: ... tps
+
+kubectl get volumeSnapshot -l cnpg.io/cluster=pg-prod
+# → pg-prod-...   VolumeSnapshotClass: csi-hostpath-snapclass
+```
 
 ## Дополнительная информация
 
-### Выбор между CNPG и Zalando Operator
+### Вопросы на собеседованиях
 
-| Критерий | CloudNativePG (CNPG) | Zalando Operator |
-| :--- | :--- | :--- |
-| **Управление HA** | Нативное (Kubernetes API) | Patroni (требует DCS) |
-| **Бинарный файл** | Единый Instance Manager (Go) | Spilo (Bash + Python + Patroni) |
-| **Бэкапы** | Встроенный Barman-движок | WAL-G (через Sidecar) |
-| **Пулер** | Нативный ресурс `Pooler` | Отдельные манифесты Deployment |
-| **Версия PostgreSQL** | Всегда актуальная (18+) | Зависит от образов Spilo |
+1. Чем CNPG отличается от Patroni, развёрнутого в Kubernetes? (нет внешнего DCS; координация через Lease API; Instance Manager как PID 1)
+2. Что делает `primaryUpdateMethod: restart` и когда выполняется fallback на switchover?
+3. Почему `barmanObjectStore` deprecated и что такое CNPG-I?
+4. Как сделать бэкап без object storage? (volumeSnapshot через CSI)
+5. Почему WAL archive без base backup бесполезен?
 
 ### Связанные документы
-- **[Наблюдаемость PostgreSQL](./observability.md)** — дашборды Grafana и алертинг.
-- **[Сетевая связность](./kubernetes_connectivity.md)** — Service Mesh, Ingress и Topology Routing.
-- **[Zalando Postgres Operator](./zalando_postgres_operator.md)** — альтернативный подход.
-- **[Backup and Recovery](../Concepts/backup_and_recovery.md)** — теория PITR и WAL.
+
+* [Наблюдаемость PostgreSQL](./observability.md) — Grafana, алерты, wait events.
+* [Сетевая связность](./kubernetes_connectivity.md) — Service, Topology Routing, mTLS, cert-manager.
+* [PgBouncer](./pgbouncer_setup.md) — теория пулинга и sizing.
+* [Автоматизация бэкапов](./backup_automation.md) — pgBackRest/Barman, теория PITR.
+* [Zalando Postgres Operator](./zalando_postgres_operator.md) — альтернативный оператор и сравнение с CNPG.
+* [Отказоустойчивость](../Concepts/high_availability.md) — теория Patroni и DCS.
+* [Backup and Recovery](../Concepts/backup_and_recovery.md) — теория PITR и WAL.
+* [Бесшовная миграция](./zero_downtime_migration.md) — VM в Kubernetes.
+* [Kubernetes-операторы](../../../Kubernetes/Concepts/kubernetes_operators.md) — общая теория операторов.
+* [StatefulSet: лучшие практики](../../../Kubernetes/Base/StatefulSet/statefulset_best_practices.md) — когда StatefulSet достаточен без оператора.

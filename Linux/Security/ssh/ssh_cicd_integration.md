@@ -93,7 +93,7 @@ deploy:
     contents: read
   steps:
     - name: Configure AWS credentials via OIDC
-      uses: aws-actions/configure-aws-credentials@v4
+      uses: aws-actions/configure-aws-credentials@v6
       with:
         role-to-assume: arn:aws:iam::123456789:role/GitHubDeployRole
         aws-region: us-east-1

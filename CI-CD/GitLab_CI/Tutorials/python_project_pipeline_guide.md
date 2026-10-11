@@ -1,5 +1,7 @@
 # Комплексный CI/CD пайплайн для Python-проекта
 
+**Актуально для:** GitLab 19.x, Python 3.11+, Kubernetes 1.27+
+
 ## Определения
 
 **Комплексный CI/CD Pipeline** — полностью автоматизированный процесс жизненного цикла ПО, включающий проверку качества кода, многоуровневое тестирование, сборку артефактов и автоматизированное развертывание в различные среды.
@@ -8,7 +10,7 @@
 
 **`ruff`** — высокопроизводительный линтер и форматер кода для Python, заменяющий собой целый стек инструментов (Flake8, isort, Black). Позволяет значительно ускорить стадию валидации.
 
-**`id_tokens` (OIDC)** — современный механизм аутентификации (стандарт 2026 года), позволяющий GitLab Runner безопасно взаимодействовать с внешними сервисами (Vault, облачные провайдеры, Kubernetes) без использования долгоживущих секретов на основе доверия между провайдером личности (GitLab) и потребителем.
+**`id_tokens` (OIDC)** — современный механизм аутентификации (стандарт 2026 года), позволяющий GitLab Runner безопасно взаимодействовать с внешними сервисами (Vault, внешние системы, Kubernetes) без использования долгоживущих секретов на основе доверия между провайдером личности (GitLab) и потребителем.
 
 **GitLab Agent for Kubernetes (KAS)** — основной инструмент для безопасной интеграции GitLab с кластером. Обеспечивает двусторонний канал связи (**CI/CD Tunnel**), исключающий необходимость экспонирования API кластера наружу или хранения `KUBECONFIG` в переменных.
 
@@ -41,9 +43,9 @@
 ### Предварительные требования
 
 **Инфраструктура:**
-- **GitLab:** Версия 16.0+ (для KAS и `id_tokens`).
+- **GitLab:** Версия 19.x (для KAS и `id_tokens`).
 - **Kubernetes:** Кластер 1.27+ с доступом через kubectl или GitLab Agent (KAS).
-- **Docker/Kaniko:** Раннер с Docker Executor или Kubernetes Executor (Kaniko работает без特权).
+- **Docker/Kaniko:** Раннер с Docker Executor или Kubernetes Executor (Kaniko работает без привилегий).
 - **Python:** Версии 3.11+ (для `uv` и современных возможностей типа `type` hints).
 
 **Инструменты (автоматически устанавливаются в CI через Docker-образы):**
@@ -128,7 +130,7 @@ linting:
 build_and_sbom:
   stage: build
   image:
-    name: gcr.io/kaniko-project/executor:v1.23.1-debug
+    name: gcr.io/kaniko-project/executor:v1.28.3
     entrypoint: [""]
   script:
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
@@ -136,10 +138,29 @@ build_and_sbom:
       --context $CI_PROJECT_DIR
       --dockerfile $CI_PROJECT_DIR/Dockerfile
       --destination $CI_REGISTRY_IMAGE:$DOCKER_IMAGE_TAG
-    # Генерация SBOM с использованием образа Syft (в отдельной джобе или через скрипт)
+    # Генерация SBOM с использованием Syft
+    - pip install anchore-syft
+    - syft $CI_REGISTRY_IMAGE:$DOCKER_IMAGE_TAG -o cyclonedx-json=sbom.json
   artifacts:
     reports:
       cyclonedx: sbom.json
+  ```
+
+**Валидация сборки:**
+```bash
+# Проверка, что образ собран и имеет правильный тег
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/registry/repositories" \
+  | jq '.[] | select(.name == "app") | .tags[] | select(.name == "staging-$CI_COMMIT_SHORT_SHA")'
+# → {"name": "staging-abc1234", "manifest_path": "/manifest.json"}
+
+# Проверка размера образа
+skopeo inspect docker://$CI_REGISTRY_IMAGE:$DOCKER_IMAGE_TAG --format '{{.Size}}'
+# → 24567890 (примерно 24 МБ)
+
+# Проверка SBOM
+cat sbom.json | jq '.components | length'
+# → 42 (количество зависимостей)
 ```
 
 #### Шаг 3: Тестирование с использованием uv
@@ -166,6 +187,22 @@ integration_tests:
     - uv run pytest tests/integration
   rules:
     - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "develop"
+  ```
+
+**Валидация тестов:**
+```bash
+# Проверка JUnit-отчёта в артефактах
+# В UI GitLab: Pipeline → job `unit_tests` → Tests: отображаются результаты pytest
+# Или через API:
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/jobs/$JOB_ID/trace" \
+  | grep -E "passed|failed|error"
+# → 42 passed, 0 failed
+
+# Проверка coverage (если настроен pytest-cov)
+uv run pytest tests/unit --cov=app --cov-report=term-missing
+# → Name                    Stmts   Miss  Cover
+# → app/__init__.py            12      0   100%
 ```
 
 #### Шаг 4: Деплой через GitLab Agent (KAS) и Helm
@@ -173,7 +210,7 @@ integration_tests:
 ```yaml
 .helm_deploy:
   stage: deploy
-  image: bitnami/kubectl:latest
+  image: bitnami/kubectl:1.36
   id_tokens:
     K8S_TOKEN:
       aud: https://kubernetes.default.svc.cluster.local
@@ -205,6 +242,28 @@ deploy_prod:
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
       when: manual
+  ```
+
+**Валидация деплоя:**
+```bash
+# Проверка статуса Deployment
+kubectl rollout status deployment/python-app -n app-dev --timeout=120s
+# → deployment "python-app" successfully rolled out
+
+# Проверка, что поды запущены и готовы
+kubectl get pods -n app-dev -l app=python-app
+# → NAME                    READY   STATUS    RESTARTS   AGE
+# → python-app-xxx          1/1     Running   0          30s
+
+# Проверка health endpoint
+kubectl port-forward deployment/python-app -n app-dev 8080:8080 &
+curl http://localhost:8080/health
+# → {"status":"ok"}
+
+# Проверка Helm-релиза
+helm list -n app-dev
+# → NAME            NAMESPACE       REVISION    UPDATED                                 STATUS      CHART
+# → python-app-dev  app-dev         1           2026-09-28 15:30:00.000000 +0300 MSK    deployed    app-1.0.0
 ```
 
 ## Технические нюансы и Тюнинг
@@ -220,6 +279,85 @@ deploy_prod:
 1.  **Stage 1 (Builder):** Установка `uv`, компиляция зависимостей, экспорт виртуального окружения.
 2.  **Stage 2 (Runtime):** Использование максимально легкого базового образа (например, `distroless` или `python-slim`). Копирование только готового окружения.
 3.  **Non-root:** Обязательный запуск приложения от пользователя с ограниченными правами (UID > 1000).
+
+### Архитектура Runner для Python-пайплайнов
+
+Для Python-приложений выбор executor'а определяется требованиями к изоляции, скорости и доступности ресурсов:
+
+| Executor | Изоляция | Скорость | Рекомендация для Python |
+| :--- | :--- | :--- | :--- |
+| **`kubernetes`** | Высокая (Pod) | Средняя | Стандарт для production: каждый job в отдельном Pod, автоматическая очистка. |
+| **`docker`** | Средняя (контейнер) | Высокая | Подходит для сред с постоянным раннером; требует DinD или Kaniko для сборки образов. |
+| **`shell`** | Отсутствует | Максимальная | Только для локальных разработческих задач и сборок, требующих direct HW access. |
+
+**SRE: Конфигурация Kubernetes Executor для Python:**
+```yaml
+# config.toml фрагмент
+[[runners]]
+  name = "python-build-runner"
+  executor = "kubernetes"
+  [runners.kubernetes]
+    image = "ghcr.io/astral-sh/uv:python3.13-bookworm-slim"
+    cpu_limit = "1"
+    memory_limit = "2Gi"
+    cpu_request = "250m"
+    memory_request = "512Mi"
+    service_account = "gitlab-runner"
+    namespace = "gitlab-runners"
+    poll_interval = 5
+    cache_dir = "/cache"
+```
+
+**Важно:** Для jobs с `uv sync` и установкой зависимостей выделяйте минимум 1 ГБ RAM — `uv` может потреблять значительную память при компиляции wheels для C-расширений (numpy, pandas).
+
+### Мониторинг и алертинг пайплайнов
+
+**Метрики здоровья пайплайнов (Prometheus + GitLab Exporter):**
+- `gitlab_ci_pipeline_duration_seconds` — время выполнения пайплайна по стадиям.
+- `gitlab_ci_job_failed_total` — количество упавших задач по проектам.
+- `gitlab_runner_jobs_duration_seconds` — время выполнения задач на конкретном раннере.
+
+**Ключевые алерты:**
+- `PipelineFailed` — пайплайн упал в `main` или защищённой ветке.
+- `JobStuck` — задача висит в `pending` дольше `timeout` из-за нехватки раннеров.
+- `UVOOM` — job с `uv sync` упал по OOM (требует увеличения лимитов).
+- `VulnerabilityFound` — `pip-audit` или `ruff` обнаружил CVE высокого/критического уровня.
+- `CacheMiss` — кэш `uv` не восстановился (возможна проблема с Distributed Cache).
+
+### Compliance и Supply Chain
+
+**SBOM и артефакты:**
+- Сохраняйте `sbom.json` (CycloneDX) как артефакт каждого `build_and_sbom` job — это требуется для SOC2/PCI-DSS аудита.
+- Настройте retention policy для артефактов: `90 дней` для SBOM, `30 дней` для бинарных файлов.
+- Используйте `rules:changes` для запуска `ruff` и `pip-audit` только при изменении `pyproject.toml` или `uv.lock`.
+
+**Аудит сборки:**
+- Включите audit log в GitLab для отслеживания, кто запускал деплой в production.
+- Храните Docker-образы в приватном Registry с включённым vulnerability scanning.
+- Используйте image tags на основе `$CI_COMMIT_SHORT_SHA`, а не `latest` — обеспечивает traceability.
+
+### Инцидент-респонс для пайплайнов
+
+При падении production-деплоя или критической уязвимости:
+
+1.  **Остановка пайплайнов:** Переключите защищённую ветку в `Settings > Repository > Protected branches` и снимите флаг `Allowed to merge` на время расследования.
+2.  **Откат образа:** Удалите проблемный тег через GitLab Registry API и выполните `kubectl rollout undo` в production namespace.
+3.  **Аудит:** Проверьте, какой коммит и кто инициировал пайплайн: `git log --oneline $CI_COMMIT_SHA`. Проверьте audit log GitLab на предмет несанкционированных запусков.
+4.  **Ротация секретов:** Если подозрение на утечку — отзовите `VAULT_TOKEN` и перегенерируйте секреты. Проверьте `vault token lookup` для compromised токенов.
+5.  **Постмортем:** Зафиксируйте время инцидента, этап падения (`validate`/`test`/`deploy`), root cause и действия по исправлению. Обновите runbook.
+
+### Жизненный цикл раннера (Runner Lifecycle)
+
+- Ротируйте `glrt-` токены раннеров каждые 90 дней. Устаревшие registration tokens отключены в GitLab 17.0+ и удалены в 20.0.
+- Настройте `concurrent` и `limit` в `config.toml` для предотвращения перегрузки раннеров.
+- Используйте `check_interval = 3` для быстрого подхвата задач, но не меньше 2 секунд чтобы не создавать лишнюю нагрузку на GitLab API.
+- При обновлении раннера используйте rolling update: остановите приём новых задач, дождитесь завершения текущих, обновите бинарник, проверьте `gitlab-runner verify`, запустите.
+
+### Сеть и изоляция
+
+- Настройте NetworkPolicy для namespace `gitlab-runners`, разрешающую только egress к GitLab API, Container Registry и Vault.
+- Используйте отдельный ServiceAccount для runner'ов с минимальными привилегиями. Не используйте `default` SA.
+- Для Kubernetes Executor включите `pod_annotations` для отслеживания владельца job в Kubernetes.
 
 ## Валидация и проверка
 
@@ -246,11 +384,27 @@ deploy_prod:
 | **SBOM пустой или некорректный** | Syft не может прочитать бинарник Python | Используйте `syft dir:.` вместо `syft bin/app`. Для Python SBOM анализируйте `pyproject.toml` и `uv.lock`. |
 | **`pip-audit` не находит уязвимости** | Устаревшая база данных | Обновите: `uv run pip-audit --strict --desc --fix`. Проверьте версию `pip-audit` — требуются свежие данные. |
 | **Кэш не восстанавливается** | Неверный `key` или изменение файлов манифеста | Используйте `cache:key:files` с привязкой к `uv.lock`. Не используйте `key: $CI_COMMIT_REF_SLUG` без `files`.
+| **`uv sync` падает по OOM** | Недостаточно RAM при установке C-зависимостей | Увеличьте `memory_limit` раннера до 2-4 ГБ. Используйте `uv sync --no-dev` для сокращения зависимостей. |
+| **`ruff` падает с segfault** | Устаревшая версия или конфликт плагинов | Обновите `ruff` до последней версии. Проверьте `ruff --version`. Убедитесь, что нет конфликтов с `flake8`/`pylint` в той же среде. |
+| **`pytest` паникает в CI** | Отсутствуют переменные окружения или секреты | Используйте `--env` в конфигурации runner'а или `variables:` в job. Проверьте `pytest -v` с локальными переменными. |
+| **SBOM не генерируется** | Syft не может прочитать pyproject.toml | Убедитесь, что `syft` установлен через `pip install anchore-syft`. Проверьте путь к проекту: `syft dir:.` вместо `syft bin/app`. |
+| **`git clone` зависает** | Large repo или нехватка диска на runner'е | Используйте `GIT_STRATEGY: fetch` и `GIT_DEPTH: 1` для поверхностного клонирования. Увеличьте диск runner'а до 50 ГБ. |
+| **`pip-audit` слишком медленный** | Большой граф зависимостей | Запускайте `pip-audit` только при изменении `pyproject.toml` через `rules:changes`. Используйте `--ignore-vuln` для известных принятых рисков. |
+| **Image pull backoff в K8s** | Неверный tag или нет доступа к Registry | Проверьте `image: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}`. Убедитесь, что `imagePullSecret` настроен. |
+| **`interruptible: true` не отменяет job** | Job уже запущен на runner'е | `interruptible` работает только на уровне планирования. Убедитесь, что runner'ы поддерживают отмену через API. |
+| **`uv lock` mismatch в CI** | Кастомный `UV_INDEX_URL` меняет разрешение | Используйте один и тот же индекс в CI и локально. Проверьте: `uv lock --check`. |
+| **`pytest` xdist: отчёты пустые** | Воркеры пишут в отдельные файлы | Используйте `--json-report` с `pytest-json-report` или `--junitxml=report-${CI_NODE_INDEX}.xml`. |
+| **`distroless` образ не запускается** | Отсутствует SHELL или_entrypoint_ошибка | Проверьте: `docker run --rm --entrypoint "" <image> ls /app`. Убедитесь, что бинарник скомпилирован корректно. |
+| **`PYTHONDONTWRITEBYTECODE` не работает** | Переменная установлена после импорта | Установите `ENV PYTHONDONTWRITEBYTECODE=1` в Dockerfile до COPY приложения. |
+| **`tini` не обрабатывает сигналы** | Не установлен как PID 1 | Используйте `--init` в `docker run` или добавьте `tini` в Dockerfile: `ENTRYPOINT ["/sbin/tini", "--"]`. |
+| **`uv` cache повреждён** | Неполная запись при OOM kill | Очистите кэш: `uv cache clean`. В CI используйте `cache:key:files` с привязкой к `uv.lock`. |
+| **Helm upgrade падает с `already exists`** | Релиз уже развёрнут в другом namespace | Проверьте: `helm list --all-namespaces | grep python-app`. Убедитесь, что `--namespace` указан корректно. |
+| **NetworkPolicy блокирует egress** | Runner не может выйти к GitLab API | Проверьте egress-правила: runner должен иметь доступ к порту 443 для GitLab API, Registry и Vault. |
 
 ## Лучшие практики (Best Practices)
 
 **Безопасность:**
-- Всегда используйте `uv sync --frozen` в CI — это гарантирует, что зависимости не изменятсяระหว сборкой.
+- Всегда используйте `uv sync --frozen` в CI — это гарантирует, что зависимости не изменятся между сборками.
 - Не храните пароли и токены в `CI/CD Variables` в открытом виде — используйте File-тип или Vault OIDC.
 - Включите Security-шаблоны: `SAST`, `Secret-Detection`, `Container-Scanning`, `Dependency-Scanning`.
 - Запускайте `pip-audit --strict` для проверки зависимостей на известные CVE.
@@ -272,6 +426,17 @@ deploy_prod:
 - Экспортируйте метрики Python-приложения через `prometheus_client` ('gc', 'http_requests_total').
 - Настройте `livenessProbe` и `readinessProbe` в Kubernetes Deployment.
 - Используйте structured logging (`structlog` или `logging` с JSON-форматом) для парсинга в Kibana/Grafana.
+
+**Жизненный цикл раннера (Runner Lifecycle):**
+- Ротируйте `glrt-` токены раннеров каждые 90 дней. Устаревшие registration tokens отключены в GitLab 17.0+ и удалены в 20.0.
+- Настройте `concurrent` и `limit` в `config.toml` для предотвращения перегрузки раннеров.
+- Используйте `check_interval = 3` для быстрого подхвата задач, но не меньше 2 секунд чтобы не создавать лишнюю нагрузку на GitLab API.
+- При обновлении раннера используйте rolling update: остановите приём новых задач, дождитесь завершения текущих, обновите бинарник, проверьте `gitlab-runner verify`, запустите.
+
+**Сеть и изоляция:**
+- Настройте NetworkPolicy для namespace `gitlab-runners`, разрешающую только egress к GitLab API, Container Registry и Vault.
+- Используйте отдельный ServiceAccount для runner'ов с минимальными привилегиями. Не используйте `default` SA.
+- Для Kubernetes Executor включите `pod_annotations` для отслеживания владельца job в Kubernetes.
 
 ## Очистка и откат (Cleanup)
 
@@ -348,6 +513,26 @@ rm -rf .venv
 - При `parallel:matrix` с несколькими версиями Python убедитесь, что `uv cache` разделяется между задачами.
 - Используйте `needs: [linting]` для параллельного запуска тестов на разных версиях.
 
+**Disaster Recovery (DR):**
+- Поддерживайте SLA на восстановление пайплайнов: RTO < 15 минут, RPO < 5 минут.
+- Храните `config.toml` и `glrt-` токены раннеров в защищённом хранилище (HashiCorp Vault или аналоги) для быстрого восстановления.
+- Регулярно тестируйте откат на предыдущий стабильный образ в staging-среде.
+
+**Compliance и аудит:**
+- Включите audit log в GitLab (`/var/log/gitlab/audit/`) для отслеживания всех запусков пайплайнов в production.
+- Настройте retention для артефактов CI: `90 дней` для SBOM, `30 дней` для бинарных файлов.
+- Регулярно проверяйте `bound_claims` и политики Vault (если используется OIDC) — удаляйте неиспользуемые роли.
+
+**Сеть и DNS:**
+- Используйте внутренний DNS (CoreDNS) для разрешения `gitlab.example.com` и `vault.example.com` внутри кластера.
+- Настройте NetworkPolicy для namespace `gitlab-runners`, разрешающую только необходимые порты (443 для GitLab API, 5000 для Registry).
+- Проверяйте egress-правила: runner'ы должны иметь доступ к GitLab API, Container Registry и Vault API.
+
+**Гонки и детерминированность:**
+- Для воспроизводимых сборок используйте `SOURCE_DATE_EPOCH` и pinned версии базовых образов.
+- Запускайте `uv lock --check` в CI для проверки целостности `uv.lock`.
+- Используйте pinned версии базовых образов по дайджесту (`ghcr.io/astral-sh/uv:python3.13.15-bookworm-slim@sha256:...`) вместо тегов.
+
 ## Дополнительная информация
 
 ### Смотрите также
@@ -358,3 +543,11 @@ rm -rf .venv
 - **[Python-менеджер: uv](../../../Linux/Development/python_management.md)** — установка, конфигурация, pyproject.toml.
 - **[Кэширование в GitLab CI](../Advanced/gitlab_ci_caching/cache_scenarios.md)** — стратегии кэширования для Python/uv.
 - **[Начальное руководство для Python](./beginner_guide_python_app.md)** — базовый пайплайн с Flask, pytest, Docker.
+- **[Обзор GitLab Runner и Executor](../Advanced/gitlab_ci_runners_executors.md)** — архитектура, executor'ы, безопасность.
+- **[Регистрация GitLab Runner](../Tutorials/runner_registration.md)** — пошаговая регистрация и лучшие практики.
+
+### SRE: Наблюдаемость пайплайнов
+- **События:** Используйте GitLab CI/CD observability features для экспорта метрик в Prometheus.
+- **Трейсинг:** Для investigation медленных пайплайнов используйте встроенную timeline view в GitLab UI.
+- **Golden Signals:** Мониторьте latency, throughput, error rate и saturation для каждого stage пайплайна.
+- **События Runner'ов:** Мониторьте `gitlab_runner_jobs_duration_seconds` и `gitlab_runner_jobs_failed_total` для ранней диагностики проблем с инфраструктурой.

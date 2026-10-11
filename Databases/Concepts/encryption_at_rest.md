@@ -1,22 +1,26 @@
 # Шифрование данных «в покое» (Encryption at Rest / TDE)
 
+**Актуально для:** PostgreSQL 18, MySQL 8.4 LTS, MariaDB 12.x, SQL Server 2022, MongoDB 8.0
+
 ## Определения
 
-**Encryption at Rest (Шифрование в покое)** — метод защиты информации, хранящейся на физических носителях (диски, ленты, облачные хранилища). Цель — предотвратить чтение данных в случае физической кражи носителя или несанкционированного доступа к файловой системе. Шифрование в покое является одним из столпов модели «эшелонированной защиты» (Defense in Depth), дополняя защиту трафика (In-Transit) и защиту данных в использовании (In-Use).
+**Encryption at Rest (Шифрование в покое)** — метод защиты информации, хранящейся на физических носителях (диски, ленты, съемные носители). Цель — предотвратить чтение данных в случае физической кражи носителя или несанкционированного доступа к файловой системе. Шифрование в покое является одним из столпов модели «эшелонированной защиты» (Defense in Depth), дополняя защиту трафика (In-Transit) и защиту данных в использовании (In-Use).
 
 **TDE (Transparent Data Encryption)** — технология прозрачного шифрования данных на уровне СУБД. Прозрачность означает, что приложение работает с данными обычным образом через SQL, а шифрование и расшифровка происходят автоматически при чтении/записи на диск. Приложение не требует модификации кода для работы с зашифрованными данными.
 
-**DEK (Data Encryption Key)** — ключ, используемый непосредственно для шифрования данных (таблиц, логов). Обычно хранится в заголовке файла в зашифрованном виде. DEK генерируется для каждого защищаемого объекта (таблицы, табличного пространства или базы данных, в зависимости от СУБД).
+**DEK (Data Encryption Key)** — ключ, используемый непосредственно для шифрования данных (таблиц, логов). Обычно хранится в зашифрованном виде и генерируется для каждого защищаемого объекта (таблицы, табличного пространства или базы данных, в зависимости от СУБД).
 
-**KEK (Key Encryption Key) / Master Key** — ключ более высокого уровня, используемый для шифрования DEK. KEK хранится во внешнем защищенном хранилище (Keyring, KMS, HSM) и никогда не покидает его в открытом виде. KEK используется только для шифрования/расшифрования DEK, но не для обработки данных напрямую.
+**KEK (Key Encryption Key) / Master Key** — ключ более высокого уровня, используемый для шифрования DEK. KEK хранится во внешнем защищенном хранилище (Keyring, KMS, HSM) и никогда не покидает его в открытом виде. KEK используется только для шифрования/расшифровки DEK, но не для обработки данных напрямую.
 
-**Envelope Encryption (Конвертное шифрование)** — иерархическая модель управления ключами, где данные шифруются ключом DEK, а сам DEK шифруется ключом KEK. Это позволяет безопасно хранить зашифрованный DEK рядом с данными, не раскрывая его без доступа к внешнему хранилищу KEK. Модель «конверта» означает, что для расшифрования данных необходимы оба ключа: DEK (расположенный рядом с данными) и KEK (находящийся в KMS/HSM).
+**Envelope Encryption (Конвертное шифрование)** — иерархическая модель управления ключами, где данные шифруются ключом DEK, а сам DEK шифруется ключом KEK. Это позволяет безопасно хранить зашифрованный DEK рядом с данными, не раскрывая его без доступа к внешнему хранилищу KEK. Модель «конверта» означает, что для расшифрования данных необходимы оба ключа: DEK (расположенный рядом с данными) и KEK (находящийся в HSM/KMS).
 
-**AES (Advanced Encryption Standard)** — симметричный блочный шифр, стандарт де-факто для шифрования данных. Для TDE используется ключи длиной 256 бит (AES-256). Современные процессоры (Intel с AES-NI, ARM с ARMv8 Crypto Extensions) аппаратно ускоряют операции AES, минимизируя влияние на производительность.
+**AES (Advanced Encryption Standard)** — симметричный блочный шифр, стандарт де-факто для шифрования данных. Для TDE используются ключи длиной 256 бит (AES-256). Современные процессоры (Intel с AES-NI, ARM с ARMv8 Crypto Extensions) аппаратно ускоряют операции AES, минимизируя влияние на производительность.
 
 **AES-XTS (XEX-based Tweaked-codebook mode with Ciphertext Stealing)** — режим шифрования AES, специально разработанный для шифрования данных на диске (block device level). В отличие от AES-CBC, XTS обеспечивает независимость шифрования каждого сектора диска и устойчивость к атакам на основе анализа структуры данных. Используется в LUKS2, BitLocker, FileVault 2.
 
-**AES-GCM (Galois/Counter Mode)** — режим шифрования AES с аутентификацией (AEAD — Authenticated Encryption with Associated Data). Обеспечивает одновременно конфиденциальность и проверку целостности данных без дополнительного прохода. Используется в TDE implementations (MySQL Keyring, PostgreSQL pgcrypto), TLS 1.3, IPsec.
+**AES-GCM (Galois/Counter Mode)** — режим шифрования AES с аутентификацией (AEAD — Authenticated Encryption with Associated Data). Обеспечивает одновременно конфиденциальность и проверку целостности данных без дополнительного прохода. Используется в расширениях pg_tde/pgcrypto, TLS 1.3, IPsec.
+
+**HSM (Hardware Security Module)** — физическое устройство для генерации и хранения ключей с аппаратной защитой от вскрытия. Используется в наиболее требовательных средах (PCI DSS Level 1, FinTech, государственные структуры).
 
 ## Основные концепции
 
@@ -38,10 +42,10 @@
 
 Для работы TDE требуется внешнее хранилище ключей:
 
-- **File-based Keyring:** Ключи хранятся в зашифрованном файле на том же сервере. Минимальная защита (подходит для тестов). В MySQL это `keyring_file`, в PostgreSQL — файловый провайдер `pg_tde`. **Важно:** комппрометация сервера означает компрометацию ключей.
-- **KMS (Key Management Service):** Облачные сервисы (AWS KMS, Google Cloud KMS, Azure Key Vault) или self-hosted (HashiCorp Vault). Ключ никогда не покидает KMS в открытом виде. KMS возвращает DEK только по авторизованному запросу сервера БД.
-- **HSM (Hardware Security Module):** Физическое устройство для генерации и хранения ключей с аппаратной защитой от вскрытия. Используется в наиболее требовательных средах (PCI DSS Level 1, FinTech, GovCloud). Cloud HSM: AWS CloudHSM, Azure Dedicated HSM.
-- **EKM (Extensible Key Management):** Механизм SQL Server для интеграции с внешними KMS/HSM через провайдеры. Позволяет использовать любое хранилище ключей, поддерживающее протокол PKCS#11 или KMIP.
+- **File-based Keyring:** Ключи хранятся в зашифрованном файле на том же сервере. Минимальная защита (подходит для тестов). В MySQL 8.4 используется `component_keyring_file`, в PostgreSQL — файловый провайдер `pg_tde`. **Важно:** компрометация сервера означает компрометацию ключей.
+- **KMS (Key Management Service):** Self-hosted решения (HashiCorp Vault, OpenBao). Ключ никогда не покидает KMS в открытом виде. KMS возвращает DEK только по авторизованному запросу сервера БД.
+- **HSM (Hardware Security Module):** Физическое устройство для генерации и хранения ключей с аппаратной защитой от вскрытия. Используется в наиболее требовательных средах (PCI DSS Level 1, FinTech, государственные структуры).
+- **EKM (Extensible Key Management):** Механизм SQL Server для интеграции с внешними HSM/KMS через провайдеры. Позволяет использовать любое хранилище ключей, поддерживающее протокол PKCS#11 или KMIP.
 
 ### Ротация ключей
 
@@ -49,7 +53,7 @@
 
 - **Ротация DEK:** Происходит автоматически в большинстве СУБД. DEK зашифровывается текущим KEK. При смене KEK все DEK перешифровываются (rewrap), но сами данные не перезаписываются — меняется только «конверт».
 - **Ротация KEK (Master Key):** Происходит реже (рекомендация NIST: не реже 1 раза в год для симметричных мастер-ключей). При ротации KEK СУБД перешифровывает DEK новым ключом. Важно сохранять историю ключей для расшифрования старых бэкапов.
-- **Автоматическая ротация:** Облачные KMS (AWS, GCP, Azure) поддерживают автоматическую ротацию ключей. HashiCorp Vault позволяет настроить автоматическую ротацию через policies.
+- **Автоматическая ротация:** HashiCorp Vault и OpenBao позволяют настроить автоматическую ротацию через policies.
 
 **Важно:** При потере KEK/Master Key данные становятся навсегда недоступными. Рекомендуется:
 - Хранить резервные копии ключей в отдельном хранилище (или second KMS).
@@ -59,7 +63,7 @@
 ### Влияние на производительность и эксплуатацию
 
 *   **CPU:** Современные процессоры с поддержкой инструкций AES-NI минимизируют накладные расходы (обычно < 3-5% на чтение/запись). На процессорах без AES-NI (некоторые ARM, старые x86) нагрузка может достигать 10-20%. Рекомендация: при проектировании инфраструктуры учитывать необходимость AES-NI в характеристиках процессора.
-*   **Сжатие:** Зашифрованные данные имеют максимальную энтропию и практически не сжимаются. Если требуется и сжатие, и шифрование, порядок операций строго определён: **сначала сжатие, затем шифрование**. Исключение — аппаратные контроллеры хранения, поддерживающие сжатие до шифрования (например, некоторые NVMe-контроллеры).
+*   **Сжатие:** Зашифрованные данные имеют максимальную энтропию и практически не сжимаются. Если требуется и сжатие, и шифрование, порядок операций строго определён: **сначала сжатие, затем шифрование**.
 *   **Бэкапы:** Бэкапы, сделанные с TDE-таблиц, также зашифрованы. Для их восстановления требуется доступ к тому же KEK/Master Key. Это критически важно учитывать при катастрофическом восстановлении (DR) — KEK должен быть доступен на DR-площадке.
 *   **Репликация:** TDE-данные передаются в зашифрованном виде между нодами кластера (обычно через TLS). Расшифрование происходит только на целевом узле. Это не влияет на производительность репликации, но требует наличия KEK на каждом узле.
 *   **I/O:** Современные реализации TDE шифруют данные страницами (обычно 16 КБ, как в PostgreSQL/MySQL). Шифрование происходит на уровне блочного ввода-вывода, что позволяет использовать аппаратное ускорение (AES-NI) без оверхеда на уровне SQL-запросов.
@@ -73,7 +77,7 @@
 - Бинарные логи (MySQL) — при включении `binlog_encryption`
 - Временные файлы (TempDB в SQL Server)
 - Бэкапы (если сделаны после включения TDE)
-- Экспортные файлы (Data Pump в Oracle с TDE)
+- Экспортные файлы
 
 **TDE НЕ защищает:**
 - Трафик между клиентом и сервером (требуется TLS/SSL)
@@ -90,24 +94,34 @@
 1. **PCI DSS / GDPR:** Требуют защиты PII (персональных данных). TDE является стандартом для выполнения этих требований. Для высокочувствительных данных (payment card data) рекомендуется комбинация TDE + Column-level encryption.
 2. **HIPAA (Healthcare):** Требует шифрования ePHI (electronic Protected Health Information). TDE + Encryption in Transit + Access Controls.
 3. **SOX / SOC2:** Требуют аудита доступа к финансовым данным. TDE + Audit Logging.
-4. **Cloud-Native:** Использование KMS провайдера (CMEK — Customer Managed Encryption Keys) для автоматического управления ротацией ключей. Все облака (AWS, GCP, Azure) поддерживают TDE для managed DB (RDS, Cloud SQL, Azure SQL).
-5. **On-Premise:** HashiCorp Vault как централизованное хранилище ключей с аудитом доступа и автоматической ротацией.
+4. **On-Premise:** HashiCorp Vault или OpenBao как централизованное хранилище ключей с аудитом доступа и автоматической ротацией.
+5. **Миграция с legacy-систем:** При наличии унаследованных БД без TDE используйте LUKS/dm-crypt на уровне ОС как промежуточное решение при переходе на СУБД с нативным TDE.
+
+### Предварительные требования для всех сценариев
+
+- **Аппаратное ускорение AES:** Процессор с поддержкой AES-NI (Intel Westmere 2010+, AMD Bulldozer 2011+). Проверка: `grep -o aes /proc/cpuinfo | head -1`.
+- **Версия СУБД:** MySQL 8.4 LTS, MariaDB 12.x, PostgreSQL 18, SQL Server 2022 или выше.
+- **Доступ root/sudo:** Для работы с LUKS, systemd, конфигурационными файлами.
+- **Резервное копирование:** Перед включением TDE выполните полный бэкап. Включение TDE на существующих таблицах — операция, затрагивающая I/O.
+- **План DR:** KEK/Master Key должен быть доступен на площадке катастрофического восстановления до инициализации СУБД.
 
 ### Сценарий 2: Установка TDE в MySQL 8.4 LTS
 
-#### Шаг 1: Настройка Keyring-плагина
+#### Шаг 1: Настройка Keyring-компонента
 
 ```ini
 # /etc/mysql/my.cnf
 [mysqld]
 # Базовый вариант: файловый keyring (для тестов/разработки)
-early-plugin-load = keyring_file.so
-keyring_file_data = /var/lib/mysql-keyring/keyring
+early-plugin-load=component_keyring_file.so
+component_keyring_file_data=/var/lib/mysql-keyring/keyring
 
 # Производственный вариант: HashiCorp Vault
-# early-plugin-load = keyring_vault.so
-# keyring_vault_config = /etc/mysql/keyring_vault.conf
+# early-plugin-load=component_keyring_vault.so
+# component_keyring_vault_config=/etc/mysql/keyring_vault.conf
 ```
+
+> **Примечание:** В MySQL 8.4 плагин `keyring_file.so` устарел. Используется компонент `component_keyring_file.so`.
 
 #### Шаг 2: Активация шифрования
 
@@ -134,8 +148,8 @@ WHERE CREATE_OPTIONS LIKE '%ENCRYPTION%';
 -- → Таблицы с ENCRYPTION='Y' будут показаны
 
 -- Проверка статуса keyring
-SHOW STATUS LIKE 'Keyring%';
--- → Должен показать активный плагин
+SELECT STATUS FROM information_schema.KEYRING_COMPONENT_STATUS;
+-- → Должен показать активный компонент
 ```
 
 #### Шаг 4: Ротация мастер-ключа
@@ -144,6 +158,21 @@ SHOW STATUS LIKE 'Keyring%';
 -- Ротация без перешифрования данных (меняется только обертка DEK)
 ALTER INSTANCE ROTATE INNODB MASTER KEY;
 -- → Ключ версии 1 → версии 2. Старые DEK перешифровываются новым KEK.
+```
+
+#### Очистка / Откат
+
+```sql
+-- Отключение шифрования для новой таблицы
+SET GLOBAL default_table_encryption = OFF;
+
+-- Снятие шифрования с таблицы (требует rebuild)
+ALTER TABLE sensitive_data ENCRYPTION = 'N';
+
+-- Отключение шифрования логов
+SET GLOBAL innodb_redo_log_encrypt = OFF;
+SET GLOBAL innodb_undo_log_encrypt = OFF;
+SET GLOBAL binlog_encryption = OFF;
 ```
 
 ### Сценарий 3: Установка TDE в MariaDB 12.x
@@ -168,19 +197,35 @@ FROM information_schema.TABLES
 WHERE TABLE_SCHEMA NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys');
 ```
 
-### Сценарий 4: Шифрование в PostgreSQL 18 (Percona pg_tde)
+#### Очистка / Откат
 
-Ванильный PostgreSQL (Community Edition) не имеет нативного TDE до версии 18. В PostgreSQL 18 ( ноябрь 2025) Percona выпустила расширение `pg_tde` с полноценной поддержкой TDE, включая шифрование WAL.
+```sql
+-- Снятие шифрования с таблицы
+ALTER TABLE sensitive_data ENCRYPTION = 'N';
 
-#### Шаг 1: Установка (Percona Distribution for PostgreSQL)
+-- Отключение шифрования по умолчанию
+SET GLOBAL default_table_encryption = OFF;
+```
+
+### Сценарий 4: Шифрование в PostgreSQL 18
+
+Ванильный PostgreSQL (Community Edition) не имеет нативного TDE. Для его реализации используются расширения:
+
+- **pg_tde** (Percona): работает только с Percona Server for PostgreSQL 17/18
+- **open_pg_tde** (Command Prompt): работает с ванильным PostgreSQL 16/17/18
+- **pg_vault_tde** (Miriade): работает с ванильным PostgreSQL 17/18
+
+#### Вариант A: Percona Server for PostgreSQL + pg_tde
+
+##### Шаг 1: Установка
 
 ```bash
-# Установка Percona Server for PostgreSQL 18.1+
+# Установка Percona Server for PostgreSQL 18
 sudo apt-get install percona-postgresql-18
 sudo apt-get install percona-postgresql-18-pg-tde
 ```
 
-#### Шаг 2: Настройка провайдера ключей
+##### Шаг 2: Настройка провайдера ключей
 
 ```sql
 -- Файловый провайдер (тесты/разработка)
@@ -190,14 +235,14 @@ SELECT pg_tde_add_key_provider_file('file-provider', '/var/lib/postgresql/keyrin
 -- SELECT pg_tde_add_key_provider_vault('vault-provider', 'https://vault.internal:8200', 'transit', 'tde-key');
 ```
 
-#### Шаг 3: Установка мастер-ключа
+##### Шаг 3: Установка мастер-ключа
 
 ```sql
 SELECT pg_tde_set_principal_key('master-key-name', 'file-provider', true);
 -- Параметр 'true' означает, что ключ генерируется, если не существует
 ```
 
-#### Шаг 4: Шифрование таблицы
+##### Шаг 4: Шифрование таблицы
 
 ```sql
 -- Включение TDE для существующей таблицы
@@ -211,7 +256,7 @@ CREATE TABLE audit_log (
 ) ACCESS METHOD tde_heap;
 ```
 
-#### Шаг 5: Валидация
+##### Шаг 5: Валидация
 
 ```sql
 -- Проверка статуса шифрования
@@ -222,10 +267,37 @@ SELECT * FROM pg_tde_is_encrypted('sensitive_data');
 SELECT * FROM pg_tde_key_providers();
 ```
 
-#### Ограничения pg_tde (2026):
-- Требует Percona Server for PostgreSQL (не работает с ванильным PostgreSQL)
-- Не шифрует временные файлы и статистику (планируется в будущих версиях)
-- Поддерживает HashiCorp Vault, Akeyless и файловый провайдер
+#### Вариант B: Ванильный PostgreSQL 18 + open_pg_tde
+
+```bash
+# Сборка и установка open_pg_tde для ванильного PostgreSQL 18
+git clone https://github.com/commandprompt/open_pg_tde.git
+cd open_pg_tde
+make && sudo make install
+```
+
+```sql
+-- Включение расширения
+CREATE EXTENSION open_pg_tde;
+
+-- Настройка ключевого провайдера (аналогично pg_tde)
+-- Поддерживает HashiCorp Vault, OpenBao, PKCS#11 HSM
+```
+
+#### Ограничения расширений TDE для PostgreSQL (2026):
+- Требуют PostgreSQL 17/18
+- Не шифруют временные файлы и статистику (планируется в будущих версиях)
+- Поддерживают HashiCorp Vault, OpenBao, файловый провайдер, PKCS#11
+
+#### Очистка / Откат (PostgreSQL)
+
+```sql
+-- Снятие шифрования с таблицы (восстанавливает heap access method)
+ALTER TABLE sensitive_data SET ACCESS METHOD heap;
+
+-- Удаление расширения (все зашифрованные таблицы должны быть предварительно расшифрованы)
+DROP EXTENSION pg_tde;
+```
 
 ### Сценарий 5: Шифрование на уровне ФС (LUKS) для PostgreSQL
 
@@ -284,6 +356,22 @@ sudo systemctl status postgresql@18-main
 # → active (running)
 ```
 
+#### Очистка / Откат
+
+```bash
+# Остановка PostgreSQL
+sudo systemctl stop postgresql@18-main
+
+# Размонтирование
+sudo umount /var/lib/postgresql/data
+
+# Закрытие LUKS
+sudo cryptsetup close pgdata_encrypted
+
+# Удаление из crypttab и fstab
+sudo sed -i '/pgdata_encrypted/d' /etc/crypttab /etc/fstab
+```
+
 ### Сценарий 6: Тестирование восстановления зашифрованных данных
 
 Тестирование восстановления — критически важная операция. Если KEK недоступен, БД не запустится.
@@ -291,10 +379,10 @@ sudo systemctl status postgresql@18-main
 ```bash
 # 1. Бэкап зашифрованной БД (MySQL)
 mysqldump --all-databases > backup.sql
-# → backup.sql содержит зашифрованные данные. Без keyring файл KMS ключа восстановление невозможно.
+# → backup.sql содержит зашифрованные данные. Без keyring файла или доступа к KMS восстановление невозможно.
 
 # 2. Восстановление на новом сервере
-# 2.1. Скопировать keyring файл (или настроить доступ к KMS/Vault)
+# 2.1. Скопировать keyring файл (или настроить доступ к Vault/HSM)
 scp root@old-server:/var/lib/mysql-keyring/keyring /var/lib/mysql-keyring/keyring
 
 # 2.2. Восстановление
@@ -310,23 +398,23 @@ SELECT COUNT(*) FROM sensitive_data;
 
 | СУБД | Механизм TDE | Гранулярность | Ключевое хранилище | Шифрование WAL/Redo | Шифрование TempDB | Примечания |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **MySQL 8.4 LTS** | Keyring Plugin | Tablespace | keyring_file / keyring_vault / HSM | Да (redo, undo, binlog) | Нет (отдельно) | Enterprise: KMIP, REST API |
-| **MariaDB 12.x** | InnoDB Encryption | Tablespace | file_keyring / HashiCorp Vault | Да (redo, binlog) | Нет | Поддержка Roles для управления ключами |
-| **PostgreSQL 18** | pg_tde (Percona) | Tablespace | File / Vault / Akeyless | Да (WAL) | Нет | Требует Percona Server for PostgreSQL |
+| **MySQL 8.4 LTS** | Keyring Component | Tablespace | component_keyring_file / Vault / HSM | Да (redo, undo, binlog) | Нет (отдельно) | component_keyring_file для Community; KMIP для Enterprise |
+| **MariaDB 12.x** | InnoDB Encryption | Tablespace | file_keyring / HashiCorp Vault / HSM | Да (redo, binlog) | Нет | Поддержка Roles для управления ключами |
+| **PostgreSQL 18** | pg_tde / open_pg_tde | Tablespace | File / Vault / OpenBao / PKCS#11 HSM | Да (WAL) | Нет | pg_tde только для Percona Server; open_pg_tde для ванильного |
 | **PostgreSQL < 18** | LUKS/dm-crypt | Раздел | ОС (Filesystem) | Да (на уровне ФС) | Да (на уровне ФС) | Не защищает от админа БД |
-| **SQL Server** | Встроенный TDE | БД (page-level) | Cert / EKM (HSM) | Да | Да (автоматически) | Включает при включении TDE в любой БД |
+| **SQL Server 2022** | Встроенный TDE | БД (page-level) | Cert / EKM (HSM) | Да | Да (автоматически) | AES-256-CBC для данных и логов |
 | **Oracle** | Advanced Security | Tablespace | Wallet / OKV / HSM | Да (redo, archive) | Да | Column-level TDE также доступен |
-| **MongoDB** | WiredTiger (Enterprise) | Коллекция | KMIP / Local Keyfile | N/A ( WiredTiger journal) | N/A | Community: LUKS / dm-crypt |
+| **MongoDB 8.0** | WiredTiger (Enterprise) | Коллекция | KMIP / Local Keyfile | N/A (WiredTiger journal) | N/A | Community: LUKS / dm-crypt |
 
 ## Типичные ошибки и troubleshooting
 
 ### 1. Бэкап не расшифровывается после потери ключа
 
-**Причина:** KEK/Master Key был утерян (файл keyring удалён, KMS ключ удалён, пароль Vault забыт).
+**Причина:** KEK/Master Key был утерян (файл keyring удалён, доступ к HSM утерян, пароль Vault забыт).
 
 **Решение:**
 - Восстановите keyring файл из резервной копии (если она была сделана).
-- Восстановите KMS ключ из облачного хранилища (AWS: `kms:DescribeKey`, GCP: `cloud kms keys restore`).
+- Восстановите доступ к HSM/KMS.
 - Если KEK не восстановим — данные утеряны безвозвратно.
 
 **Профилактика:**
@@ -352,15 +440,15 @@ tail -100 /var/log/mysql/error.log | grep -i keyring
 2. Убедитесь, что файл keyring существует и доступен пользователю mysql.
 3. Проверьте права доступа: `chmod 600 /var/lib/mysql-keyring/keyring`.
 
-### 3. PostgreSQL: pg_tde не загружается
+### 3. PostgreSQL: pg_tde / open_pg_tde не загружается
 
-**Причина:** Расширение установлено не в Percona Server for PostgreSQL или несовместимая версия.
+**Причина:** Расширение установлено не в ту версию PostgreSQL или несовместимая версия.
 
 **Диагностика:**
 ```sql
 -- Проверка версии PostgreSQL
 SELECT version();
--- → Должна быть Percona Server for PostgreSQL 18.1+
+-- → Должна быть PostgreSQL 17/18
 
 -- Попытка подключения расширения
 CREATE EXTENSION pg_tde;
@@ -368,8 +456,9 @@ CREATE EXTENSION pg_tde;
 ```
 
 **Решение:**
-1. Используйте Percona Distribution for PostgreSQL (не ванильный PostgreSQL).
-2. Проверьте совместимость версий: pg_tde 2.1+ требует PostgreSQL 17.4+ или 18.1+.
+1. Для pg_tde используйте Percona Server for PostgreSQL 18.
+2. Для open_pg_tde используйте ванильный PostgreSQL 17/18.
+3. Проверьте совместимость версий: pg_tde 2.2+ требует PostgreSQL 18.
 
 ### 4. Высокое использование CPU после включения TDE
 
@@ -386,9 +475,9 @@ top -bn1 | grep mysql
 ```
 
 **Решение:**
-1. Если AES-NI не поддерживается — рассмотрите обновление процессора.
+1. Если AES-NI не поддерживается — рассмотрите обновление процессора или использование LUKS (ядро оптимизирует I/O путь шифрования).
 2. Шифрование существующих данных — фоновая операция; дождитесь завершения.
-3. Рассмотрите использование LUKS вместо TDE (LUKS использует более оптимизированный путь шифрования на уровне ядра).
+3. Для ARM/старых x86 используйте ChaCha20-Poly1305 если поддерживается СУБД.
 
 ### 5. Бэкап MySQL не включает зашифрованные данные
 
@@ -396,15 +485,135 @@ top -bn1 | grep mysql
 
 **Решение:** Используйте `mysqldump` или `xtrabackup` (Percona), которые корректно работают с TDE. При физическом копировании файлов всегда копируйте keyring файл вместе с данными.
 
+### 6. Потеря заголовка LUKS
+
+**Причина:** Заголовок LUKS поврежден или удален.
+
+**Диагностика:**
+```bash
+# Проверка заголовка
+sudo cryptsetup luksDump /dev/sdb
+# → Ошибка, если заголовок поврежден
+```
+
+**Решение:**
+1. Восстановите заголовок из резервной копии: `cryptsetup luksHeaderRestore`.
+2. Если резервной копии нет — данные утеряны.
+
+**Профилактика:**
+- Создавайте резервную копию заголовка LUKS после инициализации: `cryptsetup luksHeaderBackup`.
+- Храните бэкап заголовка отдельно от зашифрованного носителя.
+
+## SRE/DevOps: мониторинг, автоматизация и соответствие
+
+### Ключевые метрики для мониторинга
+
+**Статус шифрования СУБД:**
+```sql
+-- MySQL: проверка шифрования таблиц
+SELECT TABLE_SCHEMA, TABLE_NAME, CREATE_OPTIONS
+FROM information_schema.TABLES
+WHERE CREATE_OPTIONS LIKE '%ENCRYPTION%';
+
+-- MariaDB: аналогично MySQL
+-- PostgreSQL (pg_tde): проверка статуса
+SELECT * FROM pg_tde_is_encrypted('sensitive_data');
+```
+
+**Статус LUKS:**
+```bash
+# Проверка статуса LUKS
+sudo cryptsetup status pgdata_encrypted
+# → type: LUKS2, cipher: aes-xts-plain64, keysize: 512 bits
+```
+
+**Поддержка AES-NI:**
+```bash
+# Быстрая проверка
+grep -o "aes" /proc/cpuinfo | head -n 1
+# → aes (если поддерживается)
+
+# Бенчмарк производительности шифрования
+cryptsetup benchmark
+# → Algorithm | Key | Encryption | Decryption
+# → aes-xts    256b      1.5 GB/s         1.5 GB/s
+```
+
+### Алерты и пороговые значения
+
+На production-хостах настройте следующие алерты:
+
+| Метрика | Порог | Действие |
+| :--- | :--- | :--- |
+| Доступность keyring/KMS | N/A | Критический алерт: СУБД не запустится без ключей |
+| `cryptsetup status` — устройство не активно | N/A | Критический алерт: зашифрованный том не смонтирован |
+| AES-NI не обнаружен | N/A | Предупреждение: производительность шифрования снижена |
+| Срок действия KEK | < 30 дней | Предупреждение: запланируйте ротацию |
+| Целостность заголовка LUKS | Изменение | Критический алерт: возможна попытка взлома или повреждение |
+
+### Compliance и аудит
+
+Для соответствия PCI DSS, GDPR, HIPAA:
+
+1. **Реестр шифрования:** ведите реестр всех зашифрованных таблиц/табличных пространств с указанием:
+   - Имя таблицы/БД
+   - Алгоритм и размер ключа
+   - Тип хранилища ключей (keyring_file, Vault, HSM)
+   - Дата включения и последней проверки восстановления
+
+2. **Аудит доступа:** логируйте все обращения к keyring, KMS, HSM и операции с ключами. Отправляйте логи в SIEM.
+
+3. **Политика ротации ключей:**
+   - Ротация KEK минимум раз в год (NIST SP 800-57)
+   - Ротация DEK при каждой ротации KEK (automatic rewrap)
+   - Сохранение истории KEK для расшифровки старых бэкапов
+
+4. **Тестирование восстановления:** минимум раз в квартал выполняйте полное восстановление из зашифрованного бэкапа на изолированном сервере.
+
+### Автоматизация
+
+**Systemd-сервис для проверки шифрования:**
+```ini
+# /etc/systemd/system/db-encryption-check.service
+[Unit]
+Description=Check database encryption status
+After=mysql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/check-db-encryption.sh
+```
+
+**Скрипт проверки (`/usr/local/bin/check-db-encryption.sh`):**
+```bash
+#!/bin/bash
+# Проверка шифрования MySQL
+mysql -u root -p"${MYSQL_ROOT_PASSWORD}" -e "
+SELECT TABLE_SCHEMA, TABLE_NAME, CREATE_OPTIONS
+FROM information_schema.TABLES
+WHERE CREATE_OPTIONS NOT LIKE '%ENCRYPTION=Y%'
+AND TABLE_SCHEMA NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys');
+" | grep -q . && echo "WARNING: Unencrypted tables found" || echo "OK: All user tables encrypted"
+
+# Проверка LUKS
+for vol in pgdata_encrypted; do
+    if ! cryptsetup status $vol >/dev/null 2>&1; then
+        echo "CRITICAL: LUKS volume $vol is not active"
+        exit 1
+    fi
+done
+```
+
 ## Лучшие практики
 
-1. **Не храните KEK на том же сервере, что и данные.** Если сервер скомпрометирован, атакующий получит и данные, и ключи. Используйте KMS/HSM.
+1. **Не храните KEK на том же сервере, что и данные.** Если сервер скомпрометирован, атакующий получит и данные, и ключи. Используйте HSM или локальный KMS (Vault/OpenBao).
 2. **Регулярно тестируйте восстановление.** Минимум 1 раз в квартал выполняйте полное восстановление из зашифрованного бэкапа на изолированном сервере.
-3. **Используйте CMEK (Customer Managed Keys) в облаке.** Служебные ключи облачного провайдера (SSE-S3, Google-managed) не обеспечивают полного контроля. CMEK позволяет отозвать доступ к ключу и гарантированно уничтожить данные.
-4. **Включайте шифрование WAL/Redo логов.** Логи транзакций содержат копии изменённых данных. Без шифрования логов TDE обеспечивает неполную защиту.
-5. **Документируйте процедуру катастрофического восстановления.** Включите KEK в план DR. Укажите: где хранится резервная копия ключа, кто имеет доступ, как выполнить восстановление.
-6. **Используйте Split-Knowledge для ручных операций.** При ручной ротации ключей пароль должен быть разделён между несколькими администраторами (N-of-M scheme).
-7. **Ведите аудит доступа к ключам.** Все обращения к KMS/HSM должны логироваться и отправляться в SIEM (Splunk, ELK, Wazuh).
+3. **Включайте шифрование WAL/Redo логов.** Логи транзакций содержат копии изменённых данных. Без шифрования логов TDE обеспечивает неполную защиту.
+4. **Документируйте процедуру катастрофического восстановления.** Включите KEK в план DR. Укажите: где хранится резервная копия ключа, кто имеет доступ, как выполнить восстановление.
+5. **Используйте Split-Knowledge для ручных операций.** При ручной ротации ключей пароль должен быть разделён между несколькими администраторами (N-of-M scheme).
+6. **Ведите аудит доступа к ключам.** Все обращения к KMS/HSM должны логироваться и отправляться в SIEM.
+7. **Шифруйте до сжатия в правильном порядке.** Сначала сжатие, затем шифрование. Зашифрованные данные не сжимаются.
+8. **Используйте AEAD-режимы (AES-GCM, ChaCha20-Poly1305).** Они обеспечивают одновременно конфиденциальность и целостность данных. Избегайте ECB и CBC для новых развёртываний где возможно.
 
 ## Дополнительная информация
 
@@ -413,5 +622,5 @@ top -bn1 | grep mysql
 - **[Безопасность MySQL](../MySQL/security.md)** — Keyring плагины и шифрование InnoDB.
 - **[Безопасность PostgreSQL](../PostgreSQL/Concepts/security_and_encryption.md)** — TDE через pg_tde, pgcrypto и LUKS.
 - **[Криптография в PostgreSQL](../PostgreSQL/Concepts/pgcrypto.md)** — шифрование на уровне столбцов.
-- **[Безопасность бэкапов](./backup_security.md)** — Envelope Encryption в облаке и правило 3-2-1-1-0.
+- **[Безопасность бэкапов](./backup_security.md)** — Envelope Encryption и правило 3-2-1-1-0.
 - **[Безопасная установка СУБД](../installation_security.md)** — эшелонированная защита и закалка.

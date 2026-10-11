@@ -559,7 +559,7 @@ sysctl net.netfilter.nf_conntrack_count net.netfilter.nf_conntrack_max
 
 **Edge Cases:**
 - **VRF и conntrack:** По умолчанию conntrack не разделяет соединения по VRF — при overlapping IP в разных VRF возможны коллизии. Фильтрация: `meta l3mdev` в nftables.
-- **UDP race condition:** При параллельных UDP-запросах с одного сокета возможны задержки ровно 1000 мс или 5000 мс (таймауты ретрансмиссии). Решение: `single-request-reopen`.
+- **UDP race condition:** При параллельных UDP-запросах с одного сокета возможны задержки ровно 1000 мс или 5000 мс (таймауты ретрансмиссии). Решение: `single-request-reopen` (только glibc; musl/Alpine игнорирует).
 - **NOTRACK в raw table:** Если используется `-j NOTRACK`, conntrack не видит эти соединения, и `conntrack -E` будет пустым для них.
 - **nf_defrag_ipv4:** Может вызывать задержки при фрагментированных пакетах. Отключайте осторожно: `sysctl -w net.netfilter.nf_defrag_ipv4_handlers=0`.
 

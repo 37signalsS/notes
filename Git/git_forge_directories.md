@@ -1,4 +1,6 @@
-# Специальные директории платформ — Git Forge Directories
+# Специальные директории платформ — Forge Directories
+
+**Актуально для:** GitHub Actions (2024–2026), GitLab CI/CD (16.x–18.x), Bitbucket Pipelines (2024–2026), Gitea/Forgejo (1.21–1.12), Woodpecker CI (0.15–0.18), Azure DevOps (2024–2026). ForgeFed — в разработке, функционал ограничивается поддержкой конкретного инстанса.
 
 ## Определения
 
@@ -104,13 +106,13 @@ Forge-директории часто становятся целью атак, 
 - `PULL_REQUEST_TEMPLATE/` — директория или файл для шаблона PR.
 - `actions/` — локальные Actions репозитория (dockerfile, action.yml).
 - `CODEOWNERS` — правила назначения ревьюеров.
-- `dependabot.yml` — конфигурация обновления зависимостей (npm, pip, docker, github-actions).
+- **`dependabot.yml`** — конфигурация обновления зависимостей (npm, pip, docker, github-actions). Подробно — в [Dependabot](../Github_CI/dependabot.md).
 - `renovate.json` — альтернатива Dependabot (может быть в корне).
 - `FUNDING.yml` — кнопки спонсирования (GitHub Sponsors, Patreon, Ko-fi).
 - `SECURITY.md` — политика сообщения об уязвимостях.
 - `CONTRIBUTING.md` — правила внесения вклада.
 - `stale.yml` — конфигурация GitHub Stale бота.
-- `dependabot/` — альтернативная директория для конфигураций Dependabot (>= v2).
+- `dependabot/` — конфигурации Dependabot v2 (с 2023 года; старый формат `.github/dependabot.yml` остаётся рабочим).
 - `workflow-templates/` — шаблоны workflows для предложения контрибьюторам через "Use this template".
 
 ### Состав директории .gitlab (GitLab)
@@ -233,27 +235,7 @@ ci_access:
 
 ### Сценарий 4: Автоматическое обновление зависимостей (GitHub Dependabot)
 
-Dependabot автоматически создает PR с обновлениями зависимостей.
-Файл: `.github/dependabot.yml`
-
-```yaml
-version: 2
-updates:
-  - package-ecosystem: "npm"
-    directory: "/frontend"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    reviewers:
-      - "frontend-team"
-    assignees:
-      - "dependabot-manager"
-
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-```
+Подробная конфигурация Dependabot (security updates, version updates, github-actions ecosystem, auto-merge, grouping) — в **[dedicated файле](../Github_CI/dependabot.md)**.
 
 ### Сценарий 5: Альтернативный менеджер зависимостей (Renovate)
 
@@ -423,6 +405,7 @@ review_apps:
 
 ```yaml
 # .github/dependabot.yml
+# (см. [Dependabot](../Github_CI/dependabot.md) для полной конфигурации)
 version: 2
 updates:
   - package-ecosystem: "npm"
@@ -476,22 +459,25 @@ effort: M
 ```
 ```
 
-### Сценарий 14: Troubleshooting — CI не запускается
+### Сценарий 14: Устранение неполадок — CI не запускается
 
 **Симптом:** Пайплайн не запускается после push в `.github/workflows/`.
 
 **Диагностика:**
 ```bash
-# 1. Проверить синтаксис YAML
+# 1. Проверить синтаксис YAML (GitHub Actions)
 cat .github/workflows/ci.yml | python3 -c "import yaml, sys; yaml.safe_load(sys.stdin)"
 
 # 2. Проверить, что файл имеет корректное расширение
 ls -la .github/workflows/
 
-# 3. Проверить webhook (GitHub)
+# 3. Статический анализ безопасности workflow (рекомендуется)
+zizmor --min-severity medium .github/workflows/
+
+# 4. Проверить webhook (GitHub)
 # Settings → Webhooks → Recent Deliveries
 
-# 4. Проверить фильтры (paths, branches)
+# 5. Проверить фильтры (paths, branches)
 grep -r "on:" .github/workflows/
 ```
 
@@ -501,7 +487,7 @@ grep -r "on:" .github/workflows/
 - Организация отключила Actions в настройках.
 - Dependabot коммит помечен как `[skip ci]`.
 
-### Сценарий 15: Troubleshooting — дублирование конфигураций
+### Сценарий 15: Устранение неполадок — дублирование конфигураций
 
 **Симптом:** Один и тот же workflow запускается дважды или конфликтуют `CODEOWNERS` в корне и в `.github/`.
 
@@ -515,6 +501,47 @@ grep -r "name:" .github/workflows/ | sort | uniq -d
 ```
 
 **Best Practice:** Храните только одну копию конфигурации. Если нужен fallback — используйте симлинки или includes.
+
+---
+
+## Устранение неполадок (Troubleshooting)
+
+### Типичные ошибки и решения
+
+| Симптом | Причина | Решение |
+| :--- | :--- | :--- |
+| CI не запускается после push | Отсутствует триггер `on: push`/`on: pull_request`, неверный `paths`-фильтр, Actions отключены в настройках организации, Dependabot коммит помечен `[skip ci]` | См. Сценарий 14 |
+| Workflow запускается дважды | Дублирующиеся `name:` в разных workflow-файлах, несколько триггеров на одно событие | Удалите дубликаты, используйте `concurrency` для дедупликации |
+| `CODEOWNERS` не работает | Файл в неправильном месте (корень, а не `.github/`), синтаксическая ошибка, не добавлен ревьюер | См. Сценарий 15 |
+| Ошибка валидации YAML | Неправильные отступы (только пробелы, не табы), неэкранированные специальные символы | Используйте `yamllint` или `python3 -c "import yaml, sys; yaml.safe_load(sys.stdin)"` |
+| `dependabot` не создаёт PR | Неправильный `package-ecosystem`, `directory` не совпадает с путём, `schedule` невалиден | Проверьте `.github/dependabot.yml` на соответствие формату v2 |
+| Actions не найдены | Использование ветки вместо тега/SHA, путь не в `.github/workflows/`, `workflow_call` отсутствует | См. `Github_CI/Reusable_Workflows.md` |
+
+### Диагностика
+
+```bash
+# Проверить синтаксис всех workflow-файлов
+python3 -c "import yaml, glob; [yaml.safe_load(open(f)) for f in glob.glob('.github/workflows/*.yml')]"
+
+# Показать все конфликтующие/дублирующиеся имена
+grep -rh "^name:" .github/workflows/ | sort | uniq -d
+
+# Найти все CODEOWNERS/OWNERS в репозитории
+find . -name "CODEOWNERS" -o -name "OWNERS"
+
+# Проверить, что workflow-файлы лежат именно в .github/workflows/
+find . -name "*.yml" -path "*/workflows/*" | head -20
+```
+
+### Инструменты валидации
+
+| Инструмент | Платформа | Назначение |
+| :--- | :--- | :--- |
+| `actionlint` | GitHub Actions | Статический анализ синтаксиса и типов |
+| `zizmor` | GitHub Actions | Анализ безопасности workflow (секреты, уязвимости) |
+| `gitlab-ci-lint` | GitLab CI | Валидация `.gitlab-ci.yml` |
+| `yamllint` | Универсальный | Общая валидация YAML |
+| `bitbucket-pipelines` | Bitbucket | Валидация `bitbucket-pipelines.yml` |
 
 ---
 
@@ -540,7 +567,7 @@ grep -r "name:" .github/workflows/ | sort | uniq -d
 
 ### Best Practices
 
-1. **Одна платформа — один SSoT:** Не пытайтесь поддерживать полную паральность GitHub и GitLab конфигураций; выберите основную платформу.
+1. **Одна платформа — один авторитетный источник:** Не пытайтесь поддерживать полную паральность GitHub и GitLab конфигураций; выберите основную платформу.
 2. **Валидация перед push:** Используйте `actionlint`, `gitlab-ci-lint`, `bitbucket-pipelines` в pre-commit хуках.
 3. **Семантическое именование файлов:** Используйте описательные имена (`ci.yml`, `deploy-prod.yml`, `test-unit.yml`), а не `1.yml`, `2.yml`.
 4. **Секреты никогда в коде:** Используйте `${{ secrets.NAME }}` и `$CI_VARIABLE`, а не hardcoded значения.

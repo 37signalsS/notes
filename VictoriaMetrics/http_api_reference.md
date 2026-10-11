@@ -173,3 +173,4 @@ curl -s 'http://localhost:8428/api/v1/query?query=count(up)' | jq '.data.result[
 - [vmestimator](./vmestimator.md) — анализ кардинальности перед `/api/v1/status/tsdb`;
 - [vmauth: прокси и маршрутизация](./vmauth_overview.md) — защита `/insert/*` и `/select/*`;
 - [Prometheus HTTP API](../Prometheus/prometheus_api.md) — набор Prometheus, совместимый с `/api/v1/...` VictoriaMetrics.
+# force reindex test

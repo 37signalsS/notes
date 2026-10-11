@@ -160,6 +160,57 @@ User.objects.raw("SELECT * FROM users WHERE name = %s", [user_name])
 - **Типизация:** Строгое приведение к типу (например, `(int)$user_id`).
 - **Цифровая подпись запросов:** В высокоценных системах — подпись параметров запроса HMAC для предотвращения подделки.
 
+### 4a. Защита на стороне MariaDB (Server-side defenses)
+
+Даже при наличии уязвимости в приложении СУБД может ограничить ущерб. Эти меры — второй рубеж, не замена prepared statements.
+
+**Запрет чтения файлов клиента:**
+```ini
+[mariadb]
+# Отключает LOAD DATA LOCAL INFILE (чтение файлов с клиента через инъекцию)
+local-infile = 0
+```
+```sql
+-- Проверка
+SHOW VARIABLES LIKE 'local_infile';
+-- → OFF
+```
+
+**Ограничение файловых операций:**
+```ini
+[mariadb]
+# Директория для LOAD DATA INFILE / SELECT ... INTO OUTFILE
+secure_file_priv = /var/lib/mysql-files/
+```
+```sql
+-- Проверка: только указанная директория доступна
+SHOW VARIABLES LIKE 'secure_file_priv';
+-- → /var/lib/mysql-files/
+```
+
+**Безопасный sql_mode:**
+```ini
+[mariadb]
+sql_mode = STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+```
+
+**Принцип наименьших привилегий (MariaDB RBAC):**
+```sql
+-- Приложение не должно иметь FILE, SUPER, PROCESS
+CREATE ROLE app_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON app_db.* TO app_role;
+-- НЕ выдавайте: FILE, SUPER, PROCESS, SHUTDOWN
+```
+
+**Аудит доступа к таблицам (TABLE event):**
+```ini
+[mariadb]
+# Логирование доступа к таблицам без полного текста запроса
+server_audit_events = CONNECT,TABLE,QUERY_DDL
+```
+
+Подробнее: **[Безопасность MariaDB](../../Databases/MariaDB/security/index.md)**, **[RBAC](../../Databases/MariaDB/security/rbac.md)**, **[Дополнительные параметры](../../Databases/MariaDB/security/additional-parameters.md)**.
+
 ### 5. Аудит и логирование на уровне СУБД
 
 Включение аудита позволяет обнаружить попытки SQL-инъекций, которые прошли через WAF.
@@ -183,6 +234,20 @@ audit_log_format = "JSON"
 audit_log_handler = "FILE"
 audit_log_file = "/var/log/mysql/audit.log"
 ```
+
+**MariaDB (server_audit — бесплатный, в Community):**
+```ini
+# В my.cnf
+[mariadb]
+plugin_load_add = server_audit
+server_audit = FORCE_PLUS_PERMANENT
+server_audit_logging = ON
+server_audit_events = CONNECT,QUERY,TABLE,QUERY_DDL
+server_audit_output_type = SYSLOG
+server_audit_syslog_facility = LOG_LOCAL6
+```
+
+Подробнее о настройке `server_audit`: **[Аудит в MariaDB](../../Databases/MariaDB/security/audit.md)**.
 
 **MSSQL:**
 ```sql

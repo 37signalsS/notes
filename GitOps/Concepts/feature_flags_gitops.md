@@ -170,7 +170,7 @@ curl -s -X POST "$UNLEASH_URL/api/admin/projects/billing/features/new-checkout/e
 Если платформа пишет обратно статус (последняя оценка, счетчики) в CRD/ConfigMap, GitOps-агент увидит вечный OutOfSync. Игнорировать нужно **только статусные поля**, но не спецификацию флагов:
 
 ```yaml
-# Argo CD: Application spec.diff.ignoreDifferences
+# Argo CD: Application spec.ignoreDifferences
 ignoreDifferences:
   - group: core.openfeature.dev
     kind: FeatureFlagConfiguration

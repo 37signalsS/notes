@@ -493,6 +493,69 @@ cat /etc/keepalived/keepalived.conf | grep -E "virtual_router_id|priority|state"
 sudo iptables -L INPUT -v | grep 112
 ```
 
+### 9. Таймаут подключения к API-серверу
+
+**Симптом:** `kubectl` или Ansible-задачи зависают либо падают с таймаутом при подключении к `https://<control-plane>:6443`.
+
+**Причина:** Закрыт порт 6443 между узлами — firewall хоста (iptables/nftables/ufw) или security group / network ACL в облаке.
+
+**Диагностика и решение:**
+
+```bash
+# С control plane-узла (локально)
+curl -sk https://localhost:6443/healthz
+# → ok
+
+# С другого узла — проверка доступности порта
+nc -zv <control-plane-ip> 6443
+
+# Проверка firewall на узле
+sudo iptables -L INPUT -v | grep 6443
+sudo ufw status
+
+# В облаке — проверить security group / network ACL для порта 6443 между узлами кластера
+```
+
+Если локальный `healthz` отвечает, а с удалённого узла порт недоступен — проблема в сетевом фильтре между узлами, а не в самом API-сервере.
+
+### 10. Образы не скачиваются из публичного реестра
+
+**Симптом:** задачи `download` или запуск подов падают с ошибками вида `failed to resolve reference`, `net/http: request canceled`, `i/o timeout` при обращении к `registry.k8s.io` или `registry-1.docker.io`.
+
+**Причина:** Нет прямого доступа к публичным реестрам (изоляция сети, блокировка провайдера, rate limits Docker Hub).
+
+**Решение — зеркало containerd.** Настройка выполняется на каждом узле в `/etc/containerd/certs.d/<registry>/hosts.toml`:
+
+```toml
+# /etc/containerd/certs.d/registry-1.docker.io/hosts.toml
+server = "https://registry-1.docker.io"
+
+[host."https://<mirror>.example.com"]
+  capabilities = ["pull", "resolve"]
+```
+
+> [!IMPORTANT]
+> Поле `server` обязательно: без блока `server` конфигурация невалидна и containerd не применяет зеркало. После изменения конфигурации перезапустите containerd: `sudo systemctl restart containerd`.
+
+> [!NOTE]
+> Конфигурация containerd (`/etc/containerd/config.toml`) в Kubespray управляется ролью `container-engine` — ручные правки `config.toml` перезаписываются при повторном запуске. Зеркало через `certs.d/hosts.toml` настраивается на уровне узла поверх конфигурации Kubespray.
+
+### 11. Service в статусе LoadBalancer `Pending`
+
+**Симптом:** `kubectl get svc` показывает `EXTERNAL-IP` в статусе `Pending` для Service типа `LoadBalancer`.
+
+**Причина:** В self-managed кластере (bare-metal, без облачного контроллера) нет интеграции с облачным балансировщиком — никто не назначает внешний IP.
+
+**Решение:** Установить MetalLB — реализацию LoadBalancer для bare-metal. Управляется переменной `metallb_enabled` в `group_vars/k8s_cluster/addons.yml` (по умолчанию `false`); диапазоны адресов задаются в `metallb_config.address_pools`. Подробности — в **[MetalLB](../../Networking/metallb.md)**.
+
+### 12. Исчерпание квот облака при создании узлов
+
+**Симптом:** создание инстансов (или масштабирование через `scale.yml` с облачным inventory) падает с ошибками квот (например, `ResourceQuotaExceeded`, `InsufficientInstanceCapacity`).
+
+**Причина:** Достигнут лимит провайдера на vCPU/RAM/количество инстансов в регионе.
+
+**Решение:** Запросить повышение квоты у провайдера или выбрать другую зону/регион; проверить текущие квоты в консоли провайдера перед масштабированием.
+
 ---
 
 ## Дополнительная информация

@@ -731,3 +731,5 @@ curl -s http://localhost:8880/api/v1/rules | jq '.data.groups | length'
 Официальная документация: [vmalert docs](https://docs.victoriametrics.com/vmalert/), [Troubleshooting vmalert](https://docs.victoriametrics.com/vmalert/#troubleshooting), [Alerting with VictoriaLogs](https://docs.victoriametrics.com/victorialogs/vmalert/).
 
 Связанные компоненты: [VictoriaMetrics](./overview.md), [Управление правилами vmalert в Kubernetes](./vmalert_rules_management_with_manifests.md), [MetricsQL](./metricsql_reference.md), [Alertmanager](../Prometheus/alertmanager.md).
+
+# force reindex test

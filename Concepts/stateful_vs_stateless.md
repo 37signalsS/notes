@@ -9,10 +9,15 @@
 
 ## Предварительные требования
 
-Для глубокого понимания темы рекомендуется ознакомиться с:
-*   **[Протоколом HTTP](../Networking/Protocols/HTTP/http_basics.md)** (классический пример stateless-протокола).
-*   **Основами контейнеризации и Docker** (эфемерность файловых систем).
-*   **Базовыми сетевыми концепциями** (TCP-сессии, балансировка нагрузки).
+Для практической работы с stateful и stateless архитектурами необходимо:
+
+1.  **ОС и сеть:** Linux-хост с доступом к сети, открытые порты для сервисов (SSH 22, HTTP 80/443, Redis 6379, PostgreSQL 5432). Используйте `ss -tlnp` для проверкиListening портов.
+2.  **Инструменты мониторинга:** `top`, `htop`, `iostat`, `netstat`/`ss`, `tcpdump` для диагностики состояния системы и сетевых соединений.
+3.  **Платформа контейнеризации:** Docker или Podman для запуска примеров. Kubernetes для практики с Deployment и StatefulSet. `kubectl` для управления кластером.
+4.  **Базы данных и кэши:** PostgreSQL или MySQL для stateful примеров. Redis для внешнего хранилища сессий. `pg_isready`, `redis-cli ping` для проверки доступности.
+5.  **CI/CD и IaC:** Git для версионирования конфигураций. Ansible или Terraform для автоматизации部署.
+6.  **Знание основ сетевых протоколов:** TCP/IP, HTTP, DNS, TLS. Статические и динамические порты, firewall-правила.
+7.  **Понимание согласованности данных:** CAP theorem, ACID properties, уровни изоляции транзакций. Подробнее: **[CAP Theorem и выбор БД](./Storage/data_storage_overview.md)**.
 
 ## Базовые концепции
 
@@ -39,7 +44,7 @@
 | Критерий | Stateless | Stateful |
 | :--- | :--- | :--- |
 | **Хранение данных** | Во внешних системах (БД, кэш) | Локально (RAM, диск) или репликация |
-| **Масштабирование** | Горизонтальное (мгновенно, Auto-scaling) | Сложное (требует координации, шардирования) |
+| **Масштабирование** | Горизонтальное (мгновенное добавление инстансов) | Сложное (требует координации, шардирования) |
 | **Отказоустойчивость** | Высокая (узлы эфемерны) | Требует механизмов Failover, WAL и репликации |
 | **Идентификация узлов** | Случайные имена/IP (Web-1, Web-2) | Стабильные ID и DNS-имена (DB-0, DB-1) |
 | **Задержки (Latency)** | Выше (из-за сетевого доступа к БД) | Ниже (данные в локальной памяти/диске) |
@@ -52,7 +57,7 @@
 | :--- | :--- | :--- | :--- |
 | **Strong Consistency** | Любой читатель видит последнюю запись | Банковские транзакции, блокировки строк | Высокая латентность (кворум) |
 | **Eventual Consistency** | Данные синхронизируются «в конце концов» | Кэш, CDN, DNS | Низкая латентность, временная несогласованность |
-| **Causal Consistency** | Сохраняется因果 порядок операций | Чат-приложения,/wiki, Ordering | Средняя латентность |
+| **Causal Consistency** | Сохраняется причинный порядок операций | Чат-приложения, wiki, Ordering | Средняя латентность |
 | **Read-your-writes** | Читатель видит свои собственные записи | Социальные сети (пост → видит себя), корзина | Кэш привязки к записи |
 | **Monotonic Reads** | Чтение не может вернуться к старым данным | Финансовые графики, audit log | Средняя латентность |
 | **Consistent Prefix** | Чтение не покажет данных в неправильном порядке | Репликация логов, ordered event streams | Буферизация |
@@ -126,6 +131,25 @@ spec:
 ```
 *Подробное сравнение:* **[StatefulSet vs Deployment](../Kubernetes/Base/StatefulSet/statefulset_vs_deployment.md)**.
 
+**Валидация deployments:**
+
+```bash
+# Проверка статуса stateless Deployment
+kubectl rollout status deployment/web-app
+# → deployment "web-app" successfully rolled out
+
+# Проверка статуса stateful StatefulSet
+kubectl rollout status statefulset/database
+# → statefulset "database" successfully rolled out
+
+# Проверка, что StatefulSet создал устойчивые сетевые идентификаторы
+kubectl get pods -l app=postgres -o wide
+# → NAME     READY   STATUS    RESTARTS   AGE   IP       NODE
+# → database-0   1/1     Running   0          10m   10.0.0.15  worker-1
+# → database-1   1/1     Running   0          10m   10.0.0.16  worker-2
+# → database-2   1/1     Running   0          10m   10.0.0.17  worker-3
+```
+
 ### Балансировка нагрузки и Nginx
 
 Для приложений, которые не могут быть полностью stateless, Nginx предлагает механизмы сохранения сессий:
@@ -147,6 +171,35 @@ upstream backend {
     sticky cookie srv_id expires=1h domain=.example.com path=/;
 }
 ```
+
+**Пошаговая инструкция部署 и валидация:**
+
+1.  **Проверьте конфигурацию Nginx:**
+    ```bash
+    nginx -t
+    # → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+    # → nginx: configuration file /etc/nginx/nginx.conf test is successful
+    ```
+
+2.  **Примените конфигурацию:**
+    ```bash
+    nginx -s reload
+    # → сигнал перезагрузки отправлен
+    ```
+
+3.  **Проверьте, что sticky sessions работают:**
+    ```bash
+    curl -I http://backend1.example.com/ -H "Host: api.example.com"
+    # → HTTP/1.1 200 OK
+    # → Set-Cookie: srv_id=backend1.example.com; Path=/; Expires=...
+    ```
+
+4.  **Проверьте балансировку без sticky sessions:**
+    ```bash
+    for i in {1..10}; do curl -s http://api.example.com/ | grep "Server:"; done
+    # → Server: backend1.example.com
+    # → Server: backend2.example.com
+    ```
 
 ### Внешнее хранилище сессий (Flask + Redis)
 
@@ -170,12 +223,72 @@ def index():
     return f"Вы посетили страницу {session['counter']} раз"
 ```
 
+**Пошаговая инструкция部署 и валидация:**
+
+1.  **Запустите Redis:**
+    ```bash
+    docker run -d -p 6379:6379 --name redis-server redis:7-alpine
+    # → Container ID: abc123def456
+    ```
+
+2.  **Установите зависимости:**
+    ```bash
+    pip install flask flask-session redis
+    # → Requirement already satisfied: flask
+    # → Collecting flask-session
+    ```
+
+3.  **Запустите приложение:**
+    ```bash
+    python app.py
+    # → Serving Flask app 'app'
+    # → Running on http://0.0.0.0:5000
+    ```
+
+4.  **Проверьте, что сессия хранится в Redis:**
+    ```bash
+    redis-cli -h redis-server keys '*'
+    # → 1) "session:abc123def456"
+    ```
+
+5.  **Проверьте идемпотентность:** Повторный запрос должен увеличивать счётчик, а не создавать новую сессию:
+    ```bash
+    curl -c - http://localhost:5000/ http://localhost:5000/
+    # → Вы посетили страницу 2 раз
+    ```
+
 ### Управление инфраструктурой (IaC)
 
 *   **Ansible (Stateless):** Инструмент "толкающего" типа (push-based). При каждом запуске он собирает факты об узлах заново. Если ресурс был удален вручную, Ansible просто создаст его снова, если это описано в плейбуке.
 *   **Terraform (Stateful):** Хранит состояние инфраструктуры в файле `terraform.tfstate`. Это позволяет Terraform понимать, какие ресурсы он создал ранее, и корректно удалять их, если они исчезли из кода. Подробнее: **[Обзор IaC](./iac_overview.md)**.
 
-### Stateless-контейнеры с локальным состоянием (eni Temporary State)
+**Пошаговая инструкция валидации Ansible и Terraform:**
+
+1.  **Проверка Ansible facts:**
+    ```bash
+    ansible all -m setup -a "filter=ansible_memtotal_mb" --limit web-servers
+    # → host | SUCCESS => {"ansible_facts": {"ansible_memtotal_mb": 16384}}
+    ```
+
+2.  **Проверка Terraform state:**
+    ```bash
+    terraform show
+    # → # vm.example.com:
+    # → resource "aws_instance" "web" {
+    # →   id = "i-1234567890abcdef0"
+    # →   tags = {
+    # →     "Name" = "web-server"
+    # →   }
+    # → }
+    ```
+
+3.  **Сравнение desired state с actual state (Ansible):**
+    ```bash
+    ansible all -m setup -a "filter=ansible_distribution_version" --limit web-servers
+    # → host | SUCCESS => {"ansible_facts": {"ansible_distribution_version": "22.04"}}
+    ```
+
+### Stateless-контейнеры с локальным состоянием (Temporary State)
 
 Даже в Stateless-архитектуре контейнеры могут нуждаться во временном хранилище:
 *   **EmptyDir:** Эфемерный том, который удаляется при остановке пода. Используется для кэша, временных файлов, IPC.
@@ -183,6 +296,31 @@ def index():
 *   **local PV:** Привязан к конкретному узлу, но управляется Kubernetes. Подходит для stateful workload, требующих locality (кэш, буфер).
 
 **Правило:** Stateless-приложения могут использовать EmptyDir для временного кэша, но **никогда** для данных, которые должны пережить рестарт контейнера.
+
+**Валидация эфемерного хранилища:**
+
+```bash
+# Создание пода с EmptyDir
+kubectl run temp-pod --image=busybox --restart=Never -- sleep 3600
+# → pod/temp-pod created
+
+# Запись данных в EmptyDir
+kubectl exec temp-pod -- sh -c 'echo "test-data" > /tmp/data.txt'
+# → (no output)
+
+# Чтение данных
+kubectl exec temp-pod -- cat /tmp/data.txt
+# → test-data
+
+# Удаление пода
+kubectl delete pod temp-pod
+# → pod "temp-pod" deleted
+
+# Создание нового пода — данные потеряны
+kubectl run temp-pod --image=busybox --restart=Never -- sleep 3600
+kubectl exec temp-pod -- cat /tmp/data.txt
+# → error: container temp-pod in pod temp-pod is not running
+```
 
 ## Стратегии миграции состояния
 
@@ -193,6 +331,31 @@ def index():
 Phase 1 (Expand):   ALTER TABLE users ADD COLUMN email_v2 VARCHAR(255);
 Phase 2 (Migrate):  UPDATE users SET email_v2 = email;
 Phase 3 (Contract): ALTER TABLE DROP COLUMN email; ALTER TABLE RENAME COLUMN email_v2 TO email;
+```
+
+**Валидация миграции:**
+
+```sql
+-- Phase 1: Проверка, что новая колонка создана
+ALTER TABLE users ADD COLUMN email_v2 VARCHAR(255);
+-- → ALTER TABLE
+
+-- Проверка схемы
+\d users
+-- →  Column   |         Type          | Collation | Nullable | Default
+-- →  email_v2 | character varying(255) |           |          |
+
+-- Phase 2: Проверка миграции данных
+UPDATE users SET email_v2 = email WHERE email_v2 IS NULL;
+-- → UPDATE 1500
+
+-- Проверка количества мигрированных строк
+SELECT COUNT(*) FROM users WHERE email_v2 IS NOT NULL;
+-- →  1500
+
+-- Phase 3: Проверка, что старая колонка удалена
+ALTER TABLE DROP COLUMN email;
+-- → ALTER TABLE
 ```
 
 Подробнее: **[Expand-Contract](../Databases/Concepts/migrations/expand_contract.md)**.
@@ -314,17 +477,77 @@ startupProbe:
   periodSeconds: 10
 ```
 
+**Валидация health checks:**
+
+```bash
+# Проверка liveness
+kubectl get pod database-0 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+# → True
+
+# Проверка readiness
+kubectl describe pod database-0 | grep -A 5 Readiness
+# → Readiness:    pg_isready -U postgres && test $(psql ...) = "f"
+
+# Проверка replication lag
+psql -U postgres -t -c "SELECT pg_last_wal_replay_lsn() - pg_last_wal_receive_lsn() AS lag_bytes;"
+# →  0
+```
+
 ### Backup и Recovery для Stateful
 *   **Logical Backup:** `pg_dump` / `mysqldump` — полный дамп, медленное восстановление, версионирование.
 *   **Physical Backup:** `pg_basebackup` + WAL archiving — инкрементальные, быстрое восстановление.
 *   **Снапшоты дисков:** Снимок PV через CSI driver или storage backend (minio, Ceph).
 *   **Регулярное тестирование:** Восстановление из бэкапа — это часть SRE-процесса. Тестировать раз в квартал.
 
+**Валидация backup и recovery:**
+
+```bash
+# Создание logical backup
+pg_dump -U postgres -F c -b -v -f /backup/db.dump mydb
+# → pg_dump: читая базу данных mydb
+# → pg_dump: сохранено 1500 объектов в 250 таблицах
+
+# Проверка backup
+pg_restore -l /backup/db.dump | head -10
+# → ;    262144     262144     TABLE DATA public users     postgres
+# → ;    262144     262144     TABLE DATA public orders    postgres
+
+# Восстановление
+pg_restore -U postgres -d mydb /backup/db.dump
+# → pg_restore: создано 250 таблиц
+# → pg_restore: загружено 1.5M строк
+```
+
 ### Runbook для типичных операций
 *   **Добавление реплики:** `pg_basebackup` → настройка `recovery.conf` → START REPLICA.
 *   **Promotion реплики:** `pg_ctl promote` → обновление DNS/service → проверка данных.
 *   **Rolling restart:** Остановка пода → ожидание drain → запуск нового → проверка health.
 *   **Data compaction:** Для LSM-деревьев (RocksDB, LevelDB) — регулярная компакция для предотвращения read amplification.
+
+**Валидация операций:**
+
+```bash
+# Проверка статуса репликации
+psql -U postgres -c "SELECT client_addr, state, sent_lsn, replay_lsn FROM pg_stat_replication;"
+# →  client_addr   | state     | sent_lsn    | replay_lsn
+# →  10.0.0.15     | streaming | 0/1A000000  | 0/1A000000
+
+# Promotion реплики
+pg_ctl promote -D /var/lib/postgresql/data
+# → server promoted
+
+# Проверка, что реплика стала primary
+psql -U postgres -c "SELECT pg_is_in_recovery();"
+# →  f
+
+# Rolling restart StatefulSet
+kubectl rollout restart statefulset/database
+# → statefulset.apps/database restarted
+
+# Проверка status
+kubectl rollout status statefulset/database
+# → statefulset "database" successfully rolled out
+```
 
 ## Репликация и разрешение конфликтов
 
@@ -366,9 +589,111 @@ startupProbe:
 | **Задержки (Tail Latency)** | Перегрузка внешнего хранилища сессий (Redis). | Шардирование Redis или использование Client-side сессий (JWT). |
 | **Split-brain при multi-primary** | Сетевой partition: два узла считают себя leader. | Настройка fencing (STONITH), кворума, или LWW-стратегии разрешения конфликтов. |
 | **Replication Lag растёт** | Перегрузка primary или медленная сеть. | Проверить `pg_stat_replication`, увеличить bandwidth, использовать sync replication для критичных данных. |
-| **StatefulSet не запускается** | PersistentVolume не найден или Bound. | `kubectl get pv,pvc` — проверить status. Для local PV: узел должен быть в `Ready` trạng thái. |
+| **StatefulSet не запускается** | PersistentVolume не найден или Bound. | `kubectl get pv,pvc` — проверить status. Для local PV: узел должен быть в `Ready` состоянии. |
 | **WAL накапливается (PostgreSQL)** | Архивация не работает или wal_keep_size слишком высокий. | Проверить `archive_command`, увеличить `wal_keep_size` или настроить replication slot с feedback. |
 | **Redis OOM при high write load** | maxmemory-policy отбирает ключи. | Увеличить `maxmemory`, выбрать политику `allkeys-lru` вместо `volatile-lru`. |
+
+### Диагностика на уровне ОС и сети
+
+При расследовании проблем stateful/stateless архитектур SRE должен начинать с системного уровня:
+
+**Проверка TCP-соединений и портов:**
+
+```bash
+# ПроверкаListening портов и Established соединений
+ss -tlnp | grep -E '5432|3306|6379|5672|9092|80|443'
+# → LISTEN 0 128 0.0.0.0:5432 0.0.0.0:* users:(("postgres",pid=1234,fd=5))
+
+# Проверка Established соединений с базой данных
+ss -tnp | grep 5432 | head -10
+# → ESTABLISHED 0 0 10.0.0.20:54321 10.0.0.10:5432 timer:(on,0.5sec,0)
+```
+
+**Проверка ресурсов узла:**
+
+```bash
+# Нагрузка CPU и памяти
+top -b -n 1 | head -15
+# → top - 15:30:01 up 10 days,  1:23,  2 users,  load average: 1.2, 0.8, 0.5
+# → Tasks: 245 total,   1 running, 244 sleeping,   0 stopped,   0 zombie
+# → %Cpu(s):  5.2 us,  1.1 sy,  0.0 ni, 93.5 id,  0.0 wa,  0.0 hi,  0.2 si,  0.0 st
+
+# Использование диска
+df -h /var/lib/postgresql /var/lib/redis
+# → Filesystem      Size  Used Avail Use% Mounted on
+# → /dev/sda1        50G   38G   12G  76% /
+```
+
+**Проверка состояния PostgreSQL:**
+
+```bash
+# Проверка готовности БД
+pg_isready -h localhost -p 5432
+# → localhost:5432 - accepting connections
+
+# Проверка репликации
+psql -U postgres -c "SELECT client_addr, state, sent_lsn, replay_lsn FROM pg_stat_replication;"
+# →  client_addr   | state     | sent_lsn    | replay_lsn
+# →  10.0.0.15     | streaming | 0/1A000000  | 0/1A000000
+
+# Проверка задержки репликации
+psql -U postgres -t -c "SELECT pg_last_wal_replay_lsn() - pg_last_wal_receive_lsn() AS lag_bytes;"
+# →  0
+```
+
+**Проверка состояния Redis:**
+
+```bash
+# Проверка доступности
+redis-cli ping
+# → PONG
+
+# Проверка использования памяти
+redis-cli info memory | grep used_memory_human
+# → used_memory_human:1.5M
+
+# Проверка конфигурации Persistence
+redis-cli config get save
+# → 1. "save"
+# → 2. "900 1 300 10 60 10000"
+```
+
+**Проверка StatefulSet в Kubernetes:**
+
+```bash
+# Проверка статуса подов
+kubectl get pods -l app=postgres -o wide
+# → NAME     READY   STATUS    RESTARTS   AGE   IP       NODE
+# → database-0   1/1     Running   0          10m   10.0.0.15  worker-1
+
+# Проверка PVC
+kubectl get pvc -l app=postgres
+# → NAME          STATUS   VOLUME               CAPACITY   ACCESS MODES   STORAGECLASS
+# → data-database-0  Bound    pvc-12345   10Gi    RWO    local-path
+
+# Проверка событиях StatefulSet
+kubectl describe statefulset database | grep -A 10 Events
+# → Events:
+# →   Type    Reason            Age   From               Message
+# →   ----    ------            ----  ----               -------
+# →   Normal  SuccessfulCreate  10m    statefulset-controller  create Pod database-0 in StatefulSet database successful
+```
+
+**Анализ процессов и ядра:**
+
+```bash
+# Поиск процессов с высоким потреблением CPU
+ps aux --sort=-%cpu | head -10
+# → root     12345  5.2  1.0  524288 1048576 ?  Ssl  15:28   0:02 /usr/bin/java ...
+
+# Проверка системных вызовов при блокировках
+strace -p $(pgrep -f 'postgres') -e trace=network,read,write -c 2>&1 | head -20
+# → Process 12345 attached - interrupt to quit
+
+# Проверка лимитов файловых дескрипторов
+cat /proc/$(pgrep -f 'postgres')/limits | grep 'open files'
+# → Max open files            65535                65535                files
+```
 
 ## Лучшие практики
 
@@ -379,14 +704,23 @@ startupProbe:
 5.  **Мониторинг Lag:** Для Stateful-систем критически важно отслеживать задержку репликации (Replication Lag). Алерт при lag > порога.
 6.  **Backup = Runnable:** Бэкап бесполезен, если не проверено восстановление. Тестировать restore раз в квартал.
 7.  **Consistency by Design:** Выбирайте модель согласованности осознанно. Не используйте eventual consistency там, где нужна strong (финансовые транзакции).
-8. **CRDT для multi-datacenter:** При.getActive-active распределении используйте CRDT для данных, где конфликты неизбежны (счётчики, множества, лимиты).
+8. **CRDT для multi-datacenter:** При active-active распределении используйте CRDT для данных, где конфликты неизбежны (счётчики, множества, лимиты).
 
-## Современные тренды (2025–2026)
+## Граничные случаи (Edge Cases)
 
-*   **Dapr (Distributed Application Runtime):** Sidecar-паттерн для state management. Dapr предоставляет единый API для state stores (Redis, PostgreSQL, etcd) с built-in support для concurrency control, state queries, transactions.
+*   **Эфемерные хранилища в контейнерах:** EmptyDir и tmpfs теряют данные при перезапуске пода. Никогда не размещайте на них данные, требующие постоянства. Используйте PersistentVolumeClaim для stateful workload.
+*   **Сетевые разрывы при репликации:** При потери связи с primary реплика может быть повышена в leader до восстановления кворума. Настройте `minimum_replicas_available_to_upgrade_tls_termination_point` и мониторинг кворума.
+*   **Split-brain в StatefulSet:** При разделении сети кластер может потерять кворум. Настройте STONITH (Shoot The Other Node In The Head) и мониторинг лидерства через `patronictl list` или `pg_stat_replication`.
+*   **Высокая нагрузка на внешнее хранилище сессий:** Redis может стать узким местом при 10K+ RPS. Используйте шардирование (Redis Cluster) или клиентские сессии (JWT).
+*   **Миграция с Stateful на Stateless:** Поэтапный перенос сессий из памяти в Redis с dual-write и проверкой консистентности. Используйте feature flags для управления трафиком.
+*   **Legacy-системы без поддержки JWT:** Если клиенты не могут хранить токены, используйте sticky sessions с плавным дренажем (drain) и предупреждением клиентов.
+*   **Базы данных на bare-metal без контейнеризации:** Используйте традиционные методы репликации (streaming replication, WAL archiving) и мониторинг через JMX/SNMP.
+*   **Гибридные окружения on-prem:** При наличии части сервисов в дата-центре, а части — на удалённых узлах, используйте VPN/IPSEC туннели и фиксированные firewall-правила для трафика между сегментами.
+*   **Long-running транзакции в PostgreSQL:** Транзакции, длящиеся >30 секунд, блокируют vacuum и вызывают рост WAL. Используйте `idle_in_transaction_session_timeout` и мониторинг `pg_stat_activity`.
+
+## Современные тренды
+
 *   **Transactional Outbox:** Паттерн для guarantees доставки событий без dual-write проблем. События записываются в ту же транзакцию, что и бизнес-данные.
-*   **Zero-copy State Transfer:** Использование RDMA и общей памяти для передачи состояния между контейнерами без накладных расходов на сеть. Актуально для HPC и high-frequency trading.
-*   **WebAssembly (Wasm) для Stateful Processing:** Wasm-модули для stateful обработки данных в edge и streaming (WasmEdge, Spin). Поддержка persistent memory через WASI.
 
 ## Дополнительная информация
 

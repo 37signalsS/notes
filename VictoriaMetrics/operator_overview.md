@@ -164,3 +164,4 @@ kubectl get configmap -n monitoring -l app.kubernetes.io/name=vmagent -o yaml
 - [VictoriaMetrics: обзор](./overview.md) — компоненты и роль оператора;
 - [vmalert: управление правилами через манифесты](./vmalert_rules_management_with_manifests.md) — `VMRule`, `VMAlert`;
 - [Kubernetes: VictoriaLogs + operator](./../Kubernetes/MonitoringLogging/victorialogs_k8s_setup.md) — деплой логов.
+# force reindex test

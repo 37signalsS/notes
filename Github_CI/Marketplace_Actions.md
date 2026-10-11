@@ -1,5 +1,7 @@
 # GitHub Actions: Готовые действия и Marketplace
 
+**Актуально для:** GitHub Actions, октябрь 2026 (actions/checkout v7, actions/cache v6; JavaScript-экшены — runtime Node.js 24; `@actions/core` v3, ESM-only; Node 20 удалён из Actions, сентябрь 2026)
+
 Готовые действия (`actions`) — это переиспользуемые блоки автоматизации, составляющие основу экосистемы GitHub Actions. Они позволяют использовать проверенные решения для типовых задач, сокращая время на разработку и поддержку процессов CI/CD (Continuous Integration / Continuous Deployment).
 
 ## Определения
@@ -8,7 +10,7 @@
 - **`action.yml`**: Манифест действия, описывающий его входы (`inputs`), выходы (`outputs`) и среду выполнения (`runs`). Альтернативное имя `action.yaml` также допустимо, но `action.yml` предпочтителен; смена имени файла между релизами скрывает старые версии из Marketplace.
 - **GitHub Marketplace**: Публичный реестр для поиска и публикации действий. Публикация мгновенная и не требует ревью со стороны GitHub, если выполнены формальные требования (публичный репозиторий, манифест в корне, уникальное имя).
 - **Verified Creator**: Отметка (синяя галочка) для официальных действий GitHub или проверенных партнеров. Означает только проверку владельца, а не аудит кода — код всё равно следует читать перед использованием.
-- **Actions Toolkit**: Набор официальных библиотек (`@actions/core`, `@actions/github`, `@actions/exec`, `@actions/io`, `@actions/cache`, `@actions/artifact`) для разработки JavaScript-экшенов. `core.getInput()`, `core.setOutput()` и `core.setFailed()` — стандартные точки входа для работы с интерфейсом экшена.
+- **Actions Toolkit**: Набор официальных библиотек (`@actions/core`, `@actions/github`, `@actions/exec`, `@actions/io`, `@actions/cache`, `@actions/artifact`) для разработки JavaScript-экшенов. `core.getInput()`, `core.setOutput()` и `core.setFailed()` — стандартные точки входа для работы с интерфейсом экшена. С `@actions/core` v3 (январь 2026) пакеты Toolkit переведены на ESM-only: `require()` заменяется на `import` (см. Сценарий 5).
 - **Branding**: Раздел манифеста (`branding.icon`, `branding.color`) — иконка из набора Feather и цвет бейджа, отображаемые на странице экшена в Marketplace.
 
 ## Основные концепции
@@ -18,12 +20,12 @@
 Выбор типа действия зависит от требуемой производительности и переносимости.
 
 1.  **JavaScript Actions**:
-    - **Реализация**: Написаны на Node.js (стандарт 2026 — Node.js 24; в манифесте указывается `using: 'node24'`, устаревший рантайм `node16` выведен из эксплуатации).
+    - **Реализация**: Написаны на Node.js (стандарт 2026 — Node.js 24; в манифесте указывается `using: 'node24'`). Рантайм `node20` удалён с GitHub-hosted раннеров в сентябре 2026 — JS-экшены на `node20` и мажорах `@v4`-линеек (`actions/checkout@v4` и старше) там больше не запускаются.
     - **Плюсы**: Самый быстрый запуск (выполняются непосредственно в среде раннера). Кросс-платформенность (Linux, Windows, macOS).
     - **Нюансы**: Требуют упаковки зависимостей (через `@vercel/ncc` или `esbuild` в `dist/index.js`) или наличия `node_modules` в репозитории. Раннер запускает файл, указанный в `runs.main`.
     - **Механика входов**: Значения из `with:` попадают в переменные окружения вида `INPUT_<ИМЯ>` (верхний регистр, пробелы заменяются на `_`), читаются через `core.getInput('имя')`.
 2.  **Docker Actions**:
-    - **Реализация**: Используют `Dockerfile` для сборки среды (`runs.image: 'Dockerfile'`) либо публичный образ реестра (`runs.image: 'docker://alpine:3.21'`).
+    - **Реализация**: Используют `Dockerfile` для сборки среды (`runs.image: 'Dockerfile'`) либо публичный образ реестра (`runs.image: 'docker://alpine:3.24'`).
     - **Плюсы**: Гарантируют идентичность окружения. Позволяют использовать любые языки (Python, Go, Rust) и системные утилиты.
     - **Нюансы**: Работают только на Linux-раннерах (запуск на `windows-latest`/`macos-latest` завершится ошибкой выполнения контейнера). Имеют накладные расходы на сборку/скачивание контейнера. Входы передаются как аргументы `ENTRYPOINT` (через `runs.args`) и как переменные `INPUT_*`; переменная подставляется буквально, поэтому shell-подстановки требуют явного `sh -c`.
     - **Жизненный цикл**: `pre-entrypoint` и `post-entrypoint` выполняются в отдельных контейнерах того же образа — состояние между ними передаётся только через рабочую директорию, `$HOME` или переменные `STATE_`.
@@ -48,10 +50,10 @@
 
 | Формат | Пример | Откуда берётся |
 | :--- | :--- | :--- |
-| `{owner}/{repo}@{ref}` | `actions/checkout@v5` | Корень публичного/доступного репозитория |
+| `{owner}/{repo}@{ref}` | `actions/checkout@v7` | Корень публичного/доступного репозитория |
 | `{owner}/{repo}/{path}@{ref}` | `actions/aws/ec2@main` | Подкаталог репозитория |
 | `./{path}` | `./.github/actions/my-action` | Локальный экшен того же репозитория (без `@ref`) |
-| `docker://{image}:{tag}` | `docker://alpine:3.21` | Образ из Docker Hub или другого реестра |
+| `docker://{image}:{tag}` | `docker://alpine:3.24` | Образ из Docker Hub или другого реестра |
 
 Рекомендации по `ref`: полный SHA — максимальная безопасность; тег конкретной версии (`@v6.2.0`) или мажорный тег (`@v6`) — баланс между безопасностью и автоматическим получением патчей; ветка (`@main`) — удобна для разработки, но ломается при выходе breaking changes.
 
@@ -101,9 +103,13 @@ runs:
 
     - name: Notify
       if: ${{ failure() }}                # условия if поддерживаются
-      uses: slackapi/slack-github-action@<sha>
+      uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a  # v2
       with:
-        channel: ${{ inputs.notify-channel }}
+        method: chat.postMessage          # v2 требует явный метод API
+        token: ${{ env.SLACK_BOT_TOKEN }}
+        payload: |
+          channel: ${{ inputs.notify-channel }}
+          text: "Deploy of ${{ inputs.environment }} failed"
 ```
 
 Ключевые механики:
@@ -127,7 +133,7 @@ runs:
   post-if: 'success()'       # по умолчанию always()
 ```
 
-- `pre:` и `post:` выполняются по умолчанию всегда (`always()`), независимо от статуса задачи — именно так `actions/cache` сохраняет кэш даже при упавших тестах.
+- `pre:` и `post:` выполняются по умолчанию всегда (`always()`), независимо от статуса задачи; отдельные экшены могут задать более строгое условие явно — например, `actions/cache` регистрирует post-шаг с `post-if: success()`, поэтому кэш сохраняется только при успешном завершении задачи.
 - В `pre-if`/`post-if` статусные функции оцениваются относительно статуса всей задачи; контекст `step` в `pre-if` недоступен.
 - Ограничение: `pre:` не поддерживается для локальных (path-based) экшенов.
 
@@ -172,29 +178,9 @@ runs:
 
 ### Сценарий 1: Настройка Dependabot для обновлений экшенов
 
-Автоматическое обновление версий экшенов (поддерживает обновление SHA до новых версий).
+> **Перенесено**: полная конфигурация Dependabot для GitHub Actions ecosystem (security updates, version updates, grouping, auto-merge) — в **[dedicated файле](./dependabot.md)**, Сценарий 2. Здесь — кратко:
 
-**Предварительные требования**: права администратора репозитория, включённые Dependabot alerts (Settings → Code security).
-
-```yaml
-# .github/dependabot.yml
-version: 2
-updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"                 # где искать workflow-файлы (.github/workflows)
-    schedule:
-      interval: "weekly"
-    groups:                        # группировать мелкие обновления в один PR
-      minor-and-patch:
-        update-types: ["minor", "patch"]
-    open-pull-requests-limit: 5
-    labels: ["dependencies", "ci"]
-    reviewers: ["platform-team"]
-```
-
-- Каждый параметр: `directory` всегда `/` для этого ecosystem (Dependabot ищет `.github/workflows`); `groups` снижает шум от еженедельных patch-обновлений; `reviewers` направляет PR сразу нужной команде.
-- Для SHA-pinned экшенов Dependabot создаёт PR, обновляющий хеш и добавляющий комментарий с новой версией (например, `updates actions/checkout from 11bd719... to 8f4b7f8... (v4.2.2 → v5)`).
-- **Валидация**: после коммита откройте вкладку Dependabot в разделе Insights → Dependency graph → Dependabot: должна появиться запись о зарегистрированном ecosystem, а в логах первого прогона — отсутствие ошибок парсинга конфигурации. Первый PR приходит в пределах расписания (`weekly`).
+Конфигурация `.github/dependabot.yml` для `package-ecosystem: "github-actions"` обеспечивает автоматическое обновление `uses:`-ссылок в workflow на новые версии экшенов. Для SHA-pinned экшенов Dependabot создаёт PR с обновлённым хешом и комментарием с версией.
 
 ### Сценарий 2: Создание локального Composite Action
 
@@ -223,7 +209,7 @@ runs:
       run: |
         curl -L https://tool.com/install.sh | bash -s -- "${{ inputs.cli-version }}"
         echo "path=$HOME/.local/bin/tool" >> "$GITHUB_OUTPUT"
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ~/.tool-cache
         key: tools-${{ inputs.cli-version }}
@@ -238,7 +224,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - id: tools
         uses: ./.github/actions/setup-tools
         with:
@@ -256,8 +242,8 @@ jobs:
 
 ```bash
 # узнать SHA тега перед пиннингом
-git ls-remote https://github.com/github/super-linter.git refs/tags/v7
-# → 45c405a18b48671602330a1f05786194b5952f44	refs/tags/v7
+git ls-remote https://github.com/super-linter/super-linter.git refs/tags/v9.0.0
+# → 2da136927bd4a73596db63044b504547c62cb854	refs/tags/v9.0.0
 ```
 
 ```yaml
@@ -266,13 +252,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      statuses: write                        # super-linter сообщает статус-чек PR
     steps:
       - name: Checkout
-        # v4.2.2 fixed at SHA
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      
+        # v7.0.1 fixed at SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0                     # super-linter сопоставляет изменения по git-истории
+          persist-credentials: false
+
       - name: Lint Code
-        uses: github/super-linter@45c405a18b48671602330a1f05786194b5952f44
+        uses: super-linter/super-linter@2da136927bd4a73596db63044b504547c62cb854  # v9.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -341,9 +331,86 @@ steps:
 ```
 
 - **Валидация**: локально повторите поведение контейнера: `docker build -t val . && docker run -v "$PWD":/ws -w /ws val schemas/config.schema.json "config.yml"` — вывод должен совпасть с выводом шага в CI.
-- **Edge cases**: на `windows-latest`/`macos-latest` такой шаг упадёт — либо явно используйте `runs-on: ubuntu-latest`, либо перенесите логику в JavaScript-экшен.
+- **Edge cases**: на `windows-latest`/`macos-latest` такой шаг упадёт — либо явно используйте `runs-on: ubuntu-latest`, либо перенесите логику в JavaScript-экшен (см. Сценарий 5).
 
-### Сценарий 5: Публикация собственного экшена в GitHub Marketplace
+### Сценарий 5: Собственный JavaScript-экшен (Actions Toolkit)
+
+Самый быстрый по запуску тип экшена: раннер исполняет `main`-файл напрямую в среде раннера, без pull/build контейнера.
+
+**Предварительные требования**: Node.js 24 и npm в среде разработки; репозиторий экшена (публичный — для Marketplace, приватный — для внутреннего использования).
+
+**Структура репозитория**:
+
+```text
+.
+├── action.yml
+├── package.json
+├── src/
+│   └── index.js
+└── dist/
+    └── index.js        # собранный самодостаточный бандл — коммитится
+```
+
+**Манифест** (`action.yml`):
+
+```yaml
+name: 'Deploy Reporter'
+description: 'Report deploy status and expose a report URL'
+inputs:
+  environment:
+    description: 'Target environment'
+    required: true
+outputs:
+  report-url:
+    description: 'URL of the generated report'
+runs:
+  using: 'node24'
+  main: 'dist/index.js'
+```
+
+**Логика** (`src/index.js`) — интерфейс экшена строится через Actions Toolkit:
+
+```javascript
+import * as core from '@actions/core';
+
+try {
+  const environment = core.getInput('environment', { required: true });
+  const url = `https://report.example/${environment}`;
+  core.setOutput('report-url', url);
+  core.info(`Report for ${environment}: ${url}`);
+} catch (error) {
+  core.setFailed(error.message);
+}
+```
+
+**Сборка бандла**:
+
+```bash
+npm init -y
+npm install @actions/core
+npm pkg set type=module engines.node=">=24"
+# раннер не выполняет npm install — код и зависимости собираются в один файл
+npx esbuild src/index.js --bundle --platform=node --format=esm --target=node24 --outfile=dist/index.js
+```
+
+- **Зачем бандл**: раннер скачивает репозиторий экшена и сразу исполняет файл из `runs.main` — отдельного шага установки зависимостей нет. Поэтому собранный `dist/` коммитится (либо собирается в релизном воркфлоу и попадает только в тег), а `node_modules` в репозиторий не коммитится.
+- **ESM**: с `@actions/core` v3 пакет ESM-only, поэтому проект переводится в ESM (`"type": "module"`), а `require()` заменяется на `import`. `@vercel/ncc` и `rollup` (формат `es`) дают тот же результат — важно, чтобы итоговый `dist/index.js` был самодостаточным.
+
+**Использование**:
+
+```yaml
+steps:
+  - uses: <owner>/<repo>@<sha>       # или @v1
+    id: deploy
+    with:
+      environment: staging
+  - run: echo "${{ steps.deploy.outputs.report-url }}"
+```
+
+- **Валидация**: заведите в репозитории экшена отдельный тестовый воркфлоу, который вызывает экшен локально (`uses: ./`) и проверяет выполнение шага и значение выхода — успешный прогон служит критерием готовности релиза.
+- **Edge cases**: рантайм фиксируется ключом `runs.using: 'node24'`; локальные (path-based) экшены не поддерживают фазу `pre` (см. «Жизненный цикл: pre / main / post»).
+
+### Сценарий 6: Публикация собственного экшена в GitHub Marketplace
 
 **Предварительные требования**:
 
@@ -379,10 +446,20 @@ steps:
 | `Input required and not supplied: X` | `required: true` в манифесте, значение не передано и не задано `default` | Передать через `with:`; помнить, что платформа не проверяет `required` автоматически — строгие проверки делает код экшена (`core.getInput(..., { required: true })` выбрасывает исключение) |
 | `Resource not accessible by integration` (HTTP 403) | `GITHUB_TOKEN` без нужного permission | Расширить `permissions` задачи ровно до необходимого минимума (например, `pull-requests: write`) |
 | `unable to resolve action ... unable to find version` | Несуществующий тег/ветка или удалённый ref | Проверить ref в исходном репозитории; при SHA-пиннинге убедиться, что хеш принадлежит этому репозиторию |
-| Предупреждение `node16` deprecation | Экшен собран под снятый с поддержки рантайм | Обновить экшен до версии с `node20`/`node24`; свой экшен перевести на `runs.using: 'node24'` |
+| Предупреждение `node20` deprecation или отказ запуска | Экшен собран под рантайм `node20`, удалённый с hosted-раннеров в сентябре 2026 | Обновить экшен до версии на `node24`; свой экшен перевести на `runs.using: 'node24'` |
 | Docker-экшен падает на Windows/macOS | Контейнерные экшены работают только на Linux | Закрепить задачу за `ubuntu-latest` либо переписать на JS/composite |
 | Секреты пустые внутри composite-экшена | Контекст `secrets` не пробрасывается в composite | Передать секрет параметром или через `env:` на уровне шага вызова |
 | Чекбокс публикации в Marketplace заблокирован | Developer Agreement не принят владельцем аккаунта | Принять соглашение под владельцем репозитория/организации, затем вернуться к черновику релиза |
+
+## Лучшие практики
+
+1. **Одна задача на экшен**: держите экшен узкоспециализированным (Unix-принцип). Разросшуюся логику выгоднее вынести в отдельный экшен или переиспользуемый процесс, чем превращать composite в монолит.
+2. **Контракт в манифесте и README**: обязательно заполняйте `inputs`/`outputs` с описаниями — страница Marketplace и подсказки `uses` строятся из `action.yml`, а примеры использования и ограничения читатель ищет в README репозитория.
+3. **Сборка JS-экшенов**: коммитьте самодостаточный `dist/` (или собирайте его в релизном воркфлоу и включайте только в тег) — раннер не выполняет установку зависимостей. `node_modules` в репозиторий не коммитится; зависимости сборки фиксируются `package-lock.json`.
+4. **Тестирование до публикации**: заведите в репозитории экшена воркфлоу, вызывающий сам экшен локально (`uses: ./`), и прогоняйте его на каждый релиз — это ловит сломанный `dist/` и неверные входы до того, как их увидит потребитель.
+5. **Маскирование секретов**: производные значения (токены, URL с credentials) регистрируйте через `core.setSecret()` перед выводом в лог; в composite-экшенах секреты не логируйте вовсе — контекст `secrets` им недоступен.
+6. **Версионирование и обновления**: публикуйте semver-релиз, двигайте мажорный тег, а потребителям рекомендуйте Dependabot (обновляет и SHA-pinned зависимости). Саму фиксацию версий выполняйте по правилам «Безопасность цепочки поставок» — SHA для критичных путей, тег с комментарием версии для остальных.
+7. **Единый манифест на репозиторий**: публикуется только `action.yml` из корня; экшены в подпапках автоматически не листятся — не рассчитывайте на их появление в Marketplace.
 
 ## Дополнительная информация
 

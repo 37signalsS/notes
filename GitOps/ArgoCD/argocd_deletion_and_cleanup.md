@@ -75,7 +75,7 @@
 | :--- | :--- | :--- |
 | `Prune=true` | Удалять ресурсы, отсутствующие в Git | `false` |
 | `PruneLast=true` | Удалять после успешного деплоя новых ресурсов | `false` |
-| `PrunePropagationPolicy=foreground` | Каскадное удаление dependent перед owner | `background` |
+| `PrunePropagationPolicy=foreground` | Каскадное удаление dependent перед owner | `foreground` |
 | `PrunePropagationPolicy=background` | Каскадное удаление dependent после owner | — |
 | `PrunePropagationPolicy=orphan` | Dependent остаются (orphaned) | — |
 

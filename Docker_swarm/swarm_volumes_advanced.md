@@ -1,8 +1,10 @@
 # Docker Swarm: продвинутые решения для хранения данных
 
+**Актуально для:** Docker Swarm 29.x
+
 ## Определения
 
-**Container Storage Interface (CSI)** — открытый стандарт интерфейса, позволяющий Docker Swarm взаимодействовать с внешними системами хранения (AWS EBS, GCP Persistent Disk, Ceph, NetApp) унифицированным способом. Поддерживается в Swarm начиная с версии 23.0.
+**Container Storage Interface (CSI)** — открытый стандарт интерфейса, позволяющий Docker Swarm взаимодействовать с внешними системами хранения (Ceph, NetApp, Portworx, локальные SAN) унифицированным способом. Поддерживается в Swarm начиная с версии 23.0.
 
 **Cluster Volume (Кластерный том)** — тип тома, управляемый через CSI-драйвер. В отличие от обычных томов, Swarm отслеживает состояние кластерных томов на уровне всего кластера, обеспечивая корректное планирование задач в зависимости от доступности тома и его топологии. Требует предварительного создания.
 
@@ -13,6 +15,15 @@
 **Accessibility / Topology (Топология)** — информация о физическом расположении (регион, зона доступности), используемая планировщиком Swarm для размещения контейнера там, где физически доступен диск.
 
 **Distributed Storage (Распределенное хранилище)** — система (например, Ceph, GlusterFS, Portworx), объединяющая диски нескольких узлов в единый пул с репликацией данных.
+
+## Предварительные требования
+
+- **Docker Engine 29.x** на всех менеджерах и рабочих узлах. Cluster Volumes требуют API v1.42+ (включён по умолчанию в Docker 29.x).
+- **CSI-плагин** установлен на всех менеджерах и на рабочих узлах, где должны размещаться тома. На менеджерах плагин должен реализовывать интерфейс `docker.csicontroller/1.0`, на воркерах — `docker.csinode/1.0`.
+- **Сетевая связность:** узлы кластера должны иметь доступ к хранилищу (Ceph cluster, SAN, NFS-сервер).
+- **Node labels:** для топологии на узлы должны быть назначены labels (`docker node update --label-add rack=rack-3 <node>`).
+- **Достаточное количество менеджеров:** для production-окружения рекомендуется ≥3 менеджера для обеспечения кворума при управлении томами.
+- **Резервное хранилище:** для систем без нативных снапшотов CSI должен быть предусмотрен sidecar-механизм бэкапа или внешний сервис.
 
 ## Базовые концепции
 
@@ -28,7 +39,7 @@
 1. **Установка плагина:** CSI-плагин должен быть установлен на каждом узле кластера.
 2. **Создание тома:** Выполняется один раз через CLI менеджера.
 3. **Планирование:** При запуске сервиса SwarmKit проверяет `RequiredTopology` тома и `NodeLabels` узлов, выбирая подходящий узел.
-4. **Управление состоянием:** `docker volume cluster inspect` показывает статус `Published` (на каком узле примонтирован) и `Pending` (в процессе переноса).
+4. **Управление состоянием:** `docker volume inspect` показывает статус `Published` (на каком узле примонтирован) и `Pending` (в процессе переноса).
 
 ### Новое в Docker 27.0
 
@@ -39,33 +50,43 @@
 
 ### Управление кластерными томами через CLI
 
-Начиная с Docker 23.0, для работы с CSI-томами используется группа команд `docker volume cluster`.
+Начиная с Docker 23.0 (API 1.42), для работы с CSI-томами используются cluster-флаги команд `docker volume` (`--scope`, `--sharing`, `--type`, `--availability`, `--group`, `--limit-bytes`, `--required-bytes`, `--secret`, `--topology-*`), список `docker volume ls --cluster` и изменение доступности `docker volume update --availability <active|pause|drain>`. Cluster-флаги скрыты в `--help`, пока демон не инициализирован как Swarm-менеджер.
 
 #### Создание тома (например, AWS EBS)
 
 ```bash
 docker volume create \
-  --driver ebs.csi.aws.com \
-  --type cluster \
+  --driver ceph.csi.io \
+  --type mount \
   --availability active \
-  --scope single-node \
+  --scope single \
   --sharing none \
-  --limit size=20Gi \
-  --required-topology region=us-east-1,zone=us-east-1a \
+  --limit-bytes 20GiB \
+  --topology-required rack=rack-3 \
   pg_data_cluster
 # → pg_data_cluster
 ```
 
-#### Просмотр и инспекция
+**Валидация:**
+```bash
+docker volume ls --cluster --filter "name=pg_data_cluster"
+# → ID и статус созданного кластерного тома
+docker volume inspect pg_data_cluster --format '{{json .Spec.ClusterVolume}}'
+# → проверка scope, sharing, topology
+docker volume inspect pg_data_cluster --format '{{json .Status}}'
+# → проверка состояния Published/Pending
+```
+
+### Просмотр и инспекция
 
 ```bash
 # Список только кластерных томов
-docker volume cluster ls
+docker volume ls --cluster
 # → ID            NAME               DRIVER              SCOPE        SHARING      STATUS
-# → abc123def     pg_data_cluster    ebs.csi.aws.com     single-node  none         created
+# → abc123def     pg_data_cluster    ceph.csi.io         single-node  none         created
 
 # Детальная информация и статус монтирования
-docker volume cluster inspect pg_data_cluster
+docker volume inspect pg_data_cluster
 # → Находим секцию "PublishContext" с ID узла, где том активен
 ```
 
@@ -101,6 +122,16 @@ volumes:
     #       sharing: none
 ```
 
+**Валидация:**
+```bash
+docker stack deploy -c docker-compose.yml mystack
+# → convergence: tasks running
+docker service ps mystack_db --no-trunc
+# → задача на узле с соответствующим label rack=rack-3
+docker volume ls --cluster --filter "name=pg_cluster_data"
+# → статус active, количество published nodes
+```
+
 ### Резервное копирование и миграция
 
 Для томов без нативной поддержки снапшотов используется "Sidecar-метод" или временные сервисы.
@@ -113,9 +144,34 @@ docker service create \
   --restart-condition none \
   --mount type=cluster,src=pg_cluster_data,dst=/source,readonly \
   --mount type=bind,src=/mnt/backups,dst=/backup \
-  alpine tar czf /backup/pg_data_$(date +%Y%m%d).tar.gz -C /source .
+   alpine tar czf /backup/pg_data_$(date +%Y%m%d).tar.gz -C /source .
 # → (Swarm сам найдет узел с томом и запустит там задачу бэкапа)
 ```
+
+**Валидация:**
+```bash
+docker service logs backup_task --tail 20
+# → проверка, что архив создан без ошибок
+ls -lh /mnt/backups/
+# → наличие tar.gz файла с актуальной датой
+docker service rm backup_task
+# → удаление временной задачи
+```
+
+## Операции и команды
+
+| Область | Команды | Назначение |
+|---|---|---|
+| **Создание** | `docker volume create --driver <csi> --type mount --scope single --sharing none <name>` | Создание кластерного тома |
+| | `docker volume create --driver local --opt type=nfs ... <name>` | Создание NFS-тома |
+| **Инспекция** | `docker volume ls --cluster` | Список только кластерных томов |
+| | `docker volume inspect <name>` | Детали тома, включая topology и publish context |
+| | `docker volume ls --filter "name=<name>"` | Фильтрация по имени |
+| **Обновление** | `docker volume update --availability active <name>` | Установка доступности active |
+| | `docker volume update --availability drain <name>` | Перевод в режим drain (остановка задач) |
+| | `docker volume update --availability pause <name>` | Пауза для новых задач |
+| **Удаление** | `docker volume rm <name>` | Удаление тома (только если не in use) |
+| | `docker volume rm -f <name>` | Принудительное удаление (опасно!) |
 
 ## Дополнительная информация
 
@@ -133,9 +189,9 @@ docker service create \
 #### Том "завис" в состоянии монтирования (Published)
 
 Если сервис не запускается, так как том считается занятым другим узлом:
-1. Проверьте статус: `docker volume cluster inspect <name>`.
+1. Проверьте статус: `docker volume inspect <name>`.
 2. Если `NodeID` указывает на узел, который вышел из строя, Swarm может потребоваться до 2–5 минут для автоматического перехвата (timeout).
-3. Принудительное освобождение (опасно!): `docker volume cluster update --availability drain <name>`, затем обратно в `active`.
+3. Принудительное освобождение (опасно!): `docker volume update --availability drain <name>`, затем обратно в `active`.
 
 #### Ошибка "CSI plugin not found"
 
@@ -149,9 +205,34 @@ docker plugin ls
 journalctl -u docker | grep -i "csi"
 ```
 
+### Лучшие практики
+
+- **Фиксация версий CSI-плагинов:** Всегда указывайте конкретную версию CSI-плагина в production. Использование `latest` может привести к несовместимости после автоматического обновления.
+- **Топология на всех узлах:** Назначайте `node.labels` для всех узлов кластера, включая менеджеров, если планируется размещение томов с topology requirements.
+- **Группы томов (Volume Groups):** Используйте `--group` для interchangeability томов. Это упрощает деплой stateful-сервисов с репликацией, когда Swarm может выбрать любой доступный том из группы.
+- **Доступность по умолчанию:** Создавайте тома с `--availability active` явно. Не полагайтесь на значение по умолчанию в автоматизированных пайплайнах.
+- **Резервное копирование:** Планируйте стратегию бэкапа до деплоя CSI-томов. Не все драйверы поддерживают снапшоты; используйте sidecar-сервисы или внешние инструменты.
+- **Сеть и DNS:** Убедитесь, что узлы могут разрешать DNS-имена хранилища (Ceph monitors, SAN IP). При сбоях DNS Swarm будет считать том недоступным.
+- **Мониторинг:** Добавьте healthcheck для сервисов, использующих кластерные тома. В случае недоступности хранилища Swarm должен перезапустить задачу на другом узле.
+- **Ограничение размера:** Используйте `--limit-bytes` и `--required-bytes` для предотвращения переполнения хранилища. Без лимитов один сервис может заполнить весь пул.
+- **Режим доступа:** Для баз данных используйте `--scope single --sharing none` (RWO). Для общих ресурсов (конфиги, статика) — `--scope multi --sharing all` (RWX).
+- **Удаление томов:** Перед `docker volume rm` убедитесь, что сервисы, использующие том, остановлены. Используйте `docker volume update --availability drain` для корректного освобождения.
+- **Планирование аварийного восстановления:** Документируйте процедуру ручного переключения доступности тома (`active` → `drain` → `active`) на другой узел в случае отказа.
+- **Тестирование отказоустойчивости:** Регулярно проверяйте поведение Swarm при отключении узла с томом. Убедитесь, что задача перезапускается в пределах SLA.
+
+## Особые случаи и ограничения
+
+- **CSI plugin must be on all managers:** Если плагин не установлен на менеджере, то при изменении лидерства этот менеджер не сможет управлять томами. Это частая причина "зависших" томов.
+- **Cluster Volumes only for Services:** Кластерные тома нельзя использовать в обычных контейнерах (`docker run`). Только в сервисах Swarm (`docker service create`).
+- **Immutable topology:** После создания тома с `--topology-required` изменить топологию нельзя. Необходимо создать новый том и мигрировать данные.
+- **Single-node scope limitation:** При `--scope single` том может быть смонтирован только на одном узле одновременно. При попытке запуска второй реплики на другом узле Swarm будет ждать освобождения тома.
+- **Drain не освобождает том мгновенно:** При `docker volume update --availability drain` Swarm останавливает задачи, использующие том, но физическое отмонтирование может занимать несколько секунд. Не удаляйте том сразу после drain.
+- **State transition delay:** Известная проблема: том может оставаться в статусе `in use` после удаления сервиса. Для принудительного пересчёта состояния создайте любой новый сервис (даже временный) или дождитесь 1–2 минут.
+- **Block vs Mount access type:** `--type block` предоставляет блочное устройство (для БД), `--type mount` — файловую систему. Некоторые CSI-драйверы поддерживают только mount.
+- **Резервное копирование RWX:** ПриRWX-доступе (`--sharing all`) создание консистентного снапшота требует координированной остановки всех задач, использующих том, или использования flush+freeze на уровне ФС.
+
 ### Смотрите также
 
 - **[Базовое управление томами в Swarm](./swarm_volumes.md)** — основы NFS и локальных томов.
 - **[Docker Volumes (общее)](../Docker/Docker_fs/docker_volumes.md)** — архитектура хранилища Docker.
 - **[Секреты и конфигурации](./swarm_secrets_configs.md)** — управление неперсистентными данными.
-- **[Продвинутые возможности CSI в Kubernetes](../Kubernetes/Storage/CSI/csi_advanced.md)** — сравнение реализации.

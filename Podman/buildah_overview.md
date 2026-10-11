@@ -790,6 +790,7 @@ journalctl --user -u my-container.service -f
 - **[Rootless режим в Podman](./podman_rootless.md)** — детали работы `fuse-overlayfs` и user namespaces.
 - **[Skopeo: Транспортировка](./skopeo_overview.md)** — перемещение образов между реестрами и транспортами.
 - **[Интеграция с Ansible](../Ansible/ansible_buildah_image_building.md)** — автоматизация сборки через плейбуки.
+- **[Бенчмарк Kaniko vs BuildKit vs Buildah в кластере](../../Docker/Dockerfile/dockerfile_build_tools_benchmark.md)** — замер времени, CPU и памяти сборки в Kubernetes с GitLab Runner.
 
 ### Ссылки
 - **[Официальный репозиторий Buildah](https://github.com/podman-container-tools/buildah)**
@@ -800,3 +801,5 @@ journalctl --user -u my-container.service -f
 - Переходите на скриптовую сборку Buildah, если вам нужны сверхмалые образы (Distroless) или сложная логика на этапе билда.
 - Для отладки используйте `buildah unshare`, чтобы войти в пространство имен пользователя и увидеть файловую систему так же, как её видит Buildah.
 - В CI/CD вместо Docker-in-Docker используйте Buildah: нет привилегированного демона и сокета, сборка выполняется в user space. Подробности — в сценарии сборки в Kubernetes.
+
+# force reindex test

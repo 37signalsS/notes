@@ -141,7 +141,7 @@ Ceph является основным решением для сетевого 
 | Драйвер | Тип | Режим доступа | Примеры использования |
 |---------|-----|---------------|-------------|
 | **Ceph CSI RBD** | Блочное | RWO, ROX | [PV/PVC Scenarios (RBD)](../pv_and_pvc_scenarios.md#динамическое-выделение-ceph-rbd) |
-| **Ceph CSI CephFS** | Файловое | RWX, ROX | [Сравнение CSI-драйверов](../../CSI/csi_drivers_comparison.md) |
+| **Ceph CSI CephFS** | Файловое | RWX, ROX | [Сравнение CSI-драйверов](../CSI/csi_drivers_comparison.md) |
 
 ### Администрирование и мониторинг
 
@@ -260,5 +260,13 @@ ceph -w
 - [Erasure Coding](./ceph_erasure_coding.md) — экономия места для RGW/CephFS
 - [RGW (S3-compatible)](./ceph_rgw_s3.md) — объектное хранилище
 - [Сетевая архитектура](./ceph_networking.md) — настройка public/cluster сетей
+- [Развертывание через cephadm](./cephadm_deployment.md) — bootstrap кластера, добавление хостов и OSD
+- [Углубленная диагностика OSD/PG](./ceph_osd_troubleshooting.md) — recovery procedures, peering failures
+- [Обслуживание BlueStore](./ceph_bluestore_maintenance.md) — fsck, repair, DB/WAL
+- [Тюнинг OSD и выбор оборудования](./ceph_osd_tuning.md) — hardware selection, mclock, compression
+- [CRUSH: продвинутые темы](./ceph_crush_advanced.md) — карта, tunables, failure domain design
+- [Безопасность Ceph](./ceph_security_hardening.md) — CephX, messenger v2.1, audit, encryption
+- [Capacity Planning](./ceph_capacity_planning.md) — sizing, рост, N+1, pool sizing
+- [RGW Lifecycle Management](./ceph_rgw_lifecycle.md) — lifecycle policies, versioning, Object Lock
 - [Резервное копирование и DR](./ceph_backup_and_dr.md) — бэкап данных и конфигурации
 - [Бенчмаркинг](./ceph_benchmarks.md) — тестирование производительности

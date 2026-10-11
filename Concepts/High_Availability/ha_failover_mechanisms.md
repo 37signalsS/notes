@@ -27,7 +27,7 @@
 
 Процесс переключения — это не просто смена IP, а сложная последовательность действий, направленная на сохранение целостности данных:
 
-1.  **Обнаружение (Detection):** Фиксация сбоя. В 2026 году стандартом де-факто для критичных систем стал протокол **BFD (Bidirectional Forwarding Detection)**, позволяющий обнаруживать обрывы линков на миллисекундном уровне.
+1.  **Обнаружение (Detection):** Фиксация сбоя. Стандартом де-факто для критичных систем стал протокол **BFD (Bidirectional Forwarding Detection)**, позволяющий обнаруживать обрывы линков на миллисекундном уровне.
 2.  **Изоляция (Fencing):** Гарантированное отстранение сбойного узла от ресурсов. Если мы не уверены, что старый мастер «мертв» (он может просто зависнуть), мы обязаны его изолировать перед запуском нового.
 3.  **Выбор лидера (Leader Election):** Процесс консенсуса. В простых системах (Keepalived) используется статический приоритет. В сложных (etcd, Consul, Kubernetes) — алгоритмы консенсуса (**Raft**, **Paxos**), требующие кворума.
 4.  **Активация (Promotion):** Перенос ресурсов на новый узел. Включает в себя Gratuitous ARP (для VIP), монтирование файловых систем и уведомление соседних сервисов.
@@ -45,7 +45,7 @@
 *   **Слишком высокая чувствительность:** кластер будет переключаться при малейшей задержке в сети, создавая нестабильность («дребезг»).
 *   **Слишком низкая чувствительность:** система будет простаивать минуты, пока мониторинг не поймет, что сервер мертв.
 
-**Решение в 2026 году:** Использование **Hold-off таймеров** и экспоненциальных задержек для возврата роли (Preemption Delay), чтобы предотвратить циклические переключения.
+**Решение:** Использование Hold-off таймеров и экспоненциальных задержек для возврата роли (Preemption Delay), чтобы предотвратить циклические переключения.
 
 **Практическая настройка anti-flapping в Keepalived:**
 
@@ -66,7 +66,7 @@ vrrp_instance VI_1 {
 
   authentication {
     auth_type PASS
-    auth_pass secure_password
+    auth_pass <секрет_32_символа>
   }
 
   virtual_ipaddress {
@@ -96,6 +96,25 @@ vrrp_script check_service {
 | **База данных** | 2 | 5 | 5 | Yes | Медленное (10 сек), чтобы не терять соединения |
 | **Нестабильная сеть** | 3 | 5 | 10 | Yes | Максимальная устойчивость к ложным срабатываниям |
 
+**Валидация anti-flapping конфигурации:**
+
+```bash
+# Проверка синтаксиса keepalived.conf
+keepalived --dont-fork --log-console --check
+
+# Проверка текущего состояния VRRP
+ip addr show eth0 | grep 192.168.1.100
+
+# Мониторинг переключений в реальном времени
+journalctl -u keepalived -f
+
+# Проверка multicast-группы
+ip maddr show dev eth0
+
+# Тест: принудительная смена состояния (только для тестовых сред!)
+# echo "master" > /proc/self/fd/2  # симуляция перехода в BACKUP
+```
+
 ## Механизмы реализации на разных уровнях
 
 #### Сетевой уровень (L2/L3)
@@ -105,7 +124,7 @@ vrrp_script check_service {
 #### Глобальный уровень (DNS/GSLB)
 Переключение между регионами.
 *   **Метод:** Балансировщик DNS отдает IP живого региона на основе Health Checks.
-*   **Ограничение:** TTL (кеширование на стороне клиента). В 2026 году используются значения TTL 10-30 сек.
+*   **Ограничение:** TTL (кеширование на стороне клиента). Используются значения TTL 10-30 сек.
 
 #### Клиентский уровень (Client-side Failover)
 Логика «умного клиента» (например, драйверы PostgreSQL или MongoDB). Клиент сам пробует следующий IP из списка при ошибке. Это самый дешевый, но сложный в управлении способ.
@@ -137,7 +156,51 @@ vrrp_script check_service {
 2.  **Hard Fencing (Node-level / STONITH):** Принудительное воздействие на «железо».
     *   **STONITH (Shoot The Other Node In The Head):** Отключение питания через IPMI, BMC, iDRAC или управляемые PDU.
     *   **Fabric Fencing:** Блокировка порта на FC/Ethernet коммутаторе, лишающая узел доступа к сети или хранилищу.
-    *   **Storage Fencing:** Использование SCSI-3 Persistent Reservations для монопольного захвата диска новым лидером.
+     *   **Storage Fencing:** Использование SCSI-3 Persistent Reservations для монопольного захвата диска новым лидером.
+
+### Целостность данных при Failover
+
+Failover — это не только смена IP или роли, но и гарантия того, что данные не повредились в процессе переключения. Без проверки целостности существует риск "тихого" повреждения данных, которое проявится позже.
+
+#### Проверка целостности данных
+
+Перед и после failover необходимо убедиться, что данные на новом мастере актуальны и неповреждены:
+
+1.  **Контрольные суммы (Checksums):**
+    - **Для файлов:** `sha256sum /path/to/file`, `md5sum` (для быстрой проверки)
+    - **Для баз данных:** `pg_checksums` (PostgreSQL), `CHECKSUM TABLE` (MySQL), `db.hash()` (MongoDB)
+    - **Для блочных устройств:** `md5sum /dev/sdX`, `zfs scrub`
+
+2.  **Сравнение реплик:**
+    - **PostgreSQL:** `pg_rewind` (проверка и исправление расхождений), `pg_comparator`
+    - **MySQL:** `pt-table-checksum` (Percona Toolkit), `replica_parallel_workers`
+    - **MongoDB:** `rs.printSecondaryReplicationInfo()`, сравнение `db.hash()`
+
+3.  **Валидация после failover:**
+    - Проверка `read_only` флага на новом мастере (должен быть OFF)
+    - Проверка репликации: `SHOW SLAVE STATUS` (MySQL), `rs.status()` (MongoDB)
+    - Тест записи: вставка тестовой записи и её удаление
+
+#### Data Drift и его последствия
+
+**Data Drift** — расхождение данных между Primary и Secondary после failover. Причины:
+- Асинхронная репликация с задержкой
+- Сетевые разрывы во время репликации
+- Ошибки при применении транзакций
+
+**Последствия:**
+- Потеря данных (если новый мастер не имеет последних изменений)
+- Некорректная работа приложения (ошибки целостности)
+- Каскадные сбои при попытке отката (rollback)
+
+#### Процедуры проверки
+
+| Этап | Действие | Команды |
+| :--- | :--- | :--- |
+| **До failover** | Проверка репликации | `SHOW SLAVE STATUS`, `rs.printSecondaryReplicationInfo()` |
+| **Во время failover** | Мониторинг логов | `journalctl -u pacemaker -f`, `watch -n1 'cat /proc/drbd'` |
+| **После failover** | Проверка целостности | `pg_checksums`, `pt-table-checksum`, `db.hash()` |
+| **Пост-фактум** | Аудит данных | Сравнение контрольных сумм, проверка репликации |
 
 ## Практические сценарии
 
@@ -162,7 +225,7 @@ vrrp_instance VI_1 {
 
   authentication {
     auth_type PASS
-    auth_pass secure_password         # Пароль для VRRP-трафика
+    auth_pass <секрет_32_символа>         # Пароль для VRRP-трафика
   }
 
   virtual_ipaddress {
@@ -173,6 +236,50 @@ vrrp_instance VI_1 {
     check_service
   }
 }
+```
+
+**Системная настройка (оба узла):**
+
+```bash
+# Разрешить привязку VIP до его назначения интерфейсу
+echo "net.ipv4.ip_nonlocal_bind=1" | sudo tee -a /etc/sysctl.d/99-ha.conf
+sudo sysctl -p /etc/sysctl.d/99-ha.conf
+
+# Параметры ARP для корректного переключения VIP
+sudo sysctl -w net.ipv4.conf.all.arp_ignore=0
+sudo sysctl -w net.ipv4.conf.all.arp_announce=1
+sudo sysctl -w net.ipv4.conf.all.rp_filter=2
+
+# Включить persistently
+cat <<EOF | sudo tee /etc/sysctl.d/99-ha.conf
+net.ipv4.ip_nonlocal_bind=1
+net.ipv4.conf.all.arp_ignore=0
+net.ipv4.conf.all.arp_announce=1
+net.ipv4.conf.all.rp_filter=2
+EOF
+sudo sysctl -p /etc/sysctl.d/99-ha.conf
+```
+
+**Проверка параметров:**
+```bash
+sysctl net.ipv4.ip_nonlocal_bind net.ipv4.conf.all.arp_ignore net.ipv4.conf.all.arp_announce net.ipv4.conf.all.rp_filter
+```
+
+**Валидация IP Failover:**
+
+```bash
+# Проверка состояния VRRP
+sudo ip addr show eth0 | grep 192.168.1.100
+
+# Тест failover: остановка сервиса на MASTER
+sudo systemctl stop nginx
+# → VIP должен мигрировать на BACKUP в течение 1-3 сек
+
+# Проверка логов VRRP
+sudo journalctl -u keepalived -f
+
+# Проверка ARP-таблицы на соседнем хосте
+arp -a | grep 192.168.1.100
 ```
 
 ### Кластерное управление ресурсами (Pacemaker + Corosync)
@@ -302,6 +409,12 @@ sudo pcs cluster start node1
 | **Узел не отдает MASTER** | Hold-off таймер или `nopreempt`. | Проверить флаг `nopreempt` в конфиге. Проверить логи на наличие ошибок `vrrp_script`. | `sudo crm_verify -L -V` — проверка конфигурации CIB; `sudo pcs resource failcount show` — счетчики отказов ресурсов |
 | **Fencing Loop** | Циклическая перезагрузка узла по STONITH. | Проверить связь с QDevice. Убедиться, что узел успевает загрузиться и войти в кластер до таймаута. | `sudo pcs stonith history` — история fencing-событий; `ipmitool -H <BMC_IP> -U admin -P pass power status` — проверка доступности BMC; `sudo journalctl -u corosync` — логи Corosync |
 | **VIP не мигрирует** | Проблема с track_script или сетью. | Проверить, что скрипт проверки возвращает exit 0 на BACKUP. Проверить доступность VIP через `ip addr`. | `ip addr show <iface> \| grep <VIP>` — проверка привязки VIP; `sudo keepalived --dont-fork --log-console` — отладочный запуск Keepalived; `sudo pcs constraint show -a` — проверка ограничений |
+| **VRRP аутентификация не работает** | Несовпадение паролей или `auth_type` между узлами. | Сравнить `auth_type` и `auth_pass` в конфигах MASTER и BACKUP. | `grep -E "auth_type|auth_pass" /etc/keepalived/keepalived.conf` — проверка конфигурации; `tcpdump -i eth0 vrrp -A` — перехват VRRP-пакетов для проверки аутентификации |
+| **Corosync: узел не joining** | Проблемы с firewall, MTU или knet. | Проверить открытые порты UDP 5404-5405, MTU на интерфейсах. | `corosync-cfgtool -s` — статус линков; `ss -u -lpn \| grep 540` — проверка портов; `ip link show <iface>` — проверка MTU |
+| **STONITH не срабатывает** | Неправильный агент fencing или нет доступа к BMC. | Проверить connectivity к BMC: `ping <BMC_IP>`, `ipmitool -H <BMC_IP> -U admin -P pass power status`. | `sudo pcs stonith show` — список агентов; `stonith_admin -H` — тест fencing; `sudo pcs stonith history` — история |
+| **Дребезг после ребута** | Все узлы стартуют одновременно и борются за MASTER. | Проверить задержки запуска systemd для keepalived/pacemaker. | `systemctl show -p FragmentPath,After keepalived` — зависимости сервиса; `timedatectl` — синхронизация часов; `sudo journalctl -u keepalived` — логи старта |
+| **Потеря кворума при 2 узлах** | Отсутствует QDevice или `two_node: 1`. | Проверить настройку quorum в corosync.conf. | `cat /etc/corosync/corosync.conf \| grep -A5 quorum`; `corosync-quorumtool` — текущее состояние кворума; `sudo pcs quorum show` |
+| **pcs: ресурс не запускается** | OCF-агент возвращает ошибку или не хватает зависимостей. | Проверить логи CRM: `sudo pcs resource debug-start <resource>`. | `pcs resource config <resource>` — конфигурация; `crm_resource -r <resource> -V` — детали; `pcs resource cleanup <resource>` |
 
 ## Лучшие практики (Best Practices)
 
@@ -325,13 +438,19 @@ sudo pcs cluster start node1
 - **Fencing через IPMI с задержкой:** Если BMC-интерфейс отвечает медленно (> 5 сек), fencing может завершиться до фактического отключения узла. Увеличьте `pcmk_delay_max` в конфигурации stonith.
 - **Приоритет VRRP и preempt:** Если MASTER-узел имеет приоритет 200, а BACKUP — 100, и на BACKUP установлен `nopreempt`, BACKUP никогда не вернет роль MASTER после восстановления. Используйте `preempt_delay` вместо полного `nopreempt`, если нужен возврат с задержкой.
 - **Дребезг при восстановлении питания:** Если в стойке отключалось питание и все узлы включились одновременно, они могут начать борьбу за MASTER. Решение: `vrrp_script` с `weight` + `nopreempt` или рандомизация задержки запуска Keepalived.
+- **NTP дрейф > 500 мс:** Corosync/Pacemaker используют время для детекции сбоев. Дрейф часов приводит к ложным fencing-событиям. Настройте `chrony` с `makestep` и мониторьте `chronyc tracking`.
+- **ARP кеширование на соседних хостах:** После failover соседние хосты могут еще держать старый MAC-адрес в ARP-таблице. Решение: `garp_interval` в Keepalived или `arping` после подъема VIP.
+- **Firewall блокирует VRRP/Corosync:** Порт UDP 112 (VRRP) и UDP 5404-5405 (Corosync) должны быть открыты между узлами кластера.
+- **Конфликт VIP с существующим адресом:** Если VIP уже занят другим устройством в сети, VRRP-переключение не произойдет. Проверяйте: `arping -D -I eth0 192.168.1.100`.
+- **Fencing при недоступном BMC:** Если BMC недоступен, STONITH завершится таймаутом. Добавьте redundant BMC-интерфейсы или используйте Fabric Fencing (блокировка порта на коммутаторе).
+- **Долгий запуск PostgreSQL Patroni:** При холодном старте Patroni может не успеть запуститься за таймаут `start timeout`. Увеличьте `pcs resource op defaults timeout=120s` для stateful-сервисов.
 
 ## Дополнительная информация
 
 ### Настройка таймингов и предотвращение Flapping
 
 Тайминги Heartbeat определяют баланс между скоростью обнаружения отказа и стабильностью системы:
-- **Интервал (Interval):** Частота отправки сигналов (обычно 1 секунда). В 2026 году для критичных систем используется **BFD** с интервалом 50-100 мс.
+- **Интервал (Interval):** Частота отправки сигналов (обычно 1 секунда). Для критичных систем используется **BFD** с интервалом 50-100 мс.
 - **Таймаут (Dead interval):** Время, после которого узел считается мертвым. Обычно `3 * Interval`.
 - **Hold-off (Preemption Delay):** Задержка перед возвратом роли MASTER восстановившемуся узлу. Рекомендуется ставить 30-300 секунд, чтобы убедиться в стабильности узла после загрузки.
 

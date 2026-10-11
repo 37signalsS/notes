@@ -1,661 +1,943 @@
-# etcdctl и etcdutl: шпаргалка по командам
+# Cheatsheet: etcdctl — полный справочник команд
 
-Данный справочник содержит исчерпывающий набор команд для управления кластером etcd v3.7.1 и выше.
+**Актуально для:** etcd 3.7.x (основные команды неизменны с 3.5; `etcdutl` и колонки `STORAGE VERSION`/`DB SIZE IN USE` в `endpoint status` — с 3.6)
+
+Справочник по CLI-утилите `etcdctl` для управления кластером etcd. Содержит основные команды с флагами, примерами и ожидаемым выводом. Команды сгруппированы по областям: KV-операции, watch, lease, concurrency, cluster, maintenance, RBAC, backup/restore. Полный список команд и флагов — в `etcdctl --help` и `etcdctl options`.
 
 ## Определения
 
-| Инструмент / Понятие | Описание |
-| :--- | :--- |
-| **etcdctl** | Основной клиент командной строки для онлайн-взаимодействия с работающим кластером через gRPC. Используется для CRUD-операций, управления участниками, мониторинга, RBAC и создания снапшотов. |
-| **etcdutl** | (начиная с v3.6) Утилита для офлайн-операций, требующих прямого доступа к файлам данных на диске: восстановление из снапшота, дефрагментация файла БД, проверка статуса и целостности снапшотов, анализ WAL, работа с форматом базы данных. |
-| **ETCDCTL_API** | Переменная окружения для выбора версии протокола. В v3.7+ стандарт — **v3**. Допустимые значения: `2`, `3`. |
-| **Raft Consensus** | Алгоритм консенсуса, лежащий в основе etcd. Обеспечивает репликацию журнала записей (log replication) между участниками кластера и выбор лидера. |
-| **WAL (Write-Ahead Log)** | Журнал предзаписи в формате protobuf. Каждая запись проходит через WAL перед фиксацией в BoltDB. Гарантирует durability: после `fsync` в WAL операция не потеряется даже при падении процесса. |
-| **BoltDB** | Встроенная БД на основе B+ дерева. Хранит все ключ-значения и метаданные MVCC (версии, модификации). Файл базы данных фрагментируется при компакции; для возврата места в ОС требуется дефрагментация. |
-| **Lease (Аренда)** | Механизм привязки ключей к временному контракту (TTL). Если TTL истекает без keep-alive, ключ автоматически удаляется. Lease ID — 64-битное число, выбранное лидером. |
-| **Watch** | Механизм long-polling для отслеживания изменений ключей в реальном времени. Поддерживает исторический диапазон (`--rev`) и прогрессивные уведомления. |
-| **Revision** | Глобально монотонно возрастающий номер версии состояния кластера. Каждая `put`, `del` или `txn` увеличивает revision. |
-| **Compact (Компакция)** | Удаление старых ревизий BoltDB. Блокирует чтение по старым ревизиям, но не уменьшает размер файла на диске. |
-| **Defrag (Дефрагментация)** | Онлайн-операция (v3.0+) или офлайн-операция (`etcdutl`), которая перестраивает файл BoltDB и возвращает свободное место операционной системе. Блокирует запись и чтение на узле на время выполнения. |
-| **Alarm (Аларм)** | Сигнал нештатного состояния узла. Типы: `NOSPACE` (превышена квота диска) и `CORRUPT` (поврежден файл данных). Алармы не распространяются автоматически между участниками. |
-| **Learner** | Участник кластера без права голоса. Получает репликацию от лидера, но не участвует в кворуме и не может стать лидером. |
-| **MVCC (Multi-Version Concurrency Control)** | Архитектура хранения, при которой каждое изменение ключа создает новую версию, а не перезаписывает старое значение. Обеспечивает согласованность reads без блокировок. |
+| Термин | Определение |
+|--------|-------------|
+| **etcdctl** | CLI-утилита для управления etcd: чтение/запись данных, управление кластером, мониторинг, бэкап |
+| **ETCDCTL_API** | Версия API etcdctl: `2` или `3`. С etcd 3.4 по умолчанию `3`. API v2 удалена из сервера etcd в 3.6 (флаг `--enable-v2` удалён) — для etcd 3.6+ работает только v3 |
+| **KV** | Key-Value операции (get, put, del, txn) — основной API etcd |
+| **Watch** | Механизм подписки на изменения ключей. Реализован как gRPC-стрим (bidirectional streaming), не long-polling |
+| **Lease** | Аренда с TTL — механизм автоматического удаления ключей по истечении времени |
+| **Compact** | Удаление старых ревизий из истории MVCC. Команда: `etcdctl compaction <revision>` (`compact` работает как префикс благодаря prefix matching в cobra) |
+| **Defrag** | Дефрагментация BoltDB — возврат места в ОС. Онлайн-операция, блокирует чтение/запись на узле |
+| **Alarm** | Сигнал о проблеме с кластером. Типы: `NOSPACE` и `CORRUPT`. Алармы не распространяются автоматически между участниками — каждый узел хранит свои |
+| **MVCC** | Multi-Version Concurrency Control — модель версионирования etcd. Каждая запись имеет уникальную ревизию |
+| **BoltDB** | Встроенная key-value БД (bbolt), хранилище etcd. Файл `member/snap/db`. Фрагментируется при обновлениях и удалениях ключей (свободные страницы остаются в freelist); для возврата места в ОС требуется дефрагментация |
+| **Lease ID** | 64-битное число, генерируемое сервером (лидером) при `lease grant`, если клиент не указало ID явно |
 
----
+## Основные концепции
 
-## Базовые концепции
-
-### Настройка окружения и аутентификация
-
-Для постоянной работы рекомендуется настроить переменные окружения, чтобы не передавать флаги TLS и адреса в каждой команде.
+### Переменные окружения
 
 ```bash
-# Базовая настройка (API v3)
-export ETCDCTL_API=3
-export ETCDCTL_ENDPOINTS="https://127.0.0.1:2379"
-
-# Настройка TLS (для Kubernetes и защищенных кластеров)
-export ETCDCTL_CACERT="/etc/etcd/ca.crt"
-export ETCDCTL_CERT="/etc/etcd/server.crt"
-export ETCDCTL_KEY="/etc/etcd/server.key"
-
-# Настройка аутентификации (если включен RBAC)
-export ETCDCTL_USER="admin:password"
+export ETCDCTL_API=3                          # версия API (v3 — по умолчанию с 3.4)
+export ETCDCTL_ENDPOINTS="https://10.0.0.11:2379,https://10.0.0.12:2379,https://10.0.0.13:2379"
+export ETCDCTL_USER="admin:password"          # формат username[:password]
+export ETCDCTL_PASSWORD="password"            # пароль отдельно от пользователя
+export ETCDCTL_CACERT="/etc/kubernetes/pki/etcd/ca.crt"
+export ETCDCTL_CERT="/etc/kubernetes/pki/etcd/server.crt"
+export ETCDCTL_KEY="/etc/kubernetes/pki/etcd/server.key"
+export ETCDCTL_DIAL_TIMEOUT=5                 # тайм-аут подключения, сек (по умолчанию 2)
+export ETCDCTL_COMMAND_TIMEOUT=5              # тайм-аут выполнения команды, сек (по умолчанию 5)
+export ETCDCTL_KEEPALIVE_TIME=2               # gRPC keepalive, сек (по умолчанию 2)
+export ETCDCTL_KEEPALIVE_TIMEOUT=6            # тайм-аут keepalive, сек (по умолчанию 6)
+export ETCDCTL_MAX_REQUEST_BYTES=2097152      # макс. размер запроса, байт (по умолчанию 2 MiB)
+export ETCDCTL_MAX_RECV_BYTES=2147483647      # макс. размер ответа, байт (по умолчанию MaxInt32)
+export ETCDCTL_AUTH_JWT_TOKEN="token"         # JWT-токен (при --auth-token=jwt)
+export ETCDCTL_DISCOVERY_SRV="example.com"    # DNS SRV-обнаружение кластера
 ```
 
-**Валидация:**
-```bash
-# Проверка успешного подключения
-etcdctl --version
-# → etcdctl version: 3.7.1
-
-# Проверка endpoints
-etcdctl endpoint status --cluster -w table
-# Должен отображать HEALTH=true для всех узлов
-```
+**Правила именования:** любой глобальный флаг `--foo-bar` доступен как переменная `ETCDCTL_FOO_BAR` (префикс `ETCDCTL_`, буквы в верхнем регистре, дефисы заменены подчёркиваниями). Переменные с префиксом `ETCDCTL_` работают **только** для глобальных флагов. `ETCDCTL_API` — специальная переменная для внутреннего использования etcdctl.
 
 ### Форматы вывода
 
-Флаг `-w` (или `--write-out`) изменяет формат ответа:
-- `simple` — текстовый (по умолчанию).
-- `table` — табличный (удобно для чтения).
-- `json` — для автоматизации и скриптов.
+```bash
+etcdctl --write-out=simple ...   # по умолчанию, человекочитаемый
+etcdctl --write-out=json ...     # JSON (ключи и значения кодируются в base64)
+etcdctl --write-out=protobuf ... # бинарный protobuf
+etcdctl --write-out=fields ...   # поля через табуляцию
+etcdctl --write-out=table ...    # таблица (для endpoint, member, snapshot status)
+```
 
-### gRPC path и параметры подключения
+### Глобальные флаги
 
-Все команды `etcdctl` маршрутизируются через gRPC endpoint (по умолчанию `/etcdserverpb.Maintenance/Defragment` и аналогичные). Важно:
-- Подключение инициализируется при каждой команде (нет глобального keep-alive).
-- Тайм-ауты настраиваются через `ETCDCTL_TIMEOUT` (по умолчанию зависит от версии клиента, обычно 5–10 секунд).
-- В Kubernetes стандартные пути к сертификатам: `/etc/kubernetes/pki/etcd/ca.crt`, `/etc/kubernetes/pki/etcd/server.crt`, `/etc/kubernetes/pki/etcd/server.key`.
+```bash
+etcdctl --endpoints=... --dial-timeout=2 --command-timeout=5 \
+  --keepalive-time=2 --keepalive-timeout=6 \
+  --max-request-bytes=2097152 --max-recv-bytes=2147483647 \
+  --insecure-transport --insecure-skip-tls-verify \
+  --cert=... --key=... --cacert=... --user=... --password=... ...
+```
 
-### Теория leases и watches
+Полный список: `etcdctl options` (появилась в 3.6+).
 
-**Lease TTL:**
-- TTL указывается в секундах при создании (`lease grant 60`).
-- Минимальный TTL: 1 секунда. Максимальный: зависит от `--experimental-lease-ttl` (по умолчанию 9e18 секунд на сервере).
-- Keep-alive выполняется через отдельный gRPC stream. Если клиент теряет соединение, lease истекает через TTL + небольшой grace period (обычно 1–2 секунды на grace period сервера).
+### gRPC и маршрутизация команд
 
-**Watch:**
-- Watch привязан к конкретной revision. При запуске `etcdctl watch /key` без `--rev` подписка начинается с текущей revision.
-- При использовании `--rev=X` клиент получит все события, произошедшие после ревизии X, и последующие события.
-- Watch buffer имеет ограниченный размер. Если клиент слишком медленно обрабатывает события, сервер закрывает стрим с ошибкой `etcdserver: mvcc: watch store is out of space`. Клиент должен переподключиться с последней известной revision.
+Все команды etcdctl выполняются через gRPC. Разные группы команд используют разные сервисы: KV-операции (get/put/del/txn/compaction) — `/etcdserverpb.KV/*`, watch — `/etcdserverpb.Watch/*`, lease — `/etcdserverpb.Lease/*`, cluster (member/move-leader) — `/etcdserverpb.Cluster/*`, maintenance (endpoint/defrag/snapshot/alarm) — `/etcdserverpb.Maintenance/*`, auth/user/role — `/etcdserverpb.Auth/*`. Подключение инициализируется при каждой команде (нет глобального keep-alive между вызовами etcdctl).
 
-### Теория дефрагментации и компакции
+### Теория: Lease (аренда)
 
-**Компакция:**
-- Помечает старые версии ключей как удаленные в BoltDB, но не уменьшает физический размер файла.
-- Блокирует чтение по ревизиям, старше compacted. Read через `get --rev=1000` после `compaction 5000` вернет ошибку `mvcc: required revision has been compacted`.
-- Kubernetes автоматически запускает компакцию каждые 5 минут через `--auto-compaction-retention=5m`.
+- **TTL**: время жизни аренды в секундах. Минимальный TTL = `ceil(1.5 × election-timeout)` (при дефолтном `election-timeout=1s` — **2 секунды**); запрошенный TTL ниже минимума продлевается до минимума. Максимальный TTL = `9 000 000 000` секунд (~285 лет, константа `MaxLeaseTTL` в `server/lease/lessor.go`); превышение возвращает ошибку `etcdserver: too large lease TTL`
+- **Экспири**: лидер проверяет истёкшие аренды каждые **500 мс** (цикл `runLoop` lessor'а); revoked-аренды удаляются в течение ~500 мс (при ошибке revoke — повтор через 3 с)
+- **Keep-alive**: клиент отправляет продление каждые `TTL/3` секунд; продления не проходят через raft — они форвардятся на лидера напрямую
+- **Checkpoint**: оставшийся TTL сохраняется в consensus-log каждые 5 минут, но только при включённом LeaseCheckpoint (выключен по умолчанию: 3.5 — `--experimental-enable-lease-checkpoint=true`, 3.6/3.7 — `--feature-gates=LeaseCheckpoint=true`); persist remainingTTL в backend автоматический при cluster version ≥ 3.6
+- **Скорость revoke**: не более 1000 аренд в секунду (`leaseRevokeRate`)
+- **В Kubernetes** контроллеры используют leases для лидерских выборов (объекты `coordination.k8s.io/v1/Lease`)
 
-**Дефрагментация:**
-- Онлайн-операция `etcdctl defrag` блокирует запись и чтение на конкретном узле на время выполнения (от миллисекунд до секунд в зависимости от размера БД).
-- Офлайн-дефрагментация через `etcdutl defrag --data-dir` блокирует запуск etcd до завершения.
-- Параллельная дефрагментация нескольких узлов недопустима: follower'ы не могут синхронизировать логи с заблокированным лидером, что может вызвать потерю кворума.
+### Теория: Watch
 
----
+- **Стрим**: gRPC bidirectional stream; watch требует наличия лидера (клиент использует `WithRequireLeader`)
+- **Буфер**: у каждого watcher ограниченный буфер событий. Если клиент не успевает читать события (например, отстал от компакции), сервер помечает watcher как «victim» и отменяет его пакетно; клиент получает ответ с установленным `CompactRevision`, а clientv3 возвращает ошибку `mvcc: required revision has been compacted`. Ошибки «watch store is out of space» в etcd нет
+- **Метрики**: `etcd_debugging_mvcc_slow_watcher_total`, `etcd_debugging_mvcc_watcher_total`, `etcd_debugging_mvcc_watch_stream_total`
+- **Progress notify**: с `--progress-notify` сервер периодически присылает `progress notify: <revision>` — подтверждение, что стрим жив и клиент на текущей ревизии
+
+### Теория: Compact и Defrag
+
+- **Compact** — удаление старых ревизий из истории MVCC. Блокирует чтение по старым ревизиям, но **не уменьшает** размер файла на диске
+- **Defrag** — онлайн-операция, блокирует чтение и запись на узле пока rebuild'ит состояние. Запрос **не реплицируется** по кластеру — применяется только к локальному узлу; укажите все участники через `--endpoints` или `--cluster`
+- **Параллельная дефрагментация нескольких узлов недопустима**: дефрагментация блокирует чтение/запись на узле, одновременная дефрагментация всех участников делает кластер недоступным — выполняйте поочередно, узел за узлом
+- **Офлайн-дефрагментация** через `etcdutl defrag --data-dir` блокирует запуск etcd до завершения (data-dir занят утилитой)
+
+### Авто-компакция на сервере etcd
+
+```bash
+# Флаги сервера etcd (не etcdctl!)
+etcd --auto-compaction-mode=periodic --auto-compaction-retention=1h
+```
+
+- `--auto-compaction-mode`: `periodic` (по умолчанию) или `revision`
+- `--auto-compaction-retention`: окно сохраняемой истории. Дефолт `0` — авто-компакция **отключена**
+- **periodic**: значение — сколько истории хранить. Если окно > 1 часа — компакция выполняется каждый час, сохраняя полное окно; если окно ≤ 1 часа — компакция выполняется с интервалом, равным окну. Без единицы времени — часы: `5` = 5 часов
+- **revision**: компакция, когда `текущая revision - retention` достигает цели; запускается каждые 5 минут при достаточном прогрессе
+- **В Kubernetes**: kube-apiserver запускает **собственный** компактор каждые **5 минут** по умолчанию (`DefaultCompactInterval` в `staging/src/k8s.io/apiserver/pkg/storage/storagebackend/config.go`), сохраняя ~5 минут истории; он обращается к etcd с Compaction RPC, а не через флаг `--auto-compaction-retention` etcd-сервера
 
 ## Практические сценарии
 
-### CRUD и работа с ключами
+### Базовые операции (CRUD)
 
-#### Запись и чтение ключа
+#### Проверка версии и endpoints
 
 ```bash
-etcdctl put /config/app "value1"
-# → OK
+# Версия etcdctl (две строки: версия утилиты и версия API)
+etcdctl version
+# etcdctl version: 3.7.2
+# API version: 3.7
 
-etcdctl get /config/app
-# → /config/app
-# → value1
+# Проверка endpoints (здоровье: линейизуемое чтение + коммит тестовой записи)
+etcdctl endpoint health --cluster
+# 10.0.0.11:2379 is healthy: successfully committed proposal: took = 2.095242ms
+# 10.0.0.12:2379 is healthy: successfully committed proposal: took = 1.876543ms
+# 10.0.0.13:2379 is healthy: successfully committed proposal: took = 2.112456ms
+
+# Статус endpoints (версия, размер БД, лидер, raft-индексы)
+etcdctl endpoint status --cluster -w table
 ```
 
-**Валидация:**
-```bash
-# Проверить существование ключа (exit code 0 = существует)
-etcdctl get /config/app --exit-code
-echo $?
-# → 0
+**Валидация:** `endpoint health` должен показать `is healthy` для каждого узла; `endpoint status` — одинаковые `VERSION` на всех узлах и ровно один `IS LEADER=true`.
 
-# Проверить отсутствие ключа
-etcdctl get /config/nonexistent --exit-code
-echo $?
-# → 1
+#### Запись данных (put)
+
+```bash
+# Простая запись
+etcdctl put /config/app/key1 "value1"
+# OK
+
+# Запись с арендой (TTL 60 секунд)
+etcdctl put /config/app/key2 "value2" --lease=123456
+
+# Запись с возвратом предыдущего значения
+etcdctl put /config/app/key1 "new_value" --prev-kv
+
+# Запись только значения (без ключа) — для обновления значения существующего ключа
+etcdctl put /config/app/key1 --ignore-value
+# (значение читается из stdin)
+
+# Запись только аренды (без изменения значения)
+etcdctl put /config/app/key1 --ignore-lease --lease=123456
+
+# Значение из stdin (если значение не указано, читается из stdin)
+echo "multi
+line
+value" | etcdctl put /config/app/key3
+# (многострочные значения требуют двойных кавычек при передаче аргументом)
+
+# Значение, начинающееся с дефиса — используйте "--" разделитель
+etcdctl put /config/app/key4 -- "-value-starting-with-dash"
 ```
 
-#### Работа с префиксами
+**Флаги put:** `--lease=<id>`, `--prev-kv`, `--ignore-value`, `--ignore-lease`.
+
+#### Чтение данных (get)
 
 ```bash
-# Чтение всех ключей в директории
-etcdctl get /config/ --prefix
+# Простое чтение
+etcdctl get /config/app/key1
+# /config/app/key1
+# value1
 
-# Только названия ключей (без значений)
-etcdctl get /config/ --prefix --keys-only
+# Чтение по префиксу
+etcdctl get /config/app/ --prefix
 
-# С ограничением количества результатов
+# Чтение с лимитом
 etcdctl get /config/ --prefix --limit=10
 
-# С сортировкой по ключу (полезно для инспекции)
-etcdctl get /config/ --prefix --sort
+# Чтение с сортировкой (по ключу, имени, ревизии создания/модификации или значению)
+etcdctl get /config/ --prefix --sort-by=KEY --order=ASCEND
+# --sort-by: CREATE | KEY | MODIFY | VALUE | VERSION
+# --order: ASCEND | DESCEND
+
+# Чтение только ключей (без значений)
+etcdctl get /config/ --prefix --keys-only
+
+# Чтение только значений (без ключей)
+etcdctl get /config/app/key1 --print-value-only
+
+# Чтение с определённой ревизии (историческое чтение)
+etcdctl get /config/app/key1 --rev=1000
+
+# Чтение всех ключей (пустой prefix + от начала)
+etcdctl get "" --from-key --prefix
+
+# Чтение в hex-формате (для бинарных ключей)
+etcdctl get /config/app/key1 --hex
+
+# Чтение с фильтрами по ревизиям
+etcdctl get /config/ --prefix --min-create-revision=100 --max-create-revision=200
+etcdctl get /config/ --prefix --min-mod-revision=100 --max-mod-revision=200
+
+# Чтение с уровнем согласованности: l (linearizable, по умолчанию) или s (serializable)
+etcdctl get /config/app/key1 --consistency=s
+
+# Чтение в JSON (ключи и значения в base64)
+etcdctl get /config/app/key1 -w json
+# {"header":{"cluster_id":...,"member_id":...,"revision":123,"raft_term":5},"kvs":[{"key":"L2NvbmZpZy9hcHAva2V5MQ==","value":"dmFsdWUx","create_revision":"1","mod_revision":"1","version":"1"}],"count":"1"}
 ```
 
-**Troubleshooting:**
-- Если `get --prefix` возвращает слишком много ключей, добавьте `--limit=N`.
-- Для больших директорий используйте `--keys-only` + `--sort` для быстрого перечисления.
+**Флаги get:** `--hex`, `--limit`, `--prefix`, `--order`, `--sort-by`, `--rev`, `--print-value-only`, `--consistency`, `--from-key`, `--keys-only`, `--min-create-revision`, `--max-create-revision`, `--min-mod-revision`, `--max-mod-revision`.
 
-#### Чтение по конкретной ревизии
+**Типичные ошибки и решения (get):**
 
-```bash
-# Прочитать значение ключа на ревизии 5000
-etcdctl get /config/app --rev=5000
+| Ошибка | Причина | Решение |
+|---------------------------|---------|---------|
+| Пустой вывод при `--prefix` | Префикс не совпадает ни с одним ключом | Проверьте префикс: `etcdctl get "" --from-key --prefix --keys-only` |
+| `mvcc: required revision has been compacted` | Запрошена ревизия старше compacted revision | Используйте текущую ревизию или более свежую |
+| `mvcc: required revision is a future revision` | Запрошена ревизия новее текущей | Проверьте текущую ревизию: `etcdctl endpoint status -w json` (поле `header.revision`) |
 
-# Получить метаданные (модификация, версия)
-etcdctl get /config/app -w json
-# → {"header":{"cluster_id":...,"member_id":...,"revision":...,"raft_term":...},"kvs":[{"key":"...","create_revision":...,"mod_revision":...,"version":...,"value":"..."}]}
-```
-
-**Edge Cases:**
-- Чтение по compacted revision возвращает ошибку: `mvcc: required revision has been compacted`.
-- Чтение по ревизии за пределами истории (слишком старой) возвращает ошибку: `mvcc: required revision is beyond the range`.
-
-#### Удаление
+#### Удаление данных (del)
 
 ```bash
 # Удаление одного ключа
-etcdctl del /config/old_key
-# → 1
+etcdctl del /config/app/key1
+# 1
 
-# Удаление всех ключей по префиксу
-etcdctl del /config/ --prefix
+# Удаление по префиксу
+etcdctl del /config/app/ --prefix
+# 3
 
-# Удаление с ограничением
-etcdctl del /config/ --prefix --limit=10
+# Удаление с возвратом удалённых значений
+etcdctl del /config/app/key1 --prev-kv
+
+# Удаление всех ключей, начиная с указанного
+etcdctl del /config/app/ --from-key
 ```
 
-### Наблюдение (Watch)
+**Флаги del:** `--prefix`, `--prev-kv`, `--from-key`. Возвращает число удалённых ключей.
 
-#### Базовый Watch
+### Watch (подписка на изменения)
 
 ```bash
-# Ожидание изменений конкретного ключа
-etcdctl watch /config/app
-# → PUT
-# → /config/app
-# → new_value
+# Подписка на изменения ключа (с текущей ревизии)
+etcdctl watch /config/app/key1
+# PUT
+# /config/app/key1
+# new_value
 
-# Watch всех изменений в префиксе
-etcdctl watch /config/ --prefix
+# Подписка с определённой ревизии (все события после revision X)
+etcdctl watch /config/app/ --rev=1000
 
-# Watch с прогрессивными уведомлениями
-etcdctl watch /config/ --prefix --progress-notify
+# Подписка по префиксу
+etcdctl watch /config/app/ --prefix
+
+# Подписка с возвратом предыдущих значений
+etcdctl watch /config/app/ --prefix --prev-kv
+
+# Подписка с progress-notify (периодическое подтверждение живости стрима)
+etcdctl watch /config/app/ --progress-notify
+# progress notify: 12345
+
+# Интерактивный режим (команды watch/put/del в одной сессии)
+etcdctl watch /config/app/ --interactive
+
+# Выполнение команды при каждом событии (после "--")
+etcdctl watch /config/app/ -- echo "watch event received"
+# (переменные окружения для команды: ETCD_WATCH_REVISION, ETCD_WATCH_EVENT_TYPE,
+#  ETCD_WATCH_KEY, ETCD_WATCH_VALUE)
+
+# Watch через переменные окружения (ключ и/или конец диапазона)
+export ETCDCTL_WATCH_KEY="/config/app/"
+export ETCDCTL_WATCH_RANGE_END="/config/app0"
+etcdctl watch
 ```
 
-#### Watch с историей
+**Флаги watch:** `--hex`, `--interactive`/`-i`, `--prefix`, `--rev`, `--prev-kv`, `--progress-notify`.
+
+**Типичные ошибки и решения (watch):**
+
+| Ошибка | Причина | Решение |
+|---------------------------|---------|---------|
+| `watch was canceled (...)` | Watcher отменён сервером (клиент отстал от компакции) | Переподключитесь с последней известной ревизии (`--rev=<revision>`) |
+| `etcdserver: no leader` | Нет лидера — watch требует лидера | Проверьте здоровье кластера: `etcdctl endpoint health --cluster` |
+| `context canceled` | Клиент отключился раньше времени | Нормальное завершение при Ctrl+C |
+
+### Lease (аренда)
 
 ```bash
-# Получить все события, произошедшие после ревизии 5000
-etcdctl watch /config/app --rev=5000
-
-# Игнорировать исторические события, начать с текущей ревизии
-etcdctl watch /config/app --ignore-watch
-```
-
-#### Watch с предыдущим значением
-
-```bash
-# Получить старое значение при изменении
-etcdctl watch /config/app --prev-kv
-# → PUT
-# → /config/app
-# → new_value
-# → PREV_KEY: /config/app
-# → PREV_VALUE: value1
-```
-
-**Troubleshooting:**
-- `etcdserver: mvcc: watch store is out of space` — клиент не успевает обрабатывать события. Решение: уменьшить буфер обработки на стороне клиента, переподключиться с `--rev`, или настроить `--auto-compaction-retention`.
-- `context canceled` — клиент отключился раньше времени. Увеличьте тайм-ауты или исправьте сетевые проблемы.
-
-### Аренда (Lease)
-
-#### Создание и привязка
-
-```bash
-# Создать аренду на 60 секунд
+# Создание аренды с TTL 60 секунд
 etcdctl lease grant 60
-# → lease 694d5765fc71500b granted with TTL(60s)
+# lease 1234567890 granted with TTL(60s)
 
-# Привязать ключ к аренде
-etcdctl put /tmp/key "val" --lease=694d5765fc71500b
+# Привязка ключа к аренде
+etcdctl put /config/app/key1 "value1" --lease=1234567890
 
-# Продлить аренду (keep-alive)
-etcdctl lease keep-alive 694d5765fc71500b
-# → lease 694d5765fc71500b keepalive with TTL(60s)
+# Однократное продление аренды (с немедленным выходом)
+etcdctl lease keep-alive 1234567890 --once
+# lease 1234567890 renewed with TTL(60)
+
+# Постоянное продление (стрим, пока не прервано Ctrl+C)
+etcdctl lease keep-alive 1234567890
+# lease 1234567890 renewed with TTL(60)
+# (при экспириции аренды стрим завершается: lease ... expired or revoked.)
+
+# Проверка оставшегося TTL
+etcdctl lease timetolive 1234567890
+# lease 1234567890 granted with TTL(60), remaining(45)
+
+# То же с выводом привязанных ключей
+etcdctl lease timetolive 1234567890 --keys
+
+# Список всех активных аренд
+etcdctl lease list
+# 1234567890
+# 1234567891
+
+# Отзыв аренды (немедленное удаление всех привязанных ключей)
+etcdctl lease revoke 1234567890
+# lease 1234567890 revoked
 ```
 
-#### Просмотр и отзыв аренды
+**Типичные ошибки и решения (lease):**
+
+| Ошибка | Причина | Решение |
+|---------------------------|---------|---------|
+| `etcdserver: too large lease TTL` | TTL превышает максимум (9e9 с) | Укажите TTL ≤ 9 000 000 000 |
+| `etcdserver: requested lease not found` | Аренда с таким ID не существует | Создайте аренду: `etcdctl lease grant 60` |
+| TTL в выводе grant больше запрошенного | Запрошенный TTL ниже минимума `ceil(1.5 × election-timeout)` (дефолт 2 с) — сервер продлевает до минимума | Укажите TTL ≥ 2 (или увеличьте `--election-ticks`/`--heartbeat-interval` сервера для меньшего минимума) |
+
+**Примечания:**
+- Запрошенный TTL ниже минимального **не является ошибкой** — аренда создаётся с TTL, продлённым до `minLeaseTTL` (дефолт 2 с). Ошибка только при TTL > 9e9
+- Lease ID — hex-строка: etcdctl парсит аргумент `<leaseID>` в base 16 (`bad lease ID arg, expecting ID in Hex` при не-hex символах)
+- Keep-alive отправляется каждые `TTL/3` секунд; при потере связи с лидером продление форвардится на лидера вручную
+- Аренда переживает смену лидера благодаря checkpoint'ам (каждые 5 мин; checkpointing выключен по умолчанию — feature gate LeaseCheckpoint, см. garbage_collection.md)
+
+### Lock и Elect (concurrency)
 
 ```bash
-# Просмотр информации об аренде
-etcdctl lease timetolive 694d5765fc71500b
-# → lease 694d5765fc71500b granted with TTL(60s), remaining(45s)
-
-# Принудительный отзыв аренды
-etcdctl lease revoke 694d5765fc71500b
-# → lease 694d5765fc71500b revoked
-```
-
-**Валидация:**
-```bash
-# После отзыва попытка чтения ключа вернет пустой результат
-etcdctl get /tmp/key
-# → (пусто)
-```
-
-**Edge Cases:**
-- TTL 0 или отрицательный — аренда не создается, возвращается ошибка.
-- Отзыв несуществующей аренды возвращает ошибку `etcdserver: lease not found`.
-- В Kubernetes контроллеры используют leases для лидерских выборов (leader election) и keep-alive. Прерывание keep-alive приведет к потери лидерства.
-
-### Распределенные блокировки (Lock)
-
-```bash
-# Создать блокировку (команда блокируется пока удерживается)
+# Создание распределённой блокировки (команда блокируется, пока удерживается)
 etcdctl lock mutex_name
-# → mutex_name/694d5765fc71500b (блокировка удерживается, пока команда запущена)
+# mutex_name/694d5765fc71500b
 
-# Освобождение происходит при закрытии процесса (Ctrl+C)
+# Блокировка с TTL сессии (по умолчанию 60 с)
+etcdctl lock mutex_name --ttl=30
+
+# Блокировка с выполнением команды (создаёт ключ <lockname>/<lease-id>,
+# выполняет команду с ETCD_LOCK_KEY и ETCD_LOCK_REV, отпускает при выходе)
+etcdctl lock mutex_name -- echo "critical section"
+
+# Участие в выборах лидера (candidate с proposal)
+etcdctl elect election_name "candidate-1"
+
+# Наблюдение за выборами (вывод изменений лидера)
+etcdctl elect election_name --listen
 ```
 
-**Важно:** `etcdctl lock` создает ключ под `/locks/mutex_name/<lease_id>` с TTL аренды. Если процесс упадет, блокировка автоматически освободится через TTL.
+**Типичные ошибки и решения (lock/elect):**
 
-**Fencing Token:** В распределенных системах важно проверять fencing token (revision lock-ключа) для предотвращения split-brain.
+| Ошибка | Причина | Решение |
+|---------------------------|---------|---------|
+| Команда `lock` зависает | Другой участник удерживает блокировку | Дождитесь освобождения или увеличьте `--ttl` |
+| Блокировка не отпускается после падения | etcdctl упал, не отпустив блокировку | Блокировка удерживается до экспири аренды (дефолт 60 с) |
 
-### Транзакции (Txn)
+**Примечания:**
+- Ключ блокировки создаётся по пути `<lockname>/<lease-id>` (без префикса `/locks/`), например `mutex_name/694d5765fc71500b`
+- **Fencing Token**: для корректного fencing при split-brain проверяйте revision lock-ключа (`etcdctl get <lockname> --rev=<rev>`) — только holder с максимальным revision может писать в разделяемый ресурс
+- `lock` возвращает нулевой код выхода только при завершении по сигналу
+
+### Транзакции (txn)
 
 ```bash
+# Транзакция с условием (интерактивный режим)
 etcdctl txn --interactive
-# Пример логики:
-# cmp: mod("/config/app") = "123"
-# success: put "/config/app" "new_val"
-# failure: get "/config/app"
-```
 
-**Пакетный режим (неинтерактивный):**
+# cmp
+mod("/config/app") = "123"
 
-```bash
-etcdctl txn <<'EOF'
-cmp
-mod_revision("/config/app") = "152"
-success
-put "/config/app" "new_val"
-failure
+# success
+put "/config/app" "new_value"
+
+# failure
 get "/config/app"
-EOF
 ```
 
-**Валидация:**
-- `cmp` поддерживает: `=`, `<`, `>`, `!=`, `mod`, `ver`, `create`, `mod_revision`, `prev_kv`.
-- `success` выполняется только если ВСЕ условия `cmp` истинны.
-- `failure` выполняется только если хотя бы одно условие ложно.
+**Синтаксис сравнений (cmp)** — цели и операторы:
 
-### Состояние и здоровье кластера
+| Цель | Сокращение | Сравнивает |
+|------|-----------|------------|
+| `create(<key>)` | `c(<key>)` | revision создания ключа |
+| `mod(<key>)` | `m(<key>)` | revision последней модификации |
+| `value(<key>)` | `val(<key>)` | значение ключа |
+| `version(<key>)` | `ver(<key>)` | версию ключа (число обновлений) |
+| `lease(<key>)` | — | ID аренды ключа |
 
-#### Проверка здоровья
+Операторы: `<`, `=`, `>` (оператора `!=` нет). Сравнение с ревизией: `mod("/config/app") = "152"`.
+
+**Правила:**
+- `success` выполняется только если **все** условия истинны; `failure` — если хотя бы одно ложно
+- Один ключ нельзя модифицировать дважды в одной транзакции (ошибка `etcdserver: duplicate key given in txn request`)
+- Макс. число операций в транзакции — 128 (серверный флаг `--max-txn-ops`, дефолт 128; ошибка `etcdserver: too many operations in txn request`)
+- Многострочные значения в интерактивном режиме записываются как `\n`
+- Вывод: `SUCCESS` или `FAILURE`, затем результаты операций
 
 ```bash
-etcdctl endpoint health --cluster -w table
-# → +----------------+--------+-------+-------+
-# → |    ENDPOINT    | HEALTH |  TOOK | ERROR |
-# → +----------------+--------+-------+-------+
-# → | 127.0.0.1:2379 |   true | 1.5ms |       |
-# → +----------------+--------+-------+-------+
+# Нестерактивный режим (условие + success/failure блоки через stdin)
+printf 'value("/config/app") = "old"\n\nput "/config/app" "new"\n\nget "/config/app"\n' | etcdctl txn
 ```
 
-**Валидация:**
+### Проверка здоровья и статуса кластера
+
+#### endpoint health
+
 ```bash
-# Exit code 0 при здоровом кластере
+# Проверка здоровья всех endpoints
 etcdctl endpoint health --cluster
-echo $?
-# → 0
+# 10.0.0.11:2379 is healthy: successfully committed proposal: took = 2.095242ms
+
+# Табличный формат
+etcdctl endpoint health --cluster -w table
+# +---------------+---------+---------+-------+
+# |   ENDPOINT    | HEALTH  |  TOOK   | ERROR |
+# +---------------+---------+---------+-------+
+# | 10.0.0.11:2379 |  true   | 2.09ms  |       |
+# +---------------+---------+---------+-------+
 ```
 
-**Troubleshooting:**
-- `etcdserver: request timed out` — проверьте firewall, TLS сертификаты, и доступность endpoints.
-- `etcdserver: no leader` — потеря кворума. Проверьте `etcdctl member list` и логи.
+**Типичные ошибки и решения (endpoint health):**
 
-#### Детальный статус
+| Ошибка | Причина | Решение |
+|---------------------------|---------|---------|
+| `context deadline exceeded` | Узел недоступен или перегружен | Проверьте сеть, firewall, TLS-сертификаты; увеличьте `--command-timeout` |
+| `etcdserver: request timed out` | Узел не отвечает в тайм-аут | Проверьте нагрузку на узел, диск (iowait), сеть |
+| `etcdserver: request timed out, possibly due to previous leader failure` | Недавняя смена лидера | Дождитесь стабилизации, повторите |
+| `etcdserver: unhealthy cluster` | Кворум недоступен | Проверьте `endpoint status --cluster`, логи etcd |
+
+#### endpoint status
 
 ```bash
+# Статус всех endpoints (таблица, etcd 3.6+)
 etcdctl endpoint status --cluster -w table
-# → +----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+
-# → |    ENDPOINT    |        ID        | VERSION | DB SIZE | IS LEADER | IS LEARNER | RAFT TERM | RAFT INDEX | RAFT APPLIED INDEX |
-# → +----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+
-# → | 127.0.0.1:2379 | 8e9e05f521f74f0d | 3.7.1   | 1.2 GB  |      true |     false  |        12 |    1543200 |           1543200 |
-# → +----------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+
+# +---------------+------------------+---------+------------------+----------+--------------+-----------+------------+-----------+----------+---------------------+--------+
+# |   ENDPOINT    |       ID         | VERSION | STORAGE VERSION  | DB SIZE  | DB SIZE IN USE | IS LEADER | IS LEARNER | RAFT TERM | RAFT INDEX | RAFT APPLIED INDEX | ERRORS |
+# +---------------+------------------+---------+------------------+----------+--------------+-----------+------------+-----------+----------+---------------------+--------+
+# | 10.0.0.11:2379 | 8e9e05f521f74f0d |  3.7.2  |       3.7        |  25 MB   |    18 MB     |  false    |   false    |     5     |  1234567   |      1234560       |        |
+# +---------------+------------------+---------+------------------+----------+--------------+-----------+------------+-----------+----------+---------------------+--------+
+
+# JSON-формат (содержит header.revision — текущую ревизию MVCC)
+etcdctl endpoint status --cluster -w json
 ```
 
-**Интерпретация:**
-- `RAFT INDEX` и `RAFT APPLIED INDEX` на follower'ах не должны отставать от лидера более чем на 1000.
-- `DB SIZE` — физический размер файла BoltDB (не используется место).
-- `IS LEARNER` — узел без права голоса.
+**Валидация:**
+- `VERSION` одинакова на всех узлах (кроме rolling upgrade)
+- Ровно один узел с `IS LEADER=true`
+- `RAFT INDEX` и `RAFT APPLIED INDEX` на follower'ах не должны сильно отставать от лидера; для promote learner'а он должен догнать лидера (порог готовности — Match learner'а ≥ 90% от Match лидера, хардкод `readyPercentThreshold = 0.9`)
+- Текущую ревизию MVCC получаете из JSON: `etcdctl endpoint status -w json` → поле `header.revision` (в табличном формате ревизия не выводится)
 
-#### Проверка хеш-значения данных (Data Integrity)
+**Типичные ошибки и решения (endpoint status):**
+
+| Ошибка | Причина | Решение |
+|---------------------------|---------|---------|
+| `etcdserver: no leader` | Потеря кворума | Проверьте доступность большинства узлов |
+| `etcdserver: leader changed` | Смена лидера во время запроса | Повторите команду |
+| Разница `DB SIZE` на узлах | Разная степень фрагментации | Выполните defrag на узле с большим размером |
+
+#### endpoint hashkv
 
 ```bash
-# Проверка хеш-значения ключевых данных на всех узлах
+# Хеш ключей для проверки консистентности между узлами
 etcdctl endpoint hashkv --cluster -w table
-# → +----------------+------------------+----------+---------+
-# → |    ENDPOINT    |        ID        |   HASH   | ROLE    |
-# → +----------------+------------------+----------+---------+
-# → | 127.0.0.1:2379 | 8e9e05f521f74f0d | 12345678 | Leader  |
-# → | 10.0.0.11:2379 | 9f1a06g632g85g1e | 12345678 | Follower|
-# → +----------------+------------------+----------+---------+
+# +---------------+----------+---------------+
+# |   ENDPOINT    |   HASH   | HASH REVISION |
+# +---------------+----------+---------------+
+# | 10.0.0.11:2379 | 2064120424 |     1234567   |
+# +---------------+----------+---------------+
+
+# Простой формат: endpoint, hash, hash_revision
+etcdctl endpoint hashkv --cluster
+# 10.0.0.11:2379, 2064120424, 1234567
 ```
 
-**Валидация:** Все узлы в HA-кластере должны иметь одинаковый `HASH`. Различия указывают на рассинхронизацию данных.
+**Валидация:** все узлы в HA-кластере должны иметь одинаковый `HASH` при одинаковом `HASH REVISION`. Разный hash при одинаковой ревизии — рассинхронизация данных.
 
-#### Управление участниками
+### Управление участниками кластера (member)
 
 ```bash
 # Список участников
+etcdctl member list
+# 8e9e05f521f74f0d, started, node1, https://10.0.0.11:2380, https://10.0.0.11:2379, false
+# 9f1a06e632a85b1e, started, node2, https://10.0.0.12:2380, https://10.0.0.12:2379, false
+# 7c8d9e0f1a2b3c4d, unstarted, node3, https://10.0.0.13:2380, , false
+# (простой формат: ID, Status, Name, Peer Addrs, Client Addrs, Is Learner)
+
+# Табличный формат
 etcdctl member list -w table
-# → +------------------+--------+------------------------+------------------------+
-# → |       ID         | STATUS |        NAME            |       PEER URLS        |
-# → +------------------+--------+------------------------+------------------------+
-# → | 8e9e05f521f74f0d | started| node1                  | https://10.0.1.10:2380 |
-# → | 9f1a06g632g85g1e | started| node2                  | https://10.0.1.11:2380 |
-# → +------------------+--------+------------------------+------------------------+
+# +------------------+---------+--------+------------------------+------------------------+
+# |        ID        | STATUS  |  NAME  |       PEER ADDRS       |      CLIENT ADDRS      |
+# +------------------+---------+--------+------------------------+------------------------+
+# | 8e9e05f521f74f0d | started | node1  | https://10.0.0.11:2380 | https://10.0.0.11:2379 |
+# +------------------+---------+--------+------------------------+------------------------+
 
-# Добавить узел как learner (без права голоса)
-etcdctl member add node3 --peer-urls=https://10.0.1.12:2380 --learner
+# С консистентностью через лидера (не локальный кеш)
+etcdctl member list --consistency=l
 
-# Повысить learner до голосующего участника
-etcdctl member promote <MEMBER_ID>
+# Добавление нового участника
+etcdctl member add node3 --peer-urls=https://10.0.0.13:2380
+# Member 7c8d9e0f1a2b3c4d added to cluster 8e9e05f521f74f0d
+#
+# ETCD_NAME: "node3"
+# ETCD_INITIAL_CLUSTER: "node1=https://10.0.0.11:2380,node2=https://10.0.0.12:2380,node3=https://10.0.0.13:2380"
+# ETCD_INITIAL_ADVERTISE_PEER_URLS: "https://10.0.0.13:2380"
+# ETCD_INITIAL_CLUSTER_STATE: "existing"
 
-# Удалить узел
-etcdctl member remove 8e9e05f521f74f0d
+# Добавление learner'а (не голосующего участника)
+etcdctl member add node4 --peer-urls=https://10.0.0.14:2380 --learner
+
+# Обновление peer URLs участника
+etcdctl member update 8e9e05f521f74f0d --peer-urls=https://10.0.0.11:2380
+
+# Повышение learner'а до полноценного участника
+etcdctl member promote 7c8d9e0f1a2b3c4d
+# Member 7c8d9e0f1a2b3c4d promoted in cluster 8e9e05f521f74f0d
+
+# Удаление участника
+etcdctl member remove 7c8d9e0f1a2b3c4d
+# Member 7c8d9e0f1a2b3c4d removed from cluster 8e9e05f521f74f0d
 ```
 
-**Best Practices:**
-- Всегда добавляйте большие узлы через `--learner` и дождитесь синхронизации RAFT INDEX (разница < 1000) перед промоушеном.
-- Удаление участника требует кворума: минимум 2 из 3 узлов должны быть доступны.
+**Типичные ошибки и решения (member):**
 
-#### Передача лидерства
+| Ошибка | Причина | Решение |
+|---------------------------|---------|---------|
+| `etcdserver: member ID already exist` | Участник с таким ID уже есть | Проверьте `member list` |
+| `etcdserver: member not found` | Неверный member ID | Скопируйте ID из `member list` (ID — hex-строка) |
+| `etcdserver: re-configuration failed due to not enough started members` | Нет кворума для изменения состава | Проверьте здоровье большинства узлов |
+| `etcdserver: given member URLs are invalid` | Некорректный формат peer URLs | Проверьте URL: `https://host:2380` |
+| `etcdserver: Peer URLs already exists` | Peer URL занят другим участником | Используйте уникальный URL |
+| Promote learner'а не удаётся | Learner отстал от лидера | Дождитесь синхронизации (Match learner'а ≥ 90% от Match лидера) перед промоушеном |
+
+**Примечания:**
+- Member ID — hex-строка (16 hex-символов); при ручном вводе используйте только символы `0-9a-f`
+- Удаление участника требует кворума: минимум 2 из 3 узлов должны быть доступны
+- `member add` выводит переменные окружения для конфигурации нового узла (`ETCD_INITIAL_CLUSTER_STATE: "existing"`)
+
+### Перенос лидерства (move-leader)
 
 ```bash
-# Проверить текущего лидера
-etcdctl endpoint status --cluster -w table | grep true
-
-# Передать лидерство целевому узлу
-etcdctl move-leader <target-node-id>
+# Перенос лидерства на указанный участник (ID в hex)
+etcdctl move-leader 9f1a06e632a85b1e
+# Leadership transferred from 8e9e05f521f74f0d to 9f1a06e632a85b1e
 ```
 
-**Важно:** `move-leader` отправляет узлу `TimeoutNow` для немедленных выборов. Текущий лидер перестает принимать запросы. Используйте для планового техобслуживания.
+**Примечания:**
+- `move-leader` отправляет целевому узлу `TimeoutNow` для немедленных выборов
+- Используется при обслуживании текущего лидера (upgrade, замена диска)
+- Целевой узел должен быть здоров и иметь актуальные данные
 
-### Управление алармами (Alarms)
+### Управление алармами (alarm)
 
 ```bash
 # Список активных алармов
 etcdctl alarm list
-# → member 8e9e05f521f74f0d: NOSPACE
+# memberID:8e9e05f521f74f0d alarm:NOSPACE
+# (пустой вывод — алармов нет)
 
-# Сброс конкретного аларма
-etcdctl alarm disarm --member 8e9e05f521f74f0d
-
-# Сброс всех алармов
+# Сброс ВСЕХ алармов (disarm не принимает аргументов — выборочного сброса нет)
 etcdctl alarm disarm
 ```
 
 **Типы алармов:**
-- `NOSPACE` — quota exceeded (по умолчанию 2GB или 8GB). Возникает при `database space exceeded`.
-- `CORRUPT` — поврежден файл данных. Возникает при аппаратных сбоях или некорректном завершении.
+- **NOSPACE** — превышен quota backend (дефолт **2 GiB**; 8 GiB — рекомендуемый максимум, при превышении которого сервер только предупреждает в логах)
+- **CORRUPT** — повреждён файл данных
 
-**Troubleshooting:**
-- При `NOSPACE` выполните `compaction` + `defrag`, затем увеличьте `quota-backend-bytes` или освободите место в ОС.
-- При `CORRUPT` требуется восстановление из снапшота (offline restore).
+**Типичные ошибки и решения (alarm):**
 
-### Обслуживание и производительность
+| Ошибка | Причина | Решение |
+|---------------------------|---------|---------|
+| `alarm:NOSPACE` | Квота backend превышена | Выполните compaction → defrag, затем `etcdctl alarm disarm`; при необходимости увеличьте `--quota-backend-bytes` или освободите место в ОС |
+| `alarm:CORRUPT` | Повреждён файл данных | Восстановление из снапшота (offline restore) |
 
-#### Компакция (Сжатие истории)
+**Примечания:**
+- Порядок восстановления при NOSPACE: **compaction → defrag → `alarm disarm`** — без disarm аларм сохраняется даже после освобождения места
+- Квота проверяется на двух уровнях: API-слой (ранний reject запросов) и Apply-слой (поднимает NOSPACE alarm без блокировки транзакции) — поэтому Put может вернуть `ErrGRPCNoSpace` и при этом успешно записать данные
+- Алармы хранятся per-member и не распространяются автоматически — проверяйте `alarm list` на каждом узле
+
+### Компакция (compaction)
 
 ```bash
-# Удалить все ревизии до 5000
+# Удаление истории до указанной ревизии
 etcdctl compaction 5000
-# → compacted revision 5000
+# compacted mvcc keys with revision 5000
 
-# Автоматическая компакция (Kubernetes)
-# В манифесте kube-apiserver:
-# --auto-compaction-retention=5m
+# Физическая компакция (с ожиданием завершения удаления ключей)
+etcdctl compaction 5000 --physical
 ```
 
-**Валидация:**
+**Примечания:**
+- Каноническое имя команды — `compaction`; `compact` работает как сокращение благодаря prefix matching в cobra
+- Компакция **не уменьшает** размер файла БД — для возврата места в ОС требуется defrag
+- После компакции чтение по ревизиям < compacted revision возвращает `mvcc: required revision has been compacted`
+- Текущую ревизию можно получить из JSON-вывода: `etcdctl endpoint status -w json` → `header.revision`
+
+**Типичные ошибки и решения (compaction):**
+
+| Ошибка | Причина | Решение |
+|---------------------------|---------|---------|
+| `mvcc: required revision has been compacted` | Watcher или чтение отстали от компакции | Перечитайте с текущей ревизии, переподключите watch |
+| `etcdserver: request timed out` | Длительная компакция на большой БД | Увеличьте `--command-timeout`, проверьте нагрузку на диск |
+
+### Дефрагментация (defrag)
+
 ```bash
-# Проверить текущий revision кластера
-etcdctl endpoint status --cluster -w table | grep -oE '[0-9]+$'
-# Убедиться, что current revision > compacted revision
-```
-
-**Troubleshooting:**
-- `mvcc: required revision has been compacted` — watcher отстал. Исправьте: увеличить `--auto-compaction-retention` или оптимизировать контроллеры, чтобы они не отставали.
-
-#### Дефрагментация (Освобождение места)
-
-```bash
-# Онлайн дефрагментация всего кластера (поочередно, не параллельно)
+# Дефрагментация всех узлов кластера (поочерёдно, не параллельно)
 etcdctl defrag --cluster
-# → Finished defragmenting etcd member[https://127.0.0.1:2379]
 
-# Онлайн дефрагментация конкретного узла
+# Дефрагментация конкретного узла
 etcdctl defrag --endpoints=https://10.0.0.11:2379
+# Finished defragmenting etcd member[https://10.0.0.11:2379]
+
+# Дефрагментация с тайм-аутом для большой БД
+etcdctl defrag --endpoints=https://10.0.0.11:2379 --command-timeout=300
 ```
 
-**Валидация:**
-```bash
-# Вычислить фрагментацию через метрики
-curl -s http://localhost:2379/metrics | grep etcd_mvcc_db_total_size
-# etcd_mvcc_db_total_size_in_bytes{...} 3221225472
-# etcd_mvcc_db_total_size_in_use_in_bytes{...} 1610612736
+**Типичные ошибки и решения (defrag):**
 
-# Формула: fragmentation = (total - in_use) / total
-# В примере: (3221225472 - 1610612736) / 3221225472 = 0.5 (50%)
-```
+| Ошибка | Причина | Решение |
+|---------------------------|---------|---------|
+| `context deadline exceeded` | Дефрагментация не уложилась в `--command-timeout` | Увеличьте тайм-аут (дефрагментация большой БД может занять минуты) |
+| `etcdserver: leader changed` | Смена лидера во время операции | Повторите команду |
 
 **Best Practices:**
-- Выполняйте `etcdctl defrag` по очереди на узлах (не одновременно) в часы минимальной нагрузки.
-- Это возвращает свободное место в ОС и ускоряет чтение (меньший файл = меньше дисковых операций).
+- Дефрагментируйте **поочередно**, узел за узлом — одновременная дефрагментация всех участников делает кластер недоступным
+- Мониторьте фрагментацию через метрики `etcd_mvcc_db_total_size_in_bytes` (размер файла) и `etcd_mvcc_db_total_size_in_use_in_bytes` (используемое место); фрагментация = `(total - in_use) / total`
+- `defrag` возвращает нулевой код выхода только при успешной дефрагментации **всех** указанных endpoints
+- Офлайн-дефрагментация (etcd 3.6+): `etcdutl defrag --data-dir /var/lib/etcd`
 
-#### Проверка производительности (Perf Check)
+### Проверка производительности (check perf)
 
 ```bash
-etcdctl check perf --load="s"  # s (small), m (medium), l (large), xl (x-large)
-# → PASS: Throughput is 150 writes/s
+# Проверка производительности кластера (нагрузка "s" — small, по умолчанию)
+etcdctl check perf --load="s"
+# Start load test for 60 seconds with 50 clients, rate limit 150 writes/s
+# ...
+# PASS: throughput is 150 writes/s, slowest request took 12ms, stddev 3ms
+
+# Доступные нагрузки: s (small), m (medium), l (large), xl (x-large)
+etcdctl check perf --load="m"   # 200 clients, rate limit 1000 writes/s
+etcdctl check perf --load="l"   # 500 clients, rate limit 8000 writes/s
+etcdctl check perf --load="xl"  # 1000 clients, rate limit 15000 writes/s
+
+# С авто-компакцией и дефрагментацией во время теста
+etcdctl check perf --load="s" --auto-compact --auto-defrag
+
+# С префиксом для изоляции тестовых данных
+etcdctl check perf --load="s" --prefix=/etcdctl-check-perf/
 ```
 
-**Интерпретация порогов (ориентировочно для NVMe):**
-- **Small (s):** PASS при > 100 writes/s.
-- **Medium (m):** PASS при > 50 writes/s.
-- **Large (l):** PASS при > 20 writes/s.
-- **X-Large (xl):** PASS при > 5 writes/s.
+**Параметры нагрузок (исходник `etcdctl/ctlv3/command/check.go`):**
 
-**Troubleshooting:**
-- FAIL на `s` или `m` указывает на проблемы с диском (HDD вместо SSD, высокий iowait) или сетью между участниками.
-- При высокой вариативности запускайте тест 3–5 раз и считайте медиану.
+| Load | Clients | Rate limit (writes/s) | PASS: throughput | PASS: slowest | PASS: stddev |
+|------|---------|----------------------|------------------|---------------|--------------|
+| s | 50 | 150 | ≥ 135 (90%) | ≤ 500 ms | ≤ 100 ms |
+| m | 200 | 1000 | ≥ 900 | ≤ 500 ms | ≤ 100 ms |
+| l | 500 | 8000 | ≥ 7200 | ≤ 500 ms | ≤ 100 ms |
+| xl | 1000 | 15000 | ≥ 13500 | ≤ 500 ms | ≤ 100 ms |
 
-### Управление доступом (RBAC)
+**Примечания:**
+- Тест длится **60 секунд**; данные пишутся в префикс `/etcdctl-check-perf/` (перезаписывается при каждом запуске)
+- Разные нагрузки могут независимо PASS/FAIL (issue etcd-io/etcd#13455) — проверяйте все четыре уровня
+- FAIL на s или m указывает на проблемы с диском (HDD вместо SSD, высокий iowait) или сетью
+- Подробнее о бенчмаркинге: [benchmarking.md](./benchmarking.md)
 
-#### Работа с пользователями
+### Проверка масштаба данных (check datascale)
 
 ```bash
-etcdctl user add my_user           # Создать пользователя (интерактивно запрашивает пароль)
-etcdctl user delete my_user        # Удалить пользователя
-etcdctl user list                  # Список всех пользователей
-etcdctl user get root              # Информация о пользователе и его ролях
+# Проверка использования памяти при заданной нагрузке
+etcdctl check datascale
+# Start data scale check for work load [10000 key-value pairs, 1024 bytes per key-value, 50 concurrent clients]
+# ...
+# PASS: Approximate system memory used : 64.30 MB
+
+# С префиксом и авто-компакцией
+etcdctl check datascale --prefix=/datascale/ --auto-compact
 ```
 
-#### Работа с ролями
+**Примечания:** `check datascale` оценивает потребление памяти (heap) при заданном объёме данных — полезно для планирования capacity перед загрузкой больших объёмов ключей.
+
+### RBAC (управление доступом)
+
+#### Bootstrap (минимальная последовательность)
 
 ```bash
-# Создать роль
-etcdctl role add my_role
+# 1. Создание root-пользователя (пароль запрашивается интерактивно)
+etcdctl user add root
+# User root created
 
-# Дать права на конкретный ключ
-etcdctl role grant-permission my_role readwrite /a
+# 2. Назначение root-пользователю root-роли
+# (для root-роли проверка существования роли пропускается — grant работает без role add)
+etcdctl user grant-role root root
+# Role root is granted to user root
 
-# Дать права на префикс
-etcdctl role grant-permission my_role read /b --prefix
-
-# Просмотр прав роли
-etcdctl role get-permission my_role
-
-# Привязать роль к пользователю
-etcdctl user grant-role my_user my_role
-
-# Отвязать роль от пользователя
-etcdctl user revoke-role my_user my_role
-```
-
-#### Включение аутентификации
-
-```bash
-# Включить (требует наличия пользователя root)
+# 3. Включение аутентификации
 etcdctl auth enable
+# Authentication Enabled
 
-# Выключить
-etcdctl auth disable
+# Проверка
+etcdctl --user=root:password endpoint status
 ```
 
-**Bootstrap sequence (правильный порядок):**
-1. `etcdctl user add root`
-2. `etcdctl role grant-permission root readwrite /`
-3. `etcdctl auth enable`
-4. Проверить: `etcdctl --user=root:password endpoint status`
+**Валидация:** `auth enable` требует существования root-пользователя **с** root-ролью (иначе — ошибки `etcdserver: root user does not exist` / `etcdserver: root user does not have root role`). Попытка `role grant-permission root readwrite /` **до** создания роли `root` (`role add root`) завершится ошибкой `etcdserver: role not found` — grant-permission требует существующей роли.
 
-**Edge Cases:**
-- Попытка `auth enable` без пользователя `root` завершится ошибкой.
-- После `auth disable` все права сохраняются в метаданных. При повторном `auth enable` они восстанавливаются.
-- RBAC проверяется на каждом gRPC-запросе. Нет кэширования прав на стороне клиента.
-
-### Резервное копирование и восстановление
-
-#### Создание снапшота (Online)
+#### Пользователи
 
 ```bash
-# Базовая команда
+# Создание пользователя (пароль запрашивается интерактивно)
+etcdctl user add myuser
+# User myuser created
+
+# Создание с паролем из stdin (без интерактивного запроса)
+etcdctl user add myuser --interactive=false
+# или
+etcdctl user add myuser --new-user-password=secret
+
+# Пользователь без пароля (аутентификация только по TLS Common Name)
+etcdctl user add myuser --no-password
+
+# Список пользователей
+etcdctl user list
+# root
+# myuser
+
+# Информация о пользователе (роли)
+etcdctl user get myuser
+# User: myuser
+# Roles: myrole
+
+# То же с деталями по правам ролей
+etcdctl user get myuser --detail
+
+# Смена пароля
+etcdctl user passwd myuser
+
+# Удаление пользователя
+etcdctl user delete myuser
+# User myuser deleted
+
+# Назначение/отзыв роли пользователю
+etcdctl user grant-role myuser myrole
+etcdctl user revoke-role myuser myrole
+```
+
+#### Роли
+
+```bash
+# Создание роли
+etcdctl role add myrole
+# Role myrole created
+
+# Выдача прав (readwrite, read, write)
+etcdctl role grant-permission myrole readwrite /a
+# Role myrole granted permissions on /a
+
+# Выдача прав на префикс (диапазон [/a/, /a0))
+etcdctl role grant-permission myrole --prefix=true readwrite /a/
+
+# Выдача прав на диапазон [key1, key5)
+etcdctl role grant-permission myrole readwrite key1 key5
+
+# Просмотр прав роли (показывает KV Read: и KV Write:)
+etcdctl role get myrole
+# Role myrole
+# KV Read:
+#  /a
+# KV Write:
+#  /a
+
+# Список ролей
+etcdctl role list
+# myrole
+# root
+
+# Отзыв прав на ключ/диапазон
+etcdctl role revoke-permission myrole /a
+
+# Удаление роли
+etcdctl role delete myrole
+# Role myrole deleted
+```
+
+**Типичные ошибки и решения (RBAC):**
+
+| Ошибка | Причина | Решение |
+|---------------------------|---------|---------|
+| `etcdserver: permission denied` | Нет прав на операцию | Проверьте роли пользователя: `etcdctl user get <user> --detail` |
+| `etcdserver: authentication failed, invalid user ID or password` | Неверный логин/пароль | Проверьте учётные данные |
+| `etcdserver: authentication is not enabled` | Аутентификация отключена | Включите: `etcdctl auth enable` |
+| `etcdserver: user not found` | Пользователь не существует | Создайте: `etcdctl user add` |
+| `etcdserver: role not found` | Роль не существует | Создайте: `etcdctl role add` |
+| `etcdserver: role is not granted to the user` | Роль не назначена пользователю | Назначьте: `etcdctl user grant-role` |
+| `etcdserver: permission is not granted to the role` | Нет прав на ключ | Выдайте: `etcdctl role grant-permission` |
+
+**Примечания:**
+- Аутентификация защищает **только V3 gRPC API** (get, put, watch, txn и т.д.). Endpoints `/metrics` и `/health` работают на отдельном handler и **не защищены** RBAC — для их защиты используйте mTLS (`--client-cert-auth`), привязку `--listen-metrics-urls` к приватному интерфейсу или сетевые политики
+- Аутентификация по TLS Common Name: при `--client-cert-auth=true` CN клиентского сертификата используется как имя пользователя (v3.2+); username/password имеет приоритет, если предоставлены оба
+- etcd не проверяет стойкость паролей — требования к длине/сложности должен задавать администратор
+- Пустой пароль не поддерживается через `--user username:` (пользователь с пустым паролем не может аутентифицироваться по username/password)
+- RBAC проверяется на сервере на каждом gRPC-запросе; клиент кэширует только auth-токен (simple или JWT, `--auth-token`)
+- После `auth disable` все права сохраняются в метаданных и восстанавливаются при повторном `auth enable`
+
+### Зеркалирование ключей (make-mirror)
+
+```bash
+# Зеркалирование ключей из текущего кластера в целевой кластер
+etcdctl make-mirror http://localhost:2379
+# ...
+# Approximate total number of keys transferred: 12345
+# (прогресс обновляется каждые 30 секунд)
+
+# С префиксом источника и/или назначения
+etcdctl make-mirror http://dest:2379 --prefix=/config/ --dest-prefix=/mirror/config/
+
+# Без префикса назначения (ключи пишутся в корень целевого кластера)
+etcdctl make-mirror http://dest:2379 --prefix=/config/ --no-dest-prefix
+
+# TLS к целевому кластеру
+etcdctl make-mirror https://dest:2379 \
+  --dest-cacert=/etc/etcd/ca.crt \
+  --dest-cert=/etc/etcd/client.crt \
+  --dest-key=/etc/etcd/client.key
+
+# Без TLS-проверки целевого кластера
+etcdctl make-mirror http://dest:2379 --dest-insecure-transport
+```
+
+**Флаги make-mirror:** `--prefix`, `--dest-prefix`, `--no-dest-prefix`, `--dest-cacert`, `--dest-cert`, `--dest-key`, `--dest-insecure-transport`, `--max-txn-ops`.
+
+**Примечания:** `make-mirror` копирует диапазон ключей из текущего кластера в целевой через Txn-пакеты — механизм логической репликации/миграции keyspace между кластерами (не snapshot-restore). Полезно для cross-DC репликации read-only копии и миграции на новый кластер без простоя.
+
+### Backup и Restore
+
+```bash
+# Создание снапшота (не влияет на производительность участника)
 etcdctl snapshot save backup.db
+# Snapshot saved at 1234567890
+# ...
 
-# Полная команда с TLS и эндпоинтами (рекомендуется для HA кластеров)
-ETCDCTL_API=3 etcdctl snapshot save /path/to/backup.db \
-  --endpoints=https://etcd1.example.com:2379,https://etcd2.example.com:2379,https://etcd3.example.com:2379 \
-  --cacert=/etc/etcd/pki/ca.pem \
-  --cert=/etc/etcd/pki/etcd.pem \
-  --key=/etc/etcd/pki/etcd-key.pem
-```
-
-**Разбор флагов:**
-- `ETCDCTL_API=3`: Принудительное использование API v3.
-- `snapshot save`: Создает снимок и сохраняет его по указанному пути.
-- `--endpoints`: Список URL-адресов всех серверов etcd в кластере.
-- `--cacert`, `--cert`, `--key`: Пути к сертификатам и ключам для безопасной аутентификации.
-
-**Валидация:**
-```bash
-# Проверить размер снапшота
-ls -lh backup.db
-# → 1.2G backup.db
-
-# Проверить валидность снапшота
+# Проверка целостности снапшота (etcd 3.6+ — через etcdutl)
 etcdutl snapshot status backup.db -w table
-# → Hash: 1a2b3c4d, Revision: 512340, Total key count: 1254300
-```
+# +----------+----------+------------------+-------------+---------+
+# |   HASH   | REVISION | TOTAL KEY COUNT  | TOTAL SIZE  | VERSION |
+# +----------+----------+------------------+-------------+---------+
+# | 1a2b3c4d |   512340 |          1254300 |    256 MB   |   3.7   |
+# +----------+----------+------------------+-------------+---------+
 
-#### Восстановление (Offline)
-
-```bash
-# Для etcd 3.6+ обязательно использование etcdutl
+# Восстановление из снапшота в новую директорию (etcd 3.6+ — через etcdutl)
 etcdutl snapshot restore backup.db \
   --name node1 \
-  --initial-cluster node1=https://10.0.1.10:2380,node2=https://10.0.1.11:2380,node3=https://10.0.1.12:2380 \
+  --initial-cluster "node1=https://10.0.0.11:2380,node2=https://10.0.0.12:2380,node3=https://10.0.0.13:2380" \
+  --initial-advertise-peer-urls https://10.0.0.11:2380 \
   --data-dir /var/lib/etcd-new
+# ...
+
+# Восстановление с дополнительными опциями (etcd 3.6+)
+etcdutl snapshot restore backup.db --data-dir /var/lib/etcd-new \
+  --skip-hash-check \      # пропустить проверку целостности (для копий из data-dir/member/snap/db)
+  --bump-revision=1000 \   # увеличить ревизию после restore
+  --mark-compacted=5000    # пометить ревизии до 5000 как скомпактированные
 ```
 
-**Важно:**
-- Восстановление требует **остановки** etcd на всех узлах и создания **новой** директории данных.
-- В Kubernetes после restore необходимо обновить статичные манифесты в `/etc/kubernetes/manifests/etcd.yaml` с новым `--initial-cluster` и `--name`, затем перезапустить control plane.
+**Примечания:**
+- Восстановление требует остановки etcd на всех узлах и создания новой директории данных
+- Восстановленный член получает **новые** member ID и cluster ID — это новый логический кластер; все члены восстанавливают из **одного и того же** снапшота
+- В Kubernetes после restore необходимо обновить статичные манифесты в `/etc/kubernetes/manifests/etcd.yaml` (или ConfigMap) и перезапустить поды
+- Проверка после restore: `etcdutl snapshot status` на восстановленном `db` — revision должен совпадать с revision в снапшоте
+- Полная процедура DR (quorum loss, force-new-cluster, fencing) — в [emergency_recovery.md](./emergency_recovery.md)
 
-**Валидация:**
-```bash
-# Проверить восстановленный кластер
-ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 \
-  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-  --cert=/etc/kubernetes/pki/etcd/server.crt \
-  --key=/etc/kubernetes/pki/etcd/server.key \
-  endpoint status -w table
-
-# Проверить revision
-etcdctl endpoint status -w table | grep -oE '[0-9]+$'
-# Должен совпадать с revision в снапшоте
-```
-
-### Утилита etcdutl: расширенные операции
-
-#### Проверка статуса снапшота
+### Офлайн-утилиты (etcdutl, etcd-dump-logs)
 
 ```bash
-etcdutl snapshot status backup.db -w table
-# → Hash: 1a2b3c4d, Revision: 512340, Total key count: 1254300
-```
-
-#### Анализ WAL
-
-```bash
-# Статистика WAL (количество записей, размер файлов)
-etcdutl wal show /var/lib/etcd/wal/
-# → WAL records: 15420, file size: 1.2GB
-
-# Проверка целостности WAL
-etcdutl wal verify /var/lib/etcd/wal/
-# → WAL verify passed, records: 15420
-```
-
-#### Офлайн дефрагментация
-
-```bash
-# Требует остановки etcd
+# Офлайн-дефрагментация (etcd 3.6+)
 etcdutl defrag --data-dir /var/lib/etcd
-# → Finished defragmenting
+
+# Чтение WAL (журнала raft) — утилита etcd-dump-logs
+# Установка:
+go install go.etcd.io/etcd/v3/tools/etcd-dump-logs@latest
+# или из исходников etcd:
+go install -v ./tools/etcd-dump-logs
+
+# Дамп записей WAL с фильтром по типу и диапазону raft-индексов
+etcd-dump-logs --wal-dir /var/lib/etcd/member/wal --entry-type IRRPut --start-index 100 --end-index 200 /var/lib/etcd
 ```
 
-#### Офлайн работа с базой данных
+**Флаги etcd-dump-logs:** `-wal-dir` (директория WAL), `-entry-type` (`ConfigChange`, `Normal`, `Request`, `InternalRaftRequest`, `IRRRange`, `IRRPut`, `IRRDeleteRange`, `IRRTxn`, `IRRCompaction`, `IRRLeaseGrant`, `IRRLeaseRevoke`, `IRRLeaseCheckpoint`), `-start-index` (включительно; по умолчанию — от индекса последнего снапшота), `-end-index` (исключительно), `-start-snap`, `-stream-decoder`, `-raw`.
+
+**Примечания:**
+- `etcdutl` не имеет wal-команды; для чтения WAL используется только `etcd-dump-logs`
+- Утилита выводит метаданные WAL (nodeID, clusterID, term, commitIndex, vote), информацию о снапшотах и записи; **ограничения**: показывает только Entries (не записи Snapshots/HardStates), применяет overrides (для перезаписанных ключей печатает финальное значение), печатает незакоммиченные «хвостовые» записи без информации о commitIndex
+- Best Practices: регулярно проверяйте целостность бэкапов (`etcdutl snapshot status`); храните снапшоты отдельно от data-dir; для etcd 3.5 и ниже используйте `etcdctl snapshot save`/`status`/`restore` (в 3.6+ они удалены из etcdctl)
+
+### Downgrade (экспериментально, etcd 3.6+)
 
 ```bash
-# Экспорт ключей в формате JSON
-etcdutl db --data-dir /var/lib/etcd get /config/ -w json
+# Проверка возможности даунгрейда до целевой версии
+etcdctl downgrade validate 3.5
+# ...
 
-# Проверка здоровья базы данных (offline)
-etcdutl health --data-dir /var/lib/etcd
-# → health check passed
+# Включение режима даунгрейда
+etcdctl downgrade enable 3.5
+
+# Отмена даунгрейда
+etcdctl downgrade cancel
 ```
 
-**Best Practices:**
-- Используйте `etcdutl` только когда процесс etcd остановлен или на уровне файлов данных.
-- Не смешивайте онлайн (`etcdctl`) и офлайн (`etcdutl`) операции на одном узле одновременно.
+**Примечания:** команда `downgrade` помечена experimental в 3.6; используется при даунгрейде кластера (например, 3.7 → 3.6). Подробнее: [version_compatibility.md](./version_compatibility.md).
 
----
+### Shell completion
 
-## Дополнительная информация
+```bash
+# Генерация completion для bash/zsh/fish/powershell (etcd 3.6+)
+etcdctl completion bash
+etcdctl completion zsh
+```
 
-*   **[Архитектура и основные концепции](./architecture-and-concepts.md)** — глубокое понимание WAL, Raft и Revision.
-*   **[Кластеризация и восстановление](./clustering_and_recovery.md)** — процедуры замены узлов и аварийное восстановление.
-*   **[Watch и Lease: внутреннее устройство](./watch_lease_internals.md)** — буфер, прогресс, compacted revision, lease GC.
-*   **[Совместимость версий и обновление](./version_compatibility.md)** — rolling upgrade и downgrade.
-*   **[Стратегии резервного копирования](./backup_strategies.md)** — snapshot vs logical backup, trade-offs.
-*   **[Безопасность](./security.md)** — TLS, RBAC, encryption at rest.
-*   **[Garbage Collection](./garbage_collection.md)** — key GC и revision cleanup.
-*   **[Proposal Pipeline](./proposal_pipeline.md)** — детальный write path.
-*   **[Maintenance API](./maintenance_api.md)** — gRPC maintenance endpoint.
-*   **[Аварийное восстановление](./emergency_recovery.md)** — `--force-new-cluster` и DR.
-*   **[Лимиты и ограничения](./limits_and_constraints.md)** — size limits и capacity planning.
-*   **[etcd в Kubernetes](./kubernetes_integration.md)** — интеграция с K8s.
-*   **[Ядерные параметры и тюнинг ОС](./kernel_tuning.md)** — sysctl, ionice, CPU governor.
-*   **[MVCC и компакция](./mvcc_versioning_and_compaction.md)** — как избежать разрастания БД.
-*   **[Мониторинг etcd](./etcd_monitoring.md)** — метрики здоровья, алертинг и WAL fsync.
+## См. также
+
+- [architecture-and-concepts.md](./architecture-and-concepts.md) — архитектура etcd
+- [clustering_and_recovery.md](./clustering_and_recovery.md) — управление кластером и восстановление
+- [watch_lease_internals.md](./watch_lease_internals.md) — внутренности watch и lease
+- [version_compatibility.md](./version_compatibility.md) — совместимость версий
+- [backup_strategies.md](./backup_strategies.md) — стратегии бэкапа
+- [security.md](./security.md) — безопасность (TLS, RBAC)
+- [garbage_collection.md](./garbage_collection.md) — сборка мусора
+- [proposal_pipeline.md](./proposal_pipeline.md) — pipeline записи
+- [maintenance_api.md](./maintenance_api.md) — Maintenance API
+- [emergency_recovery.md](./emergency_recovery.md) — аварийное восстановление
+- [limits_and_constraints.md](./limits_and_constraints.md) — лимиты и ограничения
+- [kubernetes_integration.md](./kubernetes_integration.md) — интеграция с Kubernetes
+- [kernel_tuning.md](./kernel_tuning.md) — настройка ядра
+- [mvcc_versioning_and_compaction.md](./mvcc_versioning_and_compaction.md) — MVCC и компакция
+- [etcd_monitoring.md](./etcd_monitoring.md) — мониторинг
+- [benchmarking.md](./benchmarking.md) — бенчмаркинг
+- [troubleshooting.md](./troubleshooting.md) — troubleshooting playbook
+- [raft_consensus.md](./raft_consensus.md) — консенсус Raft и кворум

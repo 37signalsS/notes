@@ -1,5 +1,7 @@
 # Развертывание стека GitLab и Runner через Docker Compose
 
+**Актуально для:** GitLab 19.x / GitLab Runner 19.x
+
 Практическое руководство по созданию локальной среды разработки (Dev-инфраструктуры), объединяющей GitLab CE и GitLab Runner в единый стек с использованием Docker Compose.
 
 ---
@@ -15,6 +17,8 @@
 **Docker-in-Docker (DinD)** — технология, позволяющая собирать и запускать Docker-образы внутри контейнера. В этом руководстве реализуется через **Bind Mount** системного сокета Docker (`/var/run/docker.sock`).
 
 **Valkey** — высокопроизводительное in-memory хранилище (форк Redis), используемое в GitLab 19.x для управления очередями задач и кэширования.
+
+**Sidecar-паттерн** — архитектурный подход, при котором Runner разворачивается в одном docker-compose.yml с GitLab, что упрощает управление жизненным циклом всего стека.
 
 ## Основные концепции
 
@@ -32,22 +36,31 @@ GitLab Omnibus является «тяжелым» приложением и п�
 
 ### Безопасность и риски Docker Socket
 
-Проброс `/var/run/docker.sock` внутрь контейнера Runner'а дает ему права суперпользователя на хост-системе. 
+Проброс `/var/run/docker.sock` внутрь контейнера Runner'а дает ему права суперпользователя на хост-системе.
 *   **Dev-окружение:** Допустимо для локальных тестов и сборки образов.
 *   **Production:** Категорически запрещено. Используйте изолированные виртуальные машины или технологию Kaniko для сборки без привилегий.
+
+### Архитектура хранения данных
+
+GitLab в Docker Compose использует три именованных volume для персистентности:
+*   `gitlab-config` — конфигурация Omnibus (`/etc/gitlab`)
+*   `gitlab-logs` — логи всех компонентов (`/var/log/gitlab`)
+*   `gitlab-data` — данные приложения, репозитории, артефакты (`/var/opt/gitlab`)
+
+При использовании относительных путей в `docker-compose.yml` Docker создает анонимные volume. Для production и reproducible-окружений всегда используйте именованные volume.
 
 ## Практические сценарии
 
 ### Предварительные требования
 
 **Аппаратные ресурсы:**
-- **RAM:** 16 ГБ (минимум 12 ГБ при отключении мониторинга).
-- **CPU:** 4 ядра и более.
-- **Диск:** SSD, минимум 50 ГБ свободного места.
+*   **RAM:** 16 ГБ (минимум 12 ГБ при отключении мониторинга).
+*   **CPU:** 4 ядра и более.
+*   **Диск:** SSD, минимум 50 ГБ свободного места.
 
 **Программное обеспечение:**
-- Docker Engine 27.0+ и Docker Compose v2.20+.
-- Настроенный локальный DNS или отредактированный файл `/etc/hosts`.
+*   Docker Engine 27.0+ и Docker Compose v2.20+.
+*   Настроенный локальный DNS или отредактированный файл `/etc/hosts`.
 
 ### Шаг 1: Подготовка окружения и DNS
 
@@ -159,7 +172,7 @@ Runner по умолчанию требует HTTPS для взаимодейс�
     # Разрешаем проброс локального домена в запускаемые пайплайном контейнеры
     extra_hosts = ["gitlab.local:host-gateway"]
     # Для сборки образов через Docker-in-Docker
-    privileged = true 
+    privileged = true
 ```
 
 ### Автоматическая очистка диска
@@ -167,6 +180,33 @@ Runner по умолчанию требует HTTPS для взаимодейс�
 Локальные сборки быстро потребляют дисковое пространство. Рекомендуется периодически выполнять очистку на хосте:
 ```bash
 docker system prune -f
+```
+
+### Ротация логов
+
+По умолчанию логи GitLab могут занимать десятки гигабайт. Добавьте в `docker-compose.yml` параметр `logging` для ограничения размера:
+
+```yaml
+services:
+  gitlab:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+### Ресурсы Docker
+
+Убедитесь, что Docker Engine имеет достаточно ресурсов. Для Docker Desktop: Settings > Resources > Advanced. Для Linux-хоста добавьте swap:
+
+```bash
+# Рекомендуется 4-8 ГБ swap для dev-окружения
+sudo fallocate -l 4G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
 ## Решение проблем
@@ -184,32 +224,33 @@ docker system prune -f
 | **Git Clone не работает из пайплайна** | `external_url` не соответствует домену доступа | Проверьте, что URL в GitLab-проекте совпадает с `external_url` в конфиге. Для SSH используйте порт 2222. |
 | **Runner не берёт задачи из очереди** | Runner не авторизован или теги не совпадают | Проверьте статус: `docker exec -it gitlab-runner gitlab-runner list`. Убедитесь, что теги задачи совпадают с тегами Runner'а. |
 | **Disk space exhausted** | Локальные образы и кэш заполнили диск | Выполните `docker system prune -af` на хосте. Настройте cron-задачу для автоматической очистки. |
-| **Container屡次 перезапускается** | CrashLoopBackOff из-за ошибки в конфиге | Проверьте логи: `docker logs gitlab --tail 100`. Частая причина — невалидный `GITLAB_OMNIBUS_CONFIG`. |
+| **Container repeatedly перезапускается** | CrashLoopBackOff из-за ошибки в конфиге | Проверьте логи: `docker logs gitlab --tail 100`. Частая причина — невалидный `GITLAB_OMNIBUS_CONFIG`. |
 
 ## Лучшие практики (Best Practices)
 
 **Безопасность:**
-- В production-окружениях **никогда** не пробрасывайте Docker Socket. Используйте изолированные VM или Kaniko для сборки образов без привилегий.
-- Для локальной среды: Runner в контейнере работает с `privileged = true` — это безопасно только на изолированной Dev-машине.
-- Все敏感ные переменные (токены, SSH-ключи) добавляйте через CI/CD Variables с флагами `masked` и `protected`.
-- Регулярно обновляйте версии образов: `gitlab/gitlab-ce:19.x` и `gitlab/gitlab-runner:alpine`.
+*   В production-окружениях **никогда** не пробрасывайте Docker Socket. Используйте изолированные VM или Kaniko для сборки образов без привилегий.
+*   Для локальной среды: Runner в контейнере работает с `privileged = true` — это безопасно только на изолированной Dev-машине.
+*   Все секретные переменные (токены, SSH-ключи) добавляйте через CI/CD Variables с флагами `masked` и `protected`.
+*   Регулярно обновляйте версии образов: `gitlab/gitlab-ce:19.x` и `gitlab/gitlab-runner:alpine`.
 
 **Производительность:**
-- Отключите Prometheus Monitoring (`prometheus_monitoring['enable': false]`) в Dev-окружении — экономит ~1 ГБ RAM.
-- Настройте `puma['worker_processes']` и `sidekiq['max_concurrency']` под объём RAM хоста.
-- Используйте SSD для хранения данных GitLab — HDD значительно замедляет PostgreSQL и Valkey.
-- Настройте `cache` в CI/CD-задачах для ускорения повторных сборок.
+*   Отключите Prometheus Monitoring (`prometheus_monitoring['enable': false]`) в Dev-окружении — экономит ~1 ГБ RAM.
+*   Настройте `puma['worker_processes']` и `sidekiq['max_concurrency']` под объём RAM хоста.
+*   Используйте SSD для хранения данных GitLab — HDD значительно замедляет PostgreSQL и Valkey.
+*   Настройте `cache` в CI/CD-задачах для ускорения повторных сборок.
 
 **Надёжность:**
-- Всегда используйте `depends_on` с `condition: service_healthy` для зависимостей от GitLab.
-- Используйте `restart: always` для всех сервисов — это восстанавливает работу после перезагрузки хоста.
-- Пинайте версии образов: `19.2.2-ce.0` вместо `latest` — это гарантирует воспроизводимость.
-- Настройте `healthcheck` с достаточным количеством `retries` (минимум 20) для тяжёлых контейнеров.
+*   Всегда используйте `depends_on` с `condition: service_healthy` для зависимостей от GitLab.
+*   Используйте `restart: always` для всех сервисов — это восстанавливает работу после перезагрузки хоста.
+*   Пините версии образов: `19.2.2-ce.0` вместо `latest` — это гарантирует воспроизводимость.
+*   Настройте `healthcheck` с достаточным количеством `retries` (минимум 20) для тяжёлых контейнеров.
+*   Настройте лимиты `deploy.resources.limits` для предотвращения OOM.
 
 **Данные и хранение:**
-- Монтируйте volume для `/etc/gitlab` — это сохраняет конфигурацию при пересоздании контейнера.
-- Не храните данные в Anonymous Volumes — они удаляются при `docker compose down -v`.
-- Используйте именованные volume для PostgreSQL и Valkey при необходимости персистентности.
+*   Монтируйте volume для `/etc/gitlab` — это сохраняет конфигурацию при пересоздании контейнера.
+*   Не храните данные в Anonymous Volumes — они удаляются при `docker compose down -v`.
+*   Используйте именованные volume для PostgreSQL и Valkey при необходимости персистентности.
 
 ## Очистка и откат (Cleanup)
 
@@ -259,23 +300,23 @@ docker cp gitlab:/var/opt/gitlab/backups/ ./backups/
 ## Граничные случаи (Edge Cases)
 
 **Обновление GitLab в Docker Compose:**
-- При обновлении версии образа GitLab **обязательно** создайте бэкап — major/minor версии могут требовать миграции БД.
-- Не пропускайте версии: обновляйтесь последовательно (19.1 → 19.2 → 19.3).
-- Процесс миграции занимает от 5 до 30 минут в зависимости от объёма данных.
+*   При обновлении версии образа GitLab **обязательно** создайте бэкап — major/minor версии могут требовать миграции БД.
+*   Не пропускайте версии: обновляйтесь последовательно (19.1 → 19.2 → 19.3).
+*   Процесс миграции занимает от 5 до 30 минут в зависимости от объёма данных.
 
 **Одновременная работа нескольких Runner'ов:**
-- Если нужно запустить несколько Runner'ов, используйте разные имена сервисов (`gitlab-runner-1`, `gitlab-runner-2`) и разные порты для `runner-config`.
-- Каждый Runner должен иметь уникальный токен регистрации.
+*   Если нужно запустить несколько Runner'ов, используйте разные имена сервисов (`gitlab-runner-1`, `gitlab-runner-2`) и разные порты для `runner-config`.
+*   Каждый Runner должен иметь уникальный токен регистрации.
 
 **Масштабирование на несколько хостов:**
-- Docker Compose — не оркестратор. Для кластера из нескольких хостов используйте Docker Swarm или Kubernetes.
-- Для single-host окружения Docker Compose подходит оптимально.
+*   Docker Compose — не оркестратор. Для single-host окружения Docker Compose подходит оптимально.
+*   Для кластера из нескольких хостов используйте Docker Swarm.
 
 **Проброс SSH для деплоя:**
-- Для использования SSH-деплоя из пайплайна пробросьте порт 2222: `2222:22` и настройте SSH-ключ в CI/CD Variables.
+*   Для использования SSH-деплоя из пайплайна пробросьте порт 2222: `2222:22` и настройте SSH-ключ в CI/CD Variables.
 
 **Работа с macOS (Docker Desktop):**
-- Docker Desktop для macOS не поддерживает `--privileged` и проброс Docker Socket напрямую. Используйте `colima` или `lima` как альтернативу.
+*   Docker Desktop для macOS не поддерживает `--privileged` и проброс Docker Socket напрямую. Используйте `colima` или `lima` как альтернативу.
 
 ## Мониторинг и логирование
 
@@ -300,14 +341,29 @@ docker exec -it gitlab gitlab-ctl status
 # Статус PostgreSQL
 docker exec -it gitlab gitlab-ctl status postgresql
 
-# Статус Redis/Valkey
+# Статус Valkey
 docker exec -it gitlab gitlab-ctl status valkey
 ```
 
-**Просмотр метрик (если Prometheus включен):**
+**Проверка диска и inodes:**
 ```bash
-# Доступ к Prometheus UI (только если prometheus_monitoring['enable': true])
-# http://gitlab.local:9090
+# Использование диска
+docker exec -it gitlab df -h
+
+# Использование inodes (важно для больших количеств файлов)
+docker exec -it gitlab df -i
+
+# Размер директории с репозиториями
+du -sh ./data/gitlab/repositories
+```
+
+**Активные задачи и очередь:**
+```bash
+# Количество активных задач
+docker exec -it gitlab gitlab-rake gitlab:sidekiq:queue_status
+
+# Размер базы данных
+docker exec -it gitlab psql -U gitlab -c "SELECT pg_size_pretty(pg_database_size('gitlabhq_production'));"
 ```
 
 ## Дополнительная информация
@@ -318,6 +374,6 @@ docker exec -it gitlab gitlab-ctl status valkey
 
 ### Смотрите также
 
-- **[Установка Self-Hosted GitLab CE](./self_hosted_installation.md)** — подробнее о параметрах Omnibus и SSL/TLS.
-- **[Регистрация GitLab Runner](./runner_registration.md)** — детализация параметров `gitlab-runner register` и 10 сценариев.
-- **[Обзор Runner'ов и Executor'ов](../Advanced/gitlab_ci_runners_executors.md)** — архитектура, типы Executor'ов и оптимизация config.toml.
+*   **[Установка Self-Hosted GitLab CE](./self_hosted_installation.md)** — подробнее о параметрах Omnibus и SSL/TLS.
+*   **[Регистрация GitLab Runner](./runner_registration.md)** — детализация параметров `gitlab-runner register` и 10 сценариев.
+*   **[Обзор Runner'ов и Executor'ов](../Advanced/gitlab_ci_runners_executors.md)** — архитектура, типы Executor'ов и оптимизация config.toml.

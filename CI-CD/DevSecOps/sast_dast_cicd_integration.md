@@ -170,6 +170,7 @@ pipeline {
 - **[Интеграция автоматизированных тестов в CI/CD](../../Testing/testing_cicd_integration.md)**
 - **[DevSecOps — обзор методологии](./devsecops_overview.md)**
 - **[Сравнение SCA-инструментов](../../Security/Supply_Chain_Security/sca_tools_comparison.md)**
+- **[Безопасный релиз на практике: SAST, SCA, сканирование образов и security gates](./secure_release_pipeline.md)** — практический пример end-to-end пайплайна с Semgrep, OWASP Dependency Check, Trivy и Cosign
 - **[Безопасность контейнеров](../../Docker/Docker_security/vulnerability_scanning.md)**
 - **[Подпись артефактов](../../Security/Supply_Chain_Security/artifact_signing.md)**
 - **[Falco runtime security](../../Security/Tools/falco.md)**

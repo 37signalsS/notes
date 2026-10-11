@@ -114,3 +114,4 @@ curl -s http://localhost:8428/api/v1/query -d 'query=count({__name__=~".*"})'
 - [VictoriaMetrics: обзор](./overview.md) — базовые примеры vmctl;
 - [vmbackup/vmrestore](./vmbackup_restore.md) — регулярное резервное копирование;
 - [Prometheus: TSDB и снапшоты](../Prometheus/concepts/tsdb.md).
+# force reindex test

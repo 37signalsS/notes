@@ -1,27 +1,34 @@
 # Практические сценарии кэширования в GitLab CI
 
+**Актуально для:** GitLab 18.x / GitLab Runner 19.x
+
 ## Требования и предварительные условия
 
 ### Версия GitLab и поддержка функций
 
 | Функция | Минимальная версия | Примечание |
 | :--- | :--- | :--- |
-| `cache:key:files` | 11.3+ | Хеш по содержимому lock-файлов |
+| `cache:key:files` | 11.3+ | Хеш по содержимому lock-файлов (максимум 2 файла) |
+| `cache:key:files_commits` | 18.4+ | Хеш по последнему коммиту файлов (максимум 2 файла) |
 | `cache:key:prefix` | 11.3+ | Статический префикс к хешу файлов |
 | `cache:policy` (`pull`/`push`) | 8.10+ | Асимметричные политики |
 | `cache:when` | 8.8+ | Условия сохранения кэша |
 | `fallback_keys` (до 5) | 16.0+ | Цепочка поиска альтернативных ключей |
+| `CACHE_FALLBACK_KEY` (глобальный) | 8.0+ | Глобальный резервный ключ для всех задач |
 | `zstd` сжатие | 16.2+ | Алгоритм по умолчанию |
-| `FF_SKIP_NOOP_CACHE` | 16.0+ | Пропуск пустых операций архивации |
+| `CACHE_COMPRESSION_FORMAT` | 16.2+ | Выбор алгоритма сжатия (`zip`, `zipzstd`, `tarzstd`) |
 | `CACHE_COMPRESSION_LEVEL` | 16.11+ | Управление уровнем сжатия |
+| `FF_SKIP_NOOP_CACHE` | 16.0+ | Пропуск пустых операций архивации |
+| `unprotect` | 15.0+ | Доступ к кэшу защищённых веток |
 
 ### Необходимые знания
 
 - Базовый синтаксис `.gitlab-ci.yml` и жизненный цикл пайплайна
 - Различие между кэшем и артефактами (подробнее — в **[сравнении механизмов](./caching_overview.md)**)
 - Предопределённые переменные (`$CI_COMMIT_REF_SLUG`, `$CI_JOB_NAME`, `$CI_DEFAULT_BRANCH`, `$CI_NODE_INDEX`)
-- Настройка Runner'ов и Distributed Cache (S3/MinIO)
-- Принципы безопасного кэширования (cache poisoning, isolation)
+- Настройка Runner'ов и локальное кэширование
+- Принципы безопасного кэширования (cache poisoning, isolation) — см. **[Лучшие практики кэширования](./cache_best_practices.md#безопасность-security)**
+- Параметры ключей и политики — см. **[Ключи и политики](./cache_keys.md#базовые-концепции)**
 
 ### Целевая аудитория
 
@@ -31,13 +38,13 @@
 
 ### Принципы эффективных сценариев
 
-1.  **Соблюдение принципа DRY (Don't Repeat Yourself):** Использование якорей YAML (`&` и `*`) или ключевого слова `!reference` для переиспользования блоков конфигурации кэша.
-2.  **Асимметричные политики (`pull`, `push`, `pull-push`):**
-    *   Задача установки зависимостей (например, `npm ci`) должна иметь политику `pull-push`.
-    *   Задачи потребители (линтеры, тесты) должны иметь **строго** политику `pull`. Это предотвращает перезапись кэша, защищает от `Cache Poisoning` и ускоряет пайплайн (убирает фаза архивации в конце).
-3.  **Детерминированная валидация (`cache:key:files`):** Привязка кэша к хэшу lock-файлов (`package-lock.json`, `poetry.lock`, `go.sum`). Если lock-файл не изменился, кэш считается актуальным.
-4.  **Разделение контекстов (Множественное кэширование):** Если проект требует и `node_modules`, и `.m2` (Java), они должны лежать в разных кэшах с разными ключами. GitLab допускает до 4 кэшей на одну задачу.
-5.  **Трансляция путей:** GitLab Runner архивирует только те файлы, которые находятся *внутри* `$CI_PROJECT_DIR`. Глобальные кэши инструментов (например, `~/.npm` или `~/.cache/pip`) необходимо переопределять через переменные окружения, направляя их в директорию проекта.
+Данный раздел содержит краткие правила, на которых строятся сценарии ниже. Детальное объяснение параметров `cache:key`, `cache:policy`, `fallback_keys`, изоляции protected/unprotected и ограничений Gitaly см. в **[Ключи и политики](./cache_keys.md#базовые-концепции)**. Безопасность и SRE-рекомендации — в **[Лучшие практики кэширования](./cache_best_practices.md)**.
+
+1.  **DRY и переиспользование:** Используйте якоря YAML (`&` / `*`) или `!reference` для единого определения кэша в проекте.
+2.  **Асимметричные политики:** Задачи установки зависимостей — `pull-push`, задачи-потребители (линтеры, тесты) — строго `pull`.
+3.  **Детерминированный ключ:** Привязывайте ключ к lock-файлам (`package-lock.json`, `go.sum`, `uv.lock`). Если lock-файл не изменился — кэш актуален.
+4.  **Разделение контекстов:** Разные экосистемы (`node_modules`, `.m2`, `.venv`) требуют разных кэшей. GitLab допускает до 4 кэшей на задачу.
+5.  **Трансляция путей:** Runner архивирует только файлы внутри `$CI_PROJECT_DIR`. Глобальные кэши инструментов перенаправляйте в проект через переменные окружения.
 
 ## Практические сценарии по языкам и технологиям
 
@@ -317,6 +324,80 @@ install_gems:
   script:
     - bundle config set --local path 'vendor/ruby'
     - bundle install --jobs $(nproc)
+```
+
+### Сценарий 7.1 — C/C++ (Conan / CMake)
+
+Для C/C++ кэшируются скачанные пакеты Conan и кэш сборки CMake. Вместо кэширования всего `build/` кэшируйте только пакеты и лог сборки.
+
+```yaml
+variables:
+  CONAN_HOME: "$CI_PROJECT_DIR/.conan2"
+  CMAKE_BUILD_DIR: "$CI_PROJECT_DIR/build"
+
+cache:
+  key:
+    files:
+      - conanfile.txt
+      - CMakeLists.txt
+  paths:
+    - .conan2/
+    - build/CMakeFiles/
+    - build/CMakeCache.txt
+  policy: pull-push
+
+build:
+  script:
+    - conan install . --build=missing
+    - cmake -B build -S .
+    - cmake --build build -- -j$(nproc)
+```
+
+### Сценарий 7.2 — .NET (NuGet)
+
+NuGet кэширует пакеты в `~/.nuget/packages`. Для детерминированной сборки используйте `packages.lock.json`.
+
+```yaml
+variables:
+  NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget/packages"
+
+cache:
+  key:
+    files:
+      - packages.lock.json
+      - Directory.Packages.props
+  paths:
+    - .nuget/packages/
+  policy: pull-push
+
+build:
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  script:
+    - dotnet restore --locked-mode
+    - dotnet build --no-restore
+```
+
+### Сценарий 7.3 — Perl (Carton / cpm)
+
+Perl кэширует установленные модули. Carton использует `local/`, cpm использует `~/.perl-cpm`.
+
+```yaml
+variables:
+  PERL_LOCAL_LIB_ROOT: "$CI_PROJECT_DIR/perl5"
+  PERL_MB_OPT: "--install_base $CI_PROJECT_DIR/perl5"
+  PERL_MM_OPT: "INSTALL_BASE=$CI_PROJECT_DIR/perl5"
+  PATH: "$CI_PROJECT_DIR/perl5/bin:$PATH"
+
+cache:
+  key:
+    files: [cpanfile.snapshot]
+  paths:
+    - perl5/
+
+install_deps:
+  script:
+    - cpanm --notest --installdeps --with-recommends --with-suggests .
+    - carton install
 ```
 
 ## Инфраструктурные и архитектурные сценарии
@@ -601,6 +682,47 @@ test:sharded:
       policy: push
 ```
 
+## Sysadmin: управление локальным хранилищем и наблюдаемость
+
+### Очистка локального кэша Runner'а
+
+Для shell-раннеров на bare-metal или VM:
+
+```bash
+# Просмотр локального кэша
+ls -la /home/gitlab-runner/cache/
+
+# Проверка размера
+du -sh /home/gitlab-runner/cache/
+
+# Очистка кэшей старше 3 дней
+find /home/gitlab-runner/cache/ -name "*.zip" -mtime +3 -delete
+
+# Автоматическая очистка через cron (root)
+# /etc/cron.d/gitlab-runner-cache
+0 2 * * * gitlab-runner find /home/gitlab-runner/cache/ -name "*.zip" -mtime +3 -delete
+```
+
+### Мониторинг эффективности кэширования
+
+| Метрика | Целевое значение | Как измерить |
+| :--- | :--- | :--- |
+| **Cache hit rate** | > 80% | Логи Runner'а: `Checking cache for <key>... Downloading` (miss) vs `Downloading` (hit) |
+| **Cache download time** | < 30 сек | Метрика `job_duration_seconds` с разбивкой по этапам |
+| **Cache size** | < 1 GB на кэш | `du -sh` на директории кэша |
+| **Gitaly timeout rate** | 0% | Мониторинг GitLab: `gitaly_requests_duration_seconds` |
+
+```bash
+ # Просмотр логов Runner'а для анализа кэша
+ # В логах задачи ищите:
+ grep -E "(Checking cache|Downloading|Creating cache|Uploading|Archive is up to date)" job.log
+
+ # Просмотр метрик GitLab Prometheus
+ curl -s "http://gitlab.example.com/-/metrics" | grep gitaly_requests_duration_seconds
+```
+
+**Примечание:** Детальную настройку Prometheus-мониторинга и рекомендации SRE по ревизии кэшей см. в **[Лучшие практики кэширования](./cache_best_practices.md#мониторинг-и-наблюдаемость)**.
+
 ## Валидация и устранение неполадок
 
 ### Как убедиться, что кэш работает?
@@ -658,140 +780,219 @@ cat /etc/gitlab-runner/config.toml | grep -A5 "\[cache\]"
 | :--- | :--- |
 | **Gitaly Timeout при создании Pipeline** | **Причина:** Слишком много файлов в `cache:key:files` (максимум 2) или огромный монорепозиторий. **Решение:** Используйте статический ключ с префиксом или якоря YAML для сокращения конфигурации. |
 | **Кэш собирается каждый раз с нуля** | **Причина:** Несовпадение ключей между ветками (Protected vs Unprotected) или пути кэша находятся ВНЕ каталога проекта (`$CI_PROJECT_DIR`). **Решение:** Используйте `fallback_keys` и проверяйте переменные путей (`X_CACHE_DIR`). |
-| **Ошибка 403 при скачивании (Distributed Cache)** | **Причина:** Срок жизни (TTL) pre-signed URL от GitLab истек, либо IAM-роль Runner'а потеряла доступ к S3. **Решение:** Проверить настройки `config.toml` Runner'а и синхронизацию времени NTP. |
+| **Ошибка 403 при скачивании** | **Причина:** Истёк pre-signed URL или неверные credentials кэш-хранилищу. **Решение:** Проверьте настройки `config.toml` Runner'а и синхронизацию времени NTP. |
 | **Раздувание кэша (No space left on device)** | **Причина:** Накапливание старых версий пакетов в локальных папках вроде `target/` или `node_modules/`. **Решение:** Включите регулярную инвалидацию ключа (смена префикса) или очистите кэш через UI GitLab (Clear runner caches). |
+
+## Infrastructure и executor-специфичные сценарии
+
+### Сценарий 18 — Кэширование в Kubernetes executor
+
+Kubernetes executor создаёт новый под для каждой задачи. По умолчанию кэш не персистит между подами. Для кэширования используйте PVC или Distributed Cache.
+
+**Вариант А: PVC (Persistent Volume Claim) для локального кэша**
+
+```yaml
+cache:
+  key:
+    files: [package-lock.json]
+    prefix: npm
+  paths:
+    - .npm/
+  policy: pull-push
+```
+
+В `config.toml` Runner'а укажите PVC:
+
+```toml
+[[runners]]
+  executor = "kubernetes"
+  [runners.kubernetes]
+    namespace = "gitlab-runner"
+    poll_timeout = 180
+    [runners.kubernetes.pod_security_context]
+      run_as_user = 1000
+      run_as_group = 1000
+    [runners.kubernetes.volumes]
+      [[runners.kubernetes.volumes.pvc]]
+        name = "gitlab-runner-cache"
+        claim_name = "gitlab-runner-cache-pvc"
+        mount_path = "/cache"
+```
+
+**Вариант Б: emptyDir для ephemeral кэша (между стадиями внутри одного под)**
+
+```yaml
+cache:
+  key:
+    files: [package-lock.json]
+  paths:
+    - .npm/
+```
+
+```toml
+[[runners]]
+  executor = "kubernetes"
+  [runners.kubernetes]
+    namespace = "gitlab-runner"
+    [runners.kubernetes.volumes]
+      [[runners.kubernetes.volumes.empty_dir]]
+        name = "gitlab-runner-cache"
+        mount_path = "/cache"
+        medium = "Memory"  # Или "HugePages" для больших кэшей
+```
+
+**Вариант В: Distributed Cache (S3/MinIO) — рекомендуется для production**
+
+Используйте S3-совместимое хранилище для общего кэша между всеми подами:
+
+```toml
+[[runners]]
+  executor = "kubernetes"
+  [runners.cache]
+    Type = "s3"
+    Shared = true
+    [runners.cache.s3]
+      BucketName = "gitlab-runner-cache"
+      BucketLocation = "us-east-1"
+      [runners.cache.s3 Authentication]
+        AccessKey = "..."
+        SecretKey = "..."
+```
+
+**Валидация:** Проверьте, что кэш создаётся и загружается между задачами. В логах ищите `Downloading cache` и `Uploading cache`.
+
+### Сценарий 19 — Кэширование сканеров безопасности (Trivy, gitleaks)
+
+Сканеры безопасности скачивают базы уязвимостей и правила при каждом запуске. Кэширование этих данных значительно ускоряет пайплайн.
+
+**Trivy (сканирование образов):**
+
+```yaml
+variables:
+  TRIVY_CACHE_DIR: "$CI_PROJECT_DIR/.trivy-cache"
+
+cache:
+  key:
+    files: [trivy.yaml]
+    prefix: trivy-db
+  paths:
+    - .trivy-cache/
+  policy: pull-push
+
+trivy:scan:
+  stage: test
+  image: aquasec/trivy:latest
+  script:
+    - trivy image --cache-dir $TRIVY_CACHE_DIR $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+```
+
+**gitleaks (поиск секретов):**
+
+```yaml
+variables:
+  GITLEAKS_CACHE: "$CI_PROJECT_DIR/.gitleaks-cache"
+
+cache:
+  key:
+    files: [.gitleaks.toml]
+    prefix: gitleaks-rules
+  paths:
+    - .gitleaks-cache/
+  policy: pull-push
+
+secret_detection:
+  stage: test
+  image: zricethezav/gitleaks:latest
+  script:
+    - gitleaks detect --source=$CI_PROJECT_DIR --config=.gitleaks.toml
+```
+
+**Syft (генерация SBOM):**
+
+```yaml
+variables:
+  SYFT_CACHE: "$CI_PROJECT_DIR/.syft-cache"
+
+cache:
+  key:
+    files: [package-lock.json, go.sum]
+    prefix: syft-cache
+  paths:
+    - .syft-cache/
+  policy: pull-push
+
+sbom:generate:
+  stage: test
+  image: anchore/syft:latest
+  script:
+    - syft dir:$CI_PROJECT_DIR -o cyclonedx-json=sbom.json
+  artifacts:
+    paths:
+      - sbom.json
+    reports:
+      cyclonedx: sbom.json
+```
+
+**Валидация:** При первом запуске сканер скачает базы (минуты). При последующих — использует кэш (секунды). В логах ищите `Loading cache` или `Using cached database`.
+
+### Сценарий 20 — Resource group для сериализации записи кэша
+
+При параллельных задачах с `policy: pull-push` последняя завершившаяся перезаписывает кэш. Для предотвращения гонки используйте `resource_group`:
+
+```yaml
+stages:
+  - build
+  - test
+
+install_deps:
+  stage: build
+  cache:
+    key: deps-$CI_COMMIT_REF_SLUG
+    paths: [node_modules/]
+    policy: pull-push
+  resource_group: cache-write
+  script:
+    - npm ci
+
+test_1:
+  stage: test
+  cache:
+    key: deps-$CI_COMMIT_REF_SLUG
+    paths: [node_modules/]
+    policy: pull
+  script:
+    - npm test
+
+test_2:
+  stage: test
+  cache:
+    key: deps-$CI_COMMIT_REF_SLUG
+    paths: [node_modules/]
+    policy: pull
+  script:
+    - npm test
+```
+
+**Важно:** `resource_group` serializes только задачи с одинаковым именем группы. Задачи `test_1` и `test_2` могут выполняться параллельно, а `install_deps` будет ждать завершения предыдущей записи.
+
+**Режимы `resource_group_process_mode`:**
+
+| Режим | Поведение | Когда использовать |
+| :--- | :--- | :--- |
+| `unordered` | По готовности раннеров | Базовая сериализация |
+| `oldest_first` | По порядку создания | Критические деплои, миграции БД |
+| `newest_first` | Приоритет свежей задачи | CD, где важен только актуальный код |
+| `newest_ready_first` | Свежая из готовых | Сложные `rules` с фильтрацией |
+
+Детальный разбор — в **[Матричные сборки и сериализация](../workflow_rules/matrix_builds_and_serialization.md)**.
 
 ## Лучшие практики
 
-### Выбор типа ключа по сценарию
-
-| Сценарий | Рекомендуемый ключ | Причина |
-| :--- | :--- | :--- |
-| Lock-файлы (npm, pip, bundler) | `cache:key:files` | Детерминированная инвалидация |
-| Go-модули без `go.sum` | `cache:key:prefix` | Хеш всего `vendor/` |
-| Глобальные утилиты (tflint, hadolint) | Статический ключ (`"tools-v2"`) | Неизменяемые бинарники |
-| Матричные сборки | `key: $CI_JOB_NAME-$TARGET` | Изоляция по комбинации |
-| Feature-ветки → main | `fallback_keys: [main]` | Использование кэша main |
-| Шардинг тестов | `key: $CI_JOB_NAME-$CI_NODE_INDEX` | Уникальность шарда |
-
-### Асимметричные политики
-
-| Тип задачи | `cache:policy` | Причина |
-| :--- | :--- | :--- |
-| Установка зависимостей (`npm ci`, `pip install`) | `pull-push` | Кэш создаётся и обновляется |
-| Тесты (`npm test`, `pytest`) | `pull` | Только чтение кэша |
-| Линтеры (`eslint`, `pylint`) | `pull` | Не должны перезаписывать кэш |
-| Сборка (`go build`, `cargo build`) | `pull` | Артефакты в artifacts, не в кэш |
-| Deploy | `pull` | Кэш для зависимостей, не для деплоя |
-
-### Организация кэша
-
-| Практика | Описание | Приоритет |
-| :--- | :--- | :--- |
-| Префикс по проекту/сервису | `myproject-npm-$CI_COMMIT_REF_SLUG` | Высокий |
-| Разделение тяжёлых зависимостей | `node_modules` отдельно от `dist/` | Средний |
-| `fallback_keys` в 2 уровнях | main → global | Средний |
-| Документирование ключей в README | Для новых членов команды | Низкий |
-
-### Безопасность
-
-| Практика | Описание | Приоритет |
-| :--- | :--- | :--- |
-| Не использовать `unprotect: true` для зависимостей | Cache poisoning через MR | Критический |
-| `policy: pull` для тестов | Предотвращение перезаписи кэша | Высокий |
-| `fallback_keys` вместо статических ключей | Изоляция веток + кэш main | Высокий |
-| Ограничение `files` до 2 файлов | Предотвращение Gitaly timeout | Средний |
+Общие рекомендации по выбору ключей, политик и организации кэша собраны в отдельном файле: **[Лучшие практики кэширования](./cache_best_practices.md)**. Там детально разобраны Gitaly Load, безопасность, мониторинг и SRE-стратегии. В этом файле практические сценарии уже следуют этим правилам.
 
 ## Граничные случаи и ограничения
 
-### Технические лимиты
-
-| Параметр | Лимит | Рекомендация |
-| :--- | :--- | :--- |
-| Кэшей на задачу | 4 | Используйте минимально необходимое количество |
-| Файлов в `cache:key:files` | 2 (Gitaly лимит) | Оставьте только lock-файлы |
-| `fallback_keys` | 5 (GitLab 16.0+) | Достаточно для большинства сценариев |
-| Размер кэша | Ограничен диском Runner'а или S3 bucket | Настройте Lifecycle в S3 |
-| `prefix` в `key:files` | Без лимита | Используйте короткие префиксы |
-
-### Особые сценарии
-
-**`cache:key:files` с пустым файлом:**
-```yaml
-# Проблема: если package-lock.json пуст или отсутствует, хеш будет детерминированным
-# и кэш НЕ обновится при изменении зависимостей
-# Решение: добавьте проверку в before_script
-before_script:
-  - test -s package-lock.json || (echo "ERROR: lock file missing" && exit 1)
-```
-
-**Изоляция кэша в матричных сборках:**
-```yaml
-# Проблема: все матричные задачи делят один кэш
-# Решение: уникальный ключ для каждой комбинации
-test:
-  parallel:
-    matrix:
-      - PYTHON_VERSION: ["3.10", "3.11", "3.12"]
-  cache:
-    key: py${PYTHON_VERSION}-deps  # Уникальный ключ
-    paths:
-      - .venv/
-```
-
-**Кэш и `interruptible: false`:**
-```yaml
-# Проблема: прерванная задача не сохраняет кэш
-# Решение: используйте cache:when: always (осторожно)
-cache:
-  key: build-$CI_COMMIT_REF_SLUG
-  when: always  # Сохраняет кэш даже при падении
-```
-
-**Кэширование в шардах:**
-```yaml
-# Проблема: шарды перезаписывают кэш друг друга
-# Решение: уникальный ключ с индексом шарда
-test:
-  parallel: 8
-  cache:
-    key: test-shard${CI_NODE_INDEX}-$CI_COMMIT_REF_SLUG
-    paths:
-      - .cache/
-```
-
-**Множественные lock-файлы:**
-```yaml
-# Проблема: несколько lock-файлов с разными хешами
-# Решение: используйте fallback_keys или комбинируйте ключи
-cache:
-  key:
-    files:
-      - package-lock.json
-      - Gemfile.lock
-    prefix: deps
-  paths:
-    - node_modules/
-    - vendor/ruby
-# Проблема: если ОДИН из файлов не изменился, кэш НЕ обновится
-# Решение: используйте отдельные кэши для разных экосистем
-```
-
-**Кэширование в Docker-контейнерах:**
-```yaml
-# Проблема: Docker-контейнер ephemeral, локальный кэш недоступен
-# Решение: используйте Distributed Cache (S3/MinIO)
-cache:
-  key: deps-$CI_COMMIT_REF_SLUG
-  paths:
-    - node_modules/
-# Настройка Runner'а в config.toml:
-# [cache]
-# Type = "s3"
-# Shared = true
-# [cache.s3]
-# BucketName = "gitlab-runner-cache"
-```
+Технические лимиты и редкие сценарии поведения кэша детально описаны в **[Ключи и политики](./cache_keys.md#граничные-случаи-и-ограничения)**. Здесь оставлены только специфичные для практических сценариев комментарии.
 
 ## Дополнительная информация
 
@@ -801,4 +1002,7 @@ cache:
 - **[Обзор кэширования](./caching_overview.md)** — архитектура, уровни хранения, сравнение с артефактами.
 - **[Лучшие практики](./cache_best_practices.md)** — детальный разбор Gitaly Load и стратегий.
 - **[Артефакты в GitLab CI](./gitlab_ci_artifacts.md)** — передача данных между стадиями.
+- **[Кэш и директивки пайплайна](./cache_pipeline_directives.md)** — взаимодействие `rules`, `needs`, `interruptible` и `resource_group` с кэшем.
+- **[Кэш в downstream-пайплайнах](./cache_downstream_pipelines.md)** — наследование кэша в parent-child и multi-project пайплайнах.
+- **[Кэш и executor'ы](./cache_executor_specifics.md)** — особенности кэширования для Docker, Shell, Kubernetes и Instance executor'ов.
 - **[Матричные сборки и сериализация](../workflow_rules/matrix_builds_and_serialization.md)** — изоляция кэша в матричных задачах.

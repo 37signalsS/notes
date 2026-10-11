@@ -70,12 +70,15 @@ def _with_hf_offline_fallback(func: Any, timeout: int, error_msg: str = "") -> A
     with _HF_ENV_LOCK:
         was_hf = os.environ.get("HF_HUB_OFFLINE")
         was_tr = os.environ.get("TRANSFORMERS_OFFLINE")
+        explicit_offline = was_hf is not None or was_tr is not None
         try:
             os.environ["HF_HUB_OFFLINE"] = "1"
             os.environ["TRANSFORMERS_OFFLINE"] = "1"
             try:
                 return _load_with_timeout(func, _OFFLINE_LOAD_TIMEOUT)
             except Exception:
+                if explicit_offline:
+                    raise RuntimeError("Offline mode requested but models are not cached locally. Run refresh with internet first to cache models.") from None
                 pass
         finally:
             if was_hf is None:

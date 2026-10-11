@@ -124,11 +124,11 @@ k-etcdctl --endpoints=https://10.0.0.12:2379 defrag
 **Алгоритм восстановления:**
 1.  **Получите текущую ревизию:**
     ```bash
-    rev=$(k-etcdctl endpoint status --write-out="json" | egrep -o '"revision":[0-9]*' | egrep -o '[0-9]*' | head -n 1)
+     rev=$(k-etcdctl endpoint status --write-out="json" | egrep -o '"revision":[0-9]*' | egrep -o '[0-9].*')
     ```
 2.  **Выполните ручную компакцию:**
     ```bash
-    k-etcdctl compaction $rev
+     k-etcdctl compact $rev
     ```
 3.  **Выполните дефрагментацию на всех узлах:**
     ```bash
@@ -178,7 +178,7 @@ etcd предоставляет встроенный Prometheus Exporter на п
 | `etcd_network_peer_round_trip_time_seconds` | Histogram | p99 < 50 мс | p99 > 100 мс | RTT между узлами кластера. |
 | `etcd_server_proposals_failed_total` | Counter | 0 | Рост | Ошибки записи, потеря кворума. |
 | `etcd_mvcc_db_total_size_in_bytes` | Gauge | < 2 GB | > 80% квоты | Размер БД. Приближение к `quota-backend-bytes`. |
-| `etcd_server_lease_expired_total` | Counter | Пропорционально TTL | Всплески | Истечение аренд — проблемы с keepalive. |
+| `etcd_debugging_server_lease_expired_total` | Counter | Пропорционально TTL | Всплески | Истечение аренд — проблемы с keepalive. |
 
 **Примеры PromQL-запросов для мониторинга:**
 
@@ -198,8 +198,8 @@ etcd_mvcc_db_total_size_in_bytes / etcd_server_quota_backend_bytes > 0.85
 # Количество active Watch (для диагностики нагрузки)
 etcd_server_watcher_total
 
-# Количество активных leases
-etcd_server_lease_object_count
+# Число активных leases (etcd не экспортирует эту метрику — только через etcdctl)
+# etcdctl lease list | wc -l
 
 # Суммарный gRPC-трафик (для оценки нагрузки на сеть)
 rate(etcd_network_client_grpc_sent_bytes_total[5m])
@@ -393,22 +393,17 @@ k-etcdctl endpoint hashkv --cluster -w table
 # → +------------------+----------+
 # → Если хеши различаются — есть расхождение данных (требуется восстановление)
 
-# Проверка WAL (Write-Ahead Log) — выполняется на остановленном etcd
-etcdutl wal verify /var/lib/etcd/wal/
-# → applying WAL
-# → 154 entries found
-# → All WAL files verified successfully
+# Проверка WAL (Write-Ahead Log) — целостность проверяется автоматически при старте etcd;
+# для ручной диагностики используется etcd-dump-logs (etcdutl не имеет wal-команды)
+go install go.etcd.io/etcd/v3/tools/etcd-dump-logs@latest
+etcd-dump-logs /var/lib/etcd
+# → поток записей WAL; ищите разрывы term/index между узлами
 
-# Если WAL повреждена — восстановление:
-etcdutl wal repair /var/lib/etcd/wal/
-
-# Просмотр содержимого WAL (для отладки)
-etcdutl wal show /var/lib/etcd/wal/
-# → WAL metadata
-# → etcd version: 3.5.12
-# → hash: abc123...
-# → index: 12345678
-# → entries: 154
+# Если WAL повреждена — восстановление из снапшота:
+etcdutl snapshot restore /backup/last-good.db \
+  --name node1 \
+  --initial-cluster node1=https://10.0.0.11:2380 \
+  --data-dir /var/lib/etcd-restored
 ```
 
 **Когда проверять целостность:**
@@ -541,14 +536,15 @@ etcdutl snapshot status /var/lib/kube-backups/etcd-snapshot-$(date +%F).db -w ta
 # → | 12345678 | 154200 | 24 MB | 12340000 |
 # → +---------+----------+------------+--------------------------------+
 
-# Проверка целостности (verify) — проверяет контрольные суммы
-etcdutl snapshot verify /var/lib/kube-backups/etcd-snapshot-$(date +%F).db
-# → Snapshot file is valid: checksum matches
+# Проверка целостности — status читает файл и вычисляет хеш
+# (повреждённый снапшот вызовет ошибку)
+etcdutl snapshot status /var/lib/kube-backups/etcd-snapshot-$(date +%F).db
+# → hash, revision, total keys, total size, version
 
 # Автоматическое резервное копирование (cron example)
 # Добавьте в crontab на каждом узле etcd:
 0 2 * * * /usr/local/bin/k-etcdctl snapshot save /var/lib/kube-backups/etcd-snapshot-$(date +\%F).db && \
-  etcdutl snapshot verify /var/lib/kube-backups/etcd-snapshot-$(date +\%F).db && \
+  etcdutl snapshot status /var/lib/kube-backups/etcd-snapshot-$(date +\%F).db && \
   find /var/lib/kube-backups/ -name "etcd-snapshot-*.db" -mtime +7 -delete
 ```
 
@@ -556,7 +552,7 @@ etcdutl snapshot verify /var/lib/kube-backups/etcd-snapshot-$(date +%F).db
 - Снапшот содержит **всё** — все K8s объекты, секреты, конфигурации
 - `snapshot save` — online-операция (не останавливает etcd)
 - `snapshot restore` — **offline**-операция (требует остановки etcd)
-- Всегда проверяйте снапшот сразу после создания (`etcdutl snapshot verify`)
+- Всегда проверяйте снапшот сразу после создания (`etcdutl snapshot status`)
 - Храните снапшоты минимум 7 дней, включая перед каждым обновлением
 
 ### Восстановление при аварии (Offline Restore)
@@ -667,7 +663,7 @@ kubectl get configmaps -n <namespace> -o json | jq '.items[] | {name: .metadata.
 5.  **mTLS:** Обязательно для всех соединений (peer, client, admin). Два отдельных CA: для peer-соединений и для client-соединений.
 6.  **Изоляция etcd:** Не запускайте на узлах с другими нагрузками. Выделите отдельные узлы (3 или 5) только для etcd.
 7.  **Мониторинг:** Настройте алерты на `etcd_server_has_leader == 0`, `etcd_server_leader_changes_seen_total > 3/15m`, `etcd_disk_wal_fsync_duration_seconds p99 > 20ms`, `etcd_mvcc_db_total_size_in_bytes / quota > 0.85`.
-8.  **Резервное копирование:** Автоматизируйте создание снапшотов с проверкой целостности. Снапшот без `snapshot verify` — ненадежен.
+8.  **Резервное копирование:** Автоматизируйте создание снапшотов с проверкой целостности. Снапшот без проверки (`etcdutl snapshot status`) — ненадежен.
 9.  **Clock Sync:** Используйте NTP на всех узлах. Смещение часов > 1 секунды может привести к проблемам с Raft consensus.
 10. **Избегайте `kubectl edit`/`kubectl patch` на etcd напрямую:** Все изменения только через API-сервер.
 

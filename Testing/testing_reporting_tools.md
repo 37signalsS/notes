@@ -81,7 +81,7 @@ mvn test
 
 **Инструментарий:**
 - **pytest:** `pytest --junitxml=report.xml --junit-prefix=service-name --junit-family=xunit2`
-- **Jest:** `--reporters=jest-junit` с переменной `JEST_JUNIT_OUTPUT`
+- **Jest:** `--reporters=jest-junit` с переменными `JEST_JUNIT_OUTPUT_DIR` и `JEST_JUNIT_OUTPUT_NAME`
 - **Go:** `gotestsum --junitfile report.xml --format=standard-json`
 - **Maven:** `surefire-report:bundle` генерирует `TEST-*.xml` в `target/surefire-reports`
 
@@ -186,7 +186,7 @@ jobs:
             --html=reports/report.html --self-contained-html
       - name: Publish JUnit report
         if: always()
-        uses: mikepenz/action-junit-report@v4
+        uses: mikepenz/action-junit-report@v6
         with:
           report_paths: reports/junit.xml
           require_tests: true

@@ -1,5 +1,7 @@
 # Популярные Unikernel-проекты
 
+**Актуально для:** Unikraft v0.21.0, KraftKit v0.12.15, MirageOS v4.11.x, OSv v0.57.0, Nanos (актуальная ветка), IncludeOS (актуальная ветка); примеры для on-premise развёртываний
+
 ## Определения
 
 В этом документе представлены основные фреймворки и реализации **юникернелов** (unikernels), актуальные на 2026 год. Описаны их ключевые характеристики, статус разработки и приведены практические фрагменты кода для старта.
@@ -9,7 +11,7 @@
 ## Требования для реализации
 
 Для on-premise развёртывания юникернелов необходима следующая инфраструктура:
-- **Гипервизор:** KVM/QEMU (наиболее универсальный), Xen (для MirageOS) или AWS Firecracker (для автоматизации).
+- **Гипервизор:** KVM/QEMU (наиболее универсальный), Xen (для MirageOS) или Firecracker (для автоматизации).
 - **Аппаратная поддержка:** Процессор с инструкциями виртуализации (Intel VT-x / AMD-V). Проверка: `egrep -c '(vmx|svm)' /proc/cpuinfo` (ожидаем ≥1).
 - **Инструментарий хоста:**
   - Доступ к `/dev/kvm` (группа `kvm` или root).
@@ -34,17 +36,17 @@
 
 | Проект | Язык / Совместимость | Статус | Размер | Особенности |
 | :--- | :--- | :--- | :--- | :--- |
-| **Unikraft** | C / POSIX (модульный) | Активен (v11+) | ~1-5 МБ | Релиз Metis: снапшоты, клонирование, модульность |
-| **Nanos/Ops** | Любой / Binary comp. | Активен | ~5-15 МБ | **Native GPU**, ARM64, Inception speedup |
-| **MirageOS** | OCaml / Clean-slate | Активен (v4.5) | ~1-2 МБ | Поддержка **OCaml 5** (Multicore/Effects) |
-| **OSv** | C++ / POSIX | Стабилен | ~10-20 МБ | Оптимизирован для JVM; ASLR (Exp. 2026) |
-| **IncludeOS** | C++ / Минимальная | Legacy | ~5-10 МБ | Проект практически не обновляется |
-| **Rumprun** | C / POSIX | Legacy | ~5-15 МБ | Использует драйверы NetBSD |
+| **Unikraft** | C / POSIX (модульный) | Активен (v0.21.0) | ~1–5 МБ | Релиз Metis: снапшоты, клонирование, модульность |
+| **Nanos/Ops** | Любой / Binary comp. | Активен | ~5–15 МБ | **Native GPU**, ARM64, Inception speedup |
+| **MirageOS** | OCaml / Clean-slate | Активен (v4.11.x) | ~1–2 МБ | Поддержка **OCaml 5** (Multicore/Effects), Eio |
+| **OSv** | C++ / POSIX | Активен (v0.57.0) | ~10–20 МБ | Оптимизирован для JVM; ASLR, Virtio-FS DAX |
+| **IncludeOS** | C++ / Минимальная | Активен (медленный ритм) | ~5–10 МБ | C++20, Solo5/uKVM, ARM в разработке |
+| **Rumprun** | C / POSIX | Legacy (не поддерживается) | ~5–15 МБ | Использует драйверы NetBSD; последний релиз 2020 |
 
 ## Практические сценарии использования
 
 ### 1. Unikraft (Linux Foundation)
-В 2026 году релиз 11 «Metis» превратил Unikraft в полноценную платформу для распределенных вычислений и ephemeral-нагрузок.
+В 2026 году релиз 0.21.0 «Ijiraq» и платформа KraftKit v0.12.15 превратили Unikraft в полноценную платформу для распределенных вычислений и ephemeral-нагрузок.
 
 *   **Ключевые фичи Metis:**
     *   **Instance Branching:** Клонирование запущенной микро-ВМ за миллисекунды.
@@ -62,7 +64,7 @@
     cat <<EOF > kraft.yaml
     spec: v0.6
     name: my-service
-    unikraft: v0.17.0
+    unikraft: v0.21.0
     targets:
       - name: qemu
         arch: x86_64
@@ -109,7 +111,7 @@
     # Создание минимального Kraftfile
     cat <<EOF > Kraftfile
     name: my-service
-    unikraft: v0.17.0
+    unikraft: v0.21.0
     targets:
       - name: qemu
         arch: x86_64
@@ -198,7 +200,7 @@
     ```
 
 ### 3. MirageOS
-Современная версия 4.5 полностью совместима с **OCaml 5**, ориентирована на максимальную безопасность (Clean-slate).
+Современная версия 4.11.x полностью совместима с **OCaml 5**, ориентирована на максимальную безопасность (Clean-slate).
 
 *   **Effects-based Concurrency:** Использование библиотеки `Eio` позволяет писать высокопроизводительный асинхронный код без использования сложных монад (Lwt).
 *   **Multicore:** Нативная поддержка многоядерности обеспечивает масштабирование сетевых приложений на современных CPU.
@@ -244,11 +246,11 @@
     ```
 
 *   **Безопасность:**
-    *   **Формальная верификация:** Возможность верификации кода с помощью工具ов типа Coq.
+    *   **Формальная верификация:** Возможность верификации кода с помощью инструментов типа Coq.
     *   **Минимальная TCB:** Только ~5000 строк кода ядра, что упрощает аудит.
 
 ### 4. OSv
-Остается лучшим выбором для запуска legacy Java-приложений и баз данных (Cassandra, ScyllaDB) в on-premise среде.
+Остается лучшим выбором для запуска legacy Java-приложений и баз данных (Cassandra, ScyllaDB) в on-premise среде. Актуальный релиз — v0.57.0 «Magpie».
 
 *   **Безопасность (2026):** Внедрение патчей ASLR для рандомизации базы приложения и стека значительно повысило устойчивость к эксплойтам.
 *   **JVM:** Бесшовная поддержка OpenJDK 17/21/25 с оптимизацией ZGC.
@@ -416,6 +418,39 @@ scrape_configs:
       - targets: ['host-ip:9090']  # QEMU metrics endpoint
 ```
 
+## Рекомендации по эксплуатации
+
+### Production hardening
+
+- **Unikraft:** Используйте `kraft build --strip` для удаления отладочных символов. Фиксируйте версии библиотек в `kraft.yaml`. Для production используйте KVM, а не эмуляцию QEMU.
+- **Nanos:** Фиксируйте версию ядра (`ops kernel get <version>` вместо `latest`). Используйте `config.json` с явными лимитами памяти и CPU. Валидируйте ELF-бинарники через `ops run -i` перед деплоем.
+- **MirageOS:** Собирайте с флагами оптимизации (`-O2` или `-O3`). Используйте `mirage configure -t hvt` для Xen или solo5-hvt для KVM. Храните конфигурацию `config.ml` в Git.
+- **OSv:** Собирайте в режиме Release (`make release`) для удаления символов. Используйте virtio-blk вместо SCSI для совместимости. Настройте `-m` и `-smp` под реальную нагрузку.
+- **Общее:** Храните все конфигурации сборки (`kraft.yaml`, `config.json`, `Kraftfile`) в Git. Никогда не изменяйте запущенный юникернел — любой change требует пересборки.
+
+### Безопасность
+
+- Удаляйте отладочные символы из всех образов: `readelf -S build/* | grep debug` должен возвращать пустой результат.
+- Ограничьте доступ к `/dev/kvm` группой `kvm` или root. Никогда не запускайте юникернелы от обычного пользователя без KVM-группы.
+- Используйте AppArmor/SELinux профили для QEMU/VMM процессов.
+- Для MirageOS используйте формальную верификацию (Coq) для критичного кода.
+- Проверяйте открытые порты через `nmap` после каждого деплоя — юникернел должен слушать только явно прописанные порты.
+
+### Мониторинг и алертинг
+
+- Собирайте метрики хоста (Node Exporter) + метрики VMM (QEMU/KVM).
+- Настройте алерты на рост потребления RAM процессами QEMU/KVM — это может указывать на утечку памяти в гостевом приложении.
+- Логируйте stdout/stderr юникернела через гипервизор в центральный агрегатор (Loki, ELK).
+- Для Unikraft используйте `--log-file` для сохранения логов. Для Nanos перехватывайте stdout через `tee`.
+- Мониторьте время старта: юникернел должен запускаться за <100 мс. Рост этого времени указывает на проблему с образом или конфигурацией.
+
+### Резервное копирование и восстановление
+
+- Юникернелы иммутабельны — основной способ отката = пересборка из Git.
+- Для Unikraft Metis используйте снапшоты (`kraft snapshot create`) для мгновенного восстановления.
+- Храните исходный код и конфигурации сборки в Git с тегированием релизов.
+- Для OSv храните готовые образы в локальном registry с версионированием.
+
 ## Устранение неполадок
 
 | Проблема | Причина | Решение |
@@ -436,11 +471,16 @@ scrape_configs:
 - [Преимущества и ограничения](./unikernel_advantages_disadvantages.md) — подробный разбор безопасности и Ops.
 - [Инструменты и будущее](./tools_future.md) — сравнение с Wasm и Firecracker.
 - [Сценарии использования](./use_cases.md) — практические примеры DevOps/SRE.
-
-### Ссылки
-- [Unikraft Documentation](https://unikraft.org/docs/) — официальная документация.
-- [Nanos / OPS](https://nanos.org/) — руководство по эксплуатации.
-- [MirageOS](https://mirage.io/) — официальный портал.
-- [OSv Project](https://osv.io/) — документация и примеры.
-- [eBPF для наблюдаемости](../../Kubernetes/Networking/Network/CNI/ebpf.md) — мониторинг юникернелов через eBPF.
+- [Оркестрация и управление](./orchestration_and_management.md) — Kubernetes/KubeVirt, Ansible, Terraform, blue-green/canary.
+- [Безопасность и hardening](./security_hardening.md) — сканирование образов, SBOM, подпись, AppArmor/SELinux, compliance.
+- [Мониторинг и алертинг](./monitoring_and_alerting.md) — Prometheus правила, Grafana дашборды, SLO/SLI/SLA.
+- [Сеть: продвинутые сценарии](./networking_advanced.md) — VLAN, bonding, nftables, DHCP, NTP.
+- [Хранилище и резервное копирование](./storage_and_backup.md) — NFS, Ceph, iSCSI, persistent данные, backup.
+- [Производительность и тюнинг](./performance_tuning.md) — KVM/QEMU тюнинг, benchmarks, capacity planning.
+- [Обнаружение сервисов](../../Concepts/service-discovery-overview.md) — общие принципы service discovery.
+- [KubeVirt: KVM в Kubernetes](../../Linux/Virtualization/kvm/kubevirt.md) — запуск VM как нативных ресурсов K8s.
+- [Оптимизация KVM (2025–2026)](../../Linux/Virtualization/kvm/performance_tuning_2026.md) — CPU pinning, NUMA, HugePages, io_uring.
+- [Мониторинг KVM](../../Linux/Virtualization/kvm/kvm_monitoring.md) — Prometheus, libvirt_exporter, Grafana.
+- [Автоматизация KVM: Ansible, Terraform, Packer](../../Linux/Virtualization/kvm/kvm_automation.md) — управление жизненным циклом ВМ.
+- [eBPF для наблюдаемости](../../Kubernetes/Networking/Network/CNI/ebpf.md) — мониторинг через eBPF.
 - [OpenTelemetry: Инструментация](../../OpenTelemetry/instrumentation_sdk.md) — отправка метрик из юникернелов.

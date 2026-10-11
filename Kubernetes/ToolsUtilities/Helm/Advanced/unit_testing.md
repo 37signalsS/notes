@@ -542,7 +542,7 @@ jobs:
           output-file: report.xml
       - name: Publish Test Results
         if: always()
-        uses: mikepenz/action-junit-report@v4
+        uses: mikepenz/action-junit-report@v6
         with:
           report_paths: '**/report.xml'
 ```

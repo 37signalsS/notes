@@ -1,5 +1,7 @@
 # Системы хранения данных (СХД): Обзор
 
+**Актуально для:** Linux kernel 6.1+, mdadm 4.2+, LVM 2.03.22+, ZFS on Linux 2.2.6+, Ceph Reef (18.x) / Squid (19.x), NVMe 2.0, PCIe 5.0/6.0, RoCE v2, NVMe-oF, iSCSI, NFS 4.1/4.2, S3 API, S3-совместимые реализации: MinIO, Ceph RGW
+
 ## Определения
 
 **Система хранения данных (СХД)** — специализированная инженерно-программная инфраструктура для централизованного хранения, защиты и управления информацией в компьютерных сетях.
@@ -15,6 +17,18 @@
 **Zoned Storage (ZNS)** — стандарт интерфейса NVMe, который разделяет адресное пространство накопителя на зоны. Данные в зоны должны записываться последовательно, что исключает необходимость в сложной логике Garbage Collection на стороне контроллера SSD, снижает Write Amplification и повышает предсказуемость задержек.
 
 **Quality of Service (QoS) в СХД** — механизмы ограничения и гарантирования производительности (IOPS, Bandwidth) для конкретных LUN или приложений. Позволяет избежать проблемы «шумного соседа» (Noisy Neighbor) в мультиарендных средах. Реализуется через выделение гарантированных лимитов (minimum IOPS/bandwidth) и потолков (maximum IOPS/bandwidth) для каждого потребителя.
+
+**Change Management** — процесс внесения изменений в production-инфраструктуру с минимальным риском. Включает: планирование, тестирование в staging, approval workflow, выполнение в maintenance window, валидацию и rollback-план.
+
+**Runbook** — пошаговая инструкция для SRE/SysAdmin на случай инцидента. Содержит: симптомы проблемы, диагностические команды, возможные причины, пошаговые решения, escalation path.
+
+**Idempotency** — свойство операции, при котором повторное выполнение не изменяет результат. В контексте storage: повторный запуск Ansible/Puppet playbook для настройки LUN/бакета не должен создавать дубликаты или изменять уже корректную конфигурацию.
+
+**Disaster Recovery (DR)** — комплекс мер по восстановлению работы систем после катастрофического сбоя. Оценивается метриками RPO и RTO.
+
+**Immutable Infrastructure** — подход, при котором серверы/хранилища не изменяются после деплоя; любые изменения выполняются через повторное развёртывание. Снижает risk configuration drift.
+
+**Configuration Drift** — неконтролируемое отклонение фактического состояния инфраструктуры от желаемого. Противодействие: configuration management (Ansible/Puppet/Chef) + регулярный audit.
 
 ## Базовые концепции
 
@@ -131,6 +145,30 @@ SDS отделяет логику управления от аппаратног
     - ** Thick Provisioning:** Полный объём выделяется сразу при создании. Предсказуемая производительность, но неэффективное использование места.
     - ** Thin Provisioning:** Объём выделяется динамически по мере заполнения. Экономит место, но требует мониторинга (переполнение пула приводит к I/O ошибкам на всех томах).
 *   **Объектные хранилища:** Данные организованы в виде объектов (с самими данными, метаданными и уникальным ID). Отличаются гибкостью и бесконечной масштабируемостью. Идеальны для Big Data, архивов, CDN и распределенных систем.
+
+### Сравнение: Block, File и Object Storage
+
+| Тип | Организация данных | Интерфейс доступа | Ключевые сценарии |
+| :--- | :--- | :--- | :--- |
+| **Block Storage** | Данные разбиваются на блоки; сервер получает хранилище в виде отдельного тома. Поверх него создаётся файловая система, после чего с диском работает ОС, база данных или приложение. | Блочное устройство (Fibre Channel, iSCSI, NVMe-oF, SAS) | Диски виртуальных машин, базы данных, приложения, чувствительные к задержкам |
+| **File Storage** | Данные организованы в привычную структуру файлов и каталогов. Доступ обычно идёт по NFS или SMB. Одно хранилище могут использовать несколько серверов или пользователей. | Файловые протоколы (NFS, SMB/CIFS) | Общие сетевые папки, документы, медиаданные, рабочие каталоги |
+| **Object Storage** | Данные хранятся как отдельные объекты вместе с метаданными. Доступ к ним обычно идёт через API. | S3 API (HTTP/REST) | Резервные копии, архивы, логи, статические файлы, большие объёмы данных |
+
+**Коротко:**
+
+- Block — сервер получает диск.
+- File — система работает с файлами и каталогами.
+- Object — приложение работает с объектами через API.
+
+**На практике:**
+
+- Нужен диск для ВМ или базы данных — используется Block Storage.
+- Нескольким пользователям или серверам нужны одни и те же файлы — подойдёт File Storage.
+- Нужно хранить бэкапы, архивы, логи или много файлов — в ход идёт Object Storage.
+
+Одна инфраструктура может использовать все три варианта одновременно.
+
+**Важно:** выбор хранилища без учёта нагрузки, способа доступа к данным и того, как с ними работает приложение, может привести к лишней задержке, неудобному доступу к данным, ограничениям при масштабировании или переплате за характеристики, которые для этой задачи не нужны.
 
 ### Глубокое погружение: Объектное хранилище (S3)
 
@@ -667,26 +705,6 @@ network:
           via: 10.10.10.1
 ```
 
-### Мониторинг СХД через Prometheus
-
-**Экспортеры для сбора метрик:**
-- **node_exporter:** Базовые метрики дисков (`node_disk_*`).
-- **smartctl_exporter:** SMART-здоровье дисков (`smartctl_device_*`).
-- **ceph_exporter:** Метрики Ceph кластера.
-- **minio-exporter:** Метрики MinIO объектного хранилища.
-
-**Пример PromQL-запросов:**
-```promql
-# Утилизация диска (проценты)
-100 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100)
-
-# Средняя задержка диска (await в мс)
-rate(node_disk_read_time_seconds_total[5m]) / rate(node_disk_reads_completed_total[5m]) * 1000
-
-# Температура NVMe
-smartctl_device_temperature_celsius
-```
-
 ### Общие рекомендации по бэкапам
 
 1. **Регулярно проверяйте восстановление:** Бэкап, который не проверен — не бэкап. Тестируйте restore минимум раз в квартал.
@@ -695,8 +713,360 @@ smartctl_device_temperature_celsius
 4. **Мониторинг бэкапов:** Алертинг на неудачные бэкапы (pgBackRest, restic помечают статус).
 5. **Изоляция бэкапов:** Используйте отдельные учётные записи с minimal permissions (principle of least privilege).
 
+### Управление конфигурацией и идемпотентность
+
+Всё управление storage должно быть описано в коде и версионироваться в Git. Ниже — минимальные паттерны для распространённых инструментов.
+
+**Ansible (декларативный подход):**
+
+```yaml
+- name: Гарантировать наличие LUN
+  ansible.builtin.uri:
+    url: "https://{{ storage_api }}/api/v1/luns"
+    method: POST
+    body_format: json
+    body:
+      name: "{{ lun_name }}"
+      size_gb: "{{ lun_size }}"
+      storage_pool: "fast_ssd"
+    status_code: 200,201,409  # 409 = already exists — идемпотентно
+  register: lun_result
+
+- name: Проверить, что LUN уже существует
+  ansible.builtin.assert:
+    that:
+      - lun_result.status == 200 or lun_result.status == 201
+    fail_msg: "Неожиданный статус при создании LUN: {{ lun_result.status }}"
+```
+
+**Проверка идемпотентности:**
+- Повторный запуск playbook не должен менять состояние (`ok` вместо `changed`).
+- Для ресурсов, которые не поддерживают `GET` для проверки существования, используйте `register` + `assert`.
+- Никогда не используйте `shell`/`command` для операций, которые можно сделать через модули — это нарушает идемпотентность.
+
+**Puppet (декларативный подход):**
+
+```puppet
+# Модуль storage/lun
+storage_lun { 'db_lun':
+  ensure      => present,
+  size_gb     => 500,
+  pool        => 'fast_ssd',
+  target_port => 'iqn.2024-01.com.example:storage.lun0',
+}
+```
+
+Puppet apply должен быть идемпотентен: повторный запуск без изменений в манифесте не вызывает `changes`.
+
+**Chef (императивный → декларативный):**
+
+```ruby
+# recipe lun
+lun 'db_lun' do
+  size_gb 500
+  pool 'fast_ssd'
+  action :create
+end
+```
+
+### Change Management
+
+Любое изменение production storage должно проходить через формализованный процесс:
+
+1. **Planning:** Описать изменение, риски, окно выполнения, rollback-план.
+2. **Testing:** Выполнить в staging-среде, идентичной production.
+3. **Approval:** Получить одобрение отTechnical Lead/SRE.
+4. **Execution:** Выполнить в maintenance window с extended monitoring.
+5. **Validation:** Проверить, что изменение достигло цели и не вызвало регресса.
+6. **Documentation:** Обновить runbook и архитектурную документацию.
+
+**Maintenance Window Checklist:**
+- [ ] Уведомление stakeholders минимум за 48 часов.
+- [ ] Наличие rollback-плана с проверенными командами.
+- [ ] Extended monitoring (1-2 часа до и после).
+- [ ] Наличие всех участников на связи (Slack/Zoom war room).
+- [ ] Проверка backups — свежий backup доступен и проверен.
+
+### Disaster Recovery Runbooks
+
+**Сценарий 1: Отказ диска в RAID-массиве**
+
+```bash
+# 1. Диагностика
+cat /proc/mdstat
+# → md0: active raid6 sdd1[3] sde1[4] sdf1[5] sdb1[1] sdc1[2]
+#    [====>................]  resync = 25.3% (292M/1152M) finish=12.3min
+
+# 2. Ожидание завершения rebuild (не отключать питание)
+watch -n 5 cat /proc/mdstat
+
+# 3. Проверка SMART нового диска
+smartctl -H /dev/sdd
+smartctl -A /dev/sdd | grep -E "Reallocated|Pending|Uncorrectable"
+
+# 4. Если диск маркирован как failed — замена
+mdadm --manage /dev/md0 --fail /dev/sdd1
+mdadm --manage /dev/md0 --remove /dev/sdd1
+# Физическая замена диска
+mdadm --manage /dev/md0 --add /dev/sdd1
+```
+
+**Сценарий 2: Ошибка пути в multipath**
+
+```bash
+# 1. Проверка статуса путей
+multipath -ll
+# mpatha (3600508b400105e21) dm-0 PURE,FlashArray
+# size=1.0T features='1 queue_if_no_path' hwhandler='0' wp=rw
+# |-+- policy='service-time 0' prio=1 status=active
+# | `- 2:0:0:0 sda 8:0    active ready running
+# `-+- policy='service-time 0' prio=1 status=enabled
+#   `- 3:0:0:0 sdb 8:16   failed ready running
+
+# 2. Принудительный failover
+multipathd failover mpatha
+
+# 3. Проверка, что путь восстановился
+multipathd show paths format "%d %t %T %s %z"
+
+# 4. Если путь не восстанавливается — проверка сети и HBA
+lspci | grep -i hba
+dmesg | grep -i "fiber\|hba\|scsi"
+```
+
+**Сценарий 3: Падение OSD в Ceph**
+
+```bash
+# 1. Проверка состояния кластера
+ceph -s
+ceph osd tree
+
+# 2. Проверка статуса OSD
+systemctl status ceph-osd@15
+journalctl -u ceph-osd@15 --since "10 minutes ago"
+
+# 3. Если OSD down — попытка restart
+systemctl restart ceph-osd@15
+sleep 10
+ceph osd tree | grep 15
+
+# 4. Если не помогает — удаление и повторное добавление
+ceph osd out 15
+ceph osd crush remove osd.15
+ceph auth del osd.15
+ceph osd rm 15
+# Создание нового OSD на новом диске
+ceph-volume lvm create --data /dev/vg/data --osd-id 15 --osd-fsid $(ceph fsid)
+```
+
+**Сценарий 4: Утечкаthin pool (LVM/Ceph)**
+
+```bash
+# 1. Проверка использования thin pool
+lvs
+# LV         VG   Attr       LSize   Pool   Origin Data%  Meta%  Move Log
+# thinpool   vg0  twi-a-tz-- 500.00g       100.00
+
+# 2. Проверка, какие тома потребляют место
+lvs -o+devices
+# Найти тома с high data%
+
+# 3. Расширение thin pool
+lvextend -L +100G vg0/thinpool
+lvextend -L +100G vg0/thinpool_tmeta
+
+# 4. Для Ceph — проверка OSD
+ceph df
+ceph osd df
+# Найти OSD с high used_%
+```
+
+### Мониторинг и алертинг
+
+**Prometheus: обязательные alert rules:**
+
+```yaml
+groups:
+  - name: storage_alerts
+    rules:
+      - alert: DiskSpaceLow
+        expr: 100 - (node_filesystem_avail_bytes{mountpoint=~"/.*"} / node_filesystem_size_bytes{mountpoint=~"/.*"} * 100) > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Диск заполняется на {{ $value }}%"
+          runbook_url: "https://wiki.example.com/runbooks/disk-space-low"
+
+      - alert: DiskSpaceCritical
+        expr: 100 - (node_filesystem_avail_bytes{mountpoint=~"/.*"} / node_filesystem_size_bytes{mountpoint=~"/.*"} * 100) > 95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Диск заполнен на {{ $value }}%"
+          runbook_url: "https://wiki.example.com/runbooks/disk-space-critical"
+
+      - alert: DiskIOLatencyHigh
+        expr: rate(node_disk_read_time_seconds_total[5m]) / rate(node_disk_reads_completed_total[5m]) * 1000 > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокая задержка чтения диска {{ $labels.device }}: {{ $value }}ms"
+
+      - alert: DiskIOLatencyCritical
+        expr: rate(node_disk_read_time_seconds_total[5m]) / rate(node_disk_reads_completed_total[5m]) * 1000 > 50
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Критическая задержка чтения диска {{ $labels.device }}: {{ $value }}ms"
+
+      - alert: NVMeTemperatureHigh
+        expr: smartctl_device_temperature_celsius > 70
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "NVMe {{ $labels.device }} перегрет: {{ $value }}°C"
+
+      - alert: MDADMDiskFailed
+        expr: node_md_state{state="faulty"} > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Диск в RAID-массиве {{ $labels.device }} сломан"
+          runbook_url: "https://wiki.example.com/runbooks/mdadm-disk-failed"
+
+      - alert: MultipathPathDown
+        expr: up{job="node_exporter"} == 0 or absent(up{job="node_exporter"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Хост {{ $labels.instance }} недоступен"
+
+      - alert: CephOSDDown
+        expr: ceph_osd_up == 0
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OSD {{ $labels.osd }} в кластере Ceph не активен"
+
+      - alert: CephPGDegraded
+        expr: rate(ceph_pg_degraded_objects[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PG {{ $labels.pg }} в состоянии degraded"
+```
+
+**Grafana Dashboard requirements:**
+- Panel 1: Disk usage % по всем mounts (top 10).
+- Panel 2: IOPS/Throughput по устройствам.
+- Panel 3: NVMe temperature, wear, errors.
+- Panel 4: Ceph cluster health (OSD count, PG state, recovery speed).
+- Panel 5: Backup job status (success/failure/duration).
+
+### Резервное копирование: процедуры валидации
+
+**Автоматическая проверка backup:**
+
+```bash
+#!/bin/bash
+# /usr/local/bin/backup-validate.sh
+BACKUP_DIR="/backup/daily"
+RESTORE_DIR="/tmp/backup-restore-test"
+MOUNT_POINT="/mnt/test-restore"
+
+# 1. Проверка размера backup
+du -sh "$BACKUP_DIR"
+# → 120G /backup/daily
+
+# 2. Проверка последнего backup
+ls -lht "$BACKUP_DIR" | head -5
+
+# 3. Тест восстановления в отдельный каталог
+mkdir -p "$RESTORE_DIR"
+restic restore latest --target "$RESTORE_DIR" --verify
+
+# 4. Проверка целостности
+find "$RESTORE_DIR" -type f | wc -l
+# → 15234
+
+# 5. Сравнение контрольных сумм
+cd "$RESTORE_DIR" && sha256sum -c /backup/manifest.sha256
+# → OK: 15234/15234
+
+# 6. Очистка
+rm -rf "$RESTORE_DIR"
+```
+
+**Ротация бэкапов (lifecycle policies):**
+- **Daily:** хранить 7 дней.
+- **Weekly:** хранить 4 недели.
+- **Monthly:** хранить 12 месяцев.
+- **Yearly:** хранить 7 лет (compliance).
+
+```bash
+# Пример lifecycle policy для S3
+aws s3api put-bucket-lifecycle-configuration --bucket backups --lifecycle-configuration '{
+  "Rules": [
+    {"ID": "DailyToWeekly", "Status": "Enabled", "Prefix": "daily/", "Transitions": [{"Days": 7, "StorageClass": "STANDARD_IA"}]},
+    {"ID": "WeeklyToMonthly", "Status": "Enabled", "Prefix": "weekly/", "Transitions": [{"Days": 30, "StorageClass": "GLACIER"}]},
+    {"ID": "DeleteAfter1Year", "Status": "Enabled", "Prefix": "yearly/", "Expiration": {"Days": 2555}}
+  ]
+}'
+```
+
+### Capacity Planning Automation
+
+**Автоматический мониторинг роста:**
+
+```bash
+#!/bin/bash
+# /usr/local/bin/capacity-check.sh
+THRESHOLD=80
+
+df -hT | awk -v threshold=$THRESHOLD '
+$6 ~ /%/ {
+  gsub(/%/, "", $6)
+  if ($6 > threshold) {
+    print "WARNING: " $6 " на " $7
+  }
+}'
+```
+
+**Прогноз роста на основе исторических данных:**
+
+```bash
+# Использование sar для анализа роста
+sar -F 1 3600 > /var/log/sar/disk_usage.log
+
+# Анализ роста
+python3 -c "
+import pandas as pd
+df = pd.read_csv('/var/log/sar/disk_usage.log', delim_whitespace=True)
+# Прогноз на 90 дней
+# ...
+"
+```
+
+**Capacity Planning Formula:**
+
+```
+Требуемый объём = (Текущий объём × (1 + Рост в год × Срок жизни)) × Коэффициент избыточности
+```
+
+- **Рост в год:** типично 30–100% для активных данных, 10–20% для архивов.
+- **Коэффициент избыточности:** 2× для RAID 10, 1.33× для RAID 6 (4+2), 1.5× для тройного копирования.
+
 ## Дополнительная информация
 
-*   [Обзор отказоустойчивости и балансировки нагрузки](../High_Availability/ha_clustering_and_load_balancing.md)
+*   [Обзор отказоустойчивости и балансировки нагрузки](../Concepts/High_Availability/ha_clustering_and_load_balancing.md)
 *   [RAID: Обзор и уровни](../../Linux/FileSystems/RAID/overview.md)
 *   [iSCSI: Индекс](../../Linux/Networking/iSCSI/index.md)

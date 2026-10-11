@@ -1,5 +1,7 @@
 # Dockerfile: Лучшие практики для C/C++
 
+**Актуально для:** C++ toolchain 2026 (GCC 15+/16, Clang 22+, CMake 4.4+, Alpine 3.24)
+
 ## Определения
 
 - **Toolchain:** Набор инструментов для компиляции и сборки ПО (компиляторы `gcc`/`clang`, линковщики `ld`/`lld`/`mold`, системы сборки `make`/`cmake`/`ninja`).
@@ -11,7 +13,7 @@
 - **Distroless / Distroless-static:** Семейство минималистичных образов от Google, содержащих только приложение и его рантайм-зависимости без shell, пакетных менеджеров и стандартных утилит. Вариант `distroless/static` — для статических бинарников, `distroless/static-debian12` — на базе `glibc`.
 - **Wolfi / Chainguard:** Современные "un-distro" образы, ориентированные на безопасность (0 CVE) и использующие `glibc`. Идеальная база для производительных C++ приложений.
 - **Hardening:** Применение флагов компиляции (например, `-fhardened`, `Stack Protector`, `Full RELRO`) для повышения устойчивости бинарника к эксплойтам.
-- **PGO (Profile-Guided Optimization):** Метод оптимизации, при котором компилятор использует данные реального выполнения программы для ускорения кода. В GCC 15+ и Clang 18+ применяется автоматически при наличии файла `default.profdata`.
+- **PGO (Profile-Guided Optimization):** Метод оптимизации, при котором компилятор использует данные реального выполнения программы для ускорения кода. В GCC 15+/16 и Clang 22+ применяется автоматически при наличии файла `default.profdata`.
 - **BOLT (Binary Optimization and Layout Tool):** Инструмент от Meta для пост-линковочной оптимизации бинарников, улучшающий размещение кода в памяти.
 - **SBOM (Software Bill of Materials):** Декларативный перечень всех компонентов и зависимостей, необходимый для аудита безопасности.
 - **LTO (Link Time Optimization):** Оптимизация на этапе линковки, анализирующая весь проект целиком. Позволяет удалять неиспользуемый код и выполнять инлайнинг функций между разными объектными файлами.
@@ -62,7 +64,7 @@
 Для достижения минимального времени сборки рекомендуется связка: **BuildKit Cache Mounts + ccache + mold + Ninja**.
 
 1.  **ccache:** Сохраняет результаты компиляции объектных файлов. Требует монтирования `--mount=type=cache`. В CMake включается через `-DCMAKE_CXX_COMPILER_LAUNCHER=ccache`.
-2.  **mold:** Устраняет "бутылочное горлышко" этапа линковки. В CMake 3.29+ включается через `CMAKE_LINKER_TYPE=MOLD`. В ручную через `-DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=mold"`.
+2.  **mold:** Устраняет "бутылочное горлышко" этапа линковки. В CMake 4.4+ включается через `CMAKE_LINKER_TYPE=MOLD`. В ручную через `-DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=mold"`.
 3.  **Ninja:** Намного эффективнее классического `make` при работе с графами зависимостей в контейнерах.
 4.  **sccache (опционально):** Аналог `ccache` от Mozilla, поддерживающий распределённые кэши (S3, Redis) в CI/CD пайплайнах.
 
@@ -73,7 +75,7 @@ C++ приложения в контейнерах подвержены тем �
 *   **cgroups и лимиты памяти:** Go и Java считывают лимиты cgroups автоматически. C++ рантайм (`glibc` malloc, `libc++ allocator`) этого не делает. При превышении лимита RSS процесс получает `SIGKILL` (Exit Code 137). Для предсказуемого поведения используйте `tcmalloc` или `jemalloc`, которые лучше работают с ограниченной памятью.
 *   **CPU Throttling:** Если лимит процессора превышен, ядро ограничивает кванты времени. Высоконагруженные C++ сервисы должны проверять `std::thread::hardware_concurrency()` или читать `/sys/fs/cgroup/cpu.max` для адаптации пула потоков.
 *   **Аллокаторы памяти:** `glibc` malloc фрагментируется под долгую нагрузку. В Docker рекомендуется связка `tcmalloc` (Google) или `jemalloc` (Facebook) с переменной окружения `LD_PRELOAD` или линковкой на этапе сборки.
-*   **Флаги hardening:** Современные компиляторы (GCC 15+, Clang 18+) поддерживают комплексную защиту. Все флаги должны применяться на этапе сборки, а не на рантайме.
+*   **Флаги hardening:** Современные компиляторы (GCC 15+/16, Clang 22+) поддерживают комплексную защиту. Все флаги должны применяться на этапе сборки, а не на рантайме.
 
 ### Воспроизводимость сборок (Reproducible Builds)
 
@@ -136,7 +138,7 @@ CMakeLists.txt
 
 ### Безопасность и Hardening (Стандарты 2026)
 
-Современные компиляторы (GCC 15+, Clang 18+) поддерживают комплексные флаги защиты:
+Современные компиляторы (GCC 15+/16, Clang 22+) поддерживают комплексные флаги защиты:
 - **`-fhardened`**: Мета-флаг, включающий набор проверенных практик защиты.
 - **`-D_FORTIFY_SOURCE=3`**: Улучшенное обнаружение переполнений буфера (заменяет уровень 2).
 - **`-Wl,-z,relro,-z,now`**: Полный RELRO (защита таблиц импорта).
@@ -169,8 +171,9 @@ C++ поддерживает кросс-компиляцию, но требуе�
 
 ### Оптимизация сборки (PGO, LTO, BOLT и кэширование)
 
-1.  **PGO (GCC/Clang):** В 2026 году считается стандартом для высоконагруженных систем.
-    *   *Процесс:* Соберите образ с `-fprofile-generate` → запустите под нагрузкой → снимите профиль → объедините через `llvm-profdata merge` → пересоберите с `-fprofile-use=default.profdata`.
+1.  **PGO (GCC):** В 2026 году считается стандартом для высоконагруженных систем.
+    *   *Процесс (GCC):* Соберите образ с `-fprofile-generate` → запустите под нагрузкой → снимите профиль (файлы `*.gcda` генерируются автоматически) → пересоберите с `-fprofile-use`.
+    *   *Процесс (Clang/LLVM):* Соберите образ с `-fprofile-generate` → запустите под нагрузкой → снимите профиль (`*.profraw`) → объедините через `llvm-profdata merge -o default.profdata *.profraw` → пересоберите с `-fprofile-use=default.profdata`.
     *   *Важно:* При кросс-компиляции профиль должен быть снят под той же архитектурой и ОС.
 2.  **BOLT:** Пост-линковочная оптимизация от Meta. Применяется после финальной сборки: `llvm-bolt my_app -o my_app.bolt -reorder-blocks=cache -reorder-functions=hfsort`. Улучшает размещение кода в памяти на 5–15%.
 3.  **LTO:** Включается через `-flto=auto` (GCC) или `-flto=thin` (Clang). Сокращает размер бинарника на 10–20% и ускорявает выполнение зачёт инлайнинга.
@@ -272,7 +275,7 @@ ENTRYPOINT ["/my_app"]
 ```dockerfile
 # syntax=docker/dockerfile:1
 FROM cgr.dev/chainguard/wolfi-base AS sdk
-RUN apk add --no-cache build-base cmake clang-18 llvm-18 mold ninja
+RUN apk add --no-cache build-base cmake clang llvm mold ninja
 
 WORKDIR /src
 COPY . .
@@ -293,7 +296,7 @@ RUN cmake -B build-final -G Ninja \
     cmake --build build-final
 
 FROM cgr.dev/chainguard/glibc-dynamic:latest
-COPY --from=builder /src/build-final/my_app /usr/bin/my_app
+COPY --from=sdk /src/build-final/my_app /usr/bin/my_app
 USER 65532
 ENTRYPOINT ["my_app"]
 ```
@@ -552,28 +555,6 @@ readelf -l ./my_app | grep interpreter
 objdump -p ./my_app | grep NEEDED
 ```
 
-### Flight Recorder и непрерывное профилирование
-
-Для production-мониторинга можно использовать встроенные инструменты:
-
-```cpp
-// Пример: flight recorder через boost::stacktrace или custom signals
-#include <csignal>
-#include <unistd.h>
-
-void signal_handler(int sig) {
-    if (sig == SIGUSR1) {
-        // Собрать stacktrace всех потоков
-        // Записать в /tmp/flight_recorder_$(date +%s).dump
-    }
-}
-
-int main() {
-    signal(SIGUSR1, signal_handler);
-    // ... приложение
-}
-```
-
 ### pprof для C++
 
 Хотя C++ не имеет встроенного `net/http/pprof`, можно использовать:
@@ -660,10 +641,98 @@ ENTRYPOINT ["my_app"]
 | **Статическая линковка** | Убирает .so | `-static` |
 | **Без RTTI/Exceptions** | -5–15% | `-fno-rtti -fno-exceptions` |
 
+## Best Practices
+
+### 1. Используйте Exec Form для ENTRYPOINT и CMD
+
+Всегда используйте JSON-форму (`ENTRYPOINT ["/usr/bin/app"]`), чтобы приложение получало PID 1 напрямую и обрабатывало `SIGTERM`/`SIGINT` от Docker/Kubernetes.
+
+### 2. Реализуйте graceful shutdown в коде
+
+C++ приложения в контейнерах должны корректно завершаться по `SIGTERM`:
+
+```cpp
+#include <csignal>
+#include <atomic>
+#include <csignal>
+
+std::atomic<bool> shutdown_requested{false};
+
+void signal_handler(int sig) {
+    if (sig == SIGTERM || sig == SIGINT) {
+        shutdown_requested = true;
+    }
+}
+
+int main() {
+    std::signal(SIGTERM, signal_handler);
+    std::signal(SIGINT, signal_handler);
+    
+    while (!shutdown_requested) {
+        // Основной цикл работы
+    }
+    
+    return 0;
+}
+```
+
+### 3. Создавайте non-root пользователя с фиксированным UID
+
+Всегда создавайте отдельного пользователя в builder и копируйте `/etc/passwd` в финальный образ:
+
+```dockerfile
+RUN useradd -m -u 10001 appuser
+COPY --from=builder /etc/passwd /etc/passwd
+USER 10001
+```
+
+### 4. Пиннингуйте базовые образы по SHA256 дайджесту
+
+Для production используйте дайджесты вместо тегов:
+
+```dockerfile
+FROM debian:bookworm-slim@sha256:d2d7... AS builder
+FROM cgr.dev/chainguard/static:latest@sha256:abc123... AS runtime
+```
+
+### 5. Используйте связку ccache + mold + Ninja
+
+Это стандарт де-факто в 2026 году для ускорения сборки C++ проектов в Docker. В CMake 4.4+ включается через `CMAKE_LINKER_TYPE=MOLD` и `-DCMAKE_CXX_COMPILER_LAUNCHER=ccache`.
+
+### 6. Отключайте CGO, если нет зависимости от C-библиотек
+
+`CGO_ENABLED=0` (Go) или полная статическая линковка (`-static`) для C++ гарантирует автономный бинарник. Если нужна CGO, используйте Wolfi (`glibc`) вместо Alpine (`musl`).
+
+### 7. Верифицируйте hardening-флаги в CI/CD
+
+Запускайте `checksec --file=./my_app` и убедитесь, что включены: NX, PIE, RELRO (Full), Canary. Это requirement для regulated environments.
+
+### 8. Используйте SOURCE_DATE_EPOCH для воспроизводимости
+
+```dockerfile
+ARG SOURCE_DATE_EPOCH
+ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
+```
+
+CMake 3.26+ автоматически использует `SOURCE_DATE_EPOCH` для встраивания дат в бинарники.
+
+### 9. Запускайте тесты в builder-stage
+
+Тесты (catch2, gtest) должны выполняться в builder, но не попадать в финальный образ. Используйте `ctest --output-on-failure` после сборки.
+
+### 10. Мониторинг cgroups throttling
+
+C++ рантайм не считывает лимиты cgroups автоматически. Читайте `/sys/fs/cgroup/cpu.max` и адаптируйте пул потоков под `nproc` или лимит CPU:
+
+```bash
+cat /sys/fs/cgroup/cpu.max
+cat /sys/fs/cgroup/memory.max
+```
+
 ### Смотрите также
 
 - **[Оптимизация сборки Docker-образов](./build_optimization.md)** — общие стратегии кэширования.
 - **[Безопасность в Dockerfile](./security.md)** — глубокий аудит и сканирование CVE.
-- **[Инструменты сборки в Linux](../../Linux/Development/build_tools.md)** — подробнее о CMake, ccache и mold.
+- **[Инструменты сборки в Linux](../../../Linux/Development/build_tools.md)** — подробнее о CMake, ccache и mold.
 - **[Dockerfile: Лучшие практики для Rust](./rust.md)** — сравнение с альтернативным системным языком.
 - **[Dockerfile: Лучшие практики для Go](./go.md)** — детали работы со статической линковкой.

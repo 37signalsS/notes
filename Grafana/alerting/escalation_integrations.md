@@ -1,5 +1,9 @@
 # Интеграция с системами эскалации — Incident Management
 
+> **Статус (2026):** Grafana OnCall OSS архивирован 24 марта 2026 года (maintenance mode с 11 марта 2025). Рекомендуется миграция на Grafana Cloud IRM или переход на GoAlert. PagerDuty, Opsgenie, Splunk On-Call и GoAlert остаются активными продуктами.
+
+**Актуальность (октябрь 2026):** Информация проверена для Grafana 13.2.x / 12.x (LTS). Текущая стабильная ветка — 13.2.x; 12.x — поддержка безопасности (LTS); 11.x — EOL (июнь 2026). Нативная поддержка Unified Alerting является стандартом.
+
 ## Определения
 
 **Системы эскалации (Escalation Systems)** — платформы для управления инцидентами (PagerDuty, Opsgenie, Splunk On-Call, GoAlert), обеспечивающие автоматизацию дежурств (on-call), многоуровневое оповещение и контроль жизненного цикла критических событий.
@@ -10,7 +14,7 @@
 *   **Grafana OnCall:** Централизованное управление дежурствами, эскалациями и расписаниями (приоритетное решение в 2026 году).
 *   **Grafana Incident:** Инструмент для координации действий во время активного сбоя (автоматическое создание Slack-каналов, Zoom-конференций и ведение таймлайна инцидента).
 
-**Grafana OnCall OSS** — Open-source версия, официально **архивирована 24 марта 2026 года**. Рекомендуется миграция на Grafana Cloud IRM или использование GoAlert.
+**Grafana OnCall OSS** — Open-source версия, официально **архивирована 24 марта 2026 года** (в режиме maintenance mode с 11 марта 2025). Рекомендуется миграция на Grafana Cloud IRM или использование GoAlert. Cloud Connection (push, SMS, звонки) перестал работать с даты архивации.
 
 **On-call schedule (График дежурств)** — ротационная таблица, определяющая, кто является текущим дежурным в заданный интервал времени. В IRM-системе график привязан к эскалационной политике и может содержать несколько уровней (L1, L2, L3).
 
@@ -63,7 +67,7 @@ Grafana взаимодействует с IRM-системами через дв
 
 ## Предварительные требования
 
-*   **Версия Grafana:** 12.x или 13.x (проверено август 2026).
+*   **Версия Grafana:** 13.2.x (текущая) или 12.x (LTS); 11.x — EOL (июнь 2026). Стандарт — Unified Alerting (включён по умолчанию с 9.x).
 *   **Аккаунт IRM:** зарегистрированная инстанция PagerDuty, Opsgenie, Splunk On-Call или GoAlert с правами на создание интеграций.
 *   **Сеть:** исходящий HTTPS-трафик из Grafana к эндпоинтам IRM:
     *   PagerDuty: `events.pagerduty.com` (порт 443)
@@ -291,11 +295,73 @@ muteTimings:
 *   **Используйте отдельные контакт-пойнты по критичности:** critical → PagerDuty/Opsgenie (звонок), warning → Slack/Telegram, info → лог.
 *   **Всегда включайте `autoResolve`** для нативных интеграций, чтобы не накапливать «призрачные» инциденты в IRM.
 *   **Формируйте стабильный dedup key:** используйте комбинацию `alertname` + `cluster` + `service`. Не включайте в ключ быстро меняющиеся метки (`instance`, `pod`), иначе каждый всплеск создаст новый инцидент.
-*   **Тестируйте контакт-пойнт кнопкой **Test** перед продакшеном и после каждой смены ключа.
+*   **Тестируйте контакт-пойнт кнопкой Test перед продакшеном и после каждой смены ключа.
 *   **Ограничивайте права ключей:** Integration Key в PagerDuty должен относиться к сервису, а не быть global API key.
 *   **Настраивайте escalation policy:** даже при автоматическом квитировании должен быть план «если никто не ответил за 15 минут».
 *   **Очистка:** удаляйте временные Silences после инцидентов; регулярно пересматривайте Mute Timings; удаляйте неиспользуемые контакт-пойнты и политики из файлов провиженинга.
-*   **Мета-мониторинг:** добавьте алерт на `rate(alertmanager_notifications_failed_total[5m]) > 0` — «тихий» сбой доставки в IRM остаётся незамеченным, если не мониторить сам алертинг.
+*   **Мета-мониторинг:** добавьте алерт на `rate(alertmanager_notifications_failed_total[5m]) > 0` — «тихий» сбой доставки в IRM остаётся незамеченным, если не мониторить сам алертинг. Аналогично проверяйте `alertmanager_notifications_total` и `alertmanager_received_total` на расхождение (отправили, но не доставили). Подробнее в [meta-monitoring](../../Concepts/Observability_and_Monitoring/meta-monitoring.md).
+
+## Мета-мониторинг IRM-интеграции
+
+Самая частая причина «никто не знает о сбое» — это сбой на этапе доставки алерта в IRM-систему. Grafana UI показывает, что алерт `Alerting`, но не показывает, дошла ли она до PagerDuty/Opsgenie/GoAlert. Ниже — конкретные алерты для мониторинга самой цепочки доставки.
+
+### Критические метрики Alertmanager
+
+| Метрика | Значение | Значение для алерта |
+| :--- | :--- | :--- |
+| `alertmanager_notifications_total` | Всего попыток отправки | Сравнивается с `alertmanager_received_total` |
+| `alertmanager_notifications_failed_total` | Неудачные отправки | `rate(...[5m]) > 0` — критично |
+| `alertmanager_notifications_dropped_total` | Отброшенные уведомления | `rate(...[5m]) > 0` — критично |
+| `alertmanager_http_request_duration_seconds` | Латентность API IRM | `histogram_quantile(0.99, ...)` > 5с — предупреждение |
+
+### Пример алерта на мониторинг IRM-доставки
+
+```yaml
+# provisioning/alerting/rules/irm-meta-alerts.yaml
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: meta-alerts-irm
+    folder: meta-alerts
+    interval: 1m
+    rules:
+      - uid: meta-irm-delivery-failed
+        title: IRM-доставка неудачна
+        condition: A
+        datasources:
+          - type: prometheus
+            uid: prometheus
+        annotations:
+          summary: "Неудачная доставка в IRM: {{ $labels.receiver }}"
+          runbook_url: "https://wiki.example.com/runbooks/irm-delivery-failed"
+        labels:
+          severity: critical
+          team: sre
+        evalData:
+          - refId: A
+            datasourceType: prometheus
+            datasourceUid: prometheus
+        expr: rate(alertmanager_notifications_failed_total[5m]) > 0
+        for: 5m
+        annotations:
+          description: "Имело место хотя бы одно неудачное уведомление в IRM за последние 5 минут."
+```
+
+### Проверка цепочки доставки вручную
+
+| Проверка | Команда | Ожидаемый результат |
+| :--- | :--- | :--- |
+| Отправка тестового алерта в IRM | Кнопка **Test** на контакт-пойнте | Инцидент в PagerDuty/Opsgenie/GoAlert в течение 1-2 мин |
+| Доступность IRM-эндпоинта | `curl -sI https://events.pagerduty.com` | `HTTP/2 200` или `401` (нет `timeout`/`connection refused`) |
+| Rate limit не сработал | `curl -sI https://api.opsgenie.com/v2/alerts` с валидным токеном | `HTTP/2 200` или `401`, но не `429` |
+| Доступность Grafana Alerting | `curl -s http://localhost:3000/api/alerting/rules` | Список правил, HTTP 200 |
+
+### Сигналы, на которые стоит реагировать
+
+- `alertmanager_notifications_failed_total` растёт — проверьте ключи интеграции, сеть, rate limit IRM.
+- `alertmanager_received_total` ≠ `alertmanager_notifications_total` — часть алертов не попала ни в один контакт-пойнт (проверьте маршрутизацию).
+- `alertmanager_notifications_dropped_total` > 0 — уведомления отброшены из-за `group_wait`/`group_interval`; возможно, интервалы过于 агрессивны.
+- IRM-система возвращает `429` — увеличьте `group_interval`, проверьте тарифный план.
 
 ## Дополнительная информация
 

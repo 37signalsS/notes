@@ -1,5 +1,7 @@
 # Матричные сборки и сериализация задач
 
+**Актуально для:** GitLab CI/CD 17.x–19.4
+
 ## Определения
 
 **Матричная сборка (`parallel:matrix`)** — это декларативный механизм GitLab CI/CD, позволяющий запускать одну задачу несколько раз с различными комбинациями переменных. На этапе компиляции пайплайна GitLab генерирует декартово произведение указанных массивов данных, создавая изолированные инстансы задачи. Это основной инструмент реализации принципа DRY (Don't Repeat Yourself) для масштабного тестирования и сборки.
@@ -19,9 +21,9 @@
 | `exclude` в матрице | 12.0+ | Исключение комбинаций |
 | `needs:parallel:matrix` | 16.3+ | Матричная адресация (1:1 связь) |
 | `$[[ matrix.VAR ]]` в `needs` | 18.6+ | Выражения в матричных зависимостях |
-| `resource_group` | 11.9+ | Базовая сериализация |
-| `resource_group_process_mode` | 15.3+ | 4 режима обработки очереди |
-| `resource_group` priority | 18.x+ | Приоритизация внутри группы |
+| `resource_group` | 12.7+ | Базовая сериализация |
+| `resource_group_process_mode` | 14.3+ API, 14.4+ YAML | 4 режима обработки очереди |
+| `newest_ready_first` | 18.6+ | Приоритизация готовых задач |
 
 ### Необходимые знания
 
@@ -64,6 +66,13 @@
 **Приоритизация (GitLab 18.x+):** Введена возможность настройки приоритетов внутри группы ресурсов. Задания из Merge Request могут иметь приоритет над Scheduled-запусками, даже если последние были созданы раньше.
 
 **Важно:** Для задач с `resource_group` рекомендуется устанавливать `interruptible: false`, чтобы критическая операция (например, обновление схемы БД) не была прервана механизмом `auto_cancel`.
+
+**Ограничения матричных выражений (18.6+):**
+- **Compile-time only:** Идентификаторы разрешаются при создании пайплайна, а не во время выполнения задачи.
+- **String replacement only:** Нет сложной логики или трансформаций.
+- **Matrix identifiers only:** Нельзя ссылаться на обычные CI/CD переменные или `spec:inputs`.
+
+**Deadlock при parent-child пайплайнах:** Если родительский и дочерний пайплайн используют одну и ту же `resource_group` с режимом `oldest_first`, возникает взаимная блокировка: родитель ждет дочерний, дочерний ждет родителя. Решение — определить `resource_group` в родительской задаче `trigger`, а не в дочерней.
 
 ## Практические сценарии
 
@@ -217,19 +226,19 @@ build:
   stage: build
   parallel:
     matrix:
-      - PROVIDER: [aws, gcp, azure]
+      - PROVIDER: [vsphere, libvirt, proxmox]
   script: ./build.sh $PROVIDER
 
 test:
   stage: test
   parallel:
     matrix:
-      - PROVIDER: [aws, gcp, azure]
+      - PROVIDER: [vsphere, libvirt, proxmox]
   needs:
     - job: build
       parallel:
         matrix:
-          - PROVIDER: [$PROVIDER] # Тест AWS не ждет сборку GCP
+          - PROVIDER: [$PROVIDER] # Тест vSphere не ждет сборку libvirt
   script: ./test.sh $PROVIDER
 ```
 
@@ -436,6 +445,147 @@ deploy:services:
       --set image.tag=$CI_COMMIT_SHA
 ```
 
+### Селективные зависимости через матричные выражения (18.6+)
+
+Matrix expressions позволяют зависеть только от части комбинаций upstream-матрицы, не указывая все варианты вручную.
+
+```yaml
+prepare_env:
+  stage: prepare
+  parallel:
+    matrix:
+      - OS: [linux, windows, macos]
+        PYTHON: ["3.10", "3.11", "3.12"]
+  script:
+    - echo "Preparing $OS with Python $PYTHON"
+
+test_project:
+  stage: test
+  parallel:
+    matrix:
+      - OS: [linux, windows, macos]
+  needs:
+    - job: prepare_env
+      parallel:
+        matrix:
+          - OS: ['$[[ matrix.OS ]]']
+            PYTHON: ["3.11", "3.12"]  # Только актуальные версии
+  script:
+    - pytest -k "not slow"
+```
+
+**Важно:**
+- Matrix expressions разрешаются только на этапе компиляции.
+- Можно ссылаться только на идентификаторы матрицы, но не на обычные переменные или `spec:inputs`.
+
+### Parent-child пайплайны с resource_group: avoiding deadlock
+
+При использовании `trigger` с `strategy: mirror` родительская задача ждет завершения дочернего пайплайна. Если дочерний пайплайн использует ту же `resource_group`, что и родительский `deploy`, при `oldest_first` возникает deadlock.
+
+```yaml
+# parent-pipeline.yml
+test:
+  stage: test
+  trigger:
+    include: child-pipeline.yml
+    strategy: mirror
+  resource_group: production_deploy  # Блокировка определяется здесь
+
+deploy:
+  stage: deploy
+  resource_group: production_deploy
+  script: ./deploy.sh
+```
+
+**Правило:** Всегда определяйте `resource_group` в родительской задаче `trigger`, а не в дочернем пайплайне.
+
+### Кросс-платформенное тестирование Ansible на on-prem хостах
+
+Тестирование плейбуков наCentOS Stream 9, Rocky Linux 9 и Ubuntu 22.04 через Docker-раннеры, имитирующие целевые ОС.
+
+```yaml
+test:ansible:
+  stage: test
+  parallel:
+    matrix:
+      - TARGET_OS: [centos9, rocky9, ubuntu2204]
+        PYTHON_VERSION: ["3.10", "3.11", "3.12"]
+        exclude:
+          - TARGET_OS: centos9
+            PYTHON_VERSION: "3.12"  # CentOS 9 Stream не имеет Python 3.12 в репозиториях
+  image: python:${PYTHON_VERSION}
+  before_script:
+    - pip install ansible-core==2.16
+  script:
+    - ansible-playbook --syntax-check -i inventory/${TARGET_OS} site.yml
+    - ansible-lint playbooks/
+  artifacts:
+    paths:
+      - lint-results/${TARGET_OS}-${PYTHON_VERSION}.txt
+    expire_in: 1 day
+```
+
+### Валидация Terraform-модулей для on-prem провайдеров
+
+Запуск `terraform validate` и `terraform plan` для модулей, targeted на vSphere, Proxmox VE и libvirt.
+
+```yaml
+stages:
+  - validate
+  - plan
+
+validate:modules:
+  stage: validate
+  image: hashicorp/terraform:1.9
+  parallel:
+    matrix:
+      - MODULE: [networking, compute, storage]
+        PROVIDER: [vsphere, proxmox, libvirt]
+  script:
+    - cd modules/${MODULE}
+    - terraform init -backend=false
+    - terraform validate
+    - terraform fmt -check -recursive
+  artifacts:
+    paths:
+      - validation-${MODULE}-${PROVIDER}.json
+    expire_in: 1 hour
+
+plan:staging:
+  stage: plan
+  needs: ["validate:modules"]
+  parallel:
+    matrix:
+      - ENV: [staging, production]
+        PROVIDER: [vsphere]
+  script:
+    - cd environments/${ENV}
+    - terraform init
+    - terraform plan -out=tfplan -var="provider=${PROVIDER}"
+  artifacts:
+    paths:
+      - environments/${ENV}/tfplan
+      - environments/${ENV}/plan-${ENV}.json
+```
+
+### Сериализация миграций БД с resource_group
+
+Защита промышленной базы от конкурирующих миграций в параллельных пайплайнах.
+
+```yaml
+database_migration:
+  stage: deploy
+  resource_group: db_migrate
+  resource_group_process_mode: oldest_first
+  script:
+    - ./migrate.sh
+  interruptible: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: false
+```
+
 ## Валидация и отладка матричных сборок
 
 ### Просмотр сгенерированных задач
@@ -503,6 +653,7 @@ curl --header "PRIVATE-TOKEN: $TOKEN" \
 | **Минимальные артефакты** | `expire_in: 1 hour` для промежуточных результатов | Высокий |
 | **Уникальные ключи кэша** | `cache:key: $CI_JOB_NAME-$TARGET` для каждой комбинации | Высокий |
 | **`needs:parallel:matrix`** | Связывание 1:1 вместо ожидания всей матрицы | Высокий |
+| **Matrix expressions (18.6+)** | `$[[ matrix.VAR ]]` для селективных зависимостей без ручного перечисления | Высокий |
 | **`exclude`** | Исключайте несовместимые комбинации заранее | Средний |
 | **Динамические матрицы** | Генерация через API при >50 комбинациях | Средний |
 | **Группировка по stages** | Не смешивайте критичные и некритичные задачи в одной стадии | Средний |
@@ -514,6 +665,7 @@ curl --header "PRIVATE-TOKEN: $TOKEN" \
 | **`interruptible: false`** | Для критических операций с `resource_group` | Критический |
 | **`resource_group_process_mode`** | `oldest_first` для миграций, `newest_first` для деплоев | Высокий |
 | **Таймауты** | Устанавливайте `timeout` для задач с `resource_group` | Высокий |
+| **Deadlock avoidance** | Определяйте `resource_group` в родительской `trigger`, а не в дочернем пайплайне | Критический |
 | **Очистка в `after_script`** | Удаляйте временные файлы, токены, ключи | Средний |
 | **Мониторинг очереди** | Отслеживайте длину очереди `resource_group` через API | Средний |
 
@@ -538,6 +690,8 @@ curl --header "PRIVATE-TOKEN: $TOKEN" \
 | `Artifact not found` | Задача в `needs` не создала артефакт | Проверьте `paths` в `artifacts` и имя файла |
 | `Resource group timeout` | Очередь `resource_group` не освобождается | Проверьте `resource_group_process_mode` и таймауты |
 | `Cache collision` | Разные матричные задачи перезаписывают кэш | Добавьте переменную матрицы в `cache:key` |
+| `Matrix expression error` | `$[[ matrix.VAR ]]` используется вне `needs:parallel:matrix` или ссылается на несуществующий идентификатор | Проверьте синтаксис и убедитесь, что переменная объявлена в `parallel:matrix` |
+| `Deadlock` | Родительский и дочерний пайплайн используют одну `resource_group` с `oldest_first` | Определите `resource_group` в родительской задаче `trigger` |
 
 ### Диагностика проблем с `resource_group`
 
@@ -557,21 +711,21 @@ curl --header "PRIVATE-TOKEN: $TOKEN" \
 
 ```yaml
 # Проблема: test: [web01] не ждет build: [web01]
-# Причина: неправильное использование $PROVIDER в needs
+# Причина: неправильное использование переменной в needs
 
 # НЕПРАВИЛЬНО:
 needs:
   - job: build
     parallel:
       matrix:
-        - PROVIDER: [aws, gcp, azure]  # Все инстансы ждут ВСЕ инстансы build
+        - TARGET: [web01, web02, web03]  # Все инстансы ждут ВСЕ инстансы build
 
 # ПРАВИЛЬНО:
 needs:
   - job: build
     parallel:
       matrix:
-        - PROVIDER: [$PROVIDER]  # Каждый инстанс ждет только свой
+        - TARGET: [$TARGET]  # Каждый инстанс ждет только свой
 ```
 
 ### Отладка `exclude`
@@ -602,6 +756,24 @@ parallel:
 | Артефактов на задачу | Квота проекта | `expire_in` для промежуточных результатов |
 | Записей кэша на задачу | 4 | Используйте `cache:key` с переменными матрицы |
 | Размер dotenv файла | 5 KB, 20 переменных | Передавайте только необходимые значения |
+
+### Ограничения матричных выражений (18.6+)
+
+Matrix expressions (`$[[ matrix.VAR ]]`) упрощают создание 1:1 зависимостей, но имеют строгие ограничения:
+- **Compile-time only:** Идентификаторы разрешаются при создании пайплайна, а не во время выполнения задачи.
+- **String replacement only:** Нет сложной логики или трансформаций.
+- **Matrix identifiers only:** Нельзя ссылаться на обычные CI/CD переменные или `spec:inputs`.
+- **Только текущая матрица:** Выражение ссылается на идентификаторы из `parallel:matrix` текущей задачи.
+
+### Несовместимость и побочные эффекты
+
+| Механизм | Ограничение | Решение |
+| :--- | :--- | :--- |
+| `dotenv` + `parallel:matrix` | Dotenv переменные не работают между инстансами матрицы | Используйте общие артефакты или API |
+| `parallel:matrix` + `parallel: N` | Числовой `parallel` и `matrix` взаимоисключающие | Добавьте измерение шардирования в саму матрицу |
+| `resource_group` + parent-child `oldest_first` | Взаимная блокировка (deadlock) | Определяйте `resource_group` в родительской задаче `trigger` |
+| `interruptible: true` + `resource_group` | Критическая операция может быть прервана `auto_cancel` | Устанавливайте `interruptible: false` |
+| `matrix expressions` + обычные переменные | `$[[ ... ]]` не разрешает `$CI_*` или `$VARIABLE` | Используйте только идентификаторы матрицы |
 
 ### Особые сценарии
 
@@ -653,32 +825,42 @@ deploy:
           - TARGET: ["$TARGET"]
 ```
 
+**Parent-child deadlock с `resource_group`:**
+```yaml
+# ПРОБЛЕМА: родительский deploy ждет child-pipeline,
+# child-pipeline ждет resource_group, который занят родителем
+# РЕШЕНИЕ: resource_group определяем в trigger-задаче родителя
+test:
+  stage: test
+  trigger:
+    include: child-pipeline.yml
+    strategy: mirror
+  resource_group: production_deploy  # Блокировка здесь
+```
+
+**Matrix expressions: ограничения (18.6+):**
+```yaml
+# НЕВОЗМОЖНО: ссылаться на обычные переменные в $[[ ... ]]
+needs:
+  - job: build
+    parallel:
+      matrix:
+        - OS: ['$[[ matrix.OS ]]']  # OK: идентификатор матрицы
+        - ENV: ['$[[ $CI_ENV ]]']   # ОШИБКА: обычная переменная не разрешается
+```
+
+**Dotenv и `parallel:matrix`:**
+```yaml
+# ПРОБЛЕМА: dotenv переменные не передаются между инстансами матрицы
+# РЕШЕНИЕ: используйте общие артефакты или API для передачи данных
+```
+
 ## Смотрите также
 
 - **[DAG с использованием needs](./dag_with_needs.md)** — управление графом зависимостей и матричные связи.
 - **[Артефакты в GitLab CI](../gitlab_ci_caching/gitlab_ci_artifacts.md)** — артефакты, кэширование, dotenv.
 - **[Правила запуска задач](./job_rules.md)** — логика условного включения задач.
 - **[Переменные и секреты GitLab CI](../../Concepts/gitlab_ci_variables_secrets.md)** — иерархия переменных и безопасность.
-
-### Выбор метода: Матрица vs Дочерние пайплайны
-
-| Критерий | `parallel:matrix` | Downstream (trigger) |
-| :--- | :--- | :--- |
-| **Сложность** | Низкая (одна задача в YAML) | Высокая (целый пайплайн) |
-| **Визуализация** | Группа задач в одной стадии | Отдельный граф пайплайна |
-| **Артефакты** | Прямой доступ между задачами | Требуется `needs:project` или API |
-| **Применение** | Разные версии языка, ОС, флаги | Разные облака, сложные релизы |
-
-### Системные лимиты и ограничения (2026)
-
-1. **Лимит задач:** По умолчанию **200** на одну матрицу. В крупных инстансах (GitLab Cells) может быть ограничен правилами квот проекта.
-2. **Артефакты:** При использовании больших матриц (50+ задач) суммарный объем артефактов может быстро исчерпать квоту проекта. Рекомендуется использовать минимальный `expire_in`.
-3. **Кэширование:** Лимит — **4 записи кэша** на одно задание. Матричные задачи делят кэш, если ключ `cache:key` не содержит переменных матрицы.
-4. **Зависимости:** `needs` может ссылаться как на всю матрицу (по имени задачи), так и на конкретный инстанс через блок `parallel:matrix`.
-5. **Dotenv:** Максимальный размер файла DOTENV — **5 KB**, максимум **20 переменных**. Учитывайте это при передаче метаданных из матрицы.
-
-### Смотрите также
-
-- **[Продвинутые рабочие процессы](../gitlab_ci_advanced_workflow.md)** — методы оптимизации и `auto_cancel`.
-- **[DAG с использованием needs](./dag_with_needs.md)** — детальное управление графом зависимостей.
-- **[Артефакты в GitLab CI](../gitlab_ci_caching/gitlab_ci_artifacts.md)** — глубокое погружение в управление данными.
+- **[Обзор Runner и Executor](../gitlab_ci_runners_executors.md)** — архитектура, типы Executor'ов и оптимизация config.toml.
+- **[Кэширование и артефакты](../gitlab_ci_caching/caching_overview.md)** — стратегии кэширования для матричных задач.
+- **[Родительско-дочерние пайплайны](../Downstream_Pipelines/parent_child_pipelines.md)** — декомпозиция монорепозиториев.

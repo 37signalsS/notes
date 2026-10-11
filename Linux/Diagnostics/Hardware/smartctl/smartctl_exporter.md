@@ -328,10 +328,7 @@ smartctl:
 
 Официальный дашборд: [Grafana Dashboard #12893](https://grafana.com/grafana/dashboards/12893) — smartctl_exporter.
 
-```bash
-# Импорт через CLI
-grafana-cli dashboards import 12893
-```
+Импорт через UI: **Dashboards → New → Import**, введите ID `12893` и подтвердите. Либо скачайте JSON дашборда через Grafana.com API (`https://grafana.com/api/dashboards/12893/revisions/latest/download`) и загрузите его на странице импорта.
 
 ### Кросс-ссылки
 

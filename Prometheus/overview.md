@@ -319,9 +319,16 @@ groups:
 *   **Дублирование данных в HA:** При запуске двух экземпляров Prometheus Grafana видит дубликаты рядов, если не настроен внешний слой дедупликации.
 *   **WAL и сбои питания:** При аварийном отключении питания Prometheus восстанавливает Head Block из WAL, но данные, не записанные в блоки, могут быть потеряны. Используйте UPS для критичных серверов.
 
-### См. также
+## Four Golden Signals (Четыре золотых сигнала)
+
+Полное описание методологии Four Golden Signals (Latency, Traffic, Errors, Saturation), процентилей, PromQL-запросов, правил алертинга и дашбордов см. в **[Методологии мониторинга](../../Concepts/Observability_and_Monitoring/monitoring_methodologies.md#3-four-golden-signals-sre-базис-google)** — SSoT для USE/RED/Golden Signals.
+
+## См. также
+
 *   [Конфигурация prometheus.yml](./configuration.md)
 *   [Установка Prometheus Server](./installation/prometheus_server_installation.md)
 *   [Обзор масштабирования](./scaling/overview.md)
 *   [Устранение неполадок](./troubleshooting.md)
 *   [Сетевая безопасность](./security_network.md)
+*   [Alertmanager](./alertmanager.md) — доставка оповещений по золотым сигналам
+*   [VictoriaMetrics](./../VictoriaMetrics/overview.md) — long-term storage для исторических процентилей

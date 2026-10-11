@@ -5,3 +5,5 @@ Gemini CLI discovers and loads them; it deliberately holds no copy of them, so
 the two tools can never disagree about the rules.
 
 @./AGENTS.md
+
+# force reindex test

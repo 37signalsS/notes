@@ -1,5 +1,7 @@
 # Dockerfile: Лучшие практики для Rust
 
+**Актуально для:** Rust 1.98.x
+
 ## Определения
 
 - **Cargo:** Официальный менеджер пакетов и система сборки для Rust.
@@ -57,7 +59,7 @@ Rust обладает уникальными характеристиками, �
 | **C-библиотеки** | Требуют `musl-dev` | Стандартные Debian-пакеты | Только статические | Стандартные `apk`-пакеты |
 | **Использование** | Статическая линковка, минимализм | CGO, OpenSSL, динамическая линковка | Максимальная минимизация | **Рекомендуется для новых проектов** |
 
-**Рекомендация:** Используйте **Wolfi/Chainguard** для новых проектов как наиболее безопасную и производительную альтернативу с поддержкой `glibc`. Для проектов, требующих привычного Debian-окружения, выбирайте `rust:1.85-bookworm` на этапе сборки и `gcr.io/distroless/static-debian12` на рантайме. Alpine подходит только при использовании `musl` target и статической линковки.
+**Рекомендация:** Используйте **Wolfi/Chainguard** для новых проектов как наиболее безопасную и производительную альтернативу с поддержкой `glibc`. Для проектов, требующих привычного Debian-окружения, выбирайте `rust:1.98-bookworm` на этапе сборки и `gcr.io/distroless/static-debian12` на рантайме. Alpine подходит только при использовании `musl` target и статической линковки.
 
 ### .dockerignore для Rust
 
@@ -111,11 +113,16 @@ rust-toolchain.toml
 
 Rust-приложения в контейнерах подвержены тем же ограничениям cgroups, что и любые другие:
 
-*   **Память (cgroups v2):** Rust рантайм не видит лимит памяти контейнера автоматически. При превышении лимита RSS процесс получает `SIGKILL` (Exit Code 137). Для предотвращения OOM Kill используйте `std::alloc::System` или настройте аллокатор через `jemalloc`/`mimalloc`.
-*   **CPU Throttling:** Если лимит процессора превышен, ядро ограничивает кванты времени. Rust-приложения должны адаптировать количество потоков под лимиты cgroups (например, через `num_cpus::get()` или чтение `/sys/fs/cgroup/cpu.max`).
+*   **Память (cgroups v2):** Rust рантайм не видит лимит памяти контейнера автоматически. При превышении лимита RSS процесс получает `SIGKILL` (Exit Code 137). Для предотвращения OOM Kill используйте предсказуемый аллокатор (`jemalloc`, `mimalloc`) и корректно настраивайте лимиты. В cgroups v2 также доступен `memory.high` (мягкий лимит с throttling) и `memory.max` (жесткий лимит с kill).
+*   **CPU Throttling:** Если лимит процессора превышен, ядро ограничивает кванты времени. Rust-приложения должны адаптировать количество потоков под лимиты cgroups (например, через `num_cpus::get()` или чтение `/sys/fs/cgroup/cpu.max`). Для сервисов с жесткими latency-требованиями используйте `cpu.shares` и `cpu.rt_runtime_us`.
+*   **PID Limits:** Ограничьте количество процессов через `--pids-limit`. По умолчанию в Docker нет лимита, что позволяет злоумышленнику запустить fork bomb или случайно исчерпать таблицу процессов ядра.
+*   **User Namespace Remapping (Userns):** Маппинг UID 0 (root) внутри контейнера на непривилегированного пользователя хоста предотвращает эскалацию привилегий при побеге из контейнера. В Docker включите через `userns-remap` в daemon.json.
 *   **Обработка сигналов:** Rust приложения должны явно перехватывать `SIGTERM` и `SIGINT` для корректного graceful shutdown. Без обработки Docker будет ждать таймаут и отправит `SIGKILL`.
-*   **Graceful Shutdown:** Паттерн: перехват `SIGTERM` → остановка приема новых запросов → завершение текущих операций → сохранение состояния → выход.
+*   **Graceful Shutdown:** Паттерн: перехват `SIGTERM` → остановка приема новых запросов → завершение текущих операций → сохранение состояния → выход. Используйте `STOPSIGNAL SIGTERM` в Dockerfile для явного указания сигнала.
 *   **Проблема PID 1:** Rust-приложения без дочерних процессов могут безопасно работать как PID 1. Если приложение порождает дочерние процессы (например, через `std::process::Command`), используйте `tini` или `dumb-init`.
+*   **Read-only Rootfs:** Запуск с `--read-only` блокирует запись в корневую ФС, предотвращая эксплойты persistence. Используйте `tmpfs` для `/tmp` и других writable директорий.
+*   **Логирование:** Для production используйте structured logging (JSON) и Docker logging drivers (`json-file` с rotation, `fluentd`, `awslogs`, `gcplogs`). Избегайте записи логов в файлы внутри контейнера при read-only rootfs — используйте stdout/stderr.
+*   **Environment-driven Configuration:** Следуйте 12-factor app methodology: конфигурация через переменные окружения, секреты через Docker Secrets или BuildKit Secrets, а не через файлы или ARG в Dockerfile.
 
 ### Воспроизводимость сборок (Reproducible Builds)
 
@@ -140,6 +147,10 @@ Rust-приложения в контейнерах подвержены тем 
 | **CPU Throttling** | `std::thread::available_parallelism()` выше лимита cgroups | Читать `/sys/fs/cgroup/cpu.max` для адаптации пула потоков |
 | **Отсутствие шрифтов/локали** | Нет `glibc` locale | Копировать `/usr/share/locale` или использовать Wolfi с `glibc` |
 | **Крупный размер бинарника** | Отсутствие strip, LTO | Применять `strip`, `lto=true`, `codegen-units = 1`, `panic = "abort"` |
+| **Read-only rootfs** | Приложение пытается писать в корень | Использовать `tmpfs` для `/tmp`, `--read-only` и `--tmpfs /tmp:rw,noexec,nosuid` |
+| **Logs lost** | Запись в файл, а не stdout | Логировать в stdout/stderr для работы с Docker logging drivers |
+| **Fork bomb / зомби** | Отсутствие `--pids-limit` и PID 1 обработчика | Добавить `--pids-limit=64` и использовать `tini` если есть дочерние процессы |
+| **Permission Denied (userns)** | UID 0 внутри контейнера, но remap на хосте | Использовать числовой UID 10001 и копировать `/etc/passwd` при необходимости |
 
 ## Практические сценарии
 
@@ -152,13 +163,13 @@ Rust-приложения в контейнерах подвержены тем 
 # check=error=true
 
 # --- Этап 1: Планирование (planner) ---
-FROM lukemathwalker/cargo-chef:latest-rust-1.85-alpine AS planner
+FROM lukemathwalker/cargo-chef:latest-rust-1.98.1-alpine3.24 AS planner
 WORKDIR /app
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # --- Этап 2: Сборка зависимостей (cacher) ---
-FROM lukemathwalker/cargo-chef:latest-rust-1.85-alpine AS cacher
+FROM lukemathwalker/cargo-chef:latest-rust-1.98.1-alpine3.24 AS cacher
 WORKDIR /app
 COPY --from=planner /app/recipe.json recipe.json
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
@@ -168,7 +179,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo chef cook --release --recipe-path recipe.json
 
 # --- Этап 3: Сборка приложения (builder) ---
-FROM rust:1.85-alpine AS builder
+FROM rust:1.98-alpine3.24 AS builder
 RUN apk add --no-cache binutils mold
 WORKDIR /app
 COPY . .
@@ -214,7 +225,7 @@ docker run --rm myapp:latest id
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM rust:1.85-alpine AS builder
+FROM rust:1.98-alpine3.24 AS builder
 RUN apk add --no-cache musl-dev pkgconfig openssl-dev binutils
 WORKDIR /app
 COPY . .
@@ -240,7 +251,7 @@ ENTRYPOINT ["/main"]
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM rust:1.85-slim AS builder
+FROM --platform=$BUILDPLATFORM rust:1.98-slim AS builder
 RUN apt-get update && apt-get install -y python3 pip clang zig
 RUN cargo install cargo-zigbuild
 WORKDIR /app
@@ -259,12 +270,12 @@ RUN case "$TARGETPLATFORM" in \
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM rust:1.85-slim AS planner
+FROM --platform=$BUILDPLATFORM rust:1.98-slim AS planner
 WORKDIR /app
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-FROM --platform=$BUILDPLATFORM rust:1.85-slim AS cacher
+FROM --platform=$BUILDPLATFORM rust:1.98-slim AS cacher
 WORKDIR /app
 COPY --from=planner /app/recipe.json recipe.json
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
@@ -272,7 +283,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
     cargo chef cook --release --recipe-path recipe.json
 
-FROM --platform=$BUILDPLATFORM rust:1.85-slim AS builder
+FROM --platform=$BUILDPLATFORM rust:1.98-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     binutils mold gcc-aarch64-linux-gnu libc6-dev-arm64-cross && \
     rm -rf /var/lib/apt/lists/*
@@ -315,7 +326,7 @@ docker buildx build \
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM rust:1.85 AS dev
+FROM rust:1.98 AS dev
 RUN cargo install cargo-watch
 WORKDIR /app
 # Кэшируем зависимости для ускорения запуска dev-контейнера
@@ -347,8 +358,8 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-ARG RUST_VERSION=1.85
-FROM rust:${RUST_VERSION}-bookworm@sha256:d2d7... AS builder
+ARG RUST_VERSION=1.98
+FROM rust:${RUST_VERSION}-bookworm AS builder
 
 # Фиксируем метку времени (например, timestamp коммита)
 ARG SOURCE_DATE_EPOCH=1724200000
@@ -377,9 +388,9 @@ ENTRYPOINT ["/usr/bin/app"]
 SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) docker buildx build --platform linux/amd64 -t myapp:1.0.0 .
 ```
 
-### Сценарий 8: CI/CD пайплайн с cargo-audit, syft, trivy
+### Сценарий 8: CI/CD пайплайн с cargo-audit, syft, Docker Scout и Trivy
 
-Полный цикл проверки безопасности в GitHub Actions.
+Полный цикл проверки безопасности в GitHub Actions. `docker scout` — нативный инструмент Docker для анализа уязвимостей, использующий SBOM-аттестации, прикрепленные на этапе сборки.
 
 ```yaml
 # .github/workflows/docker-rust.yml
@@ -440,6 +451,12 @@ jobs:
           format: table
           exit-code: 1
           severity: HIGH,CRITICAL
+
+      - name: Analyze vulnerabilities with Docker Scout
+        run: |
+          docker scout cves ghcr.io/${{ github.repository }}:${{ github.sha }} \
+            --only-critical \
+            --exit-code 1
 ```
 
 ### Сценарий 9: CGO с OpenSSL на Debian + Distroless
@@ -448,7 +465,7 @@ jobs:
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM rust:1.85-bookworm AS builder
+FROM rust:1.98-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config libssl-dev && \
     rm -rf /var/lib/apt/lists/*
@@ -642,7 +659,7 @@ curl https://crates.io
 | **Panic abort** | `panic = "abort"` | Уменьшает размер |
 | **Non-root** | `USER 10001` | Безопасность (Pod Security Standards) |
 | **SBOM** | Генерируйте на этапе CI | Аудит зависимостей и CVE |
-| **Pin версии** | `rust:1.85-bookworm` | Воспроизводимость сборок |
+| **Pin версии** | `rust:1.98-bookworm` | Воспроизводимость сборок |
 | **Sparse Index** | `CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse` | Ускоряет `cargo fetch` |
 | **HEALTHCHECK** | Добавляйте в runtime-образ | Мониторинг состояния контейнера |
 
@@ -650,7 +667,7 @@ curl https://crates.io
 
 ```dockerfile
 # 1. FROM (multi-stage)
-FROM rust:1.85-bookworm AS builder
+FROM rust:1.98-bookworm AS builder
 
 # 2. SHELL (если нужен pipefail)
 SHELL ["/bin/bash", "-eo", "pipefail", "-c"]

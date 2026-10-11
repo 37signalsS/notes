@@ -63,7 +63,7 @@ build_app:
 
 deploy_prod:
   stage: deploy
-  image: docker:27.x
+  image: docker:29.x
   environment:
     name: production
     url: https://myapp.example.com

@@ -1,10 +1,12 @@
 # Руководство: Развертывание ELK стека в Docker Compose
 
-> Эта заметка является авторитетным источником по вопросам локального и прототипного развертывания Elastic Stack с использованием Docker Compose и Docker CLI. Она описывает процессы настройки компонентов версий 8.x (актуальная LTS-ветка — 8.19) и 9.x (на август 2026 — 9.5) с учетом современных требований к безопасности: TLS через certutil, автоконфигурация безопасности, hardened-образы Wolfi и проверка подписей образов.
+**Актуально для:** Elastic Stack 9.5.x / 8.19 LTS
+
+> Эта заметка является авторитетным источником по вопросам локального и прототипного развертывания Elastic Stack с использованием Docker Compose и Docker CLI. Она описывает процессы настройки компонентов версий 8.x (LTS-ветка — 8.19) и 9.x с учетом современных требований к безопасности: TLS через certutil, автоконфигурация безопасности, hardened-образы Wolfi и проверка подписей образов Sigstore Cosign.
 
 ## Определения
 
-* **Docker Compose** — инструмент для управления жизненным циклом многоконтейнерных приложений. Описание базовых команд: [docker_compose_cli_commands.md](../../Docker/Docker_compose/docker_compose_cli_commands.md).
+* **Docker Compose** — инструмент для управления жизненным циклом многоконтейнерных приложений. В руководстве используется синтаксис Compose V2 (CLI-плагин `docker compose`); legacy-утилита `docker-compose` (v1) больше не развивается. Описание базовых команд: [docker_compose_cli_commands.md](../../Docker/Docker_compose/docker_compose_cli_commands.md).
 * **Setup-контейнер** — временный сервисный контейнер, используемый для автоматической генерации сертификатов TLS и инициализации системных настроек (пароли системных пользователей) перед запуском основных узлов Elasticsearch.
 * **Healthcheck** — механизм проверки готовности сервиса. В Elasticsearch критично проверять статус кластера через API, а не просто доступность TCP-порта.
 * **Data View** — абстракция в Kibana для объединения одного или нескольких индексов в логическую группу для поиска (заменила Index Patterns).
@@ -21,53 +23,61 @@
 
 ### Безопасность в Docker (Modern Approach)
 
-Начиная с версии 8.0, функции безопасности включены по умолчанию. В локальной среде Docker доступны два подхода:
+Начиная с версии 8.0, функции безопасности включены по умолчанию. В локальной среде Docker доступны два подхода к TLS:
 
 1.  **Автоматизация TLS**: Использование встроенной утилиты `elasticsearch-certutil` для создания собственного CA и сертификатов узлов (подход setup-контейнера, Сценарий 3).
 2.  **Автоконфигурация безопасности**: При первом старте контейнера Elasticsearch сам генерирует CA, сертификаты HTTP-слоя и учетные данные — подходит для single-node стендов (Сценарий 2). Не масштабируется на произвольные топологии так гибко, как certutil.
+
+Дополняют оба подхода:
+
 3.  **Шифрование HTTP**: Включение HTTPS для всех взаимодействий (клиент-узел и узел-узел).
 4.  **Basic Auth**: Использование системных пользователей (`elastic`, `kibana_system`) с паролями, передаваемыми через переменные окружения или файл `.env`.
-5.  **Целостность образов**: Официальные образы подписаны Sigstore Cosign; проверка перед запуском:
+5.  **Целостность образов**: Официальные образы подписаны Sigstore Cosign; проверка перед запуском (аналогично проверяются образы Kibana и Filebeat):
     ```bash
     wget https://artifacts.elastic.co/cosign.pub
-    cosign verify --key cosign.pub docker.elastic.co/elasticsearch/elasticsearch:9.5.2
+    cosign verify --key cosign.pub docker.elastic.co/elasticsearch/elasticsearch:9.5.5
     # → The following checks were performed on each of these signatures:
     # → - The cosign claims were validated
     # → - Existence of the claims in the transparency log was verified offline
     # → - The signatures were verified against the specified public key
     ```
+    Для неизменяемой проверки по дайджесту (тег может быть переиздан): `crane digest docker.elastic.co/elasticsearch/elasticsearch:9.5.5`, затем `cosign verify --key cosign.pub docker.elastic.co/elasticsearch/elasticsearch@sha256:<digest>`. Образы также зеркалируются на Docker Hub (`elasticsearch`, `kibana` — official images) и в AWS ECR (`public.ecr.aws/elastic/elasticsearch`).
 
 ### Системные требования
 
-Elasticsearch требует специфических настроек хоста:
-*   **Virtual Memory**: Параметр `vm.max_map_count` должен быть не менее 262144.
+*   **Docker Engine** 20.10+ (для hardened-образов Wolfi — 20.10.10+); **Docker Compose V2** (CLI-плагин `docker compose`, входит в состав Docker Desktop; для Linux — установка из [официального гайда](https://docs.docker.com/compose/install/)).
 *   **Memory**: Минимум 4 ГБ RAM для стабильной работы связки ES + Kibana + Filebeat. В Docker Desktop задается в **Settings → Resources** (рекомендация Elastic — не менее 4 ГБ).
-*   **Права на тома**: Контейнер Elasticsearch работает под пользователем `1000:0`; том `certs` после генерации передается ему командой `chown -R 1000:0`.
+*   **Virtual Memory**: Параметр `vm.max_map_count` — минимум 262144 (проходит bootstrap check); для production Elastic рекомендует 1048576 (Сценарий 1).
+*   **Ulimits**: контейнер должен наследовать достаточные лимиты на открытые файлы (nofile ≥ 65535) и потоки (nproc ≥ 4096). Проверка дефолтов Docker-демона:
+    ```bash
+    docker run --rm docker.elastic.co/elasticsearch/elasticsearch:9.5.5 /bin/bash -c 'ulimit -Hn && ulimit -Sn && ulimit -Hu && ulimit -Su'
+    ```
+*   **Права на тома**: Контейнер Elasticsearch работает под пользователем `1000:0`; том `certs` после генерации передается ему командой `chown -R 1000:0`. При bind-mount локального каталога для данных он должен быть доступен на запись группе gid 0: `chmod g+rwx esdatadir && chgrp 0 esdatadir`.
 
 ## Практические сценарии
 
 ### 1. Подготовка хостовой системы
 
-Перед запуском выполните настройку лимитов памяти:
+Перед запуском выполните настройку лимитов памяти. Bootstrap check требует минимум 262144; рекомендуемое значение (и обязательное для production) — 1048576:
 
 ```bash
-sudo sysctl -w vm.max_map_count=262144
+sudo sysctl -w vm.max_map_count=1048576
 # Проверка
 sysctl vm.max_map_count
-# → vm.max_map_count = 262144
+# → vm.max_map_count = 1048576
 ```
 
 ```bash
 # Сохранение после перезагрузки
-echo "vm.max_map_count=262144" | sudo tee /etc/sysctl.d/99-elasticsearch.conf
+echo "vm.max_map_count=1048576" | sudo tee /etc/sysctl.d/99-elasticsearch.conf
 sudo sysctl --system
 ```
 
 Особенности платформ:
 
 *   **Linux** — настройка обязательна, как показано выше.
-*   **Windows (WSL2)** — команда выполняется внутри дистрибутива WSL (`wsl -u root sysctl -w vm.max_map_count=262144`) либо добавляется в `/etc/sysctl.conf` дистрибутива для персистентности.
-*   **macOS (Docker Desktop)** — параметр настраивается внутри VM Linux; в актуальных версиях Docker Desktop значение по умолчанию обычно достаточно, но при ошибке bootstrap check увеличьте лимит согласно документации Docker Desktop.
+*   **Windows (WSL2)** — команда выполняется внутри дистрибутива WSL (`wsl -u root sysctl -w vm.max_map_count=1048576`) либо добавляется в `/etc/sysctl.conf` дистрибутива для персистентности. Для инстанса `docker-desktop` (backend WSL2): `wsl -d docker-desktop -u root sysctl -w vm.max_map_count=1048576`; глобально для всех WSL2-дистрибутивов — в `%USERPROFILE%\.wslconfig`: секция `[wsl2]` + `kernelCommandLine = "sysctl.vm.max_map_count=1048576"`.
+*   **macOS (Docker Desktop)** — параметр живёт внутри Linux-VM Docker Desktop и не настраивается через `sysctls:` в compose (vm.max_map_count не является namespaced sysctl). Проверьте фактическое значение: `docker run --rm alpine sysctl vm.max_map_count`. Если оно ниже 262144 (регрессия Docker Desktop 4.25 снижала его до 65530), установите из привилегированного контейнера: `docker run --privileged --rm alpine sysctl -w vm.max_map_count=1048576`. Значение сохраняется до пересоздания VM Docker Desktop.
 
 ### 2. Быстрый single-node стенд без ручных сертификатов
 
@@ -79,8 +89,10 @@ docker network create elastic
 
 # 2. Запуск узла; флаг -m задает лимит памяти контейнера
 #    и автоматически определяет размер JVM heap (без ES_JAVA_OPTS)
+#    Флаг -it держит контейнер на переднем плане, чтобы увидеть секреты;
+#    для фонового режима добавьте -d (секреты тогда — в docker logs es01)
 docker run --name es01 --net elastic -p 9200:9200 -it -m 1GB \
-  docker.elastic.co/elasticsearch/elasticsearch:9.5.2
+  docker.elastic.co/elasticsearch/elasticsearch:9.5.5
 # → в выводе появятся одноразовые секреты:
 # → Security is enabled ... generated password for the elastic user: <PASSWORD>
 # → ... enrollment token for Kibana: eyJ2ZXIiOiI5LjUuMiIs...
@@ -101,7 +113,7 @@ docker cp es01:/usr/share/elasticsearch/config/certs/http_ca.crt .
 curl --cacert http_ca.crt -u elastic:$ELASTIC_PASSWORD https://localhost:9200
 # → {
 # →   "name" : "es01", "cluster_name" : "docker-cluster",
-# →   "version" : { "number" : "9.5.2", ... },
+# →   "version" : { "number" : "9.5.5", ... },
 # →   "tagline" : "You Know, for Search"
 # → }
 ```
@@ -109,7 +121,7 @@ curl --cacert http_ca.crt -u elastic:$ELASTIC_PASSWORD https://localhost:9200
 5. Подключение Kibana — просто запустите контейнер и откройте напечатанную в терминале ссылку, введя enrollment token:
 
 ```bash
-docker run --name kib01 --net elastic -p 5601:5601 docker.elastic.co/kibana/kibana:9.5.2
+docker run --name kib01 --net elastic -p 5601:5601 docker.elastic.co/kibana/kibana:9.5.5
 ```
 
 6. Добавление узла в кластер (по желанию): сгенерируйте node-токен (`-s node`) и стартуйте новый контейнер с переменной `ENROLLMENT_TOKEN`:
@@ -117,7 +129,7 @@ docker run --name kib01 --net elastic -p 5601:5601 docker.elastic.co/kibana/kiba
 ```bash
 docker exec -it es01 /usr/share/elasticsearch/bin/elasticsearch-create-enrollment-token -s node
 docker run -e ENROLLMENT_TOKEN="<token>" --name es02 --net elastic -it -m 1GB \
-  docker.elastic.co/elasticsearch/elasticsearch:9.5.2
+  docker.elastic.co/elasticsearch/elasticsearch:9.5.5
 curl --cacert http_ca.crt -u elastic:$ELASTIC_PASSWORD https://localhost:9200/_cat/nodes
 # → ip        heap.percent ram.percent cpu load_1m load_5m load_15m node.role master name
 # → 172.18.0.2           62          78   3    0.12    0.09     0.06 cdfhilmrstw *      es01
@@ -125,6 +137,12 @@ curl --cacert http_ca.crt -u elastic:$ELASTIC_PASSWORD https://localhost:9200/_c
 ```
 
 Для ML-функций (например, ELSER) стартуйте контейнер с большим лимитом: `-m 6GB -e "xpack.ml.use_auto_machine_memory_percent=true"`.
+
+Остановка и удаление стенда (данные при `docker rm` теряются — в этом сценарии нет именованных томов):
+
+```bash
+docker rm -f es01 kib01 && docker network rm elastic
+```
 
 ### 3. Эталонная конфигурация `compose.yaml` (TLS через setup-контейнер)
 
@@ -137,13 +155,19 @@ curl --cacert http_ca.crt -u elastic:$ELASTIC_PASSWORD https://localhost:9200/_c
 ELASTIC_PASSWORD=changeme
 # Пароль пользователя 'kibana_system' (только буквы и цифры!)
 KIBANA_PASSWORD=changeme
-# Версия всех компонентов стека должна совпадать
-STACK_VERSION=9.5.2
+# Версия всех компонентов стека должна совпадать; pinning версии обязателен (не latest)
+STACK_VERSION=9.5.5
 # Порт HTTP API на хосте; биндинг на localhost скрывает API от внешних сетей
 ES_PORT=127.0.0.1:9200
+# Порт Kibana на хосте
+KIBANA_PORT=5601
 CLUSTER_NAME=docker-cluster
+# Тип самогенерируемой лицензии: basic или trial (30 дней)
 LICENSE=basic
+# Лимит памяти контейнера Elasticsearch в байтах (1073741824 = 1 ГБ)
 MEM_LIMIT=1073741824
+# Размер JVM heap; если не задан — Elasticsearch определяет его автоматически по лимиту контейнера
+#ES_HEAP=1g
 ```
 
 > Ограничение: bash-скрипт setup-контейнера корректно работает только с буквенно-цифровыми паролями без спецсимволов (`!`, `@` и т.п.).
@@ -159,6 +183,10 @@ services:
     user: "0"
     command: >
       bash -c '
+        if [ x${ELASTIC_PASSWORD} == x ] || [ x${KIBANA_PASSWORD} == x ]; then
+          echo "Set the ELASTIC_PASSWORD and KIBANA_PASSWORD environment variables in the .env file";
+          exit 1;
+        fi;
         if [ ! -f config/certs/ca.zip ]; then
           echo "Creating CA";
           bin/elasticsearch-certutil ca --silent --pem -out config/certs/ca.zip;
@@ -166,7 +194,7 @@ services:
         fi;
         if [ ! -f config/certs/certs.zip ]; then
           echo "Creating certs";
-          echo -e "instances:\n  - name: elasticsearch\n    dns:\n      - elasticsearch\n      - localhost" > config/certs/instances.yml;
+          echo -e "instances:\n  - name: elasticsearch\n    dns:\n      - elasticsearch\n      - localhost\n    ip:\n      - 127.0.0.1" > config/certs/instances.yml;
           bin/elasticsearch-certutil cert --silent --pem -out config/certs/certs.zip --in config/certs/instances.yml --ca-cert config/certs/ca/ca.crt --ca-key config/certs/ca/ca.key;
           unzip config/certs/certs.zip -d config/certs;
         fi;
@@ -199,12 +227,19 @@ services:
       - xpack.security.transport.ssl.key=certs/elasticsearch/elasticsearch.key
       - xpack.security.transport.ssl.certificate=certs/elasticsearch/elasticsearch.crt
       - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.license.self_generated.type=${LICENSE}
+      - xpack.ml.use_auto_machine_memory_percent=true
       - ES_JAVA_OPTS=-Xms${ES_HEAP:-1g} -Xmx${ES_HEAP:-1g}
-      - MEM_LIMIT=${MEM_LIMIT}
+    mem_limit: ${MEM_LIMIT}
     ulimits:
       memlock:
         soft: -1
         hard: -1
+      nofile:
+        soft: 65535
+        hard: 65535
+    restart: unless-stopped
     volumes:
       - certs:/usr/share/elasticsearch/config/certs
       - esdata:/usr/share/elasticsearch/data
@@ -218,7 +253,7 @@ services:
         ]
       interval: 10s
       timeout: 10s
-      retries: 5
+      retries: 120
 
   kibana-setup:
     depends_on:
@@ -244,14 +279,18 @@ services:
     image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
     container_name: kibana
     environment:
+      - SERVERNAME=kibana
       - ELASTICSEARCH_HOSTS=https://elasticsearch:9200
       - ELASTICSEARCH_USERNAME=kibana_system
       - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
       - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=config/certs/ca/ca.crt
+    mem_limit: ${MEM_LIMIT}
+    restart: unless-stopped
     volumes:
       - certs:/usr/share/kibana/config/certs
+      - kibanadata:/usr/share/kibana/data
     ports:
-      - "5601:5601"
+      - "${KIBANA_PORT}:5601"
     healthcheck:
       test:
         [
@@ -270,6 +309,7 @@ services:
     container_name: filebeat
     user: root
     command: filebeat -e -strict.perms=false
+    restart: unless-stopped
     volumes:
       - ./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
       - certs:/usr/share/filebeat/certs:ro
@@ -281,14 +321,20 @@ services:
 volumes:
   certs:
   esdata:
+  kibanadata:
 ```
 
 Что изменилось относительно классической схемы и почему:
 
-*   **Версии через `${STACK_VERSION}`**: все компоненты обновляются заменой одной строки в `.env`; рассинхрон версий исключен.
+*   **Версии через `${STACK_VERSION}`**: все компоненты обновляются заменой одной строки в `.env`; рассинхрон версий исключен. Версия зафиксирована (не `latest`) — требование production-эксплуатации.
 *   **Сервис `kibana-setup`**: пароль `kibana_system` устанавливается автоматически через `_security/user/_password` API сразу после готовности Elasticsearch — ручной `docker exec ... reset-password` больше не нужен.
 *   **`bootstrap.memory_lock=true` + ulimits memlock**: heap блокируется от свапа (см. тюнинг в [руководстве по кластеру](./cluster_setup.md)).
-*   **`${ES_PORT}`**: по умолчанию API доступен только с самого хоста (`127.0.0.1:9200`).
+*   **`mem_limit: ${MEM_LIMIT}`**: лимит памяти контейнера реально применяется (переменная в `.env` ранее была объявлена, но не использовалась); вместе с `mem_limit` Elasticsearch автоматически подбирает размер heap.
+*   **`xpack.license.self_generated.type: ${LICENSE}`**: тип лицензии управляется из `.env` (`basic` или `trial` на 30 дней).
+*   **`ulimits.nofile`**: лимит открытых файлов задан явно (65535) — один из bootstrap checks; лимит потоков (nproc ≥ 4096) проверьте командой из раздела «Системные требования».
+*   **`restart: unless-stopped`**: стек переживает перезапуск Docker-демона.
+*   **Том `kibanadata`**: локальные данные Kibana (кэши, task manager) переживают пересоздание контейнера; сохранённые объекты (индекс `.kibana`) хранятся в Elasticsearch.
+*   **`${ES_PORT}` / `${KIBANA_PORT}`**: по умолчанию API доступны только с самого хоста (`127.0.0.1`).
 *   Для hardened-варианта добавьте суффикс `-wolfi` ко всем тегам образов (например, `elasticsearch-wolfi:${STACK_VERSION}`). Учтите: в Wolfi-образах нет bash, поэтому setup-контейнер должен остаться на стандартном образе.
 
 ### 4. Конфигурация Filebeat (`filebeat.yml`)
@@ -316,21 +362,33 @@ output.elasticsearch:
 ```yaml
     labels:
       co.elastic.logs/enabled: "true"
-      co.elastic.logs/json.keys_under_root: "true"
+      co.elastic.logs/json.target: ""
 ```
+
+Хинт `co.elastic.logs/json.target: ""` включает разбор JSON с помещением ключей на верхний уровень (пустой `target`). Он относится к filestream input — дефолтному в 8.x/9.x. Старый хинт `co.elastic.logs/json.keys_under_root` применялся к log input, который deprecated с 7.16 и отключён в 9.0, и в текущих версиях не работает. Полный список хинтов JSON — в [документации Filebeat](https://www.elastic.co/docs/reference/beats/filebeat/configuration-autodiscover-hints).
 
 ### 5. Запуск, проверка и визуализация
 
-1.  **Запуск**: 
+1.  **Предварительная валидация конфигурации** (синтаксис compose и резолв переменных из `.env`):
+    ```bash
+    docker compose config --quiet
+    # → код 0, нет вывода = конфигурация валидна
+    ```
+2.  **Запуск**:
     ```bash
     docker compose up -d
     # → Network elk-stack_default    Created
     # → Container elasticsearch      Healthy
     # → Container kibana-setup       Exited (код 0 = пароль установлен)
     # → Container kibana             Started
+    # → Container filebeat           Started
     ```
-2.  **Проверка кластера** (пароль берется из `.env`):
+3.  **Проверка кластера** (пароль берется из `.env`):
     ```bash
+    docker compose ps
+    # → NAME          SERVICE       STATUS                   PORTS
+    # → elasticsearch elasticsearch Up (healthy)             127.0.0.1:9200->9200/tcp
+    # → kibana        kibana        Up (healthy)             0.0.0.0:5601->5601/tcp
     docker cp elasticsearch:/usr/share/elasticsearch/config/certs/ca/ca.crt http_ca.crt
     curl --cacert http_ca.crt -u elastic:$ELASTIC_PASSWORD "https://127.0.0.1:9200/_cluster/health?pretty"
     # → {
@@ -339,13 +397,24 @@ output.elasticsearch:
     # →   "number_of_nodes" : 1,
     # →   ...
     # → }
+    curl --cacert http_ca.crt -u elastic:$ELASTIC_PASSWORD "https://127.0.0.1:9200/_cat/indices?v"
+    # → health status index                           uuid                   pri rep docs.count
+    # → yellow open   .security-8                     8f2h...                 1   1
     ```
     Статус `yellow` для single-node — норма: у системных индексов есть реплики, размещать которые некуда (один узел). Если пароль `kibana_system` менялся вручную до внедрения сервиса `kibana-setup`, сбросьте его явно:
     ```bash
     docker exec -it elasticsearch bin/elasticsearch-reset-password -u kibana_system -i
     ```
-3.  **Kibana**: Перейдите на `http://localhost:5601` (TLS терминируется на Elasticsearch; Kibana наружу отдает HTTP) и войдите как `elastic` с паролем из `.env`.
-4.  **Data View**:
+4.  **Логи и диагностика**:
+    ```bash
+    docker compose logs -f elasticsearch     # следить за запуском узла
+    docker compose logs kibana-setup         # почему не установился пароль kibana_system
+    docker compose exec filebeat filebeat test config    # валидация filebeat.yml
+    docker compose exec filebeat filebeat test output    # проверка подключения к ES
+    docker stats --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"
+    ```
+5.  **Kibana**: Перейдите на `http://localhost:5601` (TLS терминируется на Elasticsearch; Kibana наружу отдает HTTP) и войдите как `elastic` с паролем из `.env`.
+6.  **Data View**:
     *   **Stack Management** -> **Data Views**.
     *   Создайте паттерн `filebeat-*` с временной меткой `@timestamp`.
 
@@ -354,26 +423,43 @@ output.elasticsearch:
 ### Типичные проблемы
 
 *   **Exit Code 137**: Контейнер Elasticsearch убит OOM Killer. Выделите больше памяти в Docker Desktop (мин. 4 ГБ) или уменьшьте `ES_JAVA_OPTS` до `-Xms512m -Xmx512m`. Диагностика: `docker inspect elk-stack-elasticsearch-1 --format '{{.State.OOMKilled}}'`.
-*   **Ошибка `max virtual memory areas` в логах**: Bootstrap check не пройден — вернитесь к шагу 1 и убедитесь, что `vm.max_map_count` применен именно на хосте, где работает Docker Engine (в WSL2 — внутри дистрибутива).
-*   **"Kibana is not ready"**: Обычно вызвано тем, что ES еще проходит стадию `recovering`. Проверьте статус через `docker ps` и логи (`docker logs kibana`). Если сервис `kibana-setup` завершился с ошибкой — проверьте, что `KIBANA_PASSWORD` буквенно-цифровой и совпадает с фактически установленным.
+*   **Ошибка `max virtual memory areas` в логах**: Bootstrap check не пройден — вернитесь к шагу 1 и убедитесь, что `vm.max_map_count` применен именно на хосте, где работает Docker Engine (в WSL2 — внутри дистрибутива; в Docker Desktop для Mac — внутри VM, см. примечание в Сценарии 1).
+*   **"Kibana is not ready"**: Обычно вызвано тем, что ES еще проходит стадию `recovering`. Проверьте статус через `docker compose ps` и логи (`docker compose logs kibana`). Если сервис `kibana-setup` завершился с ошибкой — проверьте, что `KIBANA_PASSWORD` буквенно-цифровой и совпадает с фактически установленным.
 *   **SSL Handshake Failed**: Убедитесь, что Filebeat и Kibana используют верный путь к `ca.crt`. После пересоздания volume `certs` CA меняется — перезапустите зависимые сервисы, чтобы они получили новые сертификаты.
 *   **Permission denied на volume данных**: Том `esdata` принадлежит UID 1000; не запускайте контейнер с `user:` отличным от дефолта, либо исправьте владельца: `docker compose down && docker run --rm -v elk-stack_esdata:/data alpine chown -R 1000:0 /data`.
 *   **Устаревшие сертификаты после смены версии**: Полная регенерация PKI выполняется удалением тома: `docker compose down && docker volume rm elk-stack_certs` (данные индексов в `esdata` при этом сохраняются).
+*   **Контейнер в статусе `unhealthy` при первом старте**: Elasticsearch может раскручиваться минуту и дольше на медленных дисках — healthcheck настроен с `retries: 120`. Если статус не меняется — смотрите `docker compose logs elasticsearch`; типичные причины: не пройден bootstrap check (Сценарий 1) или не хватает памяти (Exit Code 137).
+*   **Filebeat не собирает логи контейнеров**: Проверьте, что у целевых контейнеров есть labels `co.elastic.logs/enabled: "true"`, а в `docker compose exec filebeat filebeat test output` нет ошибок подключения. Также убедитесь, что Filebeat смонтирован в `/var/lib/docker/containers` (в compose-файле есть) и запущен от `user: root`.
 
-### Резервное копирование и обновление стенда
+### Граничные случаи и эксплуатация
+
+*   **Масштабирование до мультиноды**: настройка `discovery.type=single-node` заставляет узел игнорировать discovery и формировать собственный одноузловой кластер. Перед добавлением второго узла уберите её и настройте `discovery.seed_hosts`/`cluster.initial_master_nodes` — пошаговая схема в [руководстве по кластеру](./cluster_setup.md). Иначе `es02` поднимет отдельный кластер с тем же `cluster_name`.
+*   **Изменение настроек**: правки `environment`/`ports`/volumes в `compose.yaml` применяются только через `docker compose up -d` (пересоздаёт контейнеры); `docker compose restart` перезапускает старые контейнеры без новых настроек.
+*   **`sysctls:` в compose не поможет**: `vm.max_map_count` — не namespaced sysctl, он общий для хоста/VM и задаётся только на уровне ОС (Сценарий 1).
+*   **Секреты при первом старте (Сценарий 2)**: пароль `elastic` и токены печатаются один раз, при первом старте на пустом каталоге `data`. В фоновом режиме (`-d`) прочитайте их из `docker logs es01`; перевыпуск — `elasticsearch-reset-password` / `elasticsearch-create-enrollment-token`.
+*   **Kibana: приоритет настроек**: переменные окружения (`ELASTICSEARCH_*`, `SERVERNAME` и др.) переводятся в аргументы CLI и перекрывают `kibana.yml`. Docker-образ задаёт дефолты, отличающиеся от обычной установки: `server.host: 0.0.0.0`, `server.shutdownTimeout: 5s`, `monitoring.ui.container.elasticsearch.enabled: true`.
+*   **Heap в production**: `ES_JAVA_OPTS` переопределяет ВСЕ остальные JVM-опции и не рекомендуется Elastic для production. Правильный путь — bind-mount файла в `/usr/share/elasticsearch/config/jvm.options.d/` с настройкой `-Xms/-Xmx`; в большинстве случаев лучше оставить автоопределение по `mem_limit`.
+
+### Резервное копирование, обновление и очистка стенда
 
 *   **Снапшот данных**: подключите репозиторий файловой системы или S3 и делайте снимки перед экспериментами; для локального стенда достаточно копирования тома `esdata` при остановленном стеке: `docker compose stop elasticsearch && docker run --rm -v elk-stack_esdata:/src -v $PWD/backup:/dst alpine cp -a /src/. /dst/`.
-*   **Обновление версии**: измените `STACK_VERSION` в `.env` и выполните `docker compose up -d` — компоненты пересоздадутся с сохранением данных. Обновляйтесь последовательно между минорными версиями и читайте release notes; ветку выбирайте из поддерживаемых (август 2026: 9.5, 9.4 или LTS 8.19).
+*   **Обновление версии**: измените `STACK_VERSION` в `.env` и выполните `docker compose up -d` — компоненты пересоздадутся с сохранением данных. Обновляйтесь последовательно между минорными версиями и читайте release notes; ветку выбирайте из поддерживаемых (сентябрь 2026: 9.5, 9.4 или LTS 8.19).
+*   **Очистка**:
+    *   `docker compose down` — останавливает и удаляет контейнеры и сеть, **сохраняет тома** (`certs`, `esdata`, `kibanadata`); при следующем `up` данные загружаются обратно.
+    *   `docker compose down -v` — дополнительно удаляет тома: **все индексы и сертификаты теряются**. Используйте только когда стенд больше не нужен или PKI/данные нужно пересоздать с нуля.
+    *   Проверить, что осталось: `docker volume ls | grep elk-stack`.
 
 ### Рекомендации по развитию
 
 *   **OTel-native**: В версии 9.x рекомендуется использовать **OpenTelemetry Collector** вместо Filebeat для отправки данных напрямую в Elasticsearch.
 *   **Persistent Storage**: Используйте именованные тома (`volumes`) вместо bind-mounts для повышения производительности дисковых операций в Docker.
-*   **Мониторинг**: Добавьте Metricbeat для отслеживания здоровья самого кластера ELK.
-*   **Hardened-образы**: Для стендов с повышенными требованиями к безопасности используйте варианты с суффиксом `-wolfi` и проверяйте подписи образов через Cosign.
-*   **Лимиты ресурсов**: Задайте `mem_limit` (или `deploy.resources.limits` в Swarm-совместимом синтаксисе) для каждого сервиса, чтобы OOM одного компонента не убивал весь хост.
+*   **Мониторинг**: Добавьте Metricbeat для отслеживания здоровья самого кластера ELK; оперативный срез — `docker stats`.
+*   **Hardened-образы**: Для стендов с повышенными требованиями к безопасности используйте варианты с суффиксом `-wolfi` и проверяйте подписи образов через Cosign (все образы стека подписаны, не только Elasticsearch).
+*   **Лимиты ресурсов**: `mem_limit` задан для Elasticsearch и Kibana; при добавлении сервисов задавайте лимит и для них, чтобы OOM одного компонента не убивал весь хост.
+*   **Production-рекомендации Elastic**: рандомизируйте публикуемые порты (`--publish-all` вместо фиксированных), используйте storage driver `overlay2`, централизуйте логи Docker (драйвер `json-file` по умолчанию не подходит для production). Подробный список — в [документации «Using the Docker images in production»](https://www.elastic.co/docs/deploy-manage/deploy/self-managed/install-elasticsearch-docker-prod).
 
 ---
 *   **[Обзор Elastic Stack](../elk_stack_overview.md)** — архитектура и компоненты.
 *   **[Настройка кластера Elasticsearch](./cluster_setup.md)** — мультинодовая конфигурация.
 *   **[Filebeat: Обзор и настройка](../filebeat_overview.md)**.
+*   **[Системный тюнинг и bootstrap checks](./cluster_setup.md#системный-тюнинг-production-ready)** — требования к ОС хоста.

@@ -186,19 +186,20 @@ class TestDocPrefixEmbeddings(unittest.TestCase):
             def embed_query(self, text):
                 return [len(text)]
         self.mock = _MockEmbeddings()
+        self.lock = threading.Lock()
 
     def test_doc_prefix_applied_to_embed_documents(self):
-        wrapper = rag_utils._DocPrefixEmbeddings(self.mock, "PREFIX: ")
+        wrapper = rag_utils._DocPrefixEmbeddings(self.mock, "PREFIX: ", self.lock)
         result = wrapper.embed_documents(["hello"])
         self.assertEqual(result, [[13]])
 
     def test_doc_prefix_not_applied_to_embed_query(self):
-        wrapper = rag_utils._DocPrefixEmbeddings(self.mock, "PREFIX: ")
+        wrapper = rag_utils._DocPrefixEmbeddings(self.mock, "PREFIX: ", self.lock)
         result = wrapper.embed_query("hello")
         self.assertEqual(result, [5])
 
     def test_multiple_texts(self):
-        wrapper = rag_utils._DocPrefixEmbeddings(self.mock, "PRE: ")
+        wrapper = rag_utils._DocPrefixEmbeddings(self.mock, "PRE: ", self.lock)
         result = wrapper.embed_documents(["a", "ab", "abc"])
         expected = [[6], [7], [8]]
         self.assertEqual(result, expected)

@@ -1,5 +1,7 @@
 # Dockerfile: Лучшие практики для Go
 
+**Актуально для:** Go 1.27
+
 ## Определения
 
 - **Статически скомпонованный бинарник (Statically Linked Binary):** Исполняемый файл, содержащий все необходимые библиотеки (включая рантайм Go). При `CGO_ENABLED=0` он не зависит от системных библиотек (`libc`), что позволяет запускать его в пустых образах (`scratch`).
@@ -21,9 +23,9 @@
 - **nsswitch.conf:** Конфигурационный файл `/etc/nsswitch.conf`, определяющий порядок источников для разрешения имен (DNS, `/etc/hosts`, WINS). В минимальных образах его отсутствие может приводить к ошибкам разрешения имен через системный резолвер.
 - **ca-certificates:** Пакет с корневыми сертификатами доверенных центров сертификации (CA). Без него Go (и любые HTTPS-клиенты) не сможет проверить цепочку TLS-сертификатов, что приведет к ошибкам `x509: certificate signed by unknown authority`.
 - **tzdata:** База данных часовых поясов. Без нее Go возвращает `time: unknown location` или использует фиксированный UTC, что нарушает логику приложений, зависящих от локального времени.
-- **PGO (Profile-Guided Optimization):** Технология оптимизации компилятора, использующая данные профилирования реальной нагрузки для повышения производительности (обычно на 2–14%). В Go 1.25+ применяется автоматически при наличии файла `default.pgo` в корне модуля.
+- **PGO (Profile-Guided Optimization):** Технология оптимизации компилятора, использующая данные профилирования реальной нагрузки для повышения производительности (обычно на 2–14%). В Go 1.21+ применяется автоматически при наличии файла `default.pgo` в корне модуля.
 - **GOEXPERIMENT:** Переменная окружения для включения экспериментальных функций компилятора и рантайма (например, `rangefunc`, `swisslot`). Используется только для тестирования нестабильных возможностей, запрещена в production.
-- **Flight Recorder:** Встроенный в Go 1.26+ механизм непрерывного низко-оюерходного профилирования (`runtime/flightrecorder`). Позволяет собирать данные о производительности в production без внешних инструментов вроде `pprof`.
+- **Flight Recorder:** Встроенный в Go 1.25+ механизм непрерывного низко-оверходного профилирования (`runtime/trace`). Позволяет собирать данные о производительности в production без внешних инструментов вроде `pprof`.
 - **govulncheck:** Официальный инструмент Go для статического анализа зависимостей и исходного кода на предмет известных CVE. Рекомендован к обязательному запуску в CI/CD.
 - **syft:** Утилита от Anchore для генерации SBOM (Software Bill of Materials) в форматах SPDX и CycloneDX. Поддерживает анализ Go-модулей, Docker-образов и файловых систем.
 - **trivy:** Мультиформатный сканер уязвимостей от Aqua Security. Анализирует файловую систему контейнера, зависимости Go (`go.sum`), SBOM и конфигурации IaC.
@@ -60,7 +62,7 @@
 1.  **Фиксация зависимостей:** Используйте `go.sum` и `-mod=vendor` (если vendoring включен).
 2.  **Флаг `-trimpath`:** Удаляет абсолютные пути к исходникам из бинарника, предотвращая утечку структуры директорий хоста.
 3.  **SOURCE_DATE_EPOCH:** Переменная окружения, фиксирующая временную метку для всех файлов в образе. BuildKit поддерживает ее нативно.
-4.  **Pinning по дайджесту:** Базовые образы фиксируются по SHA256 (`cgr.dev/chainguard/go:1.26@sha256:...`), а не по тегу.
+4.  **Pinning по дайджесту:** Базовые образы фиксируются по SHA256 (`cgr.dev/chainguard/go:1.27@sha256:...`), а не по тегу.
 
 #### .dockerignore для Go
 
@@ -99,7 +101,7 @@ Taskfile*
 | **Размер** | ~5–7 MB | ~50–70 MB | ~2–3 MB | ~10–15 MB |
 | **Использование** | Легковесные сервисы, CGO с musl | Стандартные enterprise-приложения | Максимальная минимизация | **Рекомендуется для новых проектов** |
 
-**Рекомендация:** Используйте **Wolfi/Chainguard** для новых проектов как наиболее безопасную и производительную альтернативу с поддержкой `glibc`. Для проектов, требующих привычного Debian-окружения, выбирайте `golang:1.26-bookworm` на этапе сборки и `distroless/static-debian12` на рантайме.
+**Рекомендация:** Используйте **Wolfi/Chainguard** для новых проектов как наиболее безопасную и производительную альтернативу с поддержкой `glibc`. Для проектов, требующих привычного Debian-окружения, выбирайте `golang:1.27-bookworm` на этапе сборки и `distroless/static-debian12` на рантайме.
 
 ### Мультиплатформенная сборка и кросс-компиляция
 
@@ -112,7 +114,7 @@ Go поддерживает нативную кросс-компиляцию б�
 
 ### Оптимизация сборки (PGO и кэширование)
 
-1.  **PGO:** В 2026 году использование PGO считается стандартом для высоконагруженных систем. 
+1.  **PGO:** В 2026 году использование PGO считается стандартом для высоконагруженных систем.
     *   *Процесс:* Соберите образ → запустите под нагрузкой → снимите профиль (`curl http://app/debug/pprof/profile?seconds=30`) → положите файл как `default.pgo` в корень проекта → пересоберите образ. Компилятор подхватит его автоматически.
     *   *Важно:* Для корректной работы PGO при кросс-компиляции профиль должен быть снят под той же архитектурой и ОС, под которую собирается бинарник.
 2.  **Кэширование BuildKit:** Использование `--mount=type=cache` для `/go/pkg/mod` (`GOMODCACHE`) и `~/.cache/go-build` (`GOCACHE`) радикально ускоряет сборку, особенно при частом изменении кода.
@@ -142,7 +144,7 @@ Go поддерживает нативную кросс-компиляцию б�
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-ARG GO_VERSION=1.26
+ARG GO_VERSION=1.27
 FROM golang:${GO_VERSION}-bookworm AS builder
 
 WORKDIR /app
@@ -185,7 +187,7 @@ ENTRYPOINT ["/usr/bin/app"]
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-ARG GO_VERSION=1.26
+ARG GO_VERSION=1.27
 FROM cgr.dev/chainguard/go:${GO_VERSION} AS builder
 
 WORKDIR /app
@@ -231,7 +233,7 @@ ENTRYPOINT ["/usr/bin/app"]
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
 
 ARG TARGETOS TARGETARCH
 WORKDIR /app
@@ -259,7 +261,7 @@ ENTRYPOINT ["/main"]
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM golang:1.26-bookworm AS builder
+FROM golang:1.27-bookworm AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -295,7 +297,7 @@ ENTRYPOINT ["/server"]
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM cgr.dev/chainguard/go:1.26 AS builder
+FROM cgr.dev/chainguard/go:1.27 AS builder
 RUN apk add --no-cache build-base librdkafka-dev
 
 WORKDIR /app
@@ -318,7 +320,7 @@ ENTRYPOINT ["/usr/bin/service"]
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 # Установка C-компилятора и заголовков
 RUN apk add --no-cache build-base sqlite-dev
@@ -337,7 +339,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     -o /app/server .
 
 # Финальный этап: минимальный Alpine
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache sqlite-libs
 COPY --from=builder /app/server /server
 RUN addgroup -S appgroup -g 1001 && adduser -S appuser -G appgroup -u 1001
@@ -384,7 +386,7 @@ docker buildx bake app-dev        # dev с локальным кэшем
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-ARG GO_VERSION=1.26
+ARG GO_VERSION=1.27
 FROM golang:${GO_VERSION}-bookworm AS builder
 
 # Фиксируем метку времени (например, timestamp коммита)
@@ -512,10 +514,10 @@ jobs:
     ```
 4.  **Проверка рантайм-параметров:** Вставьте в `main()` диагностику для подтверждения корректной работы в контейнере:
     ```go
-    fmt.Printf("GOMAXPROCS=%d, GOMEMLIMIT=%s, NumCPU=%d\n",
+    fmt.Printf("GOMAXPROCS=%d, NumCPU=%d, HeapAlloc=%d\n",
         runtime.GOMAXPROCS(0),
-        common.PrettySize(runtime.MemStats.Sys), // или runtime/debug.ReadGCStats
-        runtime.NumCPU())
+        runtime.NumCPU(),
+        memStats.HeapAlloc)
     ```
 5.  **SBOM генерация:** Используйте `syft` или `docker build --sbom` для генерации состава образа.
     ```bash
@@ -538,17 +540,19 @@ jobs:
 
 ### Мониторинг в контейнере
 
-В Go 1.26+ используйте встроенный **Flight Recorder** для сбора данных о производительности с минимальным оверхедом:
+В Go 1.25+ используйте встроенный **Flight Recorder** для сбора данных о производительности с минимальным оверхедом:
 
 ```go
-import "runtime/flightrecorder"
+import "runtime/trace"
 
 func init() {
-    // Запись профиля в файл/лог с интервалом
-    flightrecorder.Start(flightrecorder.Config{
-        SampleRate: 100 * time.Millisecond,
-        Output:     "/tmp/flightrecorder.pb.gz",
+    fr := trace.NewFlightRecorder(trace.FlightRecorderConfig{
+        MinAge:   100 * time.Millisecond,
+        MaxBytes: 1 << 20,
     })
+    if err := fr.Start(); err != nil {
+        log.Fatalf("failed to start flight recorder: %v", err)
+    }
 }
 ```
 
@@ -568,6 +572,227 @@ func main() {
 ```bash
 curl http://localhost:6060/debug/pprof/profile?seconds=30 > cpu.pb.gz
 go tool pprof -http=:8080 cpu.pb.gz
+```
+
+## Best Practices
+
+### 1. Используйте Exec Form и неявный сигнал завершения
+
+Всегда используйте JSON-форму для `ENTRYPOINT` и `CMD`, чтобы Go-приложение получало PID 1 напрямую и обрабатывало `SIGTERM`/`SIGINT` от Docker/Kubernetes:
+
+```dockerfile
+ENTRYPOINT ["/usr/bin/app"]
+CMD ["serve"]
+```
+
+Для multi-process сценариев или если приложение spawning дочерние процессы, используйте `docker run --init` или добавьте `tini`:
+
+```dockerfile
+# Копирование tini из builder
+COPY --from=docker.io/docker/dockerfile:1.9.7 /docker-init /usr/local/bin/docker-init
+ENTRYPOINT ["/usr/local/bin/docker-init", "--", "/usr/bin/app"]
+```
+
+### 2. Реализуйте graceful shutdown в коде
+
+Go-приложения в контейнерах должны корректно завершаться по `SIGTERM` (дефолт для `docker stop` и `kubectl delete`):
+
+```go
+func main() {
+    ctx, stop := signal.NotifyContext(context.Background(),
+        syscall.SIGINT, syscall.SIGTERM)
+    defer stop()
+
+    srv := &http.Server{Addr: ":8080", Handler: router}
+
+    go func() {
+        <-ctx.Done()
+        shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+        defer cancel()
+        srv.Shutdown(shutdownCtx)
+    }()
+
+    if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+        log.Fatal(err)
+    }
+}
+```
+
+### 3. Приватный пользователь без оболочки
+
+Всегда создавайте отдельного non-root пользователя в builder и копируйте `/etc/passwd` в финальный образ. Для `scratch` и `distroless` используйте фиксированный UID (например, `65532` для distroless, `10001` для scratch):
+
+```dockerfile
+RUN groupadd -g 65532 appgroup && useradd -u 65532 -g appgroup appuser
+COPY --from=builder /etc/passwd /etc/passwd
+USER 65532
+```
+
+### 4. Пиннинг базовых образов по дайджесту
+
+Для production используйте SHA256-дайджесты вместо тегов. Это исключает недетерминированные сборки при обновлении upstream-образа:
+
+```dockerfile
+FROM golang:1.27@sha256:abc123... AS builder
+FROM cgr.dev/chainguard/static:latest@sha256:def456... AS runtime
+```
+
+### 5. Ограничения ресурсов и GOMEMLIMIT
+
+Всегда задавайте лимиты памяти в оркестраторе и синхронизируйте `GOMEMLIMIT`:
+
+| Сценарий | memory limit | GOMEMLIMIT | GOMAXPROCS |
+| :--- | :--- | :--- | :--- |
+| CPU-bound сервис | 256 MiB | 200 MiB | auto (Go 1.25+) |
+| I/O-bound сервис | 512 MiB | 450 MiB | auto (Go 1.25+) |
+| Памятоемкий (кэши) | 1 GiB | 900 MiB | auto (Go 1.25+) |
+
+**Важно:** Go 1.25+ автоматически считывает `cpu.cfs_quota_us` и `cpu.cfs_period_us` из cgroups v1/v2. `GOMAXPROCS` настраивать вручную не требуется. Для cgroups v2 с `cpu.max` (BFQ/EAS) поведение аналогично.
+
+### 6. Отключите CGO, если нет зависимости от C-библиотек
+
+`CGO_ENABLED=0` — единственный способ гарантировать статический бинарник для `scratch` и `distroless/static`. Если нужна CGO, используйте Wolfi (`glibc`) вместо Alpine (`musl`) для совместимости.
+
+### 7. Верификация каждой сборки
+
+- **Статическая линковка:** `ldd ./app` → `not a dynamic executable`
+- **Архитектура:** `file ./app` → ожидаемая arch
+- **Уязвимости:** `govulncheck ./...` + `trivy image`
+- **Состав:** `syft` или `docker build --sbom`
+- **Слои:** `dive myapp:latest`
+
+### 8. Используйте SOURCE_DATE_EPOCH для воспроизводимости
+
+```dockerfile
+ARG SOURCE_DATE_EPOCH
+ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
+```
+
+Запуск: `SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) docker buildx build ...`
+
+### 9. SBOM и Provenance в CI/CD
+
+Включите `--sbom` и `--provenance` в `docker buildx build` или через Docker Bake. Это requirement для SLSA L2+ и regulated environments (PCI DSS, SOC 2).
+
+```bash
+docker buildx build \
+  --sbom true \
+  --provenance mode=max \
+  --push \
+  -t myreg.com/app:1.0.0 .
+```
+
+### 10. Мониторинг cgroups throtelling
+
+В Go 1.25+ проверяйте runtime через встроенные средства:
+
+```go
+var ms runtime.MemStats
+runtime.ReadMemStats(&ms)
+log.Printf("GOMAXPROCS=%d NumCPU=%d HeapAlloc=%d",
+    runtime.GOMAXPROCS(0), runtime.NumCPU(), ms.HeapAlloc)
+```
+
+Для диагностики throttling на уровне узла:
+
+```bash
+cat /sys/fs/cgroup/cpu.stat
+# → nr_throttled: 42
+# → throttled_time: 123456789
+```
+
+## Edge Cases
+
+### Кросс-компиляция с вариантами архитектуры
+
+Для multi-arch пайплайнов используйте `TARGETVARIANT` вместе с `TARGETOS`/`TARGETARCH`:
+
+```dockerfile
+ARG TARGETOS TARGETARCH TARGETVARIANT
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=$TARGETVARIANT \
+    go build -trimpath -ldflags="-s -w" -o /app/main .
+```
+
+| Архитектура | Вариант | Пример `TARGETVARIANT` | Комментарий |
+| :--- | :--- | :--- | :--- |
+| `arm` | `GOARM` | `7` | ARMv7 ( Raspbian ) |
+| `amd64` | `GOAMD64` | `v3` | AVX2, BMI2 (Intel Haswell+, AMD Zen+) |
+| `ppc64` | `GOPPC64` | `power9` | PowerPC 64-bit LE |
+| `riscv64` | `GORISCV64` | `rva20u64` | RISC-V Vector |
+
+**Важно:** PGO-профиль должен быть снят под той же `GOARCH`/`GOAMD64`, под которую собирается бинарник. Нельзя использовать профиль с `amd64/v1` для сборки под `amd64/v4`.
+
+### CGO с динамической линковкой в multi-stage
+
+Если CGO включен и используется динамическая линковка (например, `libsqlite3.so`), финальный образ должен содержать все зависимости:
+
+```dockerfile
+FROM cgr.dev/chainguard/glibc-dynamic:latest
+RUN apk add --no-cache sqlite-libs
+COPY --from=builder /app/service /usr/bin/service
+# Проверка зависимостей:
+# ldd /usr/bin/service
+```
+
+### Обратная совместимость CGO с Alpine
+
+Для Alpine (`musl`) с CGO требуются `build-base` и соответствующие `-dev` пакеты. Статически слинкованный бинарник (`CGO_ENABLED=0`) несовместим с библиотеками, собранными под `glibc`:
+
+```dockerfile
+FROM golang:1.27-alpine AS builder
+RUN apk add --no-cache build-base sqlite-dev
+RUN CGO_ENABLED=1 go build -o /app/server .
+FROM alpine:3.24
+RUN apk add --no-cache sqlite-libs
+COPY --from=builder /app/server /server
+```
+
+### Отладка production-образов
+
+Для `scratch` и `distroless` нет shell. Используйте `docker debug` (Docker Desktop 4.33+) или эфемерные контейнеры:
+
+```bash
+docker debug myapp:latest
+# → предоставляет shell с Nix Toolbox в namespace контейнера
+```
+
+Для Kubernetes используйте `kubectl debug`:
+
+```bash
+kubectl debug -it --image=busybox:1.36 --target=myapp-pod
+```
+
+### Слишком большие бинарники
+
+Go-бинарники со включенным CGO и отладочной информацией могут превышать 100 MB. Оптимизации:
+
+1. **Уберите отладку:** `-ldflags="-s -w"` (-20-30%)
+2. **Установите GOMEMLIMIT:** предотвращает неконтролируемый рост heap
+3. **Включите UPX** (опционально, для production):
+   ```dockerfile
+   RUN apk add --no-cache upx
+   RUN upx --best --lzma /app/server
+   ```
+   **Предупреждение:** UPX unpacking добавляет overhead при старте (~10-50 ms) и может быть заблокирован security policy.
+
+### Обработка нескольких сигналов
+
+Go 1.27+ поддерживает `signal.NotifyContext`. Для приложений с фоновыми воркерами (goroutines) используйте `errgroup` для скоординированной остановки:
+
+```go
+g, ctx := errgroup.WithContext(context.Background())
+g.Go(func() error { return worker1(ctx) })
+g.Go(func() error { return worker2(ctx) })
+<-ctx.Done()
+g.Wait()
+```
+
+### Дублирование content в модуле
+
+Если модуль содержит main-пакет и библиотеку, используйте `go build -o` явно, чтобы избежать неожиданного поведения:
+
+```dockerfile
+RUN go build -trimpath -ldflags="-s -w" -o /usr/bin/app ./cmd/server
 ```
 
 ## Дополнительная информация
@@ -617,7 +842,7 @@ GOOS=linux GOARCH=arm64 GOARM=8 CGO_ENABLED=0 go build -o app-arm64 .
 В BuildKit/Docker Buildx аргументы `TARGETOS`/`TARGETARCH` заполняются автоматически:
 
 ```dockerfile
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS builder
 ARG TARGETOS TARGETARCH TARGETVARIANT
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=$TARGETVARIANT \
     go build -o /app/main .
@@ -646,14 +871,14 @@ RUN CGO_ENABLED=0 go build -mod=vendor -o /app .
 Для ускорения CI тесты можно запускать в отдельном промежуточном этапе, не включая их в финальный образ:
 
 ```dockerfile
-FROM golang:1.26-bookworm AS tester
+FROM golang:1.27-bookworm AS tester
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 RUN go test -race -coverprofile=coverage.out ./...
 
-FROM golang:1.26-bookworm AS builder
+FROM golang:1.27-bookworm AS builder
 # ... сборка
 ```
 
@@ -666,8 +891,8 @@ FROM golang:1.26-bookworm AS builder
 | Максимальная безопасность, нет CGO | `scratch` | 0 байт поверх бинарника |
 | Максимальная безопасность, есть CGO | `cgr.dev/chainguard/static` | glibc, non-root, 0 CVE |
 | Enterprise, привычный стек | `gcr.io/distroless/static-debian12` | Debian-совместимость, 0 shell |
-| Отладка, нужно `sh`/`apk` | `golang:1.26-bookworm` | Полный debug-инструментарий |
-| Легковесный Alpine | `alpine:3.21` | `apk`, `sh`, но musl-риски |
+| Отладка, нужно `sh`/`apk` | `golang:1.27-bookworm` | Полный debug-инструментарий |
+| Легковесный Alpine | `alpine:3.24` | `apk`, `sh`, но musl-риски |
 
 ### Смотрите также
 

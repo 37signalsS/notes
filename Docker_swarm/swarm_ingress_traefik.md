@@ -1,6 +1,8 @@
 # Docker Swarm: Входящий трафик (Ingress) с Traefik
 
-Миграция с версии v2 на v3: конфигурация обновлена для Traefik v3.x. В новой версии провайдер Swarm выделен в отдельный компонент: вместо `--providers.docker.swarmMode=true` используется флаг `--providers.swarm=true`.
+**Актуально для:** Docker Swarm 29.x
+
+Миграция с версии v2 на v3: провайдер Swarm в Traefik v3 выделен в отдельный компонент. Вместо `--providers.docker.swarmMode=true` используется `--providers.swarm=true`.
 
 При работе с несколькими веб-сервисами в кластере Docker Swarm стандартный механизм Routing Mesh (сетчатая маршрутизация) выполняет балансировку на уровне L4, но не поддерживает разграничение запросов по доменным именам на уровне L7. Traefik решает эту задачу, выступая в роли динамического обратного прокси-сервера и Edge Router.
 
@@ -8,13 +10,22 @@
 
 **Ingress-трафик (Входящий трафик)** — сетевой трафик, поступающий в кластер из внешних сетей (обычно по протоколам HTTP/HTTPS на порты 80/443).
 
-**Routing Mesh (Сетчатая маршрутизация)** — встроенный механизм Swarm, позволяющий обращаться к сервису через любой узел кластера. По умолчанию выполняет SNAT (Source Network Address Translation), что приводит к потере реального IP-адреса клиента.
+**Routing Mesh (Сетчатая маршрутизация)** — встроенный механизм Swarm L4-балансировки. Подробнее: **[Сетевое взаимодействие в Swarm](./swarm_networking.md)**.
 
-**Host Mode (Режим хоста)** — способ публикации портов, при котором контейнер слушает порт непосредственно на сетевом интерфейсе узла кластера (`mode: host`). Позволяет сохранять реальный IP-адрес клиента и минимизировать задержки.
+**Host Mode (Режим хоста)** — способ публикации портов, при котором контейнер слушает порт непосредственно на сетевом интерфейсе узла кластера. Позволяет сохранять реальный IP-адрес клиента и минимизировать задержки. Подробнее: **[Сетевое взаимодействие в Swarm](./swarm_networking.md)**.
 
 **Docker Socket Proxy** — вспомогательный сервис, который предоставляет ограниченный доступ к Docker API по сети (TCP), защищая основной сокет демона `/var/run/docker.sock` от прямого доступа.
 
-**Middleware (Промежуточное ПО)** — компоненты Traefik для модификации запросов (авторизация, заголовки, ограничение скорости) перед их отправкой в Backend.
+**Middleware (Промежуточное ПО)** — компоненты Traefik для модификации запросов (авторизация, заголовки, ограничение скорости) перед их отправкой в Backend. Подробнее: **[Обзор Traefik](../../WebServers/Traefik/traefik_overview.md)**.
+
+## Предварительные требования
+
+- Docker Engine 29.x на всех менеджерах и рабочих узлах кластера
+- Открытые порты между узлами: `2377/TCP` (управление кластером), `7946/TCP+UDP` (gossip), `4789/UDP` (VXLAN)
+- Созданная overlay-сеть для Traefik и приложений (например, `traefik-public`)
+- При использовании ACME (Let's Encrypt): порт `80/TCP` доступен из интернета для HTTP Challenge
+- Для production: персистентный том для `acme.json` и `docker secret` или `docker config` для статической конфигурации Traefik
+- Синхронизация времени через NTP/chrony на всех менеджерах (расхождение >100ms приводит к ошибкам сертификатов ACME)
 
 ## Базовые концепции
 
@@ -108,7 +119,7 @@ services:
           memory: 64M
 
   traefik:
-    image: traefik:v3.1
+    image: traefik:v3.7
     configs:
       - source: traefik-config
         target: /etc/traefik/traefik.yml
@@ -144,6 +155,21 @@ volumes:
   letsencrypt-data:
 ```
 
+**Валидация:**
+```bash
+docker service ls
+# → traefik_traefik в статусе Running, реплика 1/1
+
+docker service logs traefik_traefik
+# → нет ошибок конфигурации провайдера swarm
+
+curl -s http://localhost:8080/ping
+# → OK (если порт 8080 открыт)
+
+docker network inspect traefik-public
+# → Traefik подключен к сети, содержит task-эндпоинт
+```
+
 ### Настройка Middlewares для приложений
 
 Middlewares позволяют добавлять функциональность к маршрутам без изменения кода приложения.
@@ -170,6 +196,18 @@ services:
         - "traefik.http.services.api.loadbalancer.server.port=8080"
 ```
 
+**Валидация:**
+```bash
+curl -s -H "Host: api.example.com" http://<traefik-ip>/health
+# → 200 OK, ответ от бэкенда
+
+curl -s http://<traefik-ip>/api/http/routers
+# → роутер api виден в списке, middlewares подключены
+
+docker service logs api
+# → запросы проходят через Traefik, IP клиента сохранен (mode: host)
+```
+
 ### Мониторинг и логирование
 
 Для интеграции с Prometheus добавьте в `traefik.yml`:
@@ -189,37 +227,71 @@ accessLog:
       StartUTC: drop
 ```
 
-## Диагностика
+## Операции и команды
+
+| Область | Команды | Назначение |
+|:---|:---|:---|
+| **Развертывание** | `docker stack deploy -c traefik-stack.yml traefik` | Деплой стека Traefik |
+| | `docker config create traefik-config traefik.yml` | Создание статической конфигурации |
+| **Инспекция** | `docker service ls --filter name=traefik` | Проверка статуса Traefik |
+| | `docker service logs traefik_traefik` | Просмотр логов (ошибки ACME, провайдер) |
+| | `docker service inspect traefik_traefik --format '{{.Endpoint.Ports}}'` | Проверка опубликованных портов |
+| **Диагностика** | `curl -s http://localhost:8080/ping` | Health check Traefik |
+| | `curl -s http://localhost:8080/api/http/routers \| jq` | Список активных роутеров |
+| | `curl -s http://localhost:8080/api/http/services \| jq` | Список сервисов и бэкендов |
+| **Безопасность** | `docker swarm unlock-key ls` | Проверка ключей разблокировки (если autolock) |
+| | `chmod 600 acme.json` | Исправление прав на ACME-хранилище |
+
+## Устранение неисправностей
+
+### Диагностика Traefik
 
 ```bash
 # Проверка статуса сервисов
 docker service ls
-# Просмотр логов (поиск ошибок конфигурации провайдера)
+# → traefik_traefik в статусе Running
+
+# Просмотр логов (ошибки конфигурации провайдера, ACME)
 docker service logs -f traefik_traefik
+
+# Health check через встроенный endpoint
+curl -s http://localhost:8080/ping
+# → OK
+
+# Проверка открытых портов
+ss -tlnp | grep -E ':(80|443|8080)'
+# → подтверждение что Traefik слушает ожидаемые порты
 ```
 
 ### Типовые проблемы
 
 | Проблема | Причина | Решение |
-| :--- | :--- | :--- |
-| **404 Not Found** | Метки в `services.labels` | Перенести в `deploy.labels` |
-| **Gateway Timeout** | Разные сети | Проверить наличие `traefik-public` у обоих сервисов |
-| **SSL Error** | Права на `acme.json` | Убедиться в `chmod 600` на томе |
-| **IP не совпадает** | SNAT в Swarm | Использовать `mode: host` для портов Traefik |
+|:---|:---|:---|
+| **404 Not Found** | Метки в `services.labels` | Перенести в `deploy.labels` (Swarm читает только deploy.labels) |
+| **Gateway Timeout** | Разные overlay-сети | Проверить что Traefik и бэкенд в одной сети (`traefik-public`) |
+| **SSL Error** | Права на `acme.json` | `chmod 600` на томе, владелец — процесс Traefik |
+| **IP не совпадает** | SNAT в Routing Mesh | Использовать `mode: host` для портов Traefik |
+| **502 Bad Gateway** | Бэкенд слушает `localhost` | Приложение должно слушать `0.0.0.0` внутри контейнера |
+| **ACME rate limit** | Частые перезапуски Traefik | Использовать staging-сервер для тестов (`acme-staging-v02.api.letsencrypt.org`) |
+| **Dashboard недоступен** | Отсутствует middleware защиты | Добавить `BasicAuth` или `ForwardAuth`, отключить `api.insecure` |
+| **Ключ Traefik не разблокируется** | Autolock менеджера | Выполнить `docker swarm unlock` перед стартом Traefik на менеджере |
+
+## Лучшие практики
+
+1. **Версия образа:** фиксируйте версию Traefik (например, `traefik:v3.7`), не используйте `latest` в production.
+2. **Socket Proxy:** никогда не монтируйте `/var/run/docker.sock` напрямую. Используйте `tecnativa/docker-socket-proxy` с минимальными правами (`SERVICES=1`, `TASKS=1`, `NETWORKS=1`, `NODES=1`, `SWARM=1`).
+3. **Host Mode:** публикуйте порты Traefik в `mode: host` для сохранения реального IP клиента и минимизации задержек.
+4. **ACME:** храните `acme.json` на персистентном томе с правами `600`. Используйте staging-сервер для тестов.
+5. **Dashboard:** защищайте дашборд middleware `BasicAuth` или `ForwardAuth`, не открывайте на публичных entrypoints без TLS.
+6. **Replicas:** для production используйте `replicas: 1` с placement constraint на менеджерском узле, либо внешнее хранилище сертификатов (Consul, Redis) для HA.
+7. **Секреты:** для статической конфигурации используйте `docker config`, для чувствительных данных — `docker secret`.
+8. **Мониторинг:** включите Prometheus metrics (`metrics.prometheus`) и access log в формате JSON для интеграции с ELK/Loki.
 
 ## Дополнительная информация
 
-### Сравнение с другими решениями
-
-| Характеристика | Traefik | Nginx Ingress | HAProxy |
-| :--- | :--- | :--- | :--- |
-| **Service Discovery** | Нативно (Swarm API) | Требует Nginx-скриптов | Требует Consul/DNS |
-| **Auto SSL** | Встроено (ACME) | Cert-manager / Shell | Внешние скрипты |
-| **Динамичность** | 10/10 | 6/10 | 5/10 |
-
 ### Смотрите также
 
-- **[Обзор Traefik (SSoT)](../../WebServers/Traefik/traefik_overview.md)** — архитектура и компоненты.
-- **[Сетевое взаимодействие в Swarm](./swarm_networking.md)** — подробности работы Overlay-сетей.
+- **[Обзор Traefik](../../WebServers/Traefik/traefik_overview.md)** — архитектура и компоненты.
+- **[Сетевое взаимодействие в Swarm](./swarm_networking.md)** — Routing Mesh, Overlay, IPVS и VXLAN.
 - **[Продвинутые стратегии деплоя](./swarm_stack_advanced.md)** — Canary и Blue-Green через Traefik.
 - **[Диагностика сетевой связности](../Docker/Docker_troubleshooting/network_connectivity_issues.md)**

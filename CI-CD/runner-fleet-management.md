@@ -268,24 +268,9 @@ sum(gitlab_runner_jobs{state="running"}) / count(gitlab_runner_jobs) * 100
 
 ### Сценарий 5: GitHub Actions Runner Controller на собственном кластере
 
-Для self-hosted раннеров GitHub Actions используется ARC (actions-runner-controller), управляющий pod-раннерами внутри собственного кластера оркестратора:
+Для self-hosted раннеров GitHub Actions используется ARC (actions-runner-controller), управляющий pod-раннерами внутри собственного кластера оркестратора. В текущей версии ARC — пара Helm-чартов (`gha-runner-scale-set-controller` + `gha-runner-scale-set`): controller-manager в одном namespace, эфемерные runner-поды в другом; listener масштабирует поды по числу назначенных job'ов, регистрация — через JIT-токены. Это даёт те же преимущества эфемерности, что и KEDA/GitLab, без привязки к внешним провайдерам. Подробная настройка ARC (Helm, GitHub App auth, containerMode dind/kubernetes, custom images, метрики, troubleshooting) — в **[dedicated файле](../Github_CI/actions_runner_controller.md)**.
 
-```yaml
-apiVersion: actions.summerwind.dev/v1alpha1
-kind: RunnerDeployment
-metadata:
-  name: repo-runners
-spec:
-  replicas: 10
-  template:
-    spec:
-      repository: org/repo
-      labels: ["self-hosted", "linux"]
-      ephemeral: true            # каждый pod — одна джоба, затем удаляется
-      containerMode: "kubernetes"
-```
-
-Это даёт те же преимущества эфемерности, что и KEDA/GitLab, без привязки к внешним провайдерам.
+> Примечание: прежние autoscaling-режимы ARC с CRD `RunnerDeployment`/`RunnerScaleSet` (API `actions.summerwind.net/v1alpha1`) объявлены legacy и поддерживаются только сообществом — см. раздел «Legacy-режим сообщества» в dedicated файле.
 
 ---
 

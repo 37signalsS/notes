@@ -1,5 +1,7 @@
 # Dockerfile: Лучшие практики для .NET
 
+**Актуально для:** .NET 8 LTS / 9 STS / 10 LTS
+
 ## Определения
 
 - **SDK (Software Development Kit):** Полный набор инструментов (компиляторы, библиотеки, CLI) для сборки приложения. Используется только на этапе сборки.
@@ -46,6 +48,72 @@ Microsoft предоставляет три категории образов д
 *   **Server GC vs Workstation GC:** В контейнерах с малым количеством ядер (<2) рекомендуется отключать Server GC (`DOTNET_gcServer=0`) для снижения потребления памяти. Server GC выделяет отдельный поток GC на каждое ядро — при 1 ядре это лишний оверхед.
 *   **CPU Limits:** .NET использует количество ядер для определения параллелизма в ThreadPool и GC. При использовании дробных лимитов (например, 0.5 CPU) рантайм округлит значение до 1. Для корректного определения доступных ядер убедитесь, что контейнер запущен с `--cpus` (cgroups v2), а не с `--cpu-quota`.
 
+### Graceful Shutdown и обработка сигналов
+
+При Rolling Update или масштабировании Kubernetes отправляет контейнеру сигнал `SIGTERM`. .NET по умолчанию перехватывает его и запускает graceful shutdown: отказ от новых запросов, завершение активных, освобождение ресурсов. Для корректной работы в production необходимо:
+
+1.  **Настроить таймаут завершения в приложении:**
+    ```csharp
+    // Program.cs
+    builder.Services.AddHostedService<Worker>();
+    builder.Host.ConfigureAppConfiguration((hostingContext, config) =>
+    {
+        // ...
+    });
+    // Явное указание времени ожидания graceful shutdown (по умолчанию 5 сек)
+    builder.Host.UseShutdownTimeout(TimeSpan.FromSeconds(30));
+    ```
+    Или через переменную окружения:
+    ```dockerfile
+    ENV DOTNET_SHUTDOWN_TIMEOUT=30s
+    ```
+
+2.  **Установить `terminationGracePeriodSeconds` в Kubernetes:** Должен быть больше, чем максимальная длительность запроса + `DOTNET_SHUTDOWN_TIMEOUT`. Например, для P99 = 10 сек:
+    ```yaml
+    terminationGracePeriodSeconds: 60
+    ```
+
+3.  **Реализовать `IHostedService.StopAsync`:** Для фоновых воркеров остановка должна быть отзывчивой:
+    ```csharp
+    public class Worker : BackgroundService
+    {
+        private readonly ILogger<Worker> _logger;
+        private readonly CancellationTokenSource _cts = new();
+
+        public Worker(ILogger<Worker> logger) => _logger = logger;
+
+        public override async Task StopAsync(CancellationToken cancellationToken)
+        {
+            _logger.LogInformation("Worker stopping...");
+            _cts.Cancel();
+            // Дождаться завершения активных операций
+            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+            _logger.LogInformation("Worker stopped");
+        }
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            // Используем объединённый токен: cancellationToken из StopAsync + stoppingToken из хоста
+            var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, _cts.Token);
+            await ProcessLoopAsync(linkedCts.Token);
+        }
+    }
+    ```
+
+4.  **Для ASP.NET Core:** Kestrel автоматически останавливает прием новых соединений при `SIGTERM`. Убедитесь, что не используется `IApplicationLifetime.StopApplication()` в middleware, который может прервать запросы досрочно.
+
+**Диагностика проблем с shutdown:**
+```bash
+ # Проверить, что процесс получает SIGTERM
+ kubectl describe pod <pod> | grep -A2 "Last State"
+ # → Last State: Terminated (reason: Signal, exit Code: 143 (SIGTERM))
+
+ # Проверить логи shutdown
+ kubectl logs <pod> | grep -i "stopping\|shutdown"
+ # → info: Worker stopping...
+ # → info: Worker stopped
+ ```
+
 ### Переменные окружения .NET для контейнеров
 
 Полный обзор переменных, влияющих на поведение .NET в Docker:
@@ -54,8 +122,8 @@ Microsoft предоставляет три категории образов д
 | :--- | :--- | :--- |
 | `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1` | Отключает ICU, уменьшает образ на ~20-50 МБ | `1` (если нет локализации) |
 | `DOTNET_gcServer=0` | Workstation GC (меньше памяти при <2 ядер) | `0` для малых контейнеров |
-| `DOTNET_GCHeapHardLimit` | Лимит кучи GC в байтах (hex: `0x38400000`) | 70-80% от лимита памяти |
-| `DOTNET_GCHeapHardLimitPercent` | Лимит кучи GC в процентах от памяти хоста | `70` |
+| `DOTNET_GCHeapHardLimit` | Лимит кучи GC в байтах (hex: `0x38400000`) | 75% от лимита памяти |
+| `DOTNET_GCHeapHardLimitPercent` | Лимит кучи GC в процентах от памяти хоста | `75` |
 | `DOTNET_TC_ThreadPoolMinThreads` | Минимум потоков в ThreadPool | Значение по умолчанию |
 | `DOTNET_TC_ThreadPoolMaxThreads` | Максимум потоков в ThreadPool | Значение по умолчанию |
 | `DOTNET_SYSTEM_NET_HTTP_SOCKETSHTTPHANDLER_HTTP3SUPPORT` | Поддержка HTTP/3 | `1` (.NET 7+) |
@@ -63,6 +131,7 @@ Microsoft предоставляет три категории образов д
 | `ASPNETCORE_URLS` | Адреса для прослушивания Kestrel | `http://+:8080` |
 | `DOTNET_CLI_TELEMETRY_OPTOUT=1` | Отключает телеметрию CLI | `1` |
 | `DOTNET_EnableDiagnostics=0` | Отключает диагностику (diagnostics port) | `0` в production |
+| `DOTNET_SHUTDOWN_TIMEOUT` | Таймаут graceful shutdown (формат: `30s`, `1m`) | `30s` для production |
 
 **Пример конфигурации для контейнера с 512 МБ памяти:**
 ```dockerfile
@@ -126,17 +195,48 @@ docker run -d \
 ```
 
 **Зачем это нужно для .NET:**
-- `--read-only` блокирует запись в `/tmp` и лог-файлы — containerized .NET приложения пишут во временные файлы, поэтому cần `--tmpfs /tmp`.
+- `--read-only` блокирует запись в `/tmp` и лог-файлы — containerized .NET приложения пишут во временные файлы, поэтому нужно `--tmpfs /tmp`.
 - `--cap-drop=ALL` + `--security-opt=no-new-privileges` предотвращают эскалацию привилегий, если в .NET рантайме обнаружена уязвимость.
 - Пользователь `app` (UID 1654) уже непривилегирован — дополнительные меры isolation усиливают защиту.
 
-Подробнее: [Безопасность в Dockerfile](./security.md).
+### Supply Chain Security и сканирование образов
+
+Для .NET-образов критически важно проверять состав и уязвимости на этапе CI/CD:
+
+1.  **Генерация SBOM:** Используйте `syft` или встроенные возможности `dotnet` для создания Software Bill of Materials:
+    ```bash
+    # Генерация SBOM для собранного образа
+    syft my-dotnet-app:latest -o cyclonedx-json > sbom.json
+
+    # Или через dotnet publish с SBOM (требуется .NET 8+ SDK)
+    dotnet publish -c Release -o /app/publish \
+      -p:SBOMGenerate=true \
+      -p:SBOMFormat=CycloneDX
+    ```
+
+2.  **Сканирование уязвимостей:** Проверяйте образы перед деплоем:
+    ```bash
+    # Trivy — сканирование CVE
+    trivy image --severity HIGH,CRITICAL my-dotnet-app:latest
+
+    # Grype — альтернативный сканер
+    grype my-dotnet-app:latest -o table
+    ```
+
+3.  **Верификация при запуске:** В Kubernetes используйте admission-контроллеры (Kyverno, OPA/Gatekeeper) для блокировки запуска образов с недавно обнаруженными CVE высокого уровня.
+
+4.  **Подпись образа:** Подписывайте финальные образы через `cosign` и храните подписи в реестре:
+    ```bash
+    cosign sign mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled
+    ```
+
+Подробнее: [Безопасность в Dockerfile](./security.md), [Безопасность цепочки поставок](../../../Security/Supply_Chain_Security/artifact_signing.md).
 
 ## Практические сценарии
 
-### Сценарий 1: Оптимизированный ASP.NET Core для Production (2026)
+### Сценарий 1: Оптимизированный ASP.NET Core для Production
 
-Использование .NET 10 (прогноз), монтирования кэша и кросс-компиляции.
+Использование .NET 10 LTS, монтирования кэша и кросс-компиляции.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
@@ -213,7 +313,7 @@ RUN dotnet publish "Fast.Service.csproj" \
     /p:PublishAot=true
 
 # Финальный Chiseled-образ (Ubuntu-based, без shell)
-FROM mcr.microsoft.com/dotnet/nightly/runtime-deps:10.0-jammy-chiseled@sha256:...
+FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled@sha256:...
 WORKDIR /app
 COPY --from=builder /app/publish/Fast.Service .
 USER app
@@ -395,6 +495,28 @@ docker exec <container> netstat -an | findstr 8080
 
 Это позволяет держать основной образ максимально легким (Alpine/Chiseled), при этом имея полный инструментарий отладки рядом.
 
+4.  **`dotnet-counters`:** Мониторинг GC, ThreadPool, исключений и contended locks в реальном времени без остановки приложения:
+    ```bash
+    # Мониторинг процесса PID 1 в контейнере
+    docker exec <container> dotnet-counters monitor --process-id 1 \
+      --counters System.Runtime,Microsoft.AspNetCore.Hosting
+
+    # Экспорт в Prometheus (требуется dotnet-counters 8.0+)
+    dotnet-counters export --process-id 1 --format prometheus
+    ```
+5.  **`dotnet-dump`:** Сбор и анализ дампов памяти (core dumps) без отладчика:
+    ```bash
+    # Сбор дампа из запущенного контейнера
+    dotnet-dump collect -p <PID> -o /tmp/app.dump
+
+    # Анализ утечек (размер объектов, GC-статистика)
+    dotnet-dump analyze /tmp/app.dump -c "dumpheap -stat"
+    ```
+
+**Sidecar vs in-place диагностика:**
+- **Sidecar (`dotnet-monitor`):** Рекомендуется для production Kubernetes — не требует открытия портов в основном контейнере, работает через shared process namespace.
+- **`dotnet-counters`/`dotnet-dump`:** Удобны для ad-hoc диагностики в development или staging. В production требуют `--pid=host` и временных привилегий.
+
 ### Probe'ы для Kubernetes
 
 .NET приложения имеют длительный cold start (особенно с JIT-компиляцией). Правильная настройка probe'ов критична для стабильности в Kubernetes:
@@ -450,6 +572,36 @@ spec:
 - `livenessProbe` не должен зависеть от внешних сервисов (БД, Redis) — иначе контейнер будет перезапускаться при недоступности БД.
 - `readinessProbe` может проверять зависимость от БД — это корректно убирает контейнер из балансировщика.
 
+### Health Checks endpoint (C#)
+
+Для работы probes в Kubernetes приложение должно expose health endpoints. В ASP.NET Core это реализуется через `Microsoft.AspNetCore.Diagnostics.HealthChecks`:
+
+```csharp
+// Program.cs
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddHealthChecks()
+    .AddReadinessCheck("database", async sp =>
+    {
+        var db = sp.GetRequiredService<MyDbContext>();
+        return await db.Database.CanConnectAsync();
+    })
+    .AddLivenessCheck("self", () => HealthCheckResult.Healthy());
+
+var app = builder.Build();
+app.MapHealthChecks("/health/live");  // liveness
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = r => r.Tags.Contains("ready")
+});
+app.MapHealthChecks("/health");       // общий
+app.Run();
+```
+
+**Важно для .NET:**
+- `/health/live` должен проверять только состояние процесса (не зависит от внешних сервисов).
+- `/health/ready` может проверять БД, кэш, очередь — это корректно убирает контейнер из балансировщика при недоступности зависимостей.
+- `/health` — объединённый endpoint, удобен для универсального HEALTHCHECK в Dockerfile.
+
 ### Наблюдаемость (Observability)
 
 Интеграция OpenTelemetry является обязательной:
@@ -469,7 +621,7 @@ kubectl describe pod <pod> | grep -A5 "Limits\|Last State"
 # → Limits: memory: 256Mi
 # → Last State: Terminated (reason: OOMKilled)
 
-# Решение 1: установить явный лимит кучи (70% от памяти)
+# Решение 1: установить явный лимит кучи (75% от памяти)
 ENV DOTNET_GCHeapHardLimit=0x7000000  # 112 МБ
 
 # Решение 2: увеличить лимит памяти
@@ -502,7 +654,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 **Причина:** Docker Desktop на macOS/Windows не мониторит файловые изменения через overlay filesystem.
 
 ```bash
-# Симпptom: dotnet watch не реагирует на изменения в src/
+# Симптом: dotnet watch не реагирует на изменения в src/
 
 # Решение: volume mount с polling
 docker run -d \
@@ -529,7 +681,7 @@ RUN --mount=type=cache,target=/root/.nuget/packages \
 
 # Проверка что кэш работает:
 docker buildx du --filter type=cache
-# → 전체 캐시 크기 중 nuget 캐시 포함
+# → в выводе содержится суммарный объём nuget-кэша
 ```
 
 ### Ошибка 5: Контейнер запущен от root (не от app)
@@ -668,6 +820,116 @@ EXPOSE 8080
 ENTRYPOINT ["dotnet", "Api.dll"]
 ```
 
+### Сценарий 7: Self-hosted CI/CD pipeline (GitHub Actions)
+
+Сборка, тестирование и сканирование .NET образа на локальном runner (без облачных сервисов):
+
+```yaml
+# .github/workflows/dotnet-docker.yml
+name: Build and Scan .NET Container
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: self-hosted  # локальный runner без внешнего доступа
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10 LTS
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore dependencies
+        run: dotnet restore src/Api/Api.csproj
+
+      - name: Run unit tests
+        run: dotnet test tests/Api.Tests/Api.Tests.csproj --no-build -v n
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t registry.local:5000/my-app:${{ github.sha }} -f src/Api/Dockerfile .
+          docker push registry.local:5000/my-app:${{ github.sha }}
+
+      - name: Generate SBOM (Syft)
+        run: |
+          syft registry.local:5000/my-app:${{ github.sha }} \
+            -o cyclonedx-json > sbom.json
+
+      - name: Vulnerability scan (Trivy)
+        run: |
+          trivy image --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            registry.local:5000/my-app:${{ github.sha }}
+
+      - name: Sign image (Cosign)
+        run: |
+          cosign sign --key cosign.key \
+            registry.local:5000/my-app:${{ github.sha }}
+```
+
+**Для GitLab CI (self-hosted runner):**
+```yaml
+# .gitlab-ci.yml
+stages:
+  - test
+  - build
+  - scan
+
+variables:
+  IMAGE_TAG: $CI_REGISTRY:5000/my-app:$CI_COMMIT_SHORT_SHA
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+cache:
+  key: nuget-$CI_COMMIT_REF_SLUG
+  paths:
+    - ~/.nuget/packages
+
+test:
+  stage: test
+  image: mcr.microsoft.com/dotnet/sdk:10.0-alpine
+  script:
+    - dotnet restore src/Api/Api.csproj
+    - dotnet test tests/Api.Tests/Api.Tests.csproj --no-build
+
+build:
+  stage: build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  script:
+    - docker build -t $IMAGE_TAG -f src/Api/Dockerfile .
+    - docker push $IMAGE_TAG
+
+sbom:
+  stage: scan
+  image: anchore/syft:latest
+  script:
+    - syft $IMAGE_TAG -o cyclonedx-json > sbom.json
+  artifacts:
+    reports:
+      cyclonedx: sbom.json
+
+trivy_scan:
+  stage: scan
+  image: aquasec/trivy:latest
+  script:
+    - trivy image --severity HIGH,CRITICAL --exit-code 1 $IMAGE_TAG
+```
+
 ### Чек-лист перед деплоем
 
 **Dockerfile:**
@@ -692,7 +954,7 @@ ENTRYPOINT ["dotnet", "Api.dll"]
 - [ ] LivenessProbe не зависит от внешних сервисов
 - [ ] ReadinessProbe проверяет зависимость от БД
 - [ ] Лимиты памяти и CPU установлены
-- [ ] DOTNET_GCHeapHardLimit настроен (70% от лимита)
+- [ ] DOTNET_GCHeapHardLimit настроен (75% от лимита)
 
 ## Дополнительная информация
 

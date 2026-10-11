@@ -1,5 +1,7 @@
 # GitHub Actions: Контейнеры в задачах (Job Containers и Services)
 
+**Актуально для:** GitHub Actions, октябрь 2026 (job containers и service containers; ключ `container:` работает только на Linux-раннерах)
+
 Запуск задачи внутри собственного Docker-образа и подключение инфраструктурных сервисов (БД, брокеры, кеши) — стандартные продакшен-паттерны. Тематический блок охватывает ключ `container` на уровне задачи, приватные реестры, тома и service containers.
 
 ## Определения
@@ -32,11 +34,14 @@ jobs:
         - 8080:80
 ```
 
-- Поддерживается **только на Linux**-задачах: на hosted `windows-*`/`macos-*` конфигурация игнорируется с предупреждением — матрицы с контейнерами строят только вокруг Linux.
+- Контейнерные операции разрешены **только на Linux**-раннерах — ограничение зашито в код раннера: на `windows-*`/`macos-*` задача с `container:`/`services:` падает с ошибкой `Container operations are only supported on Linux runners`. На self-hosted Windows есть лишь экспериментальная поддержка за отдельным флагом — не для продакшена. Матрицы с контейнерами строят только вокруг Linux.
 - Раннер монтирует workspace в `/__w/<repo>/<repo>`, переопределяет `ENTRYPOINT` образа своим процессом и задаёт рабочую директорию `__w`.
 - Docker CLI/Docker daemon **внутри** job container недоступны (socket не пробрасывается): собирать или запускать образы из такого шага нельзя — сборка делается обычными шагами без `container`, либо выносится на self-hosted с явным монтированием socket (осознанное решение по безопасности).
 - `options:` принимает любые флаги `docker create` (ресурсы, healthchecks); `volumes:` — только анонимные (`/path`) и именные (`name:/path`) тома; bind-mount хоста невозможен, поскольку путь хоста hosted-раннера не контролируется пользователем.
 - Образ пинуйте по digest или конкретной минорной версии — `latest` делает сборку невоспроизводимой (правило пиннинга — в [Готовых действиях](./Marketplace_Actions.md)).
+- Архитектура образа должна совпадать с архитектурой раннера: на `arm64`-раннерах (`ubuntu-*-arm`) нужен arm64-образ (или multi-arch). Автоматической эмуляции нет — при несовпадении pull падает с `no matching manifest for linux/<arch> in the manifest list entries`. Для собственных CI-образов собирайте multi-arch (`docker buildx build --platform linux/amd64,linux/arm64`).
+- Отдельная категория hosted-раннеров — `ubuntu-slim`: задача исполняется напрямую в unprivileged-контейнере (без `container:`), Docker-in-Docker и монтирование файловых систем недоступны. Для контейнерных сборок не предназначен; характеристики и ограничения разобраны в [Среды выполнения и ограничения](./Environment_Limitations.md).
+- Внутри job container `$GITHUB_WORKSPACE` содержит корректный путь (`/__w/...`), тогда как контекст `${{ github.workspace }}` из-за открытого бага раннера ([actions/runner#2058](https://github.com/actions/runner/issues/2058)) может вернуть путь хоста, отсутствующий в контейнере. В шагах контейнерных задач опирайтесь на переменную окружения, а не на контекст.
 
 ### Service containers и ожидание готовности
 
@@ -72,6 +77,20 @@ jobs:
 
 Выбор: если проект уже имеет devcontainer/Dockerfile окружения — job container даёт CI-среду, идентичную локальной разработке.
 
+### Self-hosted: подмена контейнерного рантайма (container hooks)
+
+Self-hosted Linux-раннер умеет делегировать создание job/service контейнеров внешнему скрипту — это позволяет заменить Docker на Podman, containerd/CRI-O или Kubernetes-под без изменения воркфлоу. Механизм (public preview, root на раннере не обязателен) управляется переменными раннера, которые задаются в `.env` каталога раннера или в окружении ОС:
+
+```bash
+ACTIONS_RUNNER_CONTAINER_HOOKS=/opt/runner-hooks/index.js   # обработчик контейнерных задач (абсолютный путь)
+ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER=true                   # каждая задача обязана исполняться в контейнере
+```
+
+- Скрипту передаются четыре события — `prepare_job`, `cleanup_job`, `run_container_step`, `run_script_step`; эталонные реализации для Docker и Kubernetes — в [actions/runner-container-hooks](https://github.com/actions/runner-container-hooks).
+- `prepare_job` получает описание job container и сервисов (`image`, `createOptions` из `options:`, `userMountVolumes`, `credentials`, системные монтирования `_work → /__w`, `_tool → /__w/_tool`), обязан поднять контейнеры, дождаться healthcheck'ов и вернуть раннеру состояние сети и флаг `isAlpine` — без этого запуск шагов не начнётся.
+- Вызов скрипта синхронный и блокирует задачу; таймаута у раннера нет — закладывайте его в сам скрипт.
+- `ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER=true` делает `container:` обязательным: задача без job container завершится ошибкой.
+
 ---
 
 ## Практические сценарии
@@ -96,7 +115,7 @@ jobs:
 
 - Каждый параметр: `username: github.actor` + токен — каноническая аутентификация GHCR из воркфлоу; digest исключает дрейф базового образа между релизами.
 - **Валидация**: первая строка лога задачи показывает `Pull down action image 'ghcr.io/acme/ci-base:1.9...'`; внутри шага `cat /etc/os-release && which make` подтверждает содержимое.
-- Экономический эффект: тяжёлые установки (toolchains) переносятся из каждого прогона в сборку базового образа — сокращение TTR без кешей.
+- Экономический эффект: тяжёлые установки (toolchains) переносятся из каждого прогона в сборку базового образа — сокращение времени до результата (TTR) без кешей.
 
 ### Сценарий 2: Интеграционные тесты с PostgreSQL и Redis
 
@@ -167,7 +186,7 @@ dmesg | grep -i "killed process" || journalctl -k | grep -i oom
 ```
 
 - Причина: лимит памяти контейнера (`options: --memory`) исчерпан; по умолчанию контейнер получает весь объём раннера, но ручной лимит часто ставят «на всякий случай» слишком низко.
-- Решение: поднять `--memory`, ограничить параллизм тестового раннера (`--max-workers`), вынести тяжёлые шаги из контейнера.
+- Решение: поднять `--memory`, ограничить параллелизм тестового раннера (`--max-workers`), вынести тяжёлые шаги из контейнера.
 - **Валидация**: повторный прогон проходит с тем же набором тестов; потребление памяти видно в логах инструмента (`--max-old-space-size` для Node).
 
 ## Устранение неполадок
@@ -175,11 +194,14 @@ dmesg | grep -i "killed process" || journalctl -k | grep -i oom
 | Симптом | Причина | Решение |
 | :--- | :--- | :--- |
 | `connection refused` при первом запросе к сервису | Нет health-check: раннер не ждёт готовности БД | Добавить `--health-cmd` с реальной проверкой готовности |
-| Exit code 137, шаг молча умер | OOM-killer убил процесс (лимит памяти) | Поднять `options: --memory`, снизить параллизм приложения |
+| Exit code 137, шаг молча умер | OOM-killer убил процесс (лимит памяти) | Поднять `options: --memory`, снизить параллелизм приложения |
 | `docker: command not found` внутри job container | Socket демона не монтируется в контейнерную задачу | Собирать образы отдельными задачами без `container:` |
 | Bind mount ошибка при старте | Указан host-path том в `volumes:` | Использовать именованные/анонимные тома |
 | `unauthorized: authentication required` при pull | Не заданы `credentials` для приватного реестра | Добавить блок credentials с секретами |
-| Конфигурация проигнорирована | Задача на windows/macos-раннере | Контейнерные ключи работают только на Linux |
+| `Container operations are only supported on Linux runners` | Задача с `container:`/`services:` назначена на Windows/macOS | Контейнерные ключи работают только на Linux-раннерах |
+| Permission denied при записи в workspace | В образе задан непривилегированный `USER` без прав на смонтированный workspace | `options: --user 0` в job container либо подготовить образ под нужный UID |
+| `no matching manifest for linux/<arch>` при pull | Образ не собран под архитектуру раннера (например, `arm64`) | Использовать multi-arch образ или раннер соответствующей архитектуры |
+| `${{ github.workspace }}` ведёт в несуществующий путь в контейнере | Открытый баг раннера (#2058): контекст отдаёт путь хоста | Опираться на `$GITHUB_WORKSPACE`, а не на контекст |
 | Сервис не резолвится по имени | Задача вне контейнера, обращение по alias | Либо добавить `container:`, либо ходить на `localhost:mapped-port` |
 
 ## Лучшие практики
@@ -193,6 +215,8 @@ dmesg | grep -i "killed process" || journalctl -k | grep -i oom
 
 ## Дополнительная информация
 
+- **[Running jobs in a container](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/run-jobs-in-a-container)** — официальный справочник по job containers и service containers.
+- **[Customizing the containers used by jobs](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/customizing-the-containers-used-by-jobs)** — self-hosted container hooks (Podman, Kubernetes, CRI).
 - **[События, Задачи и Шаги](./Events_Jobs_Steps.md)** — базовый сценарий sidecar-сервисов.
 - **[Матричные сборки](./Matrix_Builds.md)** — комбинирование контейнеров и стратегий.
 - **[Среды выполнения и ограничения](./Environment_Limitations.md)** — ресурсы раннеров под контейнерные нагрузки.

@@ -778,6 +778,13 @@ ceph orch daemon start mon.<hostname>           # вернуть MON в рабо
 - [Администрирование Ceph — Обзор](./index.md) — навигация по разделу, иерархия управления, состояния здоровья.
 - [Мониторинг Ceph](./monitoring.md) — анализ метрик, алертов и регламентные работы по обслуживанию данных.
 - [Расчет PG](../ceph_placement_groups.md) — работа с Placement Groups и их статусами.
+- [Углубленная диагностика OSD/PG](../ceph_osd_troubleshooting.md) — advanced recovery, peering failures, data corruption.
+- [Обслуживание BlueStore](../ceph_bluestore_maintenance.md) — fsck, repair, DB/WAL управление.
+- [Тюнинг OSD](../ceph_osd_tuning.md) — hardware selection, mclock, compression, capacity planning.
+- [CRUSH Advanced](../ceph_crush_advanced.md) — карта, tunables, failure domain design, правила.
+- [Безопасность Ceph](../ceph_security_hardening.md) — CephX, messenger v2.1, audit, encryption at rest.
+- [Capacity Planning](../ceph_capacity_planning.md) — sizing, рост, N+1, pool sizing.
+- [RGW Lifecycle Management](../ceph_rgw_lifecycle.md) — lifecycle policies, versioning, Object Lock.
 - [Обзор Ceph](../ceph_overview.md) — архитектура, компоненты, CRUSH, интерфейсы доступа.
 
 ### Ссылки

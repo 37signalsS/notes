@@ -42,7 +42,7 @@
 - **Синхронизация:** Server-Side Apply (SSA) для минимизации конфликтов манифестов.
 - **Автоматизация продвижения:** Argo CD Image Updater (v1.x, декларативный CRD `ImageUpdater`), Kargo (цепочки сред с гейтами).
 
-Версии инструментов в примерах: actions/checkout@v4, Trivy 0.5x+, Cosign 2.x (keyless-подпись через OIDC), Argo CD v3.x (SSA включен по умолчанию начиная с v3.x, поддержка OCI-чартов — с v3.1+, Helm 4 — в актуальных релизах).
+Версии инструментов в примерах: actions/checkout@v4, Trivy 0.5x+, Cosign 2.x (keyless-подпись через OIDC), Argo CD v3.x (SSA — опция `ServerSideApply=true`, поддержка OCI-чартов — с v3.1+, Helm 4 — в актуальных релизах).
 
 ### Архитектура потока данных
 
@@ -206,7 +206,7 @@ spec:
       selfHeal: true # возвращать ручные изменения кластера к состоянию Git
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true # в Argo CD v3.x SSA включен по умолчанию; опция фиксирует намерение явно
+      - ServerSideApply=true # включает SSA для синхронизации (в Argo CD по умолчанию client-side apply)
 ```
 
 Назначение ключевых полей:

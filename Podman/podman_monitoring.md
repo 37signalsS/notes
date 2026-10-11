@@ -108,7 +108,7 @@ version: '3.8'
 
 services:
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: ghcr.io/google/cadvisor:v0.60.6
     container_name: cadvisor
     privileged: true
     devices:
@@ -124,7 +124,7 @@ services:
     restart: unless-stopped
 
   prometheus:
-    image: prom/prometheus:v2.53.0
+    image: prom/prometheus:v3.14.0
     container_name: prometheus
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -137,7 +137,7 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:11.1.0
+    image: grafana/grafana:13.2.3
     container_name: grafana
     volumes:
       - grafana_data:/var/lib/grafana
@@ -371,3 +371,5 @@ sudo systemctl enable --now podman-monitoring
 - **[Node Exporter](../../Prometheus/Exporters/node_exporter.md)** — метрики хоста
 - **[Podman stats](./podman_basic_commands.md)** — CLI-команды Podman
 - **[Podman events](./podman_daemonless_architecture.md)** — система событий
+
+# force reindex test

@@ -157,20 +157,24 @@ scrape_configs:
 
 ### Exemplars
 
-Exemplars — это отдельные точки данных внутри гистограммы, показывающие конкретный trace ID или пример запроса, который попал в корзину. В Prometheus v3 поддержка exemplars включена по умолчанию при использовании нативных гистограмм.
+Exemplars — это отдельные точки данных внутри гистограммы, показывающие конкретный trace ID или пример запроса, который попал в корзину.
+
+**Предварительное требование:** хранилище exemplars отключено по умолчанию и включается feature flag `--enable-feature=exemplar-storage`. Размер кольцевого буфера задаётся в секции верхнего уровня `storage` — **не** внутри `scrape_configs`.
 
 ```yaml
+storage:
+  exemplars:
+    max_exemplars: 100000  # Размер буфера в памяти на все ряды
+
 scrape_configs:
   - job_name: 'service-with-traces'
     scrape_native_histograms: true
-    exemplars:
-      max_exemplars: 100000  # Лимит exemplars на одну метрику
     static_configs:
       - targets: ['app:8080']
 ```
 
 **Ограничения:**
-- Exemplars хранятся в отдельном блоке Head в TSDB и потребляют дополнительную память. При высокой кардинальности снизьте `max_exemplars` или используйте `metric_relabel_configs` для удаления ненужных exemplars.
+- Exemplars хранятся в кольцевом буфере в памяти и потребляют дополнительную память. Exemplar, содержащий только `trace_id`, занимает в буфере порядка 100 байт. При высокой кардинальности снизьте `max_exemplars`.
 - При Remote Write exemplars отправляются только если бэкенд поддерживает protobuf и флаг `send_exemplars: true` (см. раздел Remote Write).
 
 ### Readiness и Liveness probes

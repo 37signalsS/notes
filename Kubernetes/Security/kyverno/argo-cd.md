@@ -72,8 +72,8 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   annotations:
-    # Включает сравнение на стороне сервера и учет мутирующих вебхуков
-    argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true
+    # Включает server-side diff (учет мутаций admission-вебхуков)
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
 spec:
   syncPolicy:
     syncOptions:
@@ -316,7 +316,7 @@ spec:
 
 ### 9. Тестирование интеграции перед деплоем
 
-Перед推送ем политик в production рекомендуется проверить взаимодействие Kyverno и Argo CD локально или в staging-кластере.
+Перед отправкой политик в production рекомендуется проверить взаимодействие Kyverno и Argo CD локально или в staging-кластере.
 
 **Шаг 1: Тестирование политики Kyverno (CLI)**
 ```bash
@@ -395,9 +395,8 @@ argocd app get myapp | grep "STATUS"
 | Параметр | Уровень | Значение | Назначение |
 | :--- | :--- | :--- | :--- |
 | `ServerSideApply=true` | Sync Option | Да | Рекомендуемый метод для всех ресурсов в 2026 году. |
-| `ServerSideDiff=true` | Annotation | Да | Точное сравнение с учетом мутаций на стороне API. |
-| `managedFieldsManagers` | ignoreDiff | `['kyverno']` | Автоматическое игнорирование всех мутаций от Kyverno. |
-| `IncludeMutationWebhook`| Annotation | `true` | Обязательно для корректного Diff при использовании мутаций. |
+| `ServerSideDiff=true` | Annotation | Да | Точное сравнение с учетом мутаций на стороне API (v3.5+). Модификации мутирующих вебхуков удаляются из diff по умолчанию. |
+| `managedFieldsManagers` | ignoreDiff | [`<имя-менеджера-kyverno>`] | Игнорирование мутаций от Kyverno. Имя менеджера зависит от версии — проверьте его в `metadata.managedFields` целевого ресурса. |
 
 ### Особенности Kyverno 1.13+: AdmissionReport
 

@@ -108,10 +108,9 @@ k-etcdctl endpoint status --cluster -w table
 
 **2. Целостность снапшота etcd**
 ```bash
-ETCDCTL_API=3 etcdctl snapshot status /var/lib/kube-backups/etcd-pre-upgrade-$(date +%F).db --write-out=table
-# Проверка контрольных sums
-etcdutl snapshot verify /var/lib/kube-backups/etcd-pre-upgrade-$(date +%F).db
-# → Snapshot file is valid: checksum matches
+# status читает файл и вычисляет хеш — повреждённый снапшот вызовет ошибку
+etcdutl snapshot status /var/lib/kube-backups/etcd-pre-upgrade-$(date +%F).db -w table
+# Колонки: hash, revision, total keys, total size, version
 ```
 
 **3. Сертификаты PKI**
@@ -191,12 +190,10 @@ ETCDCTL_API=3 etcdctl snapshot save /var/lib/kube-backups/etcd-pre-upgrade-$(dat
   --cert=/etc/kubernetes/pki/etcd/server.crt \
   --key=/etc/kubernetes/pki/etcd/server.key
 
-# Проверка целостности снапшота (обязательно)
-etcdutl snapshot verify /var/lib/kube-backups/etcd-pre-upgrade-$(date +%F).db
-# → Snapshot file is valid: checksum matches
-
-# Просмотр метаинформации
-ETCDCTL_API=3 etcdctl snapshot status /var/lib/kube-backups/etcd-pre-upgrade-$(date +%F).db --write-out=table
+# Проверка целостности снапшота (обязательно; status читает файл и
+# вычисляет хеш — повреждённый снапшот вызовет ошибку)
+etcdutl snapshot status /var/lib/kube-backups/etcd-pre-upgrade-$(date +%F).db -w table
+# Колонки: hash, revision, total keys, total size, version
 ```
 
 **Политика хранения снапшотов:**
@@ -207,7 +204,7 @@ ETCDCTL_API=3 etcdctl snapshot status /var/lib/kube-backups/etcd-pre-upgrade-$(d
   ```bash
   # Пример crontab
   0 2 * * * ETCDCTL_API=3 etcdctl snapshot save /var/lib/kube-backups/etcd-$(date +\%F).db && \
-    etcdutl snapshot verify /var/lib/kube-backups/etcd-$(date +\%F).db && \
+    etcdutl snapshot status /var/lib/kube-backups/etcd-$(date +\%F).db && \
     find /var/lib/kube-backups/ -name "etcd-*.db" -mtime +7 -delete
   ```
 
@@ -500,7 +497,7 @@ Batch Size = min(количество_узлов_в_пуле, floor((Общее_
 | :--- | :--- | :--- |
 | **Уровень 1: Один узел не стартовал** | После обновления узел в `NotReady` | Откатите пакеты на узеле: `apt-get install kubelet=1.31.0-1.1 kubeadm=1.31.0-1.1 kubectl=1.31.0-1.1`. Удалите узел из кластера (`kubectl delete node`), исправьте и повторите присоединение. |
 | **Уровень 2: Control Plane нестабилен** | API отвечает с ошибками, поды CP в CrashLoop | Если кворум etcd сохранен — откатите манифесты CP к старой версии (restore из git/config management). Если кворум потерян — переходите к Уровню 3. |
-| **Уровень 3: Потеря кворума / полный отказ** | API не доступен, etcd потерял лидера | Восстановление из снапшота etcd (см. раздел "Резервное копирование etcd"). При крайней необходимости используйте `--force-new-cluster` (риск split-brain). |
+| **Уровень 3: Потеря кворума / полный отказ** | API не доступен, etcd потерял лидера | Восстановление из снапшота etcd (см. раздел "Резервное копирование etcd"). При крайней необходимости используйте `--force-new-cluster` — он сохраняет данные из `data-dir` выжившего члена, но panic'нет при живых узлах старого кластера (риск двух независимых кластеров). См. [Аварийное восстановление etcd](../../etcd/emergency_recovery.md). |
 
 **Подготовка к откату (до начала обновления):**
 - Имейте готовый playbook с командами отката пакетов.

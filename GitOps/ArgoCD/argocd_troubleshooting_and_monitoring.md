@@ -246,14 +246,16 @@ kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller -
 
 | Метрика | Описание | Критическое значение |
 | :--- | :--- | :--- |
-| `argocd_app_info` | Состояние здоровья и синхронизации | `health_status="Degraded"` |
-| `argocd_app_reconcile_count` | Количество циклов сверки | Резкое падение (зависание) |
+| `argocd_app_info` | Состояние здоровья и синхронизации (labels `health_status`, `sync_status`) | `health_status="Degraded"` |
+| `argocd_app_reconcile` | Гистограмма длительности сверки, секунды | Рост p99 (замедление сверки) |
 | `argocd_cluster_api_resource_objects` | Кол-во объектов под управлением | Рост > 100к (нагрузка на etcd) |
 | `argocd_kubectl_exec_pending` | Очередь команд к K8s API | `> 20` (задержки API) |
-| `argocd_app_sync_total` | Общее количество синхронизаций | Падение до 0 (контроллер завис) |
-| `argocd_app_reconcile_errors_total` | Количество ошибок сверки | Рост > 5/мин |
-| `argocd_repo_error_total` | Ошибки работы с репозиторием | Рост > 10/час |
-| `argocd_redis_connection_pool_size` | Размер пула соединений Redis | Заполнение пула (max) |
+| `argocd_app_sync_total` | Общее количество синхронизаций (label `phase`) | Падение до 0 (контроллер завис) |
+| `argocd_app_sync_total{phase="Error"}` | Ошибки синхронизации | Рост > 5/мин |
+| `argocd_git_fetch_fail_total` | Ошибки git fetch в repo-server | Рост > 10/час |
+| `argocd_redis_request_total` | Redis-запросы при сверке (label `failed`) | Рост `failed="true"` |
+| `argocd_app_sync_blocked` | Автоматический синк заблокирован sync windows, gauge `0`/`1` (v3.5+) | `== 1` дольше ожидаемого заморозки |
+| `argocd_app_sync_window_error` | Sync windows не вычислены (fail-closed), gauge `0`/`1` (v3.5+) | `== 1` (битая конфигурация окон) |
 
 ### Рекомендуемые правила Alertmanager
 
@@ -286,7 +288,7 @@ groups:
       summary: "Контроллер Argo CD недоступен"
 
   - alert: ArgoRepoServerHighLatency
-    expr: histogram_quantile(0.99, rate(argocd_repo_server_request_duration_seconds_bucket[5m])) > 10
+    expr: histogram_quantile(0.99, rate(argocd_git_request_duration_seconds_bucket[5m])) > 10
     for: 10m
     labels:
       severity: warning
@@ -294,12 +296,12 @@ groups:
       summary: "Высокая латентность repo-server (p99 > 10s)"
 
   - alert: ArgoHighReconcileErrors
-    expr: rate(argocd_app_reconcile_errors_total[5m]) > 0.1
+    expr: rate(argocd_app_sync_total{phase="Error"}[5m]) > 0.1
     for: 10m
     labels:
       severity: warning
     annotations:
-      summary: "Повышенная частота ошибок сверки"
+      summary: "Повышенная частота ошибок синхронизации"
 ```
 
 ### Сбор DORA-метрик
@@ -320,8 +322,8 @@ groups:
 | Всего приложений | `count(argocd_app_info)` | Stat |
 | Здоровые / Больные | `argocd_app_info by (health_status)` | Pie Chart |
 | Частота синхронизации | `rate(argocd_app_sync_total[5m])` | Time Series |
-| Ошибки сверки | `rate(argocd_app_reconcile_errors_total[5m])` | Time Series |
-| Латентность API | `histogram_quantile(0.99, rate(argocd_api_request_duration_seconds_bucket[5m]))` | Time Series |
+| Ошибки синхронизации | `rate(argocd_app_sync_total{phase="Error"}[5m])` | Time Series |
+| Латентность kubectl-запросов | `histogram_quantile(0.99, rate(argocd_kubectl_request_duration_seconds_bucket[5m]))` | Time Series |
 | Потребление памяти | `container_memory_usage_bytes{namespace="argocd"}` | Time Series |
 
 ## Технический справочник
@@ -355,7 +357,7 @@ spec:
 
 **Централизованный сбор логов:**
 - **Loki + Grafana:** Легковесное решение для Kubernetes. Метки: `app=argocd`, `namespace=argocd`.
-- **ELK Stack:** Полноценный стек с全文овым поиском. Filebeat作為sidecar.
+- **ELK Stack:** Полноценный стек с полнотекстовым поиском. Filebeat как sidecar.
 - **Fluentd/Fluent Bit:** Агрегаторы логов с маршрутизацией по уровням.
 
 ### Оптимизация потребления ресурсов

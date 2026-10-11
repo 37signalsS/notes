@@ -34,6 +34,18 @@
 
 ---
 
+## Предварительные требования
+
+Перед построением процессов SRE в организации необходимо обеспечить:
+
+1.  **Сетевая доступность:** Инженеры должны иметь доступ к метрикам, логам и системам мониторинга. Используйте VPN или разграничение доступа через bastion-хосты. Откройте порты для Prometheus (9090), Grafana (3000), Alertmanager (9093), Jaeger/Tempo (16686).
+2.  **Синхронизация времени (NTP):** Расхождения между узлами >1s приводят к некорректной корреляции логов и метрик. Используйте `chrony` или `systemd-timesyncd`.
+3.  **Централизованное логирование:** Логи должны собираться в реальном времени (Loki, ELK, Splunk) с обязательными полями: `timestamp`, `service`, `level`, `traceId`, `correlationId`.
+4.  **Система мониторинга:** Prometheus + Alertmanager + Grafana для сбора Golden Signals и настройки алертов.
+5.  **CI/CD пайплайн:** Автоматическое тестирование, сборка и деплой. Без автоматизации SRE не может обеспечить скорость и надежность.
+6.  **Документация и runbooks:** Каждый критический сервис должен иметь документацию, архитектурные диаграммы и runbook для типичных инцидентов.
+7.  **Согласование с бизнесом:** SLO/SLA должны быть документированы и согласованы с Product Owner до начала работы.
+
 ## Базовые концепции
 
 ### Философия SRE: Принятие риска
@@ -92,22 +104,22 @@ Google SRE рекомендует ограничивать объем рутин
 | | Низкая сложность | Высокая сложность |
 | :--- | :--- | :--- |
 | **Высокая частота** | **Автоматизировать немедленно** (cron, скрипт) | **Автоматизировать с приоритетом** (инвестировать время) |
-| **Низкая частота** | **Документировать** (runbook, но не автоматизировать) | **Делегировать** или忍иить (если成本大于 benefit) |
+| **Низкая частота** | **Документировать** (runbook, но не автоматизировать) | **Делегировать** или исключить (если стоимость превышает пользу) |
 
 ---
 
 ### Жизненный цикл SLO (SLO Lifecycle)
 
 #### Установка начальных SLO
-1. **Исторический анализ:** Собрать метрики за 3–6 месяцев, определить текущий уровень SLI. Если система сейчас работает на 99.7% — устанавливать SLO 99.99% нельзя.
-2. **Исследование пользователей:** Определить, какие CUJ (Critical User Journey) критичны. Для e-commerce: поиск → корзина → оплата. Для API: латентность ответа и доступность.
-3. **Бизнес-негация:** Согласовать SLO с Product Owner. Формулировка: «Если мы не достигаем 99.9%, мы теряем X клиентов в месяц / Y% выручки».
-4. **Установка с буфером:** SLO должен быть на 0.1–0.5% мягче, чем текущий SLI, чтобы дать пространство для маневра.
+1.  **Исторический анализ:** Собрать метрики за 3–6 месяцев, определить текущий уровень SLI. Если система сейчас работает на 99.7% — устанавливать SLO 99.99% нельзя.
+2.  **Исследование пользователей:** Определить, какие CUJ (Critical User Journey) критичны. Для e-commerce: поиск → корзина → оплата. Для API: латентность ответа и доступность.
+3.  **Бизнес-негация:** Согласовать SLO с Product Owner. Формулировка: «Если мы не достигаем 99.9%, мы теряем X клиентов в месяц / Y% выручки».
+4.  **Установка с буфером:** SLO должен быть на 0.1–0.5% мягче, чем текущий SLI, чтобы дать пространство для маневра.
 
 #### Ревью SLO (ежеквартально)
 - **Ретроспектива:** Анализ бюджета ошибок за квартал. Были ли исчерпания? Какие инциденты повлияли?
 - **Корректировка:** Если команда стабильно не достигает SLO — это не повод занижать планку. Сначала выяснить, почему система деградирует.
-- **Декомпозиция системного SLO:** Системный SLO (например, 99.9% для «Checkout Flow»)分解为 сервисные SLO: Payment Service — 99.95%, Inventory Service — 99.99%.
+- **Декомпозиция системного SLO:** Системный SLO (например, 99.9% для «Checkout Flow») декомпозируется на сервисные SLO: Payment Service — 99.95%, Inventory Service — 99.99%.
 
 #### Мульти-оконный SLO
 Вместо календарного окна (весь месяц) используйте скользящее окно (rolling window):
@@ -246,7 +258,7 @@ Google SRE рекомендует ограничивать объем рутин
 ### Инструменты эскалации
 *   **PagerDuty:** Интеграция с Prometheus через Alertmanager. Автоматическая эскалация по escalation policy.
 *   **Grafana OnCall:** Open-source, интеграция с Grafana Alerting.
-*   **Status Page:** Критический инструмент для SEV1/SEV2. Отдельная страница (Cachet, Statuspage.io,自托管 variants).
+*   **Status Page:** Критический инструмент для SEV1/SEV2. Отдельная страница (Cachet, Statuspage.io, self-hosted варианты).
 
 Подробнее: **[Meta-Monitoring](./Observability_and_Monitoring/meta-monitoring.md)**.
 
@@ -268,6 +280,17 @@ Google SRE рекомендует ограничивать объем рутин
   sum(rate(http_requests_total{job="my-service"}[5m]))
 ) 
 / (1 - 0.999) > 14.4
+```
+
+**Валидация алерта:**
+```bash
+# Проверка, что алерт срабатывает при деградации
+curl -s 'http://prometheus:9090/api/v1/query?query=ALERTS{alertname="HighErrorRate"}' | jq '.data.result[] | {labels, value}'
+# → {"labels":{"alertname":"HighErrorRate","job":"my-service","severity":"page"},"value":[1696000000,"1"]}
+
+# Проверка burn rate за последний час
+curl -s 'http://prometheus:9090/api/v1/query?query=rate(http_requests_total{status=~"5..",job="my-service"}[1h]) / rate(http_requests_total{job="my-service"}[1h]) / (1 - 0.999)' | jq '.data.result[0].value[1]'
+# → 14.4
 ```
 
 ### Декомпозиция MTTR для оптимизации
@@ -425,6 +448,104 @@ VP Engineering / CTO (Executive)
 | **Postmortem не приводит к изменениям** | Action items не трекаются, нет accountable owners. | Внедрить трекинг action items в Jira/Linear с дедлайнами. Ревью на следующем постмортеме. |
 | **Escalation не срабатывает** | On-call инженер не ответил за 5 минут, но эскалация не произошла. | Проверить настройки PagerDuty/OnCall. Протестировать escalation policy. |
 
+### Диагностика на уровне ОС и сети
+
+При расследовании инцидентов SRE должен начинать с системного уровня:
+
+**Проверка сетевых соединений:**
+
+```bash
+# Проверка TCP-соединений с базой данных и брокерами
+ss -tnp | grep -E '5432|3306|6379|5672|9092|8181'
+# → ESTABLISHED 0 0 10.0.0.20:54321 10.0.0.10:5432 timer:(on,0.5sec,0)
+
+# Проверка DNS-резолвинга сервисов
+dig +short payment-service.default.svc.cluster.local
+# → 10.0.0.15
+
+# Проверка firewall-правил
+iptables -L -n | grep -E 'DROP|REJECT'
+# → Chain INPUT (policy ACCEPT)
+# → Chain FORWARD (policy DROP)
+```
+
+**Проверка ресурсов узла:**
+
+```bash
+# Нагрузка CPU и памяти
+top -b -n 1 | head -15
+# → top - 15:30:01 up 10 days,  1:23,  2 users,  load average: 1.2, 0.8, 0.5
+# → Tasks: 245 total,   1 running, 244 sleeping,   0 stopped,   0 zombie
+# → %Cpu(s):  5.2 us,  1.1 sy,  0.0 ni, 93.5 id,  0.0 wa,  0.0 hi,  0.2 si,  0.0 st
+
+# Использование диска
+df -h /var/log /tmp
+# → Filesystem      Size  Used Avail Use% Mounted on
+# → /dev/sda1        50G   38G   12G  76% /
+
+# Лимиты файловых дескрипторов
+cat /proc/$(pgrep -f 'java|python|node')/limits | grep 'open files'
+# → Max open files            65535                65535                files
+```
+
+**Сбор логов и трассировки:**
+
+```bash
+# Сбор логов контейнера с фильтрацией по ошибкам
+kubectl logs -l app=payment-service --tail=1000 | grep -i error | tail -20
+# → 2025-01-15 15:30:01 ERROR PaymentService - Connection timeout to inventory
+
+# Проверка метрик Prometheus через API
+curl -s 'http://prometheus:9090/api/v1/query?query=up{job="payment-service"}' | jq '.data.result[] | {labels, value}'
+# → {"labels":{"instance":"10.0.0.15:8080","job":"payment-service"},"value":[1696000000,"1"]}
+
+# Проверка алертов, сработавших за последний час
+curl -s 'http://prometheus:9090/api/v1/query?query=ALERTS{alertname=~".+"}[1h]' | jq '.data.result | length'
+# → 3
+```
+
+**Сетевая диагностика (tcpdump/tshark):**
+
+```bash
+# Перехват HTTPS-трафика для анализа задержек
+tcpdump -i eth0 -n port 443 -c 100 -A | grep -E 'HTTP/|latency|timeout'
+# → GET /api/orders HTTP/1.1
+# → Host: payment-service.default.svc.cluster.local
+
+# Проверка ARP-таблицы при подозрении на duplicate IP
+arp -a
+# → ? (10.0.0.15) at 00:15:5d:ef:12:34 [ether] on eth0
+```
+
+**Анализ процессов и ядра:**
+
+```bash
+# Поиск процессов с высоким потреблением CPU
+ps aux --sort=-%cpu | head -10
+# → root     12345  5.2  1.0  524288 1048576 ?  Ssl  15:28   0:02 /usr/bin/java ...
+
+# Проверка системных вызовов (syscalls) при блокировках
+strace -p $(pgrep -f 'payment-service') -e trace=network,read,write -c
+# → Process 12345 attached - interrupt to quit
+
+# Анализ дампов памяти при падениях
+gdb -batch -ex "thread apply all bt" -p $(pgrep -f 'payment-service') 2>&1 | head -30
+```
+
+---
+
+## Граничные случаи (Edge Cases)
+
+*   **Длинные бизнес-процессы (Long-running processes):** Когда процесс длится часы или дни (например, одобрение кредита). Требует использования состояний (stateful) внутри оркестратора и корреляции сообщений (Correlation ID).
+*   **Транзакционность (2PC):** В распределенных системах часто пытаются использовать двухфазные коммиты. Это плохо масштабируется и часто заменяется паттерном **Saga** (компенсирующие транзакции).
+*   **Безопасность в B2B:** Использование mTLS (mutual TLS) и токенов доступа позволяет передавать данные через недоверенные промежуточные узлы.
+*   **Отказ компонента (Single Point of Failure):** Если компонент недоступен, вся система ложится. Решение: кластеризация с автоматическим failover через VIP (виртуальный IP) или DNS.
+*   **Миграция с SOAP на REST:** Параллельная работа старых и новых интерфейсов. Используйте API Gateway в качестве адаптера.
+*   **Legacy-системы без контейнеризации:** Если сервисы запускаются напрямую на VM/bare-metal без Docker/Kubernetes, используйте традиционные методы развертывания (Ansible, Puppet, Chef) и мониторинг через JMX/SNMP.
+*   **Гибридные окружения on-prem:** При наличии части сервисов в дата-центре, а части — на удалённых узлах, используйте VPN/IPSEC туннели и фиксированные firewall-правила для трафика между сегментами.
+*   **Сетевые разделения (Split-Brain):** При разделении сети кластер может потерять кворум. Настройте мониторинг кворума и автоматическое переключение на резервный кластер.
+*   **Высокая нагрузка на ESB (1000+ сообщений/сек):** ESB может стать узким местом. Используйте горизонтальное масштабирование, кэширование и разгрузку логики в API Gateway.
+
 ---
 
 ## Дополнительная информация
@@ -464,3 +585,7 @@ VP Engineering / CTO (Executive)
 *   **[Incident Response](../CI-CD/Core_Concepts/incident_response_sre.md)** — жизненный цикл инцидентов в CI/CD контексте.
 *   **[DORA Metrics](../CI-CD/Core_Concepts/dora_metrics.md)** — надежность как 5-я метрика DORA.
 *   **[Capacity Planning](./capacity-planning.md)** — планирование ресурсов для поддержания SLO.
+*   **[Управление инцидентами](./Observability_and_Monitoring/incident_management.md)** — жизненный цикл инцидента, severity taxonomy, коммуникация.
+*   **[Детекция аномалий](./Observability_and_Monitoring/anomaly_detection.md)** — статистические и ML-методы, динамические пороги.
+*   **[Зрелость сервиса и готовность к production](./Observability_and_Monitoring/service_maturity_production_readiness.md)** — production readiness checklist, maturity model.
+*   **[Наблюдаемость баз данных](./Observability_and_Monitoring/database_observability.md)** — метрики, алерты, диагностика для PostgreSQL и MySQL.

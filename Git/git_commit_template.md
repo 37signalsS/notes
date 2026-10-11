@@ -1,5 +1,7 @@
 # Git Commit Template — шаблоны сообщений коммитов
 
+**Актуально для:** Git 2.20–2.56.x (локально проверено на 2.56.0). `commit.template` появилась в Git 2.20; `git commit --trailer` — с 2.20; `git interpret-trailers` — с 2.20.
+
 ## Определения
 
 **`.gitmessage`** — файл-шаблон сообщения коммита, который Git использует для предварительного заполнения текстового редактора при выполнении команды `git commit`. Файл содержит текст в формате plain text, где строки, начинающиеся с `#`, интерпретируются Git как комментарии и не попадают в итоговое сообщение коммита.
@@ -413,6 +415,24 @@ lefthook install
 - **Squash и merge:** При squash-слиянии Git создает автоматическое сообщение с перечислением коммитов. Шаблон не применяется, но `commit-msg` хук может его изменить.
 - **Rebase и amend:** `git commit --amend` открывает редактор с предыдущим сообщением, к которому применяется шаблон как основа. После сохранения старые строки комментариев из шаблона не дублируются.
 
+### Типичные ошибки
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| Шаблон не открывается | `commit.template` не установлен или путь неверен | Проверить `git config --local commit.template` и существование файла |
+| `Could not open .gitmessage` | Файл шаблона недоступен (например, в CI после `git clone`) | Добавить шаблон в репозиторий и настроить `commit.template` локально |
+| `editor exited with code 1` | Редактор завершился с ошибкой (например, `nano` без `--wait`) | Использовать редактор с блокировкой (`vim`, `code --wait`) |
+| `commit-msg hook failed` | Хук отклонил сообщение (commitlint/gitlint) | Исправить формат: тип, scope, длина заголовка |
+| `trailer ignored: bad syntax` | Неправильный формат трейлера | Использовать `Токен: Значение` без пробела перед двоеточием |
+| `Signed-off-by already exists` | `-s` добавляет дублирующий трейлер | Удалить вручную или не использовать `-s` |
+| `template file is ignored with -m` | `-m` игнорирует шаблон | Использовать `-m` только для автоматизированных коммитов (CI) |
+| `core.commentChar` ломает шаблон | Символ `#` в шаблоне интерпретируется как комментарий | Использовать `git commit --cleanup=whitespace` или изменить `core.commentChar` |
+| `body is missing` (gitlint) | Тело коммита пусто | Добавить объяснение, почему изменение необходимо |
+| `title exceeds max length` (gitlint) | Заголовок длиннее 72 символов | Сократить заголовок до 50–72 символов |
+| `type must be one of` (commitlint) | Использован нестандартный тип | Использовать один из 11 стандартных типов |
+| `BREAKING CHANGE не найден` | `!` в заголовке без описания миграции | Добавить `BREAKING CHANGE:` в футер с инструкцией |
+| `co-authored-by не отображается` | Трейлер в середине, а не в конце | Поместить все трейлеры в конец после пустой строки |
+
 ### Поддерживаемые редакторы
 
 Git определяет редактор в следующем порядке приоритета:
@@ -423,6 +443,38 @@ Git определяет редактор в следующем порядке �
 5. Системный редактор по умолчанию (`vi` на Linux, `notepad` на Windows)
 
 Для корректной работы шаблона используйте редактор, который поддерживает начальное содержимое файла (все стандартные редакторы: `vim`, `nano`, `code --wait`, `subl -n -w`).
+
+### Флаги `git commit`, связанные с шаблонами и трейлерами
+
+Все флаги проверены локально на Git 2.54.0 (`git commit -h`):
+
+| Флаг | Назначение | Пример |
+| :--- | :--- | :--- |
+| `-m, --message <msg>` | Прямое задание сообщения (игнорирует шаблон) | `git commit -m "feat(api): add endpoint"` |
+| `-F, --file <file>` | Прочитать сообщение из файла | `git commit -F msg.txt` |
+| `-t, --template <file>` | Использовать указанный шаблон (переопределяет `commit.template`) | `git commit -t .gitmessage` |
+| `-e, --edit` | Принудительно открыть редактор даже с `-m` | `git commit -m "feat: ..." -e` |
+| `-s, --signoff` | Добавить `Signed-off-by` в конец сообщения | `git commit -s -m "feat: ..."` |
+| `--trailer <token>[(=|:)<value>]` | Добавить произвольный трейлер | `git commit --trailer "Reviewed-by: John"` |
+| `-v, --verbose` | Показать diff в шаблоне (помогает описать изменения) | `git commit -v` |
+| `--cleanup <mode>` | Управление удалением строк `#` и пробелов | `git commit --cleanup=whitespace` |
+| `-n, --no-verify` | Пропустить pre-commit и commit-msg хуки | `git commit -n -m "chore: skip hooks"` |
+| `--allow-empty` | Создать коммит без изменений | `git commit --allow-empty -m "chore: empty"` |
+| `--amend` | Изменить последний коммит | `git commit --amend -m "fix: corrected subject"` |
+
+### Флаги `git interpret-trailers`
+
+Проверено локально (`git interpret-trailers -h`):
+
+| Флаг | Назначение | Пример |
+| :--- | :--- | :--- |
+| `--in-place` | Изменить файл на месте | `git interpret-trailers --in-place msg.txt` |
+| `--trim-empty` | Удалить пустые трейлеры | `git interpret-trailers --trim-empty msg.txt` |
+| `--where <placement>` | Разместить трейлер в начале/конце/после другого | `git interpret-trailers --where start msg.txt` |
+| `--if-exists <action>` | Действие, если трейлер уже есть | `git interpret-trailers --if-exists addIfDifferent msg.txt` |
+| `--only-trailers` | Вывести только трейлеры | `git interpret-trailers --only-trailers msg.txt` |
+| `--parse` | Аналог `--only-trailers --only-input --unfold` | `git interpret-trailers --parse msg.txt` |
+| `--trailer <trailer>` | Добавить трейлер | `git interpret-trailers --trailer "Co-authored-by: A <a@x>" msg.txt` |
 
 ### Edge Cases
 
@@ -448,7 +500,40 @@ git config --global --unset commit.template
 chmod -x .git/hooks/commit-msg
 ```
 
-### Официальные ресурсы
+---
+
+## Лучшие практики (Best Practices)
+
+### Для команд DevOps/SRE
+
+1. **Обязательный `commit-msg` хук в CI** — шаблон (`commit.template`) игнорируется при `git commit -m`. Только хук `commit-msg` (Gitlint, Commitlint) гарантирует соблюдение стандарта в автоматических и ручных коммитах.
+
+2. **Локальный шаблон в репозитории (`.gitmessage`)** — хранить шаблон в корне проекта и настраивать `git config --local commit.template .gitmessage`. Это обеспечивает единообразие для всех клонировавших репозиторий без глобальной конфигурации.
+
+3. **Интеграция с системой тикетов** — используйте `prepare-commit-msg` для автоматического подставления ID задачи из имени ветки (например, `feature/JIRA-1234`). Это исключает человеческий фактор и упрощает трейсинг.
+
+4. **Enforce conventional commits для автогенерации CHANGELOG** — типы `feat`, `fix`, `perf` напрямую маппятся на SemVer (MINOR, PATCH). Инструменты вроде `semantic-release` или `standard-version` требуют строгого формата.
+
+5. **BREAKING CHANGE всегда в футере с инструкцией миграции** — короткий формат `!` в заголовке допустим, но полный формат в футере (`BREAKING CHANGE: ...`) обязателен для публичных API и библиотек.
+
+6. **Подписывайте коммиты (`-s` / `-S`)** — DCO (`Signed-off-by`) обязателен для многих Open Source проектов и корпоративных политик. GPG-подпись (`-S`) добавляет неотрекаемость.
+
+7. **Используйте `git commit -v` для написания тела** — флаг показывает diff в редакторе, помогая описать *почему* изменение нужно, а не *что* изменилось.
+
+8. **Ограничьте длину заголовка 50 символами, тело — 72** — критично для читаемости в `git log --oneline`, email-патчах, GitHub/GitLab UI.
+
+9. **Настройте `core.commentChar` если `#` конфликтует** — в Markdown-документах или YAML внутри коммитов `#` может ломать парсинг. `git config core.commentChar ";"` меняет символ комментария.
+
+10. **Автоматизируйте проверку в pre-commit / Lefthook** — быстрые локальные проверки (Gitlint) экономят время CI. Для JS-проектов: Husky + Commitlint; для полиглотных: Lefthook + Gitlint.
+
+### Для поддержки легаси-проектов
+
+- При миграции на Conventional Commits не переписывайте историю — используйте `git log --grep` для поиска старых паттернов.
+- Для монореп с разными стандартами: настройте разные `commit.template` на уровне поддиректорий через `includeIf` в `.gitconfig`.
+
+---
+
+## Дополнительная информация
 
 - **Спецификация Conventional Commits:** [conventionalcommits.org](https://www.conventionalcommits.org/ru/v1.0.0/)
 - **Git Documentation (Templates):** [git-scm.com/docs/git-config#Documentation/git-config.txt-committemplate](https://git-scm.com/docs/git-config#Documentation/git-config.txt-committemplate)

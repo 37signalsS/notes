@@ -172,19 +172,25 @@ PgBouncer — это легковесный connection pooler для PostgreSQL,
 -- Конфигурация пула в ProxySQL
 
 -- Добавление backend-серверов
-INSERT INTO mysql_servers(hostgroup_id, hostname, port, weight)
-VALUES (1, '10.0.0.1', 3306, 1000),
-       (1, '10.0.0.2', 3306, 1000);
-
--- Настройка пула
-SET mysql-connect_timeout_server=5000;
-SET mysql-connection_max_age_server=0;
-SET mysql-free_connections_pct=10;
-
--- Применение
+INSERT INTO mysql_servers(hostgroup_id, hostname, port, weight, max_connections)
+VALUES (1, '10.0.0.1', 3306, 1000, 200),
+       (1, '10.0.0.2', 3306, 1000, 200);
 LOAD MYSQL SERVERS TO RUNTIME;
 SAVE MYSQL SERVERS TO DISK;
+
+-- Настройка пула (глобальные переменные)
+SET mysql-connect_timeout_server=5000;
+SET mysql-connection_max_age_ms=0;
+SET mysql-free_connections_pct=10;
+SET mysql-connection_warming=true;
+LOAD MYSQL VARIABLES TO RUNTIME;
+SAVE MYSQL VARIABLES TO DISK;
 ```
+
+> **Важно:** после изменения серверов требуется `LOAD MYSQL SERVERS TO RUNTIME`, а после изменения глобальных переменных — `LOAD MYSQL VARIABLES TO RUNTIME`. Это разные команды, и применение неверной не даёт эффекта.
+> Параметр `max_connections` в `mysql_servers` ограничивает число соединений пула к конкретному бэкенду.
+
+Развёрнутый разбор мультиплексирования, расчёта размеров пула и диагностики причин отключения multiplexing: **[ProxySQL: Connection Pool и Multiplexing](../../Databases/MySQL/ProxySQL/proxysql_connection_pool.md)**.
 
 ### Connection Pool в приложении (пример: Python)
 
@@ -320,13 +326,13 @@ cat /proc/sys/net/netfilter/nf_conntrack_max
 
 ### Связанные темы
 
-- **[TCP Keepalive](../../Linux/Networking/Concepts/tcp_keepalive.md)** — настройка keepalive в Linux через `sysctl`.
+- **[TCP Keepalive](../../Linux/Networking/Concepts/tcp_tuning/tcp_keepalive_production.md)** — настройка keepalive в Linux через `sysctl`.
 - **[Socket API](./socket_api.md)** — управление TCP-сокетами, `SO_REUSEADDR`, `SO_REUSEPORT`.
 - **[Conntrack и таймауты](./nat/overview.md#таймауты-conntrack-ключевые-параметры-linux)** — влияние connection pooling на таблицу conntrack.
-- **[nginx: reverse proxy](../../WebServers/nginx_overview.md)** — настройка keepalive к backend в nginx.
 - **[HAProxy: балансировка](../../WebServers/haproxy_overview.md)** — http-reuse и connection pooling в HAProxy.
 - **[PgBouncer](../../Databases/PostgreSQL/Operations/pgbouncer_setup.md)** — connection pooler для PostgreSQL.
 - **[ProxySQL](../../Databases/MySQL/ProxySQL/proxysql_overview.md)** — connection pooler для MySQL.
+- **[ProxySQL: Connection Pool и Multiplexing](../../Databases/MySQL/ProxySQL/proxysql_connection_pool.md)** — мультиплексинг, расчёт размеров пула, причины pinning.
 - **[IO Multiplexing](./io_multiplexing.md)** — epoll/kqueue как основа для efficient connection pooling.
 
 ### Вопросы на собеседованиях

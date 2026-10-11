@@ -517,7 +517,309 @@ test:smoke:
 * **Secrets management:** не храните токены и пароли для тестов в репозитории. Используйте CI-native secrets (GitLab CI/CD Variables, GitHub Secrets).
 * **Read-only access:** тесты в CI должны иметь read-only доступ к production. Не запускайте тесты с кредами, дающими write-доступ.
 
-## Ограничения и особые случаи
+## Практические сценарии IaC-тестирования в CI/CD
+
+> **Примечание:** общие примеры инструментов (Goss YAML, Testinfra-тесты, Molecule-сценарии) описаны в SSoT: **[Инфраструктурное тестирование](../../Testing/infrastructure_testing.md)**. Здесь приведены только CI/CD-интеграции и pipeline-конфигурации.
+
+### Сценарий 1: Terratest + Terraform в GitLab CI
+
+#### Предпосылки
+- Terraform модуль для VPC.
+- Требуется интеграционное тестирование в CI/CD.
+
+#### Структура
+```
+infra/
+├── modules/
+│   └── vpc/
+│       ├── main.tf
+│       ├── variables.tf
+│       └── outputs.tf
+└── tests/
+    └── vpc_test.go
+```
+
+#### vpc_test.go
+```go
+package test
+
+import (
+    "testing"
+    "github.com/gruntwork-io/terratest/modules/terraform"
+    "github.com/gruntwork-io/terratest/modules/test-structure"
+    "github.com/stretchr/testify/assert"
+)
+
+func TestVPCCreation(t *testing.T) {
+    t.Parallel()
+
+    terraformOptions := &terraform.Options{
+        TerraformDir: "../modules/vpc",
+        Vars: map[string]interface{}{
+            "cidr_block": "10.0.0.0/16",
+        },
+    }
+
+    defer terraform.Destroy(t, terraformOptions)
+    terraform.InitAndApply(t, terraformOptions)
+
+    vpcID := terraform.Output(t, terraformOptions, "vpc_id")
+    assert.NotEmpty(t, vpcID)
+}
+```
+
+#### .gitlab-ci.yml
+```yaml
+stages:
+  - validate
+  - test
+
+validate_terraform:
+  stage: validate
+  image: hashicorp/terraform:1.9.0
+  script:
+    - cd infra/modules/vpc
+    - terraform init -backend=false
+    - terraform validate
+    - terraform fmt -check -recursive
+
+test_terraform:
+  stage: test
+  image: golang:1.23
+  script:
+    - cd infra/tests
+    - go mod init terratest
+    - go get github.com/gruntwork-io/terratest/modules/terraform
+    - go test -v -timeout 30m ./...
+  artifacts:
+    when: always
+    paths: [test-results.xml]
+```
+
+#### Валидация
+- `terraform validate` проверяет синтаксис.
+- Terratest создаёт реальные ресурсы в тестовом аккаунте.
+- Ресурсы удаляются через `defer terraform.Destroy`.
+
+### Сценарий 2: Molecule + Ansible в GitLab CI
+
+#### Предпосылки
+- Ansible роль для настройки Nginx.
+- Требуется тестирование idempotency и интеграционных сценариев в CI/CD.
+
+#### .gitlab-ci.yml
+```yaml
+stages:
+  - lint
+  - test
+
+lint_ansible:
+  stage: lint
+  image: python:3.13-slim
+  script:
+    - pip install ansible-lint
+    - ansible-lint roles/nginx/
+
+test_ansible:
+  stage: test
+  image: python:3.13-slim
+  services:
+    - docker:dind
+  script:
+    - pip install "molecule[docker]" ansible-core pytest-testinfra
+    - cd roles/nginx && molecule test -s default
+  artifacts:
+    when: always
+    paths: [molecule/]
+```
+
+#### Валидация
+- `molecule test` запускает контейнер, применяет роль, запускает тесты.
+- После тестов контейнер удаляется.
+
+> **Примечание:** общая структура Molecule-сценариев и Testinfra-тесты описаны в **[Инфраструктурное тестирование](../../Testing/infrastructure_testing.md)**. Здесь приведена только CI/CD-интеграция.
+
+### Сценарий 3: Checkov + conftest в CI/CD
+
+#### Предпосылки
+- Terraform + Kubernetes манифесты.
+- Требуется Policy-as-Code гейты.
+
+#### Структура
+```
+infra/
+├── terraform/
+│   └── main.tf
+└── k8s/
+    └── deployment.yaml
+```
+
+#### policy/terraform.rego
+```rego
+package terraform
+
+# Запрет на public S3 buckets
+deny[msg] {
+  input.resource.type == "aws_s3_bucket"
+  input.resource.values.acl == "public-read"
+  msg := "Public S3 buckets are not allowed"
+}
+
+# Запрет на hardcoded passwords
+deny[msg] {
+  input.resource.type == "aws_db_instance"
+  input.resource.values.password != ""
+  msg := "Hardcoded passwords are not allowed"
+}
+```
+
+#### policy/k8s.rego
+```rego
+package k8s
+
+# Запрет на privileged containers
+deny[msg] {
+  input.kind == "Pod"
+  container := input.spec.containers[_]
+  container.securityContext.privileged == true
+  msg := sprintf("Privileged container %v is not allowed", [container.name])
+}
+```
+
+#### .gitlab-ci.yml
+```yaml
+stages:
+  - validate
+  - policy
+
+checkov:
+  stage: validate
+  image: bridgecrew/checkov:3.2.0
+  script:
+    - checkov -d infra/ --soft-fail-on high
+
+conftest_terraform:
+  stage: policy
+  image: openpolicyagent/conftest:latest
+  script:
+    - conftest test infra/terraform/ -p policy/terraform.rego
+
+conftest_k8s:
+  stage: policy
+  image: openpolicyagent/conftest:latest
+  script:
+    - conftest test infra/k8s/ -p policy/k8s.rego
+```
+
+#### Валидация
+- `conftest test` проверяет манифесты против политик.
+- При нарушении политики пайплайн падает.
+- Checkov проверяет best practices.
+
+### Сценарий 4: Goss + testinfra для smoke-тестов инфраструктуры
+
+#### Предпосылки
+- Инфраструктура на AWS/VirtualBox.
+- Требуется smoke-тесты после provision.
+
+#### .gitlab-ci.yml
+```yaml
+stages:
+  - provision
+  - test
+
+provision:
+  stage: provision
+  image: python:3.13-slim
+  script:
+    - pip install testinfra pytest
+    - ansible-playbook -i inventory/prod playbooks/site.yml
+
+smoke_test:
+  stage: test
+  image: python:3.13-slim
+  script:
+    - pip install goss
+    - goss validate
+```
+
+#### Валидация
+- Goss проверяет состояние сервисов/портов/пакетов по заранее подготовленному `goss.yaml`.
+- Testinfra проверяет фактическое состояние ОС.
+
+> **Примечание:** формат `goss.yaml`, генерация тестов через `goss add` и примеры Testinfra-тестов описаны в SSoT: **[Инфраструктурное тестирование](../../Testing/infrastructure_testing.md)**. Здесь приведена только CI/CD-интеграция.
+
+### Сценарий 5: Drift detection в nightly CI
+
+#### Предпосылки
+- Production инфраструктура управляется через Terraform.
+- Требуется автоматическое обнаружение дрейфа.
+
+#### .gitlab-ci.yml
+```yaml
+stages:
+  - drift
+
+drift_detection:
+  stage: drift
+  image: hashicorp/terraform:1.9.0
+  script:
+    - cd infra/prod
+    - terraform init -backend-config="bucket=terraform-state-prod"
+    - terraform plan -detailed-exitcode -out=tfplan || true
+    - |
+      if [ $? -eq 2 ]; then
+        echo "DRIFT DETECTED"
+        curl -X POST -H "Content-Type: application/json" \
+          -d '{"text":"Drift detected in production"}' \
+          $SLACK_WEBHOOK
+        exit 1
+      else
+        echo "No drift detected"
+      fi
+  only:
+    - schedules
+```
+
+#### Валидация
+- Пайплайн запускается nightly.
+- При дрейфе отправляется алерт в Slack.
+- При отсутствии дрейфа пайплайн зелёный.
+
+## Ограничения и крайние случаи
+
+- **Long-running tests:** Интеграционные тесты Terraform могут занимать 30–60 минут. Используйте caching и параллелизм.
+- **Cost:** Terratest создаёт реальные ресурсы в облаке/on-prem. Используйте дешёвые инстансы или локальные окружения (Docker, Vagrant).
+- **Flaky infrastructure tests:** Зависят от внешних API (AWS, DNS). Используйте retry и timeout.
+- **Drift in test environments:** Тестовые окружения могут дрейфовать. Используйте ephemeral environments.
+- **Secret management:** Тесты не должны использовать production секреты. Используйте test-specific credentials.
+
+## Дополнительная информация
+
+### Рекомендации
+
+1. **Тестируйте в CI:** Каждый Terraform/Ansible модуль должен иметь тесты.
+2. **Используйте ephemeral environments:** Создавайте тестовые окружения на лету, удаляйте после тестов.
+3. **Idempotency — must have:** Ansible роли и Terraform модули должны быть идемпотентны.
+4. **Drift detection:** Настройте nightly проверку дрейфа.
+5. **Cost control:** Используйте дешёвые инстансы для тестов, удаляйте ресурсы после тестов.
+
+### Инструменты
+
+- **[Terratest](https://terratest.gruntwork.io/)** — тестирование Terraform на Go.
+- **[Molecule](https://ansible.readthedocs.io/projects/molecule/)** — тестирование Ansible-ролей.
+- **[Testinfra](https://testinfra.readthedocs.io/)** — инфраструктурные тесты на Python.
+- **[InSpec](https://www.inspec.io/)** — compliance тесты.
+- **[Checkov](https://www.checkov.io/)** — статический анализ IaC.
+- **[conftest](https://www.conftest.dev/)** — policy-тестирование YAML/HCL.
+- **[Goss](https://goss.rocks/)** — быстрые smoke-тесты.
+
+### См. также
+
+- **[Test-Driven Development](./tdd_bdd_overview.md)** — обзор методологий.
+- **[Инфраструктурное тестирование](../../Testing/infrastructure_testing.md)** — обзор инструментов.
+- **[Контрактное тестирование](../../Testing/testing_types_unit_integration_e2e.md)** — Pact workflow.
+
 
 ### TDD не покрывает всё
 

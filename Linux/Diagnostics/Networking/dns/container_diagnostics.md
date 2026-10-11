@@ -21,7 +21,7 @@
 | Среда | DNS-резолвер | Особенности |
 | :--- | :--- | :--- |
 | **Docker (bridge)** | Хостовый `/etc/resolv.conf` | Прямое наследование настроек хоста. Имена соседних контейнеров не разрешаются. |
-| **Docker (user-net)** | `127.0.0.11` | Встроенный сервер. Поддержка Service Discovery по имени контейнера/сервиса. Защита от DNS Rebinding. TTL=0. |
+| **Docker (user-net)** | `127.0.0.11` | Встроенный сервер. Поддержка Service Discovery по имени контейнера/сервиса. Защита от DNS Rebinding. TTL ответов 600 с. |
 | **containerd / CRI-O** | Хостовый `/etc/resolv.conf` | Наследует настройки узла напрямую. Нет посредника. Копируется при создании sandbox. |
 | **Kubernetes** | CoreDNS ClusterIP | Разрешение FQDN вида `<svc>.<ns>.svc.cluster.local`. Использование `ndots:5`. |
 | **NodeLocalDNS** | `169.254.25.10` | Кэширующий агент (DaemonSet) для снижения задержек и нагрузки на CoreDNS. |
@@ -135,7 +135,7 @@ kubectl logs -n kube-system -l k8s-app=kube-dns --tail=20
 kubectl get pod <pod_name> -o jsonpath='{.spec.dnsConfig}'
 ```
 
-**Решение:** Для снижения задержек используйте **NodeLocal DNSCache** или уменьшите `ndots` до 2 в `spec.dnsConfig` пода, если приложение использует в основном внешние FQDN. Для постоянного применения:
+**Решение:** Для снижения задержек используйте **NodeLocal DNSCache** или уменьшите `ndots` до 2 в `spec.dnsConfig` пода, если приложение использует в основном внешние FQDN. Для постоянного применения (опция `single-request-reopen` действует только в glibc-образах; в Alpine/musl игнорируется):
 
 ```yaml
 spec:
@@ -414,7 +414,7 @@ kubectl exec <pod> -- ss -unp | grep :53
 **Решение:**
 
 ```yaml
-# Вариант 1: Уменьшение ndots + single-request-reopen
+# Вариант 1: Уменьшение ndots + single-request-reopen (опция действует только в glibc-образах; в Alpine/musl игнорируется)
 spec:
   dnsConfig:
     options:
@@ -494,7 +494,7 @@ kubectl rollout status deployment/my-app
 | :--- | :--- | :--- | :--- |
 | **NXDOMAIN** | Ошибка в имени или неверный `ndots`. | Проверить имя с точкой в конце (`host.com.`). | Использовать FQDN или уменьшить `ndots`. |
 | **SERVFAIL** | Upstream DNS недоступен или заблокирован. | `dig @<upstream_ip> google.com` с хоста. | Проверить firewall, добавить корпоративные DNS. |
-| **Timeout (5s)** | Параллельные A/AAAA запросы (musl) или MTU. | Добавить `options single-request-reopen` в `resolv.conf`. | Уменьшить `timeout`, проверить MTU. |
+| **Timeout (5s)** | Параллельные A/AAAA запросы (musl) или MTU. | `options timeout:2 attempts:1` в `resolv.conf` (glibc: дополнительно `single-request-reopen`; musl её игнорирует). | Уменьшить `timeout`, проверить MTU. |
 | **127.0.0.11:53: i/o timeout** | Ошибка в Docker Network или Firewall. | Проверить цепочки iptables (DOCKER_OUTPUT). | Перезапустить Docker, проверить nftables. |
 | **SERVFAIL на cluster.local** | CoreDNS не знает зону или эндпоинты пусты. | `kubectl get endpoints kube-dns`. | Перезапустить CoreDNS, проверить RBAC. |
 | **CrashLoopBackOff CoreDNS** | Нехватка памяти/CPU или петля перенаправления. | `kubectl logs kube-dns-...`, `kubectl top pod`. | Увеличить ресурсы, исправить upstream DNS. |
@@ -513,7 +513,7 @@ kubectl rollout status deployment/my-app
 
 3. **Управляйте ndots через `dnsConfig` пода, а не через глобальные изменения CoreDNS.** Это даёт гибкость на уровне приложения.
 
-4. **Для Alpine-образов добавляйте `options single-request-reopen`.** musl libc отправляет A и AAAA параллельно, что вызывает проблемы с некорректными firewall и NAT.
+4. **Для Alpine-образов помните:** musl отправляет A и AAAA параллельно, но опция `single-request-reopen` в ней не поддерживается (игнорируется). При проблемах с firewall/NAT используйте NodeLocal DNSCache или исправьте сеть.
 
 5. **Не редактируйте `/etc/resolv.conf` напрямую в контейнерах.** Используйте флаги `docker run --dns`, `dnsConfig` в pod spec или `daemon.json`.
 

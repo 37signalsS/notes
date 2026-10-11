@@ -581,3 +581,5 @@ podman info --format '{{.Store.Info}}'
 ### Ссылки
 - **[Официальный репозиторий Skopeo](https://github.com/podman-container-tools/skopeo)**
 - **[Руководство по синхронизации (Sync)](https://github.com/containers/skopeo/blob/main/docs/skopeo-sync.1.md)**
+
+# force reindex test

@@ -1,5 +1,9 @@
 # Юникернелы: Инструменты и будущее
 
+**Актуально для:** Unikraft v0.21.0, Firecracker v1.16.1, Kata Containers 4.0.0, WASI Preview 3 (2026); примеры для on-premise развёртываний
+
+> **Примечание:** Этот документ покрывает не только юникернелы, но и смежные технологии изоляции: MicroVM, WebAssembly (Wasm) и Sandbox-рантаймы. Если вас интересует исключительно юникернел, см. [Обзор Unikernel](./unikernel_overview.md), [Оркестрация и управление](./orchestration_and_management.md), [Безопасность и hardening](./security_hardening.md), [Мониторинг и алертинг](./monitoring_and_alerting.md), [Сеть: продвинутые сценарии](./networking_advanced.md), [Хранилище и резервное копирование](./storage_and_backup.md) и [Производительность и тюнинг](./performance_tuning.md).
+
 ## Определения
 
 В данном документе рассматриваются современные инструменты для работы с юникернелами, а также смежные технологии изоляции — **MicroVM**, **WebAssembly (Wasm)** и **Sandbox-рантаймы**. Эти направления определяют вектор развития легковесных и безопасных вычислений в on-premise и Edge средах 2026 года.
@@ -22,10 +26,10 @@
 
 ## Основные концепции и технологии
 
-### 1. AWS Firecracker и Kata Containers
+### 1. Firecracker и Kata Containers
 **MicroVM** — это гибрид безопасности традиционных ВМ и скорости контейнеров. В 2026 году это база для Serverless-вычислений и безопасной изоляции недоверенного кода.
 
-*   **AWS Firecracker (VMM на Rust):**
+*   **Firecracker (VMM на Rust):**
     *   **Механизм Jailer:** Обеспечивает дополнительный слой защиты, запуская процесс VMM внутри изолированной среды с минимальными правами (seccomp, namespaces, chroot). Jailer ограничивает системные вызовы, доступные процессу VMM, до минимума (~30 из ~300 доступных в Linux).
     *   **Снимки состояния (Snapshots):** Позволяют «замораживать» запущенную микро-ВМ и восстанавливать её за ~25 мс. Это критично для мгновенного масштабирования и disaster recovery.
     *   **Ограничение ресурсов (Rate Limiting):** Встроенные механизмы для лимитирования операций ввода-вывода и сетевого трафика на уровне каждой микро-ВМ.
@@ -64,8 +68,8 @@ Wasm вышел за пределы браузера, став стандарт�
     *   **Песочница (Sandbox):** Модуль имеет доступ только к ресурсам, явно предоставленным через WASI-интерфейсы (filesystem, network, environment variables). Это обеспечивает изоляцию уровня контейнера без ядра Linux.
 *   **Оркестрация (SpinKube):** Стек, позволяющий запускать Wasm-нагрузки в Kubernetes как нативные поды. Это обеспечивает «холодный старт» менее 10 мс и плотность размещения в 10–50 раз выше, чем у Docker.
 *   **Рантаймы:**
-    *   **Wasmtime:** Эталонная реализация от Bytecode Alliance. Поддержка WASI 0.3, компонентной модели и峰值ной производительности.
-    *   **WasmEdge:** Оптимизирован для Edge/IoT. Поддержка SIMD и AI-инференса (through TensorFlow Lite).
+    *   **Wasmtime:** Эталонная реализация от Bytecode Alliance. Поддержка WASI 0.3, компонентной модели и пиковой производительности.
+    *   **WasmEdge:** Оптимизирован для Edge/IoT. Поддержка SIMD и AOT-компиляции.
     *   **Spin (Fermyon):** Фреймворк для serverless Wasm-приложений с встроенной оркестрацией.
 
 ## Сравнительная таблица технологий (2026)
@@ -139,30 +143,30 @@ crictl info | jq .config.containerd.runtimes
 # → { "runc": {...}, "kata": {...} }
 ```
 
-### 3. Базовый запуск AWS Firecracker (on-premise)
+### 3. Базовый запуск Firecracker (on-premise)
 
 Минимальный пример полного цикла запуска MicroVM:
 
 ```bash
 # Предварительные требования
 # 1. Скачать Firecracker
-curl -fsSL -o firecracker https://github.com/firecracker-microvm/firecracker/releases/latest/download/firecracker-v1.7.0-x86_64
+curl -fsSL -o firecracker https://github.com/firecracker-microvm/firecracker/releases/latest/download/firecracker-v1.16.1-x86_64
 chmod +x firecracker
 
 # 2. Подготовить ядро и rootfs
-wget https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux-5.10.217
-wget https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/rootfs/alpine-ext3.img
+# Используйте любые совместимые образы: например, стандартные дистрибутивы Alpine или Ubuntu minimal
+wget https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.0-x86_64.tar.gz
 
 # 3. Запуск MicroVM
 ./firecracker --api-sock /tmp/firecracker.socket &
 
-# 4. Настройка ядра
+# 4. Настройка ядра (требуется собственный vmlinux, совместимый с Firecracker)
 curl --unix-socket /tmp/firecracker.socket -X PUT \
   "http://localhost/boot-source" \
   -H "accept: application/json" \
   -H "Content-Type: application/json" \
   -d '{
-        "kernel_image_path": "vmlinux-5.10.217",
+        "kernel_image_path": "vmlinux-5.10.x",
         "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
       }'
 
@@ -406,6 +410,34 @@ aa-status | grep runsc
 brctl show | grep virbr0
 # → VLAN tagging должен быть настроен
 ```
+
+## Рекомендации по эксплуатации
+
+### Production hardening
+
+- **Firecracker:** Используйте Jailer в production для изоляции процесса VMM (seccomp, namespaces, cgroups). Отключайте ненужные virtio-устройства. Настройте rate limiting для сети и диска. Храните API-socket на tmpfs с правами `0600`.
+- **Kata Containers:** Выбирайте `runtime-rs` (Rust) для новых развёртываний. Настройте `default_memory` и `default_vcpus` в `configuration.toml` под реальную нагрузку. Используйте отдельное гостевое ядро с минимальным набором драйверов.
+- **gVisor:** Для production используйте KVM-платформу вместо ptrace. Настройте `--file-access=exclusive` и лимиты `nofile`. Мониторьте количество перехваченных системных вызовов через метрики Sentry.
+- **Wasm:** Фиксируйте версии рантаймов (Wasmtime, WasmEdge) в CI/CD. Валидируйте модули через `wasm-tools validate` перед деплоем. Ограничивайте память и CPU через WASI-конфигурацию или RuntimeClass overhead.
+
+### Безопасность
+
+- Храните образы MicroVM и гостевые ядра в изолированном registry с сканированием уязвимостей.
+- Для Kata Containers включите `allow_iommu_platform` только если требуется аппаратное ускорение; иначе используйте virtio.
+- В gVisor ограничьте доступ к `/proc` и `/sys` через файловые политики Gofer.
+- Для Wasm в Kubernetes установите `resources.limits` на 2–4 Mi памяти — это предотвращает DoS через переalloc.
+
+### Мониторинг и алертинг
+
+- Собирайте метрики хоста (Node Exporter) + метрики среды выполнения (Firecracker metrics endpoint, kata-runtime metrics).
+- Настройте алерты на рост latency syscalls в gVisor (> 1 мкс), рост времени старта MicroVM (> 100 мс), ошибки валидации Wasm-модулей.
+- Логируйте все операции жизненного цикла (создание, удаление, snapshot) в центральный SIEM.
+
+### Резервное копирование и восстановление
+
+- Для Firecracker храните снапшоты MicroVM в отдельном хранилище с регулярным копированием.
+- Для Kata Containers делайте резервные копии образов rootfs и конфигураций `configuration.toml`.
+- Для Wasm храните исходные .wasm модули в Git и артефактах CI/CD; откат производится передеплоем предыдущей версии.
 
 ## Устранение неполадок
 

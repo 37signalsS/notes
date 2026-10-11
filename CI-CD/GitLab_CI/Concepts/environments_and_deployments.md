@@ -1,5 +1,7 @@
 # Окружения и развертывания в GitLab CI/CD
 
+**Актуально для:** GitLab 17.x–19.x
+
 ## Определения
 
 - **Окружение (Environment):** Логическое представление инфраструктуры (например, `development`, `staging`, `production`). Ключевое слово `environment` создает объект в GitLab для отслеживания истории деплоев и текущего состояния среды.
@@ -9,6 +11,29 @@
 - **Уровень (Tier):** Категория окружения (`production`, `staging`, `testing`, `development`). Необходима для корректного расчета DORA-метрик.
 - **Откат (Rollback):** Оперативное возвращение окружения к предыдущему стабильному состоянию через перезапуск старого успешного задания деплоя.
 - **Подтверждение (Approval):** Механизм блокировки деплоя до получения согласия от ответственных лиц или внешних систем (v19.2+).
+
+## Предварительные требования
+
+### Версия GitLab и поддержка функций
+
+| Функция | Минимальная версия | Примечание |
+| :--- | :--- | :--- |
+| `environment` (базовый) | 11.0+ | Создание окружения в UI |
+| `deployment_tier` | 12.5+ | Категоризация для DORA-метрик |
+| `auto_stop_in` | 13.8+ | Автоматическая очистка динамических окружений |
+| `on_stop` + `action: stop` | 11.0+ | Ручная/автоматическая остановка окружения |
+| Protected Environments | 13.8+ | Ограничение прав деплоя |
+| Approval Rules | 12.3+ | Ручное подтверждение деплоя |
+| External Deployment Approvals | 19.2+ | Интеграция с внешними системами (ServiceNow/Jira) |
+| Deployment Approval Policies | 19.0+ | Централизованные правила на уровне группы |
+| `environment:kubernetes` | 18.4+ | Интеграция с KAS и Flux |
+
+### Необходимые знания
+
+- Структура `.gitlab-ci.yml`, стадии (stages) и правила запуска (`rules`)
+- Основы GitLab CI/CD Variables и Protected/Masked переменные
+- Принципы DORA-метрик и их связи с `deployment_tier`
+- Базовое понимание Kubernetes Namespaces, Services и Ingress (для сценариев с кластером)
 
 ## Базовые концепции
 
@@ -157,7 +182,7 @@ deploy_to_prod:
   environment:
     name: production
   script:
-    - ./scripts/deploy_to_cloud.sh
+    - ./scripts/deploy_to_k8s.sh
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   # GitLab автоматически ожидает статус 'approved' от External Approval API
@@ -169,50 +194,7 @@ deploy_to_prod:
 3.  После ручной проверки в Jira, система отправляет `POST` запрос к GitLab Deployments API для одобрения.
 4.  GitLab разблокирует задание и Runner приступает к выполнению.
 
-### Сценарий 5: Деплой Terraform инфраструктуры с environment
-
-Управление инфраструктурой через Terraform с привязкой к окружениям GitLab.
-
-```yaml
-stages:
-  - plan
-  - apply
-
-.terraform_base:
-  image: hashicorp/terraform:1.9
-  before_script:
-    - cd terraform/
-    - terraform init -backend-config="backend.hcl"
-
-terraform_plan:
-  extends: .terraform_base
-  stage: plan
-  script:
-    - terraform plan -out=tfplan -var-file="production.tfvars"
-  artifacts:
-    paths:
-      - terraform/tfplan
-    expire_in: 1 day
-  environment:
-    name: production
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-terraform_apply:
-  extends: .terraform_base
-  stage: apply
-  script:
-    - terraform apply -auto-approve tfplan
-  dependencies:
-    - terraform_plan
-  environment:
-    name: production
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-```
-
-### Сценарий 6: Деплой Ansible playbook с environment isolation
+### Сценарий 5: Деплой Ansible playbook с environment isolation
 
 Запуск Ansible playbooks с изоляцией секретов по окружениям.
 
@@ -252,7 +234,7 @@ ansible_deploy_prod:
       when: manual
 ```
 
-### Сценарий 7: Откат базы данных через环境-scoped secrets
+### Сценарий 6: Откат базы данных через environment-scoped secrets
 
 Безопасный откат БД с использованием секретов, привязанных к конкретному окружению.
 
@@ -285,7 +267,7 @@ rollback_database:
     BACKUP_TIMESTAMP: "20240101_120000"  # Указать нужный бэкап
 ```
 
-### Сценарий 8: Canary деплой с мониторингом
+### Сценарий 7: Canary деплой с мониторингом
 
 Прогрессивная раскатка с автоматическим откатом при ошибках.
 
@@ -321,6 +303,119 @@ verify_canary:
   needs:
     - canary_deploy
 ```
+
+### Сценарий 8: Продвижение артефакта между окружениями (Environment Promotion)
+
+Последовательное продвижение проверенного артефакта из Development → Staging → Production без пересборки.
+
+```yaml
+stages:
+  - build
+  - deploy_dev
+  - deploy_staging
+  - deploy_prod
+
+variables:
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+
+build:
+  stage: build
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$IMAGE_TAG .
+    - docker push $CI_REGISTRY_IMAGE:$IMAGE_TAG
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+deploy_dev:
+  stage: deploy_dev
+  script:
+    - helm upgrade --install my-app ./chart --namespace dev --set image.tag=$IMAGE_TAG
+  environment:
+    name: development
+    url: https://dev.example.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+deploy_staging:
+  stage: deploy_staging
+  script:
+    - helm upgrade --install my-app ./chart --namespace staging --set image.tag=$IMAGE_TAG
+  environment:
+    name: staging
+    url: https://staging.example.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+
+deploy_prod:
+  stage: deploy_prod
+  script:
+    - helm upgrade --install my-app ./chart --namespace production --set image.tag=$IMAGE_TAG
+  environment:
+    name: production
+    url: https://app.example.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  needs:
+    - deploy_staging
+```
+
+### Валидация deployments
+
+После настройки окружений выполните проверки, чтобы убедиться в корректности работы:
+
+#### 1. Проверка через GitLab UI
+
+```bash
+# Откройте в браузере: Project > Operate > Environments
+# Убедитесь, что:
+# - Окружения отображаются с правильными именами и URL
+# - Deployment history содержит записи
+# - Статусы Available / Available последних деплоев корректны
+```
+
+#### 2. Проверка через API
+
+```bash
+# Список окружений
+curl --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+  "https://gitlab.example.com/api/v4/projects/${CI_PROJECT_ID}/environments"
+
+# Список deployments
+curl --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+  "https://gitlab.example.com/api/v4/projects/${CI_PROJECT_ID}/deployments"
+
+# Проверка статуса deployment
+curl --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+  "https://gitlab.example.com/api/v4/projects/${CI_PROJECT_ID}/deployments/${DEPLOYMENT_ID}"
+```
+
+#### 3. Проверка автоматической очистки
+
+```bash
+# Проверьте, что окружение остановлено после merge MR
+# В UI: Environments > review/xxx > Stop
+# Убедитесь, что задача stop_review завершилась успешно
+```
+
+## Граничные случаи
+
+### Ограничения и нюансы
+
+1. **Параллельные деплои в одну среду:** Без `resource_group` параллельные задания могут одновременно изменять окружение, что приводит к состоянию гонки. Используйте `resource_group: production` для последовательного деплоя.
+
+2. **Удаление окружения через API:** При удалении окружения через API история deployments сохраняется. Полное удаление возможно только через UI или с помощью очистки базы данных GitLab.
+
+3. **Dynamic Environments в fork-проектах:** В проектах-форках переменные и protected environments не наследуются. Необходимо дублировать настройки в каждом fork.
+
+4. **Deployment Approval Policies (19.0+):** Политики уровня группы переопределяют локальные Approval Rules. При конфликте приоритет имеет Security & Compliance Policy.
+
+5. **External Deployment Approvals (19.2+):** Внешняя система должна ответить статусом `approved` до истечения таймаута. При таймауте деплой останется в статусе `blocked`.
+
+6. **Environment scope переменных:** Переменные с scope=`production` не доступны в других окружениях. При отладке убедитесь, что используете правильный scope.
+
+7. **DORA-метрики и `deployment_tier`:** Метрики рассчитываются только для окружений с явно заданным `deployment_tier=production`. Окружения без tier не учитываются в отчетах.
 
 ## Дополнительная информация
 
@@ -383,6 +478,15 @@ kubectl get agents -n gitlab
 - **[Стратегии развертывания](../../Core_Concepts/deployment_strategies.md)** — обзор Rolling Update и Blue/Green.
 - **[Проверка здоровья и откаты](../../Deployment_Strategies/deployment_health_checks_and_rollback.md)** — механизмы автоматизации.
 - **[GitOps и GitLab](../../../GitOps/GitOps_overview.md)** — использование агента для Kubernetes.
+- **[Service Mesh и GitLab CI/CD](./gitlab_ci_service_mesh.md)** — Istio/Linkerd интеграция, canary через mesh.
+- **[Feature Flags в GitLab CI/CD](./gitlab_ci_feature_flags.md)** — progressive delivery, kill switches.
+- **[Наблюдаемость пайплайнов GitLab CI/CD](./gitlab_ci_observability.md)** — DORA-метрики, Grafana дашборды.
+- **[Container Registry в GitLab CI/CD](../Advanced/container_registry.md)** — управление образами и cleanup.
+- **[Сканирование безопасности в GitLab CI/CD](./gitlab_ci_security_scanning.md)** — SAST/DAST/Secret Detection.
+- **[Compliance и Audit в GitLab CI/CD](../Advanced/compliance_and_audit.md)** — Pipeline Execution Policies, Audit Trail.
+- **[Resource Group и контроль пайплайнов](../Advanced/resource_group_and_pipeline_control.md)** — мьютекс, concurrency, retry, timeout.
+- **[Image Promotion Strategies](../Advanced/image_promotion_strategies.md)** — промоушен артефактов между окружениями.
+- **[OIDC и Workload Identity](../Advanced/gitlab_ci_oidc_workload_identity.md)** — аутентификация без секретов.
 
 > **Критичные изменения последних версий:**
 >

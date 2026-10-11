@@ -147,6 +147,8 @@ spec:
 *   **[MySQL Operator](../../Databases/MySQL/mysql_operator.md)**: Автоматизация InnoDB Cluster.
 *   **[MongoDB Operator](../../Databases/MongoDB/mongodb_operator.md)**: Развертывание Replica Sets.
 *   **Cert-Manager**: Автоматизация TLS-сертификатов.
+*   **Redis Operator**: Управление кластерами Redis (Redis Operator, Redis-operator, OpenRedis).
+*   **ZooKeeper Operator**: Управление кластерами ZooKeeper.
 
 ### См. также
 *   **[Архитектура Control Plane](./control_plane_architecture.md)** — работа контроллеров.

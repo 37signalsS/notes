@@ -333,10 +333,67 @@ echo "Incident resolved at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /var/log/incidents
 
 ## Дополнительная информация
 
-- **[Метрики DORA](./dora_metrics.md)** — Failed Deployment Recovery Time, Change Failure Rate, связь MTTR с показателями эффективности.
-- **[Паттерны надёжности](./reliability_patterns.md)** — Circuit Breaker, Bulkhead, Timeout, Graceful Degradation, Chaos Engineering.
-- **[Стратегии развертывания](./deployment_strategies.md)** — Canary, Blue/Green, автоматический откат, feature flags.
-- **[Наблюдаемость пайплайнов](./pipeline_observability.md)** — SLI/SLO, трейсы, Golden Signals для CI/CD.
-- **[Incident Response для CI/CD](../GitLab_CI/Advanced/incident_response_cicd.md)** — severity levels, escalation matrix, runbooks для Runner/Registry/Pipeline, скрипты отката, шаблоны коммуникации, мониторинг пайплайнов.
-- **[Frontend incident response](../../CI-CD/Frontend_CI_CD/frontend_incident_response.md)** — фронтенд-специфичные инциденты (broken deploy, stale SW, CDN).
-- **[Mobile incident response](../../CI-CD/mobile-ci-cd/incident-response-mobile.md)** — мобильные инциденты, hotfix, App Store/Google Play откат.
+### GitHub Actions: специфика инцидентов
+
+Для GitHub Actions-пайплайнов типовые инциденты и методы реагирования отличаются от GitLab CI из-за отсутствия встроенных runbook'ов и централизованного логирования.
+
+**Типовые инциденты в GitHub Actions:**
+| Тип | Компонент | Причина | Влияние |
+|---|---|---|---|
+| **Workflow Failure** | Workflow YAML / Job | Ошибка синтаксиса, нехватка ресурсов, сбой шага | Блокирует деплой, рост CFR |
+| **Runner Down** | Self-hosted runner | Остановлен сервис, диск переполнен, сеть недоступна | Jobs ставятся в очередь, растёт Queue Time |
+| **Deployment Failure** | Deployment target | Ошибка в manifest, нехватка ресурсов, отказ API | Приложение в нерабочем состоянии |
+| **Secret Leak** | Secrets / Артефакты | Утечка через логи, артефакты, публичный репозиторий | Критическая угроза безопасности |
+| **Pipeline Hang** | Workflow / External service | Deadlock, зависший внешний вызов, неограниченный timeout | Занимает ресурсы, блокирует очереди |
+| **Flaky Tests** | Test step / Runner environment | Нестабильные тесты, race conditions | Ложные срабатывания, потеря доверия |
+| **Concurrency Exhaustion** | Runner fleet | Все слоты заняты, `concurrent` достиг лимита | Jobs pending, рост queue time |
+| **Cache Corruption** | Cache / Storage backend | Повреждённый кэш, несовместимость версий | Непредсказуемые сборки |
+
+**Диагностика через API:**
+```bash
+# Проверка статуса последних workflow runs
+gh run list --limit 20 --json name,conclusion,startedAt,databaseId
+
+# Проверка конкретного run с деталями
+gh run view <run-id> --log  # логи job'ов
+gh run view <run-id> --json status,conclusion,jobs
+
+# Проверка runner availability (self-hosted)
+curl -s -H "Authorization: token $GITHUB_TOKEN" \
+  "https://api.github.com/repos/<OWNER>/<REPO>/actions/runners" \
+  | jq '.runners[] | {name, status, busy, os}'
+```
+
+**Runbook: откат деплоя через GitHub Actions:**
+```yaml
+# .github/workflows/rollback.yml
+name: Rollback Deployment
+on:
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Версия для отката'
+        required: true
+        type: string
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Execute rollback
+        run: |
+          echo "Rolling back to ${{ inputs.target_version }}"
+          ./rollback.sh ${{ inputs.target_version }}
+      - name: Verify rollback
+        run: |
+          curl -fsS https://app.internal/healthz
+          # Проверка SLO-метрик
+```
+
+**Ключевые различия с GitLab CI:**
+- **Нет встроенной системы аудита** — audit log доступен только в Enterprise Edition.
+- **Логи job'ов ограничены** — стандартные логи хранятся 90 дней, archive download limited.
+- **`GITHUB_TOKEN` по умолчанию** имеет ограниченные права (read-only к репозиторию), что снижает риск компрометации, но требует явной настройки `permissions` для деплоя.
+- **`environment` protection rules** требуют ручного approval для production, что добавляет время в Lead Time и может быть точкой отказа.
+- **Self-hosted runner'ы** не имеют встроенной метрики — требуются ARC (actions-runner-controller) или внешний prometheus-экспортер.

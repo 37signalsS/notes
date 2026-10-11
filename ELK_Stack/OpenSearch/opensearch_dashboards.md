@@ -1,12 +1,14 @@
 # OpenSearch Dashboards: Визуализация и управление
 
+**Актуально для:** OpenSearch Dashboards 3.9.x (релиз 29 сентября 2026). Отличия ветки 2.x отмечены там, где они существенны.
+
 > Эта заметка является частью обзора [OpenSearch](./opensearch_overview.md) и детально описывает возможности веб-интерфейса для анализа данных и администрирования кластера.
 
 OpenSearch Dashboards (OSD) — это открытый веб-интерфейс для интерактивного исследования данных, построения аналитических панелей и управления компонентами OpenSearch. К 2026 году Dashboards трансформировался из простого инструмента визуализации в полноценную аналитическую платформу с рабочими пространствами (Workspaces), мультиисточниковостью, нативной поддержкой Prometheus и ИИ-агентами для расследования инцидентов.
 
 ## Определения
 
-* **OpenSearch Dashboards** — веб-платформа для анализа данных и администрирования (изначально форк Kibana 7.10.2, значительно дивергировавший к 2026 году). Серверная часть — Node.js-приложение, клиентская — React; функциональность расширяется системой плагинов. Версии синхронизированы с ядром OpenSearch (актуальная линия 3.x, релиз 3.8.0 — август 2026).
+* **OpenSearch Dashboards** — веб-платформа для анализа данных и администрирования (изначально форк Kibana 7.10.2, значительно дивергировавший к 2026 году). Серверная часть — Node.js-приложение, клиентская — React; функциональность расширяется системой плагинов. Версии синхронизированы с ядром OpenSearch (актуальная линия 3.x, релиз 3.9.0 — сентябрь 2026).
 * **Index Pattern (Шаблон индекса)** — конфигурация, связывающая Dashboards с одним или несколькими индексами OpenSearch для выполнения запросов; определяет схему полей (маппинги, форматы, скриптовые поля). С версии 3.7 поддерживает опциональный `displayName` — понятное имя поверх технического паттерна.
 * **Workspace (Рабочее пространство)** — введено в версии 2.18: изолированная среда с конфигурацией под конкретный use-case (наблюдаемость, security analytics, поиск), внутри которой живут сохраненные объекты (дашборды, визуализации, шаблоны индексов).
 * **Tenant (Тенант)** — механизм изоляции сохраненных объектов на уровне плагина Security: Global/Private/Custom тенанты. Исторически первый механизм организации контента; сосуществует с Workspaces.
@@ -21,7 +23,7 @@ OpenSearch Dashboards (OSD) — это открытый веб-интерфей�
 
 OSD состоит из трех слоев:
 
-1. **Сервер Node.js**: проксирует запросы браузера к кластеру OpenSearch, хранит собственное состояние (сохраненные объекты) в системных индексах `.kibana*` того же кластера. С версии 3.7 появился экспериментальный подключаемый SQLite-backend для хранения saved objects вне кластера.
+1. **Сервер Node.js**: проксирует запросы браузера к кластеру OpenSearch, хранит собственное состояние (сохраненные объекты) в системных индексах `.kibana*` того же кластера. С версии 3.7 доступен экспериментальный подключаемый backend хранения saved objects на SQLite (proof-of-concept): `savedObjects.storage.backend: "sqlite"` и `savedObjects.storage.sqlite.path: "data/osd-metadata.db"` — позволяет запускать OSD без кластера (локальная разработка, CI-тесты); в production по умолчанию остается хранение в кластере.
 2. **Клиентское React-приложение**: рендерится в браузере; вся визуализация выполняется на стороне клиента, что снимает нагрузку с сервера.
 3. **Плагины**: базовые (Discover, Visualize, Dev Tools) и дополнительные (Observability, Alerting, Security, Assistant, Reporting, Integration). Минимальный дистрибутив позволяет устанавливать только нужное.
 
@@ -36,6 +38,17 @@ OSD состоит из трех слоев:
 5. **Observability**: специализированные приложения — Trace Analytics (анализ распределенных трейсов из [Jaeger](../../Jaeger/jaeger_overview.md)), Log Explorer (PPL-аналитика логов), Metrics (PromQL/PPL-панели), Application Analytics (преднастроенные KPI приложений), Panels (общая доска визуализаций).
 6. **OpenSearch Assistant**: чат-панель и контекстные помощники (генерация запросов, объяснение ошибок, text-to-visualization).
 7. **Dashboards Management**: центр администрирования OSD — шаблоны индексов, источники данных, расширенные настройки (Advanced Settings), импорт/экспорт объектов.
+8. **Reporting**: генерация отчетов PDF/PNG (дашборды, визуализации, ноутбуки) и CSV/XLSX (сохраненные поиски Discover) — разово или по расписанию (cron/interval); см. сценарий «Плановые отчеты» ниже.
+
+### Новое в Dashboards 3.9 (сентябрь 2026)
+
+* **Переменные дашборда для Prometheus**: query-переменная на источнике Prometheus подставляет имена метрик, label-имена и label-значения — одна `$service`-переменная управляет всеми панелями, включая заголовки; добавлены тип Text, опция «Allow custom values» и regex-группы для извлечения значений.
+* **Sync crosshair**: синхронизация перекрестия по всем time-series панелям дашборда (включается в настройках дашборда) — корреляция всплесков метрик и логов по одной временной точке.
+* **Секции дашборда**: группировка панелей в именованные сворачиваемые секции с перетаскиванием (`dashboard.allowDashboardSections: true` в Advanced Settings).
+* **Визуализации**: stacked bar и area, форматирование единиц с min/max границами осей и десятичной точностью, кастомные имена серий, highlight при наведении, legend click-to-focus.
+* **Discover Metrics**: шаблоны имен серий, настройка Min step и макросы `$__interval`, `$__rate_interval`, `$__range` для PromQL-запросов.
+* **APM setup wizard**: пошаговый мастер настройки Application Monitoring (dataset, service map, Prometheus-источник RED-метрик).
+* **Unified alerts view (GA)**: алерты, аномалии и прогнозы в одном интерфейсе; PPL query profiling в Dev Tools; Grok debugger (с 3.8).
 
 ### Организация контента: Workspaces против мультиарендности
 
@@ -66,7 +79,7 @@ OSD состоит из трех слоев:
 
 * Типы подключений: self-managed OpenSearch, Amazon OpenSearch Service, Amazon S3, Prometheus (включая Amazon Managed Service for Prometheus).
 * Аутентификация: No auth, Basic (username/password), AWS SigV4.
-* Данные учетных записей шифруются и хранятся как часть saved object `data-source`; в обновлениях 2026 года закрыты уязвимости несанкционированного доступа к креденшелам (CVE-2026-28292 и связанные) — своевременное обновление критично.
+* Данные учетных записей шифруются и хранятся как часть saved object `data-source`; в цикле 3.7 закрыты критические уязвимости зависимостей Node.js (CVE-2026-28292 — RCE в simple-git, CVE-2026-33937 — RCE в handlebars, CVE-2026-25639 — DoS в axios); ранее исправлена CVE-2026-77811 — stored XSS через шаблон интеграции в плагине observability (исправлено в 3.4 и 2.19.6). Своевременное обновление критично.
 * Индекс-паттерн привязывается к источнику через reference-поле; визуализации наследуют источник от шаблона индекса.
 * Экономический смысл: сотни кластеров обслуживаются одним экземпляром OSD вместо отдельного стека на каждый кластер (health-check идет только к метадата-хранилищу).
 
@@ -84,12 +97,12 @@ OSD состоит из трех слоев:
 
 ### Быстрый старт: стек за 5 минут (Docker Compose)
 
-Требования: Docker Compose v2, 4 ГБ RAM. Версии образа и ядра должны совпадать (3.8.0):
+Требования: Docker Compose v2, 4 ГБ RAM. Версии образа и ядра должны совпадать (3.9.0):
 
 ```yaml
 services:
   opensearch:
-    image: opensearchproject/opensearch:3.8.0
+    image: opensearchproject/opensearch:3.9.0
     environment:
       - discovery.type=single-node
       - OPENSEARCH_INITIAL_ADMIN_PASSWORD=Dev#2026Start!
@@ -98,7 +111,7 @@ services:
       - "9200:9200"
 
   dashboards:
-    image: opensearchproject/opensearch-dashboards:3.8.0
+    image: opensearchproject/opensearch-dashboards:3.9.0
     ports:
       - "5601:5601"
     environment:
@@ -113,7 +126,7 @@ services:
 docker compose up -d && sleep 60
 curl -s http://localhost:5601/api/status
 # → {"name":"...","uuid":"...",
-# →  "version":{"number":"3.8.0","build_flavor":"oss","build_type":"tar",...},
+# →  "version":{"number":"3.9.0","build_flavor":"oss","build_type":"tar",...},
 # →  "status":{"overall":{"state":"available",...}}}
 ```
 
@@ -254,6 +267,8 @@ sum(rate(http_requests_total{job="nginx",status=~"5.."}[5m])) by (service)
 
 Редактор автоматически сопоставит поля результата с осями графика. Добавьте переменную дашборда `$service` и используйте ее в запросе: `... by ($service)` — переключение сервиса станет выпадающим списком над дашбордом. Так логи (PPL) и метрики (PromQL) живут в одном дашборде с общим таймлайном.
 
+Возможности 3.9 для таких дашбордов: query-переменная на источнике Prometheus сама строит список значений (имена метрик, label-имена, label-значения, серии) — не нужно хардкодить значения в переменной; доступны тип Text, опция «Allow custom values» и regex-группы для извлечения частей значения. Включите **Sync crosshair** в настройках дашборда — перекрестие синхронизируется по всем time-series панелям, что упрощает корреляцию всплесков метрик с логами. Панели можно группировать в именованные сворачиваемые секции (`dashboard.allowDashboardSections: true`).
+
 ### Производные и скриптовые поля
 
 Три механизма создания полей «на лету» без переиндексации — от простого к сложному:
@@ -285,6 +300,38 @@ curl -X POST http://prod-osd:5601/api/saved_objects/_import?overwrite=true \
 
 Флаг `includeReferencesDeep: true` вытягивает вместе с дашбордом все зависимые визуализации и шаблоны индексов. Перед импортом убедитесь, что шаблон индекса указывает на существующие в целевом кластере индексы, иначе панели останутся пустыми. Альтернатива для регулярного переноса — Terraform/API-автоматизация тех же эндпоинтов.
 
+### Плановые отчеты (Reporting)
+
+Плагин Reporting (входит в дистрибутив) автоматизирует регулярные сводки для SRE: ежедневный PDF дашборда SLO, выгрузка CSV медленных запросов и т. п. Форматы зависят от источника: Dashboard/Visualization/Notebook → PDF или PNG; Saved Search (сохраненный поиск из Discover) → CSV или XLSX.
+
+**Через UI**: Reporting > Create report definition — выберите источник (дашборд/визуализацию/saved search), тайм-рейндж, формат и триггер: On demand, Recurring (interval) или Cron (например, `0 6 * * *` — каждый день в 06:00).
+
+**Через API** (определение создается на кластере, порт 9200; сам файл рендерится OSD, порт 5601):
+
+```bash
+curl -X POST https://localhost:9200/_plugins/_reports/definition \
+  -H 'Content-Type: application/json' -u admin:'Dev#2026Start!' \
+  -d '{
+    "reportDefinition": {
+      "name": "Daily SLO dashboard",
+      "isEnabled": true,
+      "source": { "type": "Dashboard", "id": "<dashboard_id>", "origin": "http://localhost:5601" },
+      "format": { "duration": "P1D", "fileFormat": "Pdf" },
+      "trigger": { "triggerType": "CronSchedule",
+        "schedule": { "cron": { "expression": "0 6 * * *", "timezone": "UTC" } } },
+      "status": "ACTIVE"
+    }
+  }'
+# → {"reportDefinitionId":"<definition_id>"}
+
+# Скачать сгенерированный отчет (OSD, требуется заголовок osd-xsrf)
+curl -X POST "http://localhost:5601/api/reporting/generateReport/<definition_id>?timezone=UTC&dateFormat=MMM%20D,%20YYYY&csvSeparator=,&allowLeadingWildcards=false" \
+  -H 'osd-xsrf: true' -u admin:'Dev#2026Start!'
+# → файл отчета (PDF/PNG/CSV/XLSX)
+```
+
+Проверка существующих определений: `GET /_plugins/_reports/definition` на кластере. Важно: определение с несовместимой парой «тип источника — формат» (например, `Visualization` + `Csv`) принимается API, но не рендерится и ломает загрузку страницы Reporting в OSD — такое определение нужно удалить (`DELETE /_plugins/_reports/definition/<id>`). Права на создание отчетов регулируются ролями Security (предопределенные роли `reporting_full_access` / `reporting_reader`).
+
 ## Дополнительная информация
 
 ### Производительность и тюнинг
@@ -306,13 +353,29 @@ curl -X POST http://prod-osd:5601/api/saved_objects/_import?overwrite=true \
 * Переменная `NODE_OPTIONS=--max-old-space-size=2048` — лимит памяти Node.js-процесса; при активной работе десятков пользователей закладывайте не менее 1 ГБ на экземпляр.
 * Запускайте минимум два реплики OSD за балансировщиком для отказоустойчивости UI (само состояние хранится в кластере, экземпляры stateless).
 
+### Устранение типовых неисправностей
+
+| Симптом | Причина | Решение |
+| :--- | :--- | :--- |
+| OSD не стартует, в логах «Unable to retrieve version information from OpenSearch nodes» | Недоступен `opensearch.hosts`, ошибка TLS (неверный CA при `verificationMode: full`) или сервисная учетная запись без прав на системные индексы | Проверьте кластер напрямую: `curl -ku admin:'...' https://os-node-01:9200`; проверьте CA в `opensearch.ssl.certificateAuthorities`; проверьте роль `kibanaserver` в Security |
+| Страница «Dashboards server is not ready yet», `/api/status` = `degraded` | Ядро еще инициализируется (30–60 с) или миграции saved objects не завершены | Подождите и обновите страницу; если не проходит — `GET _cluster/health` (должен быть yellow/green) и `journalctl -u opensearch-dashboards` |
+| Ошибка совместимости версий при старте OSD | Несовпадение минорных версий OSD и ядра (OSD 3.x требует ядро 3.x той же минорной линии) | Выровняйте версии образов/пакетов; матрица совместимости в документации проекта |
+| Пустые панели после импорта NDJSON | Index pattern указывает на индексы, отсутствующие в целевом кластере, или смещен временной фильтр | Проверьте шаблон индекса (Management > Index Patterns) и тайм-рейндж дашборда |
+| Поле не найдено в Discover при фильтрации | Поле отсутствует в маппинге шаблона индекса | Включите `courier:ignoreFilterIfFieldNotInIndex` для разнородных логов или добавьте поле в маппинг |
+| Импорт большого NDJSON обрезается / 413 | Лимит полезной нагрузки сервера | Увеличьте `server.maxPayloadBytes` (например, до 104857600) и перезапустите OSD |
+| Страница Reporting не загружает список определений | Существует определение с несовместимой парой «тип источника — формат» (например, `Visualization` + `Csv`) | Удалите дефектное определение: `DELETE /_plugins/_reports/definition/<id>` на кластере |
+| Высокое потребление памяти процессом OSD | Десятки пользователей/дашбордов, крупные NDJSON | Поднимите `NODE_OPTIONS=--max-old-space-size=2048`; закладывайте ≥1 ГБ на экземпляр |
+| После обновления объекты не мигрировались | Миграции saved objects прерваны или `.kibana*` поврежден | Снапшот системных индексов `.kibana*` делается ДО обновления; при сбое — восстановите снапшот и повторите обновление |
+
+Диагностический эндпоинт состояния: `GET /api/status` (порт 5601) — поля `status.overall.state` и версия; логи: `journalctl -u opensearch-dashboards -f`.
+
 ### Безопасность
 
 * **Аутентификация**: при включенном Security плагине OSD требует логин; бэкенды — внутренняя база, LDAP/AD, SAML/OIDC-провайдеры. Сервисная учетная запись OSD должна иметь минимальные права (роль `kibanaserver`, а не `all_access`).
 * **Разграничение доступа**: роли Security определяют видимые индексы и операции; тенант (`tenant_permissions`) — куда пользователь сохраняет объекты. Пользователь без прав на индекс не увидит данные ни в Discover, ни через ассистента.
 * **Workspace ACL** (2.18+): дополнительный слой — кто может просматривать и администрировать конкретное рабочее пространство.
 * **TLS**: настройте `opensearch.ssl.verificationMode: full` и собственный CA для связи OSD-кластер; для публикации за reverse-proxy используйте `server.basePath` и `server.rewriteBasePath`.
-* **Актуальность версии**: в 2026 году закрыты CVE, связанные с доступом к учетным данным источников данных и эскалацией привилегий через импорт saved objects (CVE-2026-28292, CVE-2026-33937, CVE-2026-25639) — держите OSD обновленным.
+* **Актуальность версии**: в 2026 году в OSD исправлены критические уязвимости зависимостей Node.js (CVE-2026-28292 — command injection/RCE через simple-git, CVE-2026-33937 — RCE через handlebars, CVE-2026-25639 — DoS через axios; исправлены в цикле 3.7) и stored XSS в плагине observability (CVE-2026-77811, исправлен в 3.4 и 2.19.6) — держите OSD обновленным и подписывайтесь на advisories проекта.
 
 Детали управления ролями и пользователями: [Администрирование OpenSearch](./opensearch_administration.md).
 
@@ -320,7 +383,7 @@ curl -X POST http://prod-osd:5601/api/saved_objects/_import?overwrite=true \
 
 * Номера версий OSD синхронизированы с ядром: OpenSearch 3.x работает только с Dashboards 3.x той же минорной версии (матрица совместимости в документации проекта).
 * Порядок обновления стека: снапшот системных индексов `.kibana*` → обновление ядра → обновление OSD → проверка `/api/status`.
-* Ветка 2.19 продолжает получать патчи безопасности параллельно с 3.x (например, релиз 2.19.6) — организации на 2.x имеют время на планирование миграции, но новые функции (Workspaces-улучшения, Explore Metrics, dashboard variables) появляются только в 3.x.
+* Ветка 2.19 продолжает получать патчи безопасности параллельно с 3.x (2.19.6 — июль 2026, 2.19.7 запланирован на октябрь 2026) — организации на 2.x имеют время на планирование миграции, но новые функции (Workspaces-улучшения, Explore Metrics, dashboard variables, Prometheus-переменные и crosshair из 3.9) появляются только в 3.x.
 * При апгрейде с 1.x требуется промежуточное обновление (1.3 → 2.x → 3.x) как для ядра, так и для Dashboards.
 
 Руководства по развертыванию самого стека: [Helm в Kubernetes](./opensearch_helm_deployment.md), [Ansible на выделенных серверах](./opensearch_ansible_deployment.md).
@@ -334,4 +397,5 @@ curl -X POST http://prod-osd:5601/api/saved_objects/_import?overwrite=true \
 
 * **[OpenSearch: Обзор](./opensearch_overview.md)** — архитектура и ядро системы.
 * **[Администрирование OpenSearch](./opensearch_administration.md)** — роли, безопасность, устранение неполадок.
+* **[Alerting](./opensearch-alerting.md)** — мониторы и алерты через UI OpenSearch Dashboards.
 * **[Kibana: Поиск, визуализация и управление](../Kibana/kibana_search_and_visualization.md)** — аналог в Elastic Stack для сравнения подходов.

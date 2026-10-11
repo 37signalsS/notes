@@ -1,5 +1,7 @@
 # Управление релизами и семантическое версионирование
 
+**Актуально для:** GitLab CI 19.x
+
 ## Определения
 
 - **Семантическое версионирование (SemVer)** — стандарт версионирования в формате `MAJOR.MINOR.PATCH`. Является обязательным для ресурсов в **[CI/CD Catalog](../Reusable_Pipelines/ci_cd_catalog_components.md)**. Подробные правила — в **[Управлении артефактами](../../artifact_management.md)**.
@@ -7,6 +9,16 @@
 - **Release Evidence** — JSON-отчет (снимок состояния), содержащий метаданные релиза, результаты тестов и отчеты о безопасности. Используется для аудита и комплаенса.
 - **GitLab Release** — объект в интерфейсе GitLab, связывающий тег, описание изменений (Changelog) и ссылки на активы. Создается через блок `release:` в `.gitlab-ci.yml`.
 - **SBOM (Software Bill of Materials)** — декларативный список всех компонентов и зависимостей. В современных пайплайнах (2026+) генерация SBOM является обязательным шагом для обеспечения безопасности цепочки поставок (SLSA).
+
+## Предварительные требования
+
+- **GitLab 16.0+** — для декларативного блока `release:` в `.gitlab-ci.yml`.
+- **GitLab 18.4+** — для встроенного `glab` CLI (автоматическая замена `release-cli`).
+- **Роль Maintainer или выше** — права на создание тегов, релизов и protected tags в проекте.
+- **Container Registry / Package Registry** — настроенный и доступный реестр для публикации артефактов.
+- **GitLab Runner** — доступный раннер с поддержкой необходимых образов (docker, alpine, node).
+- **`glab` CLI** (опционально) — для локальной отладки и ручного управления релизами через API.
+- **Cosign / Sigstore** (опционально, рекомендуется) — для подписи артефактов и SBOM в production-средах.
 
 ## Основные концепции
 
@@ -43,7 +55,7 @@
 **Release Evidence** — автоматически генерируемый JSON-отчет, содержащий метаданные релиза для аудита и комплаенса. Включает:
 
 - **Список коммитов** между предыдущим и текущим релизом
-- **Результаты тестов** (пройдены/провалены,覆盖率)
+- **Результаты тестов** (пройдено/провалено)
 - **SBOM** (состав зависимостей)
 - **Аттестации сборки** (SLSA Provenance — где и как был собран артефакт)
 - **Подписи** (Cosign/GPG)
@@ -65,10 +77,10 @@ curl --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" \
 ### Инструментарий и современное состояние
 
 С версии GitLab **16.0** основным инструментом является декларативное ключевое слово `release:`.
-- **`release-cli`**: Начиная с версии **17.0**, инструмент находится в режиме поддержки. Рекомендуется использовать встроенные возможности YAML или прямой вызов **GitLab Releases API**.
+- **`release-cli`**: Устарел в GitLab **18.0**, запланировано удаление в **20.0**. Начиная с 18.4 по умолчанию используется **GitLab CLI (`glab`)** v1.58.0+. Для новых пайплайнов используйте встроенный `release:` или прямой вызов **GitLab Releases API**.
 - **CI/CD Catalog**: Требует строгого соблюдения SemVer. Неподдерживаемые форматы тегов блокируют публикацию компонентов в каталоге.
 - **Передача версии**: Для передачи вычисленной версии между этапами используется механизм `artifacts:reports:dotenv`.
-- **OIDC (id_tokens)**: Используется для безопасной аутентификации в облаках и подписи релизных артефактов (например, через Sigstore).
+- **OIDC (id_tokens)**: Используется для безопасной аутентификации во внешних системах и подписи релизных артефактов (например, через Sigstore).
 
 ## Практические сценарии
 
@@ -158,6 +170,8 @@ stages:
 
 create_release:
   stage: release
+  # release-cli устарел в GitLab 18.0 и будет удален в 20.0.
+  # Для GitLab 18.4+ встроенный `release:` работает через glab без дополнительного образа.
   image: registry.gitlab.com/gitlab-org/release-cli:latest
   needs:
     - job: analyze_commit
@@ -203,7 +217,7 @@ publish_image:
 ```yaml
 release_automated:
   stage: release
-  image: node:22-alpine
+  image: node:24-alpine
   before_script:
     - apk add --no-cache git
     - npm install -g semantic-release @semantic-release/gitlab @semantic-release/git
@@ -285,12 +299,12 @@ sign_release:
 
 ### Сценарий 5: GitLab Releases API через curl (замена release-cli)
 
-Начиная с GitLab 17.0, `release-cli` в режиме поддержки. Рекомендуется прямой вызов API.
+Начиная с GitLab 18.4, блок `release:` по умолчанию использует **GitLab CLI (`glab`)** v1.58.0+. Прямой вызов API остаётся универсальным вариантом для сложных сценариев.
 
 ```yaml
 create_release_api:
   stage: release
-  image: alpine:3.19
+  image: alpine:3.24
   before_script:
     - apk add --no-cache curl jq
   script:
@@ -356,7 +370,7 @@ create_release_api:
 ```yaml
 cross_project_release:
   stage: release
-  image: alpine:3.19
+  image: alpine:3.24
   before_script:
     - apk add --no-cache curl jq
   script:
@@ -403,7 +417,7 @@ cross_project_release:
 | **`Validation failed: SemVer required`** | Ошибка при публикации в CI/CD Catalog | Убедитесь, что формат тега строго соответствует `vX.Y.Z` (без суффиксов) |
 | **`403 Forbidden` при создании релиза** | Недостаточно прав у `CI_JOB_TOKEN` | Проверьте настройки «Token Access» в проекте или используйте персональный токен с правами `api` |
 | **`Release Evidence missing`** | JSON-отчет не был сформирован | Проверьте, что все задачи стадии `test` завершились успешно и сгенерировали отчеты |
-| **`release-cli: command not found`** | Используется image без release-cli | Добавьте `image: registry.gitlab.com/gitlab-org/release-cli:latest` или перейдите на API |
+| **`release-cli: command not found`** | Устаревший release-cli удален в GitLab 20.0 | Используйте встроенный `release:` или прямой вызов Releases API; для CLI — `glab` v1.58.0+ |
 | **`dotenv: file too large`** | Файл `variables.env` превышает 5 МБ | Уменьшите количество передаваемых переменных или используйте артефакты для передачи данных |
 | **Protected tag error** | Тег не может быть создан из-за настроек защиты | Создайте тег вручную через UI или временно снимите защиту тега |
 | **`release:` ignored** | Блок `release:` не выполняется | Проверьте, что `rules` не блокируют задачу и что `tag_name` указан явно |
@@ -538,7 +552,7 @@ curl --request DELETE --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" \
 
 **Этап 4: Rollback деплоя**
 
-Откат деплоя — отдельная операция от отката релиза. См. **[Стратегии развёртывания](../../Deployment_Strategies/deployment_health_checks_and_rollback.md)** и **[Canary/Blue-Green](../../Deployment_Strategies/comparison.md)**.
+Откат деплоя — отдельная операция от отката релиза. См. **[Проверки здоровья и откат развертывания](../../../CI-CD/Deployment_Strategies/deployment_health_checks_and_rollback.md)** и **[Сравнение стратегий развертывания](../../../CI-CD/Deployment_Strategies/comparison.md)**.
 
 **Важно:** Удаление тега не удаляет Docker-образ из реестра. Для полного отката необходимо также удалить образ:
 

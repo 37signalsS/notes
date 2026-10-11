@@ -1,5 +1,7 @@
 # Построение направленного ациклического графа (DAG) с использованием needs
 
+**Актуально для:** GitLab CI/CD 11.8+ / 18.6+
+
 Директива `needs` является ключевым инструментом оптимизации производительности в GitLab CI/CD, позволяющим отойти от традиционной линейной модели выполнения стадий в пользу графовой структуры (Directed Acyclic Graph, DAG). Это позволяет задачам игнорировать границы стадий и запускаться сразу по готовности зависимостей.
 
 ## Определения
@@ -55,6 +57,15 @@
 1.  **Обход стадий:** Задача запускается **сразу** после завершения указанных в `needs` задач. Не нужно ждать окончания всей стадии.
 2.  **Автоматическое управление артефактами:** `needs` автоматически устанавливает `dependencies`, загружая артефакты **только** от указанных задач.
 3.  **Ускорение обратной связи (Fail-Fast):** Критические задачи (например, быстрые тесты) могут начаться раньше, не дожидаясь долгих сборок, не связанных с ними.
+
+### Принцип работы планировщика DAG
+
+GitLab использует топологическую сортировку графа зависимостей для определения порядка выполнения задач. Планировщик работает в два этапа:
+
+1. **Компиляция графа:** При создании пайплайна GitLab анализирует все директивы `needs`, `stage` и `rules`, строит граф зависимостей и проверяет отсутствие циклов. При обнаружении циклической зависимости пайплайн не создаётся.
+2. **Выполнение по готовности:** Задача переходит в статус `pending` сразу после успешного завершения всех её прямых зависимостей, независимо от статуса других задач в той же или предыдущих стадиях. Это означает, что задача в стадии `test` может запуститься раньше, чем завершится задача в стадии `build`, если она зависит только от конкретной задачи сборки, а не от всей стадии.
+
+Артефакты передаются автоматически: если задача указана в `needs`, GitLab загружает её артефакты на раннер перед выполнением скриптов. Для задач, которые зависят от статуса другой задачи, но не нуждаются в её артефактах, используйте `dependencies: []` — это предотвращает ненужную передачу данных и ускоряет запуск.
 
 ### Сравнение needs и dependencies
 
@@ -159,20 +170,20 @@ build:
   stage: build
   parallel:
     matrix:
-      - PROVIDER: [aws, gcp, azure]
-  script: echo "Building for $PROVIDER"
+      - OS_TARGET: [ubuntu-22.04, debian-12, rockylinux-9]
+  script: echo "Building for $OS_TARGET"
 
 test:
   stage: test
   parallel:
     matrix:
-      - PROVIDER: [aws, gcp, azure]
+      - OS_TARGET: [ubuntu-22.04, debian-12, rockylinux-9]
   needs:
     - job: build
       parallel:
         matrix:
-          - PROVIDER: ['$[[ matrix.PROVIDER ]]'] # test:aws будет ждать только build:aws
-  script: echo "Testing for $PROVIDER"
+          - OS_TARGET: ['$[[ matrix.OS_TARGET ]]'] # test:ubuntu-22.04 будет ждать только build:ubuntu-22.04
+  script: echo "Testing for $OS_TARGET"
 ```
 
 ### Сценарий 5: Немедленный запуск (needs: [])
@@ -408,7 +419,6 @@ network:deploy:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
-  needs: ["network:diff"]
 ```
 
 **Мониторинг инфраструктуры (Consul/Prometheus):**
@@ -619,3 +629,17 @@ deploy:
 - **Монорепозитории:** Используйте `needs: []` для быстрого фидбека от линтеров и валидаторов, параллельно с тяжелыми сборками.
 - **Микросервисы:** `needs:project` позволяет связать пайплайны разных сервисов без API-скриптов.
 - **Большие матрицы (50+ задач):** Используйте `needs:parallel:matrix` для связывания 1:1, чтобы избежать "fan-out" и исчерпания квоты артефактов.
+
+## Дополнительная информация
+
+-   **[Основы GitLab CI/CD](../Concepts/gitlab_ci_basics.md)** — базовые концепции, стадии, артефакты и переменные.
+-   **[Продвинутые рабочие процессы](./gitlab_ci_advanced_workflow.md)** — архитектурные паттерны, Fan-in/Fan-out, Merge Queue, Security.
+-   **[Матричные сборки и сериализация](./workflow_rules/matrix_builds_and_serialization.md)** — `parallel:matrix`, `resource_group`, оптимизация артефактов.
+-   **[Обзор Runner и Executor](../gitlab_ci_runners_executors.md)** — изоляция и типы исполнителей.
+-   **[Окружения и развертывания](../../Concepts/environments_and_deployments.md)** — deployment approvals и protected environments.
+-   **[Кэширование и артефакты](../gitlab_ci_caching/caching_overview.md)** — стратегии кэширования.
+-   **[Артефакты в GitLab CI](../gitlab_ci_caching/gitlab_ci_artifacts.md)** — artifacts, reports, retention.
+-   **[Родительско-дочерние пайплайны](../Downstream_Pipelines/parent_child_pipelines.md)** — bridge jobs и downstream пайплайны.
+-   **[Compliance и Audit](../compliance_and_audit.md)** — compliance pipelines и approval rules.
+-   **[Container Registry](../container_registry.md)** — интеграция Registry с CI/CD пайплайнами.
+-   **[Pipeline Schedules](../pipeline_schedules.md)** — cron-расписания и Scheduled Execution Policies.

@@ -1,5 +1,7 @@
 # Гибкость шаблонов через механизм extends
 
+**Актуально для:** GitLab CI 19.x; Docker 29.x (DinD); Kubernetes 1.37.x.
+
 ## Определения
 
 **`extends`** — директива GitLab CI для реализации наследования конфигурации. Она позволяет заданию (job) заимствовать параметры из другого задания (обычно «скрытого»), обеспечивая переиспользование кода без нарушения принципа DRY (Don't Repeat Yourself). Механизм работает на этапе компиляции пайплайна и выполняет обратное глубокое слияние (reverse deep merge), где дочернее задание имеет абсолютный приоритет над родительским шаблоном.
@@ -15,6 +17,7 @@
 > - GitLab ограничивает глубину наследования `extends` до **11 уровней**. Рекомендуется не более **3 уровней** для обеспечения читаемости и сопровождаемости.
 > - При нарушении лимита пайплайн не компилируется с ошибкой `exceeded max levels of inheritance`.
 > - Избегайте «глубоких» иерархий (База → Язык → Фреймворк → Сервис → Окружение). Предпочитайте «плоские» структуры с комбинированием через `extends: [.base, .specific]`.
+> - Глобальные `image`, `services`, `cache`, `before_script`, `after_script` на верхнем уровне YAML объявлены устаревшими (GitLab 18.x, удаление планируется в 19.0+). В шаблонах задавайте их через блок `default:`.
 
 ### Архитектура наследования
 
@@ -143,8 +146,9 @@ build-app:
 ### Взаимодействие с другими директивами
 
 - **`needs` (DAG):** `extends` не наследует зависимости `needs` автоматически. Каждое задание должно определять свои `needs` самостоятельно, либо наследовать их через `extends` как часть структуры.
-- **`default` (Глобальные настройки):** Значения из `extends` имеют приоритет над глобальными настройками `default`.
-- **`id_tokens` (v17.x+):** Рекомендуется выносить конфигурацию OIDC/JWT аутентификации в базовые шаблоны (`.auth_base`), чтобы проекты могли безопасно подключаться к ресурсам через `extends`.
+- **`default` (Глобальные настройки):** Значения из `extends` имеют приоритет над глобальными настройками `default`. Начиная с GitLab 18.x глобальные `image`, `services`, `cache`, `before_script`, `after_script` на верхнем уровне YAML считаются устаревшими — выносите их в блок `default:`, чтобы шаблоны не ломались при будущем удалении.
+- **`id_tokens` (OIDC):** Синтаксис доступен с GitLab 15.7, а с 16.4 блок `id_tokens` можно задавать глобально в `default:` — тогда он применяется ко всем заданиям и наследуется через `extends`. Устаревшие переменные `CI_JOB_JWT`/`CI_JOB_JWT_V2` удалены в 17.0 — используйте только `id_tokens`. Рекомендуется выносить конфигурацию OIDC/JWT аутентификации в базовые шаблоны (`.auth_base`), чтобы проекты могли безопасно подключаться к ресурсам через `extends`.
+- **`secrets` (Vault / Secrets Manager):** Динамическое извлечение секретов через ключ `secrets` (Vault — давняя поддержка; native GitLab Secrets Manager, ключ `gitlab_secrets_manager`, — public beta с GitLab 19.0). Работа полагается на корректно настроенные `id_tokens`; при наследовании через `extends` проверяйте итоговую конфигурацию `glab ci lint --show-expanded` и объявляйте секреты там, где они действительно нужны.
 - **`rules` внутри `include`:** Условное подключение шаблонов (`include:rules`) выполняется **до** обработки `extends`, что позволяет подключать шаблоны динамически.
 
 ## Предварительные условия
@@ -153,16 +157,19 @@ build-app:
 - **GitLab Runner:** настроенный с Docker или Kubernetes исполнителем. Для `extends` нет особых требований к типу раннера — механизм работает на уровне компиляции пайплайна.
 - **Доступ к шаблонам:** Наличие прав `read_repository` (роль `Reporter`+) к проекту с общими шаблонами (при использовании `include:project`). Для приватных групп может потребоваться настройка `Token Access`.
 - **Согласованность стадий:** Стадии (`stages`), указанные в шаблонах, должны быть определены в локальном файле `.gitlab-ci.yml`, иначе пайплайн не пройдет валидацию.
-- **Версия GitLab:** Базовый `extends` работает с любой версии GitLab. Для комбинации с `inputs` рекомендуется GitLab 16.0+. Для `id_tokens` — GitLab 17.x+.
+- **Версия GitLab:** Базовый `extends` работает с любой версии GitLab. Для комбинации с `inputs` рекомендуется GitLab 16.0+. Для `id_tokens` — GitLab 15.7+ (глобальный `default:` — с 16.4), а для Secrets Manager — GitLab 19.0+.
 
 ### Рекомендуемый стек версий
 
 | Компонент | Минимальная версия | Рекомендуемая версия |
 | :--- | :--- | :--- |
-| GitLab | 11.3 | 17.x+ |
+| GitLab | 11.3 | 19.x |
 | GitLab Runner | 12.0 | 17.x+ |
-| `!reference` | 14.3 | 17.2+ (индексы массивов) |
+| `!reference` | 13.9 | 17.2+ (индексы массивов) |
 | `inputs` + `extends` | 16.0 | 17.x+ |
+| `id_tokens` (OIDC) | 15.7 | 16.4+ (глобально через `default:`) |
+| `secrets` (Vault) | 13.4 | 17.x+ (`gitlab_secrets_manager` — public beta с 19.0) |
+| `default:` (вместо глобальных `image`/`before_script`) | любая | рекомендуется (глобальные ключи объявлены устаревшими) |
 
 ## Практические сценарии
 
@@ -253,7 +260,12 @@ deploy-job:
 # ci-templates/deploy.yml
 .deploy-base:
   stage: deploy
-  image: bitnami/kubectl:latest
+  # Официальный образ kubectl; версия закреплена, не latest.
+  # bitnami/kubectl более не публикуется в Docker Hub (каталог перенесён в
+  # bitnamilegacy без обновлений безопасности).
+  image:
+    name: registry.k8s.io/kubectl:v1.37.0
+    entrypoint: [""]
   variables:
     ENVIRONMENT: "undefined"
   script:
@@ -404,7 +416,7 @@ test-integration:
   script:
     - npm run test:integration
   services:
-    - postgres:16
+    - postgres:18
   variables:
     POSTGRES_DB: test_db
 ```
@@ -415,13 +427,13 @@ test-integration:
 
 ```bash
 # Просмотр полной (развернутой) конфигурации
-glab ci lint --show-expanded
+glab ci config compile
 
 # Проверка синтаксиса с имитацией переменных
-glab ci lint --dry-run --variable CI_PIPELINE_SOURCE=merge_request_event
+glab ci lint --dry-run --ref <branch>
 
 # Экспорт полного YAML для анализа
-glab ci lint --show-expanded > full_pipeline.yml
+glab ci config compile > full_pipeline.yml
 cat full_pipeline.yml | grep -A5 "test-unit"
 ```
 
@@ -429,6 +441,71 @@ cat full_pipeline.yml | grep -A5 "test-unit"
 1. `Pipeline Editor` → вкладка «View merged YAML» — визуальная проверка итога
 2. `glab ci lint --show-expanded` — локальная проверка перед пушем
 3. Логи задачи: добавьте `export` или `env` в `script` для проверки финальных значений переменных
+
+### Сценарий 9: Миграция с этапа Include на extends
+
+Ключевой переход эволюции — превращение «монолитного» шаблона (этап 2) в библиотеку скрытых заданий (этап 3). Ниже показан рефакторинг без изменения поведения для потребителей.
+
+**До: монолитный шаблон, где каждый job дублирует подготовку окружения**
+```yaml
+# ci-templates/backend.yml (этап 2)
+build-backend:
+  stage: build
+  image: docker:29.8
+  services:
+    - docker:29.8-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
+
+test-backend:
+  stage: test
+  image: docker:29.8
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
+  services:
+    - postgres:18
+  script:
+    - npm test
+```
+
+**После: декомпозиция на атомарные скрытые задания и сборка через `extends`**
+```yaml
+# ci-templates/backend.yml (этап 3)
+.docker-login:
+  image: docker:29.8
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
+
+.docker-base:
+  extends: .docker-login
+  stage: build
+  variables:
+    DOCKER_BUILDKIT: "1"
+
+build-backend:
+  extends: .docker-base
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
+
+test-backend:
+  extends: .docker-login
+  stage: test
+  services:
+    - postgres:18
+  script:
+    - npm test
+```
+
+**Порядок миграции (devops-практика):**
+1. **Аудит дублирования:** `grep -n "before_script" ci-templates/*.yml` — одинаковые блоки подготовки станут кандидатами на вынос.
+2. **Декомпозиция:** вынесите повторяющиеся блоки (`image`, `before_script`, `tags`, `cache`) в атомарные скрытые задания; каждый блок отвечает за одну зону ответственности.
+3. **Сборка иерархии:** соберите задания через `extends` и проверьте, что итоговый YAML идентичен прежнему (`glab ci lint --show-expanded`, сравнение diff).
+4. **Семантическая фиксация:** закрепите новую версию шаблона SemVer-тегом (`v3.0.0`) и обновите `ref` в `include:project` у пилотного проекта.
+5. **Canary-роллаут:** распространяйте на группы/инстанс постепенно (пилотный проект → группа → весь инстанс), отслеживая статус пайплайнов. Откат — переключение `ref` на прежний тег.
+
+> **Правило:** на этапе 3 потребители работают только с именами скрытых заданий (`extends: .docker-login`), а не с их содержимым. Интерфейс шаблона — имена скрытых заданий и переменные, которые они ожидают.
 
 ## Валидация
 
@@ -441,18 +518,18 @@ cat full_pipeline.yml | grep -A5 "test-unit"
 glab ci lint
 
 # Полный разбор с отображением итогового YAML
-glab ci lint --show-expanded
+glab ci config compile
 
 # Проверка с имитацией переменных окружения
-glab ci lint --dry-run --variable CI_PIPELINE_SOURCE=merge_request_event
+glab ci lint --dry-run --ref <branch>
 
 # Экспорт полной конфигурации для аудита
-glab ci lint --show-expanded > expanded.yml
+glab ci config compile > expanded.yml
 ```
 
 ### Валидация через Web UI
 
-1.  **Pipeline Editor:** В интерфейсе GitLab (`Build -> Pipeline Editor`) используйте вкладку **«View merged YAML»**. Это SSoT (Single Source of Truth) того, как сервер видит ваш пайплайн после всех слияний.
+1.  **Pipeline Editor:** В интерфейсе GitLab (`Build -> Pipeline Editor`) используйте вкладку **«View merged YAML»**. Это эталонная конфигурация того, как сервер видит ваш пайплайн после всех слияний.
 2.  **CI Lint API:** Программная проверка через HTTP-запросы (используется в CI-пайплайнах самих шаблонов):
     ```bash
     curl --request POST \
@@ -490,6 +567,34 @@ script:
 | `Input 'X' must match regex` | При комбинации с `inputs`: переданное значение нарушает правила валидации. | Проверьте входные данные на соответствие регулярному выражению из `spec:inputs`. |
 | Изменение шаблона ломает проекты | Родительский шаблон изменил структуру (добавил обязательный ключ или переименовал переменную). | Используйте SemVer для версионирования шаблонов. Закрепляйте версию через `ref: vX.Y.Z` в `include:project`. |
 
+## Лучшие практики и очистка
+
+**Проектирование иерархии:**
+- Ограничивайте глубину наследования 3 уровнями, отдавайте предпочтение плоской композиции `extends: [.infra-base, .specific]`.
+- Имя скрытого задания — это публичный интерфейс шаблона. Используйте осмысленные префиксы (`.build-`, `.test-`, `.deploy-`, `.auth-`) и не меняйте их без SemVer-мажора.
+- Декомпозируйте по зонам ответственности (инфраструктура / технологический стек / конкретная задача) — см. Сценарий 7.
+
+**Версионирование и роллаут:**
+- Закрепляйте шаблон SemVer-тегом (`ref: vX.Y.Z`) в `include:project`; не используйте `ref: main` — изменение мгновенно ломает сотни пайплайнов.
+- Распространяйте новую ревизию канарейкой: пилотный проект → группа → инстанс. Откат — переключение `ref` на прежний тег.
+- Любое публичное изменение имени скрытого задания или добавляемой переменной — breaking change. Анонсируйте его в changelog шаблона.
+
+**Безопасность:**
+- Не храните секреты в скрытых заданиях. Для аутентификации используйте `CI_JOB_TOKEN`, `id_tokens` (OIDC) или блок `secrets` (Vault / GitLab Secrets Manager).
+- Объявляйте секреты точечно, в заданиях, которые их потребляют; избегайте выноса секретных значений в переменные уровня шаблона.
+
+**Контроль качества шаблона (в самом CI шаблонного репозитория):**
+- Добавьте job, который прогоняет `glab ci lint --show-expanded` на каждый MR в шаблоны и сверяет раскрытый YAML с эталоном.
+- Добавьте тест, гарантирующий, что скрытые задания не «протекают» в пайплайн как реальные (проверка списка заданий через CLI).
+
+**Сериализация гонок:**
+- Если несколько заданий через `extends` пишут в общий ресурс (кэш, реестр), добавьте `resource_group` — `extends` не даёт никаких гарантий взаимного исключения.
+
+**Очистка:**
+- Регулярно удаляйте неиспользуемые скрытые задания: `rg "extends:.*\.old-template" ci-templates/` показывает, кто ссылается на шаблон; отсутствие ссылок → удаление.
+- После миграции на этап 4 (Kaniko) закрывайте неиспользуемые `ref`-версии шаблонов политиками очистки реестра (`Package Registry cleanup`), а не блокировкой новых версий.
+- При удалении скрытого задания сначала выпустите мажорную версию без него и дождитесь, пока все потребители перейдут на новый `ref`.
+
 ## Преимущества и недостатки подхода
 
 | Характеристика | Описание |
@@ -498,6 +603,7 @@ script:
 | **Типизация** | Создает четкие стандарты заданий (Build, Test, Deploy) внутри организации. Иерархия шаблонов отражает архитектуру. |
 | **Гибкость** | Проекты переопределяют только нужные ключи, сохраняя остальные настройки от центральной команды. |
 | **Совместимость** | Работает с любым типом Runner и версией GitLab 11.3+. Интегрируется с `!reference`, `inputs`, `include`. |
+| **Изоляция контекста** | Скрытое задание (с префиксом `.`) не запускается напрямую — только как шаблон через `extends`. Риск случайного запуска промежуточного слоя минимален. |
 | **Скрытая сложность (Минус)** | При глубокой вложенности (>3 уровней) сложно понять итоговый `script` без спецсредств (Pipeline Editor, `glab ci lint`). |
 | **Хрупкость (Минус)** | Изменение структуры родительского шаблона может привести к неожиданному поведению в дочерних заданиях. Требует SemVer-версионирования. |
 | **Замена массивов (Минус)** | Массивы (`script`, `rules`, `tags`) не дополняются, а полностью замещаются. Для обхода required `!reference`. |
@@ -507,10 +613,21 @@ script:
 
 - **Предыдущий этап:** [Централизация с include](./evolution_include.md) — основы межфайловых подключений.
 - **Следующий этап:** [Абстрагирование с Kaniko](./evolution_kaniko.md) — решение проблем безопасности через инкапсуляцию.
-- **Технический SSoT:** [Механизм extends](../extends_keyword.md) — исчерпывающий справочник правил слияния, таблицы типов данных и сценарии.
+- **Полный справочник:** [Механизм extends](../extends_keyword.md) — исчерпывающий справочник правил слияния, таблицы типов данных и сценарии.
 - **Альтернатива для скриптов:** [Механизм !reference](../reference_and_yaml_anchors.md) — способ дополнения, а не замены массивов.
 - **Обзор механизмов:** [Переиспользуемые пайплайны: Обзор](../overview.md) — сравнение `extends`, `!reference`, `include`, `inputs`, компонентов.
 - **Обзор эволюции:** [Эволюция переиспользуемого пайплайна](../evolution_example.md) — контекст всех этапов зрелости CI/CD.
 - **Валидация:** [Валидация и версионирование](../../Advanced/pipeline_validation_and_versioning.md) — методы проверки корректности конфигурации.
 - **Отладка:** [Отладка и устранение неполадок](../../Advanced/debugging_and_troubleshooting.md) — инструменты и техники диагностики.
+- **Директивы:** [Директивы GitLab CI/CD](../../Advanced/workflow_rules/directives_definitions.md) — справочник `default`, `rules`, `!reference`, `extends`.
+- **Сериализация:** [Сериализация и параллелизм](../../Advanced/workflow_rules/matrix_builds_and_serialization.md) — `resource_group` для исключения гонок общего кэша/реестра.
 - **Безопасность:** [Переменные и секреты](../../Concepts/gitlab_ci_variables_secrets.md) — управление данными внутри иерархий `extends`.
+- **Workflow rules:** [Директивы управления запуском](../../Advanced/workflow_rules/directives_definitions.md) — `workflow:rules`, `auto_cancel`.
+- **Parent-Child пайплайны:** [Родительско-дочерние пайплайны](../../Advanced/Downstream_Pipelines/parent_child_pipelines.md) — декомпозиция сложных пайплайнов.
+- **Матричные сборки:** [Матричные сборки и сериализация](../../Advanced/workflow_rules/matrix_builds_and_serialization.md) — `parallel:matrix`, `resource_group`.
+- **Артефакты и кэш:** [Артефакты в GitLab CI](../../Advanced/gitlab_ci_caching/gitlab_ci_artifacts.md) и [Обзор кэширования](../../Advanced/gitlab_ci_caching/caching_overview.md) — policies, reports.
+- **Сканирование безопасности:** [Сканирование безопасности в GitLab CI](../../Concepts/gitlab_ci_security_scanning.md) — SAST, DAST, Secret Detection.
+- **Compliance:** [Compliance и Audit в GitLab CI](../../Advanced/compliance_and_audit.md) — Pipeline Execution Policies, protected environments.
+- **Управление раннерами:** [Управление парком Runner](../../Advanced/runner_fleet_management.md) — регистрация, tags, protected runners, KEDA.
+- **Окружения и деплой:** [Окружения и развертывания](../../Concepts/environments_and_deployments.md) — protected environments, approvals.
+- **Администрирование инстанса:** [Администрирование GitLab](../../Advanced/gitlab_instance_administration.md) — мониторинг, бэкапы, HA, Geo.

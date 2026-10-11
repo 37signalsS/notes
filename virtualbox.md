@@ -273,3 +273,5 @@ find "/lib/modules/$(uname -r)/" \
 | **KVM/QEMU** | Тип 1 | Производительность, интеграция с Linux |
 | **VMware Workstation** | Тип 2 | 3D-графика, коммерческая поддержка |
 | **GNOME Boxes** | Тип 1 (KVM) | Простота, интеграция с GNOME |
+
+# force reindex test

@@ -58,6 +58,18 @@ HEALTHCHECK NONE
 2. **Переопределение:** Любая новая инструкция `HEALTHCHECK` в Dockerfile полностью заменяет старую.
 3. **Отключение (`NONE`):** Чтобы полностью убрать мониторинг, заданный в родительском образе, используйте `HEALTHCHECK NONE`. Это критично при миграции в Kubernetes, где используются нативные пробы.
 
+#### Внутренний механизм выполнения проверки
+
+Docker Engine выполняет команду `HEALTHCHECK` как отдельный дочерний процесс внутри PID namespace контейнера. Этот процесс **не является PID 1**: он наследует среду выполнения контейнера (сеть, файловая система, права `USER`), но работает изолированно от основного приложения. На основе кода возврата и таймаута Docker обновляет статус в `docker ps` и `docker inspect`, но **не убивает контейнер** автоматически при `unhealthy`. Перезапуск определяется политикой `restart` (`no`, `on-failure`, `always`, `unless-stopped`) или внешним монитором (Autoheal, Swarm).
+
+Ключевые особенности:
+- **Таймаут команды:** Если проверка не завершилась за `--timeout`, Docker прерывает её и помечает попытку как неудачную.
+- **Права доступа:** Проверка выполняется от имени пользователя, указанного в `USER`. Если `USER` не задан — от `root`.
+- **Изоляция:** Healthcheck-процесс не имеет доступа к PID namespace хоста и не может влиять на PID 1 контейнера.
+- **Ограничения:** Количество одновременных запусков healthcheck ограничено Docker Engine. При длительных проверках следите за накоплением процессов через `docker exec <c> ps aux`.
+
+Для гарантии проброса сигналов и уборки зомби-процессов в контейнере используйте exec-form для `CMD`/`ENTRYPOINT` и инициализацию через **tini** или **dumb-init** (см. [Init Process и tini](../init_process_tini.md)).
+
 ### Сигнал остановки: STOPSIGNAL
 
 Обеспечивает **Graceful Shutdown** (корректное завершение), позволяя приложению закрыть соединения, сохранить данные и освободить ресурсы.
@@ -117,7 +129,7 @@ HEALTHCHECK --interval=5m --timeout=3s --start-period=30s --start-interval=2s \
   CMD curl -f http://localhost:8080/health || exit 1
 ```
 
-**Результат:** Приложение переходит в `healthy` через 2-4 секунды после готовности, а не через 30 секунд (станартный интервал).
+**Результат:** Приложение переходит в `healthy` через 2-4 секунды после готовности, а не через 30 секунд (стандартный интервал).
 
 ### Сценарий 2: Веб-сервер Nginx (Graceful Exit)
 
@@ -382,7 +394,7 @@ services:
 
 ### Ошибка 5: Healthcheck тратит слишком много ресурсов
 
-**Причина:** Тяжелые проверки (запросы к БД,大型 скрипты) на каждом интервале нагружают систему.
+**Причина:** Тяжелые проверки (запросы к БД, большие скрипты) на каждом интервале нагружают систему.
 
 **Решение:**
 - Используйте `wget --spider` вместо полного скачивания.
@@ -436,6 +448,16 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
 HEALTHCHECK --start-period=90s --interval=30s --timeout=5s --retries=3 ...
 ```
 
+### Воспроизводимость и надёжность healthcheck
+
+Проверка здоровья должна быть детерминированной: повторный запуск в идентичных условиях должен давать идентичный результат.
+
+**Правила:**
+- Не используйте в проверке внешние зависимости (удалённые API, БД). Это делает результат нестабильным и приводит к ложным срабатываниям.
+- Не добавляйте случайные задержки (`sleep $((RANDOM % 5))`). Docker сам управляет интервалом.
+- Фиксируйте пути и порты (`127.0.0.1`, `localhost`). Избегайте зависимостей от DNS/TLS-сертификатов, если это возможно.
+- Указывайте `CMD` в exec-форме, чтобы избежать инъекций через shell: `HEALTHCHECK CMD ["curl", "-f", "http://localhost:8080/health"]`.
+
 ### Порядок инструкций в Dockerfile
 
 ```dockerfile
@@ -474,6 +496,35 @@ docker inspect --format='{{.State.Health.Status}}' <container_id>
 docker inspect --format='{{range .State.Health.Log}}{{.Output}}{{end}}' <container_id>
 ```
 
+### Методы валидации
+
+После каждого изменения Dockerfile, влияющего на `HEALTHCHECK` или `STOPSIGNAL`, выполняйте проверку, чтобы убедиться, что контейнер переходит в ожидаемые состояния и корректно завершается:
+
+```bash
+# 1. Сборка и запуск без кэша для чистого воспроизведения
+DOCKER_BUILDKIT=1 docker build --no-cache -t myapp:test .
+docker run -d --name health-test --rm myapp:test
+
+# 2. Просмотр истории проверок здоровья: сколько попыток и статус
+docker inspect --format='{{json .State.Health}}' health-test | jq
+
+# 3. Проверка, что unhealthy вызывает перезапуск (restart policy)
+docker inspect --format='{{.HostConfig.RestartPolicy}}' health-test
+docker ps --filter "name=health-test" --format "{{.Status}}"
+
+# 4. Проверка graceful shutdown: stop timeout и exit code
+time docker stop --timeout 30 health-test
+docker inspect --format='{{.State.ExitCode}}' health-test
+# 0 = корректное завершение, 137 = SIGKILL, 143 = SIGTERM обработан
+```
+
+**Валидация прав и окружения:**
+
+```bash
+# Проверка, что healthcheck выполняется от правильного пользователя
+docker exec health-test ps -o pid,user,cmd -C "$(docker inspect --format='{{.Config.Healthcheck.Test[1]}}' health-test)"
+```
+
 ### Отключение healthcheck при отладке
 
 ```bash
@@ -488,7 +539,51 @@ services:
       disable: true
 ```
 
-## Граничные случаи и ограничения
+### Сценарий 11: Standalone Docker с внешним монитором Autoheal
+
+В standalone Docker (без Swarm/Kubernetes) для автоматического перезапуска `unhealthy`-контейнеров используется контейнер **Autoheal**. Он опрашивает Docker API и перезапускает контейнеры со статусом `unhealthy` (graceful stop с заданным `stop_timeout`, затем start).
+
+```yaml
+# docker-compose.yml
+services:
+  autoheal:
+    image: willfarrell/autoheal:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      AUTOHEAL_INTERVAL: 30
+      AUTOHEAL_START_PERIOD: 120
+      AUTOHEAL_DEFAULT_STOP_TIMEOUT: 30
+
+  app:
+    image: myapp:1.0.0
+    restart: on-failure
+    labels:
+      - "autoheal=true"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+```
+
+**Как это работает:**
+1. Docker помечает контейнер `unhealthy` после `retries` неудач.
+2. Autoheal опрашивает Docker API (`GET /containers/json?filters=...`) и находит контейнеры со статусом `unhealthy`.
+3. Autoheal вызывает API `POST /containers/{id}/restart?t=30` — graceful stop (SIGTERM, до 30 с) и start одним вызовом.
+4. `AUTOHEAL_START_PERIOD` — однократная задержка первого прохода монитора после его собственного старта; для защиты медленно стартующих приложений используйте `start_period` в healthcheck — см. [Autoheal в Docker — Сценарий 5](../../Docker_troubleshooting/docker_autoheal.md#Сценарий-5-Предотвращение-ложных-перезапусков-при-медленном-старте).
+
+**Валидация:**
+```bash
+# Просмотр событий Autoheal
+docker events --filter 'event=health_status' --filter 'event=restart' --format '{{.Time}} {{.Actor.Attributes.name}} {{.Action}}'
+
+# Проверка логов Autoheal
+docker logs autoheal --since 5m
+```
+
+### Граничные случаи и ограничения
 
 ### Зависимость от утилит в образе
 
@@ -564,9 +659,8 @@ services:
 | :--- | :--- | :--- |
 | **Docker Standalone** | Определяет статус в `docker ps` | Используйте как есть |
 | **Docker Swarm** | Автоматический перезапуск unhealthy-контейнеров | Опционально, но рекомендуется |
-| **Kubernetes** | **Игнорируется** если есть нативные пробы | Определите `livenessProbe`/`readinessProbe` |
 | **Docker Compose** | Используется с `depends_on: condition: service_healthy` | Рекомендуется для зависимостей |
-| **AWS ECS** | Используется для placement и health checks | Рекомендуется |
+| **Kubernetes** | **Игнорируется** если есть нативные пробы | Определите `livenessProbe`/`readinessProbe` |
 
 ### Проверка в CI/CD
 
@@ -579,7 +673,53 @@ docker inspect --format='{{json .Config.Healthcheck}}' myapp:latest | jq
 
 Отсутствие `HEALTHCHECK` или `null` означает, что проверка здоровья не настроена.
 
+### Ограничение ресурсов проверки
+
+По умолчанию healthcheck-процесс наследует лимиты cgroup контейнера. Если проверка слишком тяжелая, она может повлиять на стабильность приложения:
+
+```bash
+# Запуск с дополнительными лимитами CPU и памяти
+docker run -d \
+  --cpus 0.5 \
+  --memory 128m \
+  --pids-limit 64 \
+  myapp:1.0.0
+```
+
+**Рекомендации:**
+- Используйте легковесные утилиты (`wget --spider`, `nc -z`, `pg_isready`).
+- Для TCP-проверок ограничьте время выполнения: `timeout 2 bash -c 'cat < /dev/null > /dev/tcp/localhost/3306'`.
+- Увеличивайте `--interval` для фоновых воркеров (60–120 секунд).
+- Не выполняйте тяжелые скрипты (сбор метрик, полные дампы) внутри `HEALTHCHECK`.
+
+### Интеграция с Docker Events
+
+Для SRE-мониторинга подпишитесь на события здоровья:
+
+```bash
+# Мониторинг событий unhealthy в реальном времени
+docker events --filter 'event=health_status' --filter 'event=die' --format '{{.Time}} {{.Actor.Attributes.name}} {{.Action}}'
+
+# Пример вывода:
+# 2026-09-29T10:00:05Z web-app health_status: unhealthy
+# 2026-09-29T10:00:06Z web-app die exitCode=137
+```
+
+События интегрируются с внешними системами оповещения (Prometheus Alertmanager, Grafana, PagerDuty) через Docker Events API или `docker events` в скриптах.
+
 ## Дополнительная информация
+
+### Сравнение с внешними мониторами
+
+| Инструмент | Уровень | Преимущества | Недостатки |
+| :--- | :--- | :--- | :--- |
+| **HEALTHCHECK (Dockerfile)** | Слой образа | Встроен, самодокументируем, работает без внешних сервисов | Не заменяет внешние пробы в K8s |
+| **Autoheal** | Хост/Standalone | Автоматический перезапуск unhealthy, не требует оркестратора | Требует доступ к docker.sock, отдельный контейнер |
+| **Docker Swarm** | Оркестратор | Нативный перезапуск unhealthy-сервисов | Требует кластер Swarm |
+| **Kubernetes probes** | Оркестратор | Гибкие нативные пробы, интеграция с API | Игнорирует Dockerfile HEALTHCHECK |
+| **Внешний мониторинг (Prometheus, Zabbix)** | Инфраструктура | Централизованный сбор метрик, дашборды | Не влияет на жизненный цикл контейнера напрямую |
+
+**Вывод:** `HEALTHCHECK` — базовая единица мониторинга на уровне образа. Для standalone Docker дополните его Autoheal или внешними оповещающими системами. Для оркестраторов используйте нативные пробы.
 
 ### Рекомендации
 1. **Легковесность:** Проверка должна быть быстрой и не потреблять много ресурсов (избегайте тяжелых скриптов).
@@ -590,7 +730,7 @@ docker inspect --format='{{json .Config.Healthcheck}}' myapp:latest | jq
 **См. также:**
 - **[Autoheal в Docker](../../Docker_troubleshooting/docker_autoheal.md)** — автоматический перезапуск unhealthy-контейнеров.
 - **[Директивы Docker Compose](../../Docker_compose/docker_compose_directives.md)** — переопределение healthcheck в YAML (включая `disable: true`).
-- **[Проблема PID 1 и сигналы](./runtime_execution.md#решение-проблемы-pid-1)** — детали работы систем инициализации.
-- **[Healthchecks в Podman](../../Podman/podman_healthchecks.md)** — отличия в реализации.
-- **[Пробы в Kubernetes](../../Kubernetes/Base/probes.md)** — мониторинг в K8s.
+- **[Проблема PID 1 и сигналы](./runtime_execution.md)** — детали работы систем инициализации.
+- **[Healthchecks в Podman](../../../Podman/podman_healthchecks.md)** — отличия в реализации.
+- **[Пробы в Kubernetes](../../../Kubernetes/Base/probes.md)** — мониторинг в K8s.
 - **[Init Process и tini](../init_process_tini.md)** — подробный разбор tini, dumb-init, интеграция и best practices.

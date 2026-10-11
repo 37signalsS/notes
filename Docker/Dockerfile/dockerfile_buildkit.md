@@ -1,5 +1,7 @@
 # BuildKit: Современный движок сборки Docker
 
+**Актуально для:** Docker Engine 27.x+
+
 ## Определения
 
 **BuildKit** — это высокопроизводительный движок (backend) для сборки контейнерных образов, который полностью заменяет устаревший (legacy) механизм Docker. Он представляет собой оркестратор процессов сборки, преобразующий инструкции в эффективный граф выполнения.
@@ -23,10 +25,8 @@ BuildKit может работать в двух режимах:
 
 ### Программное обеспечение
 
-| Компонент | Минимальная версия | Рекомендуемая версия | Примечание |
-| :--- | :--- | :--- | :--- |
-| **Docker Engine** | 19.03 | 23.0+ | `docker build` = alias `docker buildx build` с 23.0 |
-| **Docker Buildx** | 0.7 | 0.14+ | Встроен в Docker Desktop; для Linux может потребоваться установка |
+| **Docker Engine** | 23.0 | 27.0+ | `docker build` = alias `docker buildx build` с 23.0 |
+| **Docker Buildx** | 0.10 | 0.16+ | Встроен в Docker Desktop; для Linux может потребоваться установка |
 | **buildctl** (standalone) | 0.11 | 0.16+ | Только для standalone-режима |
 
 ### Установка Buildx (Linux)
@@ -40,7 +40,7 @@ docker buildx install
 
 # Проверка
 docker buildx version
-# -> github.com/docker/buildx v0.14.0 ...
+# -> github.com/docker/buildx v0.16.x ...
 ```
 
 ### Проверка работоспособности
@@ -57,7 +57,7 @@ docker buildx ls
 # ->                 default         default  v0.16.x
 
 # Быстрая проверка — сборка простого образа
-echo 'FROM alpine:3.20' | docker buildx build --no-cache -
+echo 'FROM alpine:3.21' | docker buildx build --no-cache -
 # -> [internal] load build definition from Dockerfile
 # -> [internal] load .dockerignore
 # -> [builder 1/2] FROM docker.io/library/alpine:3.20
@@ -125,7 +125,6 @@ BuildKit поддерживает экспорт кэша в различные 
 - **Inline:** Кэш встраивается прямо в образ (стандарт Docker Hub).
 - **Registry:** Кэш пушится как отдельный манифест (идеально для `mode=max`).
 - **Local:** Кэш сохраняется в директорию на хосте.
-- **GHA / S3 / AzBlob:** Специализированные бэкенды для облачных сред (GitHub Actions, AWS, Azure).
 
 ### Garbage Collection
 
@@ -283,7 +282,7 @@ buildctl prune --all
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26-alpine AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 # Кэшируем модули Go на хосте сборщика
@@ -373,7 +372,7 @@ docker buildx build \
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM golang:1.24-alpine
+FROM golang:1.26-alpine
 WORKDIR /src
 # Подключаем SSH-агент для доступа к приватным модулям Go
 RUN --mount=type=ssh \
@@ -393,7 +392,7 @@ docker buildx build --ssh default=$SSH_AUTH_SOCK -t app:latest .
 
 ```bash
 docker buildx build \
-  --build-context baseimage=myreg.com/custom-base:latest \
+  --build-context baseimage=docker-image://myreg.com/custom-base:latest \
   --build-context src=./my-src \
   -t myapp:latest .
 ```
@@ -406,40 +405,6 @@ COPY --from=src /app /app
 ```
 
 ## Интеграция в CI/CD
-
-### GitHub Actions
-
-```yaml
-name: Build with BuildKit
-on:
-  push:
-    branches: [main]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: myorg/app:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
-```
 
 ### GitLab CI
 
@@ -595,7 +560,7 @@ docker buildx prune --all
 docker buildx du
 
 # Вывод LLB-графа для отладки
-DOCKER_BUILDKIT_DUMPl=1 docker buildx build -t app . 2>&1 | head -50
+DOCKER_BUILDKIT_DUMP=1 docker buildx build -t app . 2>&1 | head -50
 ```
 
 ## Лучшие практики
@@ -607,7 +572,7 @@ DOCKER_BUILDKIT_DUMPl=1 docker buildx build -t app . 2>&1 | head -50
 # syntax=docker/dockerfile:1
 
 # 2. Используйте multi-stage для минимизации размера образа
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26-alpine AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -648,18 +613,120 @@ docker buildx rm multi-arch-builder
 docker system prune -a --volumes
 ```
 
+## Валидация и проверка
+
+### Проверка конфигурации BuildKit
+
+```bash
+# Проверка версии BuildKit
+docker buildx version
+# → github.com/docker/buildx v0.16.x
+
+# Проверка статуса сборщика
+docker buildx ls
+# → NAME/NODE     DRIVER/ENDPOINT STATUS   BUILDKIT
+# → default*      docker
+# →                 default         default  v0.16.x
+
+# Проверка, что BuildKit активен
+docker buildx build --progress=plain . 2>&1 | head -5
+# → [internal] load build definition from Dockerfile
+# → [internal] load .dockerignore
+# → [builder 1/2] FROM docker.io/library/alpine:3.21
+```
+
+### Верификация кэширования
+
+```bash
+# Сборка с кэшированием (первый запуск — кэш пустой)
+docker buildx build \
+  --cache-to type=local,dest=/tmp/.buildx-cache,mode=max \
+  -t test-app:v1 .
+
+# Повторная сборка (должна использовать кэш)
+docker buildx build \
+  --cache-from type=local,src=/tmp/.buildx-cache \
+  -t test-app:v1 .
+# → [test-app 1/3] FROM docker.io/library/alpine:3.21
+# → [test-app 2/3] RUN apk add --no-cache curl
+# → CACHED [test-app 3/3] COPY . .
+```
+
+### Проверка mount-инструкций
+
+```bash
+# Сборка с output=local для проверки содержимого слоя
+docker buildx build \
+  --output type=local,dest=./output \
+  -t test-app:v1 .
+
+# Проверка, что секреты не попали в слой
+tar -xf ./output/test-app.tar
+grep -r "mysecret" ./output/  # → (пусто)
+```
+
+## Граничные случаи и ограничения
+
+### Rootless режим
+
+BuildKit поддерживает rootless-режим для сред без root-прав. В этом режиме `buildkitd` запускается от непривилегированного пользователя:
+
+```bash
+# Запуск buildkitd в rootless-режиме
+export XDG_RUNTIME_DIR=/run/user/1000
+buildkitd --addr unix:///run/user/1000/buildkitd.sock &
+
+# Подключение buildctl
+export BUILDKIT_HOST=unix:///run/user/1000/buildkitd.sock
+buildctl build --frontend=dockerfile.v0 --local context=. --local dockerfile=.
+```
+
+**Ограничения rootless:**
+- Нет поддержки `--privileged` mount
+- Нет доступа к `/var/lib/docker`
+- Ограниченный набор драйверов storage
+
+### Ограничения драйверов
+
+| Драйвер | Особенности |
+| :--- | :--- |
+| **docker** | Локальный, быстрый, требует Docker-демон |
+| **docker-container** | Изолированный, поддерживает multi-platform, требует container runtime |
+| **remote** | Удалённый buildkitd, нет персистентного кэша между сессиями |
+
+### Проблемы с кэшем при частых пересборках
+
+При очень частых сборках кэш может фрагментироваться. Рекомендуется периодически выполнять prune:
+
+```bash
+# Очистка только устаревших записей кэша
+docker buildx prune --filter until=72h
+
+# Проверка размера кэша
+docker buildx du
+# → TOTAL       UNTAGGED   RECLAIMABLE
+# → 2.1 GB      0 B        512 MB
+```
+
+### BuildKit в CI/CD с ограниченными ресурсами
+
+В CI-средах (GitLab CI, Jenkins) память ограничена 4–8 ГБ. Для ускорения сборки:
+- Используйте `--mount=type=cache` для кэширования пакетных менеджеров
+- Установите `NODE_OPTIONS="--max-old-space-size=4096"` для Node.js 22+, чтобы избежать OOM
+- Используйте `docker buildx bake` для параллельной сборки нескольких сервисов
+
 ## Известные проблемы и ограничения
 
 ### Проблемы совместимости
 
 - **`RUN --mount=type=cache`** — требует `# syntax=docker/dockerfile:1` в начале Dockerfile. Без этой директивы инструкция игнорируется или вызывает ошибку.
 - **Multi-platform без containerd** — требует включённого `containerd-snapshotter` в `daemon.json` для Docker 25+.
-- **Кэширование в Docker Desktop** —有些 бэкенды кэша (GHA, S3) могут работать нестабильно в Docker Desktop из-за ограничений виртуальной сети.
+- **Кэширование в Docker Desktop** — некоторые бэкенды кэша могут работать нестабильно в Docker Desktop из-за ограничений виртуальной сети.
 
 ### Ограничения производительности
 
 - **QEMU-эмуляция** значительно медленнее нативной сборки. Для регулярных multi-platform сборок рекомендуется использовать нативные билдеры (отдельные машины/контейнеры для каждой архитектуры).
-- **Кэширование через Registry** добавляет накладные расходы на сеть. При частых сборках рассмотрите `local` или `gha` бэкенд.
+- **Кэширование через Registry** добавляет накладные расходы на сеть. При частых сборках рассмотрите `local` бэкенд.
 
 ### Устаревшие функции
 
@@ -670,7 +737,8 @@ docker system prune -a --volumes
 
 - **[Docker Buildx: Мультиплатформенность](./docker_buildx.md)** — управление инстансами сборщиков.
 - **[Docker Bake: Декларативная сборка](./docker-bake.md)** — HCL/YAML конфигурации.
+- **[Бенчмарк Kaniko vs BuildKit vs Buildah в кластере](./dockerfile_build_tools_benchmark.md)** — замер времени, CPU и памяти сборки в Kubernetes с GitLab Runner.
 
 **Глубокое изучение:**
 - **[BuildKit Secrets](../../Vault/guides/vault_docker_integration.md)** — секреты в сборке. В Docker: `--mount=type=secret,id=mysecret` для передачи паролей/ключей без попадания в слои образа, совместимость с Vault Agent.
-- **[Cache Mounts](../../Linux/Core/kernel/psi.md)** — кэширование зависимостей. В Docker: `--mount=type=cache,target=/root/.cache/pip` для ускорения pip install, `--mount=type=cache,target=/go/pkg/mod` для Go модулей.
+- **[Контекст сборки и Cache Mounts](./dockerfile_build_context.md)** — оптимизация передачи файлов и кэширование зависимостей между сборками.

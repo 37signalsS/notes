@@ -1,5 +1,7 @@
 # Индексы в MySQL
 
+**Актуально для:** MySQL 8.0.x / 8.4 LTS
+
 Специфичные для MySQL структуры данных и стратегии индексирования. Общие теоретические основы (B-Tree, Hash, селективность, кардинальность) описаны в руководстве **[Индексы баз данных](../Concepts/indexes.md)**.
 
 ---
@@ -25,6 +27,25 @@
 **Индексная селективность (Index Selectivity)** — отношение количества уникальных значений в индексированном столбце к общему числу строк. Высокая селективность (близкая к 1.0) делает индекс наиболее эффективным.
 
 **Page Split** — операция разделения переполненной страницы B-Tree на две при вставке нового ключа. Происходит при заполнении страницы на 100%. Вызывает фрагментацию и снижение производительности.
+
+**Invisible Index** — индекс, существующий в базе, но невидимый для оптимизатора. Позволяет безопасно тестировать необходимость индекса в production без блокировок и риска деградации.
+
+**Skip Scan** — стратегия доступа к индексу (MySQL 8.0.13+), позволяющая использовать индекс для условий, где левый префикс составного индекса отсутствует. Полезен для колонок с низкой кардинальностью.
+
+**Index Merge** — оптимизация, при которой MySQL объединяет несколько индексов для выполнения одного запроса (intersection, union, sort-union). Используется, когда один индекс не покрывает все условия `WHERE`.
+
+---
+
+## Архитектура хранения индексов в InnoDB
+
+InnoDB хранит индексы в табличных пространствах (`ibdata1` + файлы `*.ibd` в режиме `file-per-table`) в виде B+Tree страниц по 16 KB.
+
+**Структура B+Tree в InnoDB:**
+*   **Уровень листьев (Leaf Level):** содержит указатели на строки таблицы (PK) или на PK для вторичных индексов. Данные в листьях связаны двусвязным списком, что позволяет выполнять `ORDER BY ... ASC/DESC` без дополнительной сортировки при совпадении порядка индекса.
+*   **Внутренние уровни:** содержат только ключи и указатели на дочерние страницы. Используются для навигации к листьям.
+*   **Fill Factor:** InnoDB заполняет страницы на ~15% свободного места (`innodb_fill_factor`, по умолчанию 100 для индексов, но каждый page оставляет ~15% свободного места для будущих вставок).
+
+**SRE-важность:** Понимание страничной структуры объясняет, почему массовые `INSERT` с автоинкрементом вызывают page splits на конце индекса, а `UPDATE` случайных строк — внутри дерева, что приводит к фрагментации.
 
 ---
 
@@ -62,6 +83,20 @@ SELECT user_id, total FROM orders WHERE user_id = 5;
 CREATE INDEX idx_user_total ON orders (user_id, total);
 -- Теперь запрос выполняется полностью из индекса (Index Only Scan)
 ```
+
+**Index Merge (MySQL 8.0+):**
+Иногда оптимизатор объединяет несколько индексов для одного запроса (`index_merge`). Это лучше, чем полное сканирование, но обычно хуже, чем один хорошо спроектированный составной индекс.
+
+```sql
+-- Запрос с двумя equality-условиями
+SELECT * FROM orders WHERE user_id = 5 AND status = 'pending';
+-- Если есть отдельные индексы idx_user и idx_status, MySQL может:
+-- 1. Intersection: взять пересечение PK из обоих индексов
+-- 2. Union: объединить результаты (для OR)
+-- 3. Sort-Union: объединить и отсортировать
+```
+
+**SRE-заметка:** Index Merge — компромисс. Для горячих запросов проектируйте составной индекс вместо зависимости от Index Merge.
 
 ### 2. Порядок колонок в составных индексах (Composite Index)
 
@@ -206,6 +241,63 @@ CREATE INDEX idx_cust_total_desc ON orders (customer_id ASC, total DESC);
 
 **Проверка использования:** В `EXPLAIN` отсутствует `Using filesort`, если индекс соответствует порядку `ORDER BY`.
 
+### 10. Skip Scan (MySQL 8.0.13+)
+
+Стратегия доступа, позволяющая использовать индекс, когда левый префикс составного индекса отсутствует в условии `WHERE`.
+
+**Механика:** InnoDB сканирует индекс многократно, пропуская лидирующие колонки. Эффективен для колонок с низкой кардинальностью (few distinct values).
+
+```sql
+-- Составной индекс (a, b, c)
+CREATE INDEX idx_abc ON t (a, b, c);
+
+-- Запрос WHERE b = 2 не использует левый префикс, но Skip Scan может помочь:
+SELECT * FROM t WHERE b = 2;
+-- Вместо full scan: сканирует индекс по уникальным значениям a
+```
+
+**Ограничения:**
+*   Доступен только для InnoDB.
+*   Не всегда быстрее full scan — зависит от кардинальности колонки `a`.
+*   В `EXPLAIN` отображается как `type = index` или `range` с `key = idx_abc`.
+
+### 11. Loose Index Scan (GROUP BY / DISTINCT)
+
+Метод доступа для `GROUP BY` и `DISTINCT`, использующий упорядоченность B-Tree индекса: вместо сканирования всех ключей MySQL переходит от одной группы к следующей, читая минимальное число ключей.
+
+**Механика:** при отсутствии WHERE читается столько ключей, сколько групп (может быть намного меньше всех ключей). При наличии range-предикатов — первый ключ каждой группы, удовлетворяющей условию.
+
+**Условия применимости (все должны выполняться):**
+*   Запрос по одной таблице.
+*   `GROUP BY` именует только колонки, образующие **левый префикс** индекса, и никакие другие колонки.
+*   Единственные агрегатные функции в SELECT — `MIN()` и `MAX()`, все на одной колонке, **немедленно следующей** за колонками `GROUP BY` в индексе.
+*   Остальные части индекса, упомянутые в запросе, должны быть константами (равенства с константами), кроме аргумента `MIN()`/`MAX()`.
+*   Полные значения колонок проиндексированы, не префиксы (префиксный индекс `INDEX(c1(10))` не подходит).
+
+**Дополнительно поддерживается** (без `GROUP BY`/`DISTINCT` в запросе): `AVG(DISTINCT)`, `SUM(DISTINCT)`, `COUNT(DISTINCT)` (последний — с несколькими колонками).
+
+```sql
+-- Индекс idx(c1, c2, c3) на t1(c1, c2, c3, c4)
+-- Loose Index Scan применим:
+SELECT c1, c2 FROM t1 GROUP BY c1, c2;
+SELECT DISTINCT c1, c2 FROM t1;
+SELECT c1, MIN(c2) FROM t1 GROUP BY c1;
+SELECT c1, c2 FROM t1 WHERE c1 < const GROUP BY c1, c2;
+SELECT MAX(c3), MIN(c3), c1, c2 FROM t1 WHERE c2 > const GROUP BY c1, c2;
+SELECT c1, c2 FROM t1 WHERE c3 = const GROUP BY c1, c2;
+
+-- НЕ применим:
+SELECT c1, SUM(c2) FROM t1 GROUP BY c1;          -- SUM, а не MIN/MAX
+SELECT c1, c2 FROM t1 GROUP BY c2, c3;           -- не левый префикс
+SELECT c1, c3 FROM t1 GROUP BY c1, c2;           -- c3 не в индексе после префикса
+```
+
+**Диагностика:** в `EXPLAIN` в колонке `Extra` появляется `Using index for group-by`.
+
+**Альтернатива — Tight Index Scan:** когда условия Loose Index Scan не выполняются (например, есть разрыв в префиксе, но он задан константой), оптимизатор использует range-сканирование с последующей группировкой. В EXPLAIN — `Using index` (без "for group-by").
+
+**SRE-заметка:** Loose Index Scan — причина, по которой `SELECT DISTINCT indexed_col` или `COUNT(DISTINCT ...)` на индексированной колонке выполняется мгновенно даже на больших таблицах. Если такой запрос внезапно стал медленным — проверьте, не исчез ли индекс (не переведён ли в INVISIBLE) и не изменился ли план.
+
 ### 9. Online DDL и индексы
 
 InnoDB поддерживает онлайн DDL для большинства операций с индексами, что позволяет читать и писать данные во время создания или удаления индекса.
@@ -219,9 +311,9 @@ DROP INDEX idx_email ON users ALGORITHM=INPLACE, LOCK=NONE;
 ```
 
 **Ограничения онлайн DDL:**
-- `FULLTEXT` индексы требуют `ALGORITHM=COPY` (полное копирование таблицы).
-- `SPATIAL` индексы также требуют `ALGORITHM=COPY`.
-- Multi-valued индексы не поддерживают онлайн-создание.
+- `FULLTEXT` индексы выполняются `ALGORITHM=INPLACE`, но **не разрешают параллельный DML** — запись блокируется на время операции. Первый `FULLTEXT`-индекс перестраивает таблицу, если нет пользовательской колонки `FTS_DOC_ID`; последующие добавляются без перестройки.
+- `SPATIAL` индексы также выполняются `ALGORITHM=INPLACE` без параллельного DML.
+- Multi-valued индексы создаются как функциональные индексы поверх скрытой виртуальной колонки; применимый алгоритм проверяется пробным `ALTER` с явным `ALGORITHM` на копии таблицы — [Online Schema Change](./Operations/online-schema-change.md).
 - При `ALGORITHM=COPY` таблица блокируется на время операции.
 
 ---
@@ -459,7 +551,127 @@ WHERE ST_Contains(
 
 ---
 
-## Диагностика и мониторинг
+## Эксплуатация и автоматизация
+
+### Безопасное добавление индексов в production
+
+Индекс создается через `ALTER TABLE`, что может вызывать блокировки. Для SRE критично выбрать правильный алгоритм.
+
+**Решение 1: Online DDL (MySQL 8.0+)**
+```sql
+-- Без блокировки записи (LOCK=NONE)
+ALTER TABLE orders ADD INDEX idx_status (status), ALGORITHM=INPLACE, LOCK=NONE;
+-- → result: таблица доступна для чтения и записи
+```
+
+**Решение 2: pt-online-schema-change (Percona Toolkit)**
+```bash
+# Для таблиц >100 GB или когда InnoDB Online DDL вызывает репликационный lag
+pt-online-schema-change \
+  --alter "ADD INDEX idx_email (email)" \
+  D=mydb,t=users \
+  --execute
+# → result: таблица копируется порциями, минимальное влияние на production
+```
+
+**Решение 3: gh-ost (GitHub Online Schema Transitions)**
+```bash
+gh-ost \
+  --alter "ADD INDEX idx_email (email)" \
+  --database=mydb \
+  --table=users \
+  --execute
+# → result: триггерless подход, минимальная нагрузка
+```
+
+**SRE-runbook:**
+1. Создать индекс в staging с `ALGORITHM=INPLACE, LOCK=NONE`.
+2. Проверить `EXPLAIN` на регрессию планов.
+3. Замерить длительность создания на production копии (`SHOW PROCESSLIST`, `information_schema.INNODB_TRX`).
+4. Применить в production в окно низкой нагрузки.
+5. Мониторить `Created_tmp_disk_tables`, `Innodb_row_lock_time_avg`.
+
+---
+
+### Интеграция с CI/CD
+
+Проверка планов запросов должна быть частью пайплайна:
+
+```sql
+-- Паттерн для автоматизации: убедиться что используется индекс
+EXPLAIN SELECT * FROM orders WHERE user_id = ? AND status = ?\G
+-- Ожидание: key IS NOT NULL AND type IN ('ref', 'eq_ref', 'const')
+```
+
+**Gate-чек:**
+- `type = ALL` → FAIL (full table scan)
+- `Extra LIKE '%Using filesort%'` → WARN (проверить necessity сортировки)
+- `Extra LIKE '%Using temporary%'` → FAIL (кроме случаев с доказанной эффективностью)
+
+---
+
+### Мониторинг и алерты
+
+**Ключевые метрики для алертов:**
+
+| Метрика | Источник | Порог | Действие |
+|---------|----------|-------|----------|
+| `Innodb_buffer_pool_reads` | `SHOW GLOBAL STATUS` | Рост >20% за час | Проверить отсутствие индексов (Buffer Pool miss ratio) |
+| `Created_tmp_disk_tables` | `SHOW GLOBAL STATUS` | >10% от `Created_tmp_tables` | Проверить сортировки и GROUP BY без индексов |
+| `Innodb_row_lock_time_avg` | `SHOW GLOBAL STATUS` | >50ms | Проверить отсутствие индексов в UPDATE/DELETE |
+| `Table_locks_waited` | `SHOW GLOBAL STATUS` | >0 за период | Проверить MyISAM/Archive таблицы |
+| Размер `INDEX_LENGTH` / `DATA_LENGTH` | `information_schema.TABLES` | ratio > 2.0 | Проверить фрагментацию |
+
+**Дашборд Prometheus + Grafana (exporter v0.20.0+):**
+```yaml
+# Пример метрик mysqld_exporter
+- name: mysql_global_status_created_tmp_disk_tables
+  query: Created_tmp_disk_tables
+- name: mysql_global_status_innodb_row_lock_time_avg
+  query: Innodb_row_lock_time_avg
+- name: mysql_global_status_innodb_buffer_pool_reads
+  query: Innodb_buffer_pool_reads
+```
+
+**Percona Monitoring and Management (PMM):**
+- Дашборд `MySQL > Performance > Query Analytics` показывает `Filesort` и `Temporary tables` без указания индексов.
+- Дашборд `MySQL > InnoDB Metrics` показывает `adaptive_hash_index` эффективность.
+
+---
+
+### Влияние индексов на бэкапы и репликацию
+
+**Бэкапы:**
+*   `mysqldump`: логический дамп. Размер зависит от `DATA_LENGTH + INDEX_LENGTH`. Чем больше индексов, тем больше дамп и дольше восстановление.
+*   `xtrabackup`: физический бэкап. Копирует `ibd` файлы целиком. Большое количество индексов увеличивает размер бэкапа и время восстановления.
+*   Стратегия: в production отключайте ненужные индексы перед массовой загрузкой данных, восстанавливайте после.
+
+**Репликация:**
+*   Каждая запись (`INSERT/UPDATE/DELETE`) обновляет все связанные индексы и записывает изменения в binary log.
+*   Избыточные индексы увеличивают размер binary log и нагрузку на slave.
+*   `ROW` формат binlog (рекомендуется) содержит измененные строки целиком. Чем больше индексов, тем больше overhead.
+
+---
+
+### Влияние индексов на репликацию и replication lag
+
+Каждая запись (`INSERT/UPDATE/DELETE`) обновляет все связанные индексы и записывает изменения в binary log. Избыточные индексы увеличивают размер binary log и нагрузку на slave, что может привести к репликационному отставанию (replication lag).
+
+**Диагностика:**
+```sql
+-- Размер binlog
+SHOW MASTER STATUS\G
+-- → result: File, Position, Binlog_Do_DB, Binlog_Ignore_DB
+
+-- Размер индексов
+SELECT TABLE_SCHEMA, TABLE_NAME, 
+       ROUND(INDEX_LENGTH / 1024 / 1024, 2) AS idx_mb
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA NOT IN ('mysql', 'sys', 'performance_schema', 'information_schema')
+ORDER BY idx_mb DESC;
+```
+
+**Рекомендация:** На slave можно отключать неиспользуемые индексы (если slave используется только для чтения и reporting), но только после тестирования.
 
 ### Проверка использования индексов через EXPLAIN
 
@@ -489,6 +701,8 @@ EXPLAIN SELECT * FROM orders WHERE user_id = 5;
 EXPLAIN ANALYZE SELECT * FROM orders WHERE user_id = 5 ORDER BY created_at DESC LIMIT 10\G
 -- → result: actual execution plan с реальными временами и row counts
 ```
+
+**SRE-применение:** Используйте `EXPLAIN ANALYZE` в CI/CD для критичных запросов. Сравнивайте actual time с budget. Если actual > budget — FAIL сборка.
 
 ### Анализ избыточных и неиспользуемых индексов
 
@@ -708,20 +922,24 @@ ALTER TABLE users ADD INDEX idx_email (email), ALGORITHM=INPLACE, LOCK=NONE;
 3. **Правило левого префикса:** Порядок колонок в составном индексе определяет, какие запросы его используют. Equality-колонки первыми, range — после.
 4. **Covering Index:** Добавляйте в конец составного индекса колонки из `SELECT` для Index Only Scan.
 5. **Удаляйте избыточность:** Если индекс `(A, B)` покрывает индекс `(A)` — последний избыточен.
+6. **Избегайте индексов на низкоселективные колонки:** Безлимитные `WHERE status = 'active'` на таблице с 2 статусами не эффективны.
+7. **Тестируйте на production-объеме данных:** Размер таблицы влияет на выбор оптимизатора. Тесты на 1M строк не отражают поведение на 1B.
 
 ### Обслуживание индексов
 
-1. **Мониторинг:** Регулярно проверяйте `sys.schema_unused_indexes` и `sys.schema_redundant_indexes`.
-2. **Статистика:** Выполняйте `ANALYZE TABLE` после массовых вставок/удалений.
+1. **Мониторинг:** Регулярно проверяйте `sys.schema_unused_indexes` и `sys.schema_redundant_indexes`. Автоматизируйте через cron или monitoring agent.
+2. **Статистика:** Выполняйте `ANALYZE TABLE` после массовых вставок/удалений. В MySQL 8.0.29+ можно использовать `ANALYZE TABLE AUTO` для инкрементального обновления.
 3. **Фрагментация:** Контролируйте `DATA_FREE` через `information_schema.TABLES`. `OPTIMIZE TABLE` при фрагментации >10%.
 4. **AHI:** В MySQL 8.4+ отключен по умолчанию. Включайте только после бенчмаркинга на реальной нагрузке.
+5. **Capacity Planning:** Отслеживайте рост `INDEX_LENGTH` относительно `DATA_LENGTH`. Предупреждайте алертом при ratio > 2.0.
 
 ### Безопасное удаление индексов
 
 1. Пометить индекс `INVISIBLE`.
-2. Мониторить производительность 1-7 дней.
+2. Мониторить производительность 1-7 дней через `performance_schema.table_io_waits_summary_by_index_usage`.
 3. Если метрики в норме — `DROP INDEX`.
 4. Если деградация — вернуть `VISIBLE`.
+5. **SRE:** Документируйте причину удаления в runbook и changelog.
 
 ### Версионные особенности
 
@@ -734,6 +952,58 @@ ALTER TABLE users ADD INDEX idx_email (email), ALGORITHM=INPLACE, LOCK=NONE;
 | Descending Indexes | Supported (8.0.12+) | Supported |
 | Multi-Valued Indexes | Supported (8.0.17+) | Supported |
 | Functional Indexes | Supported (8.0.13+) | Supported |
+| Skip Scan | Supported (8.0.13+) | Supported |
+| Invisible Indexes | Supported (8.0.0+) | Supported |
+
+---
+
+## Граничные случаи и ограничения
+
+### 1. Ограничения Online DDL
+
+*   `FULLTEXT` и `SPATIAL` индексы выполняются `ALGORITHM=INPLACE`, но блокируют запись на время операции (параллельный DML не разрешён).
+*   Multi-valued индексы — это функциональные индексы поверх скрытой виртуальной колонки; применимый `ALGORITHM` проверяется пробным `ALTER` на копии таблицы.
+*   На очень больших таблицах (>500 GB) `ALGORITHM=INPLACE` может вызвать репликационный lag на slave из-за большого объема изменений в redo log.
+
+### 2. Влияние индексов на репликацию
+
+*   Каждая DML-операция обновляет все индексы и пишет в binary log. Избыточные индексы увеличивают размер binlog.
+*   `ROW` формат binlog (рекомендуется) содержит измененные строки целиком. Чем больше индексов, тем больше overhead.
+*   На slave можно отключать неиспользуемые индексы (только для read-only workloads), но это требует тестирования.
+
+### 3. Влияние индексов на бэкапы
+
+*   `mysqldump`: логический дамп. Размер зависит от `DATA_LENGTH + INDEX_LENGTH`. Больше индексов → больше дамп → дольше восстановление.
+*   `xtrabackup`: физический бэкап. Копирует `ibd` файлы целиком. Большое количество индексов увеличивает размер бэкапа.
+*   Стратегия: отключайте ненужные индексы перед массовой загрузкой данных, восстанавливайте после.
+
+### 4. Ограничения функциональных индексов
+
+*   Функциональный индекс не используется, если выражение в `WHERE` не совпадает точно с выражением в определении индекса (включая скобки и пробелы).
+*   Невозможно создать covering index для функционального индекса напрямую — обращение к колонке требует дополнительного чтения кластерного индекса.
+
+### 5. Ограничения Multi-Valued Indexes
+
+*   Не может быть primary key, не поддерживает `ASC`/`DESC`.
+*   Не может быть covering index.
+*   Максимальное количество значений на запись ограничено размером страницы undo-лога (65221 байт).
+*   Не поддерживает range scans и index-only scans.
+
+### 6. Ограничения Spatial Indexes
+
+*   Колонка должна быть `NOT NULL`.
+*   Ключевое слово `ASC`/`DESC` запрещено в определении пространственного индекса (MySQL 8.0.12+).
+
+### 7. Skip Scan ограничения
+
+*   Не всегда быстрее full scan — зависит от кардинальности колонки, выступающей в роли лидирующей.
+*   В `EXPLAIN` отображается как `type = index` или `range`, что может быть неочевидно для диагностики.
+
+### 8. Фрагментация при массовых операциях
+
+*   Массовый `DELETE` не освобождает место на диске — только помечает страницы как свободные (`DATA_FREE` растет).
+*   `OPTIMIZE TABLE` пересоздает таблицу и индексы, но требует вдвое больше места на диске на время операции.
+*   На replication slave массовое `DELETE` + `OPTIMIZE TABLE` может вызвать lag.
 
 ---
 
@@ -742,6 +1012,11 @@ ALTER TABLE users ADD INDEX idx_email (email), ALGORITHM=INPLACE, LOCK=NONE;
 ### См. также
 - **[Оптимизатор MySQL: ICP, MRR, BKA](./optimizer_mechanisms.md)** — как MySQL эффективно использует индексы.
 - **[Настройка производительности MySQL](./configuration.md)** — тюнинг `innodb_buffer_pool_size`.
+- **[Блокировки и Deadlocks](./locking_and_deadlocks.md)** — влияние отсутствия индексов на блокировки.
+- **[Мониторинг MySQL](./monitoring.md)** — Performance Schema, InnoDB Metrics.
+- **[Глубокое погружение в Storage Engines MySQL](./Operations/storage_engines_deep_dive.md)** — InnoDB, MyRocks, Archive, их влияние на индексацию.
+- **[Репликация MySQL](./replication/overview.md)** — влияние индексов на binlog и replication lag.
+- **[Бэкапы MySQL](./backup_and_recovery/overview.md)** — влияние индексов на размер и скорость бэкапов.
 
 ### Связанные темы
 - **[Индексы в базах данных](../Concepts/indexes.md)** — общие теоретические основы (B-Tree, Hash, селективность, кардинальность).

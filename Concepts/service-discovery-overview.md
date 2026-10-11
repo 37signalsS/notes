@@ -10,6 +10,17 @@
 
 **Endpoint** — конкретная сетевая точка (IP + порт), по которой доступен экземпляр сервиса. Термин используется в Kubernetes (EndpointSlice), Consul и API-балансировщиках.
 
+## Предварительные требования
+
+Перед внедрением Service Discovery необходимо обеспечить:
+
+1.  **Сетевая доступность:** Все узлы должны иметь статические IP или DHCP-резервации. DNS-серверы и реестр должны быть доступны на предсказуемых портах (Consul: 8300, 8500, 8600; etcd: 2379; ZooKeeper: 2181).
+2.  **NTP-синхронизация:** Расхождения времени между узлами >1s приводят к некорректной работе TTL и heartbeat. Используйте `chrony` или `systemd-timesyncd`.
+3.  **Firewall-политики:** Разрешите только необходимые порты между сервисами и реестром. Запретите внешний доступ к API реестра.
+4.  **Health Check эндпоинты:** Каждый сервис должен иметь HTTP/TCP/gRPC эндпоинт проверки готовности (`/healthz`, `/ready`, `grpc.health.v1.Health/Check`).
+5.  **Мониторинг:** Prometheus + Alertmanager для отслеживания состояния реестра, количества сервисов и лага репликации.
+6.  **CI/CD пайплайн:** Автоматическая регистрация/дерегистрация должна происходить через пайплайн, а не вручную.
+
 ## Базовые концепции
 
 ### Механизмы обнаружения (Discovery Mechanisms)
@@ -106,6 +117,17 @@ curl --request PUT \
       "Interval": "10s"
     }
   }' http://localhost:8500/v1/agent/service/register
+# → 200 OK (пустой ответ)
+```
+
+**Валидация:** Проверьте, что сервис появился в каталоге и прошёл проверку:
+
+```bash
+curl -s http://localhost:8500/v1/catalog/service/web-api | jq .
+# → [{"ServiceName":"web-api","ServiceID":"web-v1-1",...}]
+
+curl -s http://localhost:8500/v1/health/service/web-api?passing
+# → [{"Node":"host1","Service":{"ID":"web-v1-1",...}}] — только passing-инстансы
 ```
 
 ### 2. Обнаружение через DNS SRV-записи
@@ -113,7 +135,10 @@ SRV-записи позволяют узнать не только IP, но и �
 
 ```bash
 dig @127.0.0.1 -p 8600 web-api.service.consul SRV
-# → Ответ содержит: IP 192.168.1.50, Port 8080, Weight 10, Priority 1
+# → ANSWER SECTION:
+#   web-api.service.consul. 60 IN SRV 1 10 8080 web-api.service.consul.
+# → ADDITIONAL SECTION:
+#   web-api.service.consul. 60 IN A 192.168.1.50
 ```
 
 ### 3. Логика обнаружения на стороне клиента (Псевдокод)
@@ -151,6 +176,22 @@ http {
 }
 ```
 
+**Валидация:**
+
+```bash
+# Проверка резолва имени сервиса через Consul DNS
+dig @127.0.0.1 -p 8600 web-api.service.consul A +short
+# → 192.168.1.50
+
+# Проверка, что Nginx корректно проксирует запрос
+curl -s http://nginx-host/api/health -H "Host: web-api.service.consul"
+# → 200 OK (ответ бэкенда)
+
+# Проверка, что resolver в Nginx работает
+curl -s http://nginx-host/api/ -v 2>&1 | grep -i "upstream"
+# → < upstream: 192.168.1.50:8080
+```
+
 ### 5. Автоматическая регистрация в Docker (Registrator)
 Запуск Registrator, который автоматически регистрирует все контейнеры в Consul:
 
@@ -164,6 +205,24 @@ docker run -d \
 ```
 
 Контейнеры с меткой `SERVICE_NAME=myapp` автоматически регистрируются в Consul.
+
+**Валидация:**
+
+```bash
+# Запустите тестовый контейнер с меткой
+docker run -d --name test-app \
+  -e SERVICE_NAME=myapp \
+  -e SERVICE_TAGS=production \
+  -p 8080:8080 myapp:latest
+
+# Проверьте, что сервис появился в Consul
+curl -s http://localhost:8500/v1/catalog/service/myapp | jq '.[0].Service'
+# → {"ID":"test-app:8080","Service":"myapp","Tags":["production"],...}
+
+# Проверьте health check статус
+curl -s http://localhost:8500/v1/health/service/myapp?passing | jq '.[0].Status'
+# → "passing"
+```
 
 ## Сравнение Service Discovery по платформам
 
@@ -310,6 +369,59 @@ DNS-резолвер перегружен запросами при большо
 *   **Диагностика:** `dig @consul-dns time=5000` — замерьте реальное время ответа.
 *   **Решение:** Кэширование DNS на стороне клиента (Systemd-resolved, Nginx resolver), горизонтальное масштабирование DNS-серверов, использование DNS-кэша (NodeLocal DNSCache в Kubernetes).
 
+### 7. Диагностика на уровне ОС и сети
+
+При проблемах Service Discovery диагностика должна начинаться с сетевого стека и системных вызовов:
+
+**Проверка TCP-соединений с реестром:**
+
+```bash
+ss -tnp | grep 8500
+# → ESTABLISHED 0 0 192.168.1.100:54321 10.0.0.10:8500 timer:(on,0.5sec,0)
+```
+
+**Проверка DNS-резолва на хосте:**
+
+```bash
+dig @127.0.0.1 -p 8600 web-api.service.consul A +stats
+# → Query time: 2 msec
+# → SERVER: 127.0.0.1#8600(127.0.0.1)
+
+resolvectl status eth0 | grep 'DNS Servers'
+# → DNS Servers: 10.0.0.10 (реестр), 8.8.8.8 (fallback)
+```
+
+**Проверка маршрутизации и потерь пакетов:**
+
+```bash
+mtr -rn -c 10 10.0.0.10
+# → Loss%  Last   Avg  Best  Wrst Stub
+# →   0.0%   1.2   1.3   1.1   2.5 0.0%
+```
+
+**Проверка лимитов файловых дескрипторов (FD) на сервисе:**
+
+```bash
+cat /proc/$(pgrep -f order-service)/limits | grep 'open files'
+# → Max open files            1024                 1048576                files
+```
+
+**Проверка утечек памяти и CPU на инстансе:**
+
+```bash
+ps -p $(pgrep -f order-service) -o pid,%cpu,%mem,rss,vsz
+# →   PID %CPU %MEM     RSS    VSZ
+# → 28471  2.1  1.2  524288 1048576
+```
+
+**Сбор трафика для анализа DNS-запросов:**
+
+```bash
+tcpdump -i eth0 -n port 8600 -c 100
+# → 10:00:01 IP 192.168.1.50.41234 > 10.0.0.10.8600: 12345+ A? web-api.service.consul. (42)
+# → 10:00:01 IP 10.0.0.10.8600 > 192.168.1.50.41234: 12345 1/0/0 A 192.168.1.50 (52)
+```
+
 ### Пример: Consul ACL для Service Discovery
 
 Базовая политика для сервиса, который может регистрировать себя и читать каталог:
@@ -352,6 +464,15 @@ Consul DNS (порт 8600) по умолчанию доступен без ау�
 *   **Слишком частые проверки:** Интервал менее 1s создаёт «шторм» запросов в крупных кластерах. Оптимально: 5-30s.
 *   **Проверка внешних зависимостей:** Сервис не должен помечать себя как `critical`, если недоступна БД. Используйте Circuit Breaking на уровне приложения.
 *   **Единый реестр для всего:** Попытка использовать один Consul-кластер для production, staging и development без изоляции (namespaces/partitions) приводит к взаимовлиянию сред.
+
+## Граничные случаи (Edge Cases)
+
+*   **Legacy-системы без контейнеризации:** Если сервисы запускаются напрямую на VM/ bare-metal без Docker/Kubernetes, используйте Third-party Registration (Registrator через Docker API или systemd-скрипты, опрашивающие процессы). Environment Variables — fallback для статических конфигураций.
+*   **Гибридные окружения (on-prem + remote):** При наличии части сервисов в дата-центре, а части — на удалённых узлах, используйте Consul WAN gossip или Cluster Peering для Cross-DC discovery. Настройте отдельные DNS-суффиксы для каждого сегмента.
+*   **Сетевые partition (Split-Brain):** При разделении сети реестр CP-класса (Consul, etcd) может потерять кворум и перестать записывать данные. Для таких сценариев рассмотрите AP-реестр (Eureka) с understanding, что клиенты могут получить устаревшие адреса.
+*   **Высокая плотность сервисов (1000+ инстансов):** DNS-резолвер может стать узким местом. Используйте DNS-кэширование (NodeLocal DNSCache в K8s, systemd-resolved) и увеличьте TTL. Мониторьте QPS реестра.
+*   **Stateful-сервисы с жёсткими сетевыми идентификаторами:** Для Cassandra, Kafka, Zookeeper используйте Headless Services (K8s) или статические DNS-записи с low TTL. Не полагайтесь на ephemeral IP.
+*   **Реестр как SPOF:** При отказе реестра клиенты с кэшированными адресами продолжают работать, но новые инстансы не регистрируются. Для критичных систем разворачивайте реестр в кластере (3+ узла) и настраивайте fallback на статический список адресов.
 
 ## Дополнительная информация
 

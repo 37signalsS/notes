@@ -1,5 +1,7 @@
 # Обзор GitLab Runner и Executor
 
+**Актуально для:** GitLab CI/CD 17.x–19.4, GitLab Runner 17.x–19.4
+
 ## Определения
 
 **[GitLab Runner](https://docs.gitlab.com/runner/)** — агент (приложение на Go), предназначенный для выполнения заданий (jobs) CI/CD пайплайнов. Он работает по Pull-модели: опрашивает сервер GitLab через API, получает описание задачи, исполняет её в изолированной среде и возвращает логи и артефакты.
@@ -9,15 +11,48 @@
 **Authentication Token (`glrt-`)** — современный стандарт безопасности (введен в GitLab 16.0), заменяющий устаревшие регистрационные токены. Токен создается на стороне сервера и жестко привязывает Runner к области видимости (Project/Group/Instance), исключая возможность несанкционированного изменения конфигурации агентом.
 
 **[Fleeting & Taskscaler](https://docs.gitlab.com/runner/executors/docker_autoscaler.md)** — архитектура автоскейлинга нового поколения (стандарт с GitLab 17.0+):
--   **Fleeting**: Библиотека управления эфемерной инфраструктурой. Через плагины взаимодействует с API оркестраторов (OpenStack Nova, vSphere, Proxmox, libvirt), обеспечивая создание и удаление узлов по требованию.
+-   **Fleeting**: Библиотека управления эфемерной инфраструктурой. Через плагины взаимодействует с API оркестраторов (libvirt/KVM, Proxmox, VMware vSphere), обеспечивая создание и удаление узлов по требованию.
 -   **Taskscaler**: Высокоуровневый планировщик, который распределяет задачи по инстансам Fleeting, учитывая их загрузку и жизненный цикл.
 -   **Преимущество**: Полный уход от устаревшего `docker-machine` в пользу нативных API виртуализации для масштабирования раннеров.
+
+## Предварительные требования
+
+### Версии и поддерживаемые функции
+
+| Компонент | Минимальная версия | Примечание |
+| :--- | :--- | :--- |
+| GitLab Runner | 17.x (рекомендуется 19.4+) | ±1 мажорная версия от GitLab Server |
+| `shell` executor | Все версии | Стандарт для macOS/iOS, Windows (pwsh/cmd) |
+| `docker` executor | Все версии | Требует Docker Engine 20.10+ |
+| `instance` executor | GitLab 16.0+ | Полная изоляция по ВМ на задачу |
+| `docker-autoscaler` | GitLab 17.0+ | Fleeting + плагин виртуализации (libvirt/VMware/Proxmox) |
+| `glrt-` токен | GitLab 16.0+ | Заменяет устаревшие registration tokens |
+| `metrics_server` | GitLab Runner 16.0+ | Включение через `listen_address` или `metrics_server` в config.toml |
+
+### Инфраструктурные требования
+
+-   **GitLab Server**: Self-hosted (on-prem) инстанс GitLab 17.x–19.4 с доступным API
+-   **RBAC**: Роль `Maintainer`/`Owner` для регистрации Runner'ов; `Developer` для запуска задач
+-   **Сеть**: Runner'ы должны иметь доступ к GitLab API (исходящие HTTPS); входящие соединения не требуются (Pull-модель)
+-   **TLS**: GitLab Server должен работать по HTTPS с валидным сертификатом (не self-signed в production)
+-   **NTP**: Синхронизация времени между GitLab Server и Runner'ами — критична для проверки JWT-подписи
+-   **Хранилище**: Достаточное место для артефактов, кэша и логов; рекомендуется отдельный диск для `/var/lib/gitlab-runner`
+-   **Виртуализация** (для Fleeting): KVM/libvirt, VMware vSphere или Proxmox на гипервизорах
+
+### Необходимые знания
+
+-   YAML: синтаксис, вложенность
+-   Docker: образы, volumes, сети, DinD/DooD
+-   Linux systemd: управление сервисами, логирование (journalctl)
+-   GitLab RBAC: роли, области видимости, protected branches
+-   REST API: аутентификация, пагинация
+-   HMAC-SHA256: принципы подписи вебхуков (если используется)
 
 ## Жизненный цикл задачи (Job Lifecycle)
 
 1.  **Request (Запрос)**: Runner отправляет запрос `POST /api/v4/jobs/request` с указанием своих тегов и возможностей.
 2.  **Pickup (Прием)**: Если есть подходящее задание, GitLab передает Runner'у спецификацию (скрипты, переменные, зависимости).
-3.  **Preparation (Подготовка)**: Executor создает среду (поднимает контейнер, ВМ или Pod в K8s).
+3.  **Preparation (Подготовка)**: Executor создает среду (поднимает контейнер или виртуальную машину).
 4.  **Execution (Выполнение)**:
     -   `pre_clone_script` (если задан) — выполнение команд до клонирования Git.
     -   `git clone` и загрузка артефактов/кэша.
@@ -75,10 +110,45 @@ Windows-раннеры имеют ряд специфических ограни
 | :--- | :--- | :--- | :--- |
 | **`shell`** | Отсутствует | Нет | Локальные системные задачи, доступ к GPU/HW напрямую. **Стандарт для macOS/iOS сборок.** |
 | **`docker`** | Высокая | Вертикальное (на хосте) | Стандарт индустрии. Использование образов из Docker Hub/Harbor. |
-| **`kubernetes`** | Высокая | Горизонтальное (Cluster) | Высоконагруженные системы, K8s-native пайплайны. |
-| **`docker-autoscaler`** | Высокая | Динамическое (Fleeting) | Современный автоскейлинг через API оркестраторов (OpenStack, vSphere). Замена `docker+machine`. |
+| **`kubernetes`** | Высокая | Горизонтальное (Cluster) | **Не рекомендуется** для новых on-prem развёртываний. Требует полного стека Kubernetes, что добавляет сложность. Для on-prem используйте `docker` или `instance` executor'ы. |
+| **`docker-autoscaler`** | Высокая | Динамическое (Fleeting) | Современный автоскейлинг через API оркестраторов (libvirt, VMware, Proxmox). Замена `docker+machine`. |
 | **`instance`** | Полная (VM) | Динамическое (Fleeting) | Максимальная изоляция (по ВМ на каждую задачу). Подходит для high-trust сред. |
 | **`custom`** | Любая | Любое | Использование сторонних инструментов (например, Podman или LXC) через драйвер. |
+
+### Kubernetes Executor: Архитектура Pod'а задания
+
+При использовании `kubernetes` executor'а GitLab Runner создаёт для каждой задачи отдельный Pod в Kubernetes-кластере. Pod состоит из трёх основных контейнеров:
+
+| Контейнер | Роль | Описание |
+| :--- | :--- | :--- |
+| **`helper`** | Вспомогательный | Загружает артефакты, кэш, клонирует репозиторий, подготавливает окружение. Образ: `registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:<runner-version>`. |
+| **`build`** | Основной | Выполняет пользовательские скрипты из `.gitlab-ci.yml` (секция `script`). Образ задаётся в `image` или `default.image`. |
+| **`service-*`** | Сервисные (sidecar) | Запускаются для каждого элемента в блоке `services` (БД, кэш, очереди). Каждый сервис — отдельный контейнер в том же Pod, доступен по `localhost` или имени сервиса. |
+
+**Важные нюансы:**
+- Все контейнеры разделяют сетевой namespace (один IP, `localhost`), volumes (`emptyDir` для кэша/артефактов) и PVC.
+- `helper` всегда запускается первым и завершается последним (выгружает артефакты/кэш).
+- Для сборки Docker-образов внутри Kubernetes executor **не используйте DinD** (`privileged: true`). Рекомендуется **Kaniko** (сборка без Docker-демона) или **BuildKit** с `docker-out-of-docker` (DooD) через монтирование сокета на узле, где запущен Runner Manager.
+
+**Пример конфигурации Kubernetes executor в `config.toml`:**
+```toml
+[[runners]]
+  name = "k8s-runner"
+  executor = "kubernetes"
+  [runners.kubernetes]
+    namespace = "gitlab-runners"
+    image = "ubuntu:24.04"
+    cpu_limit = "2000m"
+    memory_limit = "4Gi"
+    service_cpu_limit = "500m"
+    service_memory_limit = "1Gi"
+    helper_cpu_limit = "500m"
+    helper_memory_limit = "256Mi"
+    # Для Kaniko:
+    [runners.kubernetes.volumes.empty_dir]
+      name = "kaniko-cache"
+      mount_path = "/cache"
+```
 
 ### Runner Tags: конфигурация и логика сопоставления
 
@@ -158,6 +228,8 @@ deploy:prod:
 **Множественные executors в одном Manager:**
 Один Runner Manager может иметь несколько секций `[[runners]]` с разными executor'ами. Это позволяет запускать задачи в разных средах с одного сервера.
 
+Для пошаговой регистрации и настройки см. SSoT: **[Регистрация GitLab Runner](../Tutorials/runner_registration.md)**.
+
 ```toml
 # Пример: один сервер с двумя runner'ами
 concurrent = 10
@@ -180,52 +252,33 @@ concurrent = 10
 
 ### Multi-runner config.toml
 
-В реальных deployment'ах один `config.toml` содержит несколько `[[runners]]` для различных целей:
+В реальных deployment'ах один `config.toml` содержит несколько `[[runners]]` для различных целей. Базовый пример:
 
 ```toml
 concurrent = 50           # Глобальный лимит: 50 задач одновременно
 check_interval = 3
 
-# Группа: Builds
+# Runner 1: Docker для быстрых задач
 [[runners]]
   name = "build-linux"
   executor = "docker"
   tags = ["build", "linux"]
-  limit = 20              # Лимит задач для этого runner'а
+  limit = 20
   [runners.docker]
     image = "ubuntu:24.04"
     memory = "4g"
     cpus = "2"
 
-[[runners]]
-  name = "build-docker"
-  executor = "docker"
-  tags = ["build", "docker"]
-  limit = 5
-  [runners.docker]
-    image = "docker:24.0"
-    volumes = ["/var/run/docker.sock:/var/run/docker.sock"]
-
-# Группа: Tests
-[[runners]]
-  name = "test-integration"
-  executor = "docker"
-  tags = ["test", "integration"]
-  limit = 15
-  [runners.docker]
-    image = "ubuntu:24.04"
-    memory = "8g"
-    cpus = "4"
-    shm_size = "512m"
-
-# Группа: Deploy
+# Runner 2: Shell для системных задач
 [[runners]]
   name = "deploy-production"
   executor = "shell"
   tags = ["deploy", "production"]
   limit = 3
-  protected = true         # Только для protected веток
+  protected = true
 ```
+
+Для production-оптимизированных конфигураций (метрики, session_server, кэш S3, политики очистки) см. SSoT: **[Управление парком Runner'ов (Fleet Management)](./runner_fleet_management.md)**.
 
 **Ключевые параметры `limit`:**
 -   `limit = 0` (по умолчанию): Runner принимает задачи до достижения глобального `concurrent`
@@ -286,43 +339,14 @@ gitlab-runner start
 
 ### Оптимизация config.toml
 
-Файл конфигурации (`/etc/gitlab-runner/config.toml`) позволяет тонко настраивать производительность:
+Базовые параметры производительности:
 
 ```toml
 concurrent = 20           # Глобальный лимит задач на весь агент
 check_interval = 3        # Интервал опроса GitLab API (сек)
-
-[session_server]
-  listen_address = "[::]:8093" # Для интерактивного терминала в браузере
-
-[[runners]]
-  name = "k8s-runner-prod"
-  executor = "kubernetes"
-  builds_dir = "/builds"
-  cache_dir = "/cache"
-  
-  [runners.kubernetes]
-    image = "ubuntu:24.04"
-    namespace = "gitlab-runners"
-    cpu_limit = "1"
-    memory_limit = "2Gi"
-    service_cpu_limit = "500m"
-    service_memory_limit = "1Gi"
-    helper_image = "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v17.x.x"
-
-  [runners.cache]
-    Type = "s3"
-    Shared = true
-    [runners.cache.s3]
-      ServerAddress = "minio.internal:9000"
-      BucketName = "gitlab-ci-cache"
-      BucketLocation = "us-east-1"
-      Insecure = false
-      AccessKey = "${MINIO_ACCESS_KEY}"
-      SecretKey = "${MINIO_SECRET_KEY}"
 ```
 
-> Подробности о кэшировании, включая стратегии `policy`, `key` и `paths`, см. в **[Кэширование в GitLab CI](./gitlab_ci_caching/caching_overview.md)**.
+Для production-оптимизированных конфигураций (session_server, metrics_server, политики очистки, кэш S3) см. SSoT: **[Управление парком Runner'ов (Fleet Management)](./runner_fleet_management.md)**.
 
 ### Лимиты ресурсов Docker Executor
 
@@ -395,27 +419,17 @@ build:
     - docker push my-registry.com/my-app
 ```
 
-**Рекомендация 2026**: Для большинства on-premise сред используйте **DooD** (проще, быстрее, безопаснее). DinD — только когда критична полная изоляция Docker-демонов. Альтернатива для сборки образов без privileged — **[Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)** (сборка без Docker-демона).
-
-### Архитектура пода при Kubernetes executor
-
-При использовании **Kubernetes executor** GitLab Runner создаёт отдельный Pod для каждой задачи (job). Внутри этого пода находится **три контейнера**:
-
-1. **Pause container** (инфраструктурный контейнер) — создаётся первым и удерживает сетевой namespace Pod (общий IP-адрес, таблица маршрутизации, порты). Остальные контейнеры разделяют его сетевые ресурсы.
-2. **Init container** — выполняет подготовительные задачи: клонирование репозитория, загрузка кэша и артефактов.
-3. **Main container** — основной контейнер, в котором выполняются скрипты задачи (`script` из `.gitlab-ci.yml`).
-
-Эта архитектура соответствует стандарту Kubernetes Pod Sandbox: pause-контейнер создаёт сетевую «загушку», а остальные контейнеры присоединяются к ней.
-
-Подробнее: **[Жизненный цикл Pod и Pod Sandbox](../../../Kubernetes/Base/Pod/pod_lifecycle_and_state.md)**, **[Обзор Pod](../../../Kubernetes/Base/Pod/pod_overview.md)**.
+**Рекомендация**: Для большинства on-premise сред используйте **DooD** (проще, быстрее, безопаснее). DinD — только когда критична полная изоляция Docker-демонов. Альтернатива для сборки образов без privileged — **[Kaniko](../../../Docker/Dockerfile/dockerfile_kaniko.md)** (сборка без Docker-демона).
 
 ### Мониторинг раннера
-Runner имеет встроенный экспортер метрик для Prometheus.
--   **Включение**: В `config.toml` добавьте `listen_address = ":9252"`.
--   **Метрики**:
-    -   `gitlab_runner_concurrent`: Текущее количество запущенных задач.
-    -   `gitlab_runner_errors_total`: Количество ошибок связи с GitLab.
-    -   `gitlab_runner_jobs_total`: Общее количество выполненных задач по статусам.
+
+Runner имеет встроенный экспортер метрик для Prometheus. Базовые метрики:
+
+-   `gitlab_runner_concurrent`: Текущее количество запущенных задач.
+-   `gitlab_runner_errors_total`: Количество ошибок связи с GitLab.
+-   `gitlab_runner_jobs_total`: Общее количество выполненных задач по статусам.
+
+Для полного руководства по мониторингу (включение `metrics_server`, алерты, Grafana дашборды) см. SSoT: **[Мониторинг и метрики GitLab CI/CD](./monitoring_and_metrics.md)**.
 
 ## Устранение неполадок (Troubleshooting)
 
@@ -471,9 +485,84 @@ curl -s -o /dev/null -w "%{http_code}" https://gitlab.internal/api/v4/version
 # → 200 = OK
 ```
 
+## Best Practices
+
+### Проектирование Runner-инфраструктуры (DevOps/SRE)
+
+-   **Один executor — одна ответственность**: Не смешивайте задачи разных типов на одном раннере. Отдельные runner'ы для builds, tests, deploy с уникальными тегами.
+-   **Protected runners только для production**: Включайте `protected = true` только для runner'ов, обслуживающих `main`/`production` ветки. Это защищает секреты от кражи через Pull Request из форков.
+-   **Least Privilege для executor'ов**: Используйте `shell` executor только для задач, требующих доступ к GPU/HW. Для большинства CI/CD задач используйте `docker` с минимальными привилегиями.
+-   **DooD вместо DinD**: По умолчанию используйте DooD (монтирование `/var/run/docker.sock`). DinD (`privileged = true`) — только для задач, требующих полной изоляции Docker-демонов.
+-   **Эфемерные runner'ы по умолчанию**: Для тестов и сборок используйте эфемерные runner'ы (Fleeting). Постоянные раннеры — только для долгоживущих стендов с контролируемым доступом.
+-   **JIT Config вместо registration tokens**: Используйте JIT (Just-In-Time) Config для автоматической регистрации эфемерных runner'ов. Это исключает хранение registration tokens.
+
+### Безопасность (SRE)
+
+-   **`allowed_images` и `allowed_services`**: Ограничьте список разрешённых образов в `config.toml`. Это предотвращает запуск вредоносного ПО через `docker`/`kubernetes` executor.
+-   **OIDC вместо статических секретов**: Для доступа к Vault и внутренним сервисам используйте `id_tokens`. Это исключает риск утечки долгоживущих паролей через логи.
+-   **`privileged = false` по умолчанию**: Включайте `privileged = true` только для DinD-задач. Для сборки образов используйте Kaniko или BuildKit без привилегий.
+-   **Ротация `glrt-` токенов**: Периодически меняйте Authentication Token. Для эфемерных runner'ов используйте JIT Config с коротким TTL.
+-   **Сетевая изоляция**: Runner'ы должны находиться в отдельном сегменте сети с доступом только к GitLab API и внутренним registry. Не открывайте доступ к интернету без необходимости.
+-   **Аудит регистрации**: Включите audit logging в Admin Area → Settings → Audit Events. Мониторьте новые регистрации runner'ов.
+
+### Производительность и надёжность (Sysadmin/SRE)
+
+-   **`concurrent` и `limit`**: Настраивайте глобальный `concurrent` и per-runner `limit` с запасом 20-30% от пиковой нагрузки. Это предотвращает перегрузку хоста.
+-   **`check_interval`**: Устанавливайте `check_interval = 1` для production-раннеров. Меньшие значения увеличивают нагрузку на GitLab API.
+-   **Кэширование артефактов**: Настройте распределённый кэш (S3/MinIO) для `docker` executor'ов. Это уменьшает время сборки при переиспользовании зависимостей.
+-   **Мониторинг метрик**: Включите `metrics_server = ":9252"` и настройте алерты на `gitlab_runner_queue_size > 0` и `runner_system_failure`.
+-   **Очередь Merge Request**: Для проектов с высокой активностью MR используйте Merge Queue, чтобы предотвратить breakage main при интеграции нестабильных изменений.
+-   **Резервное копирование config.toml**: Регулярно бэкапите `/etc/gitlab-runner/config.toml` и храните в защищённом хранилище.
+
+### Управление инстансом (Sysadmin)
+
+-   **Обновление Runner'ов**: Обновляйте GitLab Runner в течение 1-2 недель после выхода мажорной версии GitLab. Runner должен быть той же мажорной версии, что и GitLab Server (±1).
+-   **Ротация секретов**: Периодически меняйте `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` для кэша и обновляйте их в `config.toml`.
+-   **Мониторинг очереди доставки вебхуков**: GitLab помещает неудачные вебхуки в очередь. Мониторьте размер очереди через Admin API.
+-   **Очистка Docker ресурсов**: Настройте автоматическую очистку остановленных контейнеров, неиспользуемых образов и volumes (cron или scheduled pipeline).
+-   **Резервное копирование**: Регулярно бэкапите базу данных GitLab и хранилище артефактов. Тестируйте восстановление на изолированном стенде.
+
+## Граничные условия и ограничения (Edge Cases)
+
+### Версионная совместимость
+
+-   **`glrt-` токены**: Доступны с GitLab 16.0+. В более старых версиях используйте `registration-token` (устарели).
+-   **`docker-autoscaler`**: Доступен с GitLab 17.0+. В более старых версиях используйте `docker-machine` (устарел) или статические runner'ы.
+-   **`spec:inputs` в корневом файле**: Доступен только с GitLab 17.11+. В более старых версиях используйте `variables` с `options`.
+-   **JIT Config**: Доступен с GitLab 17.0+. В более старых версиях используйте JIT Runner Registration Token.
+-   **Runner Manager и GitLab Server**: Runner должен быть той же мажорной версии, что и GitLab Server (±1 мажорная версия). При несовместимости могут появиться ошибки в API-запросах.
+
+### Ограничения механизмов
+
+-   **`concurrent` лимит**: Глобальный лимит задач на один Runner Manager. При превышении задачи остаются в очереди. Для масштабирования используйте несколько Runner Manager'ов.
+-   **`limit` на runner**: Если `limit = 0` (по умолчанию), runner принимает задачи до глобального `concurrent`. Если `limit = N` — максимум N задач.
+-   **Docker DinD и `privileged`**: `privileged = true` даёт полный доступ к ядру хоста. Это критическая уязвимость. Используйте Kaniko или DooD вместо DinD.
+-   **`shm_size`**: По умолчанию Docker выделяет 64MB. Для тестирования веб-приложений (Playwright, Selenium) увеличивайте до 256MB+.
+-   **`memory_swap`**: Если `memory_swap = memory` — swap отключается. Это рекомендуется для предсказуемого поведения.
+
+### Специфические сценарии
+
+-   **Runner без исходящего интернета**: Если Runner находится в изолированной сети, убедитесь, что он может доставить запросы к GitLab API и внутреннему registry.
+-   **Высокая частота задач**: При массовых задачах (bulk triggers) GitLab может дедуплицировать запросы. Настраивайте `check_interval` и `concurrent` с запасом.
+-   **Fork-репозитории**: Для Fork MR задачи запускаются только на Shared runner'ах. Project runner'ы не доступны.
+-   **Запуск пайплайна из пайплайна**: При использовании `CI_JOB_TOKEN` для Trigger API убедитесь, что целевой проект добавлен в Inbound Allowlist. Иначе вернётся 403 Forbidden.
+-   **Deadlock в Resource Group**: Если задача зависла и удерживает группу, последующие пайплайны будут ждать бесконечно. Ручная очистка в `CI/CD > Resource Groups` или настройка `timeout` на задаче.
+
+### Ограничения инфраструктуры
+
+-   **Сетевая задержка**: Runner должен отвечать на запросы GitLab API за <10 секунд. При высокой задержке увеличьте `check_interval` или используйте regional Runner'ы.
+-   **TLS-сертификаты**: GitLab не отправляет задачи на HTTP (кроме `localhost` в development-режиме). Убедитесь, что GitLab Server работает по HTTPS с валидным сертификатом.
+-   **DNS**: GitLab кэширует DNS на 5 минут. При смене IP GitLab Server старый IP может использоваться до истечения кэша.
+-   **Файрвол**: Если Runner и GitLab Server находятся в разных сегментах сети, откройте порт 443 в обе стороны.
+-   **Ресурсы хоста**: Убедитесь, что на хосте Runner'а достаточно RAM и CPU. При нехватке ресурсов Docker OOM-killer завершит контейнеры задач.
+
 ## Дополнительная информация
 
 ### См. также
 -   **[Регистрация GitLab Runner](../Tutorials/runner_registration.md)** — практическое пошаговое руководство по установке и регистрации.
 -   **[Docker-in-Docker vs Docker-out-of-Docker](../../../Docker/docker-in-docker.md)** — безопасность сборки образов, сравнение подходов.
 -   **[Кэширование в GitLab CI](./gitlab_ci_caching/caching_overview.md)** — настройка локального и распределенного кэша.
+-   **[Resource Group и контроль пайплайнов](./resource_group_and_pipeline_control.md)** — мьютекс, concurrency, retry, timeout.
+-   **[CI_JOB_TOKEN безопасность](./ci_job_token_security.md)** — allowlist, scope, attack vectors.
+-   **[OIDC и Workload Identity в GitLab CI](./gitlab_ci_oidc_workload_identity.md)** — аутентификация без секретов.
+-   **[Управление парком Runner'ов (Fleet Management)](./runner_fleet_management.md)** — автоскейлинг, мониторинг, оптимизация.

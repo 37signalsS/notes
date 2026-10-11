@@ -379,7 +379,7 @@ kubectl get nodes
   --cacert=/etc/kubernetes/pki/etcd/ca.crt \
   --cert=/etc/kubernetes/pki/etcd/server.crt \
   --key=/etc/kubernetes/pki/etcd/server.key && \
-  etcdutl snapshot verify /backup/etcd-$(date +\%F-\%H\%M).db && \
+  etcdutl snapshot status /backup/etcd-$(date +\%F-\%H\%M).db && \
   find /backup/ -name "etcd-*.db" -mtime +7 -delete
 ```
 

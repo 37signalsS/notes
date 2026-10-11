@@ -1,5 +1,7 @@
 # Dockerfile: Лучшие практики для Node.js
 
+**Актуально для:** Node.js 26.x
+
 ## Определения
 
 - **package.json / package-lock.json:** Манифест проекта и файл фиксации точных версий зависимостей. Для Yarn это `yarn.lock`, для Pnpm — `pnpm-lock.yaml`.
@@ -14,36 +16,106 @@
 - **dotenv:** Паттерн загрузки переменных окружения из файла `.env` в приложение. В контейнерах `.env` файлы не должны попадать в образ — их передают через `--env-file` или `--env` при запуске.
 - **cross-env:** Утилита для кроссплатформенной установки переменных окружения в npm-скриптах. Решает проблему различий между `export VAR=val` (Unix) и `set VAR=val` (Windows) в package.json.
 
+## Предварительные требования
+
+- **Docker Engine 24+** с включённым BuildKit (`DOCKER_BUILDKIT=1` или `"features": { "buildkit": true }` в `daemon.json`).
+- **Node.js 26.x LTS** как целевая версия runtime. Для сборки может использоваться та же или более новая версия.
+- Понимание принципов **multi-stage сборки** и механики слоёв Docker.
+- Знание особенностей **cgroups v2** в целевой ОС хоста (Ubuntu 22.04+, RHEL 9+, Debian 12+), так как они влияют на лимиты памяти и CPU в контейнере.
+- Наличие `.dockerignore` в корне проекта для исключения `node_modules`, `.git`, секретов и артефактов сборки из контекста.
+
 ## Базовые концепции
 
 ### Выбор базового образа
 
 В 2026 году стандартом остаются образы на базе **Alpine** и **Debian Slim**:
-- `node:24-alpine` (LTS) — ~50 МБ. Минимальный размер, но требует осторожности с нативными модулями из-за `musl libc`.
-- `node:24-slim` (LTS) — ~70 МБ. База Debian, лучшая совместимость с нативными зависимостями.
+- `node:26-alpine` (LTS) — ~168 МБ (сжатый образ). Минимальный размер, но требует осторожности с нативными модулями из-за `musl libc`.
+- `node:26-slim` (LTS) — ~232 МБ (сжатый образ). База Debian, лучшая совместимость с нативными зависимостями.
 - **Google Distroless:** `gcr.io/distroless/nodejs24-debian12` — максимальная безопасность (нет shell, нет пакетных менеджеров).
 
 **Важно о версионировании:**
-- Используйте конкретные теги версий (`node:24-alpine`, а не `node:alpine`) для воспроизводимости.
-- В production рекомендуется pinning по SHA256 дайджесту: `node:24-alpine@sha256:abc123...` — гарантирует, что образ не будет изменён.
+- Используйте конкретные теги версий (`node:26-alpine`, а не `node:alpine`) для воспроизводимости.
+- В production рекомендуется pinning по SHA256 дайджесту: `node:26-alpine@sha256:abc123...` — гарантирует, что образ не будет изменён.
 - Для multi-stage сборки пинните обе стадии (builder и runtime) одним дайджестом.
 
 ### Управление ресурсами и V8
 
-Node.js в контейнерах часто требует ручной настройки лимитов V8, особенно в средах с cgroups v2:
-*   **Memory Limit:** Используйте `NODE_OPTIONS="--max-old-space-size=X"`, где X составляет 75-80% от лимита памяти контейнера, чтобы оставить место для стека и системных вызовов.
-*   **CPU:** Node.js однопоточен для выполнения JS, но использует дополнительные потоки для I/O и `worker_threads`. Для корректного масштабирования в K8s используйте лимиты минимум в 1 CPU.
+Node.js в контейнерах требует ручной настройки лимитов V8, так как по умолчанию движок не знает о cgroups и может превысить лимиты памяти контейнера.
+
+*   **Memory Limit:** Используйте `NODE_OPTIONS="--max-old-space-size=X"`, где X составляет 75-80% от лимита памяти контейнера. Это правило учитывает:
+    - `--max-old-space-size` ограничивает только V8 heap (старое поколение), но не стек, внешнюю память (native addons) и внутренние структуры V8.
+    - Оставшиеся 20-25% необходимы для стека вызовов, зон V8 (code space, map space) и нативных модулей (`node-gyp`).
+    - При достижении лимита V8 пытается выполнить garbage collection; если не помогает — процесс завершается с `FATAL ERROR: Reached heap limit`.
+    - **Расчёт:** `--max-old-space-size=1024` для контейнера с `--memory=1536m` (75% от 1536).
+
+*   **CPU:** Node.js однопоточен для выполнения JS (event loop), но использует дополнительные потоки для I/O и `worker_threads`. Для корректного масштабирования:
+    - Минимум 1 CPU (`--cpus=1`) для небольших сервисов.
+    - При использовании `worker_threads` учитывайте их в общем лимите.
+    - В Kubernetes лимиты CPU throttling (`cpu.cfs_quota_us` / `cpu.cfs_period_us`) могут снижать пропускную способность при пиковых нагрузках.
+
+*   **cgroups v2:** В современных дистрибутивах (Ubuntu 22.04+, RHEL 9+, Debian 12+) используются cgroups v2, где:
+    - `memory.max` — жёсткий лимит, при превышении которого OOM killer завершает процесс.
+    - `memory.high` — мягкий лимит, при превышении которого kernel принудительно сжимает кэш и замедляет процесс (memory pressure).
+    - Node.js не отслеживает `memory.high` автоматически — только `memory.max`. Настройте `--max-old-space-size` с запасом под `memory.high`.
 
 ### Обработка сигналов и PID 1
 
-Использование `node` напрямую как PID 1 не рекомендуется, так как он не обрабатывает системные сигналы корректно.
-1.  **Решение:** Используйте `tini` или флаг `--init` в Docker.
-2.  **Graceful Shutdown:** Приложение должно явно обрабатывать сигналы:
-    ```javascript
-    const shutdown = () => server.close(() => process.exit(0));
-    process.on('SIGTERM', shutdown);
-    process.on('SIGINT', shutdown);
-    ```
+В Linux процесс с PID 1 имеет особые semantics: он не Inherit signal dispositions по умолчанию и не автоматически убирает зомби-процессы. Node.js как PID 1 игнорирует большинство сигналов, что приводит к:
+
+- **Незавершаемым контейнерам:** `docker stop` отправляет `SIGTERM`, но `node` его не обрабатывает → через 10 секунд Docker отправляет `SIGKILL` (принудительное завершение).
+- **Накоплению зомби:** Дочерние процессы (воркеры, `child_process`) завершаются, но `waitpid()` не вызывается → зомби накапливаются в таблице процессов.
+- **Утечкам ресурсов:** При `SIGKILL` не вызываются `process.on('exit')` и `server.close()`, соединения с БД и HTTP-клиентами остаются в `ESTABLISHED` состоянии.
+
+**Решение:** Используйте `tini` или флаг `--init` в Docker. Tini становится PID 1, пробрасывает сигналы дочернему процессу и вызывает `waitpid()` для зомби. Подробнее: [Init Process в Docker: tini](../../Docker/Dockerfile/init_process_tini.md).
+
+**Graceful Shutdown:** Приложение должно явно обрабатывать сигналы и корректно завершать работу:
+
+```javascript
+const shutdown = (signal) => {
+  console.log(`Received ${signal}, shutting down gracefully...`);
+  
+  // Перестаём принимать новые соединения
+  server.close(() => {
+    console.log('HTTP server closed');
+    process.exit(0);
+  });
+  
+  // Принудительное завершение через таймаут
+  setTimeout(() => {
+    console.error('Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+```
+
+**Важно для Kubernetes:** K8s отправляет `SIGTERM` перед `SIGKILL` (по умолчанию 30 секунд). Настройте `terminationGracePeriodSeconds` в манифесте и `StartupProbe` с `failureThreshold` для корректного завершения.
+
+### PM2 в контейнерах (антипаттерн)
+
+PM2 — process manager для bare-metal Node.js. В контейнерах он **не нужен и вреден**:
+
+*   **Дублирование функций:** Docker/Kubernetes перезапускают контейнер при падении — PM2 дублирует эту логику внутри контейнера.
+*   **Сигналы:** PM2 как PID 1 перехватывает `SIGTERM` и может мешать graceful shutdown приложения.
+*   **Cluster mode:** PM2 cluster mode форкает несколько процессов Node — в Kubernetes это мешает горизонтальному масштабированию (реплики) и корректному учёту CPU-лимитов.
+
+**Когда PM2 оправдан:** legacy-приложения, требующие cluster mode без возможности рефакторинга, или несколько тесно связанных Node-процессов (но тогда предпочтительнее `s6-overlay`/`supervisord` — см. [Multi-process контейнеры](../../Docker_logs/docker_multi_process_logging.md)).
+
+```dockerfile
+# Если PM2 всё же необходим (legacy)
+FROM node:26-alpine
+RUN npm install -g pm2
+# pm2-runtime — foreground-режим, обязательный для Docker (daemon-режим PM2 не подходит)
+CMD ["pm2-runtime", "ecosystem.config.js"]
+```
+
+**Валидация:**
+```bash
+docker run --rm my-app pm2-runtime --version
+# → 5.x.x
+```
 
 ### Безопасность и аудит
 
@@ -54,6 +126,58 @@ Node.js в контейнерах часто требует ручной нас�
 
 ## Практические сценарии
 
+### Сценарий 0: `.dockerignore` для Node.js
+
+Правильный `.dockerignore` исключает файлы, которые не должны попадать в контекст сборки. Это ускоряет передачу данных в BuildKit и предотвращает утечку секретов в слои образа.
+
+```dockerignore
+# Зависимости
+node_modules
+.pnpm-store
+.yarn/cache
+.npm
+
+# Исходный код и конфигурация
+.git
+.env
+.env.*
+!.env.example
+.npmrc
+
+# Артефакты сборки
+dist
+build
+out
+coverage
+*.log
+
+# Инфраструктура
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Файлы IDE и ОС
+.idea
+.vscode
+*.swp
+.DS_Store
+Thumbs.db
+```
+
+**Почему это важно:**
+- `node_modules` в контексте может занимать 500+ МБ и ломать кэш слоёв.
+- `.env` и `.npmrc` с секретами никогда не должны попадать в образ.
+- `.git` содержит историю коммитов с потенциальными секретами.
+
+**Валидация:**
+```bash
+# Проверка размера контекста сборки
+docker build --no-cache --progress=plain . 2>&1 | grep "Sending build context"
+# → Sending build context to Docker daemon  1.2MB
+
+# Без .dockerignore контекст может быть 50-500MB
+```
+
 ### Сценарий 1: Многоэтапная сборка (TypeScript + BuildKit + Tini)
 
 Эталонный шаблон для Node.js 24 LTS.
@@ -63,7 +187,7 @@ Node.js в контейнерах часто требует ручной нас�
 # check=error=true
 
 # --- Этап 1: Сборка (builder) ---
-FROM node:24-alpine@sha256:... AS builder
+FROM node:26-alpine@sha256:... AS builder
 WORKDIR /app
 
 # Копируем манифесты для кэширования слоев
@@ -81,7 +205,7 @@ RUN npm run build && \
     npm prune --omit=dev
 
 # --- Этап 2: Финальный образ (runtime) ---
-FROM node:24-alpine@sha256:...
+FROM node:26-alpine@sha256:...
 RUN apk add --no-cache tini
 WORKDIR /app
 
@@ -143,7 +267,7 @@ Pnpm значительно быстрее npm и эффективнее исп�
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM node:24-alpine@sha256:... AS builder
+FROM node:26-alpine@sha256:... AS builder
 
 # Активируем pnpm через corepack
 RUN corepack enable && corepack prepare pnpm@latest --activate
@@ -159,7 +283,7 @@ COPY . .
 RUN pnpm build && pnpm prune --prod
 
 # Финальный образ
-FROM node:24-alpine@sha256:...
+FROM node:26-alpine@sha256:...
 RUN apk add --no-cache tini
 WORKDIR /app
 
@@ -202,14 +326,14 @@ docker exec <container> du -sh node_modules
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM node:24-alpine AS pruner
+FROM node:26-alpine AS pruner
 WORKDIR /app
 RUN npm install -g turbo
 COPY . .
 # Генерируем срез только для конкретного микросервиса
 RUN turbo prune my-api --docker
 
-FROM node:24-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
 COPY --from=pruner /app/out/json/ ./
 COPY --from=pruner /app/out/pnpm-lock.yaml ./
@@ -224,7 +348,7 @@ RUN pnpm build --filter=my-api
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM node:24-slim AS builder
+FROM node:26-slim AS builder
 # Установка инструментов сборки (напр. для bcrypt или sharp)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends python3 make g++ && \
@@ -236,7 +360,7 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY . .
 RUN npm run build && npm prune --omit=dev
 
-FROM node:24-slim
+FROM node:26-slim
 # Для нативных модулей в runtime тоже нужны shared-библиотеки
 RUN apt-get update && \
     apt-get install -y --no-install-recommends tini && \
@@ -280,7 +404,7 @@ Distroless-образы не содержат shell, пакетный менед
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM node:24-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
@@ -317,7 +441,7 @@ docker exec <container> apt-get --version 2>&1 || echo "apt-get не найде�
 # Проверка размера образа
 docker images my-app:latest
 # → REPOSITORY   TAG       SIZE
-# → my-app       latest    ~100 MB (vs ~150 MB для node:24-alpine)
+# → my-app       latest    ~100 MB (vs ~150 MB для node:26-alpine)
 ```
 
 **Отладка Distroless:**
@@ -330,7 +454,7 @@ docker images my-app:latest
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM node:24-alpine AS builder
+FROM --platform=$BUILDPLATFORM node:26-alpine AS builder
 ARG TARGETARCH
 WORKDIR /app
 
@@ -340,7 +464,7 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 COPY . .
 RUN npm run build && npm prune --omit=dev
 
-FROM node:24-alpine
+FROM node:26-alpine
 RUN apk add --no-cache tini
 WORKDIR /app
 
@@ -380,7 +504,7 @@ docker manifest inspect my-app:latest
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM node:24-alpine
+FROM node:26-alpine
 RUN apk add --no-cache tini
 WORKDIR /app
 
@@ -413,10 +537,86 @@ docker run -d \
 ```
 
 **Отличия от production:**
-- `npm ci` устанавливает devDependencies (jest, eslint, nodemon)
-- `CHOKIDAR_USEPOLLING=1` — работает на macOS/Windows через Docker Desktop
-- `npx nodemon` вместо `node` — автоматическая перезагрузка при изменении файлов
-- Volume mount подменяет `src/` в контейнере — изменения отслеживаются в реальном времени
+- `npm ci` устанавливает devDependencies (jest, eslint, nodemon) — в production они исключаются.
+- `CHOKIDAR_USEPOLLING=1` — работает на macOS/Windows через Docker Desktop (inotify не работает в shared folders).
+- `npx nodemon` вместо `node` — автоматическая перезагрузка при изменении файлов.
+- Volume mount подменяет `src/` в контейнере — изменения отслеживаются в реальном времени.
+- `--read-only` и `--cap-drop=ALL` обычно не используются в dev для удобства отладки.
+- Лимиты ресурсов (`--memory`, `--cpus`) обычно жёстко не задаются в dev.
+
+### Сценарий 8: SBOM и аттестации (BuildKit + Docker Scout)
+
+Генерация SBOM (Software Bill of Materials) и аттестаций при сборке для compliance и безопасности.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM node:26-alpine@sha256:... AS builder
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+COPY . .
+RUN npm run build && npm prune --omit=dev
+
+FROM node:26-alpine@sha256:...
+RUN apk add --no-cache tini
+WORKDIR /app
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+USER node
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "dist/main.js"]
+```
+
+**Сборка с SBOM и Provenance:**
+```bash
+# Сборка с генерацией SBOM и аттестаций
+DOCKER_BUILDKIT=1 docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t my-app:latest \
+  --sbom=true \
+  --provenance=mode=max \
+  --push \
+  .
+
+# Просмотр SBOM в образе
+docker buildx imagetools inspect my-app:latest --format '{{ json .SBOM }}' | jq
+
+# Просмотр Provenance
+docker buildx imagetools inspect my-app:latest --format '{{ json .Provenance }}' | jq
+```
+
+**Сканирование уязвимостей через Docker Scout:**
+```bash
+# Быстрый обзор
+docker scout quickview my-app:latest
+
+# Только критичные и высокие уязвимости
+docker scout cves my-app:latest --only-severity critical,high
+
+# Сравнение с базовым образом
+docker scout compare my-app:latest node:26-alpine
+```
+
+**Подпись образа (Cosign):**
+```bash
+# Подпись образа
+cosign sign my-app:latest
+
+# Верификация подписи
+cosign verify my-app:latest
+```
+
+**Валидация:**
+```bash
+# Проверка что SBOM присутствует
+docker buildx imagetools inspect my-app:latest --format '{{ json .SBOM }}' | jq '.artifacts | length'
+# → число артефактов в SBOM
+
+# Проверка подписи
+cosign verify my-app:latest --certificate-identity=... --certificate-oidc-issuer=...
+# → Verification succeeded
+```
 
 ## Типичные ошибки и их решение
 
@@ -544,7 +744,7 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 # Симптом: Error: /lib/x86_64-linux-gnu/libc.so.6: version 'GLIBC_2.28' not found
 
 # Решение 1: использовать slim (Debian) вместо Alpine
-FROM node:24-slim
+FROM node:26-slim
 
 # Решение 2: установить совместимость glibc
 RUN apk add --no-cache gcompat
@@ -579,7 +779,7 @@ RUN apk add --no-cache python3 make g++ && npm rebuild
 # syntax=docker/dockerfile:1
 
 # 2. Базовый образ с pinning
-FROM node:24-alpine@sha256:... AS builder
+FROM node:26-alpine@sha256:... AS builder
 
 # 3. Переменные сборки
 ARG TARGETARCH
@@ -598,7 +798,7 @@ COPY . .
 RUN npm run build && npm prune --omit=dev
 
 # 8. Финальный образ
-FROM node:24-alpine@sha256:...
+FROM node:26-alpine@sha256:...
 RUN apk add --no-cache tini
 WORKDIR /app
 

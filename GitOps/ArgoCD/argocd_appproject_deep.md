@@ -350,7 +350,7 @@ spec:
       namespaces:
         - production
 
-    # Запрещено:最后一个星期五 месяца (emergency freeze)
+    # Запрещено: пятница в последних днях месяца (emergency freeze)
     - kind: deny
       schedule: "0 0 28-31 * 5"
       duration: 24h

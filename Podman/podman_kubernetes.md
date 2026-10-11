@@ -395,3 +395,5 @@ deploy:
 - **[Podman compose](./podman-compose.md)** — Docker Compose совместимость
 - **[Kubernetes overview](../../Kubernetes/kubernetes_overview.md)** — обзор Kubernetes
 - **[Kubernetes Pods](../../Kubernetes/Base/Pod/)** — Pod в Kubernetes
+
+# force reindex test

@@ -370,3 +370,5 @@ sha256sum app-1.42.0-linux-amd64.bin
 - **[CI/CD: Обзор](../ci_cd_overview.md)**
 - **[DevSecOps: Обзор](../DevSecOps/devsecops_overview.md)**
 - **[Метрики DORA](./dora_metrics.md)**
+- **[Управление изменениями и CAB](./change_management.md)** — Change Management и Change Advisory Board в CI/CD.
+- **[Capacity Planning для CI/CD](./capacity_planning.md)** — планирование мощности пайплайнов и инфраструктуры.

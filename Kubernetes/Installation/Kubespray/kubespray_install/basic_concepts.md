@@ -32,6 +32,35 @@ Kubespray является высокоуровневой автоматизир
 - **Синхронизация времени (NTP):** критически важна для etcd. Распределенное хранилище чувствительно к разнице во времени между узлами; значительный дрейф часов приводит к потере кворума. Рекомендуется использование `chrony` или `systemd-timesyncd`.
 - **Имена узлов (Hostname):** каждый узел должен иметь уникальное, стабильное имя хоста, которое не меняется после перезагрузки. Kubespray использует hostname для идентификации узлов в API Kubernetes. Рекомендуется FQDN-формат (например, `node-1.example.com`).
 
+### Порядок выполнения плейбуков
+
+Плейбук `cluster.yml` выполняется как последовательность plays с разными целевыми группами хостов. Порядок (Kubespray v2.30.0, `playbooks/cluster.yml`):
+
+| # | Play | Целевые хосты | Что выполняется |
+| :--- | :--- | :--- | :--- |
+| 1 | `boilerplate.yml` | all | Общие проверки и предварительные задачи |
+| 2 | `internal_facts.yml` | all | Сбор Ansible facts |
+| 3 | Prepare for etcd install | `k8s_cluster:etcd` | Роли `kubespray_defaults`, `kubernetes/preinstall`, `container-engine`, `download` |
+| 4 | Install etcd (`install_etcd.yml`) | `k8s_cluster:etcd` | Развертывание etcd |
+| 5 | Install Kubernetes nodes | `k8s_cluster` | Роль `kubernetes/node` (настройка узлов, модули ядра) |
+| 6 | Install the control plane | `kube_control_plane` | Роли `kubernetes/control-plane`, `kubernetes/client`, `kubernetes-apps/cluster_roles` |
+| 7 | Invoke kubeadm and install a CNI | `k8s_cluster` | Роли `kubernetes/kubeadm`, `node-label`, `node-taint`, `kubernetes-apps/common_crds`, `network_plugin` |
+| 8 | Install Calico Route Reflector | `calico_rr` | Route Reflector (только если используется) |
+| 9 | Patch Kubernetes for Windows | `kube_control_plane[0]` | Патчи для Windows-узлов |
+| 10 | Install Kubernetes apps | `kube_control_plane` | `external_cloud_controller`, `policy_controller`, `ingress_controller`, `external_provisioner`, `kubernetes-apps` |
+| 11 | Apply resolv.conf changes | `k8s_cluster` | Роль `kubernetes/preinstall` (тег `dns_late`) |
+
+Знание порядка полезно для диагностики: ошибка в play 3 (подготовка etcd) блокирует все последующие этапы, а ошибка в play 7 (kubeadm) означает, что etcd уже работает, но control plane не инициализирован.
+
+### Модель запуска компонентов
+
+Компоненты кластера запускаются двумя способами:
+
+- **systemd-сервисы:** `kubelet` — на **каждом** узле кластера (и control plane, и workers); `etcd` — при схеме `etcd_deployment_type: host` (по умолчанию) также как systemd-сервис. Проверка: `systemctl is-active kubelet etcd`.
+- **Статические поды (через CRI):** `kube-apiserver`, `kube-scheduler`, `kube-controller-manager` запускаются kubelet'ом как статические поды из манифестов в `/etc/kubernetes/manifests/`. Проверка: `kubectl get pods -n kube-system` или `sudo crictl pods`.
+
+Control plane-узлы получают taint `node-role.kubernetes.io/control-plane:NoSchedule` (поведение `kubeadm init` по умолчанию с Kubernetes 1.24), поэтому пользовательские поды по умолчанию не планируются на мастерах.
+
 ### Сетевые порты
 
 Для корректной работы кластера необходимо открыть следующие порты между узлами:

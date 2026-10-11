@@ -1,12 +1,14 @@
 # Конфигурация Git — git config
 
+**Актуально для:** Git 2.45–2.56 (локально проверено на 2.54.0); отдельные механизмы описаны начиная с версии их введения (2.20–2.50). Содержание остаётся корректным для 2.54–2.56 — изменений в описанных ключах не было.
+
 ## Определения
 
 *   **Конфигурация Git (`git config`):** Механизм управления параметрами Git на различных уровнях (системном, глобальном, локальном, рабочем дереве), определяющий поведение команд, интерфейс, сетевое взаимодействие и безопасность.
 *   **Иерархия уровней:** Система приоритетов, где настройки более специфичного уровня (например, локального) переопределяют настройки общего уровня (системного).
 *   **Условные инклуды (`includeIf`):** Механизм динамического подключения конфигурационных файлов в зависимости от условий, таких как путь к текущему репозиторию. Позволяет автоматически переключать профили (email, ключи) между рабочими и личными проектами.
 *   **Безопасная директория (`safe.directory`):** Мера защиты, предотвращающая выполнение команд Git в репозиториях, владельцем которых не является текущий пользователь (актуально для общих сетевых ресурсов и Docker-контейнеров).
-*   **Бэкенд `reftable`:** (Git 3.0+) Новый бинарный формат хранения ссылок (веток, тегов), обеспечивающий атомарность обновлений и масштабируемость для репозиториев с огромным количеством ссылок.
+*   **Бэкенд `reftable`:** (интегрирован в Git 2.45, выбирается конфигом `init.defaultRefFormat` с 2.47, не экспериментален; станет default в Git 3.0) Новый бинарный формат хранения ссылок (веток, тегов), обеспечивающий атомарность обновлений и масштабируемость для репозиториев с огромным количеством ссылок.
 *   **Окончания строк (CRLF/LF):** Символы завершения строки, различающиеся в Windows (`CRLF` — `\r\n`) и Unix-системах (`LF` — `\n`). Несогласованность настроек приводит к конфликтам слияния и ложным изменениям в истории.
 *   **SSH-подпись коммитов:** Современный метод верификации автора коммита с использованием SSH-ключа вместо классического GPG.
 *   **`ssh-agent`:** Фоновая программа для хранения расшифрованных приватных ключей в памяти, избавляющая от повторного ввода парольной фразы (passphrase).
@@ -14,7 +16,7 @@
 *   **`credential.helper`:** Механизм кэширования и хранения учетных данных (логин, пароль, токен) для HTTPS-удаленных репозиториев. Поддерживаемые бэкенды: `cache` (временный кэш в памяти), `store` (plain-text файл), `osxkeychain` (macOS Keychain), `wincred` (Windows Credential Manager), `libsecret` (Linux Secret Service).
 *   **`core.ignoreCase`:** Логическое значение, указывающее, должно ли Git игнорировать регистр букв при отслеживании файлов. Актуально для файловых систем Windows (NTFS) и macOS (APFS), где `file.txt` и `File.txt` могут указывать на один и тот же файл.
 *   **`core.longpaths`:** (Git 2.10+) Разрешает использование длинных путей (более 260 символов) на Windows. Необходим для монорепозиториев с глубокой вложенностью директорий.
-*   **`core.sparseIndex`:** (Git 2.25+) Ускоряет работу разреженного извлечения (`sparse-checkout`) в режиме Cone, заменяя сканирование всего индекса на точечный доступ.
+*   **`index.sparse` / `--[no-]sparse-index`:** (Git 2.25+, экспериментально) Разреженный индекс для `sparse-checkout`: размер индекса уменьшается до подмножества рабочего дерева, что ускоряет `git status` и `git add`. Включается опцией `git sparse-checkout init/set --sparse-index` (конфига `core.sparseIndex` не существует); внешние инструменты могут не понимать разреженные записи индекса.
 *   **`core.untrackedCache`:** (Git 2.5+) Кэширует информацию об неотслеживаемых файлах между вызовами `git status`, что сокращает время сканирования рабочего дерева.
 *   **`core.commitGraph` / `fetch.writeCommitGraph`:** Включение и автоматическую запись графа коммитов (`commit-graph`), ускоряющую обход истории (`git log`, `merge`, `rebase`) на десятки процентов в репозиториях с >100k коммитов.
 *   **`http.proxy` / `https.proxy`:** Настройка HTTP/HTTPS-прокси для доступа к удаленным репозиториям через корпоративные шлюзы.
@@ -190,9 +192,13 @@ git config --global gc.pruneExpire "2.weeks.ago"
 git config --global fetch.writeCommitGraph true
 git config --global core.commitGraph true
 
-# Фоновое обслуживание вместо gc
-git config --global maintenance.auto true
+# Фоновое обслуживание вместо gc (регистрация репозитория + планировщик)
 git maintenance start
+# Примечание: maintenance.auto (default true) управляет только автозапуском
+# "git maintenance run --auto" после команд, записывающих данные;
+# "git maintenance register" намеренно ставит maintenance.auto=false,
+# перекладывая работу на планировщик. Частота задаётся ключом
+# maintenance.<task>.schedule (hourly/daily/weekly).
 ```
 
 ### Конфигурация рабочих деревьев (worktreeConfig)
@@ -471,14 +477,19 @@ git config core.ignoreCase
 
 ### Сценарий 14: Конфигурация Git LFS через .lfsconfig
 
-Настройки LFS хранятся в `.lfsconfig` в корне репозитория. Для локальных override используйте `git config`:
+Настройки LFS хранятся в `.lfsconfig` в корне репозитория — но только ключи из whitelist LFSCONFIG (`lfs.url`, `lfs.pushurl`, `lfs.fetchinclude`, `lfs.fetchexclude`, `lfs.locksverify`, `lfs.allowincompletepush`, `lfs.skipdownloaderrors`, `lfs.<url>.access`, `remote.<name>.lfsurl`). Остальные параметры (например, `concurrenttransfers`) в `.lfsconfig` игнорируются — для локальных override используйте `git config`:
 
 ```ini
 # .lfsconfig (версионируется)
 [lfs]
     url = https://lfs.internal.company.com/project
-    concurrenttransfers = 16
     fetchexclude = "assets/raw_video/*,data/training_sets/**"
+```
+
+```ini
+# ~/.gitconfig или .git/config — параметры производительности
+[lfs]
+    concurrenttransfers = 16
 ```
 
 ```bash
@@ -491,7 +502,12 @@ git config lfs.url ssh://git@lfs.internal.company.com/project
 # Проверить эффективный URL
 git lfs env | grep Endpoint
 # → Endpoint=https://lfs.internal.company.com/project/info/lfs
+
+# Убедиться, что в .lfsconfig нет игнорируемых ключей
+git lfs env 2>&1 >/dev/null
 ```
+
+Подробнее о `.lfsconfig` — в [git_lfs_config.md](./git_lfs_config.md).
 
 ### Сценарий 15: Версионирование хуков через core.hooksPath
 
@@ -526,6 +542,8 @@ echo $COMMIT_HASH >> .git-blame-ignore-revs
 git blame --mark-ignored path/to/file.py
 ```
 
+**Ожидаемый результат:** `--mark-ignored` не является отдельным флагом — пометки появляют конфигурационные ключи `blame.markIgnoredLines` / `blame.markUnblamableLines` (по умолчанию `false`). По умолчанию коммиты из `.git-blame-ignore-revs` просто скрываются без маркировки.
+
 ### Сценарий 17: Изолированная конфигурация для Worktree
 
 ```bash
@@ -555,10 +573,8 @@ git config --global gc.pruneExpire "2.weeks.ago"
 # Включение фонового обслуживания (альтернатива gc)
 git maintenance start
 
-# Проверка статуса
-git maintenance run --verbose
-# → Auto packing the repository in background
-# → Auto updating the commit-graph
+# Проверка статуса (нужно ли обслуживание: exit 0 — нужно)
+git maintenance is-needed
 ```
 
 ---
@@ -585,6 +601,40 @@ git maintenance run --verbose
 | `worktreeConfig` не работает на старом Git | Git версии < 2.20 | Обновить Git или использовать ручное управление конфигами |
 
 ---
+
+## Операции и команды
+
+| Команда / Настройка | Назначение | Пример |
+| :--- | :--- | :--- |
+| `git config --global user.name "..."` | Идентификация автора | `git config --global user.name "Ivan Ivanov"` |
+| `git config --global pull.rebase true` | Rebase при pull | `git config --global pull.rebase true` |
+| `git config --global credential.helper 'cache --timeout=3600'` | Кэш паролей в памяти | `git config --global credential.helper 'cache --timeout=3600'` |
+| `git config --global credential.helper osxkeychain` | Безопасное хранение (macOS) | `git config --global credential.helper osxkeychain` |
+| `git config --global push.default simple` | Стратегия push | `git config --global push.default simple` |
+| `git config --global fetch.prune true` | Очистка локальных веток | `git config --global fetch.prune true` |
+| `git config --global init.defaultBranch main` | Имя ветки по умолчанию | `git config --global init.defaultBranch main` |
+| `git config --global core.fsmonitor true` | Монитор ФС | `git config --global core.fsmonitor true` |
+| `git config --global core.commitGraph true` | Граф коммитов | `git config --global core.commitGraph true` |
+| `git config --global gc.auto 256` | Порог автогарbage-collect | `git config --global gc.auto 256` |
+| `git maintenance start` | Фоновое обслуживание | `git maintenance start` |
+| `git config --global http.proxy http://...` | HTTP-прокси | `git config --global http.proxy http://proxy.corp:8080` |
+| `git config --global --add safe.directory '*'` | Доверенная директория | `git config --global --add safe.directory '*'` |
+| `git config --global core.hooksPath .githooks` | Версионирование хуков | `git config --global core.hooksPath .githooks` |
+| `git config --local blame.ignoreRevsFile .git-blame-ignore-revs` | Игнорирование коммитов в blame | `git config --local blame.ignoreRevsFile .git-blame-ignore-revs` |
+| `git config --global gpg.format ssh` | Подпись коммитов через SSH | `git config --global gpg.format ssh` |
+
+## Автоматизация и мониторинг (SRE / DevOps-аспект)
+
+Конфигурация Git — часть инфраструктуры, а не только личные предпочтения. Ключевые аспекты для автоматизированных сред:
+
+- **Идентификация в CI/CD:** `user.name` / `user.email` для ботов (например, `github-actions[bot]`) задаются через `git config` в скрипте инициализации или через переменные окружения `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` / `GIT_COMMITTER_NAME` / `GIT_COMMITTER_EMAIL`. Это исключает коммиты от случайного пользователя.
+- **Хуки и безопасность:** `core.hooksPath` позволяет централизованно внедрять проверки (lint, тесты, секреты) в `.githooks/`. Каталог должен быть защищён от записи посторонними — модифицированный хук может украсть секреты или внести вредоносный код.
+- **Мониторинг размера репозитория:** Утилита `git-sizer` анализирует размер репозитория и выявляет узкие места (количество объектов, pack-файлов, веток). Регулярный запуск в CI/CD позволяет ловить несанкционированный рост (например, при добавлении больших бинарных файлов).
+- **Фоновое обслуживание:** `git maintenance start` с планировщиком (`maintenance.<task>.schedule`) заменяет ручной `git gc`. В shared-средах (multiuser-серверы) фоновый `git gc` конкурирует за I/O — ограничивайте расписание через `cron`/`systemd` timers с nice-приоритетом.
+- **Блокировки ODB:** `git gc` и `git maintenance run` используют разную семантику блокировки object database. Не запускайте их параллельно на одном репозитории — один из процессов не выполнит задачи.
+- **Доверенные директории (`safe.directory`):** В Docker-контейнерах и CI-runners репозиторий часто владеет другой пользователь. `safe.directory '*'` разрешает всё, что опасно в shared-средах; ограничивайте конкретными путями, где возможно.
+- **Конфигурация и версионирование:** Настройки, специфичные для репозитория (`blame.ignoreRevsFile`, `core.hooksPath`, `safe.directory`), не передаются при `git clone`. Добавляйте их в скрипт инициализации (`setup.sh`) или в `.gitconfig` репозитория (если совместимость с Git < 2.20 не требуется).
+- **Секреты в конфиге:** Никогда не храните пароли/токены в `~/.gitconfig` — файл бэкапируется и синхронизируется. Используйте credential helpers или переменные окружения (`GIT_ASKPASS`, `GITHUB_TOKEN`, `GITLAB_TOKEN`).
 
 ## Ограничения и крайние случаи
 
@@ -638,7 +688,7 @@ git maintenance run --verbose
 
 - **`core.hooksPath` и целостность:** Убедитесь, что каталог с хуками защищен от записи посторонними. Злоумышленник, могущий модифицировать хук, может украсть секреты или внести вредоносный код.
 
-- **`git-crypt` и доступ:** Управление ключами через GPG требует четкой политики отзыва. При увольнении сотрудника удалите его ключ через `git-crypt remove-gpg-user`.
+- **`git-crypt` и доступ:** Управление ключами через GPG требует четкой политики отзыва. `git-crypt` не предоставляет команды для отзыва доступа (`remove-gpg-user` отсутствует): при увольнении сотрудника необходимо ротировать симметричный ключ (`git-crypt export-key` → `git-crypt init` с новым ключом) и передать его оставшимся участникам.
 
 - **HTTP/HTTPS и MITM:** Для корпоративных прокси используйте `http.sslcainfo` с валидным CA-файлом. Никогда не отключайте `http.sslVerify` в продакшене.
 

@@ -208,3 +208,5 @@ jobs:
 *   **[Управление окружениями Python](./Linux/Development/python_management.md)** — использование mise для изоляции интерпретаторов Python.
 *   **[GitHub Actions: mise-action](https://github.com/jdx/mise-action)** — официальный Action для интеграции в CI.
 *   **[Mise Documentation](https://mise.jdx.dev/)** — официальная техническая документация проекта.
+
+# force reindex test

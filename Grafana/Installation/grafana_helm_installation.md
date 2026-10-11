@@ -1,5 +1,7 @@
 # Установка Grafana через Helm
 
+**Актуально для:** Helm-чарт `grafana-community/grafana` 13.5.x, Grafana OSS 13.x, Helm 4, Kubernetes 1.25+
+
 ## Определения
 
 **Grafana** — платформа для аналитики и визуализации данных. См. [Обзор Grafana](../grafana_overview.md).
@@ -24,9 +26,9 @@
 
 | Компонент | Минимальная версия | Рекомендуемая версия (2026) | Примечание |
 | :--- | :--- | :--- | :--- |
-| **Kubernetes** | 1.25 | 1.28+ | Требуется для Gateway API и стабильной работы Ingress |
-| **Helm** | 3.10 | 3.14+ | Поддержка OCI-репозиториев и `helm show values` с ревизиями |
-| **Grafana OSS** | 11.x | 12.x / 13.x | LTS-версии получают обновления безопасности |
+| **Kubernetes** | 1.25 | 1.35+ | Ограничение `kubeVersion: ^1.25.0-0` в чарте; актуальный стабильный релиз — 1.37 (авг. 2026) |
+| **Helm** | 3.10 | 4.x | Helm 4 — активная ветка; Helm 3 получает security-фиксы до 11.11.2026 |
+| **Grafana OSS** | 12.x (LTS) | 13.x | 11.x — EOL (июнь 2026). Чарт 13.5.0 содержит appVersion 13.2.3 |
 
 ### Кластер и доступ
 
@@ -46,7 +48,7 @@ Sidecar-контейнер требует прав на чтение ConfigMaps 
 
 ### Миграция репозитория (2026)
 
-С начала 2026 года официальные Open Source чарты Grafana Labs переехали в комьюнити-репозиторий. Оригинальный репозиторий `grafana/helm-charts` теперь ориентирован преимущественно на Enterprise-версии.
+С конца января 2026 года официальные Open Source чарты Grafana Labs переехали в комьюнити-репозиторий. Оригинальный репозиторий `grafana/helm-charts` теперь ориентирован преимущественно на Enterprise-версии.
 
 **Актуальные репозитории для OSS Grafana 12.x/13.x:**
 
@@ -56,8 +58,8 @@ helm repo add grafana-community https://grafana-community.github.io/helm-charts
 helm repo update
 
 # OCI-репозиторий (рекомендуется для CI/CD)
-helm repo add grafana-community oci://ghcr.io/grafana-community/helm-charts
-helm repo update
+# ВАЖНО: OCI-чарты не добавляются через `helm repo add` — устанавливаются напрямую:
+helm install grafana oci://ghcr.io/grafana-community/helm-charts/grafana --version 13.5.0
 ```
 
 **Фиксация версии чарта (best practice):**
@@ -67,7 +69,7 @@ helm repo update
 helm search repo grafana-community/grafana --versions
 
 # Фиксация конкретной версии в values/команде
-# --version 9.2.0 (пример; проверьте актуальную версию)
+# --version 13.5.0 (актуальная; проверяйте через helm search repo --versions)
 ```
 
 ---
@@ -103,19 +105,19 @@ Helm-чарт включает sidecar-контейнер (`k8s-sidecar`), ко�
 | **Alerts** | `grafana_alert: "1"` | `/etc/grafana/provisioning/alerting` |
 
 **Особенности:**
-*   Общий размер данных в ConfigMap не должен превышать **1 МБ**. Для больших дашбордов включите `sidecar.dashboards.GZIP: true`.
+*   Общий размер данных в ConfigMap не должен превышать **1 МБ** — это ограничение Kubernetes API. Для больших дашбордов разбейте их на несколько ConfigMap.
 *   Параметр `sidecar.dashboards.searchNamespace: ALL` позволяет собирать дашборды со всего кластера. Требует соответствующих прав RBAC для ServiceAccount.
 *   Используйте аннотацию `grafana_dashboard_folder` (или `grafana_folder` в зависимости от версии sidecar) для автоматического создания папок в UI.
-*   Интервал сканирования настраивается через `sidecar.dashboards.watchInterval` (по умолчанию 30s).
+*   Метод отслеживания изменений настраивается через `sidecar.dashboards.watchMethod`: `WATCH` (по умолчанию, отслеживание по API) или `SLEEP` (пересканирование ConfigMap каждые 60 секунд).
 
 ### Высокая доступность (High Availability)
 
 Увеличение количества реплик (`replicas > 1`) недостаточно для полноценного HA. Grafana требует централизованного хранилища состояния.
 
 **Требования для HA:**
-*   **Внешняя БД:** PostgreSQL версии 12+ или MySQL через параметры `grafana.database.*`. SQLite не поддерживает конкурентный доступ.
+*   **Внешняя БД:** PostgreSQL версии 12+ или MySQL через параметры `grafana.ini.database.*`. SQLite не поддерживает конкурентный доступ.
 *   **Shared Storage:** Для кастомных плагинов и аватаров (через PVC с `accessModes: [ReadWriteMany]`).
-*   **Session Management:** Настройка Redis или внешней базы данных для хранения сессий пользователей (`grafana.grafana.ini.sessions`).
+*   **Session Management:** Настройка Redis для хранения сессий пользователей через `grafana.ini.remote_cache` (секции `[sessions]` в Grafana 13 нет, см. Сценарий 3).
 *   **Sticky Sessions:** Рекомендуется на уровне Ingress для стабильной работы UI.
 
 ### Безопасность
@@ -141,11 +143,11 @@ helm repo update
 # 2. Проверка доступных версий
 helm search repo grafana-community/grafana --versions
 # → NAME                                    CHART VERSION   APP VERSION   DESCRIPTION
-# → grafana-community/grafana                9.2.0           13.x          Grafana
+# → grafana-community/grafana                13.5.0          13.2.3        Grafana
 
 # 3. Установка с фиксированной версией чарта
 helm upgrade --install grafana grafana-community/grafana \
-  --version 9.2.0 \
+  --version 13.5.0 \
   --namespace monitoring \
   --create-namespace \
   -f values.yaml \
@@ -188,8 +190,8 @@ kubectl create namespace monitoring
 # grafana-values.yaml
 admin:
   existingSecret: "grafana-admin-secret" # Рекомендуется создавать отдельно
-  adminUserKey: "username"
-  adminPasswordKey: "password"
+  userKey: "username"
+  passwordKey: "password"
 
 # Фиксация версии чарта для воспроизводимости
 # В команде helm upgrade --install используйте --version X.Y.Z
@@ -227,7 +229,7 @@ sidecar:
     labelValue: "1"
     searchNamespace: ALL # Сканировать все неймспейсы; требует RBAC
     folderAnnotation: "grafana_folder"
-    watchInterval: 30s
+    watchMethod: WATCH
   datasources:
     enabled: true
     label: grafana_datasource
@@ -288,14 +290,14 @@ kubectl logs -n monitoring -l app.kubernetes.io/name=grafana -c grafana
 
 ### Сценарий 2: Базовая установка с Ingress и PVC
 
-Конфигурация для небольших или тестовых окружений. Включает RBAC для sidecar и GZIP-сжатие.
+Конфигурация для небольших или тестовых окружений. Включает RBAC для sidecar.
 
 ```yaml
 # grafana-values.yaml
 admin:
   existingSecret: "grafana-admin-secret"
-  adminUserKey: "username"
-  adminPasswordKey: "password"
+  userKey: "username"
+  passwordKey: "password"
 
 persistence:
   enabled: true
@@ -338,8 +340,7 @@ sidecar:
     labelValue: "1"
     searchNamespace: ALL
     folderAnnotation: "grafana_folder"
-    GZIP: true # Сжатие больших дашбордов (>1MB)
-    watchInterval: 30s
+    watchMethod: WATCH
   datasources:
     enabled: true
     label: grafana_datasource
@@ -369,13 +370,20 @@ helm upgrade --install grafana grafana-community/grafana \
 # Создание секрета для внешней PostgreSQL
 kubectl create secret generic grafana-db-secret \
   --namespace monitoring \
-  --from-literal=user=grafana \
-  --from-literal=password='<DB_PASSWORD>'
+  --from-literal=DB_USER=grafana \
+  --from-literal=DB_PASSWORD='<DB_PASSWORD>'
 
 # Создание секрета для SMTP (если используется)
 kubectl create secret generic grafana-smtp-secret \
   --namespace monitoring \
-  --from-literal=password='<SMTP_PASSWORD>'
+  --from-literal=SMTP_USER=apikey \
+  --from-literal=SMTP_PASSWORD='<SMTP_PASSWORD>'
+
+# Создание секрета для OIDC (если используется)
+kubectl create secret generic grafana-oauth-secret \
+  --namespace monitoring \
+  --from-literal=OAUTH_CLIENT_ID='<CLIENT_ID>' \
+  --from-literal=OAUTH_CLIENT_SECRET='<CLIENT_SECRET>'
 ```
 
 **Конфигурация (`production-values.yaml`):**
@@ -386,29 +394,29 @@ replicas: 3
 # Учетные данные администратора через Secret
 admin:
   existingSecret: "grafana-admin-secret"
-  adminUserKey: "username"
-  adminPasswordKey: "password"
-
-# Использование внешней PostgreSQL для обеспечения HA
-database:
-  type: postgres
-  host: postgres-service.db-namespace.svc.cluster.local:5432
-  name: grafana
-  user: grafana
-  existingSecret: "grafana-db-secret"
-  userKey: "user"
+  userKey: "username"
   passwordKey: "password"
 
-# Передача переменных окружения из секрета
-envFromSecret: "grafana-smtp-secret"
+# Использование внешней PostgreSQL для обеспечения HA
+# Переменные окружения берутся из секрета grafana-db-secret
+envFromSecrets:
+  - name: grafana-db-secret
+  - name: grafana-smtp-secret
+  - name: grafana-oauth-secret
 
 # Настройка SMTP для уведомлений
 grafana.ini:
+  database:
+    type: postgres
+    host: postgres-service.db-namespace.svc.cluster.local:5432
+    name: grafana
+    user: "${DB_USER}" # Переменная из grafana-db-secret
+    password: "${DB_PASSWORD}"
   smtp:
     enabled: true
     host: "smtp.sendgrid.net:587"
     user: "apikey"
-    password: "${SMTP_PASSWORD}" # Переменная из envFromSecret
+    password: "${SMTP_PASSWORD}" # Переменная из grafana-smtp-secret
     from_address: "grafana@example.com"
     starttls_policy: MandatoryStartTLS
   server:
@@ -419,17 +427,16 @@ grafana.ini:
   unified_alerting:
     enabled: true
     execute_alerts: true
-  sessions:
+  remote_cache:
     # Session management через внешний Redis (рекомендуется для HA)
-    # database_type: redis
-    # database_url: "redis://redis-service.db-namespace:6379"
+    type: redis
+    connstr: "addr=redis-service.db-namespace:6379"
 
-# OIDC-аутентификация (Keycloak / Authentik / GitHub)
-auth:
-  generic_oauth:
+  # OIDC-аутентификация (Keycloak / Authentik / GitHub)
+  auth.generic_oauth:
     enabled: true
     name: "Keycloak"
-    client_id: "${OAUTH_CLIENT_ID}"
+    client_id: "${OAUTH_CLIENT_ID}" # Переменная из grafana-oauth-secret
     client_secret: "${OAUTH_CLIENT_SECRET}"
     scopes: "openid profile email roles"
     auth_url: "https://auth.example.com/realms/master/protocol/openid-connect/auth"
@@ -439,11 +446,11 @@ auth:
     allow_sign_up: false
 
 # Настройки безопасности пода
-podSecurityContext:
+securityContext:
   runAsUser: 472
   runAsGroup: 472
   fsGroup: 472
-  fsGroupChangePolicy: "OnRootMismatch" # (v1.23+) Стабильность прав на volume
+  fsGroupChangePolicy: "OnRootMismatch" # (v1.20+) Стабильность прав на volume
 
 containerSecurityContext:
   allowPrivilegeEscalation: false
@@ -477,8 +484,7 @@ sidecar:
     labelValue: "1"
     searchNamespace: ALL
     folderAnnotation: "grafana_folder"
-    GZIP: true
-    watchInterval: 15s
+    watchMethod: WATCH
   datasources:
     enabled: true
     label: grafana_datasource
@@ -498,8 +504,8 @@ autoscaling:
   enabled: true
   minReplicas: 2
   maxReplicas: 5
-  targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 80
+  targetCPU: "70"
+  targetMemory: "80"
 ```
 
 **Установка:**
@@ -577,18 +583,18 @@ autoscaling:
   enabled: true
   minReplicas: 2
   maxReplicas: 5
-  targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 80
+  targetCPU: "70"
+  targetMemory: "80"
 
 # Интеграция с External Secrets (использование существующего секрета)
 envFromSecret: "grafana-external-secrets"
 
 # Дополнительные метрики для мониторинга самой Grafana
- grafana.ini:
-   metrics:
-     enabled: true
-     basic_auth_username: "metrics_user"
-     basic_auth_password: "${METRICS_PASSWORD}"
+grafana.ini:
+  metrics:
+    enabled: true
+    basic_auth_username: "metrics_user"
+    basic_auth_password: "${METRICS_PASSWORD}"
 ```
 
 **Валидация метрик:**
@@ -653,8 +659,8 @@ kubectl get secret --namespace monitoring grafana \
 ```bash
 helm history grafana --namespace monitoring
 # → REVISION    UPDATED                     STATUS          CHART                   APP VERSION   DESCRIPTION
-# → 1           Mon Aug 24 17:00:00 2026    superseded      grafana-9.2.0          13.x           Install complete
-# → 2           Mon Aug 24 17:05:00 2026    deployed        grafana-9.2.0          13.x           Upgrade complete
+# → 1           Mon Aug 24 17:00:00 2026    superseded      grafana-13.5.0       13.2.3         Install complete
+# → 2           Mon Aug 24 17:05:00 2026    deployed        grafana-13.5.0       13.2.3         Upgrade complete
 ```
 
 **Очистка (удаление релиза):**
@@ -701,24 +707,24 @@ kubectl delete pvc -n monitoring -l app.kubernetes.io/name=grafana
 | **Дашборды не импортируются** | Отсутствует метка на ConfigMap или неверный JSON | Проверьте наличие label `grafana_dashboard: "1"` (или значения из `sidecar.label`/`sidecar.labelValue`); валидируйте JSON-схему |
 | **ServiceMonitor не собирает метрики** | Несоответствие селекторов меток | Убедитесь, что метки в `serviceMonitor.labels` совпадают с ожидаемыми в Prometheus Operator |
 | **Графана недоступна через Ingress** | Неверный `root_url` или проблемы с TLS | Проверьте `grafana.ini.server.root_url` и статус сертификата: `kubectl describe certificate` |
-| **OOMKilled** | Недостаточно памяти для загрузки больших дашбордов | Увеличьте `resources.limits.memory`; включите `sidecar.dashboards.GZIP: true` |
+| **OOMKilled** | Недостаточно памяти для загрузки больших дашбордов | Увеличьте `resources.limits.memory`; разбейте дашборды на несколько ConfigMap |
 | **RBAC Error (sidecar)** | ServiceAccount не имеет прав на чтение ConfigMaps в неймспейсах | Расширьте Role или используйте ClusterRole с правильным селектором неймспейсов |
 
 ### Edge Cases и технические нюансы
 
-1.  **Лимит размера ConfigMap (1 МБ):** Kubernetes ограничивает размер ConfigMap 1 МБ. Если дашборды не загружаются, включите `sidecar.dashboards.GZIP: true` или разбейте дашборды на несколько ConfigMap.
+1.  **Лимит размера ConfigMap (1 МБ):** Kubernetes ограничивает размер ConfigMap 1 МБ. Если дашборды не загружаются, разбейте их на несколько ConfigMap.
 2.  **ReadWriteMany (RWX):** Требуется для HA-режима (совместный доступ к плагинам и аватарам). Убедитесь, что ваш StorageClass поддерживает RWX. Если нет, используйте внешнее хранилище (NFS, CephFS, Longhorn).
 3.  **Concurrent Provisioning:** Grafana обрабатывает файлы провиженинга параллельно. Для ресурсов одного типа (например, два файла `datasources.yaml`) порядок применения зависит от алфавитного порядка имен файлов.
 4.  **Configuration Drift:** Изменения, сделанные через UI, не сохраняются обратно в конфигурационные файлы. После перезапуска Grafana вернет состояние, описанное в провиженинговых файлах. Используйте `editable: false` для источников данных, чтобы исключить конфликты.
 5.  **Downgrade:** Grafana 13.x не поддерживает downgrade до 11.x без потери данных (изменения схемы БД). Всегда тестируйте обновления.
-6.  **Sidecar и namespaces:** При `searchNamespace: ALL` sidecar сканирует все неймспейсы, кроме системных (`kube-system`, `kube-public`). Для кастомного списка используйте `sidecar.dashboards.namespaces: ["monitoring", "app"]`.
+6.  **Sidecar и namespaces:** Параметр `searchNamespace` принимает либо одно имя неймспейса, либо `ALL` — списка неймспейсов в чарте нет. При `ALL` sidecar сканирует все неймспейсы кластера, поэтому ServiceAccount должен иметь права на чтение ConfigMap/Secret во всех них (см. [Best Practices](#best-practices)).
 7.  **Helm-секреты (sops):** Для интеграции с `sops` используйте плагин `helm-secrets`. Пример команды: `sops -d values.yaml.sops | helm upgrade grafana grafana-community/grafana -f -`.
 
 ### Полезные команды Helm
 
 ```bash
 # Вывод всех доступных параметров чарта (с фиксацией версии)
-helm show values grafana-community/grafana --version 9.2.0
+helm show values grafana-community/grafana --version 13.5.0
 
 # Просмотр значений, установленных в релизе
 helm get values grafana --namespace monitoring

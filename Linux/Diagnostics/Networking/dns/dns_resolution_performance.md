@@ -97,8 +97,10 @@ sudo tcpdump -i any port 53 -nn -v | grep -i "frag\|reassembled"
 - **`options attempts:2`**: Ограничение попыток для предотвращения бесконечного ожидания в p99.
 - **`options rotate`**: Балансировка нагрузки между указанными серверами (nameservers).
 - **`options trust-ad`**: Позволяет приложению доверять флагу аутентичности DNSSEC от резолвера, пропуская локальную проверку.
-- **`options single-request-reopen`**: Переоткрытие сокета для A и AAAA запросов (решает проблему conntrack race, особенно в musl/Alpine).
+- **`options single-request-reopen`**: Переоткрытие сокета для A и AAAA запросов (решает проблему conntrack race — только в glibc; musl/Alpine игнорирует эту опцию).
 - **`options use-vc`**: Принудительное использование TCP для всех запросов (устраняет проблемы с UDP-фрагментацией, но увеличивает латентность).
+
+*Из перечисленных опций musl (Alpine) поддерживает только `timeout`, `attempts` и `ndots`; `rotate`, `trust-ad`, `use-vc` и `single-request-reopen` — только glibc.*
 
 ## Инструменты: сравнение
 
@@ -117,7 +119,7 @@ sudo tcpdump -i any port 53 -nn -v | grep -i "frag\|reassembled"
 
 | Симптом | RCODE / Код | Вероятная причина | Метод диагностики | Решение |
 | :--- | :--- | :--- | :--- | :--- |
-| Задержка ровно 1000/5000 мс | (no RCODE) | conntrack race, таймаут ретрансмиссии | `dmesg \| grep conntrack` | NodeLocal DNSCache, `single-request-reopen` |
+| Задержка ровно 1000/5000 мс | (no RCODE) | conntrack race, таймаут ретрансмиссии | `dmesg \| grep conntrack` | NodeLocal DNSCache, `single-request-reopen` (только glibc) |
 | Запросы к одному домену идут каскадом | (no RCODE) | `ndots:5` + неполное имя | `cat /etc/resolv.conf \| grep ndots` | FQDN с точкой, `ndots:1` |
 | `NXDOMAIN` для существующего домена | NXDOMAIN | `ndots` исказил имя, stale NXDOMAIN в кэше | `dig +trace <fqdn>.`, `resolvectl flush-caches` | FQDN, сброс кэша |
 | `SERVFAIL` | SERVFAIL | Upstream недоступен, DNSSEC-ошибка | `dig @<upstream> <domain> +dnssec` | Исправить upstream, откатить DNSSEC |
@@ -175,7 +177,7 @@ resolvectl statistics
 Если вы видите задержки ровно в 1 или 5 секунд в Kubernetes:
 
 1. **Решение (Node-level):** Внедрите **NodeLocal DNSCache**. Это переведет трафик с UDP на TCP для связи с CoreDNS.
-2. **Решение (Pod-level):** Добавьте параметры в `dnsConfig`:
+2. **Решение (Pod-level):** Добавьте параметры в `dnsConfig` (опция `single-request-reopen` действует только в glibc-образах; для Alpine/musl она игнорируется — используйте NodeLocal DNSCache или исправьте сеть):
 ```yaml
 dnsConfig:
   options:
@@ -405,7 +407,7 @@ dig @10.0.0.2 example.com +stats
 1. **Всегда используйте FQDN с точкой** (`example.com.`) в скриптах и конфигурациях для исключения влияния `search`-доменов.
 2. **Настройте таймауты:** `options timeout:1 attempts:2 rotate` в `resolv.conf` снижает p99-задержку при сбое одного сервера.
 3. **Управляйте ndots через `dnsConfig`** в Kubernetes, а не глобально на уровне хоста.
-4. **Используйте `single-request-reopen`** в средах с musl (Alpine) или при проблемах с conntrack.
+4. **Используйте `single-request-reopen`** при проблемах с conntrack в glibc-образах (в musl/Alpine опция игнорируется — там помогает только NodeLocal DNSCache или исправление сети).
 5. **Не смешивайте nscd и systemd-resolved:** одновременный запуск приводит к двойному кэшированию и конфликтам.
 
 ### Мониторинг
@@ -438,6 +440,6 @@ dig @10.0.0.2 example.com +stats
 - **[DNS и Service Discovery в Docker](../../../../Docker/Docker_network/dns_and_service_discovery.md)** — архитектура Docker DNS.
 - **[Проблемы с DNS в Docker](../../../../Docker/Docker_network/troubleshooting/dns_resolution_issues.md)** — Docker-специфичные проблемы.
 - **[Диагностика DNS-мисконфигурации](../../../../Networking/Troubleshooting/real_case_troubleshooting_dns_misconfig.md)** — практические кейсы.
-- **[Диагностика Tail Latency](../../../../Diagnostics/Performance/diagnosing_tail_latency.md)** — общая методология диагностики хвостовой задержки.
+- **[Диагностика Tail Latency](../../../Diagnostics/Performance/diagnosing_tail_latency.md)** — общая методология диагностики хвостовой задержки.
 - **[Управление задержками](../../../../Concepts/High_Availability/tail_latency_mitigation.md)** — архитектурные паттерны борьбы с p99.
 - **[Мониторинг DNS](../../../../Networking/Protocols/DNS/dns_monitoring.md)** — SLA, метрики, алертинг.

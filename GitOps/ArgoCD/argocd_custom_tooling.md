@@ -395,9 +395,9 @@ data:
 ```
 
 **Ключевые метрики:**
-- `argocd_app_reconcile_total` — количество реконсиляций
+- `argocd_app_reconcile` — гистограмма длительности сверки, секунды
 - `argocd_app_sync_total` — количество синхронизаций
-- `argocd_app_health_status` — статус здоровья
+- `argocd_app_info` — статус здоровья и синхронизации (labels `health_status`, `sync_status`)
 
 ## Сравнение CMP v1 и CMP v2
 

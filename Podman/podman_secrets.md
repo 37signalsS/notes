@@ -427,3 +427,4 @@ podman inspect <image> | jq '.[0].Config.Secrets'
 - **[Переменные окружения в Podman](./podman_environment_variables.md)** — разница в применении ENV и секретов.
 - **[Daemonless архитектура](./podman_daemonless_architecture.md)** — интеграция Quadlet с systemd.
 - **[Rootless режим](./podman_rootless.md)** — особенности хранения и работы без прав root.
+# force reindex test

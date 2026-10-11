@@ -37,16 +37,27 @@ http_request_duration_seconds_bucket{le="1"} 24 # {trace_id="e5f6g7h8"} 0.891
 
 ### Конфигурация в Prometheus
 
+**Предварительное требование.** Хранилище exemplars отключено по умолчанию и включается feature flag при запуске сервера:
+
+```bash
+prometheus --config.file=/etc/prometheus/prometheus.yml --enable-feature=exemplar-storage
+```
+
+Размер кольцевого буфера задаётся в секции верхнего уровня `storage` — **не** внутри `scrape_configs`:
+
 ```yaml
+storage:
+  exemplars:
+    max_exemplars: 100000  # Размер буфера в памяти на все ряды
+
 scrape_configs:
   - job_name: 'service-with-traces'
     scrape_native_histograms: true
-    exemplars:
-      max_exemplars: 100000  # Лимит exemplars на одну метрику
 ```
 
 **Ключевые параметры:**
-- `max_exemplars`: Максимальное количество exemplars, хранимых на одну метрику. По умолчанию 100000.
+- `max_exemplars`: Максимальное количество exemplars в кольцевом буфере, по умолчанию 100000. Буфер общий для всех рядов, а не выделяется на каждую метрику.
+- Exemplar, содержащий только `trace_id`, занимает в этом буфере порядка 100 байт.
 - При Remote Write exemplars отправляются только если `send_exemplars: true` и бэкенд поддерживает protobuf.
 
 ### Инструментация приложений

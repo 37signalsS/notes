@@ -259,6 +259,54 @@ kubectl get ds -A
 *   **Deployment:** Не гарантирует порядок запуска и стабильные имена. Если сервис А зависит от сервиса Б, это нужно обрабатывать на уровне приложения (init-контейнеры), а не контроллера. При `maxSurge` требует свободных ресурсов и может упереться в `ResourceQuota`; при слишком агрессивном `maxUnavailable` возможна потеря мощности.
 *   **DaemonSet:** Неправильные `resources.requests` в DaemonSet могут привести к тому, что на узлах не останется места для пользовательских приложений. Всегда ограничивайте DaemonSet через `nodeSelector` или `affinity`. Конфликты портов при `hostPort`; для Control Plane требуется явная `toleration`. HPA и `replicas` для него недоступны.
 
+### Рекомендации по выбору контроллера
+
+#### Когда StatefulSet обязателен, а когда достаточно Deployment с Recreate
+
+| Ситуация | Рекомендуемый контроллер | Обоснование |
+| :--- | :--- | :--- |
+| **База данных (PostgreSQL, MySQL, MongoDB) с RWO дисками** | **StatefulSet** | Стабильная идентичность (db-0, db-1), порядок старта/останова, исключение Multi-Attach, Headless Service для DNS |
+| **Однорепличная очередь (RabbitMQ, Kafka single broker) без кворума** | **Deployment + Recreate** | Даунтайм при обновлении, но нет сложности StatefulSet. `Recreate` гарантирует: старый под удаляется → диск освобождается → новый под монтирует тот же PVC |
+| **Распределенная СУБД с кворумом (etcd, Consul, Cassandra)** | **StatefulSet** | Строгий порядок, стабильные DNS-имена для конфигурации кластера, защита от Split-brain при отказе узла |
+| **Stateless микросервисы (API, веб-серверы, воркеры)** | **Deployment** | `maxSurge` для zero-downtime, параллельное масштабирование, HPA, rollout pause/resume |
+| **Stateful сервис на RWX (NFS, CephFS, GlusterFS)** | **Deployment** | Все поды читают/пишут в одно общее хранилище, личности не нужны |
+
+#### StatefulSet: защита от Split-brain при отказе узла
+Это **фундаментальное архитектурное решение**. Когда узел с подом `db-0` становится `NotReady`:
+1. **Deployment** — контроллер видит пропавший под, создает замену на другом узле **мгновенно** (после таймаутов).
+2. **StatefulSet** — **блокирует** создание нового `db-0`, потому что RWO-диск (PVC) всё ещё смонтирован на недоступном узле. Два пода с одним диском = **Split-brain / data corruption**.
+
+**SRE-действие при невернувшемся узле (v1.28+):**
+```bash
+# Принудительный taint для Non-Graceful Node Shutdown
+kubectl taint node <node-name> node.kubernetes.io/out-of-service=nodeshutdown:NoExecute --overwrite
+```
+Это заставляет kubelet на Control Plane отмонтировать тома и разрешить пересозождение пода. Без этого кластер «ждёт» узел вечно.
+
+#### Headless Service — требование для StatefulSet
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-headless
+spec:
+  clusterIP: None          # Headless!
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+```
+Без `clusterIP: None` не работают:
+- Индивидуальные DNS записи (`db-0.db-headless.default.svc.cluster.local`)
+- Стабильная сетевая идентичность при пересоздании пода
+- Внутрикластерное обнаружение соседних реплик
+
+#### StatefulSet Recreate стратегия (Alpha v1.37)
+Feature gate `StatefulSetRecreateStrategy`:
+- Аналог `Recreate` в Deployment: удаляет все поды → создает новые с 0 до N-1
+- Для малых реплик (1-2) может быть быстрее RollingUpdate
+- **Риск:** полный даунтайм приложения во время обновления
+
 ### См. также
 
 *   **[Ключевые концепции StatefulSet](./statefulset_core_concepts.md)** — глубокий разбор механизмов идентификации, хранения и стратегий обновления.

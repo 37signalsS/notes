@@ -1,5 +1,7 @@
 # GitLab CI: Каталог компонентов — продвинутые сценарии
 
+**Актуально для:** GitLab CI 19.x
+
 ## Определения
 
 **Продвинутый сценарий** — комплексный архитектурный паттерн использования CI/CD Components, выходящий за рамки базового импорта. Включает в себя миграцию крупномасштабных систем, управление монорепозиториями, многоуровневое каскадное подключение (chaining), стратегии безопасного развертывания новых версий и глубокую интеграцию с корпоративными политиками безопасности.
@@ -12,7 +14,7 @@
 
 **SLA Impact** — показатель влияния времени загрузки компонента на общее время выполнения пайплайна. Рассчитывается как `(Load Time / Total Pipeline Time) × 100%`.
 
-**RFC (Request for Comments)** — формальный процесс согласования архитектурных изменений в команде, включающий описание проблемы, предложенного решения, влияния и.timeline.
+**RFC (Request for Comments)** — формальный процесс согласования архитектурных изменений в команде, включающий описание проблемы, предложенного решения, влияния и timeline.
 
 ## Основные концепции
 
@@ -70,7 +72,7 @@ include:
 1.  **Спецификация**: Создайте блок `spec:inputs` в исходном шаблоне.
 2.  **Рефакторинг**: Замените обращения к переменным `$VAR` на интерполяцию `$[[ inputs.var ]]`.
 3.  **Релиз**: Создайте тег SemVer (v1.0.0) и GitLab Release.
-4.  **Проверка**: Используйте `glab ci lint --show-expanded` для подтверждения корректности.
+4.  **Проверка**: Используйте `glab ci config compile` для подтверждения корректности.
 
 **Полный алгоритм миграции для крупных организаций:**
 
@@ -240,11 +242,11 @@ include:
 spec:
   inputs:
     target_cluster:
-      options: [k8s-eu, k8s-us]
-      default: k8s-eu
+      options: [self-hosted-eu, self-hosted-us]
+      default: self-hosted-eu
 ---
 include:
-  - component: $CI_SERVER_FQDN/org/k8s-deploy@1.0.0
+  - component: $CI_SERVER_FQDN/org/deploy@1.0.0
     inputs: { cluster: $[[ inputs.target_cluster ]] }
 ```
 
@@ -301,11 +303,11 @@ run-scan:
       for component in templates/*.yml; do
         echo "Проверка ${component}..."
         
-        if glab ci lint --config "${component}" > /dev/null 2>&1; then
+        if glab ci lint "${component}" > /dev/null 2>&1; then
           echo "  OK: ${component}"
         else
           echo "  ОШИБКА: ${component}"
-          glab ci lint --config "${component}"
+          glab ci lint "${component}"
           exit 1
         fi
       done
@@ -407,7 +409,7 @@ run-scan:
       EOF
       
       # Валидация должна показать ошибку
-      if glab ci lint --config test-invalid-type.yml 2>&1 | grep -q "input validation error"; then
+      if glab ci lint test-invalid-type.yml 2>&1 | grep -q "input validation error"; then
         echo "  OK: Неверный тип данных корректно отклонен"
       else
         echo "  ОШИБКА: Неверный тип данных не был отклонен"
@@ -425,7 +427,7 @@ run-scan:
           - echo "Should not reach here"
       EOF
       
-      if glab ci lint --config test-missing-required.yml 2>&1 | grep -q "missing required input"; then
+      if glab ci lint test-missing-required.yml 2>&1 | grep -q "missing required input"; then
         echo "  OK: Отсутствующий обязательный input корректно отклонен"
       else
         echo "  ОШИБКА: Отсутствующий обязательный input не был отклонен"
@@ -633,11 +635,8 @@ echo "=== Действие выполнено ==="
           }" \
           "${SLACK_WEBHOOK}"
         
-        # Автоматическое масштабирование (если применимо)
-        if [ "${COMPONENT_TYPE}" == "build" ]; then
-          echo "Масштабирование пуллов..."
-          kubectl scale deployment/build-pool --replicas=10
-        fi
+        # Масштабирование инфраструктуры (зависит от окружения: docker-compose, systemd, CI/CD)
+        echo "Масштабирование пулов..."
       fi
 ```
 
@@ -694,7 +693,7 @@ canary_deploy:
         echo "  Текущий error rate: ${ERROR_RATE}%"
         
         if (( $(echo "${ERROR_RATE} > $[[ inputs.error_threshold ]]" | bc -l) )); then
-          echo "  ОШИБКА: Error rate превыšает порог"
+          echo "  ОШИБКА: Error rate превышает порог"
           
           # Автоматический откат
           for PROJECT_ID in ${CANARY_PROJECTS}; do
@@ -1010,10 +1009,10 @@ parallel_build:
 # Полный набор инструментов отладки
 
 # 1. Просмотр expanded YAML
-glab ci lint --show-expanded
+glab ci config compile
 
 # 2. Проверка конкретного компонента
-glab ci lint --config component.yml
+glab ci lint component.yml
 
 # 3. Анализ метрик
 curl "${PROMETHEUS_URL}/api/v1/query?query=gitlab_component_usage_total"
@@ -1077,13 +1076,13 @@ for component in "${CATALOG_PATH}/templates/"*.yml; do
   
   COMPONENT_COUNT=$((COMPONENT_COUNT + 1))
   
-  if glab ci lint --config "${component}" > /dev/null 2>&1; then
+  if glab ci lint "${component}" > /dev/null 2>&1; then
     VALID_COUNT=$((VALID_COUNT + 1))
     echo "  OK: $(basename ${component})"
   else
     INVALID_COUNT=$((INVALID_COUNT + 1))
     echo "  ОШИБКА: $(basename ${component})"
-    glab ci lint --config "${component}"
+    glab ci lint "${component}"
   fi
 done
 
@@ -1154,12 +1153,309 @@ echo "=== Диагностика завершена ==="
 
 ---
 
+## Безопасность
+
+### Защита цепочки поставок (Supply Chain Security)
+
+Продвинутые сценарии требуют усиленного контроля над цепочкой поставок компонентов:
+
+- **Верификация Commit SHA**: Вместо тегов SemVer для критичных компонентов используйте полные SHA-хеши (`@abc123de...`). Это исключает атаки типа «отравление тега» (tag poisoning), когда злоумышленник перезаписывает легковесный тег.
+- **Изоляция контекста**: Интерполяция `$[[ inputs.* ]]` выполняется в изолированной области видимости, исключая конфликты имен между независимыми модулями.
+- **OIDC и короткоживущие токены**: Для доступа к внешним ресурсам (реестрам образов, API) используйте `id_tokens` вместо долгоживущих секретов. Пример конфигурации:
+
+```yaml
+# templates/secure_deploy.yml
+deploy_job:
+  image: alpine:3.19
+  id_tokens:
+    GITLAB_TOKEN:
+      aud: https://gitlab.example.com
+  script:
+    - echo "Deploying with OIDC token"
+```
+
+- **Запрет глобальных ключей в компонентах**: Компоненты не должны содержать `workflow:`, `default:`, `stages:` на верхнем уровне — это гарантирует их функциональную изоляцию.
+
+### Управление секретами
+
+- **Никогда не передавайте секреты через `inputs`**: Параметры `spec:inputs` видны в раскрытом YAML и логах. Для секретов используйте `variables:` с защищенными переменными проекта/группы.
+- **Сканирование на утечки**: Интегрируйте `gitleaks` или `truffleHog` в пайплайн каталога для автоматического поиска секретов в шаблонах.
+
+### Контроль доступа
+
+- **Роль Catalog Owner**: Только пользователи с ролью `Owner` в проекте-каталоге могут публиковать новые версии компонентов.
+- **Change Advisory Board (CAB) lightweight**: Для каждого нового компонента требуется минимум 2 approve от команды инфраструктуры.
+- **Аудит изменений**: Все изменения в каталоге проходят через Merge Request с обязательным ревью и CI-валидацией.
+
+---
+
+## Диагностика и отладка
+
+### Типичные ошибки продвинутых сценариев
+
+| Проблема | Причина | Способ решения |
+| :--- | :--- | :--- |
+| **Error 404** | Неверный путь или проект не «Catalog resource». | Проверьте настройки Visibility и путь к файлу в `templates/`. |
+| **Input validation error** | Ошибка типа (string вместо number). | Оборачивайте числа в кавычки в YAML, если в `spec` указан тип `string`. |
+| **Exceeded max includes** | Слишком глубокая вложенность (лимит 150). | Используйте `!reference` для переиспользования кода внутри одного файла. |
+| **Interpolation failed** | Ошибка синтаксиса `$[[ ]]`. | Проверьте закрывающие скобки и отсутствие циклов в инпутах. |
+| **Component load timeout** | Медленная загрузка компонента (>30с). | Оптимизируйте зависимости, используйте кэширование. |
+| **Version conflict** | Несовместимые версии в цепочке. | Используйте SemVer ranges, проверьте совместимость. |
+| **OIDC token expired** | Истекший токен аутентификации. | Обновите токен, проверьте настройки OIDC. |
+| **Pipeline too slow** | SLA Impact > 20%. | Оптимизируйте загрузку, параллелизм, кэширование. |
+
+### Инструменты отладки
+
+```bash
+# Полный набор инструментов отладки
+
+# 1. Просмотр expanded YAML
+glab ci config compile
+
+# 2. Проверка конкретного компонента
+glab ci lint templates/docker-build.yml
+
+# 3. Анализ метрик
+curl "${PROMETHEUS_URL}/api/v1/query?query=gitlab_component_usage_total"
+
+# 4. Поиск затронутых проектов
+curl -s --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+  "${GITLAB_URL}/api/v4/projects?search=component-name" | jq '.[].path_with_namespace'
+
+# 5. Анализ времени выполнения
+curl -s --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+  "${GITLAB_URL}/api/v4/projects/${CI_PROJECT_ID}/pipelines?per_page=10" | \
+  jq '.[] | {id: .id, duration: .duration, status: .status}'
+
+# 6. Проверка версий компонентов
+grep -r "component:" .gitlab-ci.yml | sed 's/.*@//' | sort -u
+
+# 7. Анализ ошибок
+curl -s --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+  "${GITLAB_URL}/api/v4/projects/${CI_PROJECT_ID}/pipelines?status=failed&per_page=5" | \
+  jq '.[].id' | while read PIPELINE_ID; do
+    echo "=== Pipeline ${PIPELINE_ID} ==="
+    curl -s --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+      "${GITLAB_URL}/api/v4/projects/${CI_PROJECT_ID}/pipelines/${PIPELINE_ID}/jobs?scope=failed" | \
+      jq '.[].failure_reason'
+  done
+```
+
+### Диагностический скрипт
+
+```bash
+#!/bin/bash
+# diagnose_catalog.sh — полная диагностика каталога компонентов
+
+echo "=== Диагностика каталога компонентов ==="
+
+CATALOG_PATH="${1:?Укажите путь к каталогу}"
+GITLAB_URL="${GITLAB_URL:-https://gitlab.example.com}"
+TOKEN="${GITLAB_TOKEN}"
+
+# 1. Проверка структуры каталога
+echo "1. Проверка структуры каталога..."
+REQUIRED_DIRS=("templates" "tests" "docs")
+for dir in "${REQUIRED_DIRS[@]}"; do
+  if [ ! -d "${CATALOG_PATH}/${dir}" ]; then
+    echo "  ОШИБКА: Отсутствует директория ${dir}"
+  else
+    echo "  OK: ${dir} существует"
+  fi
+done
+
+# 2. Проверка компонентов
+echo "2. Проверка компонентов..."
+COMPONENT_COUNT=0
+VALID_COUNT=0
+INVALID_COUNT=0
+
+for component in "${CATALOG_PATH}/templates/"*.yml; do
+  if [ ! -f "${component}" ]; then
+    continue
+  fi
+  
+  COMPONENT_COUNT=$((COMPONENT_COUNT + 1))
+  
+  if glab ci lint "${component}" > /dev/null 2>&1; then
+    VALID_COUNT=$((VALID_COUNT + 1))
+    echo "  OK: $(basename ${component})"
+  else
+    INVALID_COUNT=$((INVALID_COUNT + 1))
+    echo "  ОШИБКА: $(basename ${component})"
+    glab ci lint "${component}"
+  fi
+done
+
+echo "  Всего: ${COMPONENT_COUNT}, Валидных: ${VALID_COUNT}, Невалидных: ${INVALID_COUNT}"
+
+# 3. Проверка версий
+echo "3. Проверка версий..."
+TAGS=$(cd "${CATALOG_PATH}" && git tag --sort=-v:refname | head -5)
+echo "  Последние теги: ${TAGS}"
+
+# 4. Проверка лимитов
+echo "4. Проверка лимитов..."
+INCLUDE_COUNT=$(grep -r "include:" "${CATALOG_PATH}/templates/" | wc -l)
+echo "  Количество include: ${INCLUDE_COUNT}"
+if [ ${INCLUDE_COUNT} -gt 100 ]; then
+  echo "  ПРЕДУПРЕЖДЕНИЕ: Приближение к лимиту (150)"
+fi
+
+# 5. Проверка безопасности
+echo "5. Проверка безопасности..."
+SECRETS_FOUND=$(grep -r "password\|secret\|token" "${CATALOG_PATH}/templates/" | grep -v "description" | wc -l)
+if [ ${SECRETS_FOUND} -gt 0 ]; then
+  echo "  ОШИБКА: Найдены потенциальные секреты в шаблонах"
+  grep -r "password\|secret\|token" "${CATALOG_PATH}/templates/" | grep -v "description"
+else
+  echo "  OK: Секреты не найдены"
+fi
+
+# 6. Проверка документации
+echo "6. Проверка документации..."
+if [ -f "${CATALOG_PATH}/README.md" ]; then
+  echo "  OK: README.md существует"
+  
+  # Проверка наличия описаний для inputs
+  for component in "${CATALOG_PATH}/templates/"*.yml; do
+    if [ ! -f "${component}" ]; then
+      continue
+    fi
+    
+    INPUTS_COUNT=$(grep -c "type:" "${component}" || echo "0")
+    DESCRIPTIONS_COUNT=$(grep -c "description:" "${component}" || echo "0")
+    
+    if [ ${INPUTS_COUNT} -gt ${DESCRIPTIONS_COUNT} ]; then
+      echo "  ПРЕДУПРЕЖДЕНИЕ: $(basename ${component}) имеет inputs без описаний"
+    fi
+  done
+else
+  echo "  ОШИБКА: README.md отсутствует"
+fi
+
+echo "=== Диагностика завершена ==="
+```
+
+---
+
+## Восстановление и очистка
+
+### Откат миграции на компоненты
+
+При проблемах после миграции с `include:project` на компоненты выполните откат:
+
+```bash
+# 1. Определение последнего рабочего коммита
+LAST_GOOD=$(git log --oneline --grep="ci: migrate to components" -n 1 --format="%H")
+
+# 2. Откат .gitlab-ci.yml
+git revert --no-commit ${LAST_GOOD} -- .gitlab-ci.yml
+git commit -m "revert: rollback component migration"
+git push origin main
+
+# 3. Верификация
+glab ci config compile > expanded.yml
+grep -q "component:" expanded.yml && echo "WARNING: components still present" || echo "OK: reverted to includes"
+```
+
+### Очистка неиспользуемых компонентов
+
+Регулярно удаляйте неиспользуемые компоненты из каталога:
+
+```bash
+#!/bin/bash
+# cleanup_unused_components.sh
+
+CATALOG_PATH="${1:?Укажите путь к каталогу}"
+
+echo "=== Очистка каталога компонентов ==="
+
+# 1. Получение списка всех компонентов
+COMPONENTS=$(find "${CATALOG_PATH}/templates/" -name "*.yml" | xargs -I {} basename {} .yml)
+
+for component in ${COMPONENTS}; do
+  echo "Проверка компонента: ${component}"
+  
+  # 2. Поиск проектов, использующих компонент
+  USAGE=$(curl -s --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+    "${GITLAB_URL}/api/v4/projects?search=${component}" | jq -r '.[].path_with_namespace')
+  
+  if [ -z "${USAGE}" ]; then
+    echo "  Удаление неиспользуемого компонента: ${component}"
+    rm "${CATALOG_PATH}/templates/${component}.yml"
+  else
+    echo "  Используется в: ${USAGE}"
+  fi
+done
+
+echo "=== Очистка завершена ==="
+```
+
+### Очистка кэша Runner
+
+При изменении компонентов убедитесь, что Runner использует актуальную конфигурацию:
+
+```bash
+# Перезапуск Runner для сброса кэша
+gitlab-runner restart
+
+# Очистка артефактов и кэша на Runner
+gitlab-runner verify --delete
+```
+
+### Очистка тегов и артефактов
+
+```bash
+# Удаление устаревших тегов компонентов
+git tag --list 'v*' | sort -V | head -n -5 | xargs -I {} git tag -d {}
+
+# Очистка старых релизов
+gitlab release list --per-page=100 | grep -v "latest" | awk '{print $1}' | tail -n +6 | \
+  xargs -I {} gitlab release delete {}
+```
+
+---
+
+## Особые случаи и ограничения
+
+### Ограничения компонентов
+
+| Ограничение | Значение | Версия GitLab | Архитектурный контекст |
+| :--- | :--- | :--- | :--- |
+| **Максимум компонентов на проект** | **100** | 18.5+ | Лимит на количество YAML-файлов в `templates/` проекта-ресурса. |
+| **Лимит вложенности include** | **150** | Все | Суммарное количество узлов в дереве зависимостей `include`. |
+| **Глубина цепочки компонентов** | **10** | Все | Лимит на последовательное подключение: `A -> B -> ... -> J`. |
+| **Максимальное количество заданий** | **1000** | Все | Общий лимит `jobs` в одном пайплайне после раскрытия всех циклов. |
+| **Размер одного YAML-файла** | **2 МБ** | 17.3+ (`max_yaml_size_bytes`) | Память, выделяемая на парсинг одного файла; настраивается администратором. |
+| **Суммарный раскрытый YAML** | **314,6 МБ** | 17.3+ (`ci_max_total_yaml_size_bytes`) | 2 МБ × 150 включений; объём памяти под полную скомпилированную конфигурацию. |
+| **Максимум входов (spec:inputs)** | **50** | 17.0+ | Лимит уникальных параметров в секции спецификации одного файла. |
+| **Глубина наследования extends** | **11 уровней** | Все | Внутренняя константа `MAX_NESTING_LEVELS = 10`; рекомендуется ≤ 3–4. |
+
+### Производительность
+
+| Лимит | Влияние на производительность | Порог критичности |
+| :--- | :--- | :--- |
+| **150 include** | Каждый include увеличивает время компиляции пайплайна на 0.5–2 секунды. При 150 узлах задержка может достигать 5 минут. | > 100 узлов (67% от лимита) |
+| **100 компонентов** | Большое количество компонентов замедляет обнаружение в каталоге и увеличивает время валидации. | > 70 компонентов (70% от лимита) |
+| **1000 заданий** | Генерация более 500 заданий квадратично увеличивает время построения графа зависимостей. | > 500 заданий (50% от лимита) |
+
+### Edge Cases
+
+- **Циклические зависимости**: Компоненты не могут циклически зависеть друг от друга через `include`. GitLab обнаружит это на этапе компиляции и вернет ошибку.
+- **Секреты в inputs**: Значения `inputs` видны в раскрытом YAML. Никогда не передавайте секреты через `spec:inputs`.
+- **Глобальные ключи в компонентах**: Блоки `workflow:`, `default:`, `stages:` на верхнем уровне компонента игнорируются или вызывают ошибку. Перенесите их в корневой `.gitlab-ci.yml`.
+- **Кэширование компонентов**: GitLab кэширует раскрытые компоненты на уровне инстанса. При обновлении компонента в каталоге существующие пайплайны могут использовать устаревшую версию до истечения TTL кэша.
+- **Одновременное обновление**: При обновлении компонента, используемого сотнями проектов, все они увидят новую версию одновременно. Используйте canary-стратегию для постепенного внедрения.
+
+---
+
 ## Справочная информация
 
 ### Чек-лист перед публикацией
 - [ ] Секция `spec:inputs` заполнена и синтаксически верна.
 - [ ] Добавлена валидация через `regex` или `options`.
-- [ ] Компонент прошел проверку через `glab ci lint --show-expanded`.
+- [ ] Компонент прошел проверку через `glab ci config compile`.
 - [ ] Проект помечен как «Catalog resource».
 - [ ] Создан релиз с тегом SemVer.
 - [ ] Добавлены интеграционные тесты в папку `tests/`.

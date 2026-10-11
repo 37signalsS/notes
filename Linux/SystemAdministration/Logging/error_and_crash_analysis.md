@@ -383,7 +383,7 @@ spec:
 | `crash: compressed kdump not supported` | Ошибка при открытии vmcore | `makedumpfile` создал сжатый дамп без поддержки | Пересоздать дамп с `makedumpfile -F` или использовать `makedumpfile -R vmcore < /proc/vmcore` |
 | kdump не создает vmcore | Паника, но `/var/crash` пуст | Недостаточно памяти для kdump, `crashkernel` не указан | Проверить `dmesg \| grep -i crash`, `kdumpctl status`, добавить `crashkernel=256M` в GRUB |
 | pstore пуст после перезагрузки | `/sys/fs/pstore/` пуст | `ramoops` не загружен или `mem_size=0` | Проверить `lsmod \| grep ramoops`, `cat /sys/module/ramoops/parameters/mem_size` |
-| OOM Kill без записи в dmesg | Silent OOM (cgroup v2) | `memory.oom.group=1` не установлен | Добавить `--cgroup-conf=memory.oom.group=1` в Docker или `oomGroup: true` в K8s |
+| OOM Kill без записи в dmesg | Silent OOM (cgroup v2) | `memory.oom.group=1` не установлен | Docker: флага нет — Podman (`--cgroup-conf=memory.oom.group=1`) или systemd-slice; K8s: `memory.oom.group` включён по умолчанию на cgroup v2, отключается kubelet-флагом `singleProcessOOMKill: true` (1.32+) |
 | Container OOMKilled, но лимиты не превышены | OOM на уровне узла | Node-pressure eviction | Проверить `kubectl describe node`, `kubectl top nodes`, `kubectl get events --field-selector reason=OOMKilling` |
 | Kernel Panic при загрузке модуля | `BUG: unable to handle kernel NULL pointer` | Драйвер с багом, Tainted ядро | Проверить `cat /proc/sys/kernel/tainted`, откатить модуль, включить kdump |
 | `coredumpctl debug` падает | `gdb: fatal error: Unable to open ...` | Отсутствуют символы (`vmlinux` или debuginfo) | Установить `kernel-debuginfo`, `glibc-debuginfo`, `systemd-debuginfo` |
@@ -393,7 +393,7 @@ spec:
 ## Рекомендации
 
 ### На production-хостах
-1.  **Всегда включайте kdump** и тестируйте его раз в квартал. Включите `kdumpctl test` в维护窗口.
+1.  **Всегда включайте kdump** и тестируйте его раз в квартал. Включите `kdumpctl test` в окно обслуживания.
 2.  **Настройте systemd-coredump** с внешним хранилищем и лимитами (`ProcessSizeMax`, `MaxUse`). Мониторьте заполнение диска.
 3.  **Установите `OOMScoreAdjust=-1000`** для критических сервисов (sshd, monitoring agents, database proxies).
 4.  **Используйте `makedumpfile`** для сжатия vmcore (снижает время записи и размер в 5–10 раз).

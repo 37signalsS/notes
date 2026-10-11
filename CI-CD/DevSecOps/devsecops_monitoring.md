@@ -388,7 +388,7 @@ inhibit_rules:
 | :--- | :--- | :--- |
 | `promtool query instant --host=http://prometheus:9090 'up{job="falco"}'` | Проверка метрик Falco | 1 если Falco Up, 0 если Down |
 | `logcli query '{job="falco"} | json | priority="critical"' --since=1h` | Поиск критичных алертов Falco | Список алертов за последний час |
-| `grafana-cli admin reset-admin-password` | Сброс пароля Grafana | Новый пароль для admin |
+| `grafana cli admin reset-admin-password` | Сброс пароля Grafana | Новый пароль для admin |
 | `jq '[.runs[].results[] | select(.level=="error")] | length' report.sarif` | Подсчёт критичных findings в SARIF | Число critical/high findings |
 | `vault audit enable file file_path=/var/log/vault/audit.log` | Включение аудит-логирования Vault | Подтверждение включения |
 | `alertmanager --config.file=alertmanager.yml` | Запуск Alertmanager | Запущен сервис на порту 9093 |

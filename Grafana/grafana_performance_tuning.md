@@ -93,7 +93,7 @@ timeout = 30
 ```yaml
 services:
   grafana:
-    image: grafana:13.1.0
+    image: grafana:13.2.3
     deploy:
       resources:
         limits:

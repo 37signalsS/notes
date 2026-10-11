@@ -1,200 +1,385 @@
 # Point-in-Time Recovery (PITR) — восстановление на конкретный момент
 
-**Point-in-Time Recovery (PITR)** — восстановление состояния БД на конкретный момент времени с помощью полного физического или логического бэкапа и последующего применения бинарных логов через `mysqlbinlog`.
+**Актуально для:** MySQL 5.7 / 8.0 / 8.4 LTS
 
-> **Требование:** Бинарный лог должен быть включён до момента создания бэкапа. Конфигурация — в **[Обзоре](./overview.md#включённый-бинарный-лог-обязательно-для-pitr)**.
+## Определения
 
-## Алгоритм PITR
+**Point-in-Time Recovery (PITR)** — процедура восстановления базы данных до точного момента в прошлом путем комбинации полного бэкапа (физического или логического) и последовательного применения бинарных логов через `mysqlbinlog`.
 
-1. Восстановить БД из полного бэкапа (физического или логического).
-2. Определить целевой момент восстановления (datetime или позиция в логе).
-3. Применить бинарные логи от момента бэкапа до целевого через `mysqlbinlog`.
+**Целевая точка восстановления (Recovery Target)** — конкретный момент времени (`datetime`) или позиция в бинарном логе (`filename:position`), до которого необходимо откатить данные.
 
-## Шаг 1: Восстановление из полного бэкапа
+**Бинарный лог (Binary Log)** — последовательность файлов с событиями изменений данных, обязательных для PITR. Подробнее — в [Управление бинарным логом](../replication/binlog_management.md).
 
-### Из физического бэкапа (XtraBackup)
+## Основные концепции
 
-```bash
-xtrabackup --prepare --target-dir=/backups/full_latest
-systemctl stop mysql
-rm -rf /var/lib/mysql/*
-xtrabackup --copy-back --target-dir=/backups/full_latest
-chown -R mysql:mysql /var/lib/mysql
-systemctl start mysql
+PITR состоит из трех этапов:
+1. Восстановить полный бэкап на целевом инстансе.
+2. Определить начальную позицию в binlog (момент создания бэкапа).
+3. Применить binlog-события от начальной позиции до целевого момента.
+
+Для PITR требуется:
+- Включенный `log_bin` на источнике до момента создания бэкапа.
+- Доступ ко всем binlog-файлам за период от момента бэкапа до целевого момента.
+- Соответствие версий `mysqlbinlog` и сервера MySQL.
+
+## Предварительные требования
+
+### Версии и инструменты
+
+| Компонент | Требование |
+| :--- | :--- |
+| MySQL | 5.7+ (рекомендуется 8.0+ или 8.4 LTS) |
+| `mysqlbinlog` | Входит в дистрибутив; версия должна совпадать с версией сервера |
+| XtraBackup | 8.0.35-36 для MySQL 8.0.x; 2.4 для MySQL 5.7 |
+| MySQL Shell | 9.7.x (для логических дампов) |
+
+### Конфигурация сервера
+
+PITR невозможен без включенного binlog. Минимальная конфигурация:
+
+```ini
+[mysqld]
+server-id = 1
+log_bin = mysql-bin
+binlog_format = ROW
+binlog_expire_logs_seconds = 604800
+max_binlog_size = 100M
+sync_binlog = 1
+gtid_mode = ON
+enforce_gtid_consistency = ON
 ```
 
-### Из логического дампа (MySQL Shell)
+Проверка:
+```sql
+SHOW VARIABLES LIKE 'log_bin';
+-- → log_bin: ON
+
+SHOW BINARY LOGS;
+-- →mysql-bin.000001   154
+```
+
+> **Важно:** MySQL 8.0 завершает поддержку (EOL) в апреле 2026. Для новых систем используйте MySQL 8.4 LTS.
+
+### Права пользователя
+
+```sql
+-- Для чтения binlog с удаленного сервера или реплики
+GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'backup_user'@'%';
+
+-- Для XtraBackup
+GRANT PROCESS, RELOAD, LOCK TABLES, REPLICATION CLIENT, SELECT ON *.* TO 'backup_user'@'localhost';
+```
+
+### Инфраструктура
+
+- **NTP:** синхронизация времени на всех узлах. Некорректные временные метки binlog ломают PITR.
+- **Диск:** отдельный раздел для binlog, место под 2–3 цикла ротации сверх активных логов.
+- **Сеть:** стабильный канал для `mysqlbinlog --read-from-remote-server`, если используется удаленный архив.
+
+## Практические сценарии
+
+### Сценарий 1: PITR после логической ошибки (DROP TABLE)
+
+1. Определить начальную позицию binlog, соответствующую моменту создания бэкапа.
+2. Восстановить полный бэкап.
+3. Применить binlog до целевого момента.
+
+```bash
+# 1. Определение позиции (XtraBackup)
+cat /var/lib/mysql/xtrabackup_binlog_info
+# → mysql-bin.000005    89234
+
+# Для mysqldump с --source-data=2 позиция указана в самом дампе (в MySQL 5.7 — --master-data=2).
+# Для MySQL Shell — в метаданных дампа.
+
+# 2. Восстановление физического бэкапа
+systemctl stop mysql
+rm -rf /var/lib/mysql/*
+xtrabackup --copy-back --target-dir=/backups/full_2024-08-19
+chown -R mysql:mysql /var/lib/mysql
+systemctl start mysql
+
+# 3. Применение binlog до 15:04:59 (за минуту до DROP)
+mysqlbinlog --no-defaults \
+  --stop-datetime="2024-08-20 15:04:59" \
+  /var/lib/mysql/mysql-bin.000005 \
+  | mysql -u root -p
+```
+
+> **Примечание:** При использовании инкрементальных бэкапов XtraBackup последовательность восстановления: `Base → Inc1 → Inc2 → apply binlog`. Подробнее — в [Percona XtraBackup](./xtrabackup.md).
+
+### Сценарий 2: PITR с исключением конкретной транзакции (GTID)
+
+Если GTID включен и известен идентификатор вредоносной транзакции, можно исключить её без полного восстановления из бэкапа:
+
+```bash
+# Найти GTID транзакции DROP
+mysqlbinlog --no-defaults -v --base64-output=DECODE-ROWS \
+  /var/lib/mysql/mysql-bin.000005 | grep -A 3 "DROP TABLE"
+# → GTID: 3E11FA47-...:542
+
+# Применить все логи, исключая эту транзакцию
+mysqlbinlog --no-defaults \
+  --exclude-gtids="3E11FA47-71CA-11E1-9E33-C80AA9429562:542" \
+  /var/lib/mysql/mysql-bin.000005 \
+  | mysql -u root -p
+```
+
+> **Важно:** GTID-метод работает только для логических операций (DROP, ошибочный `UPDATE`). При физическом повреждении данных требуется полный цикл PITR. Подробнее — в [GTID-репликации](../replication/gtid.md#использование-mysqlbinlog-с-gtid).
+
+### Сценарий 3: Восстановление из логического дампа (MySQL Shell)
 
 ```bash
 mysqlsh --uri backup_user@localhost \
   -e "util.loadDump('/backups/shell_dump', {threads: 16})"
 ```
 
-### Определение позиции бинарного лога в бэкапе
+После загрузки дампа примените binlog так же, как в сценарии 1. Для логических дампов начальная позиция binlog указывается в метаданных дампа (при использовании `consistent: true` или `--source-data=2`; в MySQL 5.7 — `--master-data=2`).
 
-После восстановления из XtraBackup проверьте файл `xtrabackup_binlog_info`:
+### Сценарий 4: PITR с удаленным архивом binlog
 
-```bash
-cat /var/lib/mysql/xtrabackup_binlog_info
-# → mysql-bin.000005    89234    3E11FA47-71CA-11E1-9E33-C80AA9429562:1-100
-```
-
-Это начальная точка для применения бинарных логов (все логи до этого момента уже содержатся в бэкапе).
-
-## Шаг 2: Определение целевой точки восстановления
-
-```sql
--- Просмотр списка бинарных логов
-SHOW BINARY LOGS;
--- →mysql-bin.000001   154
--- →mysql-bin.000002   15267
--- →mysql-bin.000003   89234
-
--- Просмотр событий в конкретном логе
-SHOW BINLOG EVENTS IN 'mysql-bin.000005' LIMIT 20;
-```
+Если локальные binlog потеряны, но настроено непрерывное архивирование:
 
 ```bash
-# Просмотр через mysqlbinlog (удобнее для больших логов)
-mysqlbinlog --no-defaults /var/lib/mysql/mysql-bin.000005 | head -100
-
-# Поиск конкретной операции (например, DROP TABLE)
-mysqlbinlog --no-defaults -v --base64-output=DECODE-ROWS \
-  /var/lib/mysql/mysql-bin.000005 | grep -B 5 "DROP TABLE"
-```
-
-## Шаг 3: Применение бинарных логов
-
-### Вариант 1: До конкретного момента времени (datetime)
-
-```bash
-mysqlbinlog --no-defaults \
-  --stop-datetime="2024-08-20 14:30:00" \
-  /var/lib/mysql/mysql-bin.000001 \
-  /var/lib/mysql/mysql-bin.000002 \
-  /var/lib/mysql/mysql-bin.000003 \
-  /var/lib/mysql/mysql-bin.000004 \
-  /var/lib/mysql/mysql-bin.000005 \
-  | mysql -u root -p
-# → Все транзакции до 14:30:00 применены
-```
-
-### Вариант 2: До конкретной позиции в логе (pos)
-
-```bash
-mysqlbinlog --no-defaults \
-  --stop-position=12345 \
-  /var/lib/mysql/mysql-bin.000005 \
-  | mysql -u root -p
-# → Транзакции до позиции 12345 в mysql-bin.000005 применены
-```
-
-### Вариант 3: С исключением GTID (отмена конкретной транзакции)
-
-```bash
-# Исключить транзакцию с GTID=542 (например, DROP TABLE)
-mysqlbinlog --no-defaults \
-  --exclude-gtids="server-uuid:542" \
-  /var/lib/mysql/mysql-bin.000005 \
-  | mysql -u root -p
-# → Все транзакции, КРОМЕ с GTID=542, применены
-```
-
-### Вариант 4: Фильтрация по базе данных
-
-```bash
-# Применить только транзакции конкретной базы
-mysqlbinlog --no-defaults \
-  --database=mydb \
-  --stop-datetime="2024-08-20 14:30:00" \
-  /var/lib/mysql/mysql-bin.000005 \
-  | mysql -u root -p
-```
-
-### Вариант 5: Чтение бинарного лога с удалённого сервера
-
-```bash
-# Прямое чтение с реплики (не требует скачивания логов)
 mysqlbinlog --no-defaults \
   --read-from-remote-server \
-  --host=replica_host --port=3306 \
-  --user=backup_user --password='ClonePassword!2024' \
+  --host=archive_host --port=3306 \
+  --user=backup_user --password='StrongPassword!2024' \
   --stop-datetime="2024-08-20 14:30:00" \
   mysql-bin.000005 \
   | mysql -u root -p
 ```
 
-## Полный сценарий PITR: откат после DROP TABLE
+Для фонового непрерывного архивирования используйте `mysqlbinlog --read-from-remote-server --stop-never --raw`. Подробнее — в [Управление бинарным логом](../replication/binlog_management.md#2-удаленное-резервное-копирование-binary-log-archiving).
 
-### Ситуация
+### Сценарий 5: PITR через реплику
 
-В 15:05 выполнен `DROP TABLE critical_data`. Нужно восстановить БД на состояние 15:04.
+Если источник потерял binlog, но реплики еще не применили все транзакции:
 
-```bash
-# 1. Остановить сервер (предотвратить дальнейшие записи)
-systemctl stop mysql
+1. Определите позицию на реплике: `SHOW REPLICA STATUS` → `Relay_Master_Log_File`, `Exec_Master_Log_Pos`.
+2. Восстановите реплику на новый инстанс как источник.
+3. Используйте её binlog для продолжения PITR.
 
-# 2. Сохранить текущие бинарные логи (на случай, если сервер ещё писал)
-cp /var/lib/mysql/mysql-bin.000005 /tmp/mysql-bin.000005.bak
+Подробнее — в [Управление бинарным логом](../replication/binlog_management.md#восстановление-после-потери-всего-binlog-на-источнике).
 
-# 3. Определить позицию бэкапа
-cat /var/lib/mysql/xtrabackup_binlog_info
-# → mysql-bin.000005    89234
+### Сценарий 6: Восстановление одной таблицы из закрытого бинарного лога
 
-# 4. Восстановить из полного бэкапа (сделанного вчера в 03:00)
-rm -rf /var/lib/mysql/*
-xtrabackup --copy-back --target-dir=/backups/full_2024-08-19
-chown -R mysql:mysql /var/lib/mysql
+Регулярная задача: инцидент затронул одну таблицу (ошибочный `DELETE`, `UPDATE` без `WHERE`, испорченные данные), а полный PITR с откатом всей базы недопустим. Откатывать нужно только пострадавшую таблицу, не затрагивая остальные.
 
-# 5. Запустить сервер в readonly (временно)
-mysql -u root -p -e "SET GLOBAL read_only = ON;"
+Принцип: восстановить целевую таблицу из последнего полного бэкапа, затем наложить на неё только те события binlog, которые относятся к этой таблице, остановившись до момента инцидента.
 
-# 6. Применить бинарные логи до момента 15:04:59 (за минуту до DROP)
-mysqlbinlog --no-defaults \
-  --stop-datetime="2024-08-20 15:04:59" \
-  /var/lib/mysql/mysql-bin.000005 \
-  | mysql -u root -p
-# → Транзакции с 03:00 (момент бэкапа) до 15:04:59 применены
+#### Шаг 1: Найти позицию инцидента
 
-# 7. Убрать readonly и проверить данные
-mysql -u root -p -e "SET GLOBAL read_only = OFF;"
-mysql -u root -p -e "SELECT COUNT(*) FROM critical_data;"
-# → Таблица восстановлена и содержит данные до 15:04
+```sql
+-- Позиция binlog на текущий момент — точка отката
+SHOW BINARY LOG STATUS;
+-- → File: binlog.000042   Position: 1540
 ```
 
-### Альтернатива: исключение DROP TABLE через GTID
-
-Если GTID включён и известен идентификатор транзакции DROP TABLE:
-
-```bash
-# 1. Найти GTID транзакции DROP
-mysqlbinlog --no-defaults -v --base64-output=DECODE-ROWS \
-  /var/lib/mysql/mysql-bin.000005 | grep -A 3 "DROP TABLE"
-# → GTID: 3E11FA47-...:542
-
-# 2. Применить все логи, исключая эту транзакцию
-mysqlbinlog --no-defaults \
-  --exclude-gtids="3E11FA47-71CA-11E1-9E33-C80AA9429562:542" \
-  /var/lib/mysql/mysql-bin.000005 \
-  | mysql -u root -p
-# → Все транзакции применены, КРОМЕ DROP TABLE
+```sql
+-- Найти время ошибочной операции
+SELECT FROM_UNIXTIME(1545388800) AS query_time, user, db, command_info
+FROM mysql.general_log
+WHERE command_type = 'Query' AND argument LIKE '%DELETE%'
+ORDER BY event_time DESC LIMIT 5;
+-- → 2026-10-22 10:00:00 app_user @ localhost Delete from orders where ...
 ```
 
-> **Преимущество GTID-метода:** Не нужно восстанавливать из полного бэкапа — можно просто исключить вредоносную транзакцию при повторном применении логов. Однако это работает только для логических операций (DROP, UPDATE без WHERE и т.д.), не для физических повреждений данных.
+```bash
+# По времени найти файл и позицию в binlog
+mysqlbinlog --base64-output=DECODE-ROWS -v \
+  --start-datetime="2026-10-22 09:00:00" \
+  --stop-datetime="2026-10-22 10:30:00" \
+  /var/log/mysql/binlog.000042 | grep -B5 -A30 "DELETE FROM \`orders\`"
+# → # at 984517
+# → #260322 10:00:14 server id 1  end_log_pos 985203 CRC32 0x3f2a9b71  GTID 0-42-118 trans
+# → DELETE FROM `orders` WHERE `id` IN (1001,1002,...)
+```
+
+Записываем позицию инцидента: **позиция 984517 в binlog.000042** — точка остановки.
+
+#### Шаг 2: Восстановить таблицу из последнего бэкапа
+
+```bash
+# Из физического бэкапа — таблица извлекается экспортом (см. xtrabackup.md)
+# Либо из логического дампа:
+zstd -dc /backups/mysql/all_2026-10-20.sql.zst \
+  | mysql -u root --one-database mydb_restored
+# → 0
+```
+
+> **Важно:** таблицу восстанавливаем в **отдельную базу** (`mydb_restored`), а не в рабочую. Замена на месте означает потерю данных, появившихся после бэкапа, — а их тоже нужно сохранить.
+
+#### Шаг 3: Наложить binlog до момента инцидента
+
+```bash
+# Фильтр --database указывает имя базы ИЗ BINLOG (mydb), а целевая база —
+# mydb_restored задаётся в mysql на конце пайпа
+mysqlbinlog --database=mydb \
+  --start-position=1540 --stop-position=984517 \
+  /var/log/mysql/binlog.000042 \
+  | mysql -u root mydb_restored
+# → 0
+```
+
+Фильтр `--database` работает на уровне **события**: он отбрасывает целые события, не относящиеся к указанной базе. Имя в этом флаге — то, что записано в binlog, а не имя базы-получателя; их расхождение здесь и используется намеренно.
+
+Ограничение для `ROW`-формата: событие изменения строки в `ROW` содержит изменения **всех** колонок строки, но не содержит имени таблицы для таблиц, отличных от затронутых, в одном потоке событий. Поэтому `--database` сужает поток по базе, но не по таблице. Если в той же базе параллельно шли изменения других таблиц, они попадут в поток и будут применены к `mydb_restored` — что приведёт к ошибке «таблица не существует». Практическое решение: сузить поток по базе и проверить состав событий разбором до применения.
+
+```bash
+# Контроль состава: сколько событий и какие таблицы затронуты
+mysqlbinlog --database=mydb \
+  --start-position=1540 --stop-position=984517 \
+  -v --base64-output=DECODE-ROWS \
+  /var/log/mysql/binlog.000042 \
+  | grep -E "^### (INSERT INTO|UPDATE|DELETE FROM)" \
+  | awk '{print $3}' | sort -u
+# → `orders`
+# → `order_items`
+# → Если в выводе есть лишние таблицы — исключите их или применяйте выборочно
+```
+
+> **Точная изоляция одной таблицы из `ROW`-binlog штатными средствами невозможна.** `mysqlbinlog` не имеет флага «только эта таблица» (в отличие от `--database`). Для строгой изоляции применяют `binlog2sql --tables` (сценарий 7) либо извлекают таблицу из физического бэкапа через `--export` и доигрывают вручную.
+
+#### Шаг 4: Откат ошибочных изменений на рабочей таблице
+
+```bash
+# Данные из восстановленной таблицы выгружаем в отдельный файл
+mysqldump --user=root --single-transaction --no-tablespaces \
+  --no-create-info mydb_restored orders \
+  > /tmp/orders_rollback.sql
+# → 0
+
+# Проверяем количество строк до подмены
+mysql -u root -N -B -e "SELECT COUNT(*) FROM mydb.orders;"
+# → 8412993
+```
+
+#### Шаг 5: Подмена с сохранением изменений после инцидента
+
+```sql
+-- Что было сделано с таблицей ПОСЛЕ инцидента — эти операции нужно сохранить
+SELECT * FROM orders WHERE updated_at > '2026-10-22 10:00:00' LIMIT 5;
+```
+
+```bash
+# 1. Блокируем таблицу на время подмены
+mysql -e "LOCK TABLES mydb.orders WRITE;" &
+
+# 2. Подменяем содержимое
+mysql -u root mydb < /tmp/orders_rollback.sql
+
+# 3. Снимаем блокировку
+mysql -e "UNLOCK TABLES;"
+# → (без вывода при успехе)
+```
+
+> **Оценка риска:** подмена таблицы на работающей системе теряет все изменения после инцидента, если они не сохранены отдельно. Для production-базы с активной записью этот приём применяют только в окно обслуживания либо после обязательного выравнивания через репликацию.
+
+### Сценарий 7: Откат ошибочного UPDATE через `binlog2sql`
+
+Когда ошибочна не структура данных, а конкретная транзакция, и её точный текст известен из slow query log или general log. Утилита `binlog2sql` формирует обратный `UPDATE`/`DELETE` — «откат по значению», а не по времени.
+
+```bash
+# Утилита не входит в поставку MySQL — ставится отдельно
+pip install binlog2sql
+
+# Сгенерировать обратный SQL для конкретной транзакции
+binlog2sql --mysql-host=127.0.0.1 --mysql-user=backup_user \
+  --mysql-password="$MYSQL_PWD" \
+  --start-datetime="2026-10-22 09:00:00" \
+  --stop-datetime="2026-10-22 10:30:00" \
+  --database=mydb --tables=orders \
+  --sql --flashback \
+  > /tmp/orders_rollback_2sql.sql
+# → (файл с обратными операциями)
+```
+
+```bash
+# ОБЯЗАТЕЛЬНО: сначала посмотреть, что сгенерировано
+head -20 /tmp/orders_rollback_2sql.sql
+# → UPDATE `mydb`.`orders` SET `total`=1199.00 WHERE `id`=1001 AND `total`=2499.00;
+```
+
+```bash
+# Убедиться, что WHERE содержит первичный ключ И старое значение —
+# иначе откат затронет больше строк, чем нужно
+grep -c "WHERE \`id\`=" /tmp/orders_rollback_2sql.sql
+# → 1
+```
+
+```bash
+# Применение
+mysql -u root < /tmp/orders_rollback_2sql.sql
+# → 0
+```
+
+> **Критично:** `--flashback` требует `ROW`-формата binlog и полнотекстового журнала. Для `STATEMENT`-формата он **не работает**, а для `MIXIN` — работает только при `binlog_row_image=FULL`. Перед применением всегда проверяйте сгенерированный SQL и количество строк в нём.
+
+| Формат binlog | Работает `--flashback` | Требование |
+| :--- | :--- | :--- |
+| `ROW` + `binlog_row_image=FULL` | Да | Полные образы строк в binlog |
+| `ROW` + `binlog_row_image=MINIMAL` | Ограниченно | Нужны значения всех изменённых колонок |
+| `STATEMENT` | Нет | Принципиально невозможно |
+| `MIXIN` | Частично | Только для ROW-составляющей |
+
+## Применение бинарных логов: основные варианты
+
+| Вариант | Флаг | Применение |
+| :--- | :--- | :--- |
+| До момента времени | `--stop-datetime="YYYY-MM-DD HH:MM:SS"` | Самый частый сценарий |
+| До позиции | `--stop-position=N` | Точный контроль при длинных транзакциях |
+| От момента времени | `--start-datetime="YYYY-MM-DD HH:MM:SS"` | Пропуск ранних событий в логе |
+| От позиции | `--start-position=N` | Пропуск ранних событий |
+| Исключение GTID | `--exclude-gtids="uuid:N"` | Отмена конкретной транзакции |
+| Фильтр по БД | `--database=dbname` | Восстановление только одной базы |
+| Удаленное чтение | `--read-from-remote-server` | При отсутствии локальных логов |
+
+> **Примечание:** Для декодирования ROW-формата используйте `-v --base64-output=DECODE-ROWS`. Подробнее — в [Форматах бинарного лога](../replication/binlog_formats.md).
 
 ## Ограничения и особенности
 
-1. **Бинарный лог обязателен:** Если `log_bin=OFF`, PITR невозможен. Бэкап будет восстанавливаться только на момент его создания.
-2. **Ротация логов:** Если `binlog_expire_logs_seconds` мал, старые логи могут быть удалены до завершения PITR. Убедитесь, что все логи от момента бэкапа до целевого момента доступны.
-3. **Non-transactional DDL:** Операции `CREATE TABLE`, `ALTER TABLE`, `DROP TABLE` фиксируются в бинарном логе немедленно (не в рамках транзакции). Их невозможно откатить через `ROLLBACK`, но можно исключить через GTID.
+1. **Бинарный лог обязателен:** Если `log_bin=OFF`, PITR невозможен. Бэкап восстанавливается только на момент его создания.
+2. **Ротация логов:** Если `binlog_expire_logs_seconds` мал, старые логи удаляются до завершения PITR. Рекомендуется минимум 72 часа (259200 сек) для покрытия типичных RPO.
+3. **Non-transactional DDL:** `CREATE TABLE`, `ALTER TABLE`, `DROP TABLE` фиксируются в binlog немедленно (не в рамках транзакции). Их невозможно откатить через `ROLLBACK`, но можно исключить через GTID (если известен GTID).
 4. **Длинные транзакции:** Если транзакция началась до целевого момента, но была зафиксирована после, `--stop-datetime` может не отработать корректно. Используйте `--stop-position` для точного контроля.
-5. **Промежуточные состояния:** PITR восстанавливает БД на **консистентное** состояние. Если вы откатываетесь на момент до завершения длинной транзакции, InnoDB откатит её при старте сервера.
+5. **Промежуточные состояния:** PITR восстанавливает БД на **консистентное** состояние. InnoDB откатит незавершенные транзакции при старте сервера.
+6. **Шифрование binlog:** Если включен `binlog_encryption`, укажите `--keyring-path` в `mysqlbinlog`.
+7. **Сжатие binlog:** Если включен `binlog_transaction_compression`, `mysqlbinlog` декодирует автоматически (MySQL 8.0.20+).
+8. **Смешанные форматы:** В режиме `MIXED` PITR может восстановить только события, поддерживаемые целевым сервером. Рекомендуется единообразное использование `ROW`. Подробнее — в [Форматах бинарного лога](../replication/binlog_formats.md#восстановление-pitr-при-смешанных-форматах).
 
-## Дополнительная информация
+## Диагностика и устранение неисправностей
 
-- **[Обзор инструментов бэкапа](./overview.md)** — конфигурация binlog, определения инструментов.
-- **[Percona XtraBackup](./xtrabackup.md)** — физические бэкапы как основа для PITR.
-- **[MySQL Shell Dump & Load](./mysql_shell_dump.md)** — логические дампы как основа для PITR.
-- **[Настройка репликации MySQL](../replication/setup_guide.md)** — PITR и replication тесно связаны.
-- **[GTID в MySQL](../replication/gtid.md)** — подробнее о GTID-фильтрации в mysqlbinlog.
-- **[Бинарные логи: формат и управление](../replication/binlog_management.md)** — архивация и ротация.
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `mysqlbinlog: [ERROR] unknown variable` | Конфликт опций конфигурации | Добавьте `--no-defaults` к команде |
+| `ERROR 1236` (Missing GTIDs) | Binlog удален на источнике | Восстановите из полного бэкапа + binlog до точки сбоя; используйте реплику |
+| Ошибка прав доступа | `backup_user` lacks `REPLICATION SLAVE` | Выдайте грант: `GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'backup_user'@'%'` |
+| `xtrabackup_binlog_info` не найден | Восстановление не из XtraBackup | Используйте `SHOW MASTER STATUS` на момент создания бэкапа |
+| Данные не восстановились до целевого момента | Неверная позиция или пропущены логи | Проверьте цепочку binlog: `SHOW BINARY LOGS` |
+| Повреждение binlog | Аварийное завершение, сбой диска | Проверьте целостность: `mysqlbinlog --verify-binlog-checksum /var/lib/mysql/binlog.000001` |
+
+Подробная диагностика binlog — в [Управление бинарным логом](../replication/binlog_management.md#устранение-неисправностей).
+
+## Бест-практики
+
+1. **Тестируйте PITR регулярно:** Проводите drills восстановления на изолированном инстансе не реже раза в квартал. Документируйте RTO (среднее время восстановления) и RPO (максимально допустимая потеря данных).
+2. **Архивируйте binlog offsite:** Храните binlog на удаленном хранилище или стримите через `mysqlbinlog --read-from-remote-server --stop-never`. Подробнее — в [Автоматизации](./automation.md#скрипт-архивации-бинарных-логов-для-pitr).
+3. **Настройте `binlog_expire_logs_seconds` с запасом:** Для систем с высокой нагрузкой или долгими простоями реплик — не менее 7 дней.
+4. **Включите `binlog_checksum = CRC32`:** Проверяйте целостность: `mysqlbinlog --verify-binlog-checksum /var/lib/mysql/binlog.000001`.
+5. **Используйте GTID:** Упрощает позиционирование и исключение транзакций. При включенном GTID не требуется ручной поиск координат `filename:pos`.
+6. **Мониторьте место под binlog:** Настройте алерт при заполнении диска более чем на 80%. Используйте `du -sh /var/lib/mysql-binlog/`.
+7. **Сбросьте кэши после PITR:** Прогрейте `buffer_pool` и сбросьте кэши приложения, так как производительность будет временно снижена.
+8. **Храните метаданные бэкапа:** Файл `xtrabackup_binlog_info`, метаданные дампа MySQL Shell и скрипты восстановления должны храниться вместе с бэкапом.
+9. **Используйте отложенную репликацию (`SOURCE_DELAY`):** Для защиты от логических ошибок (DROP TABLE, ошибочный UPDATE) можно настроить реплику с задержкой 30–60 минут. Это позволяет откатиться без полного PITR, если ошибка обнаружена вовремя.
+
+## См. также
+
+- **[Обзор инструментов бэкапа](./overview.md)** — требования к binlog, версии инструментов, пользователь бэкапа.
+- **[Percona XtraBackup](./xtrabackup.md)** — физические бэкапы, инкрементальные бэкапы, восстановление таблиц.
+- **[MySQL Shell Dump & Load](./mysql_shell_dump.md)** — логические дампы, загрузка.
+- **[Управление бинарным логом](../replication/binlog_management.md)** — ротация, архивация, продвинутая PITR, диагностика.
+- **[GTID-репликация](../replication/gtid.md)** — исключение транзакций через `--exclude-gtids`, пропуск проблемных GTID.
+- **[Форматы бинарного лога](../replication/binlog_formats.md)** — влияние ROW/STATEMENT/MIXED на PITR.
+- **[Автоматизация и верификация](./automation.md)** — скрипты PITR, ротация, smoke-тестирование.
+- **[Настройка репликации MySQL](../replication/setup_guide.md)** — PITR и replication.

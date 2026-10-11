@@ -1,11 +1,16 @@
 # CI/CD в Docker Swarm: Лучшие практики и стандарты эксплуатации
 
+> **Статус:** Docker Swarm не развивается. Применяется только для поддержки существующих
+> развёртываний; для новых — Kubernetes.
+
+**Актуально для:** Docker Swarm mode (Compose file v3.x), Prometheus 3.15.x, Grafana 13.3.x, node-exporter 1.12.x
+
 ## Определения
 
 - **Лучшие практики (Best Practices):** Набор проверенных архитектурных и операционных паттернов, направленных на обеспечение безопасности, масштабируемости и отказоустойчивости систем.
 - **Неизменяемая инфраструктура (Immutable Infrastructure):** Принцип, согласно которому серверы и контейнеры никогда не модифицируются после развертывания. Любое изменение требует сборки нового образа и замены старого инстанса.
-- **[GitOps](../../GitOps/GitOps_overview.md):** Операционная модель, в которой Git является "единственным источником истины" (SSoT) для инфраструктуры и приложений. Изменения в кластере инициируются исключительно через Pull Requests.
-- **[Принцип минимальных привилегий (POLP)](../../CI-CD/DevSecOps/secrets_management.md#1-принцип-минимальных-привилегий-least-privilege):** Стратегия безопасности, при которой субъекту (пайплайну, сервису) предоставляется только тот набор прав, который необходим для выполнения его функций.
+- **[GitOps](../../GitOps/GitOps_overview.md):** Операционная модель, в которой Git является "единым источником истины" для инфраструктуры и приложений. Изменения в кластере инициируются исключительно через Pull Requests.
+- **[Принцип минимальных привилегий (POLP)](../../CI-CD/DevSecOps/secrets_management.md#принцип-минимальных-привилегий-least-privilege):** Стратегия безопасности, при которой субъекту (пайплайну, сервису) предоставляется только тот набор прав, который необходим для выполнения его функций.
 
 ## Базовые концепции
 
@@ -166,7 +171,7 @@ rotate-secrets:
   script:
     - |
       NEW_PASS=$(openssl rand -base64 32)
-      echo "$NEW_PASS" | docker secret create --template-name my_template db_password_${CI_COMMIT_SHA} -
+      echo "$NEW_PASS" | docker secret create db_password_${CI_COMMIT_SHA} -
       docker service update --force --secret-rm db_password --secret-add db_password_${CI_COMMIT_SHA} my_app
       docker secret rm db_password 2>/dev/null || true
   only:
@@ -174,9 +179,9 @@ rotate-secrets:
   when: manual  # Ручной триггер для безопасности
 ```
 
-**Важно:** Никогда не удаляйте старый секрет trước успешного обновления сервиса. Сначала создайте новый, обновите сервис, затем удалите старый.
+**Важно:** Никогда не удаляйте старый секрет до успешного обновления сервиса. Сначала создайте новый, обновите сервис, затем удалите старый.
 
-### Сценарий 8: Стратегия резервного к管理和 Stateful-сервисы
+### Сценарий 8: Стратегия резервного копирования и Stateful-сервисы
 
 Docker Swarm не имеет встроенного бэкапа кластера (в отличие от Kubernetes etcd snapshot). Рекомендуемая стратегия:
 
@@ -184,7 +189,7 @@ Docker Swarm не имеет встроенного бэкапа кластер�
 # Пример BackUp-задачи как сервиса
 services:
   backup_postgres:
-    image: alpine:3.19
+    image: alpine:3.24
     volumes:
       - pg_data:/source:ro
       - /mnt/nfs/backups:/backup
@@ -201,76 +206,63 @@ services:
 
 **Чек-лист резервного копирования:**
 
-- [ ] **Реестр образов (Harbor):** Настроена репликация на вторую ноду или объектное хранилище (S3/MinIO).
+- [ ] **Реестр образов (Harbor):** Настроена репликация на вторую ноду или локальное объектное хранилище (MinIO).
 - [ ] **Swarm State:** Регулярный экспорт `docker service ls`, `docker node ls`, `docker network ls` в версионируемый Git-репозиторий.
 - [ ] **Persistent Volumes:** Для каждой БД — отдельный BackUp-сервис с `schedule` (cron) и `rotation` (удаление старых артефактов).
-- [ ] **Secrets:** Секреты не резервируются напрямую — их хранение организуется во внешнем Vault (HashiCorp Vault / AWS Secrets Manager), а не в Swarm.
+- [ ] **Secrets:** Секреты не резервируются напрямую — их хранение организуется во внешнем Vault (HashiCorp Vault), а не в Swarm.
 
-### Сценарий 9: Мониторинг и алертинг (Observability Stack)
+### Сценарий 9: Мониторинг и алертинг инфраструктуры
 
-Минимально необходимый стек для продакшена в Swarm:
+Развертывание полного стека мониторинга (Prometheus, Grafana, cAdvisor, node_exporter, Loki) в виде инфраструктурного стека описано в **[infra_deployment.md](./infra_deployment.md)**.
+
+### Сценарий 10: Сканирование образов и целостность цепочки поставок
+
+Сканирование образов на уязвимости и секреты должно выполняться на этапе сборки (CI), до попадания образа в реестр.
 
 ```yaml
-# docker-compose.monitoring.yml
-services:
-  prometheus:
-    image: prom/prometheus:v2.53.0
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    ports:
-      - "9090:9090"
-    networks:
-      - monitoring_net
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1G
-
-  grafana:
-    image: grafana/grafana:11.1.0
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_admin
-    secrets:
-      - grafana_admin
-    ports:
-      - "3000:3000"
-    networks:
-      - monitoring_net
-
-  node_exporter:
-    image: prom/node-exporter:v1.8.1
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    command:
-      - '--path.procfs=/host/proc'
-      - '--path.sysfs=/host/sys'
-      - '--path.rootfs=/rootfs'
-    networks:
-      - monitoring_net
-
-networks:
-  monitoring_net:
-    driver: overlay
-    internal: true
-
-secrets:
-  grafana_admin:
-    external: true
+# Пример стадии в GitLab CI
+trivy-scan:
+  stage: security
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  script:
+    - trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHA}
+  only:
+    - merge_requests
+    - main
 ```
 
-**Ключевые метрики для алертинга:**
+**Альтернативные инструменты:**
+- **Grype** (Anchore) — открытый сканер, интегрируется с Syft для генерации SBOM.
+- **Docker Scout** — встроенный в Docker CLI сканер уязвимостей.
 
-| Метрика | Инструмент | Порог алерта |
+**SBOM (Software Bill of Materials):**
+Генерация SBOM в формате SPDX или CycloneDX для каждого образа позволяет отслеживать состав и реагировать на новые CVE.
+
+```bash
+# Генерация SBOM через Syft
+syft ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHA} -o spdx-json > sbom.json
+```
+
+**Ключевые правила:**
+- Сканируйте образы на этапе сборки (CI), а не только в реестре.
+- Блокируйте деплой при критических уязвимостях (`--exit-code 1`).
+- Кэшируйте базу уязвимостей между джобами для ускорения сканов.
+
+## Устранение неполадок
+
+### Диагностика распространенных проблем
+
+| Проблема | Диагностика | Решение |
 |:---|:---|:---|
-| Error Rate (5xx) | Prometheus + AlertManager | > 1% за 5 минут |
-| P99 Latency | Grafana Dashboard | > 500ms за 5 минут |
-| CPU/Memory Usage | node_exporter | > 85% за 10 минут |
-| Disk Space | node_exporter | < 15% свободного |
-| Container Restarts | cAdvisor / Docker API | > 3 перезапуска за 15 минут |
-| Swarm Service Down | Prometheus (up metric) | == 0 реплик > 2 минуты |
+| Workers не скачивают образ | `docker service inspect <service> --format '{{.Status.Errors}}'` | Проверьте флаг `--with-registry-auth` и доступ менеджера к реестру |
+| Контейнер не проходит Health Check | `docker service ps <service> --no-trunc --format "{{.CurrentTaskState}}"` | Увеличьте `start_period` или проверьте эндпоинт `/health` внутри контейнера |
+| OOM Kill | `dmesg \| grep -i oom` | Увеличьте `deploy.resources.limits.memory` или добавьте ноды |
+| Нет места на диске | `docker system df` и `docker node ls` | Настройте `docker system prune` через `systemd.timer` |
+| Деплой завис | `docker stack ls` и `docker service ps <stack>_<service>` | Проверьте `docker events` на менеджере; при необходимости `docker service rollback` |
+| Секрет не обновляется | `docker service inspect --format '{{json .Spec.TaskTemplate.ContainerSpec.Secrets}}' <service>` | Убедитесь, что использован `--force` при обновлении сервиса |
+| mTLS ошибка подключения | `docker context ls` и `openssl s_client -connect <manager>:2376` | Проверьте срок действия сертификатов и соответствие CA |
 
 ## Дополнительная информация
 
@@ -297,7 +289,7 @@ secrets:
 | `docker service update` из терминала | Конфликт с декларативным состоянием в Git | Только `docker stack deploy` через CI/CD. |
 | `stop-first` на stateless-сервисах | Долгое обновление, простой в обслуживании | `start-first` + `order: start-first` для Zero Downtime. |
 | Нет ограничений ресурсов (`limits`) | OOM Kill.random узлов, нестабильность кластера | Всегда задавать `reservations` и `limits`. |
-| Использование Docker Content Trust на dev | Задержка сборки из-за подписи образов | Отключать DCT на dev/staging, включать только на prod. |
+| Использование Docker Content Trust (DCT) | DCT устарел (Notary v1 отключен в 2026), заменяется на Sigstore/Cosign или Notation | Отключить DCT, перейти на Cosign/Sigstore или Notation для подписи образов. |
 | Нет мониторинга после деплоя | Незаметные регрессии (рост latency, ошибок) | Обязательный аннотинг в Grafana + алертинг. |
 
 ### Связанные документы

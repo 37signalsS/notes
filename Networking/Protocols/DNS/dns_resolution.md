@@ -267,7 +267,7 @@ getent ahosts example.com
 
 **Причины и решение:**
 1.  **Проблема ndots:** в Kubernetes и контейнерах параметр `ndots:5` заставляет систему сначала пытаться разрешить имя как absolute (с приставкой search domain). Решение: используйте FQDN с точкой на конце (`example.com.`) или установите `ndots:1`.
-2.  **Параллельные A/AAAA запросы (musl):** в Alpine Linux (musl libc) запросы A и AAAA отправляются параллельно. Если IPv6-запрос «зависает» из-за проблем с сетью, общая задержка достигает 5 секунд. Решение: `options single-request-reopen` в `/etc/resolv.conf` или настройка `dnsConfig` в Kubernetes.
+2.  **Параллельные A/AAAA запросы (musl):** в Alpine Linux (musl libc) запросы A и AAAA отправляются параллельно. Если IPv6-запрос «зависает» из-за проблем с сетью, общая задержка достигает 5 секунд. Решение: тюнинг поддерживаемых musl опций (`options timeout:2 attempts:1` в `/etc/resolv.conf` или `dnsConfig` в Kubernetes) — опция `single-request-reopen` musl не поддерживает и игнорирует. Надёжное решение — исправить IPv6 в сети или использовать DNS-прокси (NodeLocal DNSCache, dnsmasq).
 3.  **Системный резолвер недоступен:** `systemd-resolved` не запущен или порт 53 занят другим процессом. Проверьте: `resolvectl status` и `ss -ulnp | grep :53`.
 
 ### Конфликт systemd-resolved и BIND
@@ -322,7 +322,7 @@ dig cdn.provider.com A +short
 *   **Очищайте кэш** при подозрении на устаревшие записи: `resolvectl flush-caches` (systemd-resolved), `sudo nscd -i hosts` (nscd).
 *   **Не опускайте TTL ниже 60 секунд** без крайней необходимости — это создает экстремальную нагрузку на DNS-серверы.
 *   **Для Kubernetes:** используйте `ndots:1` и FQDN с точкой (`example.com.`) для внешних доменов, чтобы избежать 5-секундных задержек.
-*   **В контейнерах (Alpine/musl):** добавляйте `options single-request-reopen` в `/etc/resolv.conf` для предотвращения блокировки при параллельных A/AAAA запросах.
+*   **В контейнерах (Alpine/musl):** тюните поддерживаемые опции (`options timeout:2 attempts:1` в `/etc/resolv.conf`); `single-request-reopen` musl не поддерживает — при «зависании» параллельных A/AAAA исправляйте IPv6 или используйте DNS-прокси (NodeLocal DNSCache).
 *   **Для высоконагруженных сред:** рассмотрите NodeLocal DNSCache для кэширования DNS на уровне узлов и снижения нагрузки на CoreDNS.
 *   **`getaddrinfo()` блокирует поток:** Стандартный glibc-резолвер является блокирующим. Приложение не может выполнять другие операции пока DNS-запрос не завершится. Для асинхронного резолвинга используйте `c-ares` (C/C++), `Go net.Resolver` (Go), или `dns` модуль (Node.js).
 *   **glibc vs musl:** glibc учитывает `/etc/nsswitch.conf` и поддерживает NSS (NSS, LDAP, SSSD), musl (Alpine) игнорирует NSS и читает только `/etc/resolv.conf`. В Alpine-контейнерах `getent hosts` может не работать для кастомных NSS-источников.

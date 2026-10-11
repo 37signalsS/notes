@@ -413,7 +413,7 @@ sysctl -a | grep "\.rp_filter"
 **Edge Cases:**
 - **Docker:** Docker автоматически добавляет правила в `nat` и `filter` таблицы. При проблемах проверяйте `iptables -t nat -L -n -v` и `iptables -L DOCKER -n -v`.
 - **VRF и conntrack:** По умолчанию conntrack не разделяет соединения по VRF — при overlapping IP в разных VRF возможны коллизии (требуется VRF-aware conntrack в новых ядрах).
-- **UDP race condition:** При параллельных UDP-запросах с одного сокета возможны задержки ровно 1000 мс или 5000 мс (таймауты ретрансмиссии). Решение: NodeLocal DNSCache, `single-request-reopen`.
+- **UDP race condition:** При параллельных UDP-запросах с одного сокета возможны задержки ровно 1000 мс или 5000 мс (таймауты ретрансмиссии). Решение: NodeLocal DNSCache, `single-request-reopen` (только glibc; musl/Alpine игнорирует).
 
 **Откат:**
 ```bash
@@ -764,7 +764,7 @@ chmod +x /etc/scripts/network_health.sh
 - **Неучет cgroups/containers:** В Docker/Kubernetes параметры `sysctl` могут быть переопределены на уровне Pod security context. Проверяйте приоритет настроек.
 - **Отключение offloading для диагностики:** При анализе через `tcpdump` отключайте TSO/GRO (`ethtool -K eth0 tso off gro off`), иначе пакеты отображаются в неразделанном виде.
 - **Остановка на первом найденном симптоме:** Низкая скорость может быть вызвана как проблемами L1 (кабель), так и L7 (приложение). Проверяйте все уровни до изоляции проблемы.
-- **Использование `netstat` в 2026 году:** `netstat` устарел. Используйте `ss` (сокеты) и `nstat` (глобальные счетчики).
+- **Устаревший `netstat`:** `netstat` устарел. Используйте `ss` (сокеты) и `nstat` (глобальные счетчики).
 
 ### Связанные документы
 

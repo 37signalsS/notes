@@ -1,5 +1,7 @@
 # Ограничение ресурсов контейнеров — Deep Dive
 
+**Актуально для:** Docker Engine 29.x (актуальный релиз — 29.8.x, сентябрь 2026). Docker Engine 28.x и ранее достигли EOL (май 2026) и не получают исправлений безопасности.
+
 ## Определения
 
 **Ограничение ресурсов (Resource Limits)** — механизм изоляции контейнеров, реализованный через **cgroups (Control Groups)** ядра Linux. Позволяет установить верхние границы потребления CPU, оперативной памяти, дискового I/O и количества процессов для каждого контейнера. Предотвращает ситуацию, когда один контейнер забирает ресурсы у других (neighbors) или хоста.
@@ -11,6 +13,33 @@
 **OOM Killer (Out-Of-Memory Killer)** — подсистема ядра, убивающая процесс при нехватке оперативной памяти. В Docker: `memory.events` → `oom_kill` counter. Exit code контейнера: `137`.
 
 **PSI (Pressure Stall Information)** — подсистема ядра (≥4.20), измеряющая реальное давление на ресурсы (CPU, memory, I/O). Значения `some` и `full` в процентах за интервал времени.
+
+## Предварительные требования
+
+- **ОС:** Linux с ядром 5.10+ (рекомендуется 6.1+ для стабильной работы cgroups v2 и PSI). RHEL/CentOS 9+, Debian 12+, Ubuntu 22.04+.
+- **Docker Engine:** 29.x с включенным BuildKit (`DOCKER_BUILDKIT=1` по умолчанию). Docker 28.x и ранее достигли EOL (май 2026).
+- **cgroups:** Рекомендуется cgroups v2 (единое дерево). Проверка: `stat -fc %T /sys/fs/cgroup/` → `cgroup2fs`.
+- **Права:** `root` или membership в группе `docker` для изменения лимитов. В production-средах — Rootless Docker с соответствующими настройками cgroups.
+- **Инструменты:** `jq` для парсинга JSON, `curl` для проверки Referrers API (если используется), `ps`/`top`/`htop` для диагностики.
+
+**Валидация:**
+```bash
+# Проверка версии Docker Engine
+docker version --format '{{.Server.Version}}'
+# → 29.8.0
+
+# Проверка версии cgroups
+stat -fc %T /sys/fs/cgroup/
+# → cgroup2fs
+
+# Проверка поддержки PSI
+cat /proc/pressure/cpu
+# → some avg10=0.00 avg60=0.00 avg300=0.00 total=0
+# → full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+
+# Проверка текущих лимитов контейнера
+docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.PIDs}}"
+```
 
 ## Базовые концепции
 
@@ -92,7 +121,7 @@ docker stats <container> --no-stream
 # CPU% показывает потребление, но НЕ показывает throttling
 ```
 
-**Ссылка:** [CPU Throttling](Dockerfile/Docker_best_practices/container_execution.md), [Native Metrics](Docker_metrics/docker_native_metrics.md)
+**Ссылка:** [CPU Throttling](../Dockerfile/Docker_best_practices/container_execution.md), [Native Metrics](../Docker_metrics/docker_native_metrics.md)
 
 ### 2. CPU Weight — `--cpu-shares`
 
@@ -105,7 +134,7 @@ docker run -d --cpu-shares=1024 --name light myapp
 ```
 
 **Отличие от `--cpus`:**
-- `--cpus` = хард-лимит (绝对不会 превысить)
+- `--cpus` = хард-лимит (никогда не превысит)
 - `--cpu-shares` = вес при конкуренции (если CPU свободен, ограничение не действует)
 
 **В cgroups v2:**
@@ -115,7 +144,7 @@ echo 200 > /sys/fs/cgroup/.../cpu.weight  # дефолт: 100
 
 **Когда использовать:**
 - Смешанные рабочие нагрузки (web + worker на одном хосте)
-- Приоритизация:ritical сервисов над фоновыми
+- Приоритизация критичные сервисов над фоновыми
 
 ### 3. CPU Pinning — `--cpuset-cpus`
 
@@ -211,7 +240,7 @@ docker inspect <container> --format '{{.State.OOMKilled}}'
 # true
 ```
 
-**Ссылка:** [Linux Isolation](Concepts/linux_isolation.md), [Exit Codes](Docker_troubleshooting/docker_exit_codes.md)
+**Ссылка:** [Linux Isolation](../Concepts/linux_isolation.md), [Exit Codes](../Docker_troubleshooting/docker_exit_codes.md)
 
 ### 6. Memory High vs Memory Max
 
@@ -389,7 +418,7 @@ docker run -d --ulimit memlock=-1:-1 postgres
 - `cannot allocate memory` для БД → `memlock=-1:-1`
 - Java: `Unable to create native thread` → увеличить `nproc`
 
-**Ссылка:** [Docker Compose Directives](Docker_compose/docker_compose_directives.md), [Container Hardening](Docker_security/container_hardening.md)
+**Ссылка:** [Docker Compose Directives](../Docker_compose/docker_compose_directives.md), [Container Hardening](./container_hardening.md)
 
 ### 12. OOM Behavior — `--oom-kill-disable` / `--oom-score-adj`
 
@@ -473,11 +502,67 @@ services:
     cpus: 2.0
 ```
 
-**Compose v2 vs v3:**
-- `deploy.resources.limits` — Swarm mode / Compose v3
-- `mem_limit`, `cpus` — Compose v2 (без deploy)
+**Что применяет compose (non-Swarm, Compose v2+ CLI):**
+- `deploy.resources.limits` (`cpus`, `memory`, `pids`) — жёсткие лимиты, работают без Swarm
+- `deploy.resources.reservations.memory` — soft limit (`--memory-reservation`, reclaim); `reservations.cpus`/`reservations.pids` compose не применяет — опции только для Swarm
+- `mem_limit`, `cpus` — альтернативный синтаксис без `deploy`
 
-**Ссылка:** [Compose Directives](Docker_compose/docker_compose_directives.md)
+**Ссылка:** [Compose Directives](../Docker_compose/docker_compose_directives.md)
+
+## Best Practices
+
+- **Ограничивайте каждый контейнер:** Никогда не запускайте production-контейнеры без `--memory`, `--cpus` и `--pids-limit`. Без лимитов один скомпрометированный контейнер может "съесть" весь хост.
+- **Используйте `memory.high` как soft limit:** Устанавливайте `--memory-high` на 80% от `--memory` для раннего throttling перед OOM Kill. Это даёт приложению время на graceful degradation (GC, cache eviction).
+- **Отключайте swap:** Устанавливайте `--memory-swap` равным `--memory` для предсказуемой производительности. Swap скрывает утечки памяти и делает latency недетерминированной.
+- **`pids-limit` для всех контейнеров:** Защита от fork bomb. Значения: 100-200 для простых сервисов, 500-1000 для Java/Go приложений. `-1` (без лимита) не рекомендуется.
+- **`--oom-kill-disable` только с `--memory`:** Никогда не отключайте OOM killer без хард-лимита памяти. Без `--memory` контейнер потребит всю RAM хоста.
+- **CPU shares для приоритизации:** Используйте `--cpu-shares` для смешанных рабочих нагрузок (web + worker). Production-сервисы: 2048+, фоновые задачи: 512-1024.
+- **CPU pinning для latency-sensitive:** Привязывайте БД и real-time сервисы к конкретным ядрам через `--cpuset-cpus`. NUMA-оптимизация: `--cpuset-mems` для исключения удалённого доступа к памяти.
+- **Динамическое обновление без даунтайма:** Используйте `docker update` для изменения лимитов без перезапуска контейнера. Только `--memory` можно только увеличивать.
+- **Мониторинг throttling и OOM:** Настройте алерты на `nr_throttled > 0` в `cpu.stat` и `oom_kill > 0` в `memory.events`. `docker stats` не показывает throttling — он скрыт в cgroups.
+- **Baseline для базовых образов:** Генерируйте SBOM и измеряйте baseline потребления ресурсов для каждого базового образа (distroless, alpine). Сравнивайте при обновлениях.
+
+## Troubleshooting
+
+- **`docker stats` показывает высокий CPU%, но приложение медленное:**
+  - **Причина:** CPU throttling. `docker stats` показывает общее потребление, но не throttling.
+  - **Решение:** Проверьте `cat /sys/fs/cgroup/.../cpu.stat` → `nr_throttled` и `throttled_usec`. Увеличьте `--cpus` или снизьте нагрузку.
+
+- **Exit code 137 без логов в `docker logs`:**
+  - **Причина:** OOM Killer убил контейнер. Exit code 137 = 128 + 9 (SIGKILL).
+  - **Решение:** Проверьте `docker inspect <container> --format '{{.State.OOMKilled}}'` → `true`. Увеличьте `--memory` или настройте `--memory-high` для throttling.
+
+- **Контейнер "висит" при старте с `--memory`:**
+  - **Причина:** Memory limit ниже working set приложения (JVM heap, Go runtime).
+  - **Решение:** Увеличьте `--memory` или настройте приложение на адаптацию к лимитам (JVM: `-XX:MaxRAMPercentage`, Go: `GOMEMLIMIT`).
+
+- **Fork bomb убивает хост:**
+  - **Причина:** Отсутствует `--pids-limit` или значение `-1` (без лимита).
+  - **Решение:** Всегда устанавливайте `--pids-limit` (100-1000 в зависимости от приложения). Для legacy-контейнеров используйте `docker update --pids-limit=500 <container>`.
+
+- **Swap используется на хосте, но контейнеры не ограничены:**
+  - **Причина:** Отсутствуют `--memory` и `--memory-swap` для контейнеров, или `--memory-swap=-1` (без ограничений).
+  - **Решение:** Установите `--memory-swap=--memory` для каждого контейнера. На уровне хоста: `vm.swappiness=10`.
+
+- **`docker update` не применяет `--memory` (уменьшение):**
+  - **Причина:** Docker позволяет только увеличивать `--memory`. Уменьшение требует перезапуска контейнера.
+  - **Решение:** Остановите контейнер и запустите с новым лимитом, или используйте оркестратор (Kubernetes) с in-place resize.
+
+- **`--cpus` работает, но `--cpuset-cpus` игнорируется:**
+  - **Причина:** Запрошенные CPU ядра недоступны (offline, reserved) или NUMA-привязка конфликтует.
+  - **Решение:** Проверьте `lscpu` и `numactl --hardware`. Убедитесь, что ядра не заблокированы через `isolcpus` в kernel boot parameters.
+
+- **Контейнер с `--oom-kill-disable` убивает другие контейнеры:**
+  - **Причина:** OOM killer не может убить проблемный контейнер, поэтому выбирает соседний.
+  - **Решение:** Никогда не используйте `--oom-kill-disable` без `--memory`. Если нужно защитить critical-сервис — используйте `--oom-score-adj=-500` вместо отключения.
+
+- **PSI не показывает давление, но приложение тормозит:**
+  - **Причина:** PSI доступен только с ядра 4.20+. На older kernels используйте `cpu.stat`, `memory.events`, `vmstat`.
+  - **Решение:** Проверьте `uname -r`. На ядрах < 5.x PSI может быть неактивным по умолчанию.
+
+- **`memory.high` не throttling, только OOM Kill:**
+  - **Причина:** `memory.high` и `memory.max` установлены в одно значение, или ядро не поддерживает memory.high throttling (старые патчи).
+  - **Решение:** Убедитесь, что `memory.high` < `memory.max`. На cgroups v1 memory.high работает иначе — используйте v2.
 
 ## Дополнительная информация
 
@@ -510,18 +595,10 @@ cat /sys/fs/cgroup/.../io.pressure
 ```
 
 **Связанные документы:**
-- **[Linux Isolation](Concepts/linux_isolation.md)** — cgroups v1/v2, namespaces, raw inspection
-- **[Native Metrics](Docker_metrics/docker_native_metrics.md)** — cpu.stat, memory.events, io.stat, PSI
-- **[Container Hardening](Docker_security/container_hardening.md)** — --pids-limit, --memory-swap, --ulimit
-- **[Container Execution](Dockerfile/Docker_best_practices/container_execution.md)** — throttling, signal handling
-- **[Exit Codes](Docker_troubleshooting/docker_exit_codes.md)** — exit code 137 (OOM), throttling
-- **[Docker Debug](Docker_troubleshooting/docker_debug.md)** — PSI для диагностики bottleneck
-- **[Compose Directives](Docker_compose/docker_compose_directives.md)** — ulimits в Compose
-
-**Типичные ошибки:**
-- `--memory` без `--memory-swap` → swap в 2 раза больше (512m + 512m swap = 1GB)
-- `--pids-limit` не установлен → fork bomb убивает хост
-- `docker stats` показывает CPU%, но не throttling → проверяйте `cpu.stat`
-- `--oom-kill-disable` без `--memory` → контейнер сожрёт всю память хоста
-- `--memory-high` не настроен → нет раннего throttling, сразу OOM Kill
-- `--cpus` ≠ `--cpuset-cpus`: первый лимитирует, второй привязывает
+- **[Linux Isolation](../Concepts/linux_isolation.md)** — cgroups v1/v2, namespaces, raw inspection
+- **[Native Metrics](../Docker_metrics/docker_native_metrics.md)** — cpu.stat, memory.events, io.stat, PSI
+- **[Container Hardening](./container_hardening.md)** — --pids-limit, --memory-swap, --ulimit
+- **[Container Execution](../Dockerfile/Docker_best_practices/container_execution.md)** — throttling, signal handling
+- **[Exit Codes](../Docker_troubleshooting/docker_exit_codes.md)** — exit code 137 (OOM), throttling
+- **[Docker Debug](../Docker_troubleshooting/docker_debug.md)** — PSI для диагностики bottleneck
+- **[Compose Directives](../Docker_compose/docker_compose_directives.md)** — ulimits в Compose

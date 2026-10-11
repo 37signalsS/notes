@@ -1,5 +1,7 @@
 # Конфигурация редакторов (EditorConfig)
 
+**Актуально для:** EditorConfig спецификация 1.0 (стабильна с 2014 года, изменения только в рекомендованных свойствах).
+
 ## Определения
 
 **EditorConfig** — кроссплатформенный стандарт для определения и поддержания единого стиля форматирования кода в различных редакторах и IDE. Он позволяет избежать конфликтов форматирования в командах, использующих разные инструменты разработки.
@@ -145,7 +147,17 @@ git diff --stat
 
 ### Сценарий 3: Интеграция с Mega-Linter в CI/CD
 
-В современных проектах (2026+) вместо отдельных проверок часто используется **Mega-Linter**, который включает `editorconfig-checker` «из коробки».
+Mega-Linter включает `editorconfig-checker` **по умолчанию** во всех флейворах (включая `all`, `python`, `javascript`, `devops`). Дополнительная настройка не требуется — проверка запускается при каждом коммите/PR.
+
+Для использования только `editorconfig-checker` без 70+ других линтеров:
+
+```yaml
+# .mega-linter.yml
+ENABLE:
+  - EDITORCONFIG
+```
+
+Пример workflow:
 
 ```yaml
 # .github/workflows/lint.yml
@@ -155,14 +167,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Mega-Linter
-        uses: oxsecurity/megalinter@v7
+        uses: oxsecurity/megalinter@v9
         env:
-          ENABLE_LINTERS: EDITORCONFIG_EDITORCONFIG_CHECKER
+          # EDITORCONFIG_EDITORCONFIG_CHECKER включён по умолчанию
+          FILTER_REGEX_EXCLUDE: "(test|examples|docs)/.*"
 ```
 
 **Валидация:**
 ```bash
-# Проверить workflow локально (при наличии act)
+# Проверить локально при наличии act
 act -j build
 # → (успешное выполнение или описание ошибок)
 
@@ -173,7 +186,8 @@ act -j build
 ```
 
 **Edge cases:**
-* Mega-Linter может быть медленным для больших репозиториев — используйте `FILTER_REGEX_INCLUDE` для ограничения проверяемых файлов.
+* Mega-Linter по умолчанию включает все линтеры, включая `editorconfig-checker`. Если нужна только проверка форматирования — используйте `ENABLE: [EDITORCONFIG]` в `.mega-linter.yml`.
+* Для больших репозиториев используйте `FILTER_REGEX_EXCLUDE` или `EDITORCONFIG_EDITORCONFIG_CHECKER_ARGUMENTS` для ограничения проверяемых файлов.
 * Для локальной проверки перед пушем используйте `pre-commit` хук с `editorconfig-checker`.
 
 ### Сценарий 4: Проверка через CLI
@@ -290,7 +304,7 @@ editorconfig-checker src/*.py
 
 ### Сценарий 6: Интеграция с Prettier
 
-EditorConfig и Prettier могут работать вместе — Prettier читает настройки из `.editorconfig` при наличии плагина:
+EditorConfig и Prettier работают вместе: Prettier читает `.editorconfig` **по умолчанию** в CLI (отключить можно через `--no-editorconfig`). Поддержка появилась в Prettier 1.9 (декабрь 2017 года).
 
 ```ini
 # .editorconfig
@@ -304,9 +318,10 @@ max_line_length = 100
 ```
 
 ```json
-// .prettierrc.json (опционально — Prettier возьмет настройки из .editorconfig)
+// .prettierrc.json — editorconfig НЕ является допустимым ключом
+// (ошибка "Ignored unknown option"). CLI читает .editorconfig автоматически.
 {
-  "editorconfig": true
+  "singleQuote": true
 }
 ```
 
@@ -320,15 +335,19 @@ npx prettier --check "src/**/*.js"
 npx prettier --write "src/**/*.js"
 # → (файлы отформатированы согласно правилам)
 
+# Отключить чтение .editorconfig
+npx prettier --no-editorconfig --check "src/**/*.js"
+
 # Проверить конкретный файл
 npx prettier --check src/app.js
 # → src/app.js — OK
 ```
 
 **Edge cases:**
-* Prettier поддерживает `.editorconfig` начиная с версии 1.15+.
-* Если настройки в `.prettierrc` конфликтуют с `.editorconfig`, приоритет зависит от версии Prettier (обычно `.editorconfig` имеет приоритет при `"editorconfig": true`).
-* Для принудительного использования `.editorconfig` без `.prettierrc` достаточно только `.editorconfig` с `"editorconfig": true` в конфиге.
+* Prettier поддерживает `.editorconfig` с версии **1.9** (2017), а не 1.15+.
+* `editorconfig: true` — опция **API** (`prettier.resolveConfig({ editorconfig: true })`), а не ключ в `.prettierrc`. В `.prettierrc` она вызывает предупреждение "Ignored unknown option".
+* Если настройки в `.prettierrc` конфликтуют с `.editorconfig`, `.prettierrc` имеет **приоритет** (переопределяет `.editorconfig`).
+* Prettier читает из `.editorconfig` только: `indent_style`, `indent_size`/`tab_width`, `max_line_length`, `end_of_line`, `charset`, `insert_final_newline`, `trim_trailing_whitespace`. Остальные свойства игнорируются.
 
 ### Сценарий 7: Миграция с ручного форматирования на EditorConfig
 
@@ -381,6 +400,106 @@ git diff --stat HEAD~1
 * Для исключения legacy-файлов из проверки используйте `editorconfig-checker -exclude "legacy/"`.
 * Команда `git add --renormalize .` требует Git 2.16+.
 
+### Сценарий 8: Инфраструктурные файлы (Dockerfile, YAML, Ansible)
+
+DevOps/SRE-инженеры работают с конфигурациями, где форматирование критично для читаемости и совместимости:
+
+```ini
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# YAML-файлы (CI/CD, docker-compose, helm)
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+max_line_length = 120
+
+# Dockerfile — без расширения, табуляция не требуется (пробелы)
+[Dockerfile]
+indent_style = space
+indent_size = 4
+
+# Ansible — 2 пробела (стандарт Ansible)
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# Shell-скрипты
+[*.sh]
+indent_style = space
+indent_size = 2
+
+# Makefile — обязательная табуляция
+[Makefile]
+indent_style = tab
+```
+
+**Валидация:**
+```bash
+# Проверить инфраструктурные файлы
+editorconfig-checker docker-compose.yml Dockerfile deploy/ansible/
+# → (список нарушений или OK)
+
+# Проверить YAML через yamllint (дополнительно)
+yamllint docker-compose.yml
+# → (оформление согласно Ansible/CI-стандартам)
+```
+
+**Edge cases:**
+* Dockerfile не имеет расширения — используйте точное имя `[Dockerfile]`.
+* YAML-файлы в Ansible требуют `---` в начале; `insert_final_newline = true` гарантирует корректную обработку.
+* Для Helm-чартов (`templates/*.yaml`) используйте паттерн `templates/*.yaml`.
+
+### Сценарий 9: Проверка в CI/CD pipeline (SRE контекст)
+
+Для SRE и DevOps-инженеров проверка `.editorconfig` в pipeline предотвращает "шумные" коммиты с форматированием:
+
+```yaml
+# .github/workflows/lint.yml
+jobs:
+  editorconfig:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: EditorConfig check
+        run: |
+          wget -qO- https://github.com/editorconfig-checker/editorconfig-checker/releases/download/v3.0.0/editorconfig-checker_Linux_x86_64.tar.gz \
+          | tar -xz -C /usr/local/bin
+          editorconfig-checker -exclude ".git"
+```
+
+Или через `pre-commit`:
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
+    rev: v3.0.0
+    hooks:
+      - id: editorconfig-checker
+        args: ["-exclude", ".git"]
+```
+
+**Валидация:**
+```bash
+# Локальная проверка перед пушем
+pre-commit run --all-files
+# → (список файлов, нарушающих правила)
+
+# Проверка через GitHub Actions
+# → editorconfig-checker: PASSED (в UI Actions)
+```
+
+**Edge cases:**
+* В CI/CD убедитесь, что `editorconfig-checker` установлен как dependency (Go, pip, или binary download).
+* Для корпоративных прокси настройте `HTTP_PROXY`/`HTTPS_PROXY` при загрузке бинаря.
+* Если `.editorconfig` находится не в корне — укажите путь через `-config` флаг.
+
 ---
 
 ## Troubleshooting
@@ -391,7 +510,7 @@ git diff --stat HEAD~1
 | :--- | :--- | :--- |
 | EditorConfig не применяется | Файл не в корне или нет `root = true`. | Убедитесь, что `.editorconfig` в корне репозитория и содержит `root = true`. |
 | VS Code игнорирует настройки | Не установлено расширение. | Установите [EditorConfig for VS Code](https://marketplace.visualstudio.com/items?itemName=EditorConfig.EditorConfig). |
-| Конфликт с Prettier | Разные настройки в `.prettierrc` и `.editorconfig`. | Установите `"editorconfig": true` в `.prettierrc` или удалите дублирующие настройки. |
+| Конфликт с Prettier | Разные настройки в `.prettierrc` и `.editorconfig`. | Удалите дублирующие настройки из `.prettierrc` — Prettier читает `.editorconfig` автоматически (CLI). |
 | Ошибки в CI | Файлы не проходят проверку `editorconfig-checker`. | Запустите `editorconfig-checker` локально и исправьте нарушения. |
 | Неправильные окончания строк | Нет синхронизации с `.gitattributes`. | Добавьте `* text eol=lf` в `.gitattributes`. |
 
@@ -428,21 +547,50 @@ hexdump -C path/to/file | head -5
 7.  **Нормализуйте существующие файлы** — при внедрении в legacy-проект используйте `git add --renormalize .`.
 8.  **Проверяйте поддержку в IDE команды** — убедитесь, что все разработчики используют редакторы с поддержкой EditorConfig.
 
+### Очистка и откат
+
+*   **Удаление устаревших правил:** Регулярно проверяйте `.editorconfig` на ненужные секции (например, паттерны для удалённых языков). Удалите секцию и перезапустите редакторы для применения изменений.
+*   **Откат изменений без переписывания:** Если `.editorconfig` вызвал массовые изменения, откатите коммит через `git revert` или `git reset`. Редакторы вернут предыдущие настройки при следующем открытии файлов (требует перезапуска IDE).
+*   **Очистка дублей:** Проверяйте, что секции не перекрываются — более специфичные паттерны (например, `src/*.py`) должны быть ниже общих (например, `*.py`), чтобы переопределять их.
+*   **Комментирование:** Добавляйте `#` комментарии для объяснения нетипичных настроек (например, `# Dockerfile требует табуляции`).
+*   **Версионирование:** Коммитите `.editorconfig` отдельно от форматирования кода, чтобы можно было легко откатить только настройки или только код.
+
+### Особые случаи и ограничения
+
+*   **Платформы:** Поддержка EditorConfig встроена в JetBrains IDE, Visual Studio, Xcode, Vim, Emacs, BBEdit, GitHub/GitLab/Gitea/Gogs веб-редакторы. Для VS Code, Atom, Sublime Text, CLion, Eclipse требуется плагин.
+*   **Символические ссылки:** Редакторы могут не искать `.editorconfig` через символические ссылки на директории — поведение зависит от реализации.
+*   **Shallow clone:** `.editorconfig` в корне репозитория доступен при shallow clone, но если он находится выше точки клонирования, редакторы не найдут его.
+*   **Bare-репозитории:** EditorConfig не применяется — это формат для редакторов, а не для Git. Для проверки в CI используйте `editorconfig-checker` с явно указанным путём к `.editorconfig`.
+*   **Большие `.editorconfig`:** Файлы с десятками секций могут замедлять запуск редактора. Группируйте по темам и избегайте избыточных паттернов.
+*   **Отсутствие email/конфигурации:** EditorConfig не требует учётной записи и не взаимодействует с облачными сервисами — работает полностью локально.
+*   **Спецсимволы в паттернах:** Паттерны с `[]`, `{}` и `?` могут быть неправильно интерпретированы некоторыми редакторами. Проверяйте поддержку конкретного IDE.
+
 ---
 
 ## Дополнительная информация
 
 ### Поддержка в редакторах
 
-*   **JetBrains (IntelliJ, PyCharm, WebStorm):** Встроенная поддержка, самая полная реализация (включая кастомные префиксы `ij_`).
-*   **Visual Studio:** Встроенная поддержка, акцент на свойствах `.NET`.
-*   **VS Code:** По состоянию на середину 2026 года все еще **требуется расширение** [EditorConfig for VS Code](https://marketplace.visualstudio.com/items?itemName=EditorConfig.EditorConfig) для полной поддержки.
-*   **GitHub/GitLab:** Веб-редакторы учитывают `.editorconfig` при правках в браузере.
+**Встроенная поддержка (без плагинов):**
+
+*   **JetBrains (IntelliJ, PyCharm, WebStorm, Rider, RubyMine, PHPStorm):** Самая полная реализация, включая кастомные префиксы `ij_`.
+*   **Visual Studio Professional:** Встроенная поддержка, акцент на `.NET`-свойствах. Visual Studio 2022+ имеет визуальный редактор `.editorconfig`.
+*   **Xcode:** Встроенная поддержка.
+*   **Vim, Emacs:** Поддержка через плагины (встроенные в дистрибутивы последних версий).
+*   **GitHub/GitLab/Gitea/Gogs:** Веб-редакторы учитывают `.editorconfig` при правках в браузере.
+*   **BBEdit, Helix, Kakoune, Nova, SourceLair:** Встроенная поддержка.
+
+**Требует плагина:**
+
+*   **VS Code:** По состоянию на 2026 год встроенной поддержки по-прежнему нет. Используйте расширение [EditorConfig for VS Code](https://marketplace.visualstudio.com/items?itemName=EditorConfig.EditorConfig) (12 млн установок, последнее обновление 2026-04-08).
+*   **Atom, Sublime Text, CLion, Eclipse, NetBeans, Notepad++, Far Manager:** Требуют плагины.
 
 ### Официальные ресурсы
 
-*   **[Официальный сайт EditorConfig](https://editorconfig.org/)** — спецификация и примеры.
+*   **[Официальный сайт EditorConfig](https://editorconfig.org/)** — спецификация, примеры, список поддерживаемых редакторов.
 *   **[Wiki свойств (GitHub)](https://github.com/editorconfig/editorconfig/wiki/EditorConfig-Properties)** — полный список стандартных и предложенных свойств.
+*   **[editorconfig-checker (GitHub)](https://github.com/editorconfig-checker/editorconfig-checker)** — CLI-утилита для проверки.
+*   **[Mega-Linter](https://megalinter.io/)** — интеграция в CI/CD.
 
 ### Связанные темы
 

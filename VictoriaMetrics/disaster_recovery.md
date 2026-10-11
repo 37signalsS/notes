@@ -136,3 +136,4 @@ echo "OK: восстановилось"
 - [HTTP API: снапшоты](./http_api_reference.md) — `/snapshot/create`, `/snapshot/list`;
 - [VictoriaMetrics: обзор](./overview.md) — capacity-планирование, флаги retention;
 - [Общее: стратегии DR](./../Concepts/disaster_recovery.md) — методология, Tier, матрица паттернов.
+# force reindex test

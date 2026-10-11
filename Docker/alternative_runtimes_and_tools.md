@@ -156,6 +156,8 @@ skopeo delete docker://registry.example.com/repo:tag
 | **Демон** | Готов запускать `buildkitd` (или использовать встроенный в Docker). | Требуется **daemonless** подход (чистый CLI без фоновых процессов). |
 | **Безопасность** | Нужна изоляция через `userns` (Rootless Docker). | Используешь **Rootless** по умолчанию в полностью непривилегированной среде. |
 
+Эмпирические данные по производительности тройки инструментов в одинаковых условиях кластерного стенда с registry-кэшем — в [Бенчмарк Kaniko vs BuildKit vs Buildah в кластере](./Dockerfile/dockerfile_build_tools_benchmark.md).
+
 ### Рекомендации по выбору сред выполнения (Runtimes)
 
 * **Для Kubernetes:** `containerd` является стандартом индустрии (SSoT). `CRI-O` — если вы работаете в экосистеме OpenShift.

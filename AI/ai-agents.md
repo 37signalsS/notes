@@ -57,6 +57,7 @@
 
 ### См. также
 *   **[Методология AI-First разработки](./ai-first-development.md)**
+*   **[Файлы инструкций агента (AGENTS.md, CLAUDE.md, GEMINI.md)](./agent-rules-files.md)**
 *   **[RAG-система:Unified Search](./rag_system/README.md)**
 *   **[Пробы в Kubernetes (Probes)](../Kubernetes/Base/probes.md)** — интеграция с диагностическими агентами.
 *   **[KGateway — AI Gateway](../Kubernetes/Networking/gateway_api/kgateway.md)**

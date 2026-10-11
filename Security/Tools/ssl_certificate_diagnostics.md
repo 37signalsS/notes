@@ -409,6 +409,39 @@ docker run --rm -v /path/to/cert.pem:/tmp/cert.pem alpine/openssl \
   x509 -in /tmp/cert.pem -noout -text -noout
 ```
 
+### Сценарий 16: Падение SSL/TLS-соединений при смене времени
+
+**Симптом:** HTTPS-сессии обрываются или завершаются ошибкой handshake, хотя сертификаты валидны и сервер доступен.
+
+**Причины:**
+- **Расхождение системных часов** — TLS строго проверяет временные метки `notBefore`/`notAfter`. Если часы сервера или клиента сильно отстают или опережают реальное время, сертификат может считаться просроченным или ещё не действительным.
+- **Неправильно настроенный NTP** — без синхронизации часы расходятся, и handshake завершается с ошибкой.
+- **Expired сертификаты** — просроченные сертификаты дополнительно усугубляют проблему, особенно на новых соединениях.
+
+```bash
+# Проверка статуса NTP на сетевых устройствах/сервере
+show ntp status
+
+# Проверка системного времени
+date
+
+# Анализ TLS handshake и проверки сертификатов
+openssl s_client -connect <host>:443
+
+# Проверка часового пояса и синхронизации на Linux
+timedatectl
+
+# Проверка логов NTP
+show logging | include NTP
+```
+
+**Решение:**
+1. Проверьте синхронизацию времени: `timedatectl status` или `chronyc tracking`.
+2. Если NTP не активен — включите и запустите службу: `systemctl enable --now chronyd` или `systemctl enable --now ntpd`.
+3. Принудительно синхронизируйте время: `chronyc makestep` или `ntpd -gq`.
+4. Проверьте сертификат на просрочку: `openssl x509 -in server.crt -noout -dates`.
+5. Убедитесь, что на клиенте и сервере установлен одинаковый часовой пояс и NTP-источник.
+
 ## Дополнительная информация
 
 ### Полезные команды OpenSSL
@@ -437,6 +470,7 @@ docker run --rm -v /path/to/cert.pem:/tmp/cert.pem alpine/openssl \
 | :--- | :--- | :--- | :--- |
 | `Verify return code: 21` (unable to verify) | Неполная цепочка или неизвестный CA | `openssl s_client -showcerts` — проверка количества сертификатов | Добавить промежуточный CA в `ssl_certificate` |
 | `Verify return code: 10` (certificate expired) | Истёк срок действия | `openssl x509 -enddate` | Перевыпустить сертификат |
+| `certificate has expired or is not yet valid` | Расхождение часов (clock skew) или просроченный сертификат | `timedatectl status`, `date`, `openssl s_client -connect host:443` | Синхронизировать NTP (`chronyc makestep`), проверить `notBefore`/`notAfter` |
 | `Verify return code: 18` (self-signed) | Самоподписанный сертификат | `openssl x509 -noout -issuer -subject` | Добавить CA в trust store или использовать публичный CA |
 | `Verify return code: 62` (hostname mismatch) | SAN/CN не совпадают с доменом | `openssl x509 -noout -text | grep -E "DNS:|Subject"` | Выпустить сертификат с корректным SAN |
 | `handshake failure` | Несовпадение cipher suites или TLS версии | `openssl s_client -connect host:port -msg -debug` | Обновить конфигурацию шифров/версий на сервере |

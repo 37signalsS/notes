@@ -111,3 +111,4 @@ curl -s 'http://localhost:8428/api/v1/query?query=up' | jq '.data.result | lengt
 - [MetricsQL: справочник](./metricsql_reference.md) — синтаксис запросов в vmui;
 - [vmalert: алертинг](./vmalert_overview.md) — Alerting tab в vmui;
 - [Grafana: интеграция](./grafana_integration.md) — когда использовать Grafana вместо/вместе с vmui.
+# force reindex test

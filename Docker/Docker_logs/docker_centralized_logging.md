@@ -1,20 +1,22 @@
 # Централизованное логирование Docker: Лог-драйверы
 
+**Актуально для:** Docker Engine 29.x, Loki v3.7.x, Grafana 13.x
+
 ## Определения
 
 **Лог-драйвер (Logging Driver)** — это встроенный в Docker Engine механизм, который перехватывает потоки `STDOUT` и `STDERR` контейнера и перенаправляет их в указанное место назначения: локальный файл, системный журнал (Journald, Syslog) или сетевой эндпоинт (Loki, GELF, Fluentd).
 
 **Централизованное логирование** — архитектурный паттерн, при котором логи со всех узлов инфраструктуры собираются в единое хранилище для обеспечения наблюдаемости (Observability), упрощения отладки и проведения аудита безопасности.
 
-**Драйвер прямой отправки (Direct Push Driver)** — класс лог-драйверов (`loki`, `gelf`, `fluentd`, `awslogs`, `splunk`, `syslog`), которые самостоятельно транслируют логи по сети из Docker Engine в целевое хранилище без промежуточных агентов.
+**Драйвер прямой отправки (Direct Push Driver)** — класс лог-драйверов (`loki`, `gelf`, `fluentd`, `splunk`, `syslog`), которые самостоятельно транслируют логи по сети из Docker Engine в целевое хранилище без промежуточных агентов.
 
 ## Предпосылки
 
 - **Docker Engine** версии 20.10 или выше (для Dual Logging и стабильной работы сетевых драйверов)
 - **Docker CLI** с правами root или членство в группе `docker` для редактирования `/etc/docker/daemon.json`
-- **Доступ по сети** к целевому сервису (Loki, Graylog, Fluentd, CloudWatch и т.д.) из каждого Docker-хоста
+- **Доступ по сети** к целевому сервису (Loki, Graylog, Fluentd, Splunk и т.д.) из каждого Docker-хоста
 - **Открытый порт** на целевом сервисе (по умолчанию: `3100` для Loki, `12201` для GELF, `24224` для Fluentd, `514` для Syslog, `8088` для Splunk HEC)
-- **Учётные данные** (при необходимости): IAM-политики для AWS CloudWatch, токен для Splunk, сертификаты TLS для защищённых соединений
+- **Учётные данные** (при необходимости): токены/ключи для Splunk HEC, сертификаты TLS для защищённых соединений
 
 **Проверка текущего лог-драйвера:**
 ```bash
@@ -114,7 +116,7 @@ docker info --format '{{.LoggingDriver}}'
 # → json-file
 
 # Проверка non-blocking для конкретного контейнера
-docker inspect --format '{{.HostConfig.LogConfig.Config}}' <container>
+docker inspect --format '{{.HostConfig.LoggingConfig.Config}}' <container>
 ```
 
 ### Сценарий 1: Драйвер Journald (Интеграция с ОС)
@@ -153,7 +155,7 @@ journalctl CONTAINER_NAME=<container_name> -p err
 ```
 
 **Ограничения:**
-*   Драйвер `journald` **не поддерживает** Dual Logging — команда `docker logs` не работает при его использовании.
+*   Драйвер `journald` **нативно поддерживает чтение** через `docker logs` — Dual Logging для него не используется (включение или отключение локального кэша не имеет эффекта).
 *   Невозможно использовать теги для маршрутизации — логи попадают в общий поток journald.
 *   Формат логов — текстовый, без структурированных метаданных Docker.
 
@@ -272,60 +274,9 @@ docker logs <container_name> --tail 50
 | **Multiline** | Требует настройки на стороне Fluentd | Встроенные паттерны |
 | **Фильтрация** | Ограничена | Полная (плагины Ruby) |
 | **Отказоустойчивость** | Низкая (буфер RAM) | Высокая (буфер диск) |
-| **Подробнее** | Этот раздел | **[Агентный сбор логов](./docker_agent_based_logging.md)** |
+ | **Подробнее** | Этот раздел | **[Агентный сбор логов](./docker_agent_based_logging.md)** |
 
-### Сценарий 4: Драйвер AWS Logs (Cloud Native)
-
-Используется для прямой отправки логов в CloudWatch при запуске в AWS (EC2, Fargate).
-
-**Параметры:**
-```bash
-docker run -d \
-  --log-driver=awslogs \
-  --log-opt awslogs-region=us-east-1 \
-  --log-opt awslogs-group=my-app-logs \
-  --log-opt awslogs-stream=web-server-01 \
-  --log-opt awslogs-create-group=true \
-  nginx
-```
-
-**Доступные параметры:**
-
-| Параметр | Описание | Значение по умолчанию |
-| :--- | :--- | :--- |
-| `awslogs-region` | Регион AWS | Регион инстанса |
-| `awslogs-group` | Имя Log Group | Обязательный |
-| `awslogs-stream` | Имя Log Stream | Обязательный |
-| `awslogs-create-group` | Автосоздание Log Group | `false` |
-| `awslogs-datetime-format` | Формат времени | Формат strftime |
-| `awslogs-multiline-pattern` | Regex для multiline | Пусто |
-
-*   Требует настроенных IAM-прав (Policy `logs:CreateLogStream`, `logs:PutLogEvents`) на уровне инстанса или через IAM Role.
-*   **Dual Logging**: Драйвер awslogs поддерживает Dual Logging начиная с Docker 20.10+.
-
-**Валидация:**
-```bash
-# Проверка IAM-прав
-aws logs describe-log-groups --log-group-name-prefix my-app-logs
-
-# Просмотр логов в CloudWatch
-aws logs get-log-events \
-  --log-group-name my-app-logs \
-  --log-stream-name web-server-01 \
-  --start-time $(date -d '1 hour ago' +%s000)
-
-# Просмотр логов локально (Dual Logging)
-docker logs <container_name> --tail 50
-```
-
-**Типичные ошибки:**
-| Ошибка | Причина | Решение |
-| :--- | :--- | :--- |
-| `AccessDeniedException` | Нет IAM-политики `logs:PutLogEvents` | Добавьте политику в IAM Role инстанса |
-| `ResourceNotFoundException` | Log Group не существует | Установите `awslogs-create-group=true` |
-| `InvalidParameterException` | Неверный формат `datetime-format` | Проверьте формат strftime |
-
-### Сценарий 5: Драйвер Splunk
+### Сценарий 4: Драйвер Splunk
 
 Для интеграции с корпоративной SIEM Splunk через HTTP Event Collector (HEC).
 
@@ -379,7 +330,7 @@ curl -k -H "Authorization: Splunk 12345-abcde" https://splunk.example.com:8088/s
 docker logs <container_name> --tail 50
 ```
 
-### Сценарий 6: Драйвер Syslog
+### Сценарий 5: Драйвер Syslog
 
 Отправка логов в стандартный syslog-сервер (rsyslog, syslog-ng).
 
@@ -425,12 +376,12 @@ docker logs <container_name> --tail 50
 | :--- | :--- | :--- |
 | **Протокол** | TCP/UDP (RFC 5424) | Локальный сокет |
 | **Структура** | Текстовый формат | Бинарный формат |
-| **Dual Logging** | Да (Docker 20.10+) | Нет |
+| **Dual Logging** | Да (Docker 20.10+) | N/A (нативное чтение) |
 | **Фильтрация** | Через rsyslog/syslog-ng | Через journalctl |
 | **Пересылка** | Нативная (remote syslog) | Требует ForwardToSyslog |
-| **Использование** | Legacy-системы, энтерпайз | systemd-дистрибутивы |
+| **Использование** | Legacy-системы, энтерпрайз | systemd-дистрибутивы |
 
-### Сценарий 7: Изменение драйвера для конкретного контейнера
+### Сценарий 6: Изменение драйвера для конкретного контейнера
 
 Драйвер можно задать не только глобально, но и для отдельного контейнера через `--log-driver` или секцию `logging` в Docker Compose.
 
@@ -459,15 +410,15 @@ services:
 
 **Важно:** Драйвер фиксируется при создании контейнера. Невозможно изменить `log-driver` или `log-opts` для уже запущенного контейнера. Требуется пересоздание.
 
-### Сценарий 8: Полный стек с Loki (драйвер + Grafana)
+### Сценарий 7: Полный стек с Loki (драйвер + Grafana)
 
-Комбинация Loki-драйвера для сбора с Grafana для визуализации.
+Комбинация Loki-драйвера для сбора логов и Grafana для визуализации.
 
 **`docker-compose.yml`:**
 ```yaml
 services:
   loki:
-    image: grafana/loki:3.4.2
+    image: grafana/loki:3.7.8
     ports:
       - "3100:3100"
     volumes:
@@ -475,7 +426,7 @@ services:
     command: -config.file=/etc/loki/local-config.yaml
 
   grafana:
-    image: grafana/grafana:11.5.0
+    image: grafana/grafana:13.2.2
     ports:
       - "3000:3000"
     environment:
@@ -489,7 +440,7 @@ services:
       driver: loki
       options:
         loki-url: "http://loki:3100/loki/api/v1/push"
-        loki-batch-size: "400"
+        loki-batch-size: "400000"
         mode: "non-blocking"
         max-buffer-size: "8m"
 ```
@@ -518,11 +469,10 @@ curl -s "http://localhost:3100/loki/api/v1/query?query={job=\"docker\"}" | pytho
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **json-file** | Файл (диск) | Да | Да | Да | Нет | Нет |
 | **local** | Файл (диск) | Да | Да | Да (встроено) | Нет | Нет |
-| **journald** | Сокет systemd | **Нет** | Да | Нет | Нет | Нет |
+| **journald** | Сокет systemd | N/A (читает нативно) | Да | Нет | Нет | Нет |
 | **syslog** | TCP/UDP | Да (20.10+) | Да | Нет | Нет | Нет |
 | **gelf** | TCP/UDP | Да (20.10+) | Да | gzip/zlib | Нет | Нет |
 | **fluentd** | TCP/Unix socket | Да | Да | Нет | Нет (требует настройки) | Нет |
-| **awslogs** | HTTPS (CloudWatch) | Да (20.10+) | Да | Нет | Да | Нет |
 | **splunk** | HTTPS (HEC) | Да (20.10+) | Да | Нет | Да | Нет |
 | **loki** | HTTP/HTTPS | Да | Да | Нет | Да | Минимальная |
 
@@ -534,11 +484,11 @@ curl -s "http://localhost:3100/loki/api/v1/query?query={job=\"docker\"}" | pytho
 | **Трансформация** | Почти отсутствует. | Полноценный ETL (парсинг, маскирование). |
 | **Нагрузка** | На Docker Engine. | На отдельный процесс (агент). |
 | **Простота** | Настройка одной строкой. | Требует конфигурации агента. |
-| **Multiline** | Ограничена (awslogs, splunk). | Полная поддержка (regex-паттерны). |
+| **Multiline** | Ограничена (splunk). | Полная поддержка (regex-паттерны). |
 | **Фильтрация** | Отсутствует. | Полная (по контейнерам, лейблам, содержимому). |
 | **Доп. ресурсы** | Минимальные. | 20-500 МБ RAM на агента. |
 
-**Рекомендация:** Используйте лог-драйверы для быстрой интеграции в облачных средах (AWS/GCP) или при малых нагрузках. Для высоконагруженных систем с требованиями к сохранности данных (compliance) переходите на **[Агентный сбор логов Docker](./docker_agent_based_logging.md)**.
+**Рекомендация:** Используйте лог-драйверы для быстрой интеграции в небольшие и средние среды без дополнительных агентов. Для высоконагруженных систем с требованиями к сохранности данных (compliance) переходите на **[Агентный сбор логов Docker](./docker_agent_based_logging.md)**.
 
 ### Лучшие практики
 
@@ -553,12 +503,17 @@ curl -s "http://localhost:3100/loki/api/v1/query?query={job=\"docker\"}" | pytho
 ### Ограничения и известные проблемы
 
 1.  **Драйвер фиксируется при создании контейнера**: Невозможно изменить `log-driver` или `log-opts` для уже запущенного контейнера. Требуется пересоздание.
-2.  **`journald` не поддерживает Dual Logging**: Команда `docker logs` не работает при использовании этого драйвера.
+2.  **`journald` и Dual Logging**: драйвер читает логи нативно через `docker logs`, поэтому Dual Logging для него не применяется — опция `cache-disabled` не имеет эффекта.
 3.  **Потеря логов в non-blocking режиме**: При переполнении буфера старые записи отбрасываются без уведомления. Для критичных логов используйте `blocking` или агентный сбор.
 4.  **Нагрузка на Docker daemon**: Сетевые драйверы выполняют передачу данных в рамках Docker Engine. При высоком трафике это может увеличить потребление CPU.
 5.  **Ограничение Multiline**: Не все драйверы поддерживают склейку многострочных логов. Для сложных паттернов (Java stack traces) рекомендуется агентный сбор.
 6.  **Дублирование при ForwardToSyslog**: Если на хосте настроен `rsyslog` и активен `ForwardToSyslog=yes` в `journald.conf`, логи контейнеров могут дублироваться в `/var/log/syslog`.
 7.  **`max-buffer-size` — общий для всех контейнеров**: Невозможно задать разный размер буфера для разных драйверов в пределах одного `daemon.json`. Используйте per-container настройку через Docker Compose.
+8.  **Сертификаты TLS**: При использовании TLS-соединений (`syslog-tls-ca-cert`, `splunk-insecureskipverify=false`) истечение срока действия сертификата на стороне приемника приведет к ошибкам доставки логов. Настройте мониторинг срока действия сертификатов и автоматическое их обновление.
+9.  **Высокая кардинальность тегов**: Использование уникальных значений в шаблонах тегов (например, `{{.ID}}` для каждого контейнера) приводит к увеличению числа активных серий в целевом хранилище (Loki, Splunk). Это увеличивает потребление памяти и индексов. Используйте стабильные теги на уровне сервиса (`{{.Name}}` или фиксированные значения), а не на уровне инстанса.
+10. **Сетевая разрозненность (partition)**: При разделении сети между Docker-хостами и приемником в `blocking` режиме контейнеры на проблемных хостах перестанут отвечать. В `non-blocking` режиме логи будут теряться до восстановления связности. Для критичных систем используйте redundant пути доставки или агентный сбор с disk-backed буфером.
+11. **Диспетчеризация ресурсов Docker daemon**: При большом количестве контейнеров с сетевыми драйверами Docker daemon может исчерпать лимиты файловых дескрипторов (`ulimit -n`) или памяти. Мониторьте метрики `docker_info` и настраивайте `max-buffer-size` с учетом общего числа контейнеров.
+12. **Накопление логов при проблемах с DNS**: Если приемник указан по имени хоста (например, `loki.service.local:3100`) и DNS-сервер недоступен, Docker daemon будет блокировать запись логов (в `blocking` режиме) или терять их (в `non-blocking`). Используйте IP-адреса или проверяйте доступность DNS перед настройкой драйвера.
 
 ### Типичные ошибки и решения
 
@@ -570,14 +525,13 @@ curl -s "http://localhost:3100/loki/api/v1/query?query={job=\"docker\"}" | pytho
 | **`permission denied` при чтении логов** | Драйвер не поддерживает чтение через `docker logs`. | Проверьте Dual Logging для вашего драйвера. |
 | **Дублирование логов в `/var/log/syslog`** | Активен `ForwardToSyslog=yes` в journald.conf. | Отключите: `ForwardToSyslog=no` в `/etc/systemd/journald.conf`. |
 | **`no buffer space available`** | Non-blocking буфер переполнен. | Увеличьте `max-buffer-size` или стабилизируйте приемник. |
-| **`connection refused` на целевом порту** | Целевой сервис не запущен или порт закрыт. | Проверьте `nc -zv host port` и настройки firewall. |
-| **`AccessDeniedException` (AWS)** | Нет IAM-политики для CloudWatch. | Добавьте `logs:CreateLogStream`, `logs:PutLogEvents` в IAM Role. |
-| **Высокий CPU на Docker daemon** | Много контейнеров с сетевым драйвером в blocking режиме. | Переключите на `non-blocking` или используйте агентный сбор. |
+ | **`connection refused` на целевом порту** | Целевой сервис не запущен или порт закрыт. | Проверьте `nc -zv host port` и настройки firewall. |
+ | **Высокий CPU на Docker daemon** | Много контейнеров с сетевым драйвером в blocking режиме. | Переключите на `non-blocking` или используйте агентный сбор. |
 
 ### Безопасность
 
 - **TLS для удалённых хранилищ**: Используйте HTTPS при отправке логов по сети. Драйверы `syslog`, `splunk` поддерживают TLS-соединения.
-- **Токены и секреты**: Не храните токены (Splunk HEC, AWS Credentials) в `daemon.json` в открытом виде. Используйте IAM Roles (AWS) или Docker Secrets.
+- **Токены и секреты**: Не храните токены (Splunk HEC) в `daemon.json` в открытом виде. Используйте Docker Secrets.
 - **Сетевая изоляция**: Разместите приемники логов в отдельной VLAN или используйте Security Groups для ограничения доступа.
 - **Аудит доступа**: Мониторьте, кто изменяет `daemon.json` — это файл глобальных настроек Docker.
 
@@ -593,12 +547,58 @@ curl -s "http://localhost:3100/loki/api/v1/query?query={job=\"docker\"}" | pytho
 
 **Рекомендация по масштабированию**: При >200 контейнеров на хост или требовании fault-tolerance переходите на **[Агентный сбор логов Docker](./docker_agent_based_logging.md)**.
 
+### Очистка и откат
+
+**Возврат к локальному драйверу:**
+```bash
+# 1. Остановите контейнер
+docker stop <container_name>
+
+# 2. Удалите контейнер (драйвер фиксируется при создании)
+docker rm <container_name>
+
+# 3. Пересоздайте с локальным драйвером
+docker run -d \
+  --log-driver=json-file \
+  --log-opt max-size=10m \
+  --log-opt max-file=5 \
+  --name <container_name> \
+  <image>
+```
+
+**Отключение глобального сетевого драйвера:**
+```bash
+# 1. Отредактируйте /etc/docker/daemon.json
+sudo vi /etc/docker/daemon.json
+
+# 2. Удалите или закомментируйте log-driver и log-opts
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "5"
+  }
+}
+
+# 3. Перезапустите Docker
+sudo systemctl restart docker
+
+# 4. Пересоздайте контейнеры
+docker-compose up -d --force-recreate
+```
+
+**Архивация текущей конфигурации перед изменением:**
+```bash
+tar -czf docker-daemon-config-backup-$(date +%Y%m%d).tar.gz /etc/docker/daemon.json
+```
+
 ### Ссылки на смежные темы
 
 *   **[Обзор системы логирования в Docker](./docker_logging_drivers_overview.md)** — база и сравнение методов.
-*   **[Настройка лог-драйвера Grafana Loki для Docker](./loki_logging_driver_setup.md)** — детальный разбор драйвера Loki.
-*   **[Агентный сбор логов Docker](./docker_agent_based_logging.md)** — альтернативный, более надежный подход.
-*   **[Управление ротацией логов Docker](./docker_log_rotation.md)** — защита диска от переполнения.
+*   **[Настройка лог-драйвера Grafana Loki](./loki_logging_driver_setup.md)** — альтернативный подход прямой отправки.
+*   **[Агентный сбор логов](./docker_agent_based_logging.md)** — альтернативный, более надежный подход.
+*   **[Управление ротацией логов](./docker_log_rotation.md)** — защита диска от переполнения.
+*   **[Команда docker logs: справочник](./docker_logs_cli.md)** — чтение логов при сетевых драйверах (Dual Logging).
 *   **[rsyslog: Фильтрация и пересылка](../../Linux/SystemAdministration/Logging/rsyslog.md)** — настройка приемника для драйвера syslog.
 
 **Глубокое изучение:**

@@ -1,5 +1,7 @@
 # Dockerfile: Лучшие практики для Frontend (SPA и SSR)
 
+**Актуально для:** Docker 27+, Node.js 24 LTS (26 LTS с 28 октября 2026), Nginx 1.30.x, Caddy 2.11.x
+
 ## Определения
 
 - **SPA (Single Page Application):** Веб-приложение, которое загружает одну HTML-страницу и динамически обновляет её при взаимодействии с пользователем (React, Vue, Angular, Svelte).
@@ -12,12 +14,25 @@
 - **node-gyp:** Инструмент для компиляции нативных аддонов (C/C++). Требует наличия Python и компилятора в образе на этапе сборки.
 - **Tini:** Легковесный init-процесс (PID 1) для контейнеров. Решает проблему обработки сигналов и удаления зомби-процессов.
 - **Graceful Shutdown:** Корректное завершение работы приложения (закрытие соединений с БД, HTTP-сервера) при получении сигналов `SIGTERM` или `SIGINT`.
+- **BuildKit Cache Mount:** Монтирование кэша пакетов между сборками через `--mount=type=cache`, ускоряющее повторные сборки на 30-70%.
+- **Immutable Assets:** Файлы с хешами в именах (`app.a1b2c3.js`), которые можно кэшировать браузером на длительный срок.
+- **Mutable Assets:** Файлы без хешей в именах (`index.html`), которые нельзя кэшировать долгосрочно.
+
+## Предварительные требования
+
+- **Docker Engine 27+** с включённым BuildKit (`DOCKER_BUILDKIT=1` или `"features": { "buildkit": true }` в `daemon.json`).
+- **Node.js 24 LTS** как целевая версия runtime. Node.js 26 становится LTS 28 октября 2026 и может использоваться для тестирования совместимости.
+- **Package Manager:** pnpm 9+ через Corepack (стандарт 2026), либо npm 10+ для legacy-проектов.
+- **Понимание multi-stage сборки** и механики слоёв Docker, включая layer caching и BuildKit cache mounts.
+- **Знание cgroups v2** в целевой ОС хоста (Ubuntu 22.04+, RHEL 9+, Debian 12+), так как они влияют на лимиты памяти и CPU в контейнере.
+- **Наличие `.dockerignore`** в корне проекта для исключения `node_modules`, `.git`, секретов и артефактов сборки из контекста.
+- **CI/CD:** Для production-pipeline требуется registry с поддержкой OCI (Docker Hub, GitLab Container Registry, Harbor) и сканер уязвимостей (Trivy, Grype).
 
 ## Базовые концепции
 
 ### Разделение сред: Build-time vs Runtime
 
-Главная сложность фронтенда в Docker — это момент подстановки конфигурации.
+Главная сложность фронтенда в Docker — момент подстановки конфигурации.
 
 1.  **SPA (Static):** Приложение компилируется в статику. Переменные окружения (`VITE_`, `REACT_APP_`) подставляются **в момент сборки** (Build-time). Если нужно менять API URL без пересборки, требуются специальные методы (см. Практические сценарии).
 2.  **SSR (Next.js/Nuxt):** Приложение работает как сервер. Оно может читать `process.env` **в рантайме**, как обычный бэкенд на Node.js.
@@ -126,6 +141,44 @@ docker-compose*.yml
 .dockerignore
 ```
 
+## Архитектура сборки
+
+### Pipeline сборки фронтенд-образа
+
+Современный Dockerfile для фронтенда состоит из трёх логических частей:
+
+1.  **Builder Stage:** Установка зависимостей, кэширование через BuildKit mount, сборка статических файлов. На выходе — папка `dist` или `.next/standalone`.
+2.  **Final Stage:** Минимальный образ с веб-сервером (Nginx/Caddy) или Node.js для SSR. Содержит только production-файлы.
+3.  **Entrypoint / CMD:** Запуск веб-сервера или Node.js-приложения с корректной обработкой сигналов.
+
+### Почему multi-stage обязателен для фронтенда
+
+| Проблема без multi-stage | Решение с multi-stage |
+| :--- | :--- |
+| `node_modules` (200–500 МБ) попадает в финальный образ | В финальном образе только статика или standalone-бандл |
+| Исходный код и `.git` доступны в production | В финальном образе только собранные артефакты |
+| Установленные devDependencies увеличивают поверхность атаки | В runtime-образе только production-зависимости |
+| Размер образа 1–2 ГБ вместо 20–50 МБ | Уменьшение размера на 70–90% |
+
+### BuildKit и кэширование слоёв
+
+Docker BuildKit (включён по умолчанию в Docker 27+) меняет порядок выполнения инструкций и позволяет использовать кэш между сборками:
+
+- **Inline Cache:** `RUN --mount=type=cache,...` сохраняет данные между пересборками на хосте.
+- **Layer Reuse:** Если `package.json` не изменился, слой с зависимостями не пересобирается.
+- **Parallel Execution:** Независимые стадии (builder + test) выполняются параллельно.
+
+### SPA vs SSR: разница в архитектуре
+
+| Аспект | SPA (Static) | SSR (Next.js/Nuxt) |
+| :--- | :--- | :--- |
+| **Runtime** | Nginx, Caddy, любой статический сервер | Node.js |
+| **Размер образа** | 20–50 МБ | 200–500 МБ |
+| **Переменные окружения** | Build-time (ARG) или config.json | Runtime (process.env) |
+| **Graceful Shutdown** | Nginx обрабатывает SIGQUIT | Требует tini или --init |
+| **Healthcheck** | Проверка файла/порта | Проверка HTTP endpoint |
+| **Масштабирование** | Легко: stateless, горизонтальное масштабирование через Kubernetes Deployment | Возможно, но требуется больше памяти |
+
 ## Практические сценарии
 
 ### Сценарий 1: Оптимизированный SPA (Vite + pnpm + Nginx)
@@ -153,7 +206,7 @@ COPY . .
 RUN pnpm build
 
 # --- Этап 2: Финальный образ (Nginx) ---
-FROM nginx:1.27-alpine
+FROM nginx:1.30-alpine
 
 # Копируем кастомный конфиг (см. сценарий 2)
 COPY nginx.conf /etc/nginx/conf.d/default.conf
@@ -277,7 +330,7 @@ COPY . .
 RUN pnpm build
 
 # --- Финальный этап ---
-FROM nginx:1.27-alpine
+FROM nginx:1.30-alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 EXPOSE 8080
 CMD ["nginx", "-g", "daemon off;"]
@@ -325,7 +378,7 @@ COPY . .
 RUN pnpm build
 
 # --- Финальный этап (Caddy) ---
-FROM caddy:2-alpine
+FROM caddy:2.11-alpine
 
 COPY --from=builder /app/dist /srv
 COPY Caddyfile /etc/caddy/Caddyfile
@@ -365,7 +418,7 @@ CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile"]
 ```bash
 # Проверка что Caddy запустился
 docker exec <container> caddy version
-# → v2.x.x
+# → v2.11.x
 
 # Проверка ответа
 curl -I http://localhost:80
@@ -453,6 +506,25 @@ services:
       - frontend-dist:/usr/share/nginx/html:ro
     networks:
       - internal
+    depends_on:
+      - backend
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt:
+      - no-new-privileges: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
 
   backend:
     build:
@@ -467,9 +539,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
 
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:1.30-alpine
     ports:
       - "80:80"
       - "443:443"
@@ -488,9 +566,20 @@ services:
       - /var/cache/nginx
       - /var/run
       - /tmp
+    security_opt:
+      - no-new-privileges: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.5"
 
   db:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     environment:
       - POSTGRES_USER=user
       - POSTGRES_PASSWORD=pass
@@ -504,6 +593,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
 
 volumes:
   frontend-dist:
@@ -569,12 +664,12 @@ Nginx не имеет встроенного health endpoint. Создайте �
 RUN echo '{"status":"ok"}' > /app/dist/healthcheck.json
 
 # --- Финальный этап ---
-FROM nginx:1.27-alpine
+FROM nginx:1.30-alpine
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# HEALTHCHECK с curl ( Alpine имеет curl черезBusyBox)
+# HEALTHCHECK с curl (Alpine имеет curl через BusyBox)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -q --spider http://localhost:8080/healthcheck.json || exit 1
 
@@ -603,7 +698,7 @@ docker inspect --format='{{json .State.Health.Log}}' <container> | python3 -m js
 Максимальная безопасность: файловая система только для чтения, временные файлы в tmpfs:
 
 ```dockerfile
-FROM nginx:1.27-alpine
+FROM nginx:1.30-alpine
 
 RUN touch /var/run/nginx.pid && \
     chown -R nginx:nginx /var/run/nginx.pid /var/cache/nginx /var/log/nginx /usr/share/nginx/html
@@ -683,6 +778,64 @@ docker inspect <container> --format='{{.State.ExitCode}}'
 docker exec <container> ps -p 1 -o pid,comm,args
 # → PID   COMMAND  COMMAND
 #   1   tini     /sbin/tini -- node server.js
+```
+
+### Сценарий 12: Мониторинг и логирование в production
+
+Для SRE-подхода настройте логирование и метрики уже на уровне контейнера:
+
+```yaml
+# docker-compose.yml
+services:
+  frontend:
+    build: ./frontend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Или для Loki/Grafana:
+    # logging:
+    #   driver: loki
+    #   options:
+    #     loki-url: "http://localhost:3100/loki/api/v1/push"
+    #     loki-retries: "3"
+    #     loki-batch-size: "1mb"
+    labels:
+      - "com.sre.team=platform"
+      - "com.sre.component=frontend"
+```
+
+**Nginx access log format для SRE:**
+```nginx
+log_format main_ext '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for" '
+                    'rt=$request_time uct="$upstream_connect_time" '
+                    'uht="$upstream_header_time" urt="$upstream_response_time"';
+
+access_log /var/log/nginx/access.log main_ext;
+```
+
+### Сценарий 13: Подпись и верификация образа
+
+Для supply chain security подпишите образ перед push в registry:
+
+```bash
+# 1. Сборка с аттестациями (BuildKit)
+DOCKER_BUILDKIT=1 docker buildx build \
+  --sbom=true \
+  --provenance=true \
+  -t registry.example.com/frontend:2.1.0 \
+  --push .
+
+# 2. Подпись образа (Cosign)
+cosign sign registry.example.com/frontend:2.1.0
+
+# 3. Верификация на целевом хосте
+cosign verify registry.example.com/frontend:2.1.0 \
+  --certificate-identity-regexp ".*" \
+  --certificate-oidc-issuer https://accounts.google.com
 ```
 
 ## Типичные ошибки и их решение
@@ -767,6 +920,58 @@ services:
     stop_grace_period: 60s
 ```
 
+## Граничные случаи
+
+### Монорепозитории с workspaces
+
+В монорепозиториях (Turborepo, Nx) несколько приложений делят общий `node_modules`. Для Docker:
+
+- Копируйте только `package.json` и lock-файл конкретного приложения, а не корневой.
+- Используйте `--filter` в pnpm для установки зависимостей только нужного пакета.
+- Для shared-библиотек копируйте их исходники в builder-stage и делайте `pnpm build` перед сборкой приложения.
+
+### Legacy-приложения без хешированных имен файлов
+
+Старые приложения могут генерировать файлы без content hash (например, `main.js` вместо `main.a1b2c3.js`). Для таких случаев:
+
+- Отключите долгосрочное кэширование для JS/CSS файлов: `expires 1h` вместо `expires 1y`.
+- Используйте `Cache-Control: no-cache` для HTML и JS, чтобы браузер всегда проверял актуальность.
+- В nginx.conf добавьте `add_header Cache-Control "no-cache, must-revalidate"` для `.js` и `.css`.
+
+### Ограниченная память в CI
+
+В CI-средах (GitLab CI, GitHub Actions) память ограничена 4–8 ГБ. Для ускорения сборки:
+
+- Используйте `--mount=type=cache` для pnpm/npm кэша.
+- Установите `NODE_OPTIONS="--max-old-space-size=4096"` для Node.js 24+, чтобы избежать OOM.
+- Используйте `docker buildx bake` для параллельной сборки нескольких образов.
+- Включите BuildKit inline cache: `docker build --cache-from=type=registry,ref=image:latest`.
+
+### Кросс-платформенная сборка (arm64/amd64)
+
+Для продакшена на ARM (Apple Silicon, AWS Graviton) собирайте multi-platform образы:
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t my-app:multiarch \
+  --push .
+```
+
+Для SPA (Nginx) проблем не возникает — Alpine поддерживает обе архитектуры. Для SSR с нативными модулями (`sharp`, `bcrypt`) проверьте совместимость модулей с arm64.
+
+### Приватные registry и air-gapped среды
+
+В изолированных сетях без доступа к Docker Hub:
+
+- Используйте `--build-arg NPM_TOKEN=...` с `--mount=type=secret` для доступа к приватным пакетам.
+- Настройте registry mirror в `daemon.json`:
+  ```json
+  {
+    "registry-mirrors": ["https://registry.example.com"]
+  }
+  ```
+- Для air-gapped: скачайте базовые образы заранее и загрузите в внутренний registry.
+
 ## Лучшие практики
 
 ### Сводка рекомендаций
@@ -785,6 +990,9 @@ services:
 | **tini** | `ENTRYPOINT ["/sbin/tini", "--"]` | Корректная обработка сигналов (SSR) |
 | **HEALTHCHECK** | `wget` или `node --eval` | Мониторинг состояния контейнера |
 | **npm audit** | `RUN npm audit --audit-level=high` | Раннее обнаружение CVE |
+| **Resource limits** | `--memory`, `--cpus` в Compose/K8s | Защита от OOM и noisy neighbour |
+| **Log rotation** | `max-size: 10m`, `max-file: 3` | Предотвращение заполнения диска |
+| **Image signing** | Cosign/Sigstore | Supply chain security |
 
 ### Чек-лист перед деплоем
 
@@ -807,13 +1015,37 @@ services:
 - [ ] `--stop-signal SIGQUIT` для Nginx graceful shutdown
 - [ ] `--init` или `init: true` для SSR-приложений
 - [ ] Лимиты памяти установлены (`--memory`)
+- [ ] Логи ротируются (`max-size`, `max-file`)
+- [ ] Образ подписан (Cosign) для production
 
 **Kubernetes:**
-- [ ] StartupProbe с足够的 `failureThreshold` (60+ сек на старт)
+- [ ] StartupProbe с достаточным `failureThreshold` (60+ сек на старт)
 - [ ] LivenessProbe не зависит от внешних сервисов
 - [ ] ReadinessProbe проверяет health endpoint
 - [ ] Лимиты памяти и CPU установлены
 - [ ] SecurityContext с `runAsNonRoot: true`
+- [ ] `readOnlyRootFilesystem: true` с tmpfs для временных файлов
+
+### Очистка и обслуживание
+
+```bash
+# Удаление висячих (dangling) образов
+docker image prune -f
+
+# Удаление неиспользуемых volumes
+docker volume prune -f
+
+# Полная очистка неиспользуемых ресурсов
+docker system prune -f --volumes
+
+# Очистка кэша BuildKit
+docker builder prune -f
+
+# Проверка размера кэша
+docker system df
+# → TYPE            TOTAL     ACTIVE    SIZE      RECLAIMABLE
+# → Images          5         2         1.2GB     800MB (66%)
+```
 
 ## Дополнительная информация
 
@@ -822,3 +1054,5 @@ services:
 - **[Dockerfile: Лучшие практики для Node.js](./nodejs.md)** — глубокая оптимизация сборки зависимостей.
 - **[Оптимизация сборки Docker-образов](./build_optimization.md)** — механизмы кэширования BuildKit.
 - **[Безопасность в Dockerfile](./security.md)** — работа с пользователями и заголовками.
+- **[Контейнеризация фронтенда](../../CI-CD/Frontend_CI_CD/frontend_containerization.md)** — CI/CD пайплайн, registry security, Cosign.
+- **[Nginx в Docker](../WebServers/Nginx/Scenarios/nginx_in_docker.md)** — эксплуатация контейнерного веб-сервера.

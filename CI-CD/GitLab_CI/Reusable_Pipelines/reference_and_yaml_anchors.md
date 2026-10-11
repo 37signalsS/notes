@@ -1,5 +1,7 @@
 # GitLab CI: Механизмы !reference и якоря YAML
 
+**Актуально для:** GitLab CI 19.x
+
 ## Определения
 
 **`!reference`** — специализированный технический тег GitLab CI, предназначенный для создания явных ссылок на фрагменты конфигурации других заданий или глобальных секций. Этот механизм позволяет извлекать и вставлять части настроек (`script`, `rules`, `variables`, `tags` и др.) с сохранением возможности глубокой валидации. Работает как внутри одного файла, так и между ресурсами, подключенными через `include`.
@@ -66,7 +68,7 @@
 | Наследование всего задания | `extends` | Полная поддержка GitLab, ленивое разрешение |
 | Вставка фрагмента скрипта | `!reference` | Точечная вставка без замены массива |
 | Локальный словарь переменных | YAML Anchors (`<<:`) | Простое слияние в пределах файла |
-| Межфайловые ссылки | `!reference` | Единственный механизм для跨文件 |
+| Межфайловые ссылки | `!reference` | Единственный механизм для межфайловых ссылок |
 | Конкатенация массивов | `!reference` | `extends` заменяет массивы, не дополняет |
 
 ## Практические сценарии
@@ -98,7 +100,7 @@ build_image:
 
 ```bash
 # Просмотр результата вставки
-glab ci lint --show-expanded | grep -A 10 "build_image"
+glab ci config compile | grep -A 10 "build_image"
 ```
 
 ### Сценарий 2: Использование индексов массивов (v17.2+)
@@ -518,7 +520,7 @@ lint_expanded:
   script:
     - |
       echo "=== Просмотр расширенного YAML ==="
-      glab ci lint --show-expanded > expanded.yml
+glab ci config compile > expanded.yml
       
       # Проверка отсутствия ошибок
       if grep -q "error" expanded.yml; then
@@ -720,7 +722,7 @@ deploy_secure:
 1.  **GitLab CLI (`glab`)**:
     ```bash
     # Просмотр финального YAML со всеми разрешенными ссылками
-    glab ci lint --show-expanded
+glab ci config compile
     ```
 2.  **Pipeline Editor**: Вкладка «View merged YAML» в интерфейсе GitLab — лучший способ увидеть результат работы `!reference`.
 3.  **Диагностический скрипт**:
@@ -742,7 +744,7 @@ echo "   OK: Синтаксис валиден"
 
 # 2. Просмотр expanded YAML
 echo "2. Просмотр expanded YAML..."
-glab ci lint --show-expanded > expanded.yml
+glab ci config compile > expanded.yml
 
 # 3. Поиск не разрешенных ссылок
 echo "3. Поиск не разрешенных ссылок..."
@@ -827,6 +829,37 @@ echo "=== Диагностика завершена ==="
         "${PROMETHEUS_PUSHGATEWAY}/metrics/job/${CI_JOB_NAME}"
 ```
 
+### Комбинация !reference с extends для сервисов и обработки ошибок
+
+Массивы `services`, `script`, `retry`, `allow_failure` и `when` **полностью замещаются** при `extends`. Для частичного дополнения используйте `!reference`:
+
+```yaml
+# templates/base.yml
+.base-test:
+  services:
+    - name: postgres:18
+      alias: db
+  retry:
+    max: 2
+    when: runner_system_failure
+  script:
+    - npm test
+
+# Дочернее задание: добавляем сервис без потери родительского
+integration-tests:
+  extends: .base-test
+  services:
+    - !reference [.base-test, services]
+    - name: redis:7-alpine
+      alias: cache
+  retry:
+    max: !reference [.base-test, retry, max]
+    when: !reference [.base-test, retry, when]
+  script:
+    - !reference [.base-test, script]
+    - npm run test:integration
+```
+
 ### Управление техническим долгом
 
 | Проблема | Решение | Приоритет |
@@ -839,13 +872,73 @@ echo "=== Диагностика завершена ==="
 
 ### Чек-лист ревью конфигурации
 
-- [ ] Все `!reference` корректно разрешаются (`glab ci lint --show-expanded`)
+- [ ] Все `!reference` корректно разрешаются (`glab ci config compile`)
 - [ ] Нет циклических зависимостей
 - [ ] Якоря YAML не используются между файлами
 - [ ] Скрытые задания задокументированы
 - [ ] Добавлены интеграционные тесты
 - [ ] Проверена безопасность (нет секретов в YAML)
 - [ ] Оптимизировано количество ссылок (< 50 на файл)
+
+---
+
+## Восстановление и очистка
+
+### Откат изменений в конфигурации
+
+При проблемах с `!reference` после деплоя конфигурации выполните откат на последний рабочий коммит:
+
+```bash
+# 1. Определение последнего рабочего коммита
+LAST_GOOD=$(git log --oneline --grep="ci: !reference refactor" -n 1 --format="%H")
+
+# 2. Откат .gitlab-ci.yml и шаблонов
+git revert --no-commit ${LAST_GOOD} -- .gitlab-ci.yml templates/
+git commit -m "revert: rollback !reference changes"
+git push origin main
+
+# 3. Верификация
+glab ci config compile > expanded.yml
+grep -q "!reference" expanded.yml && echo "WARNING: !reference still present" || echo "OK: !reference removed"
+```
+
+### Очистка неиспользуемых якорей
+
+Регулярно удаляйте неиспользуемые якоря YAML, чтобы снизить технический долг:
+
+```bash
+#!/bin/bash
+# cleanup_unused_anchors.sh
+
+for file in templates/*.yml; do
+  echo "Проверка ${file}..."
+  
+  # Извлечение всех якорей
+  ANCHORS=$(grep -oP '&\K[a-zA-Z0-9_-]+' "${file}" | sort -u)
+  
+  for anchor in ${ANCHORS}; do
+    # Проверка использования
+    USAGE_COUNT=$(grep -c "\*${anchor}" "${file}" || echo "0")
+    if [ ${USAGE_COUNT} -eq 0 ]; then
+      echo "  Удаление неиспользуемого якоря: ${anchor}"
+      # Удаление строки с якорем
+      sed -i "/&${anchor}/d" "${file}"
+    fi
+  done
+done
+```
+
+### Очистка кэша GitLab Runner
+
+При изменении `!reference` убедитесь, что Runner использует актуальную конфигурацию:
+
+```bash
+# Перезапуск Runner для сброса кэша
+gitlab-runner restart
+
+# Очистка артефактов и кэша на Runner
+gitlab-runner verify --delete
+```
 
 ---
 
@@ -856,6 +949,7 @@ echo "=== Диагностика завершена ==="
 - **[Обзор переиспользуемых пайплайнов](./overview.md)** — выбор архитектурного подхода.
 - **[Механизм extends](./extends_keyword.md)** — наследование структур заданий.
 - **[Механизм include](./include_keyword.md)** — подключение внешних YAML-ресурсов.
+- **[Сервисные контейнеры](./services_and_service_containers.md)** — `services:`, DinD, health checks, aliases в reusable templates.
 - **[Переменные и секреты](../Concepts/gitlab_ci_variables_secrets.md)** — управление данными внутри пайплайна.
 - **[CI/CD Components](./ci_cd_catalog_components.md)** — параметризованные компоненты (альтернатива `!reference` для передачи параметров).
 

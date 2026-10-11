@@ -1,5 +1,7 @@
 # Управление часовыми поясами в контейнерах
 
+**Актуально для:** Docker 20.10+ (рекомендуется 29.x), Podman 4.0+ (рекомендуется 6.x), Cgroups v2 (Kernel 5.6+, в production 2026 года преобладают ядра 6.x)
+
 ## Определения
 
 **UTC (Coordinated Universal Time)** — всемирное координированное время. Является промышленным стандартом для серверов, баз данных и контейнерных сред. По умолчанию почти все базовые образы (Alpine, Debian, Ubuntu) используют UTC.
@@ -12,11 +14,11 @@
 
 | Компонент | Минимальная версия | Примечание |
 | :--- | :--- | :--- |
-| **Docker Engine** | 20.10+ | Поддержка переменной `TZ` работает со всеми версиями, но рекомендуется актуальная LTS. |
+| **Docker Engine** | 20.10+ (рекомендуется 29.x) | Поддержка переменной `TZ` работает со всеми версиями; 29.x обеспечивает стабильную работу cgroups v2 и `--cgroupns`. |
 | **Docker Compose** | v2.0+ | Compose V2 интегрирован в Docker CLI как `docker compose` (с пробелом). |
-| **Kubernetes** | 1.27+ | Поле `timeZone` в CronJob доступно, начиная с версии 1.27 (было `beta` в 1.24–1.26). |
-| **Базовый образ** | — | Alpine 3.18+, Debian 12+, Ubuntu 22.04+ для актуального `tzdata`. |
-| **Хостовая ОС** | Linux kernel 5.6+ | Для поддержки Time Namespace (`CLONE_NEWTIME`) в OCI-рънтайме. |
+| **Kubernetes** | 1.27+ (GA для `timeZone` в CronJob) | Поле `timeZone` в CronJob стало стабильным в 1.27; в актуальных релизах 2026 года (1.31+) поведение не изменилось. |
+| **Базовый образ** | — | Alpine 3.21+, Debian 13+, Ubuntu 24.04+ для актуального `tzdata`. |
+| **Хостовая ОС** | Linux kernel 5.6+ (рекомендуется 6.x) | Для поддержки Time Namespace (`CLONE_NEWTIME`) в OCI-рънтайме. |
 
 **Исходное состояние окружения:**
 - Хост-машина с установленным Docker Engine и синхронизированными системными часами (см. [Синхронизация времени в systemd](../../Linux/Core/systemd/time_synchronization.md)).
@@ -63,7 +65,7 @@ docker run -d --name app -e TZ=Europe/Moscow nginx
 ```yaml
 services:
   app:
-    image: nginx:1.27-alpine
+    image: nginx:1.30-alpine
     environment:
       - TZ=Europe/Moscow
     # Альтернатива: использовать deploy.resources для prod-окружений
@@ -176,7 +178,7 @@ docker run -d \
 
 **Debian/Ubuntu (glibc):**
 ```dockerfile
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       tzdata \
@@ -191,7 +193,7 @@ ENV TZ=Europe/Moscow
 
 **Alpine (musl):**
 ```dockerfile
-FROM alpine:3.20
+FROM alpine:3.21
 
 RUN apk add --no-cache tzdata \
     && cp /usr/share/zoneinfo/Europe/Moscow /etc/localtime \
@@ -297,6 +299,7 @@ RUN powershell -Command "Set-TimeZone -Id 'Russian Standard Time'"
 Спецификация OCI (используемая `runc`) поддерживает **Time Namespace** (Kernel 5.6+). Это позволяет изолировать `CLOCK_MONOTONIC` и `CLOCK_BOOTTIME`.
 - **CLOCK_REALTIME:** (реальное время) **не изолируется**. Оно всегда общее с хостом.
 - **Offsets:** Рантайм может задавать смещения (`timeOffsets`) для таймеров, что полезно для приложений, чувствительных к времени работы системы (uptime).
+- **Docker 29.5.0+:** private time namespace создаётся **по умолчанию** для контейнеров на ядрах ≥ 5.6 (с нулевыми смещениями); отключается feature-флагом `{"features": {"time-namespaces": false}}` в `daemon.json`. Диагностика и побочные эффекты (в т.ч. регрессия socket-passthrough в 29.5.0–29.5.1) — в **[container_time_sync.md](../Docker_troubleshooting/container_time_sync.md)** (Сценарий 8).
 
 ### Синхронизация времени (NTP/Chrony)
 Контейнеры **никогда не должны** запускать NTP-клиенты.
@@ -366,10 +369,65 @@ podman exec <id> date
 # → Mon Aug 21 12:10:19 MSK 2026
 ```
 
+## Валидация в CI/CD пайплайнах
+
+Для SRE и DevOps-инженеров важно автоматизировать проверку настроек часового пояса при деплое. Ниже приведены проверки, которые можно интегрировать в GitLab CI, GitHub Actions или Jenkins:
+
+```bash
+#!/usr/bin/env bash
+# validate-timezone.sh — базовый набор проверок для CI
+set -euo pipefail
+
+IMAGE="${1:-myapp:latest}"
+CONTAINER_NAME="tz-validation-$$"
+
+# 1. Проверка: образ должен содержать tzdata или поддерживать TZ
+docker run --rm -d --name "$CONTAINER_NAME" "$IMAGE" sleep 3600
+PID=$(docker inspect -f '{{.State.Pid}}' "$CONTAINER_NAME")
+
+# 2. Проверка наличия зоны (общая)
+if docker exec "$CONTAINER_NAME" test -f /usr/share/zoneinfo/Europe/Moscow 2>/dev/null; then
+  echo "OK: zoneinfo доступен"
+else
+  echo "WARN: zoneinfo отсутствует, проверка через TZ"
+fi
+
+# 3. Проверка переменной TZ (если задана)
+if docker exec "$CONTAINER_NAME" printenv TZ >/dev/null 2>&1; then
+  echo "TZ=$(docker exec "$CONTAINER_NAME" printenv TZ)"
+else
+  echo "INFO: TZ не задана, будет использован часовой пояс по умолчанию"
+fi
+
+# 4. Проверка /etc/localtime
+if docker exec "$CONTAINER_NAME" test -L /etc/localtime 2>/dev/null; then
+  echo "OK: /etc/localtime является symlink"
+elif docker exec "$CONTAINER_NAME" test -f /etc/localtime 2>/dev/null; then
+  echo "OK: /etc/localtime существует"
+else
+  echo "WARN: /etc/localtime отсутствует"
+fi
+
+# 5. Проверка согласованности: TZ vs /etc/localtime
+TZ_VAL=$(docker exec "$CONTAINER_NAME" printenv TZ 2>/dev/null || echo "")
+LOCAL_VAL=$(docker exec "$CONTAINER_NAME" readlink /etc/localtime 2>/dev/null || echo "")
+if [ -n "$TZ_VAL" ] && [ -n "$LOCAL_VAL" ]; then
+  if echo "$LOCAL_VAL" | grep -q "$TZ_VAL"; then
+    echo "OK: TZ и /etc/localtime согласованы"
+  else
+    echo "WARN: TZ ($TZ_VAL) и /etc/localtime ($LOCAL_VAL) не согласованы"
+  fi
+fi
+
+docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1
+echo "Валидация часового пояса завершена"
+```
+
 ## Лучшие практики
 
-Сводка рекомендаций по управлению временем в контейнерах:
+Сводка рекомендаций по управлению временем в контейнерах для DevOps/SRE:
 
+**Безопасность и стабильность:**
 1. **Используйте переменную `TZ`** — это золотой стандарт (golden standard). Она не зависит от файловой системы хоста, работает в rootless-режиме и не требует привилегий.
 2. **Пишите логи в UTC / ISO 8601** — локализация должна происходить только на уровне UI (Grafana, Kibana, Loki). Это устраняет проблему "двойных временных меток" (см. ниже).
 3. **Указывайте IANA-имена зон** (например, `Europe/Moscow`, `America/New_York`), а не смещения (`+03:00`). IANA-имена учитывают исторические изменения и DST.
@@ -380,9 +438,66 @@ podman exec <id> date
    ```
 6. **Синхронизируйте время на хосте** через `systemd-timesyncd` или `chrony` — контейнеры наследуют системные часы ядра.
 7. **Не запускайте NTP-клиенты внутри контейнеров** — это бесполезно и опасно (требует `--privileged`).
+
+**Для Kubernetes и оркестрации:**
 8. **В Kubernetes** используйте глобальную переменную `TZ` через Helm (`global.timezone`) для согласованности всех компонентов стека.
 9. **В CronJob** (K8s 1.27+) используйте поле `timeZone`, а не переменную `TZ` — `timeZone` влияет на расписание, а `TZ` — только на приложение внутри пода.
 10. **Для Distroless/Scratch** убеждайтесь, что `tzdata` или `zoneinfo` включены — иначе приложения (особенно Go) не смогут разрешить часовой пояс.
+
+**Мониторинг и валидация:**
+11. **Автоматизируйте проверку в CI/CD** — используйте скрипт валидации (см. раздел «Валидация в CI/CD пайплайнах») для контроля настроек timezone при деплое.
+12. **Мониторьте дрейф времени** — интеграция с Prometheus через `node_timex_offset_seconds` и кастомные проверки для контейнеров.
+13. **Аудит образов** — регулярно проверяйте наличие актуального `tzdata` в базовых образах через Trivy или Grype.
+14. **Ведите runbook** — документируйте процедуры расследования инцидентов, связанных с временем (см. раздел «Производственный мониторинг и инцидент-респонс»).
+
+## Мониторинг и алертинг
+
+### Метрики для сбора
+
+| Метрика | Источник | Порог алерта |
+| :--- | :--- | :--- |
+| `node_timex_offset_seconds` | node_exporter | > 5s (критично), > 1s (предупреждение) |
+| `node_timex_sync_status` | node_exporter | 0 = синхронизирован, 1 = нет |
+| Дрейф времени контейнера | Кастомный скрипт | > 5s относительно хоста |
+| Версия `tzdata` в образе | Trivy/Grype | < текущей версии дистрибутива |
+
+### Пример алерта (Prometheus + Alertmanager)
+
+```yaml
+groups:
+  - name: time_sync
+    rules:
+      - alert: HostTimeDriftHigh
+        expr: node_timex_offset_seconds > 5
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Высокий дрейф времени на {{ $labels.instance }}"
+          description: "Offset {{ $value }}s превышает порог 5s"
+
+      - alert: ContainerTimezoneMismatch
+        expr: time_drift_seconds > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Расхождение времени в контейнере {{ $labels.container }}"
+```
+
+### Проверка в production
+
+```bash
+# Ежедневная проверка всех контейнеров
+for c in $(docker ps --format '{{.Names}}'); do
+  drift=$(docker exec "$c" date +%s 2>/dev/null || echo "0")
+  host=$(date +%s)
+  diff=$((host - drift))
+  if [ "$diff" -gt 5 ] || [ "$diff" -lt -5 ]; then
+    echo "ALERT: $c drift=${diff}s"
+  fi
+done
+```
 
 ## Очистка и откат
 
@@ -482,6 +597,82 @@ CRON_TZ=Europe/Moscow
 **Причина:** Windows использует имена часовых поясов в формате Windows (например, `Russian Standard Time`), а не IANA.
 
 **Решение:** Используйте PowerShell или `tzutil` (см. раздел «Специфика операционных систем»).
+
+## Производственный мониторинг и инцидент-респонс
+
+### Мониторинг расхождений времени (Time Drift)
+
+В production-средах критично отслеживать расхождение между временем контейнера и эталоном:
+
+```bash
+# Скрипт для мониторинга дрейфа времени в контейнерах
+#!/usr/bin/env bash
+# check-time-drift.sh — интеграция с Prometheus node exporter или cron
+set -euo pipefail
+
+CONTAINER="${1:-}"
+if [ -z "$CONTAINER" ]; then
+  echo "Usage: $0 <container_name>"
+  exit 1
+fi
+
+# Получаем время хоста (UTC)
+HOST_TIME=$(date -u +%s)
+
+# Получаем время контейнера (UTC)
+CONT_TIME=$(docker exec "$CONTAINER" date -u +%s 2>/dev/null || echo "0")
+
+# Считаем drift в секундах
+DRIFT=$((HOST_TIME - CONT_TIME))
+
+# Порог предупреждения: 5 секунд
+if [ "$DRIFT" -gt 5 ] || [ "$DRIFT" -lt -5 ]; then
+  echo "WARNING: Time drift detected for $CONTAINER: ${DRIFT}s"
+  # Здесь можно отправить алерт в Slack/Telegram/PagerDuty
+else
+  echo "OK: Time drift for $CONTAINER: ${DRIFT}s"
+fi
+```
+
+**Интеграция с Prometheus:**
+- Используйте `node_exporter` метрику `node_timex_offset_seconds` для контроля дрейфа на хосте
+- Для контейнеров добавьте проверку в виде sidecar-скрипта или blackbox-exporter probe
+
+### Типичные инциденты и реагирование
+
+| Инцидент | Причина | Действия SRE |
+| :--- | :--- | :--- |
+| **Логи с неправильным временем** | `TZ` не задан или устарел `tzdata` | 1. Проверьте `docker exec <id> date` и `printenv TZ` 2. Обновите `tzdata` в образе 3. Перезапустите контейнер |
+| **CronJob сбивает расписание** | Переход на DST без `timeZone` в K8s 1.27+ | 1. Добавьте поле `timeZone` в манифест CronJob 2. Проверьте актуальность `tzdata` в образе |
+| **Дублирование/пропуск логов** | Leap second или рассинхронизация часов | 1. Проверьте `timedatectl status` на хосте 2. Убедитесь, что `systemd-timesyncd` активен 3. Для Java-приложений обновите JVM |
+| **Ошибки сертификатов** | Системное время ушло вперед/назад | 1. Проверьте время на хосте: `timedatectl status` 2. Принудительно синхронизируйте: `chronyc makestep` 3. Проверьте RTC: `timedatectl` |
+| **Расхождение временных меток в Grafana** | Разные TZ в сервисах стека | 1. Убедитесь, что все сервисы используют `TZ=UTC` 2. Настройка временной зоны только на уровне UI Grafana 3. Проверьте `/etc/localtime` в контейнерах Prometheus/Grafana |
+
+### Чек-лист для наряда (Runbook)
+
+При расследовании инцидента, связанного с временем:
+
+```bash
+# 1. Проверка времени на хосте
+timedatectl status
+# → System clock synchronized: yes
+# → NTP service: active
+
+# 2. Проверка дрейфа
+timedatectl timesync-status
+# → Offset: -1.234ms
+
+# 3. Проверка контейнера
+docker exec <id> date -u
+docker exec <id> printenv TZ
+
+# 4. Проверка tzdata
+docker exec <id> ls -la /usr/share/zoneinfo/Europe/Moscow
+docker exec <id> zdump /etc/localtime
+
+# 5. Проверка логов systemd-timesyncd
+journalctl -u systemd-timesyncd --since "1 hour ago"
+```
 
 ## Граничные случаи
 

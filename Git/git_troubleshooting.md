@@ -187,6 +187,8 @@ git bisect reset
 
 ### Сценарий 4: Восстановление потерянных коммитов и данных
 
+Подробное руководство по `git reflog` см. в **[Git Reflog — журнал ссылок](./git_reflog.md)**.
+
 #### Восстановление после reset --hard или удаления ветки
 ```bash
 # 1. Просмотреть историю перемещений HEAD
@@ -263,10 +265,15 @@ git submodule update --init --recursive --force
 
 ### Сценарий 8: Отладка игнорирования файлов (check-ignore)
 
-Если файл неожиданно игнорируется или не попадает под правила `.gitignore`:
+Подробное руководство по диагностике правил `.gitignore` см. в **[Игнорирование файлов в Git](./git_ignore.md#сценарий-1-отладка-невидимых-правил)**.
+
+**Краткая справка:**
 ```bash
 # Показать правило и файл конфигурации, вызывающий игнорирование
 git check-ignore -v path/to/file.log
+
+# Проверить все источники (включая exclude и глобальные)
+git check-ignore -v --no-index path/to/file
 ```
 
 ### Сценарий 9: Работа с Git Worktree и очистка
@@ -279,61 +286,31 @@ git worktree list
 git worktree prune
 ```
 
+**Примечание:** Полный разбор сценариев, архитектуры `$GIT_COMMON_DIR`/`$GIT_DIR`, диагностики и устранения неполадок по worktree — в **[Git Worktree — параллельные рабочие директории](./git_worktree.md)**. Ниже — только типовые точки входа.
+
 ### Сценарий 10: Удаление секретов из истории Git
 
-**Проблема:** Коммит с паролями, API-ключами или другими секретами был отправлен в удаленный репозиторий.
+Полное руководство по очистке истории от секретов см. в **[Игнорирование файлов в Git](./git_ignore.md#утечка-секретов-и-очистка-истории)**.
 
-**Важно понимать:**
-- Простое удаление файла в новом коммите НЕ решает проблему — секрет остается в истории.
-- Если репозиторий публичный — считайте секрет скомпрометированным и немедленно ротируйте его.
-
-**Метод 1: git-filter-repo (рекомендуемый)**
-
+**Краткая справка:**
 ```bash
-# Установка
+# 1. Установить git-filter-repo
 pip install git-filter-repo
 
-# Удаление конкретного файла из всей истории
+# 2. Удалить файл из всей истории
 git filter-repo --path secrets.env --invert-paths
 
-# Замена текста (секретов) в истории
-git filter-repo --replace-text <(echo 'SECRET_KEY==>REPLACED')
-```
+# 3. Добавить в .gitignore
+echo "secrets.env" >> .gitignore
+git add .gitignore && git commit -m "chore: add secrets.env to gitignore"
 
-**Метод 2: BFG Repo-Cleaner (для больших репозиториев)**
-
-```bash
-# Удаление файла с секретами
-java -jar bfg.jar --delete-files secrets.env
-
-# Замена текста
-java -jar bfg.jar --replace-text passwords.txt
-```
-
-**Метод 3: git filter-branch (устаревший, но работает)**
-
-```bash
-# Удаление файла из истории
-git filter-branch --force --index-filter \
-  'git rm --cached --ignore-unmatch secrets.env' \
-  --prune-empty --tag-name-filter cat -- --all
-```
-
-**После очистки истории:**
-
-```bash
-# Принудительный push всех веток
+# 4. Force push (требуется согласие команды!)
 git push origin --force --all
-git push origin --force --tags
-
-# Удаление объектов сборщиком мусора
-git reflog expire --expire=now --all
-git gc --prune=now --aggressive
 ```
 
 **Важно:**
-- Все коллеги должны переклонировать репозиторий или выполнить `git rebase` после force-push.
-- Для предотвращения в будущем используйте `git-secrets`, `truffleHog` или `gitleaks` в pre-commit хуках.
+- Все коллеги должны переклонировать репозиторий после force-push.
+- Для предотвращения используйте `git-secrets`, `gitleaks` в pre-commit хуках.
 - См. [Защита от секретов в Git](../Security/Tools/gitleaks.md).
 
 ### Сценарий 11: Восстановление после Detached HEAD
@@ -454,7 +431,9 @@ git config core.fsmonitor true
 
 # Запустить фоновое обслуживание
 git maintenance start
-git maintenance run --verbose
+
+# Проверить, нужно ли обслуживание (exit 0 — нужно)
+git maintenance is-needed
 
 # Проверить размер репозитория
 git count-objects -vH

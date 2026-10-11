@@ -33,11 +33,11 @@
   '''
 
 [sinks.opensearch]
-  type = "elasticsearch" # Используется для OpenSearch
-  inputs = ["parse_json"]
-  endpoint = "https://os.example.com:9200"
-  mode = "data_stream"
-  index = "logs-app-default"
+type = "elasticsearch"
+inputs = ["parse_json"]
+endpoints = ["https://os.example.com:9200"]
+mode = "data_stream"
+index = "logs-app-default"
 ```
 
 ### Источники (Sources)
@@ -124,7 +124,7 @@ customConfig:
     os_out:
       type: elasticsearch
       inputs: ["process_logs"]
-      endpoint: "https://opensearch:9200"
+      endpoints: ["https://opensearch:9200"]
       compression: "gzip"
       # Шаблон индекса: поле события + strftime-спецификатор (Vector template syntax)
       index: "logs-{{ kubernetes.namespace }}-%Y.%m.%d"
@@ -267,7 +267,7 @@ sinks:
   es_errors:
     type: elasticsearch
     inputs: ["split_logs.errors"]
-    endpoint: "https://es:9200"
+    endpoints: ["https://es:9200"]
     index: "app-errors-%Y.%m.%d"
 
   loki_info:
@@ -348,7 +348,7 @@ sinks:
 [sinks.elastic]
   type = "elasticsearch"
   inputs = ["parse"]
-  endpoint = "http://es:9200"
+  endpoints = ["http://es:9200"]
   index = "app-logs-%Y.%m.%d"
   compression = "gzip"
 

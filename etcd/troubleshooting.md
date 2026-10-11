@@ -1,13 +1,17 @@
 # Систематический troubleshooting etcd
 
+**Актуально для:** etcd 3.7.x
+
 Данный playbook описывает пошаговые алгоритмы диагностики типичных проблем в production. Используйте его как чеклист при получении алертов или жалоб пользователей.
+
+Предварительные требования: `etcdctl` той же мажорной версии, что и сервер; доступ к `/metrics` на клиентском порту (2379); `kubectl` для сценариев Kubernetes; `journalctl`, `iostat`, `mpstat` на узлах.
 
 ## Определения
 
 | Термин | Описание |
 | :--- | :--- |
 | **Raft Index Gap** | Разница между `RAFT INDEX` (записан) и `RAFT APPLIED INDEX` (применен к MVCC). |
-| **Stale Read** | Чтение устаревших данных (serializable read без ReadIndex). |
+| **Stale Read** | Чтение устаревших данных — возможно при serializable-read; linearizable-read проходит через ReadIndex и гарантирует актуальность. |
 | **Split-Brain** | Сетевое разделение, при котором часть узлов теряет кворум. |
 | **Gray Failure** | Узел частично работает (принимает запросы, но не отвечает на heartbeats). |
 | **Data Corruption** | Повреждение данных на диске (WAL или BoltDB). |
@@ -30,7 +34,7 @@ iostat -x 1 5
 ```
 
 **Решение:**
-- Если `await` > 10 ms — проблема с диском. Перейти на NVMe или разделить WAL/данные.
+- Если `await` > 10 ms — проблема с диском. Перейти на NVMe или вынести WAL на отдельный диск (`--wal-dir`).
 - Если `%util` = 100% — диск насыщен. Добавьте более быстрый диск.
 
 ### Шаг 2: Проверить CPU
@@ -132,10 +136,11 @@ journalctl -u etcd -n 100 --no-pager
 ### Шаг 2: Проверить WAL
 
 ```bash
-# Целостность WAL
-etcdutl wal verify /var/lib/etcd/wal/
+# Целостность WAL проверяется при старте etcd; ручная диагностика — через etcd-dump-logs
+go install go.etcd.io/etcd/v3/tools/etcd-dump-logs@latest
+etcd-dump-logs /var/lib/etcd
 
-# Если поврежден — восстановить из снапшота
+# Если поврежден — восстановить из снапшота (etcd 3.6+; в 3.5 — `etcdctl snapshot restore`)
 etcdutl snapshot restore /backup/last-good.db \
   --name node1 \
   --initial-cluster node1=... \
@@ -147,7 +152,9 @@ etcdutl snapshot restore /backup/last-good.db \
 ```bash
 # Права доступа
 ls -la /var/lib/etcd
-# → Должен быть доступен пользователю etcd (chown 1001:1001)
+# → Должен быть доступен пользователю etcd:
+#   systemd: chown -R etcd:etcd /var/lib/etcd
+#   k8s static pod: 1001:1001
 
 # Свободное место
 df -h /var/lib/etcd
@@ -172,7 +179,7 @@ openssl x509 -in /etc/etcd/pki/server.crt -noout -subject -ext subjectAltName
 
 ```bash
 etcdctl alarm list
-# → member xxxxx: NOSPACE
+# → memberID:8e9e05f54f240d12 alarm:NOSPACE
 ```
 
 ### Шаг 2: Освободить место в ОС
@@ -189,10 +196,10 @@ df -h /var/lib/etcd
 
 ```bash
 # Текущая ревизия
-rev=$(etcdctl endpoint status --write-out="json" | egrep -o '"revision":[0-9]*' | egrep -o '[0-9]*' | head -n 1)
+rev=$(etcdctl endpoint status --write-out="json" | egrep -o '"revision":[0-9]*' | egrep -o '[0-9].*')
 
 # Компакция
-etcdctl compaction $rev
+etcdctl compact $rev
 ```
 
 ### Шаг 4: Дефрагментация (поочередно)
@@ -205,6 +212,16 @@ etcdctl defrag --cluster
 
 ```bash
 etcdctl alarm disarm
+```
+
+### Шаг 6: Проверка
+
+```bash
+etcdctl alarm list
+# → (пусто)
+
+etcdctl put probe-key probe-value
+# → OK
 ```
 
 ---
@@ -231,7 +248,7 @@ kubectl get --raw /metrics | grep etcd_helper_cache
 
 **Решение:**
 - Увеличить `--watch-cache-sizes`.
-- Убедиться, что `--watch-cache-enabled=true`.
+- Убедиться, что `--watch-cache=true` (по умолчанию true).
 
 ### Шаг 3: Проверить Request Size
 
@@ -264,10 +281,21 @@ kubectl logs -n kube-system kube-apiserver-... | grep "compacted"
 | `etcd_server_has_leader` | < 1 | Потеря лидера → проверить кворум, сеть, диск |
 | `etcd_server_leader_changes_seen_total` | > 3 за 15м | Flapping → disk/network/CPU |
 | `etcd_disk_wal_fsync_duration_seconds` | p99 > 100 мс | Disk bottleneck |
-| `etcd_mvcc_db_total_size_in_bytes` | > 8 ГБ | Defrag + compact или масштабирование |
+| `etcd_mvcc_db_total_size_in_bytes` | > 80% от `quota-backend-bytes` (по умолчанию 2 ГБ, максимум 8 ГБ) | Defrag + compact или увеличение квоты |
 | `etcd_server_proposals_failed_total` | Рост | Write path overloaded |
-| `etcd_server_lease_expired_total` | Всплеск | Lease GC не успевает или keep-alive сбоит |
+| `etcd_debugging_server_lease_expired_total` | Всплеск | Lease GC не успевает или keep-alive сбоит |
 | `etcd_network_peer_round_trip_time_seconds` | p99 > 100 мс | Network partition или high latency |
+
+---
+
+## Best Practices
+
+- **Профилактика NOSPACE:** алерт на `etcd_mvcc_db_total_size_in_bytes / etcd_server_quota_backend_bytes > 0.85` — реагировать до достижения квоты, а не после.
+- **Compact перед defrag:** без компакции дефрагментация не вернёт значительного объёма места.
+- **Defrag по очереди:** дефрагментируйте узлы поочерёдно в часы минимальной нагрузки — каждый узел блокируется на время выполнения.
+- **Диск для WAL:** держите p99 `etcd_disk_wal_fsync_duration_seconds` < 10 мс; при перегрузке диска вынесите WAL на отдельный NVMe (`--wal-dir`).
+- **Lease TTL ≥ 3× keep-alive interval:** предотвращает массовое истечение аренд при кратковременных сетевых проблемах.
+- **Тестируйте restore:** регулярно проверяйте `etcdutl snapshot status` бэкапов и процедуру восстановления в staging.
 
 ---
 

@@ -151,3 +151,4 @@ curl -s http://localhost:8428/metrics | grep -E '^vm_(data_size_bytes|free_disk_
 - [Отчёт о кардинальности (vmestimator)](./vmestimator.md);
 - [VictoriaLogs: внутреннее устройство](./victorialogs_internals.md) — аналогичный движок для логов;
 - [HTTP API: диагностика RAM/кардинальности](./http_api_reference.md) — `/api/v1/status/tsdb`, `active_queries`.
+# force reindex test

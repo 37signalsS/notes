@@ -35,7 +35,7 @@
 
 ```bash
 curl -s http://localhost:3000/api/health
-# → {"commit":"...","database":"ok","version":"13.1.0","status":"ok"}
+# → {"commit":"...","database":"ok","version":"13.2.3","status":"ok"}
 ```
 
 Если `database":"failed"` — проблема с БД (доступ/миграция). Если соединение отклонено — процесс не слушает порт.
@@ -96,14 +96,14 @@ curl -sI https://grafana.example.internal/api/health | grep -i "strict-transport
 
 ```bash
 # Когда нет доступа, но есть доступ к хосту
-grafana-cli admin reset-admin-password <new-strong-password>
+grafana cli admin reset-admin-password <new-strong-password>
 # → Admin password changed successfully
 ```
 
 ### Сценарий 7. Проверка плагинов
 
 ```bash
-grafana-cli plugins ls
+grafana cli plugins ls
 # → список с версиями; ищем несовместимые/ошибочные
 docker compose logs grafana | grep -i "plugin"
 # → "plugin <id> is not compatible" означает обновить/удалить плагин
@@ -128,9 +128,9 @@ docker compose logs grafana | grep -i "plugin"
 | `migration failed` при старте | БД новее версии Grafana / повреждена | Восстановить БД из бэкапа нужной версии |
 | 502 Bad Gateway за nginx | Grafana не слушает / упала | `ss -ltnp` на 3000, логи Grafana |
 | Вечный редирект / cookie не ставится | `root_url` http или нет `X-Forwarded-Proto` | `root_url=https://...`, проксировать `X-Forwarded-Proto` |
-| `plugin not compatible` | Плагин несовместим с версией | `grafana-cli plugins update/remove <id>` |
+| `plugin not compatible` | Плагин несовместим с версией | `grafana cli plugins update/remove <id>` |
 | Панель пустая, в логах `context deadline exceeded` | Таймаут источника | Увеличить `timeout`, оптимизировать запрос |
-| Не могу войти, забыл пароль Admin | — | `grafana-cli admin reset-admin-password` |
+| Не могу войти, забыл пароль Admin | — | `grafana cli admin reset-admin-password` |
 | Утечка памяти / OOM | Рендеринг в том же процессе | Вынести `grafana-image-renderer` отдельно |
 | `database is locked` в логах | SQLite не выдерживает нагрузку алертов (Grafana 8.0.0+) | Миграция на PostgreSQL — см. [Обновление и миграция](grafana_upgrade_migration.md#сценарий-7-миграция-sqlite--postgresql-docker-compose) |
 
@@ -149,7 +149,7 @@ docker compose logs grafana | grep -i "plugin"
 
 ### Актуальность и статус
 
-Эндпоинты `/api/health`, `/metrics` и утилита `grafana-cli` стабильны на 11.x/12.x/13.x. Профайлер — стандартный для Go-сервисов Grafana.
+Эндпоинты `/api/health`, `/metrics` и утилита `grafana cli` стабильны на 11.x/12.x/13.x (в Grafana 13.0 старые обёртки `grafana-cli` и `grafana-server` удалены — используйте `grafana cli` и `grafana server`). Профайлер — стандартный для Go-сервисов Grafana.
 
 ### Связанные темы
 

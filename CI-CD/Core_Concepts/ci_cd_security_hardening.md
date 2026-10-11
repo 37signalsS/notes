@@ -161,6 +161,95 @@ gitleaks detect --source=. --report-format=json --report-path=gitleaks-report.js
 
 ## Лучшие практики
 
+### GitHub Actions: специфика безопасности
+
+Для GitHub Actions есть ряд платформо-специфичных мер безопасности, которых нет в GitLab CI или Jenkins.
+
+**1. `permissions` ключ (самая важная мера):**
+```yaml
+# По умолчанию GITHUB_TOKEN имеет широкие права.
+# Явно ограничивайте:
+permissions:
+  contents: read       # только чтение кода
+  pull-requests: read  # доступ к PR
+  id-token: write      # только для OIDC-аутентификации
+  # packages: write   # только если нужно push образов
+  # actions: read      # доступ к кэшу и артефактам
+```
+
+**2. Ограничение `GITHUB_TOKEN` по умолчанию:**
+- По умолчанию токен имеет права `contents: write`, `issues: write`, `pull_requests: write` и др. Для production-деплоя обязательно ограничивайте `permissions` на уровне workflow или job.
+- `GITHUB_TOKEN` автоматически маскируется в логах (как и `secrets.*`).
+
+**3. OIDC вместо статических секретов:**
+```yaml
+jobs:
+  deploy:
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/github-actions-deploy
+          aws-region: us-east-1
+      - name: Deploy
+        run: ./deploy.sh
+```
+
+**Настройка OIDC-identity provider (однократно):**
+- AWS: IAM → Identity providers → Create provider (`https://token.actions.githubusercontent.com`, audience `sts.amazonaws.com`).
+- Настраивайте trust policy с ограничением `sub` на конкретный репозиторий и ветку:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Federated": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:my-org/my-repo:ref:refs/heads/main"
+        }
+      }
+    }
+  ]
+}
+```
+
+**4. Self-hosted runner hardening:**
+- Используйте `--ephemeral` при регистрации или ARC с `ephemeral: true` — каждый job на чистом pod.
+- Запускайте runner под непривилегированным пользователем; не используйте root.
+- Регулярно обновляйте приложение runner'а (устаревшие версии принудительно отключаются).
+- Для публичных репозиториев self-hosted runner'ы запрещены по умолчанию (настройте `allowed_runners` в organization settings).
+
+**5. Supply Chain Security:**
+- Используйте только проверенные действия из Marketplace; проверяйте `uses` на ввод данных извне.
+- Пинуйте действия по версии (`actions/checkout@v7`), а не по `@main`/`@master`.
+- Генерируйте SBOM и подписывайте образы (cosign) в пайплайне.
+- Включите GitHub Advanced Security (GHAS) для сканирования уязвимостей и секретов, если доступно.
+
+**6. Branch Protection Rules:**
+- Требуйте review перед merge.
+- Требуйте статус-чеков (required status checks) перед merge.
+- Запрещайте force-push в production-ветки.
+- Используйте CODEOWNERS для назначения ревьюеров.
+
+**7. Environment Protection Rules:**
+- Для production-environment: настройте `deployment review` (требование approval).
+- Используйте `deployment_branch_policy` для ограничения веток, которые могут деплоить в environment.
+
+**8. Audit Trail:**
+- Включите audit log (доступно в Enterprise).
+- Критические действия: создание/удаление секретов, изменение runner'ов, изменение branch protection.
+
+**9. Сетевая изоляция:**
+- Self-hosted runner'ы должны иметь исходящий трафик только к необходимым хостам (egress allowlist).
+- Используйте внутренние зеркала для зависимостей (Nexus, Artifactory, pull-through cache).
+- Для недоверённого кода (PR из forks) используйте `pull_request` триггер (не `pull_request_target`) или изолируйте выполнение.
+
 - **Наименьшие привилегии:** раннер работает под выделенным пользователем без широких прав; нет SSH-ключей к проду.
 - **Эфемерные раннеры:** каждый джоб выполняется на свежем экземпляре, уничтожаемом после. Для GitLab — флаг `--ephemeral`; для Jenkins — облачные агенты с discard.
 - **Сетевая изоляция:** раннеры в отдельном VLAN; исходящий трафик — только к внутреннему registry/mirror и необходимым хостам (egress allowlist). Недоверенные зависимости тянутся через внутреннее зеркало, а не напрямую из интернета.

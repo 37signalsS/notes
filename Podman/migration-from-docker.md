@@ -601,3 +601,5 @@ podman network prune
 - Перед обновлением Podman делайте бэкап `~/.local/share/containers/storage` — миграция БД между мажорными версиями необратима.
 - Для CI/CD, где требуется Docker API, включайте `podman.socket` и настраивайте `DOCKER_HOST` на соответствующем уровне (rootful или rootless).
 - Указывайте полные имена образов (FQIN) в новых конфигурациях — это избавит от зависимости от `registries.conf`.
+
+# force reindex test

@@ -1,5 +1,7 @@
 # Инструкции Dockerfile: Обзор
 
+**Актуально для:** Docker 20.10+, BuildKit v1.4+
+
 ## Определения
 
 **Инструкции Dockerfile** — зарезервированные ключевые слова, используемые в файле `Dockerfile` для описания процесса сборки образа. Каждая инструкция представляет собой отдельный логический шаг, который либо формирует новый слой файловой системы (изменяя содержимое), либо модифицирует метаданные образа (управляя рантаймом). Инструкции выполняются последовательно сверху вниз, и каждая создаёт неизменяемый слой (layer) в стеке образа.
@@ -82,7 +84,7 @@
 - **`ENV`** доступен и во время сборки, и во время выполнения. Может быть переопределён через `-e` при `docker run`.
 - **`WORKDIR`** устанавливает рабочую директорию для всех последующих `RUN`, `CMD`, `ENTRYPOINT`, `COPY`, `ADD`.
 - **`USER`** определяет, от имени какого пользователя выполняются команды `RUN`, `CMD`, `ENTRYPOINT`.
-- **`VOLUME`** создаёт точку монтирования, но не привязывает её к хосту直到 `docker run -v`.
+- **`VOLUME`** создаёт точку монтирования, но не привязывает её к хосту до `docker run -v`.
 - **`EXPOSE`** — исключительно документирующая инструкция; она не открывает порты.
 
 ### Порядок инструкций
@@ -94,7 +96,7 @@
 # syntax=docker/dockerfile:1
 
 # 2. FROM (базовый образ)
-FROM node:22-slim
+FROM node:26-slim
 
 # 3. Метаданные для сборки
 ARG NODE_ENV=production
@@ -170,7 +172,7 @@ SBOM позволяет:
 
 ### Переход на Containerd Store
 
-Docker Engine v29+ использует общее хранилище с Kubernetes через **Containerd Store**. Инструкции Dockerfile теперь генерируют слои, которые полностью совместимы с нативным форматом `containerd` без конвертации.
+Современные версии Docker Engine используют общее хранилище с Kubernetes через **Containerd Store**. Инструкции Dockerfile теперь генерируют слои, которые полностью совместимы с нативным форматом `containerd` без конвертации.
 
 **Преимущества:**
 - Устранение дублирования образов между Docker и Kubernetes.
@@ -255,7 +257,7 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000
 # syntax=docker/dockerfile:1
 # check=error=true
 
-FROM node:22-slim
+FROM node:26-slim
 WORKDIR /app
 # Ошибка сборки: использование root (прервано линтером BuildKit)
 COPY . .
@@ -299,7 +301,7 @@ COPY services/api/config.json /dist/services/api/
 # syntax=docker/dockerfile:1
 
 # Стадия 1: Сборка
-FROM golang:1.22-alpine AS builder
+FROM golang:1.27-alpine AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -307,7 +309,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /app .
 
 # Стадия 2: Runtime (минимальный образ)
-FROM alpine:3.21
+FROM alpine:3.24
 RUN addgroup -g 1001 appgroup && adduser -u 1001 -G appgroup -s /bin/sh -D appuser
 COPY --from=builder /app /app
 USER 1001
@@ -326,7 +328,7 @@ CMD ["/app"]
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM node:22-slim
+FROM node:26-slim
 WORKDIR /app
 
 # Шаг 1: Копируем файлы зависимостей (редко меняются)
@@ -350,7 +352,7 @@ COPY . .
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
 FROM node:${NODE_VERSION}-slim
 
 ARG APP_ENV=production
@@ -375,7 +377,7 @@ CMD ["node", "index.js"]
 ```bash
 # Продакшен
 docker build \
-    --build-arg NODE_VERSION=22 \
+    --build-arg NODE_VERSION=24 \
     --build-arg APP_ENV=production \
     --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
     --build-arg VERSION=1.2.3 \
@@ -383,7 +385,7 @@ docker build \
 
 # Разработка
 docker build \
-    --build-arg NODE_VERSION=22 \
+    --build-arg NODE_VERSION=24 \
     --build-arg APP_ENV=development \
     -t myapp:dev .
 ```
@@ -395,7 +397,7 @@ docker build \
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache git openssh
 
 # Монтирование SSH-ключа (ключ НЕ попадает в слой образа)
@@ -459,7 +461,7 @@ build
 
 **Базовый образ (Dockerfile.base):**
 ```dockerfile
-FROM node:22-slim
+FROM node:26-slim
 WORKDIR /app
 ONBUILD COPY package*.json ./
 ONBUILD RUN npm ci --only=production
@@ -484,7 +486,7 @@ CMD ["node", "index.js"]
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM alpine:3.21
+FROM alpine:3.24
 
 ARG BUILD_DATE
 ARG VERSION
@@ -527,7 +529,7 @@ FROM python
 
 # ХОРОШО: конкретная версия
 FROM ubuntu:24.04
-FROM node:22.5-slim
+FROM node:26-slim
 FROM python:3.12-alpine
 ```
 
@@ -539,13 +541,13 @@ FROM python:3.12-alpine
 
 ```dockerfile
 # ПЛОХО: процесс запускается от root
-FROM node:22-slim
+FROM node:26-slim
 WORKDIR /app
 COPY . .
 CMD ["node", "index.js"]
 
 # ХОРОШО: непривилегированный пользователь
-FROM node:22-slim
+FROM node:26-slim
 WORKDIR /app
 RUN addgroup --gid 1001 appgroup && \
     adduser --uid 1001 --gid 1001 --disabled-password --gecos "" appuser
@@ -647,7 +649,7 @@ ADD archive.tar.gz /app/
 
 ```dockerfile
 # Базовый образ
-FROM alpine:3.21
+FROM alpine:3.24
 ENTRYPOINT ["/bin/sh"]
 
 # Дочерний образ: ENTRYPOINT перезаписывается
@@ -670,7 +672,7 @@ ONBUILD ONBUILD RUN echo "nested"  # BuildKit проигнорирует или 
 Изменение `ENV` инвалидирует кэш для всех последующих инструкций, даже если они не используют эту переменную:
 
 ```dockerfile
-FROM node:22-slim
+FROM node:26-slim
 ENV APP_ENV=production
 RUN apt-get update  # Кэш сброшен, даже если APP_ENV не используется здесь
 ```
@@ -685,12 +687,12 @@ Digest образа (`sha256:...`) не обновляется автомати�
 
 ```bash
 # Проверка digest
-docker inspect --format='{{index .RepoDigests 0}}' node:22-slim
+docker inspect --format='{{index .RepoDigests 0}}' node:26-slim
 # → node@sha256:abc123...
 
 # Через неделю digest может измениться
-docker pull node:22-slim
-docker inspect --format='{{index .RepoDigests 0}}' node:22-slim
+docker pull node:26-slim
+docker inspect --format='{{index .RepoDigests 0}}' node:26-slim
 # → node@sha256:def456...
 ```
 
@@ -702,6 +704,208 @@ docker inspect --format='{{index .RepoDigests 0}}' node:22-slim
 # escape=`
 FROM windowsservercore
 RUN dir C:\Windows\System32
+```
+
+### Ограничение: BuildKit отключён (legacy builder)
+
+В окружениях с устаревшим Docker (до 23.0) или принудительно отключённом BuildKit (`DOCKER_BUILDKIT=0`) некоторые инструкции и директивы недоступны:
+
+```bash
+# Проверка режима
+echo $DOCKER_BUILDKIT  # 0 = legacy, 1 = BuildKit
+
+# Legacy builder: нет поддержки Heredocs, --mount, --parents
+docker build --no-cache .
+```
+
+**Ограничения legacy builder:**
+- Нет Heredoc-синтаксиса (`<<EOF`)
+- Нет mount-монтирований (`--mount=type=ssh`)
+- Нет флага `--parents` в `COPY`
+- Нет встроенного линтинга (`# check`)
+- Нет SBOM и Provenance по умолчанию
+
+**Решение:** Обновите Docker до 23.0+ или включите BuildKit через демона (`/etc/docker/daemon.json`).
+
+### Ограничение: Rootless Docker и сборка
+
+Rootless Docker имеет ограничения на сборку образов:
+- Нет доступа к `docker` группе
+- Нет возможности использовать `--platform` без дополнительных разрешений
+- BuildKit может требовать явного указания драйвера
+
+```bash
+# Проверка режима
+docker info | grep -i rootless
+
+# Сборка в Rootless
+docker build --build-arg BUILDKIT_PROGRESS=plain .
+```
+
+### Ограничение: Air-gapped окружения
+
+В изолированных сетях (без доступа к интернету) сборка требует предварительной подготовки:
+- Базовые образы должны быть загружены в локальный registry
+- `docker buildx build --output=type=local` для экспорта артефактов
+- Kaniko или BuildKit в режиме `--oci` для сборки без демона Docker
+
+```bash
+# Загрузка базового образа в локальный registry
+docker pull alpine:3.24
+docker tag alpine:3.24 localhost:5000/alpine:3.24
+docker push localhost:5000/alpine:3.24
+
+# Сборка из локального registry
+docker build --registry-mirror http://localhost:5000 -t myapp .
+```
+
+### Ограничение: Воспроизводимость и `SOURCE_DATE_EPOCH`
+
+Для детерминированных сборок (reproducible builds) используйте `SOURCE_DATE_EPOCH`:
+- Фиксирует временные метки в слоях
+- Гарантирует одинаковые digest для одного исходного кода
+- Важно для compliance и аудита
+
+```dockerfile
+# syntax=docker/dockerfile:1
+ARG SOURCE_DATE_EPOCH=1735689600
+FROM alpine:3.24
+RUN touch /build-$(date -u -d "@$SOURCE_DATE_EPOCH" +"%Y-%m-%d")
+```
+
+```bash
+# Сборка с фиксированной датой
+docker build --build-arg SOURCE_DATE_EPOCH=1735689600 -t myapp:reproducible .
+```
+
+### Ограничение: Дисковое пространство и кэш сборки
+
+BuildKit кэширует промежуточные слои на диске. При нехватке места:
+- Используйте `docker builder prune` для очистки неиспользуемого кэша
+- Настройте `buildkitd.toml` для ограничения размера кэша
+- Используйте `--no-cache` для полной пересборки (не влияет на хранилище)
+
+```bash
+# Очистка кэша
+docker builder prune -a --filter until=24h
+
+# Проверка размера кэша
+docker system df -v | grep Build
+```
+
+### Ограничение: Режим BuildKit daemon vs client
+
+BuildKit может работать в двух режимах:
+- **Daemon mode** (по умолчанию в Docker 23.0+): кэш сохраняется между сборками
+- **Client mode** (`buildctl`): изолированные сборки, нет персистентного кэша
+
+```bash
+# Daemon mode (Docker CLI)
+docker build -t myapp .
+
+# Client mode (buildctl)
+buildctl build --frontend=dockerfile.v0 --local context=. --local dockerfile=.
+```
+
+### Ограничение: Параллелизм и лимиты ресурсов
+
+BuildKit использует параллельные воркеры для ускорения сборки:
+- По умолчанию: число воркеров = количество CPU cores
+- Ограничьте через `--cpu-shares` или `buildkitd.toml`
+- В CI/CD окружениях используйте `--build-arg BUILDKIT_MAX_CPU=2`
+
+```bash
+# Ограничение ресурсов
+docker build --build-arg BUILDKIT_MAX_CPU=2 --build-arg BUILDKIT_MAX_MEM=4g -t myapp .
+```
+
+## Валидация
+
+### Проверка версии Docker Engine
+
+```bash
+# Минимальная версия для BuildKit по умолчанию
+docker version --format '{{.Server.Version}}'
+# → 24.0.5 (требуется 20.10+)
+
+# Проверка версии клиента
+docker version --format '{{.Client.Version}}'
+```
+
+### Проверка статуса BuildKit
+
+```bash
+# BuildKit по умолчанию в Docker 23.0+
+docker info | grep -i buildkit
+# → BuildKit: Enabled (true)
+
+# Проверка через переменную окружения
+echo $DOCKER_BUILDKIT
+# → 1 (включён) или пусто (используется значение по умолчанию)
+```
+
+### Проверка синтаксиса директив парсера
+
+```bash
+# Линтинг Dockerfile
+docker build --check -t myapp .
+# → error: FROM requires a tag
+
+# Строгий режим
+# syntax=docker/dockerfile:1
+# check=error=true
+```
+
+### Проверка отсутствия секретов в слоях
+
+```bash
+# Анализ истории слоёв
+docker history myapp:latest
+# → Проверьте, нет ли команд с секретами (API keys, пароли, токены)
+
+# Сканирование секретов
+trivy image --scanners secret myapp:latest
+# → Проверка на наличие ключей, паролей, токенов
+```
+
+### Проверка эффективности .dockerignore
+
+```bash
+# Размер контекста до/после .dockerignore
+tar -czf context-before.tar.gz .
+tar -czf context-after.tar.gz .  # с .dockerignore
+
+# Разница в размере = эффективность исключений
+```
+
+### Проверка размера образа и количества слоёв
+
+```bash
+# Размер образа
+docker images myapp:latest
+# → myapp latest 123MB 2 hours ago
+
+# Количество слоёв
+docker inspect myapp:latest --format '{{len .RootFS.Layers}}'
+# → 5 (оптимально: 5-10 для большинства приложений)
+
+# Анализ слоёв
+dive myapp:latest
+# → Визуализация каждого слоя и его размера
+```
+
+### Проверка генерации SBOM
+
+```bash
+# Генерация SBOM через Syft
+syft myapp:latest -o cyclonedax-json > sbom.json
+
+# Проверка через Trivy
+trivy image --format cyclonedx myapp:latest > sbom-trivy.json
+
+# Валидация SBOM
+jq '.components | length' sbom.json
+# → Количество компонентов в образе
 ```
 
 ## Дополнительная информация

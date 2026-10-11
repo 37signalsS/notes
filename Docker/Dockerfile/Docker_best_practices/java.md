@@ -1,3 +1,5 @@
+**Актуально для:** Java 21+
+
 # Dockerfile: Лучшие практики для Java
 
 ## Определения
@@ -21,7 +23,7 @@
 - **Quarkus / Micronaut:** Альтернативные фреймворки, оптимизированные для контейнеров и GraalVM Native Image. Обеспечивают время старта <100 мс и потребление памяти <100 МБ.
 - **Testcontainers:** Библиотека для поднятия полноценных контейнеров (БД, брокеры сообщений) во время интеграционных тестов. В Java-экосистеме работает через Docker API и требует доступа к `/var/run/docker.sock`.
 - **JMX (Java Management Extensions):** Механизм мониторинга и управления JVM в runtime. Позволяет получать метрики (память, потоки, GC) и изменять параметры без перезапуска.
-- **JFR (Java Flight Recorder):** Встроенный в JVM низко-оюерходный профайлер, записывающий события (GC, методы, блокировки) в файл `.jfr` для последующего анализа в JDK Mission Control.
+- **JFR (Java Flight Recorder):** Встроенный в JVM низкоуровневый профайлер, записывающий события (GC, методы, блокировки) в файл `.jfr` для последующего анализа в JDK Mission Control.
 - **jcmd / jstack / jmap / jinfo:** Утилиты JDK для диагностики живого процесса (`jcmd`), получения дампов потока (`jstack`), анализа кучи (`jmap`) и изменения параметров JVM (`jinfo`) без перезапуска.
 - **-XX:MaxRAMPercentage:** Флаг JVM, задающий процент от лимита памяти контейнера, который JVM может использовать для Heap. Стандарт для контейнеризированных приложений — `75.0`.
 - **-XX:+ExitOnOutOfMemoryError:** Флаг, заставляющий JVM завершиться (с non-zero exit code) при OutOfMemoryError вместо попытки продолжить работу в неопределенном состоянии.
@@ -35,16 +37,16 @@
 - **trivy:** Мультиформатный сканер уязвимостей от Aqua Security. Анализирует файловую систему контейнера, JAR-файлы и SBOM.
 - **syft:** Утилита от Anchore для генерации SBOM в форматах SPDX и CycloneDX. Поддерживает анализ Maven/Gradle зависимостей.
 - **dive:** Интерактивный инструмент для анализа слоев Docker-образов. Позволяет обнаруживать "мусор" (кэши Maven, исходный код), попавший в итоговый образ.
-- **Tomcat / Jetty / Undertow:** Серверы приложений для部署 Java веб-приложений. В контейнерах часто используются как embedded (встроенные) серверы в Spring Boot или Quarkus.
+- **Tomcat / Jetty / Undertow:** Серверы приложений для deployment Java веб-приложений. В контейнерах часто используются как embedded (встроенные) серверы в Spring Boot или Quarkus.
 - **Virtual Threads (Java 21+):** Легковесные потоки (Project Loom), работающие поверх ограниченного пула системных потоков. В контейнерах позволяют масштабировать приложения до миллионов конкурентных запросов без увеличения потребления памяти.
 - **Metaspace:** Область памяти JVM для хранения метаданных классов (заменила PermGen в Java 8). Рекомендуется ограничивать через `-XX:MaxMetaspaceSize` для предотвращения утечек.
 - **Direct Memory:** Память, выделяемая вне кучи (Heap) через NIO (например, в Netty, Kafka). Лимитируется через `-XX:MaxDirectMemorySize`.
 
 ## Базовые концепции
 
-### Эволюция рантайма в контейнерах (Java 21/25/26)
+### Эволюция рантайма в контейнерах (Java 21+)
 
-Начиная с версий Java 21 и 25 (LTS), платформа стала полностью адаптированной для облачных сред и контейнеризации.
+Начиная с версий Java 21 (LTS) и 25 (LTS), платформа получила существенные улучшения для контейнеризации и управления памятью.
 
 *   **Compact Object Headers (Java 25+):** Снижает потребление Heap на **15–30%** за счет уменьшения размера заголовков объектов. Включается через `-XX:+UseCompactObjectHeaders`.
 *   **Generational ZGC:** Обеспечивает паузы сборщика мусора **<1 мс** даже на очень больших объемах памяти, эффективно разделяя объекты по поколениям.
@@ -134,7 +136,7 @@ target/
 build/
 out/
 
-# Зависимости (не нужны в контексте, если используется go-offline)
+# Зависимости (не нужны в контексте при использовании кэширования зависимостей)
 vendor/
 node_modules/
 
@@ -168,7 +170,7 @@ docker buildx build \
 
 1.  **PGO (Profile-Guided Optimization):** В 2026 году использование PGO считается стандартом для высоконагруженных систем.
     *   *Процесс:* Соберите образ → запустите под нагрузкой → снимите профиль (через JFR или async-profiler) → пересоберите с профилем.
-    *   *GraalVM Native Image:* Поддерживает PGO через флаг `--pgo=profile.jdg`.
+    *   *GraalVM Native Image:* Поддерживает PGO через флаг `--pgo=profile.iprof`.
 2.  **Кэширование BuildKit:** Монтирование `~/.m2` и `~/.gradle` через `type=cache` ускоряет повторные сборки в разы.
 3.  **Layered JAR:** В Spring Boot разделение на слои (`dependencies`, `spring-boot-loader`, `snapshot-dependencies`, `application`) позволяет Docker кэшировать неизменяемые слои.
 
@@ -257,7 +259,7 @@ ENTRYPOINT ["java", "-jar", "app.jar"]
 
 ### Сценарий 3: GraalVM Native Image (Максимальная плотность)
 
-Идеально для Serverless и систем с мгновенным масштабированием.
+Идеально для систем с мгновенным масштабированием и ограниченными ресурсами.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
@@ -272,6 +274,57 @@ USER 65532
 # Нативный бинарник стартует за 20-50 мс
 ENTRYPOINT ["/app"]
 ```
+
+### Сценарий 4: WAR в Tomcat / Jetty (legacy)
+
+Для приложений, которые нельзя перевести на Spring Boot с embedded-сервером — классический WAR-деплой на сервер приложений.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+
+# --- Этап сборки ---
+FROM eclipse-temurin:21-jdk AS builder
+WORKDIR /build
+COPY pom.xml .
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn dependency:go-offline -B
+COPY src ./src
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn package -DskipTests -B
+
+# --- Финальный этап: Tomcat ---
+FROM tomcat:10.1-jdk17-temurin
+# Удаляем дефолтные приложения (ROOT, examples, manager) — уменьшает attack surface
+RUN rm -rf /usr/local/tomcat/webapps/*
+COPY --from=builder /build/target/*.war /usr/local/tomcat/webapps/ROOT.war
+
+# Tomcat стартует как PID 1 и корректно обрабатывает SIGTERM (graceful shutdown)
+EXPOSE 8080
+CMD ["catalina.sh", "run"]
+```
+
+**Jetty (альтернатива):**
+
+```dockerfile
+FROM jetty:11-jdk17-temurin
+COPY --from=builder /build/target/*.war /var/lib/jetty/webapps/ROOT.war
+EXPOSE 8080
+```
+
+**Валидация:**
+```bash
+docker build -t my-war-app:latest .
+docker run -d -p 8080:8080 --name war-app my-war-app:latest
+curl -s http://localhost:8080/health
+# → OK
+
+# Graceful shutdown
+docker stop --timeout 30 war-app
+docker inspect war-app --format='{{.State.ExitCode}}'
+# → 0
+```
+
+**Рекомендация:** для новых проектов используйте Spring Boot с embedded Tomcat (Сценарий 1) — WAR на внешний сервер приложений оправдан только для legacy-приложений и Jakarta EE-проектов. WildFly/JBoss контейнеризируются аналогично (`jboss/wildfly`), но требуют настройки management-порта и пользователей.
 
 ## Отладка и мониторинг
 

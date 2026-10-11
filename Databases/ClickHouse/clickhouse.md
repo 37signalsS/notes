@@ -1,10 +1,18 @@
 # ClickHouse
 
+**Актуально для:** ClickHouse 26.9.x (Stable) / 26.8.x (LTS)
+
 ## Определения и базовая теория
 
 **ClickHouse** — это колоночная (столбцовая) система управления базами данных (СУБД) для онлайн-обработки аналитических запросов (OLAP — Online Analytical Processing). Изначально разработана в Яндексе для сервиса Яндекс.Метрика.
 
-**Текущая версия:** ClickHouse 26.7 (июль 2026, Stable).
+**MPP (Massively Parallel Processing)** — архитектура массово-параллельной обработки, при которой запрос разделяется на множество независимых подзадач, выполняемых параллельно на разных ядрах или узлах.
+
+**Shared-Nothing** — принцип построения распределенных систем, где каждый узел обладает собственным CPU, памятью и дисками без общих ресурсов с другими узлами, обеспечивая линейную масштабируемость.
+
+**MergeTree** — семейство движков таблиц ClickHouse, являющееся фундаментом хранения данных; основано на LSM-дереве с фоновым слиянием мелких частей в крупные.
+
+**Текущие версии:** ClickHouse 26.9.x (Stable, сентябрь 2026) / 26.8.x (LTS, август 2026).
 
 ### Архитектурные принципы: почему ClickHouse работает быстро
 
@@ -33,7 +41,7 @@
 ClickHouse стал де-факто стандартом для хранения телеметрии высокой кардинальности (High Cardinality) благодаря способности обрабатывать петабайты логов, метрик и трейсов с минимальными затратами.
 
 -   **Централизованное логирование:** Альтернатива стеку ELK и Grafana Loki для сценариев с огромным объемом данных. Агент **Vector** обеспечивает сверхвысокую скорость доставки через `clickhouse` sink с поддержкой бинарного формата **Apache Arrow**.
--   **Распределенная трассировка:** В **Jaeger v2** ClickHouse является рекомендованным бэкендом (first-class citizen), обеспечивающим на порядки более быстрый поиск по спанам по сравнению с Elasticsearch при нагрузках свыше 1 ТБ данных в день.
+-   **Распределенная трассировка:** В **Jaeger v2** ClickHouse доступен как нативный экспериментальный бэкенд хранения (feature gate `storage.clickhouse`, с v2.18.0, поддерживает ClickHouse 26.x). Детали — **[Наблюдаемость](./clickhouse-observability.md)**.
 -   **Метрики:** **Zabbix 8.0+** использует ClickHouse как аналитический бэкенд для хранения исторических данных и JSON. Prometheus может записывать данные в ClickHouse через адаптеры `remote_write` для долгосрочного хранения (Long-term storage).
 -   **Сетевой мониторинг:** Идеальное хранилище для терабайтов NetFlow/IPFIX-логов, позволяющее строить отчеты по трафику в реальном времени.
 
@@ -44,10 +52,30 @@ ClickHouse стал де-факто стандартом для хранения
 Для детального изучения конкретных аспектов ClickHouse выберите соответствующий раздел:
 
 1.  **[Архитектура и внутреннее устройство](./clickhouse-architecture.md):** Ключевые особенности, семейство MergeTree, разреженный индекс, жизненный цикл запроса.
-2.  **[Кластерное управление](./clickhouse-cluster.md):** Репликация, шардирование, ClickHouse Keeper, решардинг и Rolling Updates.
-3.  **[Производительность и оптимизация](./clickhouse-performance.md):** Тюнинг настроек, кодеки сжатия, механизмы JOIN, Tiered Storage.
+2.  **[Кластерное управление](./clickhouse-cluster.md):** Репликация, шардирование, ClickHouse Keeper, кворум (`insert_quorum`), решардинг, clickhouse-copier, Distributed-настройки.
+3.  **[Производительность и оптимизация](./clickhouse-performance.md):** Тюнинг настроек, кодеки сжатия, механизмы JOIN, MV (включая refreshable MV), Tiered Storage, продвинутый TTL, EXPLAIN.
 4.  **[Эксплуатация и обслуживание](./clickhouse-operations.md):** Системные требования, безопасность, бэкапы, мониторинг и диагностика.
-5.  **[ClickHouse в Kubernetes](./clickhouse-kubernetes.md):** Развертывание через оператор, манифесты и HA-конфигурации.
+5.  **[Операционный SQL и SYSTEM-команды](./clickhouse-sql-operations.md):** OPTIMIZE FINAL, lightweight DELETE, мутации, KILL QUERY, FREEZE/FETCH, DETACH/ATTACH, LIMIT BY, SAMPLE, ARRAY JOIN, GLOBAL IN.
+6.  **[Словари (Dictionaries)](./clickhouse-dictionaries.md):** Layouts, источники, `dictGet()`, LIFETIME, мониторинг `system.dictionaries`.
+7.  **[Моделирование данных](./clickhouse-data-modeling.md):** Паттерны time-series, сессии, воронки, высококардинальные теги, приближённые и оконные функции, SAMPLE, LIMIT BY, downsampling, CHECK constraints.
+8.  **[Клиентский инструментарий](./clickhouse-client-tools.md):** clickhouse-client, clickhouse-local, clickhouse-benchmark, clickhouse-format, HTTP-интерфейс, мосты, методология нагрузочного тестирования.
+9.  **[Безопасность](./clickhouse-security.md):** RBAC, quotas, LDAP, allow_networks, RLS, TOTP, хеширование паролей.
+10.  **[Мониторинг и системные таблицы](./clickhouse-monitoring.md):** Порты, каталог `system.*`, metric_log, query_thread_log, Prometheus, алерты.
+11.  **[Бэкапы и восстановление](./clickhouse-backup.md):** BACKUP/RESTORE, FREEZE/FETCH, инкрементальные бэкапы, RPO/RTO, бэкап Keeper, retention, мониторинг бэкапов.
+12.  **[Capacity Planning, обновления и HA](./clickhouse-capacity-upgrades.md):** Sizing, rolling upgrade, HAProxy, connection pooling.
+13.  **[ClickHouse в Kubernetes](./clickhouse-kubernetes.md):** Развертывание через оператор, манифесты и HA-конфигурации.
+14.  **[Интеграция Kafka](./clickhouse_kafka_integration.md):** Движок Kafka, хранение offsets в Keeper, конвейеры, DLQ, Avro/Protobuf.
+15.  **[Интеграция S3](./clickhouse_s3_integration.md):** Tiered Storage, S3Queue, zero-copy, Iceberg.
+16.  **[Эволюция схемы и ALTER TABLE](./clickhouse-schema-evolution.md):** ADD/DROP/MODIFY COLUMN, DEFAULT/MATERIALIZED/EPHEMERAL/ALIAS, CHECK/ASSUME constraints, MODIFY SETTING.
+17.  **[Полнотекстовый поиск](./clickhouse-full-text-search.md):** text-индекс (inverted), токенизаторы, hasToken/hasPhrase, миграция с ngrambf_v1.
+18.  **[Наблюдаемость (логи, метрики, трейсы)](./clickhouse-observability.md):** Prometheus remote_write, OTLP, Vector, Jaeger, downsampling.
+19.  **[Высокая конкурентность](./clickhouse-high-concurrency.md):** Query Cache, Parallel Replicas, connection pooling.
+20.  **[Пользовательские функции (UDF)](./clickhouse-udf.md):** CREATE FUNCTION, executable UDF, system.functions.
+21.  **[Файловая система и хранение](./clickhouse-filesystem-storage.md):** XFS vs ext4, опции монтирования, RAID, swap, I/O scheduler.
+22.  **[Отказоустойчивость и DR](./clickhouse-disaster-recovery.md):** RPO/RTO, cross-DC, multi-cluster, DR runbook.
+23.  **[Коды ошибок](./clickhouse-error-codes.md):** Справочник кодов, system.errors, error_log, retryable-ошибки.
+24.  **[Вопросы на собеседовании](./clickhouse-interview-qa.md):** Архитектура, индексы, движки, репликация, производительность.
+25.  **[Альтернативы и сравнение](./clickhouse-alternatives.md):** Druid, Pinot, StarRocks, Doris, Greenplum, Elasticsearch, TimescaleDB.
 
 ---
 
@@ -114,6 +142,34 @@ DROP DATABASE devops;
 -- Остановка контейнера: docker stop clickhouse-server && docker rm clickhouse-server
 ```
 
+### Установка на bare metal (Linux)
+
+Для эксплуатации на физическом сервере или виртуальной машине используйте официальный установщик или пакеты deb/rpm.
+
+**1. Установка через официальный скрипт (любая версия):**
+```bash
+curl https://clickhouse.com/ | sh
+# → Устанавливает последнюю стабильную версию, создает пользователя clickhouse,
+#   systemd-сервис clickhouse-server и каталог /var/lib/clickhouse/
+```
+
+**2. Запуск и включение автозапуска:**
+```bash
+sudo systemctl enable --now clickhouse-server
+# → Active: active (running) с момента запуска
+```
+
+**3. Проверка работоспособности:**
+```bash
+clickhouse-client --query "SELECT version()"
+# → 26.9.4.3 (или текущий стабильный релиз)
+```
+
+**4. Основные каталоги:**
+- Данные: `/var/lib/clickhouse/`
+- Логи: `/var/log/clickhouse-server/`
+- Конфигурация: `/etc/clickhouse-server/` (`config.xml`, `users.xml`, каталоги `config.d/` и `users.d/` для кастомных настроек)
+
 ### Когда переходить на ClickHouse
 
 **Сигналы о том, что PostgreSQL не справляется:**
@@ -155,6 +211,30 @@ SELECT data.user.id, count() FROM app_logs WHERE data.status = 'error' GROUP BY 
 
 ---
 
+## Troubleshooting (типичные проблемы)
+
+Краткий справочник для быстрой диагностики. Детальные сценарии и команды — в **[Эксплуатации](./clickhouse-operations.md)** и **[Кластерном управлении](./clickhouse-cluster.md)**.
+
+| Проблема | Причина | Быстрое решение |
+| :--- | :--- | :--- |
+| **Too many parts (Code: 252)** | Слишком частые мелкие вставки; фоновые слияния не успевают обрабатывать новые части. | Включить `async_insert = 1` или батчинг от 10 000 строк на клиенте. |
+| **Memory limit exceeded (Code: 241)** | Запрос превысил `max_memory_usage`. | Уменьшить выборку, добавить `PREWHERE`, включить `max_bytes_before_external_group_by`. |
+| **Replica in read-only (Code: 242)** | Потеря связи с ClickHouse Keeper / ZooKeeper. | Проверить сеть до Keeper, `operation_timeout_ms`, состояние `system.replicas`. |
+| **Connection refused (порт 9000/8123)** | Сервер не запущен или прослушивает только localhost. | `sudo systemctl status clickhouse-server`; проверить `<listen_host>` в `config.xml`. |
+| **Disk full** | Накопитель заполнен данными или логами. | Удалить старые партиции (`DROP PARTITION`), очистить лог-таблицы через TTL, проверить `system.disks`. |
+
+### Диагностика медленных запросов
+
+```sql
+SELECT query, query_duration_ms, read_rows, formatReadableSize(memory_usage) as mem
+FROM system.query_log
+WHERE type = 'QueryFinish'
+ORDER BY query_duration_ms DESC
+LIMIT 10;
+```
+
+Подробнее: **[Эксплуатация](./clickhouse-operations.md#диагностика-медленных-запросов)**.
+
 ## Интеграция с BI-системами
 
 - **Apache Superset:** нативная поддержка, рекомендуется использовать SQLAlchemy-коннектор.
@@ -169,8 +249,19 @@ SELECT data.user.id, count() FROM app_logs WHERE data.status = 'error' GROUP BY 
 3.  **Использование словарей:** Для ускорения JOIN со справочниками используйте `Dictionaries` с хранением в RAM. Это позволяет избежать дорогостоящих сетевых перемещений данных.
 4.  **Денормализация:** ClickHouse работает быстрее с плоскими широкими таблицами, чем со сложными схемами «звезда» или «снежинка».
 5.  **Типизация:** Используйте `LowCardinality(String)` для строк с небольшим количеством уникальных значений (например, `status`, `country`, `browser`) — это экономит память и ускоряет фильтрацию.
+6.  **TTL для очистки и Tiered Storage:** Настраивайте `TTL` на уровне таблиц для автоматического удаления или перемещения старых данных на холодные диски/S3. Это предотвращает неконтролируемый рост `/var/lib/clickhouse/`.
+7.  **Мониторинг системных таблиц:** Добавьте в Prometheus/Grafana дашборд по `system.metrics`, `system.events` и `system.asynchronous_metrics`. Для быстрого поиска проблем используйте `system.query_log`.
+8.  **Безопасность:** Включайте RBAC (`<access_management>1</access_management>`), ограничивайте права по принципу наименьших привилегий, настраивайте TLS на портах 8123/8443/9440. Детали: **[Эксплуатация](./clickhouse-operations.md)**.
 
 ## Дополнительная информация
+
+### Ограничения и известные особенности
+
+- **MergeTree не предназначен для частых UPDATE/DELETE:** точечные обновления вызывают мутации, переписывающие целые куски данных. Для сценариев с изменяемыми сущностями используйте `CollapsingMergeTree` или `ReplacingMergeTree`.
+- **SELECT * неэффективен:** колоночная модель подразумевает выбор только нужных колонок. `SELECT *` считывает все колонки таблицы и лишает преимущества колоночного хранения.
+- **Транзакции:** отсутствует многострочная ACID-транзакция. Каждая вставка атомарна на уровне отдельной части данных, но согласованность между частями обеспечивается асинхронно.
+- **Материализованные представления не обрабатывают UPDATE/DELETE:** MV срабатывают только на новые вставки. Изменения существующих данных через мутации не пересчитывают MV автоматически.
+- **Высокая кардинальность индексов:** колонки с миллионами уникальных значений (например, `user_id`, `request_id`) в PRIMARY KEY приводят к росту разреженного индекса и потреблению памяти. Для таких полей используйте `bloom_filter` индексы или предварительную агрегацию.
 
 ### Типы данных
 
@@ -190,12 +281,24 @@ SELECT data.user.id, count() FROM app_logs WHERE data.status = 'error' GROUP BY 
 
 ### Сравнение с другими системами
 
-- **[Greenplum](../greenplum.md):** лучше для сложнейших соединений (JOIN) множества огромных таблиц.
-- **[TimescaleDB](../timescaledb.md):** предпочтительнее для временных рядов при небольших объемах данных (до 10-50 ТБ) в экосистеме PostgreSQL.
-- **Elasticsearch:** лучше для полнотекстового поиска по неструктурированному тексту, но значительно хуже для числовой и агрегационной аналитики.
+Детальное сравнение ClickHouse с альтернативами — в **[Альтернативы ClickHouse](./clickhouse-alternatives.md)**.
 
 ### Смежные темы
 
 - Общая теория шардирования — **[Шардирование](../Concepts/sharding.md)**.
 - Масштабирование PostgreSQL — **[PostgreSQL Scaling](../PostgreSQL/Concepts/scaling.md)**.
 - Работа с Foreign Data Wrappers — **[FDW в PostgreSQL](../PostgreSQL/Integrations/fdw.md)**.
+
+### Системные пути и файлы (Linux)
+
+При on-prem установке через официальный скрипт или пакеты:
+
+- **Данные:** `/var/lib/clickhouse/` (разделы `data/`, `system/`, `format_schemas/`, `dictionaries/`)
+- **Логи:** `/var/log/clickhouse-server/` (`clickhouse-server.log`, `clickhouse-client.log`, `stderr.log`)
+- **Конфигурация сервера:** `/etc/clickhouse-server/`
+  - Основные файлы: `config.xml`, `users.xml`
+  - Кастомные настройки: `config.d/*.xml`, `users.d/*.xml`
+- **Секреты и ключи:** `/etc/clickhouse-server/ssl/` (сертификаты TLS), `/etc/clickhouse-server/certs/`
+- **Systemd unit:** `clickhouse-server.service` (работает от пользователя `clickhouse`)
+
+**Важно:** не редактируйте `config.xml` напрямую — используйте файлы в `config.d/` для переопределения параметров. Это упрощает обновления и откат настроек.

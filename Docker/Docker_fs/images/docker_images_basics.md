@@ -1,10 +1,12 @@
 # Docker: основы образов
 
+**Актуально для:** Docker 24.x–29.x, containerd 1.7.x–2.4.x, Kubernetes 1.29.x–1.32.x, Podman 5.x–6.x, nerdctl v2.x, skopeo v1.14+–v1.24+
+
 ## Предварительные требования
 
 Перед выполнением практических сценариев убедитесь, что окружение готово:
 
-- **Docker Engine** версии **24.0+** (BuildKit включён как рантайм сборки по умолчанию с 23.0+). Проверка: `docker version --format '{{.Server.Version}}'` → `27.3.1`.
+- **Docker Engine** версии **24.0+** (BuildKit включён как рантайм сборки по умолчанию с 23.0+). Проверка: `docker version --format '{{.Server.Version}}'` → `29.8.1`.
 - **Доступ к демону**: сокет `/var/run/docker.sock` (штатный) либо переменная `DOCKER_HOST`. Без прав возникает `permission denied while trying to connect to the Docker daemon socket`.
 - **Реестр (для pull/push)**: доступ к Docker Hub, Harbor, ECR, GCR или локальному реестру. Для приватных — предварительный `docker login`. См. **[Реестры Docker](../../docker_registries.md)**.
 - **Multi-arch сборка**: `docker buildx` (встроен с 23.0). Проверка: `docker buildx version`. Для кросс-платформенной эмуляции — QEMU:
@@ -12,8 +14,8 @@
   docker run --privileged multiarch/qemu-user-static --reset -p yes
   # → (выводится строка регистрации каждой архитектуры; ошибок нет)
   docker buildx ls
-  # → NAME/NODE      DRIVER/ENDPOINT         STATUS    BUILDKIT  PLATFORMS
-  # → default        docker-container                  running   v0.16.0    linux/amd64,linux/arm64,...
+# → NAME/NODE      DRIVER/ENDPOINT         STATUS    BUILDKIT  PLATFORMS
+# → default        docker-container                  running   v0.37.1    linux/amd64,linux/arm64,...
   ```
 - **Утилиты хоста для диагностики**: `jq` (парсинг JSON из `inspect`), `dive` (интерактивный просмотр слоёв). Опционально, но рекомендуется.
 
@@ -21,9 +23,9 @@
 
 - **Образ (Image)** — неизменяемый (read-only) пакет, содержащий всё необходимое для запуска приложения: программный код, среду выполнения, библиотеки, переменные окружения и конфигурационные файлы. Образ является «чертежом» или шаблоном для создания контейнеров.
 - **Слой (Layer)** — образ состоит из упорядоченного набора слоев файловой системы. Каждый слой представляет собой результат выполнения одной инструкции в `Dockerfile` (например, `RUN`, `COPY`) и фиксирует изменения относительно предыдущего состояния.
-- **Тег (Tag)** — человекочитаемый изменяемый псевдоним для конкретной версии образа (например, `nginx:1.27` или `myapp:stable`). Один и тот же тег может со временем указывать на разные образы (mutable reference).
+- **Тег (Tag)** — человекочитаемый изменяемый псевдоним для конкретной версии образа (например, `nginx:1.30` или `myapp:stable`). Один и тот же тег может со временем указывать на разные образы (mutable reference).
 - **Дайджест (Digest)** — уникальный неизменяемый идентификатор образа, представляющий собой криптографический хеш **SHA256 (Secure Hash Algorithm 256-bit)** его манифеста. Гарантирует побайтовую идентичность артефакта.
-- **Манифест (Manifest)** — JSON-файл, описывающий образ: его слои, архитектуру и метаданные.
+- **Манифест (Manifest)** — JSON-файл, описывающий образ: его слои, архитектуру и метаданные. Полная структура манифеста, config blob и media types — в **[OCI Image Spec: структура образа изнутри](./oci_image_spec.md)**.
 - **Image ID** — внутренний идентификатор образа в локальном хранилище. Это SHA256-хеш **конфигурации образа** (`config.json`), а не манифеста. Отображается в сокращённом (12 hex) и полном (64 hex) виде. Важно не путать с дайджестом: дайджест адресует образ в реестре (по манифесту), а Image ID — локально (по конфигурации); они вычисляются от разных объектов и обычно не совпадают.
 - **Репозиторий (Repository)** — именованная коллекция образов в реестре (например, `library/nginx` или `registry.example.com/team/app`). Тег уточняет конкретную версию внутри репозитория.
 - **Реестр (Registry)** — сервер хранения и распространения образов (Docker Hub, Harbor, ECR, GCR). См. **[Реестры Docker](../../docker_registries.md)**.
@@ -39,11 +41,13 @@
 - **Слоеная структура**: Каждая команда `RUN`, `COPY`, `ADD` создает новый слой. Если слой уже существует (например, при повторной сборке), Docker переиспользует его из кэша.
 - **Драйверы хранения**: Объединение слоев выполняется драйвером (обычно **[OverlayFS](../docker_overlayfs.md)**). Все слои образа доступны только для чтения; при запуске контейнера сверху добавляется тонкий записываемый слой (writable layer).
 - **containerd image store**: В современных версиях Docker (24.0+) доступно новое хранилище образов на базе `containerd`. Оно обеспечивает нативную поддержку многоархитектурных образов в локальном хранилище и лучшую интеграцию с экосистемой Kubernetes.
-- **Адресуемость по содержимому (Content-Addressable Storage)**: слои и образы идентифицируются по хешу их содержимого. Поэтому общие слои между разными образами физически хранятся один раз (дедупликация), что экономит место.
+- **Адресуемость по содержимому (Content-Addressable Storage)**: слои и образы идентифицируются по хешу их содержимого. Поэтому общие слои между разными образами физически хранятся один раз (дедупликация), что экономит место. Для SRE: при аудите дискового пространства проверяйте не только количество образов (`docker images`), но и общий размер уникальных слоёв (`docker system df`); удаление одного образа не освобождает слой, если на него ссылается другой.
 
 ### Жизненный цикл образа
 
 Типичный путь артефакта: **build** (`docker build`) → **tag** (`docker tag`) → **push** (`docker push`) → **pull** (`docker pull`) → **run** (`docker run`) → при необходимости **rmi / prune** (удаление). Образ остаётся неизменным на всех этапах; меняются только ссылки (теги) и размещение (локальный кеш ↔ реестр).
+
+Для SRE: в продакшен-средах жизненный цикл часто зациклен — образы после деплоя не удаляются, кэш сборки и неиспользуемые теги накапливаются. Настройте `docker system prune` по расписанию или используем registry lifecycle policies (Harbor, ECR, GCR) для автоматической очистки устаревших артефактов.
 
 ### Многоархитектурные образы (Multi-platform)
 
@@ -193,6 +197,13 @@ docker build --no-cache -t myapp:clean .
 | `image with reference ... already exists` (при `tag`) | Тег уже занят другим Image ID | `docker rmi <repo>:<tag>` перед повторным `tag` (удаляет только ссылку, не слои) |
 | `<missing>` в `docker history` | Сборка через BuildKit / импорт из реестра | Норма: метаданные промежуточных слоёв недоступны локально; функционально не влияет |
 | `failed to solve: ...` при buildx multi-arch | Нет эмуляции QEMU | зарегистрируйте бинформаты: `docker run --privileged multiarch/qemu-user-static --reset -p yes` |
+| `no space left on device` при `docker build` или `pull` | Диск заполнен образами/слоями/кэшем | `docker system df -v` для анализа; `docker image prune -a`; проверьте `/var/lib/docker` или `/var/lib/containerd` |
+| `toomanyrequests: Rate limited` (Docker Hub) на CI | Анонимный лимит pull исчерпан | `docker login` (повышает лимит), настройте registry mirror, или используйте платный тариф Docker Hub |
+| `manifest unknown` при `docker run` по тегу | Тег удалён или перезаписан в реестре | используйте дайджест (`@sha256:...`) вместо тега; проверьте `docker manifest inspect` |
+| `imagePullBackOff` / `ErrImagePull` в Kubernetes | Образ не доступен: нет в registry, неверный тег, секрет, или quota | проверьте `kubectl describe pod`, `docker manifest inspect`, сетевую доступность registry, `kubectl get events` |
+| `no such manifest: ...` в containerd (Kubernetes) | containerd image store: несовместимость с docker save/load или отсутствие manifest list | используйте `skopeo copy --all` для multi-arch; проверьте `ctr -n k8s.io images list` |
+| `<missing>` в `docker history` после `docker build` | BuildKit собирает на другой машине или импортирован из registry | нормальное поведение; для полной истории используйте `--no-cache` или remote BuildKit cache |
+| BuildKit cache заполняет диск на CI | Кэш не ограничен по размеру/времени | настройте `max-age` и `max-size` в BuildKit cache mount; добавьте `docker buildx prune -f` в post-job |
 
 ## Рекомендации и очистка
 
@@ -201,7 +212,13 @@ docker build --no-cache -t myapp:clean .
 - Используйте multi-stage сборки для уменьшения размера и поверхности атаки. Подробнее — **[Оптимизация сборки Docker-образов](../../Dockerfile/Docker_best_practices/build_optimization.md)**.
 - Не помещайте секреты в образ: даже удалённые в следующем `RUN` файлы физически остаются в нижних слоях (см. **[Управление слоями](./layer_management.md)**, раздел о whiteout). Используйте BuildKit secrets mount (`RUN --mount=type=secret`) или внешние Secret-механизмы.
 - Для переноса образов в изолированные контуры — `docker save`/`load` или `skopeo` (см. **[Перенос и экспорт образов](./diagnostics_transfer.md)**).
-- Регулярно отслеживайте занятое место: `docker system df`.
+- Регулярно отслеживайте занятое места: `docker system df`.
+- **SRE-паттерны для эксплуатации образов:**
+  - **Инвентаризация:** ведите реестр используемых базовых образов и их дайджестов; периодически сканируйте на уязвимости (`trivy image`, `docker scout`).
+  - **CI/CD pipeline:** настройте registry mirror (`DOCKER_REGISTRY_MIRROR`) для ускорения `docker pull` на CI-раннерах и снижения зависимости от Docker Hub.
+  - **Обновление базовых образов:** автоматизируйте rebase при выходе security-патчей (Dependabot, Renovate, или кастомные workflow); проверяйте `docker history` на наличие устаревших `apt-get install` без `rm -rf /var/lib/apt/lists/*`.
+  - **Планирование диска:** учитывайте, что `docker system df` показывает только summary; для детального анализа используйте `docker system df -v` или inspect каталога `/var/lib/docker` (или `/var/lib/containerd` при containerd image store).
+  - **Prometheus/метрики:** экспортируйте `docker_image_size`, `docker_container_count`, `docker_network_count` через cAdvisor или Node Exporter для прогнозирования роста хранилища.
 
 **Очистка окружения (revert / cleanup):**
 ```bash
@@ -231,7 +248,7 @@ docker system prune -a --volumes -f
 - **Общие слои (дедупликация)**: несколько образов физически используют один и тот же read-only слой; удаление одного образа не удаляет слой, пока на него ссылается другой.
 - **Висячие образы (dangling)**: образы без тегов (тег переназначен) занимают место и чистятся `docker image prune`.
 - **`docker image prune -a` безвозвратен**: удаляет все неиспользуемые образы; потребуется повторный pull/build.
-- **containerd image store (Docker 29.1+ / containerd 2.0)**: `RepoDigests` формируется иначе, дефолтное хранилище меняется; поведение интеграции с Kubernetes отличается (см. «Примечания по версиям»).
+- **containerd image store (Docker 29.0+ fresh installs / containerd 2.3.x)**: `RepoDigests` формируется иначе, дефолтное хранилище меняется; поведение интеграции с Kubernetes отличается (см. «Примечания по версиям»).
 - **Секреты в нижних слоях**: `RUN` с секретом оставляет его в слое навсегда, даже если файл удалён следующей инструкцией (whiteout только скрывает). Распаковка архива раскроет «удалённый» секрет.
 - **Windows-контейнеры**: используют иной формат слоёв и изоляцию; архивы/образы Windows несовместимы с Linux-хостом и наоборот.
 
@@ -240,7 +257,7 @@ docker system prune -a --volumes -f
 - **Docker Engine 24.0+**: containerd image store доступен опционально; команды `build`, `tag`, `push`, `history`, `inspect` стабильны на всех современных версиях (27/28/29).
 - **BuildKit**: рантайм сборки по умолчанию с 23.0+; обеспечивает кэш-монтирование (`--mount=type=cache`), secret-монтирование и параллельную сборку.
 - **Docker 29.1 / containerd 2.0**: нативный containerd image store включён по умолчанию; образы физически лежат в containerd, `RepoDigests` и дефолтный путь хранения могут отличаться от классического `/var/lib/docker`.
-- **docker buildx**: встроен с 23.0; для multi-arch требует инициализации билдера (`docker buildx create --use`) и регистрации QEMU на хосте.
+- **docker buildx v0.37.1**: встроен с 23.0; для multi-arch требует инициализации билдера (`docker buildx create --use`) и регистрации QEMU на хосте.
 - **skopeo** (≥ 1.14): альтернатива daemonless-переноса образов без Docker-демона (см. **[Перенос и экспорт образов](./diagnostics_transfer.md)**).
 
 ## Дополнительная информация
@@ -251,4 +268,5 @@ docker system prune -a --volumes -f
 
 - **[Сравнение образа и контейнера](./image_vs_container.md)** — ключевые различия между статическим шаблоном и живым процессом.
 - **[Анализ и управление слоями](./layer_management.md)** — глубокое погружение в структуру слоев и инструмент dive.
+- **[OCI Image Spec: структура образа изнутри](./oci_image_spec.md)** — манифест, config blob, media types, OCI Layout.
 - **[Стратегии версионирования и тегирования](../../Docker_registries/image_versioning_and_tagging.md)** — лучшие практики именования образов.

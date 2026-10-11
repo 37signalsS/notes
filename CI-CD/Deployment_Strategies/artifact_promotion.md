@@ -33,290 +33,9 @@
 
 ## Практические сценарии
 
-### 1. Promotion по digest через GitLab CI (Kubernetes)
+### GitLab-specific сценарии
 
-```yaml
-stages:
-  - build
-  - test_dev
-  - promote_staging
-  - test_staging
-  - promote_prod
-  - deploy_prod
-
-build_image:
-  stage: build
-  image: docker:29.8
-  services:
-    - docker:29.8-dind
-  script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_JOB_TOKEN $CI_REGISTRY
-    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
-    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
-    # Сохраняем digest для promotion
-    - docker inspect --format='{{index .RepoDigests 0}}' $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA > image_digest.txt
-  artifacts:
-    paths:
-      - image_digest.txt
-    expire_in: 30d
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-deploy_dev:
-  stage: test_dev
-  image: bitnami/kubectl:1.37
-  needs:
-    - build_image
-  script:
-    - IMAGE=$(cat image_digest.txt | cut -d@ -f2)
-    - kubectl set image deployment/my-app app=$CI_REGISTRY_IMAGE@$IMAGE -n dev
-    - kubectl rollout status deployment/my-app -n dev --timeout=300s
-  environment:
-    name: dev
-    url: https://dev.example.com
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-promote_staging:
-  stage: promote_staging
-  image: docker:29.8
-  needs:
-    - deploy_dev
-  script:
-    - IMAGE=$(cat image_digest.txt | cut -d@ -f2)
-    # Продвигаем тот же digest в staging-реестр
-    - docker pull $CI_REGISTRY_IMAGE@$IMAGE
-    - docker tag $CI_REGISTRY_IMAGE@$IMAGE $CI_REGISTRY_STAGING/my-app:$CI_COMMIT_SHORT_SHA
-    - docker push $CI_REGISTRY_STAGING/my-app:$CI_COMMIT_SHORT_SHA
-  environment:
-    name: staging
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-      allow_failure: false
-
-deploy_staging:
-  stage: test_staging
-  image: bitnami/kubectl:1.37
-  needs:
-    - promote_staging
-  script:
-    - kubectl set image deployment/my-app app=$CI_REGISTRY_STAGING/my-app:$CI_COMMIT_SHORT_SHA -n staging
-    - kubectl rollout status deployment/my-app -n staging --timeout=300s
-  environment:
-    name: staging
-    url: https://staging.example.com
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-promote_prod:
-  stage: promote_prod
-  image: docker:29.8
-  needs:
-    - deploy_staging
-  script:
-    - IMAGE=$(cat image_digest.txt | cut -d@ -f2)
-    - docker pull $CI_REGISTRY_IMAGE@$IMAGE
-    - docker tag $CI_REGISTRY_IMAGE@$IMAGE $CI_REGISTRY_PROD/my-app:$CI_COMMIT_SHORT_SHA
-    - docker push $CI_REGISTRY_PROD/my-app:$CI_COMMIT_SHORT_SHA
-  environment:
-    name: production
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-      allow_failure: false
-
-deploy_prod:
-  stage: deploy_prod
-  image: bitnami/kubectl:1.37
-  needs:
-    - promote_prod
-  script:
-    - kubectl set image deployment/my-app app=$CI_REGISTRY_PROD/my-app:$CI_COMMIT_SHORT_SHA -n production
-    - kubectl rollout status deployment/my-app -n production --timeout=300s
-  environment:
-    name: production
-    url: https://app.example.com
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-      allow_failure: false
-```
-
-### 2. Promotion через GitLab API (скрипт promotion)
-
-```bash
-#!/bin/bash
-# promote_to_prod.sh
-# Продвижение артефакта из staging в production через GitLab API
-
-set -euo pipefail
-
-SOURCE_PROJECT="group/myapp-staging"
-TARGET_PROJECT="group/myapp-production"
-PIPELINE_ID=$CI_PIPELINE_ID
-PROMOTION_TOKEN=$PROMOTION_API_TOKEN
-
-# Получаем артефакт из staging-пайплайна
-ARTIFACT_URL=$(curl -s --header "PRIVATE-TOKEN: $PROMOTION_TOKEN" \
-  "https://gitlab.example.com/api/v4/projects/$SOURCE_PROJECT/pipelines/$PIPELINE_ID/jobs" \
-  | jq -r '.[] | select(.name=="build_image") | .artifacts[0].url')
-
-# Скачиваем manifest с digest'ом
-curl -s --header "PRIVATE-TOKEN: $PROMOTION_TOKEN" "$ARTIFACT_URL" > manifest.yaml
-
-# Запускаем prod-пайплайн с продвигаемым digest'ом
-curl -s --request POST \
-  --header "PRIVATE-TOKEN: $PROMOTION_TOKEN" \
-  --header "Content-Type: application/json" \
-  "https://gitlab.example.com/api/v4/projects/$TARGET_PROJECT/trigger/pipeline" \
-  --data "{
-    \"ref\": \"$CI_DEFAULT_BRANCH\",
-    \"variables\": {
-      \"PROMOTED_DIGEST\": \"$(grep DIGEST manifest.yaml | cut -d: -f2-)\",
-      \"PROMOTED_COMMIT\": \"$CI_COMMIT_SHA\",
-      \"PROMOTED_BY\": \"$GITLAB_USER_NAME\"
-    }
-  }"
-```
-
-### 3. Helm Chart Promotion
-
-```yaml
-stages:
-  - package
-  - promote_staging
-  - deploy_staging
-  - promote_prod
-  - deploy_prod
-
-package_chart:
-  stage: package
-  image: alpine/helm:3.22
-  script:
-    - helm package mychart/ --destination ./
-    - helm lint ./mychart-*.tgz
-  artifacts:
-    paths:
-      - mychart-*.tgz
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-promote_chart_staging:
-  stage: promote_staging
-  image: alpine/helm:3.22
-  needs:
-    - package_chart
-  script:
-    - helm upgrade --install myapp ./mychart-*.tgz \
-        --namespace staging \
-        --values values-staging.yaml \
-        --set image.tag=$CI_COMMIT_SHORT_SHA \
-        --wait --timeout 5m
-  environment:
-    name: staging
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-
-promote_chart_prod:
-  stage: promote_prod
-  image: alpine/helm:3.22
-  needs:
-    - promote_chart_staging
-  script:
-    - helm upgrade --install myapp ./mychart-*.tgz \
-        --namespace production \
-        --values values-production.yaml \
-        --set image.tag=$CI_COMMIT_SHORT_SHA \
-        --wait --timeout 10m
-  environment:
-    name: production
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-      allow_failure: false
-```
-
-### 4. GitLab Environment Promotion с approval rules
-
-```yaml
-deploy_staging:
-  stage: deploy_staging
-  image: bitnami/kubectl:1.37
-  script:
-    - kubectl apply -f k8s/
-    - kubectl rollout status deployment/my-app -n staging
-  environment:
-    name: staging
-    url: https://staging.example.com
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-promote_to_production:
-  stage: promote_prod
-  image: bitnami/kubectl:1.37
-  needs:
-    - deploy_staging
-  script:
-    - kubectl apply -f k8s/
-    - kubectl rollout status deployment/my-app -n production
-  environment:
-    name: production
-    url: https://app.example.com
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-      allow_failure: false
-```
-
-**Настройка approval policy в GitLab:**
-1. `Settings > CI/CD > Deployment approval policy`
-2. Выберите окружения: `production`
-3. Укажите approval rules (например, минимум 2 approve от SRE)
-
-### 5. Promotion с проверкой сканирования уязвимостей
-
-```yaml
-stages:
-  - build
-  - scan
-  - promote_staging
-  - deploy_staging
-  - promote_prod
-
-build:
-  stage: build
-  image: docker:29.8
-  services:
-    - docker:29.8-dind
-  script:
-    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
-    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-security_scan:
-  stage: scan
-  image: aquasec/trivy:0.74.0
-  needs:
-    - build
-  script:
-    - trivy image --exit-code 1 --severity HIGH,CRITICAL $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
-  allow_failure: true
-
-promote_staging:
-  stage: promote_staging
-  needs:
-    - security_scan
-  script:
-    - echo "Promoting to staging..."
-  environment:
-    name: staging
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-```
+GitLab-specific пайплайны, approval policies, Helm chart promotion и verification подписи описаны в [Стратегии промоушена артефактов в GitLab CI/CD](../../CI-CD/GitLab_CI/Advanced/image_promotion_strategies.md).
 
 ## Операции и команды
 
@@ -404,7 +123,72 @@ promote_staging:
 
 ## Дополнительная информация
 
-### Рекомендованные ссылки
+### Роллбэк-пайплайн как отдельный паттерн
+
+Помимо ручного отката через `kubectl rollout undo` или `helm rollback`, в production-средах рекомендуется иметь **dedicated rollback pipeline** — пайплайн, единственная задача которого — откатить deployment к предыдущему стабильному состоянию.
+
+**Принцип работы:**
+1.  При падении deployment в production алерт (Prometheus/Alertmanager) вызывает rollback-пайплайн через Pipeline Triggers API.
+2.  Rollback-пайплайн получает ID последнего стабильного deployment (через GitLab API или Argo CD API).
+3.  Применяет предыдущий digest/ревизию без повторной сборки артефакта.
+4.  Создает incident ticket для расследования.
+
+**Пример rollback-пайплайна:**
+```yaml
+# .gitlab-ci.yml (dedicated rollback pipeline)
+stages:
+  - rollback
+
+rollback_production:
+  stage: rollback
+  image: bitnami/kubectl:1.37
+  script:
+    - |
+      # Получаем предыдущую ревизию deployment
+      PREVIOUS_REVISION=$(kubectl rollout history deployment/my-app -n production | tail -n 2 | head -n 1 | awk '{print $1}')
+      
+      # Откатываем к предыдущей ревизии
+      kubectl rollout undo deployment/my-app -n production --to-revision=$PREVIOUS_REVISION
+      
+      # Ждем завершения rollout
+      kubectl rollout status deployment/my-app -n production --timeout=300s
+      
+      # Фиксируем откат в GitLab
+      echo "Rolled back to revision $PREVIOUS_REVISION"
+  environment:
+    name: production
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "trigger"
+      when: always
+  interruptible: false
+```
+
+**Запуск rollback-пайплайна через API:**
+```bash
+# Вызывается из Alertmanager webhook или вручную
+curl --request POST \
+  --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/trigger/pipeline" \
+  --form "ref=main" \
+  --form "token=$ROLLBACK_TRIGGER_TOKEN" \
+  --form "variables[ROLLBACK_TARGET]=production"
+```
+
+**Интеграция с GitLab Environments:**
+- Rollback-пайплайн отображается в `CI/CD > Environments > production` как отдельный deployment.
+- Используйте `environment:name: production` и `environment:url` для видимости.
+- Настройте `Deployment approval policy` для production, чтобы rollback требовал approve от SRE.
+
+### Promoted artifacts и артефакт-промоушен между окружениями
+
+Артефакт-промоушен — это процесс переноса артефакта из одной среды в другую (dev → staging → production) без повторной сборки. В GitLab CI это реализуется через:
+- **Digest Promotion:** Перенос по SHA256-дайджесту без перепаковки.
+- **GitLab Environment Promotion:** Использование `environment:name` и ручных approval gates.
+- **Helm Chart Promotion:** Обновление values.yaml с новым digest'ом образа.
+
+GitLab-specific пайплайны описаны в [Стратегии промоушена артефактов в GitLab CI/CD](../../CI-CD/GitLab_CI/Advanced/image_promotion_strategies.md).
+
+### См. также
 
 - **[Управление артефактами](../artifact_management.md)** — жизненный цикл артефактов, immutability, SBOM.
 - **[Окружения и деплой в GitLab CI](../GitLab_CI/Concepts/environments_and_deployments.md)** — deployment tier'ы, approval policies, review apps.

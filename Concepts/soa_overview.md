@@ -15,6 +15,17 @@
 *   **Canonical Data Model (Каноническая модель данных):** Единый формат представления данных, который используется всеми сервисами в рамках инвентаризации. Устраняет необходимость в преобразованиях формата на каждом шаге интеграции.
 *   **Service Broker (Брокер сервисов):** Компонент, принимающий запрос одного формата и преобразующий его в формат, ожидаемый целевым сервисом. Часто реализуется как часть ESB.
 
+## Предварительные требования
+
+Перед внедрением SOA необходимо обеспечить:
+
+1.  **Сетевая доступность:** Все узлы должны иметь статические IP или DHCP-резервации. ESB, сервисы и брокеры сообщений должны быть доступны на предсказуемых портах (ActiveMQ 61616, RabbitMQ 5672, Kafka 9092).
+2.  **NTP-синхронизация:** Расхождения времени между узлами >1s приводят к некорректной работе таймаутов и корреляции. Используйте `chrony` или `systemd-timesyncd`.
+3.  **Firewall-политики:** Разрешите только необходимые порты между сервисами и ESB. Запретите внешний доступ к ESB и брокерам сообщений.
+4.  **Health Check эндпоинты:** Каждый сервис должен иметь HTTP/TCP эндпоинт проверки готовности (`/healthz`, `/ready`).
+5.  **Мониторинг:** Prometheus + Alertmanager для отслеживания состояния ESB, глубины очередей и лага сообщений.
+6.  **CI/CD пайплайн:** Автоматическое развертывание и версионирование контрактов должно происходить через пайплайн.
+
 ## Базовые концепции
 
 ### Ключевые принципы (по Томасу Эрлу)
@@ -154,6 +165,21 @@ SOA-системы критически зависят от полноты на�
 </definitions>
 ```
 
+**Валидация WSDL-контракта:**
+
+```bash
+# Проверка синтаксиса WSDL
+wsdl2java -verify http://esb.local:8080/OrderService?wsdl
+# → [INFO] WSDL verified successfully
+
+# Проверка доступности эндпоинта
+curl -s -o /dev/null -w "%{http_code}" -X POST \
+  -H "Content-Type: text/xml;charset=UTF-8" \
+  -d '<?xml version="1.0"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ns1:CreateOrder xmlns:ns1="http://example.com/order"/></soap:Body></soap:Envelope>' \
+  http://esb.local:8080/OrderService
+# → 200
+```
+
 ### Логика маршрутизации в ESB (Apache Camel)
 
 ESB позволяет описывать сложные правила интеграции без изменения кода целевых систем. Пример на языке Apache Camel (Java DSL):
@@ -168,6 +194,22 @@ from("activemq:orders.incoming")
             .marshal().json()
             .to("kafka:wholesale-orders")
     .endChoice();
+```
+
+**Валидация маршрутизации ESB:**
+
+```bash
+# Проверка очереди ActiveMQ
+curl -s http://activemq:8161/api/jolokia/read/org.apache.activemq:type=Broker,brokerName=localhost,destinationType=Queue,destinationName=orders.incoming | jq '.value.QueueSize'
+# → 0
+
+# Проверка Kafka-топика
+kafka-topics.sh --bootstrap-server kafka:9092 --describe --topic wholesale-orders
+# → Topic: wholesale-orders  PartitionCount: 3  ReplicationFactor: 2
+
+# Проверка health ESB-ноды
+curl -s http://esb-1:8181/camel/rest/health
+# → {"status":"UP","timestamp":1696000000000}
 ```
 
 ### Управление версиями контрактов (Versioning)
@@ -193,16 +235,79 @@ from("activemq:orders.incoming")
 | **Versioning Hell** | Изменение контракта одного сервиса ломает 10 композитных сервисов. | Использование семантического версионирования и поддержка старых версий контрактов в ESB (Transform). |
 | **Низкая производительность** | XML-оверхед и глубокие цепочки вызовов. | Кэширование на уровне шины, переход на REST/Protobuf для внутренних коммуникаций. |
 | **Несоответствие SLA** | Задержка в одном из 15 сервисов композита. | Внедрение таймаутов, автоматических откатов и Circuit Breaker на уровне шины. |
-| **Потеря сообщений** | Сбой ESB в процессе обработки (нет持久ности очереди). | Включение持久ности очередей (JMS durable subscriptions), WS-ReliableMessaging. |
-| **«Старый» SOAP-заголовок** | Клиент отправляет deprecated security token. | Отключение поддержки старых версий WS-Security с предварительным уведомлением через政策. |
+| **Потеря сообщений** | Сбой ESB в процессе обработки (нет постоянства очереди). | Включение постоянства очередей (JMS durable subscriptions), WS-ReliableMessaging. |
+| **«Старый» SOAP-заголовок** | Клиент отправляет deprecated security token. | Отключение поддержки старых версий WS-Security с предварительным уведомлением через политики. |
+
+### Диагностика на уровне ОС и сети
+
+При проблемах SOA/ESB диагностика должна начинаться с сетевого стека и системных вызовов:
+
+**Проверка TCP-соединений с ESB и брокерами:**
+
+```bash
+ss -tnp | grep -E '61616|5672|9092|8181'
+# → ESTABLISHED 0 0 192.168.1.100:54321 10.0.0.10:61616 timer:(on,0.5sec,0)
+```
+
+**Проверка очередей JMS:**
+
+```bash
+# Проверка размера очереди ActiveMQ
+curl -s http://activemq:8161/api/jolokia/read/org.apache.activemq:type=Broker,brokerName=localhost,destinationType=Queue,destinationName=orders.incoming | jq '.value.QueueSize'
+# → 0
+
+# Проверка consumers
+curl -s http://activemq:8161/api/jolokia/read/org.apache.activemq:type=Broker,brokerName=localhost,destinationType=Queue,destinationName=orders.incoming | jq '.value.ConsumerCount'
+# → 3
+```
+
+**Проверка Kafka-консьюмеров:**
+
+```bash
+# Список consumer groups
+kafka-consumer-groups.sh --bootstrap-server kafka:9092 --list
+# → order-service-group
+# → notification-service-group
+
+# Offset lag
+kafka-consumer-group.sh --bootstrap-server kafka:9092 --describe --group order-service-group
+# → GROUP  TOPIC  PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
+# → order-service-group  wholesale-orders  0  12345  12350  5
+```
+
+**Проверка ресурсов ESB-ноды:**
+
+```bash
+# CPU и память ESB-процесса
+ps -p $(pgrep -f 'mule|jboss-esb') -o pid,%cpu,%mem,rss,vsz
+# →   PID %CPU %MEM     RSS    VSZ
+# → 28471  2.1  1.2  524288 1048576
+
+# Лимиты файловых дескрипторов
+cat /proc/$(pgrep -f 'mule|jboss-esb')/limits | grep 'open files'
+# → Max open files            1024                 1048576                files
+
+# Открытые TCP-соединения ESB
+ss -tnp | grep $(pgrep -f 'mule|jboss-esb') | wc -l
+# → 42
+```
+
+**Сбор трафика для анализа SOAP-сообщений:**
+
+```bash
+tcpdump -i eth0 -n port 8080 -c 50 -A
+# → POST /OrderService HTTP/1.1
+# → Content-Type: text/xml;charset=UTF-8
+# → <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+```
 
 ### Выбор инструмента ESB
 
 | Инструмент | Тип | Язык | Особенности | Когда использовать |
 | :--- | :--- | :--- | :--- | :--- |
 | **Apache Camel** | Библиотека | Java | DSL, 300+ компонентов, легковесный | Микросервисная интеграция, Spring Boot |
-| **Mule ESB** | Платформа | Java | Anypoint Studio, API Management, CloudHub | Enterprise, гибридная интеграция |
-| **WSO2 ESB** | Платформа | Java | Open-source,轻量, WS-* полная поддержка | Корпоративная SOA с WS-* стандартами |
+| **Mule ESB** | Платформа | Java | Anypoint Studio, API Management, Runtime Fabric | Enterprise, гибридная интеграция |
+| **WSO2 ESB** | Платформа | Java | Open-source, легковесный, WS-* полная поддержка | Корпоративная SOA с WS-* стандартами |
 | **Apache ServiceMix** | Контейнер | Java | OSGi-based, поддержка Camel, CXF | Legacy интеграция, миграция |
 | **Talend ESB** | Платформа | Java | Data integration, ETL + ESB | Интеграция с корпоративными БД |
 
@@ -211,15 +316,19 @@ from("activemq:orders.incoming")
 *   **Длинные бизнес-процессы (Long-running processes):** Когда процесс длится часы или дни (например, одобрение кредита). Требует использования состояний (stateful) внутри оркестратора и корреляции сообщений (Correlation ID).
 *   **Транзакционность (2PC):** В SOA часто пытаются использовать двухфазные коммиты через WS-AtomicTransaction. Это плохо масштабируется и часто заменяется паттерном **Saga** (компенсирующие транзакции).
 *   **Безопасность в B2B:** Использование WS-Security (подпись и шифрование частей XML-сообщения) позволяет передавать данные через недоверенные промежуточные узлы (прокси).
-*   **Отказ ESB (Single Point of Failure):** Если ESB недоступен, вся интеграция ложится. Решение:.getActivePassiveClustering() с несколькими нодами и автоматическим failover через VIP (виртуальный IP).
+*   **Отказ ESB (Single Point of Failure):** Если ESB недоступен, вся интеграция ложится. Решение: кластеризация с несколькими нодами и автоматическим failover через VIP (виртуальный IP).
 *   **Миграция с SOAP на REST:** Параллельная работа SOAP и REST интерфейсов на одном сервисе. ESB выступает в роли адаптера, маршрутизируя трафик с legacy-клиентов на SOAP, а с современных — на REST.
+*   **Legacy-системы без контейнеризации:** Если сервисы запускаются напрямую на VM/bare-metal без Docker/Kubernetes, используйте традиционные методы развертывания (Ansible, Puppet, Chef) и мониторинг через JMX/SNMP.
+*   **Гибридные окружения on-prem:** При наличии части сервисов в дата-центре, а части — на удалённых узлах, используйте VPN/IPSEC туннели и фиксированные firewall-правила для трафика между сегментами.
+*   **Сетевые разделения (Split-Brain):** При разделении сети ESB-кластер может потерять кворум. Настройте мониторинг кворума и автоматическое переключение на резервный кластер.
+*   **Высокая нагрузка на ESB (1000+ сообщений/сек):** ESB может стать узким местом. Используйте горизонтальное масштабирование, кэширование и разгрузку логики в API Gateway.
 
 ## Антипаттерны
 
 *   **God ESB:** Вся бизнес-логика вынесена в ESB (включая валидацию, обогащение, маршрутизацию). При отказе ESB система полностью недоступна. Логика должна жить в сервисах, ESB — только транспорт и трансформация.
 *   **Chatty Interface:** Слишком много мелких вызовов через ESB. Каждый вызов — это задержка и overhead. Решение: агрегация вызовов, API Composition.
 *   **Shared Database:** Несколько сервисов читают/пишут в одну БД. Нарушает автономность, создает tight coupling. Решение: Database-per-Service.
-*   **忽略 версионирования:** Изменение контракта без увеличения версии. Старые клиенты ломаются. Всегда используйте семантическое версионирование (MAJOR.MINOR.PATCH).
+*   **Игнорирование версионирования:** Изменение контракта без увеличения версии. Старые клиенты ломаются. Всегда используйте семантическое версионирование (MAJOR.MINOR.PATCH).
 *   **Synchronous Chain:** Цепочка из 10+ синхронных вызовов через ESB. Один сбой — каскадный отказ. Используйте асинхронные паттерны и timeouts.
 
 ## Лучшие практики

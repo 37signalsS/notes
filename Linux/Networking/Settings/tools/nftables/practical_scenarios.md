@@ -1,5 +1,7 @@
 # nftables — практические сценарии настройки
 
+**Актуально для:** nftables 1.0+ / Linux kernel 5.15+ (базовые функции: 3.13+, flowtables: 5.3+, netdev ingress: 4.10+)
+
 ## Определения
 
 **NAT (Network Address Translation)** — механизм преобразования IP-адресов и портов в заголовках пакетов. В nftables реализуется через типы `snat`, `dnat`, `masquerade` и `redirect`.
@@ -350,11 +352,31 @@ nft add chain inet filter input { type filter hook input priority 0; policy drop
 
 В отличие от политики `accept` (разрешает всё, что не запрещено), политика `drop` запрещает всё, что не разрешено явно.
 
-**Безопасный подход:** сначала добавить правило для SSH, и только потом устанавливать политику `drop`.
+**Безопасный поэтапный подход (интерактивный):**
+1. Создайте цепочку с политикой `accept` (по умолчанию `priority 0` соответствует `filter` = accept).
+2. Добавьте разрешающие правила (SSH, established/related, loopback, ICMP).
+3. Проверьте, что SSH работает (создайте новое соединение).
+4. Только затем измените политику на `drop`.
 
-#### Метод 1: Атомарная загрузка правил
+```bash
+# 1. Создать таблицу и цепочку с policy accept (явно или по умолчанию)
+nft add table inet filter
+nft add chain inet filter input { type filter hook input priority filter; policy accept; }
 
-Главное преимущество nftables — возможность атомарной замены всего набора правил одной командой. В рамках одной транзакции `flush ruleset` и `policy drop` срабатывают одновременно, поэтому разрыва соединения не происходит, если правило для SSH уже находится в том же файле.
+# 2. Добавить правила (порядок важен: established/related ПЕРВЫМ)
+nft add rule inet filter input ct state established,related accept
+nft add rule inet filter input iif lo accept
+nft add rule inet filter input tcp dport 22 accept
+nft add rule inet filter input ip protocol icmp accept
+
+# 3. Проверить: новое SSH-соединение работает?
+# 4. Сменить политику на drop
+nft chain inet filter input { policy drop; }
+```
+
+#### Метод 1: Атомарная загрузка правил (рекомендуемый для production)
+
+Главное преимущество nftables — возможность атомарной замены всего набора правил одной командой. В рамках одной транзакции `flush ruleset` и `policy drop` срабатывают одновременно, поэтому разрыва соединения не происходит, если правило для SSH и `ct state established,related accept` уже находятся в том же файле.
 
 ```bash
 cat > /etc/nftables.conf <<'EOF'
@@ -363,7 +385,7 @@ flush ruleset
 
 table inet filter {
     chain input {
-        type filter hook input priority 0; policy drop;
+        type filter hook input priority filter; policy drop;
 
         # Разрешаем loopback
         iif lo accept
@@ -380,16 +402,17 @@ table inet filter {
         # Разрешаем HTTP/HTTPS при необходимости
         tcp dport { 80, 443 } accept
 
-        # Разрешаем ICMP (ping)
+        # Разрешаем ICMP (ping) и ICMPv6
         ip protocol icmp accept
+        icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, echo-request, echo-reply, nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert } accept
     }
 
     chain forward {
-        type filter hook forward priority 0; policy drop;
+        type filter hook forward priority filter; policy drop;
     }
 
     chain output {
-        type filter hook output priority 0; policy accept;
+        type filter hook output priority filter; policy accept;
     }
 }
 EOF
@@ -398,11 +421,11 @@ EOF
 sudo nft -f /etc/nftables.conf
 ```
 
-После успешной загрузки проверьте, что SSH-соединение всё ещё живо. Если в конфигурации синтаксическая ошибка, nftables не применит её.
+После успешной загрузки проверьте, что SSH-соединение всё ещё живо. **Критически важно:** создайте **новое** SSH-соединение, чтобы убедиться, что правило `tcp dport 22 accept` работает для новых соединений (не только для established). Если в конфигурации синтаксическая ошибка, nftables не применит её.
 
 #### Метод 2: Автоматический откат при потере соединения
 
-Атомарная загрузка не гарантирует отсутствие ошибок (например, неверный номер порта SSH или забытый `ct state established,related`). Для защиты используется автоматический откат.
+Атомарная загрузка не гарантирует отсутствие логических ошибок (например, неверный номер порта SSH или забытый `ct state established,related`). Для защиты используется автоматический откат.
 
 **Вариант А: Таймер с подтверждением**
 
@@ -463,7 +486,7 @@ sudo nftables-apply -s /etc/nftables/candidate.nft -t 15
 
 При первой загрузке правил SSH-соединение может оборваться, хотя правила корректны. Причина: conntrack не был активен до загрузки правил, и для текущего SSH-соединения не было записи в таблице состояний, поэтому `ct state established,related accept` не сработало.
 
-Решение — добавить на этапе загрузки системы правило, активирующее conntrack заранее:
+Решение — добавить на этапе загрузки системы правило, активирующее conntrack заранее (отдельной цепочкой с высоким приоритетом):
 
 ```bash
 table inet filter {
@@ -472,6 +495,24 @@ table inet filter {
         ct state { established, related } accept
     }
 }
+```
+
+#### Персистентность: сохранение конфигурации и systemd
+
+В Ubuntu/Debian конфигурация по умолчанию хранится в `/etc/nftables.conf`. Служба `nftables` при старте просто выполняет `nft -f /etc/nftables.conf`.
+
+**Правильный способ сохранения (stateless — без счетчиков):**
+```bash
+# Экспорт текущих правил в stateless-формате (без значений счетчиков)
+sudo nft list ruleset -s > /etc/nftables.conf
+# или
+sudo nft list ruleset --stateless > /etc/nftables.conf
+```
+
+**Включение автозагрузки:**
+```bash
+sudo systemctl enable --now nftables
+# Служба выполняет: nft -f /etc/nftables.conf
 ```
 
 #### Проверка существующих правил
@@ -487,13 +528,20 @@ sudo nft list table inet filter
 
 # Конкретная цепочка
 sudo nft list chain inet filter input
+
+# С хэндлами (для точечных изменений)
+sudo nft -a list ruleset
 ```
 
 Если вы переходите с iptables, можно преобразовать существующие правила в формат nftables:
 
 ```bash
+# Одно правило
 iptables-translate -A INPUT -p tcp --dport 22 -j ACCEPT
 # → nft add rule ip filter INPUT tcp dport 22 accept
+
+# Весь набор правил
+iptables-save | iptables-restore-translate > /etc/nftables.conf
 ```
 
 Подробнее о миграции: [nftables — миграция и справочник синтаксиса](./migration_and_reference.md).
@@ -503,15 +551,17 @@ iptables-translate -A INPUT -p tcp --dport 22 -j ACCEPT
 *   Не выполняйте команды по одной через SSH без страховки — между `nft add chain... policy drop` и добавлением разрешающего правила.
 *   Не используйте `nft flush ruleset` в интерактивном режиме на удалённом сервере — если у вас не было явного разрешающего правила для SSH, вы останетесь без защиты (и без доступа). Вместо этого используйте `nft -f` с полным набором правил.
 *   Не забывайте про правило для установленных соединений — без `ct state established,related accept` даже правильно настроенный SSH может оборваться, если таблица conntrack была очищена.
+*   Не смешивайте нативные nftables-таблицы с таблицами, созданными через `iptables-nft` — это вызывает конфликты приоритетов на хуках (предупреждение `incompatible base chains`).
 
 #### Чек-лист безопасной настройки
 
 1.  Подготовьте файл правил с `flush ruleset`, правилом для SSH и политикой `drop`.
 2.  Проверьте синтаксис: `sudo nft --check --file /etc/nftables.conf`.
 3.  Примените атомарно: `sudo nft -f /etc/nftables.conf`.
-4.  Сохраните правила для загрузки при старте: `sudo nft list ruleset | sudo tee /etc/nftables.conf`.
-5.  Настройте автоматический запуск: `sudo systemctl enable --now nftables`.
-6.  Оставьте себе запасное окно — не закрывайте текущую SSH-сессию, пока не проверите, что новое подключение работает.
+4.  **Создайте новое SSH-соединение** — подтвердите, что новые подключения работают.
+5.  Сохраните правила для загрузки при старте: `sudo nft list ruleset -s | sudo tee /etc/nftables.conf`.
+6.  Настройте автоматический запуск: `sudo systemctl enable --now nftables`.
+7.  Оставьте себе запасное окно — не закрывайте текущую SSH-сессию, пока не проверите, что новое подключение работает.
 
 ### 8. Оптимизация через Flowtables
 

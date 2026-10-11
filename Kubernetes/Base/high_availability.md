@@ -275,7 +275,7 @@ kubectl get nodes -w                     # NotReady → Ready после reboot
     3.  Обновить конфигурацию кластера etcd и запустить etcd, затем добавить остальные узлы.
     4.  Удалить не валидные члены: `etcdctl member remove <id>`.
 
-*   **Важно (Edge Case):** флаг `--force-new-cluster` запускает etcd как новый одноузловой кластер без консенсуса — это восстанавливает доступность ценой потери всех данных вне снапшота. Применяйте его только как последнее средство, иначе есть риск получить два «независимых» кластера (split-brain).
+*   **Важно (Edge Case):** флаг `--force-new-cluster` запускает etcd как новый одноузловой кластер, **сохраняя данные из `data-dir` выжившего члена** (без консенсуса). Документация etcd strongly discourages его: panic при живых узлах старого кластера. Применяйте только как последнее средство (предпочителен restore из снапшота), иначе есть риск получить два независимых кластера. Подробности — в [Аварийное восстановление etcd](../../etcd/emergency_recovery.md).
 
 Полный пошаговый процесс — в **[etcd — операции](../Concepts/etcd_operations.md)**.
 
@@ -341,7 +341,7 @@ mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/
 # 2. Остановить etcd
 crictl stop $(crictl ps --name etcd -q)
 
-# 3. Восстановить из снапшота с force-new-cluster
+# 3. Восстановить из снапшота (snapshot restore перезаписывает member ID и cluster ID — новый логический кластер)
 ETCDCTL_API=3 etcdctl snapshot restore /backup/etcd-snapshot.db \
   --data-dir /var/lib/etcd-restored \
   --initial-cluster "survivor=https://10.0.0.1:2380" \
@@ -377,7 +377,7 @@ kubectl get pods -A --field-selector spec.nodeName=<survivor-node>
 | **Data Plane автономен** | Поды живут без Control Plane, но нет self-healing/scaling |
 | **RTO зависит от** | Времени возврата нод ИЛИ времени восстановления снапшота |
 | **Best Practice** | Снапшоты etcd каждые 5-15 мин, проверенная DR-процедура, мониторинг `etcd_server_has_leader` |
-| **Риск split-brain** | При force-new-cluster без изоляции мёртвых нод — два кластера с diverged state |
+| **Риск двух кластеров** | При force-new-cluster без изоляции мёртвых нод — два независимых кластера с diverged state |
 
 ---
 
@@ -450,7 +450,7 @@ groups:
 | API-сервер на одном узле падает при нагрузке | APF/приоритеты или нехватка ресурсов | Проверить `/livez`, `/readyz`, метрики API; настроить приоритеты. |
 | Поды не переезжают после сбоя узла | Taint `unreachable` ещё не истёк (300 c) или мало свободных узлов | Дождаться таймаута выселения; проверить ёмкость и анти-аффинити. |
 | `drain` «застревает» | Нарушение PDB / не выселяемый под | `kubectl get pdb -A`; `kubectl get pod -o wide`; использовать `--ignore-daemonsets`/`--force`. |
-| Два узла «думают», что кластер их | Split-brain после `--force-new-cluster` | Fencing/изоляция на уровне сети/питания; вернуть единый кворум. |
+| Два узла «думают», что кластер их | Два независимых кластера после `--force-new-cluster` без fencing | Fencing/изоляция на уровне сети/питания; вернуть единый кворум. |
 | LB отдаёт на нездоровый API-сервер | Некорректная health-проверка балансировщика | Настроить check на TCP 6443 или `/readyz`; периодически тестировать. |
 | etcd: высокий `wal_fsync_duration_seconds` | Медленный диск / высокая нагрузка I/O | Перевести etcd на NVMe/SSD, изолировать storage. |
 

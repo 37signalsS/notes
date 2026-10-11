@@ -22,17 +22,23 @@
 
 Детальное изучение конкретных аспектов Cassandra/ScyllaDB:
 
-1.  **[Обзор и моделирование данных](./cassandra-scylladb/overview.md):** Определения, Primary Key, типы данных, Secondary Indexes, Materialized Views, UDT.
+1.  **[Обзор и моделирование данных](./cassandra-scylladb/overview.md):** Определения, Primary Key, типы данных, Secondary Indexes, SAI, Materialized Views, CDC, UDT.
 2.  **[CQL: синтаксис и примеры](./cassandra-scylladb/cql-syntax.md):** DDL, DML, SELECT, BATCH, Lightweight Transactions.
-3.  **[Архитектура: Cassandra vs ScyllaDB](./cassandra-scylladb/architecture.md):** Seastar vs JVM, vNodes vs Tablets, когда что выбирать.
-4.  **[Установка и настройка](./cassandra-scylladb/installation.md):** Docker Compose,裸-metal, cassandra.yaml.
-5.  **[Обслуживание и эксплуатация](./cassandra-scylladb/operations.md):** Compaction Strategies, Repair, gc_grace_seconds.
-6.  **[Безопасность](./cassandra-scylladb/security.md):** Аутентификация, TLS/SSL, RBAC, Firewall.
-7.  **[Тюнинг производительности](./cassandra-scylladb/performance.md):** JVM Heap, Scylla I/O, Tombstones, антипаттерны.
+3.  **[Архитектура: Cassandra vs ScyllaDB](./cassandra-scylladb/architecture.md):** Token ring, vNodes vs Tablets, gossip/Raft, snitch, storage engine, когда что выбирать.
+4.  **[Установка и настройка](./cassandra-scylladb/installation.md):** Docker Compose, bare-metal, cassandra.yaml.
+5.  **[Обслуживание и эксплуатация](./cassandra-scylladb/operations.md):** Compaction, Repair, жизненный цикл узлов, SSTables, управление схемой.
+6.  **[Безопасность](./cassandra-scylladb/security.md):** Аутентификация, TLS/SSL, RBAC, Firewall, secrets.
+7.  **[Тюнинг производительности](./cassandra-scylladb/performance.md):** JVM Heap, cassandra.yaml, ScyllaDB I/O, Tombstones, антипаттерны, нагрузочное тестирование.
 8.  **[Мониторинг и observability](./cassandra-scylladb/monitoring.md):** Ключевые метрики, nodetool, Prometheus, ScyllaDB endpoint.
 9.  **[Бэкап и восстановление](./cassandra-scylladb/backup-recovery.md):** Снапшоты, инкрементальный бэкап, restore.
-10. **[Поиск и устранение неисправностей](./cassandra-scylladb/troubleshooting.md):** Типичные ошибки, сбор диагностики.
-11. **[Масштабирование в Kubernetes](./cassandra-scylladb/kubernetes.md):** Scylla Operator, CRD, Helm.
+10. **[Поиск и устранение неисправностей](./cassandra-scylladb/troubleshooting.md):** Типичные ошибки, сбор диагностики, zombie data, clock skew.
+11. **[Развёртывание и масштабирование в Kubernetes](./cassandra-scylladb/kubernetes.md):** Scylla Operator, cass-operator, K8ssandra, Helm, CRD.
+12. **[Клиентские драйверы](./cassandra-scylladb/drivers.md):** Пул соединений, load balancing, retry, reconnection, application.conf.
+13. **[Capacity Planning](./cassandra-scylladb/capacity-planning.md):** Расчёт числа узлов, headroom compaction, repair-трафик.
+14. **[Multi-DC и аварийное восстановление](./cassandra-scylladb/multi-dc-dr.md):** Несколько DC, LOCAL_QUORUM, RPO/RTO, switchover/failover.
+15. **[Миграция и upgrade](./cassandra-scylladb/upgrade-migration.md):** Rolling upgrade, Cassandra → ScyllaDB (Hydra), откат.
+16. **[Runbook](./cassandra-scylladb/runbook.md):** Алерты → диагностика → действие, SLO/SLI.
+17. **[Вопросы для собеседования](./cassandra-scylladb/interview_qa.md):** Операционные вопросы и короткие ответы.
 
 ---
 

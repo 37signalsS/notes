@@ -116,6 +116,13 @@ ceph osd pool autoscale-status    # → что решил pg_autoscaler по к�
 **Архитектура и установка:**
 - [Обзор Ceph](../ceph_overview.md) — фундаментальные основы архитектуры: компоненты, CRUSH, интерфейсы доступа, decision tree выбора интерфейса.
 - [Расчет PG](../ceph_placement_groups.md) — математика расчета Placement Groups и работа автоскейлера.
+- [Развертывание Ceph через cephadm](../cephadm_deployment.md) — bootstrap, добавление хостов, OSD, сервисов, верификация.
+- [Углубленная диагностика OSD/PG](../ceph_osd_troubleshooting.md) — recovery procedures, peering failures, data corruption.
+- [Обслуживание BlueStore](../ceph_bluestore_maintenance.md) — fsck, repair, DB/WAL управление.
+- [Тюнинг и выбор оборудования OSD](../ceph_osd_tuning.md) — hardware selection, mclock, compression, capacity planning.
+- [CRUSH: продвинутые темы](../ceph_crush_advanced.md) — карта, tunables, failure domain design, правила.
+- [Безопасность и hardening Ceph](../ceph_security_hardening.md) — CephX, messenger v2.1, audit, encryption at rest.
+- [Capacity Planning](../ceph_capacity_planning.md) — sizing, рост, N+1, pool sizing.
 - [Развертывание Ceph](../ceph_ansible_installation.md) — от `ceph-ansible` (legacy) к `cephadm`.
 - [Сетевая архитектура](../ceph_networking.md) — настройка public/cluster сетей, MTU, тюнинг, диагностика Slow Ops.
 

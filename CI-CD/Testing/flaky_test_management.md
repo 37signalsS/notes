@@ -251,42 +251,7 @@ quarantine_tests:
 
 ### GitHub Actions: retry и quarantine
 
-```yaml
-name: Tests
-on: [pull_request]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run tests with retry
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 20
-          warning_on_retry: true
-          command: pytest tests/ -v
-
-  quarantine:
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run quarantined tests
-        run: |
-          TODAY=$(date -u +%F)
-          while IFS='|' read -r spec expiry; do
-            [ -z "$spec" ] && continue
-            if [[ "$expiry" < "$TODAY" ]]; then
-              echo "::error::Карантин истёк для $spec — верните тест или продлите"
-              exit 1
-            fi
-            grep -qxF "$spec" .github/quarantine.txt && TESTS_TO_RUN="$TESTS_TO_RUN $spec"
-          done < .github/quarantine.txt
-          npx jest $TESTS_TO_RUN
-```
+Готовые сценарии для GitHub Actions — ретрай шага через `nick-fields/retry`, автоперезапуск упавших ночных прогонов (`gh run rerun --failed` с `permissions: actions: write`) и карантин с TTL — описаны в [Тест-отчётах и надёжности в GitHub Actions](../../Github_CI/Test_Reporting_Reliability.md). Этот файл остаётся источником по кроссплатформенной части: маркеры pytest, детекция по истории, GitLab CI.
 
 ### Bash: анализ истории тестов
 

@@ -237,18 +237,18 @@ mkdir -p /tmp/prom-images && cd /tmp/prom-images
 
 # 2. Скачайте все необходимые образы
 docker pull prom/prometheus:v3.13.1
-docker pull grafana/grafana:v13.1.1
+docker pull grafana/grafana:v13.2.3
 docker pull prom/alertmanager:v0.33.1
 docker pull prom/node-exporter:v1.12.1
-docker pull ghcr.io/google/cadvisor:v0.60.5
+docker pull ghcr.io/google/cadvisor:v0.60.6
 
 # 3. Сохраните образы в единый tar-архив
 docker save -o prom-images.tar \
   prom/prometheus:v3.13.1 \
-  grafana/grafana:v13.1.1 \
+  grafana/grafana:v13.2.3 \
   prom/alertmanager:v0.33.1 \
   prom/node-exporter:v1.12.1 \
-  ghcr.io/google/cadvisor:v0.60.5
+  ghcr.io/google/cadvisor:v0.60.6
 
 # 4. Вычислите контрольную сумму
 sha256sum prom-images.tar > prom-images.tar.sha256
@@ -439,7 +439,7 @@ docker volume rm prometheus_data
 | Компонент | Образ | Версия |
 |---|---|---|
 | **Prometheus** | `prom/prometheus` | v3.13.1 |
-| **Grafana** | `grafana/grafana` | v13.1.1 |
+| **Grafana** | `grafana/grafana` | v13.2.3 |
 | **Alertmanager** | `prom/alertmanager` | v0.33.1 |
 | **Node Exporter** | `prom/node-exporter` | v1.12.1 |
 | **cAdvisor** | `ghcr.io/google/cadvisor` | v0.60.5 |

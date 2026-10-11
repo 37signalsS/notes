@@ -364,7 +364,7 @@ filter {
 output {
   elasticsearch {
     hosts => ["elasticsearch:9200"]
-    index => "ldap-%{+YYYY.MM.dd}"
+    index => "ldap-%{{yyyy.MM.dd}}"
   }
 }
 ```

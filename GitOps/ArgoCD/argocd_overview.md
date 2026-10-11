@@ -1,8 +1,14 @@
 # ArgoCD — декларативный CI/CD для Kubernetes
 
-> **Актуальность (2026):** Argo CD v3.x является стандартом де-факто для GitOps-доставки в Kubernetes. Ключевые изменения v3.x: Server-Side Apply по умолчанию, Progressive Sync для ApplicationSets, PreDelete/PostDelete хуки (v3.3+), OCI-нативность (v3.1+), Shallow Git Cloning (v3.3+).
+**Актуально для:** Argo CD v3.6.x
 
-Установка: `kubectl apply -n argocd --server-side --force-conflicts -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml`
+> **Ключевые изменения v3.x:** Server-Side Apply по умолчанию, Progressive Sync для ApplicationSets, PreDelete-хуки (v3.3+), PostDelete-хуки (v2.10+), OCI-нативность (v3.1+), Shallow Git Cloning (v3.3+).
+
+Установка:
+```bash
+kubectl apply -n argocd --server-side --force-conflicts \
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+```
 
 См. также: [Сравнение с Flux](../argo_vs_flux_manifests.md), [Установка и настройка](./argocd_installation_and_setup.md), [Диагностика и мониторинг](./argocd_troubleshooting_and_monitoring.md)
 
@@ -10,22 +16,25 @@
 
 Перед началом работы с Argo CD необходимо убедиться в следующем:
 
-1. **Kubernetes кластер:** v1.26+ (рекомендуется v1.28+). Поддерживаются любые дистрибутивы (EKS, GKE, AKS, kubeadm, k3s, minikube).
-2. **`kubectl`:** Установлен и настроен для доступа к целевому кластеру.
+1. **Kubernetes кластер:** v1.26+ (рекомендуется v1.28+). Поддерживаются любые дистрибутивы (kubeadm, k3s, minikube, Kind, Talos, на bare metal).
+2. **`kubectl`:** Установлен и настроен для доступа к целевому кластеру (v1.26+).
 3. **Helm:** v3.10+ (опционально, для установки через чарты).
-4. **Сеть:** Доступ из кластера к Git-репозиторию и реестрам образов.
-5. **RBAC:** Администратор кластера для первоначальной установки.
-6. **Ресурсы:** Минимум 2 CPU / 4 GB RAM для контрольного平面 Argo CD.
+4. **Сеть:** Доступ из кластера к Git-репозиторию (HTTPS/SSH) и реестрам образов (Docker Hub, Harbor, GHCR, GCR).
+5. **RBAC:** Администратор кластера для первоначальной установки и настройки CRD.
+6. **Ресурсы:** Минимум 2 CPU / 4 GB RAM для контрольной плоскости Argo CD (не HA); для HA — 3 реплики каждого компонента.
 
 ## Определения
 
-**ArgoCD** — это декларативный [GitOps-инструмент](../GitOps_overview.md) непрерывной доставки (CD) для Kubernetes. Он автоматизирует развертывание приложений и синхронизирует состояние кластера с Git-репозиторием, который выступает как основной источник конфигурации.
+**ArgoCD** — это декларативный [GitOps-инструмент](../GitOps_overview.md) непрерывной доставки (CD) для Kubernetes. Он автоматизирует развертывание приложений и синхронизирует состояние кластера с Git-репозиторием, который выступает как основной источник конфигурации (Single Source of Truth).
 
 Вся архитектура Argo CD базируется на **возможности расширения API Kubernetes** через механизмы пользовательских определений ресурсов (CRD) и операторов. Это позволяет управлять приложениями как нативными объектами кластера, обеспечивая глубокую интеграцию с экосистемой K8s.
 
-**Желаемое состояние (Desired State)** — эталонная конфигурация ресурсов (YAML, Helm, Kustomize), хранящаяся в Git.
+**Желаемое состояние (Desired State)** — эталонная конфигурация ресурсов (YAML, Helm, Kustomize, Jsonnet, OCI-артефакты), хранящаяся в Git.
 **Фактическое состояние (Live State)** — текущее состояние объектов, запущенных в кластере Kubernetes.
 **Цикл сверки (Reconciliation Loop)** — непрерывный процесс сравнения желаемого и фактического состояний с последующим устранением расхождений.
+**Application (Приложение)** — основная CRD Argo CD, связывающая источник в Git с целевым кластером и namespace.
+**AppProject (Проект)** — логическая группа для реализации мультитенантности: ограничивает источники, назначения, типы ресурсов и роли доступа.
+**ApplicationSet** — контроллер для массового управления приложениями на основе шаблонов и генераторов (входит в состав ядра v3.x).
 
 ## Основные концепции
 
@@ -127,6 +136,8 @@ ArgoCD не только применяет изменения, но и защи
 
 **Важно:** При использовании Helm рекомендуется метод `annotation`, так как он не конфликтует с управлением аннотациями Helm.
 
+**Подробное описание методов, миграция и примеры:** см. **[Отслеживание ресурсов](./argocd_resource_tracking.md)**.
+
 ### Ключевые абстракции
 
 - **Application:** Основная единица управления (CRD). Представляет собой группу ресурсов, развертываемых как единое целое.
@@ -135,75 +146,49 @@ ArgoCD не только применяет изменения, но и защи
 
 ## Параметры синхронизации (Sync Options)
 
-В манифесте `Application` (секция `spec.syncPolicy.syncOptions`) настраивается поведение контроллера:
+В манифесте `Application` поведение контроллера настраивается в двух секциях:
+- `spec.syncPolicy.automated` — поля политики автоматической синхронизации (`enabled`, `prune`, `selfHeal`, `allowEmpty`);
+- `spec.syncPolicy.syncOptions` — опции применения изменений:
 
 | Параметр | Описание | По умолчанию |
 | :--- | :--- | :--- |
 | **CreateNamespace=true** | Автоматическое создание целевого Namespace, если он отсутствует. | false |
-| **Prune=true** | Удаление ресурсов в кластере, которых больше нет в Git. | false |
-| **SelfHeal=true** | Автоматический откат ручных правок в кластере к состоянию в Git. | false |
-| **AllowEmpty=false** | Запрет синхронизации, если Git-репозиторий пуст (защита от случайного удаления). | false |
 | **ServerSideApply=true** | Использование Server-Side Apply вместо Client-Side Apply. | false |
 | **RespectIgnoreDifferences=true** | Использование настроек `ignoreDifferences` при синхронизации. | false |
 | **SkipDryRunOnMissingResource=true** | Пропуск проверки `dry-run` для ресурсов, чьи CRD еще не созданы. | false |
-| **Replace=true** | Использование `kubectl replace` вместо `apply` (для ресурсов с неизменяемыми полями). | false |
+| **Replace=true** | Использование `kubectl replace`/`create` вместо `apply` (для ресурсов, не помещающихся в аннотацию `last-applied-configuration`). | false |
 | **ApplyOutOfSyncOnly=true** | Применение только ресурсов в статусе `OutOfSync` (оптимизация производительности). | false |
+
+**Поля автоматической синхронизации (`spec.syncPolicy.automated`):** `prune` (удаление ресурсов, которых нет в Git), `selfHeal` (откат ручных правок), `allowEmpty` (синк при пустом репозитории) — все по умолчанию `false`; `enabled` (v3.1+) — явное вкл/выкл автосинка, `null` = включен.
 
 **Пример использования:**
 ```yaml
 spec:
   syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
     syncOptions:
     - CreateNamespace=true
-    - Prune=true
-    - SelfHeal=true
     - ServerSideApply=true
     - RespectIgnoreDifferences=true
 ```
 
 ## Мультитенантность и AppProject
 
-Объект `AppProject` обеспечивает изоляцию команд и проектов внутри одного экземпляра ArgoCD.
+Объект `AppProject` обеспечивает изоляцию команд и проектов внутри одного экземпляра ArgoCD. Это ключевой механизм мультитенантности, определяющий границы (boundaries) того, **что** разрешено делать, тогда как RBAC определяет, **кто** может это делать.
 
 **Основные возможности изоляции:**
-- **Ограничение источников (Sources):** список разрешенных Git-репозиториев.
-- **Ограничение целей (Destinations):** список разрешенных кластеров и Namespaces.
-- **Белые списки ресурсов (Whitelisted Resources):** ограничение типов объектов (например, запрет на создание ClusterRole).
-- **Роли проекта (Project Roles):** внутренние роли для связки с группами в SSO.
+- **Ограничение источников (Sources):** список разрешенных Git-репозиториев (`sourceRepos`).
+- **Ограничение целей (Destinations):** список разрешенных кластеров и Namespaces (`destinations`).
+- **Белые/чёрные списки ресурсов:** ограничение типов объектов (`clusterResourceWhitelist`, `namespaceResourceWhitelist`, `namespaceResourceBlacklist`).
+- **Роли проекта (Project Roles):** внутренние роли для связки с группами в SSO/OIDC.
 - **Окна синхронизации (Sync Windows):** временные периоды запрета/разрешения на деплой.
+- **Квоты (Quotas):** лимиты на количество приложений и кластеров.
 
-**Пример AppProject:**
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: AppProject
-metadata:
-  name: production
-  namespace: argocd
-spec:
-  description: Production applications
-  sourceRepos:
-  - 'https://github.com/my-org/*'
-  destinations:
-  - namespace: production
-    server: 'https://kubernetes.default.svc'
-  clusterResourceWhitelist:
-  - group: ''
-    kind: Namespace
-  namespaceResourceWhitelist:
-  - group: 'apps'
-    kind: Deployment
-  - group: ''
-    kind: Service
-  roles:
-  - name: deployer
-    description: Deploy role
-    policies:
-    - p, proj:production:deployer, applications, sync, production/*, allow
-    groups:
-    - my-org:deployers
-```
+**Подробное руководство с примерами, квотами, кастомными ролями и best practices:** см. **[AppProject — изоляция проектов](./argocd_appproject_deep.md)**.
 
-## Продвинутые шаблоны
+## Продвинутые шаблоны управления приложениями
 
 ### Шаблон «App-of-Apps»
 
@@ -269,110 +254,15 @@ spec:
 
 ### Шаблон «ApplicationSet»
 
-Обеспечивает динамическую генерацию приложений на основе шаблонов и внешних источников (генераторов).
+**ApplicationSet** решает главную проблему масштабирования Argo CD: ручное создание и сопровождение сотен однотипных объектов `Application`. Вместо копирования YAML для каждого приложения или кластера описывается один шаблон и правила генерации параметров — а ApplicationSet Controller сам создаёт, обновляет и удаляет дочерние приложения.
 
-*   **Как это работает:**
-    1.  **Ресурс ApplicationSet:** Определяет структуру шаблона и правила генерации.
-    2.  **Генераторы (Generators):** Используются для поставки параметров (List, Cluster, Git, Matrix). Например, генератор `Git` может сканировать папки в репозитории, а `Cluster` — список подключенных кластеров.
-    3.  **Подстановка параметров:** Параметры из генератора подставляются в шаблон `Application`.
-    4.  **Синхронизация:** Argo CD автоматически создает, обновляет или удаляет приложения при изменении параметров в источнике (например, при добавлении нового кластера или папки в Git).
-*   **Преимущества:**
-    *   Масштабируемость: управление сотнями приложений в разных кластерах из одного манифеста.
-    *   Динамичность: автоматическое создание временных сред (preview environments) для каждого Pull Request.
-    *   Сокращение ручного труда и минимизация ошибок конфигурации.
-*   **Когда использовать:**
-    *   Развертывание во множество кластеров или сред (dev/staging/prod) с идентичной структурой.
-    *   Автоматизация на основе структуры Git-репозитория (например, в больших монорепозиториях).
-    *   Реализация самообслуживания (self-service) для команд, где приложения создаются динамически.
+**Ключевые возможности:**
+- **Генераторы (Generators):** Источники параметров — List, Cluster, Git (Directories, Files), Pull Request, SCM Provider, Matrix, Merge, Plugin, Cluster Decision Resource.
+- **goTemplate:** Современный режим шаблонизации с полным синтаксисом Go templates и функциями sprig.
+- **Progressive Sync (RollingSync):** Поэтапная раскатка по группам кластеров (canary → production) с контролем `maxUpdate`.
+- **Жизненный цикл:** Дочерние приложения — полноценные Application; ручные правки затираются следующей итерацией контроллера.
 
-#### Пример реализации
-
-**Определение ресурса ApplicationSet:**
-В данном примере используется генератор списка (`list`) для динамического развертывания приложения в два разных кластера.
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: ApplicationSet
-metadata:
-  name: multi-cluster-apps
-  namespace: argocd
-spec:
-  generators:
-  - list:
-      elements:
-      - cluster: cluster-a
-        url: 'https://cluster-a.example.com'
-      - cluster: cluster-b
-        url: 'https://cluster-b.example.com'
-  template:
-    metadata:
-      name: '{{cluster}}-app'
-    spec:
-      project: default
-      source:
-        repoURL: 'https://github.com/your-org/your-repo.git'
-        targetRevision: HEAD
-        path: apps/{{cluster}}
-      destination:
-        server: '{{url}}'
-        namespace: default
-      syncPolicy:
-        automated:
-          prune: true
-          selfHeal: true
-```
-
-#### Прогрессивная синхронизация ApplicationSet (RollingSync)
-
-В v3.x ApplicationSet поддерживает стратегию `RollingSync` для поэтапной раскатки приложений по группам кластеров.
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: ApplicationSet
-metadata:
-  name: progressive-apps
-  namespace: argocd
-spec:
-  generators:
-  - clusters: {}
-  strategy:
-    type: RollingSync
-    rollingSync:
-      steps:
-      - matchExpressions:
-          - key: environment
-            operator: In
-            values: [canary]
-        maxUpdate: 1
-      - matchExpressions:
-          - key: environment
-            operator: In
-            values: [production]
-        maxUpdate: 10%
-  template:
-    metadata:
-      name: '{{name}}-app'
-    spec:
-      project: default
-      source:
-        repoURL: https://github.com/my-org/manifests.git
-        targetRevision: HEAD
-        path: app
-      destination:
-        server: '{{server}}'
-        namespace: production
-```
-
-**Важно:** При использовании `RollingSync` стандартный флаг `syncPolicy.automated` внутри шаблона приложения игнорируется. Решение о запуске синхронизации принимает контроллер `ApplicationSet`.
-
-### Сравнение подходов
-
-| Критерий | App-of-Apps | ApplicationSet |
-| :--- | :--- | :--- |
-| **Сложность** | Низкая (простая иерархия). | Средняя (требует настройки генераторов). |
-| **Автоматизация** | Ручное добавление дочерних манифестов. | Полностью динамическая генерация. |
-| **Гибкость** | Ограничена статическим списком. | Максимальная (поддержка Matrix, Git-директорий). |
-| **Масштабируемость** | Для небольших, известных наборов приложений. | Для крупных инфраструктур и динамических сред. |
+**Подробное руководство с каталогом генераторов, goTemplate, Pull Request generator, RollingSync и сравнением подходов:** см. **[ApplicationSet — генераторы приложений](./argocd_applicationsets.md)**.
 
 ## Сравнение: ArgoCD vs Flux
 
@@ -394,7 +284,7 @@ spec:
 1.  **Git-откат (Рекомендуемый):** Выполнение `git revert` в репозитории. ArgoCD видит изменение в Git и синхронизирует кластер с предыдущим стабильным состоянием. Это сохраняет историю изменений в Git (SSoT).
 2.  **UI-откат (Экстренный):** В веб-интерфейсе ArgoCD есть кнопка **Rollback**, позволяющая мгновенно откатиться к одной из предыдущих ревизий.
     - **Нюанс:** При UI-откате ArgoCD переходит в состояние `OutOfSync` относительно Git, так как версия в кластере больше не совпадает с версией в репозитории. Автоматическая синхронизация (`SelfHeal`) при этом временно отключается для этого приложения, чтобы не "перетереть" откат новым комитом из Git.
-3.  **CLI-откат:** Использование команды `argocd app rollback` для отката к指定енной ревизии.
+  3.  **CLI-откат:** Использование команды `argocd app rollback` для отката к указанной ревизии.
 
 ```bash
 # Просмотр доступных ревизий
@@ -561,25 +451,57 @@ kubectl get pods -n argocd -o wide
 | :--- | :--- |
 | `argocd_app_info` | Информация о приложении (health_status, sync_status, project). |
 | `argocd_app_sync_total` | Общее количество синхронизаций. |
-| `argocd_app_reconcile_total` | Количество реконсиляций. |
-| `argocd_app_health_status` | Статус здоровья приложения. |
-| `argocd_app_sync_duration_seconds` | Длительность синхронизации. |
+| `argocd_app_reconcile` | Гистограмма длительности сверки, секунды. |
+| `argocd_app_sync_duration_seconds_total` | Суммарная длительность синхронизаций, секунды. |
 
 **Пример PromQL-запроса для поиска деградированных приложений:**
 ```promql
 argocd_app_info{health_status="Degraded"} > 0
 ```
 
-### Типичные ошибки и решения
+**Полное руководство по диагностике, мониторингу, типичным ошибкам, логам, метрикам и алертингу:** см. **[Диагностика и мониторинг Argo CD](./argocd_troubleshooting_and_monitoring.md)**.
 
-| Ошибка | Причина | Решение |
-| :--- | :--- | :--- |
-| **`ComparisonError`** | Ошибка в синтаксисе манифестов или недоступность репозитория. | Проверьте манифесты и доступ к Git. |
-| **`InvalidSpecError`** | Ошибка в конфигурации объекта `Application`. | Проверьте манифест Application. |
-| **`SyncError`** | Ошибка применения ресурсов в кластере. | Проверьте RBAC и доступность API-сервера. |
-| **`UnknownError`** | Неизвестная ошибка. | Просмотрите логи контроллера. |
+## Валидация и проверка работоспособности
 
-Подробнее: **[Диагностика и мониторинг Argo CD](./argocd_troubleshooting_and_monitoring.md)**.
+После установки и настройки Argo CD выполните следующие проверки:
+
+**1. Проверка состояния компонентов:**
+```bash
+# Все поды должны быть в статусе Running
+kubectl get pods -n argocd -o wide
+
+# Проверка готовности API сервера
+kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
+```
+
+**2. Проверка подключения к кластерам:**
+```bash
+# Список подключенных кластеров
+argocd cluster list
+# → SERVER                          NAME        STATUS      MESSAGE
+# → https://kubernetes.default.svc  in-cluster  Successful
+```
+
+**3. Проверка синхронизации тестового приложения:**
+```bash
+# Создание тестового приложения
+argocd app create test-app \
+  --repo https://github.com/argoproj/argocd-example-apps.git \
+  --path guestbook \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace guestbook
+
+# Синхронизация и проверка статуса
+argocd app sync test-app
+argocd app get test-app
+# → Status: Synced, Healthy
+```
+
+**4. Проверка метрик (если настроен Prometheus):**
+```bash
+# Запрос к метрикам контроллера
+curl -s http://argocd-metrics:8082/metrics | grep argocd_app_info
+```
 
 ## Лучшие практики
 
@@ -601,22 +523,62 @@ argocd_app_info{health_status="Degraded"} > 0
 
 - **App-of-Apps:** Используйте для bootstrapping и группировки связанных приложений.
 - **ApplicationSet:** Используйте для динамических сред и масштабируемых инфраструктур.
-- **Reconciliation Pause:** Используйте `argocd.argoproj.io/reconciliation-pause: "true"` для временной остановки сверки при глобальных технических работах.
+- **Skip Reconcile:** Используйте `argocd.argoproj.io/skip-reconcile: "true"` (Alpha с v2.7.0) для полной остановки обработки приложения; на секрете кластера (с v3.4) — для всех приложений кластера.
+- **HA режим:** Для production обязательно используйте HA установку (3 реплики каждого компонента, Redis HA, внешний Redis).
+
+### Операции и очистка
+
+**Удаление приложения с очисткой ресурсов:**
+```bash
+# Удаление приложения и всех управляемых ресурсов (prune)
+argocd app delete my-app --cascade --yes
+
+# Только удаление объекта Application, ресурсы в кластере остаются
+argocd app delete my-app --no-cascade
+```
+
+**Очистка завершённых операций:**
+```bash
+# Удаление завершённых операций старше 24 часов
+argocd app operations delete my-app --all --older-than 24h
+```
+
+**Полное удаление Argo CD (включая CRD и данные):**
+```bash
+# Удаление всех Application и ApplicationSet
+argocd app list -o name | xargs -I {} argocd app delete {} --cascade --yes
+argocd appset list -o name | xargs -I {} argocd appset delete {} --cascade --yes
+
+# Удаление манифестов установки
+kubectl delete -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# Удаление CRD (требует кластер-админа)
+kubectl get crd -l app.kubernetes.io/part-of=argocd -o name | xargs kubectl delete
+
+# Удаление namespace
+kubectl delete namespace argocd
+```
+
+**Очистка кэша repo-server (при проблемах с рендерингом):**
+```bash
+# Перезапуск repo-server для сброса кэша
+kubectl rollout restart deployment/argocd-repo-server -n argocd
+```
 
 ## Ограничения и edge cases
 
 ### Ограничения
 
 1. **Лимит ресурсов:** Argo CD имеет внутренние лимиты на количество управляемых ресурсов. Для очень больших приложений (>1000 ресурсов) рекомендуется разбивать на несколько ApplicationSets.
-2. **Cross-namespace ресурсы:** Автоматическая синхронизация работает только в рамках одного namespace. Для кросс-namespace ресурсов настройте отдельные ApplicationSets.
-3. **ApplicationSet и `automated`:** Стандартный флаг `syncPolicy.automated` внутри шаблона ApplicationSet игнорируется. Решение о запуске синхронизации принимает контроллер `ApplicationSet`.
+2. **Cross-namespace ресурсы:** Приложение может управлять ресурсами в нескольких namespaces (включая cluster-scoped), если это разрешено AppProject и RBAC. Отдельные ApplicationSets нужны для логической группировки.
+3. **ApplicationSet и `automated`:** Политика `syncPolicy.automated` из шаблона применяется для обычных приложений ApplicationSet; при стратегии RollingSync автосинк принудительно отключается контроллером ApplicationSet.
 4. **Множественные ApplicationSets:** Если ресурс управляется несколькими ApplicationSets, возникает конфликт. Используйте `FailOnSharedResource=true`.
-5. **Reconciliation Pause:** Приостановка сверки через аннотацию `argocd.argoproj.io/reconciliation-pause: "true"` в секрете кластера останавливает все процессы для этого кластера.
+5. **Skip Reconcile:** Аннотация `argocd.argoproj.io/skip-reconcile: "true"` (на приложении или, с v3.4, на секрете кластера) останавливает всю обработку — статус не обновляется, синхронизации не выполняются.
 
 ### Edge Cases
 
 1. **UI-откат и `OutOfSync`:** После UI-отката приложение переходит в состояние `OutOfSync` относительно Git. `SelfHeal` временно отключается для этого приложения.
-2. **PreSync Hook и Sync Windows:** Если PreSync Hook (миграция БД) начинается во время Allow окна и выполняется дольше, Hook не прерывается. Основные ресурсы будут применены после завершения Hook.
+2. **PreSync Hook и Sync Windows:** Если PreSync Hook (миграция БД) выполняется дольше Allow-окна: без `syncOverrun` операция приостанавливается контроллером (`Sync operation blocked by sync window`) и возобновляется, когда окно снова разрешит синхронизацию; с `syncOverrun: true` (v3.5+, на всех подходящих окнах) — завершается.
 3. **Progressive Sync и Deny окно:** Если приложение попадает в Deny окно во время Progressive Sync, оно не будет синхронизировано до открытия Allow окна.
 4. **Progressive Sync и ручная синхронизация:** Если вы вручную нажмете "Sync" на приложении, которое еще не подошло по очереди, оно будет синхронизировано, но это может нарушить логику `maxUpdate` текущего шага.
 5. **PreDelete Hook и удаление ApplicationSet:** Если ApplicationSet удален во время выполняющейся синхронизации, операция завершится, но новые синхронизации будут невозможны.

@@ -682,3 +682,4 @@ sudo systemctl start victorialogs
 - **[Инжест логов](./victorialogs_ingestion.md)** — протоколы приёма и коллекторы.
 - **[Обзор vmalert](./vmalert_overview.md)** — использование VictoriaLogs для алертинга.
 - **[VictoriaMetrics: обзор](./overview.md)** — общая информация об экосистеме.
+# force reindex test

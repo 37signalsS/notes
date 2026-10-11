@@ -35,7 +35,7 @@
 ```yaml
 services:
   grafana-image-renderer:
-    image: grafana/grafana-image-renderer:3.11.0
+    image: grafana/grafana-image-renderer:v5.12.4
     ports:
       - "8081:8081"
     environment:
@@ -60,13 +60,11 @@ services:
 server_url = http://grafana-image-renderer:8081/render
 # callback — внешний URL Grafana, который рендерер сможет открыть
 callback_url = https://grafana.example.internal/
-# Таймаут рендеринга (сек)
-timeout = 60
-# Ключ, если рендерер требует (опционально)
-# rendering_key = ...
+# Токен, который проверяет renderer (совпадает с --server.auth-token сервиса)
+renderer_token = -
 ```
 
-Через переменные: `GF_RENDERING_SERVER_URL`, `GF_RENDERING_CALLBACK_URL`, `GF_RENDERING_TIMEOUT`.
+Через переменные: `GF_RENDERING_SERVER_URL`, `GF_RENDERING_CALLBACK_URL`, `GF_RENDERING_RENDERER_TOKEN`.
 
 Проверка — отправить тестовый алерт со включённым «Include image» либо сделать снимок дашборда; в уведомлении/снимке появляется PNG.
 
@@ -74,8 +72,8 @@ timeout = 60
 
 ```bash
 # Grafana должна видеть рендерер
-curl -s http://grafana-image-renderer:8081/render/health
-# → {"status":"ok"} (или пустой 200)
+curl -s http://grafana-image-renderer:8081/healthz
+# → OK (HTTP 200)
 
 # Рендерер должен достигать Grafana по callback
 curl -sI https://grafana.example.internal/api/health
@@ -85,9 +83,9 @@ curl -sI https://grafana.example.internal/api/health
 ### Сценарий 4. Установка через Helm
 
 ```bash
-helm upgrade grafana grafana/grafana -n monitoring \
-  --set "grafana-image-renderer.enabled=true" \
-  --set "grafana-image-renderer.env.GF_RENDERER_CALLBACK_URL=https://grafana.example.internal/"
+helm upgrade grafana grafana-community/grafana --version 13.5.0 -n monitoring \
+  --set "imageRenderer.enabled=true" \
+  --set "imageRenderer.renderingCallbackURL=https://grafana.example.internal/"
 # → деплоится отдельный Deployment рендерера, Grafana настраивается автоматически
 ```
 
@@ -98,15 +96,15 @@ helm upgrade grafana grafana/grafana -n monitoring \
 - Выносите рендерер в отдельный процесс/под с лимитами памяти — тяжёлые дашборды могут «съесть» сотни МБ на скриншот.
 - `callback_url` должен быть тем же, что и внешний `root_url`, иначе рендерер не откроет дашборд.
 - Включайте «Include image» только в тех каналах алертинга, где картинка нужна (Slack/Email/Telegram) — это добавляет нагрузку на рендерер.
-- Мониторьте доступность `/render/health` рендерера и его потребление памяти.
+- Мониторьте доступность `/healthz` рендерера и его потребление памяти.
 - Обновляйте рендерер синхронно с мажорными версиями Grafana.
 
 ### Типичные ошибки и их решение
 
 | Симптом | Причина | Решение |
 | --- | --- | --- |
-| Алерты/снимки без картинки | Рендерер не настроен/недоступен | Проверить `[rendering]`, `/render/health` |
-| `timeout` при рендеринге, пустая картинка | Тяжёлый дашборд, медленная загрузка | Увеличить `timeout`, уменьшить число панелей |
+| Алерты/снимки без картинки | Рендерер не настроен/недоступен | Проверить `[rendering]`, `/healthz` |
+| `timeout` при рендеринге, пустая картинка | Тяжёлый дашборд, медленная загрузка | Увеличить `--browser.readiness.timeout` (по умолчанию 30s), уменьшить число панелей |
 | Рендерер не открывает дашборд | Неверный `callback_url` / нет сети до Grafana | Выставить внешний `callback_url`, проверить сеть |
 | OOM на узле Grafana | Рендерер в том же процессе/узле | Вынести рендерер отдельно с лимитами |
 | Картинка «белая»/недогруз панелей | Панели не успели отрисоваться | Увеличить таймаут, проверить доступность источников данных |
@@ -123,11 +121,11 @@ helm upgrade grafana grafana/grafana -n monitoring \
 
 - Чтобы отключить изображения без удаления рендерера — уберите «Include image» из contact points алертинга.
 - Для полного отключения рендеринга удалите секцию `[rendering]` (Grafana вернётся к текстовым уведомлениям).
-- Удаление рендерера: `docker compose rm -s grafana-image-renderer` / `helm` отключить `grafana-image-renderer.enabled=false`.
+- Удаление рендерера: `docker compose rm -s grafana-image-renderer` / `helm` отключить `imageRenderer.enabled=false`.
 
 ### Актуальность и статус
 
-Модель внешнего `grafana-image-renderer` актуальна для 11.x/12.x/13.x. Образ `grafana/grafana-image-renderer` публикуется синхронно с релизами Grafana.
+Модель внешнего `grafana-image-renderer` актуальна для 11.x/12.x/13.x. Версии рендерера нумеруются независимо от Grafana (текущая ветка — v5.x); фиксируйте конкретный тег в проде, а не `latest`.
 
 ### Связанные темы
 

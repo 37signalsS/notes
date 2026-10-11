@@ -1,5 +1,7 @@
 # Init Process в Docker: tini, PID 1, zombie reaping, signal forwarding
 
+**Актуально для:** Tini v0.19.0
+
 ## Определения
 
 **Init Process (PID 1)** — первый процесс в PID namespace контейнера, ответственный за обработку сигналов, пожинание завершившихся дочерних процессов и принятие сирот. В Linux ядро treats PID 1 specially: он не получает стандартных обработчиков сигналов (signal disposition) по умолчанию, обязан пожинать (reap) завершившиеся дочерние процессы и становиться adoptive parent для сирот (orphan processes). Если приложение с PID 1 не реализует обработку сигналов и reaping, контейнер будет некорректно завершаться при `docker stop`, а зомби-процессы будут накапливаться в таблице процессов.
@@ -152,9 +154,46 @@ tini -g -- bash -c "python app.py & python worker.py & wait"
 - Используется `wait` для ожидания нескольких фоновых процессов
 - Нужно гарантировать Graceful Shutdown всех компонентов
 
+### 4.5. Дополнительные флаги tini: subreaper, remapping, parent death signal
+
+Tini предоставляет несколько флагов для продвинутых сценариев, которые не покрыты базовым набором.
+
+**Subreaper mode (`-s` / `TINI_SUBREAPER`):**
+
+По умолчанию tini должен быть PID 1, чтобы пожинать зомби. Если это невозможно (например, при использовании `shareProcessNamespace` в Kubernetes или запуске в уже существующем PID namespace), флаг `-s` регистрирует tini как subreaper через системный вызов `prctl(PR_SET_CHILD_SUBREAPER)`. Тогда все orphan-процессы будут перенаправляться tini, даже если он не PID 1.
+
+```bash
+# tini как subreaper (не PID 1)
+tini -s -- python app.py
+
+# Через переменную окружения
+export TINI_SUBREAPER=1
+tini -- python app.py
+```
+
+> **Примечание:** Subreaper работает только на ядрах Linux >= 3.4. Tini выводит предупреждение, если запущен не как PID 1 и не зарегистрирован как subreaper.
+
+**Remapping exit code (`-e CODE`):**
+
+Некоторые приложения завершаются с ненулевым exit code при получении сигнала завершения. Например, Java-приложения возвращают `143` (128 + 15 = SIGTERM), что нарушает контракт health check и orchestration. Флаг `-e` перезаписывает указанный exit code на `0`.
+
+```bash
+# Java-приложение: SIGTERM → exit 143, перезаписываем в 0
+tini -e 143 -- java -jar app.jar
+```
+
+**Parent death signal (`-p SIGNAL`):**
+
+Tini может быть сконфигурирован так, чтобы получать сигнал при смерти своего родителя. Это полезно для гарантированной каскадной остановки: если runtime убивает родителя, tini получает указанный сигнал и передаёт его дочернему приложению.
+
+```bash
+# Если родитель tini завершается, дочерний процесс получит SIGTERM
+tini -p SIGTERM -- python app.py
+```
+
 ### 5. dumb-init как альтернатива
 
-**dumb-init** — ещё одна lightweight-утилита от Yandex, но с другим функциональным набором:
+**dumb-init** — ещё одна lightweight-утилита от Yelp, но с другим функциональным набором:
 
 | Характеристика | tini | dumb-init |
 | :--- | :--- | :--- |
@@ -162,6 +201,9 @@ tini -g -- bash -c "python app.py & python worker.py & wait"
 | Signal forwarding | Да (прямая пересылка) | Да (с возможностью перезаписи) |
 | Перезапись сигналов (translation) | Нет | Да (например, SIGTERM->SIGQUIT для JVM) |
 | Process group forwarding | Да (`-g`) | Нет |
+| Subreaper mode | Да (`-s`) | Нет |
+| Exit code remapping | Да (`-e`) | Частично |
+| Parent death signal | Да (`-p`) | Нет |
 | Размер | ~20KB | ~30KB |
 | Встроен в Docker | Да (`--init`) | Нет |
 | Установка | `apk add tini` | `apt-get install dumb-init` |
@@ -221,6 +263,97 @@ CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
 ```
 
 **Важно:** Даже с supervisord/s6 рекомендуется использовать tini или --init как PID 1 для корректного zombie reaping и signal forwarding.
+
+### 6.5. Оркестраторы и контейнерные runtime
+
+Поведение init-процесса зависит от runtime и оркестратора. Ключевое правило: **Docker `--init` работает только в Docker**. В Kubernetes, Podman и других runtime init должен быть встроен в образ.
+
+#### Kubernetes
+
+Kubernetes **не поддерживает** флаг `--init` или аналогичный механизм runtime injection. Об этом известно открытой issue с 2019 года (kubernetes/kubernetes#84210). В Kubernetes tini/dumb-init/catatonit должны быть частью образа.
+
+```dockerfile
+# Правильно для Kubernetes: tini встроен в ENTRYPOINT
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["python", "app.py"]
+```
+
+**Жизненный цикл завершения Pod в Kubernetes:**
+
+1. Pod помечается как `Terminating` — удаляется из endpoints
+2. Выполняется `preStop` hook (если определён)
+3. В каждый контейнер отправляется `SIGTERM`
+4. Запускается обратный отсчёт `terminationGracePeriodSeconds` (по умолчанию 30с)
+5. После истечения grace period: `SIGKILL`
+
+Если PID 1 не обрабатывает `SIGTERM`, grace period тратится впустую, после чего следует принудительное завершение. При частых деплоях это суммируется в значительные задержки.
+
+```yaml
+# docker-compose.yml с stop_grace_period
+services:
+  web:
+    image: myapp
+    init: true
+    stop_grace_period: 30s
+```
+
+**Альтернатива: `shareProcessNamespace`:**
+
+Kubernetes позволяет включить общий PID namespace для всех контейнеров в Pod через `shareProcessNamespace: true`. В этом случае pause-контейнер становится PID 1 для всего Pod и пожинает зомби. Однако:
+
+- Signal handling остаётся ответственностью каждого контейнера отдельно
+- Опция отключена по умолчанию с Kubernetes 1.8
+- Изменяет видимость процессов (`/proc/1/cmdline` теперь указывает на pause)
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app
+spec:
+  shareProcessNamespace: true
+  containers:
+  - name: app
+    image: myapp
+    # tini всё ещё рекомендуется для signal forwarding
+```
+
+> **Важно:** `initContainers` Kubernetes — это не init-процесс PID 1. Они выполняются последовательно перед основными контейнерами и завершаются. Их задача — подготовка окружения, а не обработка сигналов.
+
+#### Podman
+
+Podman включает встроенный init через флаг `--init`. В отличие от Docker (который использует tini), Podman по умолчанию использует **catatonit** — активно поддерживаемый форк от openSUSE. Catatonit последний релиз — декабрь 2024, имеет сигналы signal forwarding и zombie reaping, но не поддерживает signal rewriting и exit code remapping.
+
+```bash
+podman run --init myapp
+```
+
+#### Windows containers
+
+Tini — это Linux-специфичная утилита, использующая системные вызовы Linux (`waitpid`, `prctl`). В Windows containers аналогичная проблема PID 1 решается иначе: Windows имеет встроенный процесс `csrss`/`wininit`, который обрабатывает orphan adoption, а signal forwarding реализован через Windows Events и Job Objects.
+
+Для Windows контейнеров используйте:
+- Встроенные механизмы Windows Service
+- PowerShell `Register-ObjectEvent` для обработки остановки
+- Docker HEALTHCHECK для мониторинга состояния
+
+#### Shell-скрипты и `exec`
+
+Entrypoint-скрипты на shell создают дополнительный процесс, который может стать источником проблем с сигналами. Правило: всегда используйте `exec "$@"` в конце скрипта, чтобы заменить shell-процесс на целевое приложение.
+
+```bash
+#!/bin/bash
+# entrypoint.sh
+set -euo pipefail
+
+# Инициализация
+python migrate.py
+
+# КРИТИЧНО: exec заменяет shell на целевое приложение
+exec "$@"
+```
+
+Без `exec` shell остаётся PID 1 (или родителем для tini), и сигналы могут обрабатываться неправильно. Tini пробросит сигнал shell-скрипту, но если скрипт не завершается, сигнал не дойдёт до приложения.
 
 ## Практические сценарии
 
@@ -556,13 +689,13 @@ func main() {
 
 ### Сравнительная таблица init-инструментов
 
-| Инструмент | Zombie reaping | Signal forwarding | Process groups | Перезапись сигналов | Размер | Встроен в Docker |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **tini** | Да | Да | `-g` | Нет | ~20KB | Да (`--init`) |
-| **dumb-init** | Нет | Да | Нет | Да (`--rewrite`) | ~30KB | Нет |
-| **s6-overlay** | Да | Да | Да | Да | ~100KB | Нет |
-| **supervisord** | Частично | Нет | Нет | Нет | ~5MB | Нет |
-| **--init (Docker)** | Да | Да | Нет | Нет | N/A | Да |
+| Инструмент | Zombie reaping | Signal forwarding | Process groups | Перезапись сигналов | Subreaper | Exit remap | Размер | Встроен в Docker |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **tini** | Да | Да | `-g` | Нет | Да (`-s`) | Да (`-e`) | ~20KB | Да (`--init`) |
+| **dumb-init** | Нет | Да | Нет | Да (`--rewrite`) | Нет | Нет | ~30KB | Нет |
+| **s6-overlay** | Да | Да | Да | Да | Да | Да | ~100KB | Нет |
+| **supervisord** | Частично | Нет | Нет | Нет | Нет | Нет | ~5MB | Нет |
+| **--init (Docker)** | Да | Да | Нет | Нет | Нет | Нет | N/A | Да |
 
 ### Размер и производительность overhead
 
@@ -582,6 +715,9 @@ Tini добавляет минимальный overhead:
 | Зомби накапливаются при fork | Нет init для reaping | Добавьте tini или --init |
 | Сигнал не доходит до фоновых процессов | tini без `-g` для группы процессов | Используйте `tini -g` |
 | OOM при большом количестве процессов | Исчерпание PID namespace зомбами | Используйте tini для автоматического reaping |
+| Entrypoint-скрипт без `exec "$@"` | Shell остаётся между tini и приложением | Добавьте `exec "$@"` в конец скрипта |
+| Java-приложение завершается с exit code 143 | SIGTERM возвращается как ненулевой код | Используйте `tini -e 143` |
+| Tini предупреждает "not PID 1" | Запуск без subreaper в не-PID-1 | Добавьте `-s` или `TINI_SUBREAPER=1` |
 
 ### Установка tini в разных образах
 
@@ -603,13 +739,74 @@ RUN curl -fsSL -o /usr/local/bin/tini https://github.com/krallin/tini/releases/d
     chmod +x /usr/local/bin/tini
 ```
 
-### Связанные документы
+### Сценарии production
+
+**Одинаковое поведение в Docker и Kubernetes:**
+
+Если образ планируется использовать в Docker и Kubernetes, встраивайте tini в Dockerfile, а не полагайтесь на `docker run --init` или `init: true`. Kubernetes не поддерживает runtime injection.
+
+```dockerfile
+# Универсальный Dockerfile для Docker и K8s
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/*
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["python", "app.py"]
+```
+
+**Distroless и scratch образы:**
+
+Минимальные образы не содержат пакетного менеджера. Используйте статический бинарник tini:
+
+```dockerfile
+FROM golang:1.22-alpine AS builder
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /server .
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=builder /usr/local/bin/tini-static /tini
+COPY --from=builder /server /server
+ENTRYPOINT ["/tini", "--"]
+CMD ["/server"]
+```
+
+**Java-приложения с exit code 143:**
+
+Java-приложения завершаются с exit code 143 при SIGTERM, так как JVM не перехватывает сигнал по умолчанию. Используйте remapping или dumb-init:
+
+```dockerfile
+# Вариант A: tini с remapping exit code
+ENTRYPOINT ["/usr/bin/tini", "-e", "143", "--"]
+CMD ["java", "-jar", "app.jar"]
+
+# Вариант B: dumb-init с rewrite
+ENTRYPOINT ["dumb-init", "--rewrite", "15:3", "--"]
+CMD ["java", "-jar", "app.jar"]
+```
+
+**Multi-stage сборки с тINI:**
+
+Если builder stage использует tini для health checks или скриптов, а final stage — нет, убедитесь, что бинарник tini копируется корректно:
+
+```dockerfile
+FROM alpine:3.21 AS builder
+RUN apk add --no-cache tini
+
+FROM alpine:3.21
+COPY --from=builder /sbin/tini /sbin/tini
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["python", "app.py"]
+```
+
+## Связанные документы
 
 **См. также:**
-- **[container_execution.md](../Docker_best_practices/container_execution.md)** — паттерны multi-process, Graceful Shutdown, OOM.
-- **[health_signals.md](./health_signals.md)** — инструкции HEALTHCHECK и STOPSIGNAL, проброс сигналов.
-- **[runtime_execution.md](./runtime_execution.md)** — инструкции CMD, ENTRYPOINT, USER и решение проблемы PID 1.
+- **[container_execution.md](./Docker_best_practices/container_execution.md)** — паттерны multi-process, Graceful Shutdown, OOM.
+- **[health_signals.md](./Instructions/health_signals.md)** — инструкции HEALTHCHECK и STOPSIGNAL, проброс сигналов.
+- **[runtime_execution.md](./Instructions/runtime_execution.md)** — инструкции CMD, ENTRYPOINT, USER и решение проблемы PID 1.
 - **[docker_multi_process_logging.md](../../Docker_logs/docker_multi_process_logging.md)** — логирование multi-process контейнеров.
-- **[linux_isolation.md](../../Concepts/linux_isolation.md)** — изоляция Linux: namespaces, cgroups, PID namespace.
+- **[linux_isolation.md](../../Docker/Concepts/linux_isolation.md)** — изоляция Linux: namespaces, cgroups, PID namespace.
 - **[docker_exit_codes.md](../../Docker_troubleshooting/docker_exit_codes.md)** — справочник по exit code (137, 143 и др.).
 - **[docker_compose_directives.md](../../Docker_compose/docker_compose_directives.md)** — директива `init:` в Docker Compose.

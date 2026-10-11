@@ -459,7 +459,7 @@ sudo journalctl -u gitlab-runner --no-pager -n 20
 - **Ephemeral runners и remote cache:** при использовании эфемерных раннеров локальный `.turbo`/`.nx/cache` не сохраняется между джобами, поэтому remote cache обязателен.
 - **Dependency hoisting в pnpm/workspace:** hoisting меняет структуру `node_modules`, что влияет на хэш задачи. Фиксируйте workspace Protocol или используйте одинаковый менеджер пакетов.
 - **Runner node failure:** при outage узла с persistent runner'ами джобы завершаются с ошибкой. Настройте `interrupt_timeout` и graceful shutdown; используйте ephemeral runners для критичных джоб.
-- **Concurrent limit и лицензия:** GitLab CE/EE имеет лимит concurrent джоб; при его достижении новые джобы стоят в очереди несмотря на доступные runners. Мониторьте `gitlab_runner_active_jobs` vs `concurrent`.
+- **Concurrent limit и лицензия:** GitLab CE/EE имеет лимит concurrent джоб; при его достижении новые джобы стоят в очереди несмотря на доступные runners. Мониторьте `gitlab_runner_jobs_running_total` vs `concurrent`.
 - **Registry mirror outage:** при недоступности primary registry CI/CD не может pull/push образов. Настройте registry mirror с webhook trigger; RTO для registry = интервал репликации.
 - **Секреты в runner environment:** runner с доступом к Vault/registry должен иметь minimal RBAC; используйте OIDC id_tokens вместо статических ключей.
 - **Горячие кэши в preview:** preview-окружения создаются и удаляются автоматически; кэшировать `node_modules` для preview нецелесообразно — используйте shared remote cache с TTL.

@@ -651,3 +651,4 @@ journalctl --user -u app-stack-pod.service -f
 - **[Daemonless архитектура](./podman_daemonless_architecture.md)** — как работают процессы `conmon` и инфраструктура подов.
 - **[Миграция с Docker (Compose → Quadlet)](./migration-from-docker.md)** — подробнее о переходе на Quadlet и различиях в сетевом стеке.
 - **[Podman Compose](./podman-compose.md)** — компоновка сервисов через Compose-спецификацию.
+# force reindex test

@@ -1,6 +1,8 @@
 # Руководство: Настройка мультинодового кластера Elasticsearch (8.x / 9.x)
 
-> Эта заметка является авторитетным источником по развертыванию мультинодовых кластеров Elasticsearch версий 8.x и 9.x в self-managed среде. Она охватывает процессы автоматической и ручной настройки безопасности, системный тюнинг ОС, управление ролями узлов и обеспечение отказоустойчивости на уровне стоек или зон доступности.
+**Актуально для:** Elasticsearch 8.19 LTS / 9.5.x
+
+> Эта заметка является авторитетным источником по развертыванию мультинодовых кластеров Elasticsearch версий 8.x и 9.x в self-managed среде. Она охватывает процессы автоматической и ручной настройки безопасности, системный тюнинг ОС, управление ролями узлов и обеспечение отказоустойчивости на уровне стоек, зон или дата-центров.
 >
 > Базовая архитектура кластера описана в [обзоре Elasticsearch](../Elasticsearch/elasticsearch_overview.md); развертывание single-node в Docker — в [руководстве по Docker Compose](./practical_setup_with_docker.md); сетевые требования — в [Network и Firewall](../elasticsearch_network_requirements.md).
 
@@ -9,9 +11,10 @@
 * **Токен регистрации (Enrollment Token)** — зашифрованный ключ (Base64-строка), содержащий информацию для автоматического подключения нового узла к кластеру: версию, адреса мастер-узла, отпечаток CA-сертификата и ключ доступа. Действует 30 минут с момента генерации.
 * **Проверки при загрузке (Bootstrap Checks)** — набор тестов конфигурации ОС (память, лимиты файлов, потоки), которые Elasticsearch выполняет при старте в сетевом режиме (когда `network.host` привязан не только к loopback). Если проверки не пройдены, процесс завершается с ошибкой и не формирует кластер.
 * **Allocation Awareness (Осведомленность о распределении)** — механизм, позволяющий Elasticsearch учитывать физическую топологию серверов (зоны, стойки) при размещении реплик для предотвращения потери данных при отказе целого сегмента инфраструктуры.
-* **Elasticsearch Keystore** — защищенное хранилище для чувствительных настроек (пароли облачных провайдеров, ключи API), которое предотвращает их хранение в открытом виде в `elasticsearch.yml`.
-* **Compressed OOPs (Сжатые указатели)** — технология JVM, позволяющая использовать 32-битные указатели в 64-битной среде, что экономит память. Работает только до порога heap, который зависит от JVM (~26–31 ГБ); точное значение можно проверить в логах или через `GET _nodes/jvm`.
-* **Кворум мастеров (Voting Configuration)** — подмножество master-eligible узлов, чьи голоса определяют выбор активного мастера и защиту от split brain. Кластер работоспособен, пока доступны больше половины узлов кворума; поэтому число master-eligible узлов должно быть нечетным (обычно 3).
+* **Elasticsearch Keystore** — защищенное хранилище для чувствительных настроек (пароли, ключи API, учётные данные для S3-репозиториев), которое предотвращает их хранение в открытом виде в `elasticsearch.yml`.
+* **Compressed OOPs (Сжатые указатели)** — технология JVM, позволяющая использовать 32-битные указатели в 64-битной среде, что экономит память. Работает только до порога heap, который зависит от JVM: 26 ГБ безопасно на большинстве систем, на некоторых порог достигает 30 ГБ; точное значение можно проверить в стартовом логе или через `GET _nodes/_all/jvm`.
+* **Кворум мастеров (Voting Configuration)** — подмножество master-eligible узлов, чьи голоса определяют выбор активного мастера и защиту от split brain. Решения принимаются только после ответа большинства (более половины) узлов кворума; поэтому число master-eligible узлов должно быть нечетным (обычно 3). При четном числе узлов Elasticsearch сам исключает один из них из кворума, чтобы сохранить нечетный размер.
+* **Voting-only узел (dedicated tiebreaker)** — master-eligible узел, участвующий в кворуме, но никогда не избираемый мастером (`node.roles: [ master, voting_only ]`). Экономит ресурсы в схемах с выделенными мастерами и служит узлом-развязкой (tiebreaker) при двухзонных развёртываниях.
 * **Security Auto-Configuration** — автоматическая настройка безопасности при первом запуске: генерация CA, выпуск TLS-сертификатов для transport- и HTTP-слоя, создание пароля суперпользователя `elastic`.
 * **Дисковые пороги (Watermarks)** — уровни заполнения диска (по умолчанию 85%/90%/95%), при достижении которых кластер последовательно прекращает назначать шарды, мигрирует их с узла и блокирует запись в индексы.
 
@@ -25,36 +28,58 @@
 | :--- | :--- | :--- |
 | **`cluster.initial_master_nodes`** | Список начальных мастеров | Используется **только один раз** при самом первом запуске (bootstrap). Задается только на master-eligible узлах первого формирования; после образования кластера настройку следует убрать из конфигурации. |
 | **`discovery.seed_hosts`** | Список узлов для поиска | IP или DNS-имена master-eligible узлов. Постоянная настройка — нужна при каждом старте для повторного обнаружения кластера. |
-| **`node.roles`** | Список ролей узла | Например `[master, data_hot]`. Для стабильности рекомендуется выделять 3 выделенных узла с ролью `master` в кластерах от 10 узлов. |
+| **`node.roles`** | Список ролей узла | Например `[master, data_hot]`. Каждый кластер требует роли `master` и (`data_content` + `data_hot`) либо `data`. Как только кластер насчитывает больше нескольких узлов (more than a handful), обычно имеет смысл выделять dedicated master-узлы с единственной ролью `master`. |
 
-Механика выбора мастера: при первом запуске узлы из `cluster.initial_master_nodes` образуют voting configuration и выбирают активного мастера; далее состав кворума кластер поддерживает сам (API `_cluster/voting_config_exclusions` нужен только при выводе мастеров из эксплуатации). Нарушение кворума останавливает запись и выбор мастера — кластер остается в режиме чтения недоступным (`master not discovered`), это штатная защита от split brain, а не авария.
+Механика выбора мастера: при первом запуске узлы из `cluster.initial_master_nodes` образуют voting configuration и выбирают активного мастера; далее состав кворума кластер поддерживает сам. Управлять составом кворума можно через API voting configuration exclusions: `POST /_cluster/voting_config_exclusions?node_names=<name>` исключает узел из кворума (требуется при плановом выводе мастеров, особенно когда за короткий период убирается половина или более master-eligible узлов); вместо имён можно указать постоянные ID узлов — `?node_ids=<id>` (одновременно с `node_names` не указывается); параметр `timeout` (дефолт 30s) ограничивает ожидание авто-переконфигурации. Ответ `200 OK` гарантирует, что узел удалён из voting configuration и не будет в него возвращён до очистки списка; при любом другом ответе вызов можно безопасно повторить. `DELETE /_cluster/voting_config_exclusions` очищает весь список (по умолчанию дожидается полного удаления исключённых узлов из кластера; `?wait_for_removal=false` очищает список, не дожидаясь), текущий список — `GET /_cluster/state?filter_path=metadata.cluster_coordination.voting_config_exclusions`. Исключения персистентны и ограничены по числу (`cluster.max_voting_config_exclusions`, дефолт 10) — в нормальной эксплуатации список должен быть пуст, исключения удаляют после завершения работ. Нарушение кворума останавливает выбор мастера и фиксацию изменений состояния — запись становится недоступной с ошибками `master not discovered`, это штатная защита от split brain, а не авария. HA-кластер требует минимум три master-eligible узла, из которых минимум два не voting-only; при этом кластер переносит потерю любого одного узла.
 
 ### Модель безопасности по умолчанию (Security Auto-Configuration)
 
 При первом старте узла, установленного из DEB/RPM пакета, происходит следующее:
 
-1. Генерируется локальный CA и сертификаты; TLS включается для transport-слоя (порт 9300) и HTTP-слоя (порт 9200).
-2. В keystore записывается seed, генерируется пароль пользователя `elastic` — он выводится **один раз** в консоль/лог при первом старте.
-3. HTTP-слой привязывается к `_site_` и `_local_`, transport-слой — только к `_local_`. Это позволяет single-node стартовать без вопросов, но означает, что для присоединения удаленных узлов нужно явно задать `network.host`.
+1. Генерируется локальный CA и сертификаты; TLS включается для transport-слоя (порт 9300) и HTTP-слоя (порт 9200). Сертификаты и ключи лежат в каталоге конфигурации (`config/certs`, для пакетов — `/etc/elasticsearch/certs`): `http_ca.crt` (CA для HTTP-слоя), `http.p12` и `transport.p12` (PKCS#12 keystore, пароли хранятся как secure-настройки). Настройки TLS записываются в `elasticsearch.yml`.
+2. В keystore записывается seed, генерируется пароль пользователя `elastic` — он выводится **один раз** в консоль/лог при первом старте (см. ограничения ниже).
+3. HTTP-слой привязывается ко всем интерфейсам (`0.0.0.0` — автоконфигурация записывает `http.host: 0.0.0.0` в `elasticsearch.yml`), transport-слой — только к `_local_` (localhost). Это позволяет single-node стартовать без вопросов, но означает, что узел сразу доступен по сети: TLS и аутентификация включены по умолчанию, однако порт 9200 всё равно нужно закрыть firewall-правилами, а для присоединения удаленных узлов требуется явно задать `network.host`.
+
+Автоконфигурация пропускается, если при старте обнаруживается, что узел уже входит в кластер, что безопасность уже настроена или явно отключена. Если вывод процесса перенаправлен в файл или терминал не подключен (типичный случай — systemd-сервис), TLS при этом всё равно настраивается автоматически, но пароль `elastic` и токены не генерируются — их нужно задать/выпустить вручную. В пакетных (DEB/RPM) установках пароль `elastic` при старте не выводится вообще и его требуется сбросить вручную.
+
+Условия пропуска автоконфигурации (узел стартует с существующей конфигурацией):
+
+* **Среда**: каталог `data` существует и не пуст (узел уже запускался и, возможно, входит в кластер); `elasticsearch.yml` отсутствует/нечитаем или `elasticsearch.keystore` недоступен; каталог конфигурации недоступен для записи (узел запущен не тем пользователем или администратор ограничил права).
+* **Настройки**: `node.roles` задано так, что узел не может быть избран мастером или хранить данные; `xpack.security.autoconfiguration.enabled: false`; явно заданное `xpack.security.enabled`; любые `xpack.security.transport.ssl.*` / `xpack.security.http.ssl.*` в `elasticsearch.yml` или keystore; заданные `discovery.type`, `discovery.seed_hosts` или `cluster.initial_master_nodes` (исключения — `discovery.type: single-node` и `cluster.initial_master_nodes`, содержащий только имя текущего узла).
 
 Ограничения, которые важно знать заранее:
 
-* Enrollment работает **только** с автосгенерированными сертификатами; если TLS настроен вручную через `elasticsearch-certutil`, токены узлов использовать нельзя.
-* Генерация токенов требует настройки `xpack.security.enrollment.enabled: true`. Токен для Kibana (`-s kibana`) дополнительно опирается на TLS HTTP-слоя, который при автоконфигурации включен по умолчанию.
-* Инструмент переписывает существующую автоконфигурацию нового узла: удаляет его локальные сертификаты и связанные secure-настройки, заменяя их данными из токена.
+* Enrollment работает **только** с кластерами, настроенными автоконфигурацией безопасности (автосгенерированные сертификаты); если TLS настроен вручную через `elasticsearch-certutil`, токены узлов использовать нельзя. Инструмент `elasticsearch-create-enrollment-token` также не работает при отключенном file realm; для выполнения запроса он создаёт и сразу удаляет временного пользователя в file realm.
+* Генерация токенов управляется настройкой `xpack.security.enrollment.enabled` (дефолт `false`), но автоконфигурация сама выставляет её в `true` при первом старте — задавать вручную требуется только если автоконфигурация отключена. Токен для Kibana (`-s kibana`) дополнительно опирается на TLS HTTP-слоя, который при автоконфигурации включен по умолчанию.
+* Инструмент `elasticsearch-reconfigure-node` переконфигурирует узел DEB/RPM для присоединения к существующему кластру: прописывает TLS-настройки (сертификаты того же CA) и `discovery.seed_hosts` на узел-источник токена.
+
+Для подключения клиентов (Beats, Logstash, standalone Elastic Agent) к HTTP-слою нужен отпечаток CA или сам сертификат. Отпечаток выводится в терминал при первом старте; получить его позже можно так:
+
+```bash
+openssl x509 -fingerprint -sha256 -in /etc/elasticsearch/certs/http_ca.crt
+# → issuer= /CN=Elasticsearch security auto-configuration HTTP CA
+# → SHA256 Fingerprint=28:28:4E:...
+```
+
+Пароли PKCS#12-keystore'ов (`http.p12`, `transport.p12`), созданных автоконфигурацией, хранятся как secure-настройки и извлекаются через:
+
+```bash
+sudo /usr/share/elasticsearch/bin/elasticsearch-keystore show xpack.security.http.ssl.keystore.secure_password
+sudo /usr/share/elasticsearch/bin/elasticsearch-keystore show xpack.security.transport.ssl.keystore.secure_password
+```
 
 ### Системный тюнинг (Production Ready)
 
 Для прохождения Bootstrap Checks и стабильной работы под нагрузкой обязательны следующие настройки ([официальный список](https://www.elastic.co/docs/deploy-manage/deploy/self-managed/bootstrap-checks)):
 
-1.  **Память (mmap)**: Увеличение лимитов виртуальной памяти для Lucene.
-    ```bash
-    sysctl -w vm.max_map_count=262144
-    # Перманентно (предпочтительный путь для systemd-дистрибутивов):
-    echo "vm.max_map_count=262144" > /etc/sysctl.d/99-elasticsearch.conf
-    sysctl --system
-    # → vm.max_map_count = 262144
-    ```
+1.  **Память (mmap)**: Увеличение лимитов виртуальной памяти для Lucene. Bootstrap check требует минимум 262144; официально рекомендуемое значение — 1048576. Проверка применяется только при использовании mmapfs/hybridfs для хранения индексов (тип хранения задаётся `index.store.type`; при `niofs`/`simplefs` проверка не выполняется).
+     ```bash
+     sysctl -w vm.max_map_count=262144
+     # Перманентно (предпочтительный путь для systemd-дистрибутивов):
+     echo "vm.max_map_count=262144" > /etc/sysctl.d/99-elasticsearch.conf
+     sysctl --system
+     # → vm.max_map_count = 262144
+     ```
 2.  **Блокировка памяти (mlockall)**: Предотвращает уход JVM в swap.
     *   В `elasticsearch.yml`: `bootstrap.memory_lock: true`.
     *   В системных лимитах (systemd): `LimitMEMLOCK=infinity`.
@@ -63,8 +88,8 @@
     curl -k -u elastic:$PASS "https://localhost:9200/_nodes?filter_path=nodes.*.process.mlockall"
     # → {"nodes":{"<node_id>":{"process":{"mlockall":true}}}}
     ```
-3.  **Дескрипторы файлов**: Минимум 65536 открытых файлов.
-    *   `LimitNOFILE=65536` (в DEB/RPM пакетах уже задано в unit-файле — проверьте переопределениями).
+3.  **Дескрипторы файлов**: Официальный минимум — 65535 открытых файлов; bootstrap check проверяет значение 65536, поэтому 65536 — практический минимум.
+     *   `LimitNOFILE=65536` (в DEB/RPM пакетах уже задано в unit-файле — проверьте переопределениями).
 4.  **Отключение swap**: Свапинг heap вызывает непредсказуемые паузы длительностью в секунды.
     ```bash
     sudo swapoff -a                                   # временно, до ребута
@@ -91,8 +116,18 @@ sudo systemctl daemon-reload
 1.  **Метка узла**: `node.attr.zone: "zone-a"`.
 2.  **Настройка кластера**: `cluster.routing.allocation.awareness.attributes: "zone"`.
 3.  **Принудительная защита**: `cluster.routing.allocation.awareness.force.zone.values: ["zone-a", "zone-b"]`. Это предотвратит "скучивание" реплик в одной зоне, если вторая временно недоступна: при forced awareness первичные шарды в выжившей зоне не будут принимать реплики, пока вторая зона не вернется — ценой снижения отказоустойчивости записи, но сохранением емкости дисков.
+4.  **Voting-only узел (dedicated tiebreaker)**: `node.roles: [ master, voting_only ]`. Узел участвует в кворуме, но никогда не становится мастером — экономит ресурсы в схеме «два полноценных мастера + tiebreaker» и в двухзонных развёртываниях, где третий master-eligible узел-развязка живёт в отдельной зоне. Помечать `voting_only` можно только узлы с ролью `master`.
 
 ## Практические сценарии
+
+### Предварительные требования
+
+* Установлены пакеты Elasticsearch 8.19 LTS или 9.5.x (DEB/RPM) на всех узлах; оптимизированный JDK поставляется в комплекте.
+* Открыты порты: **9200** (HTTP — клиенты, Beats, Logstash) и **9300** (transport — межузловой трафик); детали и примеры правил см. в [сетевых требованиях](../elasticsearch_network_requirements.md).
+* `cluster.name` идентичен на всех узлах; `node.name` уникален на каждом узле.
+* Синхронизация времени (NTP/chrony) на всех узлах; одинаковые UID/GID пользователя `elasticsearch`.
+* Системные лимиты настроены (раздел «Системный тюнинг» выше) — иначе Bootstrap Checks остановят узел при привязке к сетевому интерфейсу.
+* Для сценария Enrollment: первый узел запущен с автоконфигурацией безопасности (TLS-сертификаты сгенерированы автоматически); на присоединяемом узле каталог `data` пуст (узел ни разу не запускался) — `elasticsearch-reconfigure-node` выполняется до первого старта сервиса.
 
 ### Сценарий 1: Автоматическое развертывание (Enrollment)
 
@@ -105,21 +140,22 @@ sudo systemctl daemon-reload
 ```yaml
 # /etc/elasticsearch/elasticsearch.yml (первый узел)
 network.host: 10.0.1.10          # IP этого узла, доступный другим
-xpack.security.enrollment.enabled: true   # разрешает генерацию токенов
+xpack.security.enrollment.enabled: true   # опционально: автоконфигурация выставит сама при первом старте
 ```
 
 ```bash
 systemctl enable --now elasticsearch
-# → в логе появится одноразовый пароль elastic:
-grep -A2 "Password for the elastic user" /var/log/elasticsearch/elasticsearch.log
+# Пароль elastic при пакетной установке в консоль не выводится (сервис работает без терминала) — задайте его вручную:
+sudo /usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic -i
+# → Enter new password for [elastic]:
 ```
-2.  Сохраните вывод в консоли или найдите пароль в логах: `/var/log/elasticsearch/elasticsearch.log`.
-3.  Сгенерируйте токен для нового узла (действует 30 минут):
-    ```bash
-    sudo /usr/share/elasticsearch/bin/elasticsearch-create-enrollment-token -s node
-    # → eyJ2ZXIiOiI4LjAuMCIsImFkciI6WyIxMC4wLjEuMTA6OTIwMCJdLCJmZ3IiOiI...
-    ```
-    Флаг `-s kibana` аналогично генерирует токен подключения Kibana.
+2.  Сохраните пароль в переменной окружения: `export ELASTIC_PASSWORD="<новый_пароль>"`. (При запуске из архива в интерактивном терминале пароль выводится на экран один раз — в лог-файл он не записывается.)
+3.  Сгенерируйте токен для нового узла (действует 30 минут). Токен можно выпускать на любом узле существующего кластера:
+     ```bash
+     sudo /usr/share/elasticsearch/bin/elasticsearch-create-enrollment-token -s node
+     # → eyJ2ZXIiOiI4LjAuMCIsImFkciI6WyIxMC4wLjEuMTA6OTIwMCJdLCJmZ3IiOiI...
+     ```
+     Флаг `-s kibana` аналогично генерирует токен подключения Kibana. Если инструмент не может достучаться до локального узла, явно укажите его: `--url "https://10.0.1.10:9200"`; флаг `-f/--force` позволяет выпускать токен на нездоровом кластере.
 
 #### Шаг 2: Присоединение нового узла
 
@@ -145,6 +181,14 @@ curl -k -u elastic:$PASS "https://10.0.1.10:9200/_cat/nodes?v&h=name,ip,node.rol
 # → es-node3 10.0.1.12 cdfhilmrstw -
 curl -k -u elastic:$PASS "https://localhost:9200/_cluster/health?pretty"
 # → "status" : "green", "number_of_nodes" : 3
+
+# Факт присоединения узлов подтверждается в логах:
+journalctl -u elasticsearch | grep -i "joined cluster"
+# → ... [cluster.service] ... [node-2] ... joined cluster [prod-logs]
+
+# Transport-соединение между узлами зашифровано тем же CA — проверка TLS на 9300:
+openssl s_client -connect 10.0.1.11:9300 -CAfile /etc/elasticsearch/certs/http_ca.crt </dev/null 2>/dev/null | grep "Verify return code"
+# → Verify return code: 0 (ok)
 ```
 
 Если пароль утерян, сбросьте его без остановки кластера:
@@ -166,6 +210,8 @@ network.host: 10.0.1.10
 discovery.seed_hosts: ["10.0.1.10", "10.0.1.11", "10.0.1.12"]
 cluster.initial_master_nodes: ["es-master-1", "es-master-2", "es-master-3"]
 xpack.security.enabled: true
+path.data: /var/lib/elasticsearch   # быстрый локальный диск; для мастеров без данных можно не выделять
+path.logs: /var/log/elasticsearch
 ```
 
 На остальных двух мастерах — то же с заменой `node.name`/`network.host`. После успешного формирования кластера строку `cluster.initial_master_nodes` удаляют со всех узлов. Ручной выпуск TLS-сертификатов (`elasticsearch-certutil`) выходит за рамки этого файла — пошаговый пример генерации и раздачи сертификатов см. в [руководстве по Docker Compose](./practical_setup_with_docker.md) (механика идентична для пакетной установки).
@@ -197,7 +243,7 @@ curl -k -u elastic:$PASS -X POST "https://localhost:9200/_nodes/reload_secure_se
 ```
 *В `elasticsearch.yml` теперь можно использовать переменные или полагаться на то, что плагины сами найдут ключи в Keystore. Часть secure-настроек помечена как reloadable — они применяются через API выше; остальные требуют перезапуска узла.*
 
-### Сценарий 4: Диагностика формирования кластера
+### Сценарий 4: Устранение неполадок кластера (Troubleshooting)
 
 Если узлы не видят друг друга или кластер находится в статусе `Yellow`/`Red`:
 
@@ -223,12 +269,79 @@ curl -k -u elastic:$PASS "https://localhost:9200/_cluster/health?pretty"
 
 Интерпретация статусов здоровья: `green` — все реплики размещены; `yellow` — есть неразмещенные реплики (частая норма: единственная копия индекса или временная недоступность узла); `red` — потеряны первичные шарды (данные частично недоступны). При деградации до `red` начинайте всегда с `_cluster/allocation/explain` — API отвечает причиной отказа в размещении конкретного шарда.
 
-Для планового вывода мастер-узла из эксплуатации исключите его из кворума заранее:
+Типовые ошибки формирования кластера:
+
+| Симптом / ошибка | Причина | Диагностика и решение |
+| :--- | :--- | :--- |
+| `handshake failed: remote cluster name [X] does not match local cluster name [Y]` | Разный `cluster.name` на узлах | Выровнять `cluster.name` во всех `elasticsearch.yml` |
+| `master_not_discovered_exception`, кластер не выбирает мастера | Нет кворума master-eligible узлов | Логи всех master-eligible узлов: `ClusterFormationFailureHelper` пишет причину каждые 10 сек; проверить `discovery.seed_hosts`, доступность порта 9300, синхронизацию времени |
+| Узел не присоединяется: TLS-ошибка при верификации сертификата на 9300 | Разные CA на узлах (ручная настройка TLS) или несовпадение отпечатка | Сравнить `openssl x509 -fingerprint -sha256 -in /etc/elasticsearch/certs/http_ca.crt` на всех узлах; при ручном TLS — выдать сертификаты одного CA |
+| Узел присоединяется и сразу отключается (`node-join` → `node-left`) | Узел помечен неисправным мастером; частая причина — клонирование каталога `data` (дублируется UUID узла) | В логах мастера: `found existing node ... with the same id but is a different node instance`; очистить `data` на клоне, перезапустить |
+| `ERROR: [1] bootstrap checks failed: max virtual memory areas vm.max_map_count [...] is too low` | Системные лимиты ОС не выполнены | Раздел «Системный тюнинг»; проверить `sysctl vm.max_map_count`, `ulimit -n`, `ulimit -u` |
+| Узел не может присоединиться после долгого простоя | Локальное состояние узла устарело или привязано к другому cluster UUID | Плановый случай — voting exclusions (ниже); аварийный (кластер потерян) — процедуры ниже |
+
+Плановый вывод мастер-узла из эксплуатации — двухшаговая процедура (path-форма `/_cluster/voting_config_exclusions/<name>` deprecated с 7.8 и не применяется):
 
 ```bash
+# 1. Исключить узел из кворума ДО остановки (кластер перестроит voting configuration)
+curl -k -u elastic:$PASS -X POST \
+  "https://localhost:9200/_cluster/voting_config_exclusions?node_names=es-master-old"
+# 2. Остановить узел
+sudo systemctl stop elasticsearch
+# 3. Очистить список исключений после полного удаления узла из кластера
 curl -k -u elastic:$PASS -X DELETE \
-  "https://localhost:9200/_cluster/voting_config_exclusions/es-master-old"
+  "https://localhost:9200/_cluster/voting_config_exclusions"
 ```
+
+Аварийное восстановление при потере кворума (все или большинство master-eligible узлов безвозвратно потеряны). Крайняя мера с риском потери последних операций — сначала попробуйте вернуть узлы в строй или восстановить данные из snapshot (см. [Disaster Recovery](../Elasticsearch/elasticsearch_disaster_recovery.md)):
+
+```bash
+# 1. На узле со свежей копией метаданных — принудительное формирование нового кластера
+sudo /usr/share/elasticsearch/bin/elasticsearch-node unsafe-bootstrap
+# → Master node was successfully bootstrapped
+# 2. На каждом выжившем узле — сброс привязки к старому cluster UUID
+sudo /usr/share/elasticsearch/bin/elasticsearch-node detach-cluster
+# → Node was successfully detached from the cluster
+# 3. Перезапустить узлы; они присоединятся к новому кластру
+```
+
+Оба инструмента требуют подтверждения (`Confirm [y/N]`) и выводят сводку удаляемых данных. `unsafe-bootstrap` формирует новый кластер из локальных метаданных одного узла; `detach-cluster` сбрасывает cluster UUID, позволяя узлу перейти в новый кластер. Полная процедура и предупреждения — в [обзоре Elasticsearch](../Elasticsearch/elasticsearch_overview.md) (раздел «Устранение неполадок»).
+
+Плановое удаление data-узла без потери данных:
+
+```bash
+# 1. Запретить аллокацию шардов на узел
+curl -k -u elastic:$PASS -X PUT "https://localhost:9200/_cluster/settings" \
+  -H 'Content-Type: application/json' \
+  -d '{"persistent":{"cluster.routing.allocation.exclude._name":"es-data-old"}}'
+# 2. Дождаться переноса шардов: на узле не должно остаться шардов
+curl -k -u elastic:$PASS "https://localhost:9200/_cat/shards?v&h=index,shard,prirep,state,node" | grep es-data-old
+# 3. Снять запрет и остановить узел
+curl -k -u elastic:$PASS -X PUT "https://localhost:9200/_cluster/settings" \
+  -H 'Content-Type: application/json' \
+  -d '{"persistent":{"cluster.routing.allocation.exclude._name":null}}'
+sudo systemctl stop elasticsearch
+```
+
+## Рекомендации и очистка
+
+**Чек-лист после развёртывания:**
+
+* Удалите `cluster.initial_master_nodes` из `elasticsearch.yml` на всех master-eligible узлах после успешного формирования кластера (повторный запуск с ней опасен расщеплением кластера).
+* Убедитесь, что список voting config exclusions пуст: `GET /_cluster/state?filter_path=metadata.cluster_coordination.voting_config_exclusions`.
+* Проверьте прохождение bootstrap checks: `GET /_nodes?filter_path=nodes.*.process.mlockall` (должно быть `true` при `bootstrap.memory_lock: true`).
+* Зафиксируйте пароль `elastic` в менеджере секретов; при утере — `elasticsearch-reset-password -u elastic -i` (без остановки кластера).
+
+**Применение изменений конфигурации:**
+
+* Настройки из `elasticsearch.yml`, требующие перезапуска, применяют rolling restart-ом (по одному узлу, master-eligible последними); пошаговая процедура — в [Upgrades и миграция](../Elasticsearch/elasticsearch_upgrades.md).
+* Часть secure-настроек keystore применяется без рестарта через `POST /_nodes/reload_secure_settings` (см. Сценарий 3).
+
+**Очистка и откат:**
+
+* Токены enrollment живут 30 минут и не требуют отзыва; если генерация токенов не нужна — не задавайте `xpack.security.enrollment.enabled: true` вручную (автоконфигурация выставляет её только при первом старте).
+* При выводе узла из эксплуатации: запретите аллокацию, дождитесь переноса шардов, остановите сервис, затем (при необходимости) удалите каталог `data` и верните системные лимиты (`/etc/sysctl.d/99-elasticsearch.conf`, systemd override через `systemctl edit elasticsearch`) к значениям по умолчанию.
+* Перед удалением узла из кластера с чётным числом master-eligible узлов помните: кворум должен остаться нечётным — выводите мастеров так, чтобы в кворуме всегда оставалось большинство.
 
 ## Дополнительная информация
 
@@ -272,4 +385,6 @@ Elasticsearch автоматически блокирует запись при 
 
 *   **[Elasticsearch: Обзор](../Elasticsearch/elasticsearch_overview.md)** — архитектура, роли и возможности 8.15+.
 *   **[Elasticsearch: Жизненный цикл (ILM)](../Elasticsearch/elasticsearch_ilm_and_retention.md)** — автоматизация ротации после настройки.
+*   **[Elasticsearch: Upgrades и миграция](../Elasticsearch/elasticsearch_upgrades.md)** — rolling restart и rolling upgrade конфигурации.
+*   **[Elasticsearch: Disaster Recovery](../Elasticsearch/elasticsearch_disaster_recovery.md)** — snapshot-стратегии и восстановление.
 *   **[Развертывание ELK стека в Docker Compose](./practical_setup_with_docker.md)** — генерация TLS-сертификатов вручную и single-node стенд.

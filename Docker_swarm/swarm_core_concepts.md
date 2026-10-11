@@ -1,5 +1,7 @@
 # Docker Swarm: Основные концепции
 
+**Актуально для:** Docker Swarm 29.x
+
 ## Определения
 
 **Узел (Node)** — физическая или виртуальная машина с установленным Docker Engine, являющаяся частью Swarm-кластера. Узлы делятся на менеджеров и рабочих.
@@ -71,7 +73,7 @@ Swarm использует систему фильтров и стратегий
 
 ### Сетевая модель и балансировка
 
-- **Overlay networks:** виртуальные сети уровня L2 между хостами. Поддерживают IPv6 (v27+) и mTLS-шифрование трафика.
+- **Overlay networks:** виртуальные сети уровня L2 между хостами. Поддерживают IPv6 (стабилен с Docker 27.x) и mTLS-шифрование трафика.
 - **Endpoint Mode:**
   - **VIP (Virtual IP):** балансировка трафика через единый IP и IPVS (по умолчанию).
   - **DNSRR (DNS Round-Robin):** возвращает список IP всех реплик, клиент сам выполняет балансировку.
@@ -98,11 +100,28 @@ Swarm использует систему фильтров и стратегий
 
 ## Практические сценарии
 
+### Предварительные требования
+
+- **Docker Engine:** 29.x на всех узлах кластера.
+- **Сетевая связность:** между всеми узлами открыты 2377/TCP (управление), 7946/TCP+UDP (gossip), 4789/UDP (VXLAN). При шифровании — protocol 50 (ESP).
+- **Синхронизация времени:** NTP или chrony на всех узлах (расхождение >100ms приводит к ошибкам сертификатов mTLS).
+- **Ресурсы:** минимум 2 GB RAM и 2 CPU на менеджера; рабочие узлы — по нагрузке.
+- **Метаданные:** для топологического планирования на узлы должны быть назначены labels: `docker node update --label-add zone=us-east-1a <node>`.
+
 ### Отказоустойчивость при сбое лидера
 
 1. Лидер падает → фолловеры замечают отсутствие heartbeats.
 2. Инициируются выборы → кворум менеджеров выбирает нового лидера.
 3. Новый лидер восстанавливает состояние из лога Raft и продолжает управление.
+
+**Валидация:**
+```bash
+docker node ls
+# → убедитесь, что один из менеджеров имеет статус Leader
+
+docker service ls
+# → сервисы остаются в состоянии Running, перепланирования не требуется
+```
 
 ### Масштабирование сервиса
 
@@ -118,6 +137,15 @@ docker service ps web
 # → 8k3j1n...     web.1     nginx:latest   node-1    Running         Running 10 minutes ago
 ```
 
+**Валидация:**
+```bash
+docker service ls
+# → web  replicated  10/10
+
+docker service ps web --no-trunc
+# → убедитесь, что задачи распределены по ожидаемым узлам с учетом constraints/preferences
+```
+
 ### Управление узлом (Draining)
 
 ```bash
@@ -127,18 +155,144 @@ docker node update --availability drain worker-1
 # Все задачи будут перенесены на другие узлы.
 ```
 
+**Валидация:**
+```bash
+docker node inspect worker-1 --format '{{ .Spec.Availability }}'
+# → Drain
+
+docker service ps web --filter node=worker-1
+# → задач на узле worker-1 не осталось
+```
+
+### Стратегии обновления (Update Config)
+
+Для контроля над процессом обновления реплик используйте параметры `deploy.update_config`:
+
+```yaml
+services:
+  web:
+    image: nginx:1.27-alpine
+    deploy:
+      replicas: 6
+      update_config:
+        parallelism: 2
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 2
+        delay: 5s
+```
+
+**Валидация:**
+```bash
+docker service update --image nginx:1.28-alpine web
+# → verify rolling update started
+
+docker service ps web
+# → новые задачи появляются постепенно (parallelism: 2)
+
+docker events --filter 'type=service' --filter 'event=update'
+# → отслеживайте прогресс обновления в реальном времени
+```
+
+### Placement Constraints и Preferences
+
+Жесткие ограничения (`constraints`) и мягкие предпочтения (`preferences`) для планирования:
+
+```yaml
+services:
+  db:
+    image: postgres:17-alpine
+    deploy:
+      placement:
+        constraints:
+          - node.labels.storage == ssd
+        preferences:
+          - spread: node.labels.zone
+```
+
+**Валидация:**
+```bash
+docker service ps db --no-trunc
+# → убедитесь, что задачи запущены только на узлах с label storage=ssd
+
+docker node ls
+# → задачи распределены по разным зонам (если labels настроены)
+```
+
+## Операции и команды
+
+| Область | Команды | Назначение |
+|:---|:---|:---|
+| **Кластер** | `docker swarm init`, `docker swarm join`, `docker swarm leave` | Инициализация, присоединение узлов, выход из кластера |
+| **Узлы** | `docker node ls`, `docker node inspect`, `docker node update` | Просмотр списка, инспекция, обновление меток и доступности |
+| **Сервисы** | `docker service create`, `docker service ps`, `docker service scale`, `docker service update` | Управление жизненным циклом сервисов |
+| **Секреты** | `docker secret create`, `docker secret ls`, `docker secret inspect` | Управление чувствительными данными |
+| **Сети** | `docker network create --driver overlay`, `docker network inspect` | Управление оверлейными сетями |
+| **Стеки** | `docker stack deploy`, `docker stack ls`, `docker stack rm` | Декларативное управление группами сервисов |
+
+Полный справочник CLI см. **[Справочник CLI для Swarm](./swarm_management_cli.md)**.
+
+## Устранение неполадок
+
+### Потеря кворума менеджеров
+
+Если кластер перешел в режим "только чтение" (нельзя создавать/обновлять сервисы):
+1. Проверьте количество активных менеджеров: `docker node ls --filter role=manager`
+2. Восстановите кворум до `(N/2) + 1` активных менеджеров.
+3. Если невозможно восстановить кворум, принудительно создайте новый кластер на живом менеджере: `docker swarm init --force-new-cluster --advertise-addr <IP>`
+
+### Задачи не запускаются (Pending/Rejected)
+
+1. Проверьте ресурсы узла: `docker node inspect <node> --format '{{ .Description.Resources }}'`
+2. Проверьте constraints: `docker service inspect <service> --format '{{ .Spec.TaskTemplate.Placement.Constraints }}'`
+3. Проверьте статус задач: `docker service ps <service> --no-trunc`
+4. Для rejected задач проверьте совместимость образа с архитектурой узла (`docker info --format '{{ .Architecture }}'`)
+
+### Частые ошибки mTLS и сертификатов
+
+- **"Certificate has expired or is not yet valid"**: проверьте синхронизацию времени (NTP) на всех узлах.
+- **"swarm daemon is locked"**: разблокируйте менеджер: `docker swarm unlock`
+- **Ротация сертификатов**: измените срок действия: `docker swarm update --cert-expiry 2160h` (90 дней по умолчанию)
+
+### Перегрузка Control Plane (Gossip)
+
+При большом количестве сервисов (>1000) или сетей (>500) протокол gossip создает нагрузку:
+1. Группируйте сервисы в общие overlay-сети.
+2. Используйте выделенные менеджеры без воркер-нагрузок (`docker node update --availability drain <manager>`).
+
+## Лучшие практики
+
+1. **Количество менеджеров:** используйте 3 или 5 менеджеров. 7 — максимальный предел для эффективного Raft.
+2. **Выделенные менеджеры:** для кластеров >10 узлов настраивайте менеджеров без воркер-задач (`drain`).
+3. **Мониторинг кворума:** настройте алерты при потери менеджеров (`docker node ls --filter role=manager`).
+4. **Labels:** используйте метки для топологического планирования (`zone`, `rack`, `storage`), а не для жестких constraints везде.
+5. **Update Config:** всегда настраивайте `failure_action: rollback` и `parallelism` для production-сервисов.
+6. **Health Checks:** определяйте `HEALTHCHECK` в образе и используйте `--restart-condition` в сервисе.
+7. **Ротация токенов:** периодически ротируйте join-токены: `docker swarm join-token --rotate worker`
+8. **Backup Raft:** регулярно копируйте `/var/lib/docker/swarm/raft` с менеджера для аварийного восстановления.
+
 ## Дополнительная информация
 
 ### Лимиты и масштабируемость
 
-- **Рекомендованный размер кластера:** 50–100 узлов (баланс производительности Raft и управления).
-- **Теоретический максимум:** до 2000 узлов и 5000–10000 сервисов.
-- **Ограничения Raft:** не рекомендуется более 7 менеджеров из-за накладных расходов на консенсус.
-- Для сверхкрупных или сверхсложных инсталляций (сложные зависимости, State-management) рекомендуется переход на Kubernetes.
+| Параметр | Рекомендация |
+|:---|:---|
+| Число менеджеров | 3 или 5 (7 — максимум, далее Raft замедляется) |
+| Рекомендованный размер кластера | 50–100 узлов (баланс производительности Raft и gossip) |
+| Эффективный предел Gossip | ~1000 узлов (при превышении — разделение на несколько кластеров) |
+| Лимит сервисов | до 5000–10000 сервисов (зависит от сложности сервисов и overlay-сетей) |
+| MTU Overlay | 1450 (стандарт для VXLAN, чтобы избежать фрагментации) |
+
+Для сверхкрупных или сверхсложных инсталляций (сложные зависимости, State-management) рекомендуется переход на Kubernetes.
 
 ### См. также
 
-- **[Обзор Docker Swarm](./docker_swarm_overview.md)** — архитектура и сравнение.
-- **[Сетевое взаимодействие в Swarm](./swarm_networking.md)** — Routing Mesh и Overlay.
-- **[Управление через CLI](./swarm_management_cli.md)** — полный справочник команд.
+- **[Обзор Docker Swarm](./docker_swarm_overview.md)** — архитектура и сравнение с Kubernetes.
+- **[Сетевое взаимодействие в Swarm](./swarm_networking.md)** — Routing Mesh, Overlay и IPVS.
+- **[Справочник CLI для Swarm](./swarm_management_cli.md)** — полный справочник команд.
 - **[Продвинутые темы](./swarm_advanced_topics.md)** — глубокие детали Raft, mTLS и восстановление кворума.
+- **[Развертывание стеков](./swarm_stack_deployment.md)** — `docker stack deploy`, Compose vs Stack.
+- **[Секреты и конфигурации](./swarm_secrets_configs.md)** — управление чувствительными данными.
+- **[Сетевой драйвер overlay (SSoT)](../Docker/Docker_network/drivers/overlay.md)** — VXLAN, VTEP и производительность.

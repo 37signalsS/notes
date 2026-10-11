@@ -174,3 +174,4 @@ curl -s 'http://localhost:9428/select/logsql/query' \
 - [vmauth: прокси и аутентификация](./vmauth_overview.md) — защита `/insert/*`;
 - [LogsQL: обзор](./logsql_overview.md) — запросы к принятым логам;
 - [vmbackup/vmrestore](./vmbackup_restore.md) — бэкап и экспорт каталога данных.
+# force reindex test

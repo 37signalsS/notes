@@ -1,5 +1,7 @@
 # Выполнение приложений в контейнере
 
+**Актуально для:** Docker 24.0+ / BuildKit включён по умолчанию
+
 ## Определения
 
 - **PID (Process Identifier) 1:** Первый процесс в пространстве имен (Namespace), обладающий особыми полномочиями и обязанностями в Linux. Он отвечает за управление сигналами и очистку «процессов-сирот» (reaping). В контейнере PID 1 — это основной процесс, определяемый инструкцией `ENTRYPOINT` или `CMD`.
@@ -11,6 +13,19 @@
 - **STOPSIGNAL:** Инструкция Dockerfile, задающая конкретный системный сигнал (например, `SIGTERM`, `SIGQUIT`, `SIGINT`), который Docker будет отправлять процессу PID 1 при выполнении команды `docker stop`. Использование имен сигналов предпочтительнее числовых значений, так как числа могут различаться в зависимости от архитектуры процессора.
 - **Init-система (Tini / dumb-init):** Легковесные менеджеры процессов, которые берут на себя роль PID 1, корректно пробрасывают сигналы дочерним процессам и очищают зомби. Разница: `tini` ( (~20KB) ) является стандартом для Docker, поддерживает process groups (`-g`), тогда как `dumb-init` предоставляет возможность перезаписи сигналов (например, SIGTERM → SIGQUIT для Java).
 - **Stop Timeout (Таймаут остановки):** Временной интервал (по умолчанию 10 секунд для Linux-контейнеров), в течение которого Docker ожидает завершения процесса после отправки сигнала из STOPSIGNAL. По истечении таймаута Docker отправляет SIGKILL (сигнал 9), который невозможно перехватить.
+
+## Предварительные требования
+
+Для корректного выполнения и управления контейнерами необходимо:
+
+- **Docker Engine** версии 24.0 или новее (Cgroups v2, BuildKit включён по умолчанию, улучшенная обработка сигналов).
+- **Docker Compose** версии 2.x (для управления жизненным циклом, `stop_grace_period`, `security_opt`).
+- **Linux Kernel** версии 5.19+ (полная поддержка cgroups v2, User Namespaces, Landlock).
+- **Rootless Docker** (опционально, рекомендуется): требует ядро >= 5.11 и настройки `userns-remap`.
+- **ОС хоста:** Ubuntu 22.04+/Debian 12+ (AppArmor), RHEL 9+/Fedora 40+ (SELinux enforcing).
+- Понимание базовых концепций: **[CMD и ENTRYPOINT](../Instructions/runtime_execution.md)** (exec-form vs shell-form), **[HEALTHCHECK и STOPSIGNAL](../Instructions/health_signals.md)**.
+- Базовое понимание Linux-процессов: PID, сигналы (SIGTERM, SIGKILL, SIGCHLD), процессы-зомби, дерево процессов.
+- Утилиты для диагностики: `docker exec`, `docker top`, `docker events`, `docker inspect`, `docker stats`, `ps`, `strace` (в debugging образах).
 
 ## Базовые концепции
 
@@ -163,6 +178,111 @@ dumb-init --rewrite SIGTERM:SIGQUIT java -jar app.jar
 # Пересылает сигналы всей группе процессов (полезно для shell-скриптов с фоновыми задачами)
 tini -g -- sh -c "python worker.py & python scheduler.py"
 ```
+
+### Мониторинг жизненного цикла и процессов (DevOps/SRE)
+
+Для управления контейнерами в production необходим набор инструментов наблюдения за состоянием процессов и событиями.
+
+#### События контейнера (`docker events`)
+
+Docker Engine генерирует события для каждого изменения состояния: `start`, `stop`, `die`, `kill`, `oom`, `pause`, `unpause`, `exec-create`, `exec-start`. Эти события критичны для построения пайплайнов реагирования (например, автоматический перезапуск, оповещение в Slack/PagerDuty, запись в SIEM).
+
+```bash
+# Подписка на все события в реальном времени
+docker events --filter event=die --filter event=oom --format '{{.Time}} {{.Action}} {{.ID}}'
+
+# Фильтр по контейнеру
+docker events --filter id=abc123 --filter event=die
+
+# Выходные коды и их причины:
+# die    exit_code=137 → OOM Kill или docker stop timeout
+# die    exit_code=0   → нормальное завершение
+# oom    → OOM Killer убил контейнер (cgroups)
+# kill   → SIGKILL отправлен явно
+```
+
+**SRE-практика:** В production-средах все события контейнера должны стекаться в централизованный лог (Loki, ELK, Splunk). Это позволяет диагностировать инциденты постфактум: какой контейнер умер, с каким кодом, в какое время.
+
+#### Инспекция процессов внутри контейнера (`docker top`)
+
+`docker top` показывает дерево процессов внутри running-контейнера, аналогично `ps aux` на хосте. Это первичный инструмент диагностики при проблемах с потреблением CPU, памятью или зависаниями.
+
+```bash
+# Полный список процессов
+docker top mycontainer -eo pid,user,pri,ni,vsize,rsize,etime,args
+
+# Фильтр по имени процесса
+docker top mycontainer | grep python
+
+# Проверка зомби-процессов
+docker top mycontainer -o stat | grep -w Z
+# → Если есть вывод — проблема с PID 1 (см. Раздел "Проблема PID 1")
+```
+
+**Важно:** `docker top` работает через встроенный criu/procfs-механизм. Если контейнер остановлен — команда вернет ошибку. Для stopped-контейнеров используйте `docker inspect --format='{{.State.ExitCode}}'` и логи.
+
+#### Живое обновление ресурсов (`docker update`)
+
+Docker позволяет изменять лимиты CPU, памяти и количество процессов без перезапуска контейнера. Это критично для SRE: можно среагировать на деградацию производительности без даунтайма.
+
+```bash
+# Увеличение лимита CPU с 0.5 до 2.0 ядер "на лету"
+docker update --cpus=2.0 mycontainer
+
+# Увеличение лимита памяти с 512m до 1g
+docker update --memory=1g --memory-swap=1g mycontainer
+
+# Ограничение количества процессов (защита от fork-бомб)
+docker update --pids-limit=128 mycontainer
+
+# Привязка к конкретным ядрам CPU (для latency-sensitive приложений)
+docker update --cpuset-cpus="0,1" mycontainer
+
+# Проверка применённых лимитов
+docker inspect mycontainer --format='{{.HostConfig.CpuShares}} {{.HostConfig.Memory}} {{.HostConfig.PidsLimit}}'
+```
+
+**Ограничения:**
+- Уменьшение лимита памяти (`--memory`) принудительно завершит контейнер с кодом 137, если текущее потребление превышает новый лимит. Всегда проверяйте `docker stats` перед уменьшением.
+- `--cpuset-cpus` может быть только **сужен**, но не расширен. Если контейнер уже привязан к ядрам 0,1 — нельзя добавить ядро 2 без перезапуска.
+
+#### Интеграция с systemd
+
+Запуск Docker Engine и контейнеров через systemd-юниты — стандарт для production Linux-хостов. Неправильная конфигурация systemd приводит к проблемам с сигналами и управлением ресурсами.
+
+```ini
+# /etc/systemd/system/docker.service.d/delegate.conf
+# Делегирование cgroups контейнерам (обязательно для корректных лимитов)
+[Service]
+Delegate=yes
+
+# Проверка
+systemctl daemon-reload && systemctl restart docker
+```
+
+**Управление контейнером как systemd-юнитом (Podman-стиль):**
+
+В Docker 24+ доступен экспериментальный режим `--sdnotify`, позволяющий контейнеру интегрироваться с systemd через D-Bus. Это позволяет:
+- Автоматически запускать контейнер при старте systemd.
+- Получать статус `active`/`inactive` через `systemctl status mycontainer`.
+- Автоматически перезапускать контейнер при падении (аналог `restart: always`).
+
+```bash
+# Запуск с интеграцией systemd
+docker run -d --name myservice --sdnotify=conmon nginx:alpine
+```
+
+**Критично:** При запуске Docker внутри systemd-контейнера (Docker-in-Docker) убедитесь, что хост-юнит содержит `Delegate=yes` и `TasksMax=infinity`, иначе воркеры DinD не смогут создавать дочерние контейнеры.
+
+#### Паттерны process supervision
+
+Помимо `tini` и `dumb-init`, в production-средах применяются полноценные менеджеры процессов для multi-process-контейнеров (legacy-приложения, Nginx + PHP-FPM):
+
+- **s6-overlay:** Минималистичный init-система с зависимостями между сервисами, долгоживущими процессами и oneshot-задачами. Подходит для Alpine-образов.
+- **supervisord:** Классический Python-менеджер процессов с веб-интерфейсом, перезапуском и логированием. Требует установки `supervisor` пакета, увеличивает размер образа.
+- **runit:** Очень легковесный (single-binary), поддерживает параллельный запуск сервисов и автоматический перезапуск.
+
+**Рекомендация:** Для микросервисов (один процесс на контейнер) используйте `tini`. Для legacy-моноролитов, где разделение на микросервисы требует рефакторинга — `s6-overlay`. `supervisord` и `runit` применяйте только при обоснованной необходимости.
 
 ## Практические сценарии
 
@@ -599,7 +719,7 @@ docker inspect mycontainer --format='{{.State.ExitCode}}'
 # Расшифровка кодов:
 # 0   — нормальное завершение
 # 1   — общая ошибка приложения
-# 126 — команда не может被执行 (permission denied)
+# 126 — команда не может быть выполнена (permission denied)
 # 127 — команда не найдена (command not found)
 # 130 — завершен по SIGINT (Ctrl+C)
 # 137 — завершен по SIGKILL (OOM, docker stop timeout)
@@ -722,6 +842,107 @@ CMD ["echo", "hello"]
 CMD ["python", "app.py"]
 ```
 
+## Граничные случаи и ограничения
+
+### Air-gapped среды
+
+В изолированных инфраструктурах (нет доступа в интернет) требуется предварительная подготовка:
+- Все базовые образы и зависимости загружаются во внутренний registry.
+- Утилиты для отладки (`tini`, `curl`, `procps`) должны присутствовать в образе заранее.
+- Сканеры уязвимостей (Trivy, Grype) работают с локальной базой CVE.
+
+**Проверка:**
+```bash
+# В air-gapped среде docker events недоступен
+# Используйте docker logs и docker inspect для диагностики
+docker inspect mycontainer --format='{{.State.ExitCode}} {{.State.OOMKilled}}'
+```
+
+### Rootless Docker
+
+Rootless Docker запускает демон и контейнеры от непривилегированного пользователя хоста. Это влияет на execution:
+- Некоторые системные вызовы (например, `CAP_SYS_ADMIN`) ограничены. `docker exec` работает, но `strace` может требовать дополнительных прав.
+- User Namespaces (userns-remap) меняют UID/GID маппинг. `USER 10001` внутри контейнера маппируется на `100000+` на хосте.
+- Сеть rootless-контейнера работает через `slirp4netns` или `rootlesskit` с более низкой производительностью, чем `bridge` с правами root.
+
+**Проверка:**
+```bash
+# Проверка режима
+docker info --format '{{.SecurityOptions}}'
+# → containerd, userns, rootless ...
+
+# Проверка UID внутри контейнера
+docker exec mycontainer id -u
+# → 10001 (внутри контейнера), но на хосте это 100000+
+```
+
+### Distroless и отладка
+
+В distroless/chiseled образах (`gcr.io/distroless/...`, `chainguard`) нет shell, поэтому `docker exec` стандартными утилитами недоступен.
+
+**Решение:**
+- Используйте debug-версии образов только для отладки, не для production: Google Distroless — тег `:debug` (BusyBox); Chainguard — `-dev`-вариант (например, `cgr.dev/chainguard/static:latest-dev`).
+- Добавьте временную отладочную стадию в Dockerfile для сбора артефактов.
+- Используйте `kubectl debug` (Kubernetes) или `ctr tasks exec` (containerd) с предустановленными утилитами.
+
+```bash
+# Ошибка: нет sh в distroless
+docker exec mycontainer sh
+# → docker: Error response from daemon:OCI runtime exec failed: exec failed: container_linux.go:380: ...
+
+# Решение 1: debug-образ
+docker run -it --rm gcr.io/distroless/java21-debian12:debug bash
+
+# Решение 2: kubectl debug (Kubernetes)
+kubectl debug -it pod/myapp --image=busybox --target=myapp
+```
+
+### Read-only rootfs и временные файлы
+
+Запуск с `--read-only` блокирует запись в корневую ФС. Приложение не сможет создавать временные файлы, сокеты, PID-файлы или логи.
+
+```bash
+docker run -d --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m myapp:latest
+```
+
+**Ограничения:**
+- Все временные директории должны быть явно смонтированы через `--tmpfs`.
+- Логирование в файлы внутри контейнера невозможно. Используйте stdout/stderr и Docker logging drivers.
+- Некоторые приложения пишут PID-файлы в `/var/run/` — потребуется `--tmpfs /var/run:rw,noexec,nosuid`.
+
+### Multi-platform и эмуляция
+
+Сборка и запуск контейнеров под архитектуру, отличную от архитектуры хоста (например, `linux/arm64` на `linux/amd64`), требует:
+- Включенной поддержки QEMU/binfmt_misc: `docker run --rm --privileged multiarch/qemu-user-static --reset -p yes`.
+- Учета производительности эмуляции: запуск под QEMU в 5-10 раз медленнее нативного.
+
+```bash
+# Проверка поддерживаемых архитектур
+docker buildx inspect --bootstrap
+# → Platforms: linux/amd64, linux/arm64, linux/riscv64
+
+# Запуск arm64-контейнера на amd64-хосте (с эмуляцией)
+docker run --platform linux/arm64 myapp:latest
+```
+
+### Потребление ресурсов и cgroups v2
+
+Все ограничения Docker (CPU, память, I/O, PIDs) реализованы через cgroups v2 (Docker 24+). Понимание этих ограничений критично для SRE:
+
+- **CPU Throttling:** При превышении `--cpus` лимита, ядро ограничивает кванты времени. Приложение не завершается, но замедляется. Диагностика: `docker stats` показывает `CPU %` относительно лимита.
+- **OOM Kill:** При превышении `--memory` (RSS), ядро отправляет `SIGKILL`. Контейнер завершается с кодом 137. Включите `--memory-swap` равным `--memory` для отключения свопа и предсказуемой производительности.
+- **PIDs Limit:** Защита от fork-бомб. `--pids-limit` ограничивает количество процессов в контейнере. Слишком низкое значение (< 50) может сломать приложения с пулом потоков.
+- **I/O Throttling:** `--device-read-bps`, `--device-write-bps` ограничивают скорость чтения/записи на блочные устройства.
+
+**SRE-практика:** Все production-контейнеры должны иметь явные лимиты `--cpus`, `--memory`, `--memory-swap` и `--pids-limit`. Без лимитов один контейнер может исчерпить все ресурсы хоста.
+
+### Сигналы и Windows-контейнеры
+
+Windows-контейнеры обрабатывают сигналы иначе, чем Linux:
+- Stop timeout по умолчанию: **30 секунд** (вместо 10 секунд в Linux).
+- Некоторые сигналы (например, `SIGKILL`) не поддерживаются в Windows-контейнерах. Docker использует `TerminateProcess` для принудительного завершения.
+- `docker exec` в Windows-контейнерах работает только через `powershell` или `cmd`, но не поддерживает интерактивный `bash`.
+
 ## Лучшие практики
 
 ### Сводка рекомендаций
@@ -823,3 +1044,16 @@ spec:
 - **[Паттерн Multi-Process в Docker](../../Docker_logs/docker_multi_process_logging.md)** — использование `supervisord`, `s6-overlay`, логирование.
 - **[Graceful Shutdown в Kubernetes](../../../Kubernetes/Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md)** — специфика оркестрации.
 - **[Init Process и tini](../init_process_tini.md)** — подробный разбор tini, dumb-init, интеграция и best practices.
+- **[Безопасность в Dockerfile](./security.md)** — `USER`, read-only rootfs, tmpfs, `--security-opt`, capabilities, cgroups v2.
+- **[Изоляция Linux](../../Concepts/linux_isolation.md)** — namespaces, cgroups, capabilities, rootfs.
+- **[Производительность Docker](../../Docker_performance_tuning.md)** — `docker update`, `docker stats`, лимиты ресурсов, диагностика throttling.
+- **[Политики перезапуска и Autoheal](../../Docker_troubleshooting/docker_autoheal.md)** — `restart: always/on-failure`, самовосстановление `unhealthy`-контейнеров.
+- **[Лимиты ресурсов — Deep Dive](../../Docker_security/resource_limits.md)** — `--memory`, `--cpus`, `--pids-limit`, cgroups v1/v2, диагностика OOM и throttling.
+- **[Конфигурация демона daemon.json](../../docker_daemon_config.md)** — `live-restore`, `log-driver`, `storage-driver`, `registry-mirrors`.
+- **[Продвинутые возможности Docker Compose](../../Docker_compose/docker_compose_advanced_topics.md)** — `stop_grace_period`, `init: true`, `healthcheck`, `deploy.resources` в production.
+- **[Rolling Update в Docker Swarm](../../../Docker_swarm/swarm_stack_advanced.md)** — стратегии обновления стеков и авто-откат.
+- **[Деплой cAdvisor и сбор метрик](../../Docker_metrics/docker_cadvisor_deployment.md)** — per-container метрики CPU, RAM, Network, I/O для Prometheus.
+- **[Обзор системы логирования](../../Docker_logs/docker_logging_drivers_overview.md)** — лог-драйверы (`json-file`, `loki`, `gelf`, `fluentd`), ротация.
+- **[Паттерны Sidecar в Kubernetes](../../../Kubernetes/Base/Pod/pod_sidecar_patterns.md)** — Sidecar, Ambassador, Adapter — многоконтейнерные паттерны.
+- **[Отладка контейнеров](../../Docker_troubleshooting/docker_debug.md)** — `docker exec`, `docker diff`, диагностика внутри контейнера.
+- **[Антипаттерны Dockerfile](../dockerfile-anti-patterns.md)** — каталог антипаттернов: shell-form CMD, отсутствие init, секреты в слоях.

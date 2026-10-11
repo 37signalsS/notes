@@ -81,10 +81,8 @@ scrape_configs:
     # Поведение при конфликте меток
     honor_labels: false           # false = Prometheus перезаписывает job/instance
     honor_timestamps: true        # Использовать timestamp из экспортёра
-    # Нативные гистограммы и exemplars
+    # Нативные гистограммы
     scrape_native_histograms: true # Включить сбор нативных гистограмм (v3)
-    exemplars:
-      max_exemplars: 100000       # Лимит exemplars на одну метрику
     # Лимиты кардинальности
     sample_limit: 10000           # Максимум samples с одного таргета за scrape
     target_limit: 100             # Максимум таргетов в задании
@@ -245,14 +243,18 @@ Service Discovery (SD) — механизм автоматического об�
 
 ### Exemplars
 
-Exemplars — это отдельные точки данных внутри гистограммы, показывающие конкретный trace ID или пример запроса, который попал в корзину. В Prometheus v3 поддержка exemplars включена по умолчанию при использовании нативных гистограмм.
+Exemplars — это отдельные точки данных внутри гистограммы, показывающие конкретный trace ID или пример запроса, который попал в корзину.
+
+**Предварительное требование:** хранилище exemplars отключено по умолчанию и включается feature flag `--enable-feature=exemplar-storage`. Размер кольцевого буфера задаётся в секции верхнего уровня `storage` — **не** внутри `scrape_configs`.
 
 ```yaml
+storage:
+  exemplars:
+    max_exemplars: 100000  # Размер буфера в памяти на все ряды
+
 scrape_configs:
   - job_name: 'service-with-traces'
     scrape_native_histograms: true
-    exemplars:
-      max_exemplars: 100000  # Лимит exemplars на одну метрику
     static_configs:
       - targets: ['app:8080']
 ```

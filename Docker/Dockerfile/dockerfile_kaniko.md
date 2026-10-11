@@ -1,5 +1,7 @@
 # Kaniko: Сборка Docker-образов без демона
 
+**Актуально для:** osscontainertools/kaniko 1.28.x (форк сообщества); официальная Google-ветка (kaniko 1.23.x) архивирована и более не поддерживается.
+
 > [!WARNING]
 > **Статус проекта (2025):** Официальный репозиторий Google (`GoogleContainerTools/kaniko`) был **архивирован 3 июня 2025 года**. Новые функции и патчи безопасности от Google более не выпускаются. В актуальных инфраструктурах рекомендуется использовать форк от сообщества — **[osscontainertools/kaniko](https://github.com/osscontainertools/kaniko)** или мигрировать на **[BuildKit (Standalone)](./dockerfile_buildkit.md)**.
 
@@ -8,10 +10,10 @@
 **Kaniko** — инструмент для сборки образов контейнеров из `Dockerfile` без зависимости от Docker-демона. Он выполняет инструкции внутри пользовательского пространства (userspace), что делает его стандартом для сред с жесткими ограничениями безопасности (Kubernetes, GitLab CI), где использование привилегированных контейнеров или монтирование Docker Socket запрещено.
 
 Ключевые особенности:
-- Работает без root-прав на хосте.
+- Работает без root-прав и привилегий на хосте.
 - Не требует `--privileged` режима.
-- Идеально совместим с **Pod Security Standards (Restricted)**.
-- Использует механизм `chroot` вместо изоляции через namespaces.
+- Совместим с **Pod Security Standards (Baseline)** (профиль `restricted` недостижим для стокового образа — см. ниже).
+- Использует изоляцию в пользовательском пространстве: распаковывает файловую систему базового образа непосредственно в корень своего контейнера (без `chroot` и bind-mount).
 - Поддерживает multi-stage сборки и удалённое кэширование.
 
 ### Архитектура
@@ -29,8 +31,8 @@
 │  │         │                  │              │  │
 │  │         ▼                  ▼              │  │
 │  │  ┌──────────────────────────────────┐    │  │
-│  │  │      chroot (эмуляция FS)       │    │  │
-│  │  │  /kaniko/workspace/rootfs/       │    │  │
+│  │  │  Извлечение base image прямо      │    │  │
+│  │  │  в корень контейнера (без chroot) │    │  │
 │  │  └──────────────────────────────────┘    │  │
 │  └───────────────────────────────────────────┘  │
 │                                                   │
@@ -46,7 +48,7 @@
 ### Программное обеспечение
 
 - **Docker** (для локальной отладки) или **Kubernetes** / **CI-runner** (для production)
-- **Dockerfile** — стандартный синтаксис Docker (Kaniko совместим с ~95% инструкций)
+- **Dockerfile** — стандартный синтаксис Docker (поддерживает большинство инструкций, есть ограничения — см. ниже)
 - **Доступ к реестру образов** (Docker Hub, GCR, Harbor, ECR и др.) — для пуша результатов
 
 ### Доступные образы Kaniko
@@ -54,11 +56,16 @@
 | Образ | Назначение |
 | :--- | :--- |
 | `gcr.io/kaniko-project/executor:latest` | Официальный образ Google (архивирован) |
-| `gcr.io/kaniko-project/executor:debug` | С поддержкой shell для отладки |
-| `osscontainertools/kaniko:v1.28.0` | Актуальный форк сообщества (рекомендуется) |
-| `osscontainertools/kaniko:v1.28.0-debug` | Форк + shell для отладки |
+| `gcr.io/kaniko-project/executor:debug` | С поддержкой shell для отладки (архивирован) |
+| `ghcr.io/osscontainertools/kaniko:v1.28.5` | Актуальный форк сообщества (рекомендуется, основной реестр) |
+| `ghcr.io/osscontainertools/kaniko:v1.28.5-debug` | Форк + shell для отладки |
+| `ghcr.io/osscontainertools/kaniko:v1.28.5-warmer` | Предварительный нагрев кэша базовых образов |
+| `ghcr.io/osscontainertools/kaniko:v1.28.5-bootstrap` | Сборка кастомных образов kaniko |
+| `ghcr.io/osscontainertools/kaniko:v1.28.5-slim` | Минимальный образ без credential-helpers |
+| `ghcr.io/osscontainertools/kaniko:v1.28.5-alpine` | Alpine-вариант образа |
+| `martizih/kaniko:v1.28.5` | Форк сообщества (Docker Hub-зеркало) |
 
-> **Рекомендация:** Используйте форк `osscontainertools` для получения актуальных обновлений безопасности. Официальный образ Google больше не обновляется.
+> **Рекомендация:** Используйте форк `osscontainertools` (`ghcr.io/osscontainertools/kaniko`, Docker Hub — зеркало) для получения актуальных обновлений безопасности. Официальный образ Google (`gcr.io/kaniko-project/*`) не обновляется с момента архивации.
 
 ### Проверка работоспособности
 
@@ -69,7 +76,7 @@ docker login registry.example.com
 # Быстрая проверка Kaniko (сборка без пуша)
 docker run --rm \
   -v $(pwd):/workspace \
-  osscontainertools/kaniko:v1.28.0-debug \
+  ghcr.io/osscontainertools/kaniko:v1.28.5-debug \
   --dockerfile=/workspace/Dockerfile \
   --context=dir:///workspace \
   --no-push
@@ -80,12 +87,10 @@ docker run --rm \
 
 ### Принцип работы Kaniko (пошагово)
 
-Главное отличие Kaniko от классического Docker заключается в том, что он **вообще не запускает контейнеры** для сборки. Вместо механизмов ядра (namespaces) он использует эмуляцию в пользовательском пространстве.
+Главное отличие Kaniko от классического Docker заключается в том, что он **вообще не запускает контейнеры** для сборки. Вместо механизмов ядра (namespaces) он использует эмуляцию в пользовательском пространстве (userspace).
 
-1.  **Распаковка базового образа:** При обработке инструкции `FROM`, Kaniko скачивает образ и **распаковывает** его файловую систему в рабочую директорию (обычно `/kaniko/workspace/rootfs`).
-2.  **Выполнение команд (RUN) через chroot:** Для выполнения команд Kaniko использует механизм **chroot**. Процессу (например, `apk` или `apt`) сообщается, что его корневая директория — это папка с распакованным образом. 
-    - Процесс «считает», что он находится в реальной ОС.
-    - На самом деле он просто меняет файлы в папке на диске.
+1.  **Распаковка базового образа:** При обработке инструкции `FROM`, Kaniko скачивает образ и **распаковывает** его файловую систему **непосредственно в корень собственного контейнера** (`/`). `chroot` и bind-mount не используются — они требуют прав `CAP_SYS_ADMIN`, которых у обычного контейнера нет.
+2.  **Выполнение команд (RUN) в том же контейнере:** Команды `RUN` исполняются как обычные процессы внутри контейнера Kaniko, **видя распакованную файловую систему образа в качестве корня** `/`.
 3.  **Снапшоты (Snapshots):** После каждой команды `RUN` Kaniko сравнивает текущее состояние файлов с предыдущим, вычисляет разницу (diff) и упаковывает измененные файлы в новый слой (`tar.gz`).
 4.  **Multi-stage сборки и оптимизация:** 
     - **Статический анализ (Built cross stage deps):** Перед началом работы Kaniko строит карту зависимостей между стадиями. Это позволяет заранее знать, какие файлы из ранних стадий понадобятся позже.
@@ -97,9 +102,11 @@ docker run --rm \
 
 Kaniko обеспечивает безопасность через несколько уровней изоляции:
 
-1.  **Non-root запуск:** Побег из `chroot` технически невозможен для непривилегированного пользователя (UID 1000), так как техники escape требуют прав `CAP_SYS_ADMIN`.
+1.  **Отсутствие `chroot` и привилегированных механизмов:** Kaniko не использует `chroot` и не требует `CAP_SYS_ADMIN` — изоляция достигается развёртыванием в обычном контейнере. (Примечание: executor исполняется с UID 0 внутри своего контейнера — это необходимо для записи распакованного образа в корень `/`; отдельный не-root пользователь в стоковом образе не предусмотрен.)
 2.  **Отсутствие привилегий ядра:** Контейнер Kaniko запускается без `--privileged`. У него нет прав на монтирование устройств или изменение параметров ядра хоста.
 3.  **Ограничения оркестратора:** В Kubernetes NetworkPolicy может жестко ограничить сетевую активность процесса сборки, не позволяя ему сканировать внутреннюю сеть.
+
+> **Соответствие PSS:** стоковый образ Kaniko проходит профиль `baseline` (в `deploy/Dockerfile` задано `ENV USER=root`, процесс исполняется с UID 0 — это необходимо для записи распакованного образа в корень `/`). Профиль `restricted` требует `runAsNonRoot: true`, `runAsUser ≠ 0` и `allowPrivilegeEscalation: false`, что для стокового образа невозможно. Варианты для `restricted`-сред: сборка собственного образа kaniko с директивой `USER` (и учётом реальных прав на запись), либо выделение отдельного неймспейса сборки с профилем `baseline` + NetworkPolicy.
 
 ### Особенности кэширования
 
@@ -118,6 +125,15 @@ Kaniko обеспечивает безопасность через нескол
 
 ## Флаги executor (CLI Options Reference)
 
+### Основные команды Kaniko
+
+| Команда | Описание |
+| :--- | :--- |
+| `/kaniko/executor` | Сборка и пуш образа (основной flow) |
+| `/kaniko/executor login <registry>` | Аутентификация в реестре (сохраняет в `config.json`) |
+| `/kaniko/executor push <path>` | Пуш pre-built образа из tar/OCI-layout |
+| `/kaniko/executor bake <file>` | Декларативная сборка из HCL-файла (аналог Bake) |
+
 ### Основные флаги
 
 | Флаг | Описание | Пример |
@@ -134,46 +150,53 @@ Kaniko обеспечивает безопасность через нескол
 | Флаг | Описание |
 | :--- | :--- |
 | `--cache=true` | Включение удалённого кэширования |
-| `--cache-repo` | Реестр для хранения кэшированных слоёв |
-| `--cache-ttl` | Время жизни кэша (по умолчанию 24h) |
-| `--no-push-cache` | Отключение пуша кэша (по умолчанию false) |
-| `--snapshot-mode` | Режим снапшотов: `redo` (по умолчанию, быстрый) или `full` (точный) |
+| `--cache-repo` | Реестр для хранения кэшированных слоёв (по умолчанию выводится из `--destination`) |
+| `--cache-dir` | Локальная директория для кэша базовых образов (по умолчанию `/cache`) |
+| `--cache-ttl` | Время жизни кэша (по умолчанию 336h — две недели) |
+| `--cache-run-layers` | Кэшировать слои `RUN` (по умолчанию true) |
+| `--cache-copy-layers` | Кэшировать слои `COPY` (по умолчанию false — `COPY` не кэшируется) |
+| `--no-push-cache` | Отключение пуша кэша при `--no-push` (по умолчанию false) |
+| `--snapshot-mode` | Режим снапшотов: `full` (по умолчанию, точный), `redo` (быстрый), `time` |
 
 ### Безопасность и аутентификация
 
 | Флаг | Описание |
 | :--- | :--- |
 | `--registry-certificate` | Сертификат для конкретного реестра |
-| `--registry-username` | Имя пользователя для реестра |
-| `--insecure` | Использовать HTTP вместо HTTPS |
-| `--skip-tls-verify` | Пропустить проверку TLS-сертификата |
-| `--registry-secret` | Секрет для registry |
+| `--credential-helpers` | Встроенные credential helpers: `env`, `google`, `ecr`, `acr`, `gitlab` (default: все) |
+| `--insecure` | Использовать HTTP вместо HTTPS (push) |
+| `--skip-tls-verify` | Пропустить проверку TLS-сертификата (push) |
+| `--insecure-pull` / `--skip-tls-verify-pull` | То же для pull |
+| `--insecure-registry` / `--skip-tls-verify-registry` | То же для pull+push конкретного реестра |
 
 ### Сборка
 
 | Флаг | Описание |
 | :--- | :--- |
 | `--build-arg` | Передача аргументов сборки |
-| `--build-arg-env` | Читать аргументы из переменных окружения |
-| `--build-context` | Дополнительные контексты |
 | `--label` | Метаданные образа |
-| `--build-secret` | Секреты сборки (монтируются в /secrets/) |
-| `--ssh` | SSH-ключи для сборки |
-| `--target` | Целевая стадия multi-stage |
-| `--platform` | Целевая платформа |
-| `--revision` | Git-ревизия для build-context |
-| `--branch` | Git-ветка для build-context |
-| `--git` | Расширенные Git-опции (branch, recursive) |
+| `--secret` | Секреты сборки: `--secret id=NAME,env=VAR` или `--secret id=NAME,src=/path` (в Dockerfile — `RUN --mount=type=secret`) |
+| `--target` | Целевая стадия multi-stage (можно несколько раз) |
+| `--custom-platform` | Целевая платформа (например, `linux/arm64`); последовательно, без эмуляции |
+| `--annotation` | Метаданные-аннотации образа (key=value, повторяемый) |
+| `--reproducible` | Убрать временные метки из образа |
+| `--git` | Git-опции контекста: `--git=branch=main,recursive=true` |
+| `--context-sub-path` | Подпуть внутри контекста (для сборки поддиректории git-репо) |
 
 ### Вывод
 
 | Флаг | Описание |
 | :--- | :--- |
-| `--image-file` | Запись digest в файл (аналог --digest-file) |
-| `--oci-image-path` | Экспорт в OCI-формат |
+| `--image-name-with-digest-file` | Запись имени образа с digest в файл |
+| `--image-name-tag-with-digest-file` | Запись имени образа, тега и digest в файл |
+| `--oci-layout-path` | Экспорт в OCI-layout |
+| `--image-format` | Формат образа: `docker` (schema2) или `oci` (по умолчанию наследуется от base image) |
+| `--tar-path` | Экспорт в tar (schema2; не совместим с `--image-format=oci`) |
 | `--single-snapshot` | Один снапшот на всю стадию (ускорение) |
-| `--compressed-caching` | Сжатие кэшированных слоёв |
-| `--use-new-run` | Использовать улучшенный механизм RUN |
+| `--compressed-caching` | Сжатие кэшированных слоёв (по умолчанию true) |
+| `--compression` | Алгоритм сжатия слоёв: `gzip` (по умолчанию) или `zstd` |
+| `--compression-level` | Уровень сжатия: для gzip `-2..9`, для zstd `1..22` (по умолчанию — fastest) |
+| `--use-new-run` | Экспериментальная реализация RUN без снапшотов ФС |
 
 ### Диагностика
 
@@ -181,7 +204,12 @@ Kaniko обеспечивает безопасность через нескол
 | :--- | :--- |
 | `--verbosity` | Уровень логирования (trace, debug, info, warn, error) |
 | `--log-timestamp` | Добавлять временны́е метки в логи |
-| `--force-build-running-cache` | Принудительное использование кэша |
+| `--log-format` | Формат логов: `color` (default), `text`, `json` |
+| `--push-retry` | Количество повторов при push |
+| `--image-download-retry` | Повторы при сбое скачивания образа |
+| `--image-fs-extract-retry` | Повторы при сбое распаковки образа |
+| `--cleanup` / `--pre-cleanup` | Очистка ФС в конце / перед сборкой |
+| `--digest-file` | Запись SHA256 digest в файл |
 
 ### Переменные окружения
 
@@ -191,13 +219,16 @@ Kaniko поддерживает несколько переменных окру
 | :--- | :--- |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Путь к JSON-ключу сервисного аккаунта GCP (для GCR/AR) |
 | `DOCKER_CONFIG` | Путь к директории с конфигурацией Docker (по умолчанию `/kaniko/.docker`) |
+| `DOCKER_AUTH_CONFIG` | JSON-конфигурация `auths`; приоритет над `config.json` |
 | `AWS_ACCESS_KEY_ID` | Ключ доступа AWS (для ECR) |
 | `AWS_SECRET_ACCESS_KEY` | Секретный ключ AWS (для ECR) |
 | `AWS_DEFAULT_REGION` | Регион AWS |
 | `GIT_TOKEN` | Токен для доступа к приватным Git-репозиториям |
-| `SRC_CONTEXT` | Источник контекста сборки (альтернатива --context) |
-| `DOCKER_USERNAME` | Имя пользователя Docker Hub |
-| `DOCKER_PASSWORD` | Пароль Docker Hub |
+| `KANIKO_<HOST_WITH_UNDERSCORES>_USER` / `_PASSWORD` | Credential helper `env`: `KANIKO_REGISTRY_EXAMPLE_COM_USER/PASSWORD` |
+| `CI_REGISTRY` / `CI_REGISTRY_USER` / `CI_REGISTRY_PASSWORD` | GitLab Registry (читает helper `gitlab`) |
+| `KANIKO_DIR` | Расположение рабочих файлов Kaniko (по умолчанию `/kaniko`; замена deprecated `--kaniko-dir`) |
+| `KANIKO_CLEANUP` / `KANIKO_PRE_CLEANUP` | Очистка ФС в конце / перед сборкой |
+| `KANIKO_TELEMETRY_ENDPOINT` | OTLP-эндпоинт трейсов (телеметрия выключена по умолчанию) |
 
 ### Аутентификация в реестрах
 
@@ -220,41 +251,39 @@ echo "{\"auths\":{\"$REGISTRY\":{\"auth\":\"$(printf 'oauth2accesstoken:%s' "$TO
 | :--- | :--- | :--- | :--- |
 | **Демон Docker** | Нужен | Не нужен (`buildkitd`) | Не нужен |
 | **Привилегии** | Нужны (`--privileged`) | Не нужны (rootless) | Не нужны |
-| **Безопасность** | Низкая | Высокая | Высокая |
+| **Безопасность / PSS** | Низкая (privileged) | Высокая | Высокая (baseline, не restricted) |
 | **Кэширование** | Локальное | Локальное / Remote | Только Remote |
-| **Совместимость** | 100% | Высокая | Средняя (~95%) |
-| **BuildKit функции** | Поддерживаются | Полная поддержка | Игнорируются |
-| **Multi-arch** | Последовательно | Одновременно | Ограниченно |
+| **Совместимость** | 100% | Высокая | Высокая (с ограничениями) |
+| **BuildKit функции** | Поддерживаются | Полная поддержка | `RUN --mount=type=cache/secret/bind` в v1.28+ |
+| **Multi-arch** | Последовательно | Одновременно | Последовательно (`--custom-platform`) |
 | **Аттестации (SBOM)** | Нет | Да | Нет |
 | **Параллелизм** | Нет | Нативный (LLB) | Последовательно |
 | **Multi-stage** | Поддерживается | Поддерживается | Поддерживается |
-| **Secrets** | Через ARG (небезопасно) | `type=secret` | `--build-secret` |
+| **Secrets** | Через ARG (небезопасно) | `type=secret` | `--secret` (`RUN --mount=type=secret`) |
 | **Ресурсоемкость** | Высокая | Средняя | Низкая |
-| **Рекомендуемый сценарий** | Локальная разработка | CI/CD, production | Kubernetes, restricted PSS |
+| **Рекомендуемый сценарий** | Локальная разработка | CI/CD, production | CI/CD, Kubernetes (неймспейс baseline) |
 
 ## Практические сценарии
 
-### Сценарий 1: Сборка в GitLab CI (форк v1.28.0)
+### Сценарий 1: Сборка в GitLab CI (форк v1.28.5)
 
-Рекомендуется использовать образ из форка `osscontainertools` для получения актуальных обновлений.
+Рекомендуется использовать образ из форка `osscontainertools` (`ghcr.io/osscontainertools/kaniko`) для получения актуальных обновлений.
 
 ```yaml
 build-app:
   stage: build
   image:
     # Использование актуального форка сообщества
-    name: osscontainertools/kaniko:v1.28.0-debug
+    name: ghcr.io/osscontainertools/kaniko:v1.28.5-debug
     entrypoint: [""]
   script:
-    # Аутентификация через базовую авторизацию (base64)
-    - mkdir -p /kaniko/.docker
-    - |
-      echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(printf "%s:%s" "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
-    # Запуск сборки с кэшированием
+    # Аутентификация встроенным credential helper 'gitlab'
+    # (читает CI_REGISTRY / CI_REGISTRY_USER / CI_REGISTRY_PASSWORD)
     - /kaniko/executor \
         --context "dir://${CI_PROJECT_DIR}" \
         --dockerfile "${CI_PROJECT_DIR}/Dockerfile" \
         --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHA}" \
+        --credential-helpers gitlab \
         --cache=true \
         --cache-repo "${CI_REGISTRY_IMAGE}/cache" \
         --digest-file=/kaniko/digest.txt
@@ -268,7 +297,7 @@ build-app:
 ```bash
 docker run \
     -v $(pwd):/workspace \
-    osscontainertools/kaniko:v1.28.0 \
+    ghcr.io/osscontainertools/kaniko:v1.28.5 \
     --dockerfile=/workspace/Dockerfile \
     --context=dir:///workspace \
     --no-push
@@ -280,7 +309,7 @@ docker run \
 docker run \
   -v $(pwd):/workspace \
   -v $HOME/.docker/config.json:/kaniko/.docker/config.json:ro \
-  osscontainertools/kaniko:v1.28.0 \
+  ghcr.io/osscontainertools/kaniko:v1.28.5 \
   --dockerfile=/workspace/Dockerfile \
   --context=dir:///workspace \
   --destination=harbor.example.com/myproject/app:$(git rev-parse --short HEAD) \
@@ -299,7 +328,7 @@ echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
 docker run \
   -v $(pwd):/workspace \
   -v $(pwd)/.npmrc:/workspace/.npmrc:ro \
-  osscontainertools/kaniko:v1.28.0 \
+  ghcr.io/osscontainertools/kaniko:v1.28.5 \
   --dockerfile=/workspace/Dockerfile \
   --context=dir:///workspace \
   --destination=reg/app:v1 \
@@ -324,7 +353,7 @@ CMD ["node", "server.js"]
 ```bash
 docker run \
   -v $(pwd):/workspace \
-  osscontainertools/kaniko:v1.28.0 \
+  ghcr.io/osscontainertools/kaniko:v1.28.5 \
   --dockerfile=/workspace/Dockerfile \
   --context=dir:///workspace \
   --destination=reg/app:v1.2.3 \
@@ -354,7 +383,7 @@ ENTRYPOINT ["/app"]
 ```bash
 docker run \
   -v $(pwd):/workspace \
-  osscontainertools/kaniko:v1.28.0 \
+  ghcr.io/osscontainertools/kaniko:v1.28.5 \
   --dockerfile=/workspace/Dockerfile \
   --context=dir:///workspace \
   --destination=reg/app:v1 \
@@ -367,7 +396,7 @@ docker run \
 
 ```bash
 docker run \
-  osscontainertools/kaniko:v1.28.0 \
+  ghcr.io/osscontainertools/kaniko:v1.28.5 \
   --git=branch=main,recursive=true \
   --context=git://github.com/user/repo.git \
   --destination=reg/app:v1
@@ -380,11 +409,40 @@ export GIT_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
 
 docker run \
   -e GIT_TOKEN=${GIT_TOKEN} \
-  osscontainertools/kaniko:v1.28.0 \
+  ghcr.io/osscontainertools/kaniko:v1.28.5 \
   --git=branch=main,recursive=true \
   --context=git://github.com/user/private-repo.git \
   --destination=reg/app:v1
 ```
+
+### Сценарий 8: Декларативная сборка через `kaniko bake`
+
+Начиная с v1.28.5, Kaniko поддерживает экспериментальную команду `bake` для сборки нескольких образов из одного Dockerfile через HCL-файл:
+
+`bake.hcl`:
+```hcl
+target "app" {
+  destination = ["registry.example.com/app:latest"]
+}
+
+target "tools" {
+  destination = ["registry.example.com/tools:latest"]
+}
+```
+
+Запуск:
+```bash
+docker run \
+  -v $(pwd):/workspace \
+  ghcr.io/osscontainertools/kaniko:v1.28.5 \
+  bake /workspace/bake.hcl \
+  --context=dir:///workspace \
+  --dockerfile=/workspace/Dockerfile \
+  --cache=true \
+  --cache-repo=registry.example.com/cache
+```
+
+> **Примечание:** `kaniko bake` — экспериментальная функция. Синтаксис HCL отличается от `docker-bake.hcl` (Buildx); файлы несовместимы между инструментами.
 
 ## Работа с результатом сборки
 
@@ -411,12 +469,12 @@ docker run --rm my-app:latest
 ### Метод 2: Использование локального реестра
 ```bash
 # Запуск локального реестра
-docker run -d -p 5000:5000 --name registry registry:2
+docker run -d -p 5000:5000 --name registry registry:3
 
 # Сборка и отправка
 docker run --rm --network host \
   -v $(pwd):/workspace \
-  osscontainertools/kaniko:v1.28.0 \
+  ghcr.io/osscontainertools/kaniko:v1.28.5 \
   --dockerfile=/workspace/Dockerfile \
   --context=dir:///workspace \
   --destination=localhost:5000/my-app:latest \
@@ -453,14 +511,17 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build with Kaniko
-        uses: gcr.io/kaniko-project/executor@v1.23.2
-        with:
-          dockerfile: Dockerfile
-          context: .
-          destination: myregistry.com/app:${{ github.sha }}
-          cache: true
-          cache-repo: myregistry.com/cache
-          push-retry: 3
+        run: |
+          docker run --rm \
+            -v "$PWD":/workspace \
+            -e DOCKER_CONFIG=/kaniko/.docker \
+            ghcr.io/osscontainertools/kaniko:v1.28.5 \
+            --dockerfile=/workspace/Dockerfile \
+            --context=dir:///workspace \
+            --destination=myregistry.com/app:${{ github.sha }} \
+            --cache=true \
+            --cache-repo=myregistry.com/cache \
+            --push-retry=3
 ```
 
 ### Jenkins (Pipeline)
@@ -475,7 +536,7 @@ pipeline {
                     docker run --rm \
                       -v $(pwd):/workspace \
                       -v $HOME/.docker/config.json:/kaniko/.docker/config.json:ro \
-                      osscontainertools/kaniko:v1.28.0 \
+                      ghcr.io/osscontainertools/kaniko:v1.28.5 \
                       --dockerfile=/workspace/Dockerfile \
                       --context=dir:///workspace \
                       --destination=myregistry.com/app:${BUILD_NUMBER} \
@@ -500,7 +561,7 @@ spec:
     spec:
       containers:
         - name: kaniko
-          image: osscontainertools/kaniko:v1.28.0-debug
+          image: ghcr.io/osscontainertools/kaniko:v1.28.5-debug
           args:
             - "--dockerfile=/workspace/Dockerfile"
             - "--context=dir:///workspace"
@@ -546,14 +607,14 @@ echo "{\"auths\":{\"registry.example.com\":{\"auth\":\"$(printf '%s:%s' "$USER" 
   > /kaniko/.docker/config.json
 ```
 
-**2. Ошибка: `error building image: mkdir /kaniko/workspace/rootfs: read-only file system`**
+**2. Ошибка: `failed to extract layer` / `read-only file system` при распаковке образа**
 
-Причина: Корневая файловая система монтирована как read-only.
+Причина: Kaniko распаковывает файловую систему базового образа в корень собственного контейнера (`/`) (`constants.RootDir = "/"`). Если корневой слой смонтирован read-only (например, `readOnlyRootFilesystem: true` в Kubernetes), распаковка падает.
 
-Решение: Убедитесь, что контейнер Kaniko имеет доступ на запись к volume:
+Решение: Убедитесь, что у контейнера Kaniko есть записываемый корневой слой. Не задавайте `readOnlyRootFilesystem: true` для executor; рабочие каталоги (`/kaniko`, workspace) должны быть доступны на запись:
 
 ```bash
-docker run -v $(pwd):/workspace osscontainertools/kaniko:v1.28.0 ...
+docker run -v $(pwd):/workspace ghcr.io/osscontainertools/kaniko:v1.28.5-debug
 ```
 
 **3. Ошибка: `error building image: failed to get reader: Get https://registry...: tls: certificate signed by unknown authority`**
@@ -566,24 +627,32 @@ docker run -v $(pwd):/workspace osscontainertools/kaniko:v1.28.0 ...
 # Монтирование сертификата
 docker run \
   -v /path/to/ca.crt:/kaniko/ssl/certs/ca-certificates.crt:ro \
-  osscontainertools/kaniko:v1.28.0 \
+  ghcr.io/osscontainertools/kaniko:v1.28.5 \
   --registry-certificate=registry.example.com=/path/to/ca.crt \
   ...
 ```
 
-**4. Ошибка: `error building image: mount --bind /proc/fd/...: no such file or directory`**
+**4. Ошибка: «read-only file system» при работе с `/kaniko` (например, `mkdir /kaniko/...` / `moveKanikoDir`)**
 
-Причина: Kaniko не может найти необходимые системные файлы.
+Причина: рабочий каталог `/kaniko` смонтирован read-only или раннер запрещает запись в него; некоторые контейнерные рантаймы накладывают ограничения на запись в корневой каталог.
 
-Решение: Убедитесь, что контейнер запущен с достаточными правами (не `--privileged`, но с необходимыми capability):
+Решение: **не добавляйте capabilities** — это противоречит модели безопасности Kaniko. Переместите рабочий каталог через переменную окружения `KANIKO_DIR`:
 
 ```bash
-docker run --cap-add SYS_ADMIN osscontainertools/kaniko:v1.28.0 ...
+docker run \
+  -e KANIKO_DIR=/workspace/kaniko \
+  -v $(pwd):/workspace \
+  ghcr.io/osscontainertools/kaniko:v1.28.5 \
+  --dockerfile=/workspace/Dockerfile \
+  --context=dir:///workspace \
+  --no-push
 ```
 
-**5. Медленная сборка大型 проектов**
+> Переменная `KANIKO_DIR` заменила устаревший флаг `--kaniko-dir`. При её изменении путь к `config.json`, digest-файлам и внутренним каталогам также меняется.
 
-Причина: Отсутствие кэширования или использование `--snapshot-mode=full`.
+**5. Медленная сборка больших проектов**
+
+Причина: отсутствие кэширования или полное сканирование ФС при `--snapshot-mode=full` (режим по умолчанию).
 
 Решение:
 
@@ -591,7 +660,7 @@ docker run --cap-add SYS_ADMIN osscontainertools/kaniko:v1.28.0 ...
 # Включение кэширования
 --cache=true --cache-repo=reg/cache
 
-# Использование быстрого режима снапшотов (по умолчанию)
+# Быстрый режим снапшотов (проверяйте корректность слоёв!)
 --snapshot-mode=redo
 ```
 
@@ -609,19 +678,19 @@ aws ecr create-repository --repository-name my-app
 
 ```bash
 # Проверка версии Kaniko
-docker run --rm osscontainertools/kaniko:v1.28.0 version
+docker run --rm ghcr.io/osscontainertools/kaniko:v1.28.5 version
 
 # Сборка с подробным логированием
 docker run --rm \
   -v $(pwd):/workspace \
-  osscontainertools/kaniko:v1.28.0-debug \
+  ghcr.io/osscontainertools/kaniko:v1.28.5-debug \
   --dockerfile=/workspace/Dockerfile \
   --context=dir:///workspace \
   --no-push \
   --verbosity=trace
 
 # Просмотр внутренней структуры образа
-docker run --rm -it osscontainertools/kaniko:v1.28.0-debug shell
+docker run --rm -it ghcr.io/osscontainertools/kaniko:v1.28.5-debug shell
 # Внутри контейнера:
 ls -la /kaniko/
 ls -la /kaniko/workspace/
@@ -643,14 +712,14 @@ cat /kaniko/.docker/config.json
 
 ### Рекомендации
 
-1. **Используйте форк `osscontainertools`** вместо официального образа Google (архивирован).
-2. **Настройте кэширование** — всегда указывайте `--cache-repo` для ускорения повторных сборок.
+1. **Используйте форк `osscontainertools`** (`ghcr.io/osscontainertools/kaniko`) вместо официального образа Google (архивирован).
+2. **Настройте кэширование** — указывайте `--cache-repo` и `--cache-copy-layers=true` для ускорения повторных сборок.
 3. **Используйте `--digest-file`** для интеграции с Kubernetes (точное указание образа по SHA256).
-4. **Избегайте `--snapshot-mode=full`** — он медленнее `redo` и обычно не нужен.
-5. **Передавайте секреты через `--build-secret`** или монтируйте в `/secrets/`, а не через `ARG`.
+4. **Понимайте дефолты снапшотов:** по умолчанию активен `--snapshot-mode=full` (точный, медленнее). `--snapshot-mode=redo` быстрее, но подходит не для всех Dockerfile — переключайте осознанно и проверяйте корректность слоёв.
+5. **Передавайте секреты через `--secret id=NAME,env=VAR`** (в Dockerfile — `RUN --mount=type=secret,id=NAME`) или монтируйте файлы `.npmrc`/`.env` как ро-файлы, а не через `ARG` (ARG оседает в слоях image history).
 6. **Используйте `--verbosity=debug`** для отладки проблемных сборок.
 7. **Указывайте `--push-retry=3`** для fault-tolerance в CI/CD.
-8. **Регулярно обновляйте** образ Kaniko для получения патчей безопасности.
+8. **Регулярно обновляйте** образ Kaniko: форк выпускает патч-релизы каждые ~2 недели (без изменения поведения), версия пиннится в шаблоне.
 
 ### Очистка
 
@@ -659,34 +728,35 @@ cat /kaniko/.docker/config.json
 docker image prune -f
 
 # Удаление временных файлов Kaniko
-docker run --rm -v $(pwd):/workspace osscontainertools/kaniko:v1.28.0 \
+docker run --rm -v $(pwd):/workspace ghcr.io/osscontainertools/kaniko:v1.28.5 \
   rm -rf /kaniko/workspace/
 
 # Удаление кэша в реестре
-# (зависит от реистра — для Harbor используйте GC, для Docker Hub — ручное удаление)
+# (зависит от реестра — для Harbor используйте GC, для Docker Hub — ручное удаление)
 ```
 
 ## Известные проблемы и совместимость
 
-### Ограничения совместимости (~5% Dockerfile)
+### Ограничения совместимости
 
 Kaniko **не поддерживает** следующие инструкции и функции:
 
-- **`--mount=type=cache`** — распознаёт синтаксис BuildKit, но **игнорирует** его. Это критично для сборки тяжелых проектов (Java, Node.js, Go), где кэш пакетов теряется.
-- **`--mount=type=ssh`** — не поддерживается (используйте `--ssh` флаг executor).
-- **`--network host`** в инструкции RUN — не работает (Nettoy не поддерживается).
+- **`--mount=type=ssh`** — не поддерживается (флага `--ssh` в исполнителе нет с перехода на 1.28.x; в BuildKit для этого используется SSH-forwarding-agent).
+- **Cross-stage `--mount=type=bind,from=<stage>`** — не поддерживается (монтировать каталоги из других стадий нельзя; только `type=cache`/`secret`/`bind` в пределах текущей стадии).
+- **`--network host`** в инструкции RUN — не работает (изоляция сети сохраняется; альтернатива BuildKit — `--network=host`).
 - **`--security-opt`** — не поддерживается.
-- **Некоторые сложные shell-конструкции** — могут работать некорректно из-за эмуляции через chroot.
+- **`--customPlatform`** (camelCase) — deprecated, заменен на `--custom-platform` (дефис); возможная путаница с именем `--platform`, которого в Kaniko не существовало.
+- **Некоторые сложные shell-конструкции** — могут работать некорректно из-за особенностей исполнения команд внутри контейнера Kaniko (не из-за chroot — Kaniko chroot не использует).
 
 ### Проблемы с жёсткими ссылками (hardlinks)
 
 Kaniko может некорректно обрабатывать жёсткие ссылки на системные файлы. Это проявляется при сборке образов на базе Alpine Linux или Debian, где пакетный менеджер создаёт hardlinks.
 
-**Решение:** Используйте `--snapshot-mode=full` или обновите до последней версии форка.
+**Решение:** используйте актуальную версию форка — `FF_KANIKO_PRESERVE_HARDLINKS` (по умолчанию `true`) сохраняет hardlink-связи при `COPY --from=<stage>` и устраняет раздувание размера образа (например, для `git`-установок, где многие бинарники связаны через inode).
 
 ### Проблемы с производительностью
 
-- Сборка大型 проектов (1000+ файлов) может быть медленной из-за полного сканирования файловой системы после каждой инструкции RUN.
+- Сборка больших проектов (1000+ файлов) может быть медленной из-за полного сканирования файловой системы после каждой инструкции RUN.
 - **Решение:** Используйте `.dockerignore` для исключения ненужных файлов и `--snapshot-mode=redo`.
 
 ### Рекомендации по миграции
@@ -698,3 +768,4 @@ Kaniko может некорректно обрабатывать жёсткие
 - **[BuildKit: Современная альтернатива](./dockerfile_buildkit.md)** — сравнение и выбор инструмента.
 - **[Docker-in-Docker: Анализ рисков](../docker-in-docker.md)** — детали DinD vs Kaniko.
 - **[Безопасность в Dockerfile](./Docker_best_practices/security.md)** — Pod Security Standards.
+- **[Бенчмарк Kaniko vs BuildKit vs Buildah в кластере](./dockerfile_build_tools_benchmark.md)** — замер времени, CPU и памяти сборки в Kubernetes с GitLab Runner.

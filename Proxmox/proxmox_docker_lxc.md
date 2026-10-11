@@ -224,7 +224,7 @@ docker compose logs -f
 
 ```bash
 # Экспорт метрик Docker для Prometheus
-docker run -d   --name cadvisor   --volume /:/rootfs:ro   --volume /var/run:/var/run:ro   --volume /sys:/sys:ro   --volume /var/lib/docker/:/var/lib/docker:ro   --publish 8080:8080   gcr.io/cadvisor/cadvisor:latest
+docker run -d   --name cadvisor   --volume /:/rootfs:ro   --volume /var/run:/var/run:ro   --volume /sys:/sys:ro   --volume /var/lib/docker/:/var/lib/docker:ro   --publish 8080:8080   ghcr.io/google/cadvisor:v0.60.6
 
 # Настройка scrape в Prometheus
 # prometheus.yml

@@ -1,13 +1,26 @@
 # Интеграция Ansible с GitLab CI/CD
 
+**Актуально для:** GitLab 17.x–19.x, ansible-core 2.20–2.21, GitLab Runner на Docker/Podman
+
 ## Определения
 
 **Интеграция Ansible с GitLab CI/CD** — это процесс автоматизации управления конфигурациями, подготовки инфраструктуры (Provisioning) и развертывания приложений через выполнение плейбуков Ansible в конвейерах GitLab. Подход реализует парадигму **Infrastructure as Code (IaC)**, обеспечивая версионирование, аудит и повторяемость изменений.
 
 - **Ansible Control Node (в CI):** Среда выполнения (GitLab Runner), в которой запускаются команды `ansible-playbook`. В современных пайплайнах это Docker-контейнер или специализированный **[Execution Environment (EE)](../../../Ansible/ansible-execution-environments.md)**.
-- **Динамический инвентарь (Dynamic Inventory):** Механизм автоматического получения списка хостов из API облачных провайдеров (Yandex Cloud, AWS, GCP) или систем учета (NetBox) непосредственно в момент выполнения пайплайна.
-- **CI/CD ID Tokens (JWT):** Современный механизм аутентификации, позволяющий GitLab Runner получать временные права доступа к облачным ресурсам или менеджерам секретов без использования долгоживущих паролей и ключей.
+- **Динамический инвентарь (Dynamic Inventory):** Механизм автоматического получения списка хостов из систем учета (NetBox) или CMDB непосредственно в момент выполнения пайплайна.
+- **CI/CD ID Tokens (JWT):** Современный механизм аутентификации, позволяющий GitLab Runner получать временные права доступа к менеджерам секретов и внешним системам без использования долгоживущих паролей и ключей.
 - **Артефакты (Artifacts):** Файлы, генерируемые плейбуком (отчеты о состоянии, логи изменений, сгенерированные конфигурации), которые сохраняются в GitLab для аудита и отладки.
+
+## Предварительные требования
+
+- **GitLab Runner:** Зарегистрированный Runner с поддержкой Docker или Podman. Для production-деплоев рекомендуется использовать **Protected Runners** с изолированным доступом к целевым сегментам сети.
+- **GitLab 17.x+:** Поддержка `spec:inputs`, ID Tokens, Protected Environments и Merge Request Pipelines.
+- **Ansible Core 2.20–2.21:** Установлен в образе Runner или в Execution Environment. Совместимость с используемыми коллекциями (`community.general`, `ansible.posix` и др.).
+- **ansible-lint 26.x:** Инструмент статического анализа, интегрированный как блокирующая стадия пайплайна.
+- **Система контроля версий:** Репозиторий с плейбуками, инвентарями и `.gitlab-ci.yml`. Ветка `main` защищена, изменения проходят через Merge Request.
+- **Сеть и доступ:** Runner имеет сетевое соединение с целевыми хостами по SSH (порт 22) или через доступ к API систем управления (NetBox, Vault). На целевых хостах настроен `sudo` для пользователя, под которым работает Ansible.
+- **Хранилище секретов:** GitLab CI/CD Variables (Masked + Protected) и/или HashiCorp Vault для временных учетных данных.
+- **Артефакт-хранилище:** GitLab Package Registry или внутренний реестр Docker для хранения собранных Execution Environments.
 
 ## Основные концепции
 
@@ -17,6 +30,25 @@
 2.  **Безопасность (Least Privilege):** Доступ к серверам имеет только Runner. Использование **Masked Variables** и временных JWT-токенов минимизирует риски утечки учетных данных.
 3.  **Скорость и масштабируемость:** Параллельное выполнение задач на множестве хостов и использование `needs` для оптимизации графа выполнения пайплайна.
 4.  **Аудит и отслеживаемость:** Полная история изменений с привязкой к коммитам, авторам и результатам выполнения плейбуков в UI GitLab.
+
+### Архитектура интеграции
+
+Интеграция Ansible с GitLab CI строится на трёх компонентах:
+
+```
+git push → GitLab CI → Runner → Ansible EE → Inventory → Target Hosts
+                 ↓
+            Artifacts / Reports
+                 ↓
+            GitLab UI / Compliance
+```
+
+1.  **Событие:** Пуш в репозиторий или создание Merge Request активирует пайплайн.
+2.  **Сборка:** GitLab Runner поднимает среду выполнения (Docker-контейнер или Execution Environment) с предустановленным `ansible-core`, коллекциями и системными зависимостями.
+3.  **Выполнение:** В рамках стадий `lint → test → deploy` выполняются `ansible-lint`, Molecule-тесты и `ansible-playbook` с динамическим инвентарем.
+4.  **Безопасность:** Доступ к целевым хостам и секретам обеспечивается через SSH-ключи (Masked Variables) или временные JWT-токены (ID Tokens + Vault/OIDC). Runner не хранит постоянных учетных данных.
+5.  **Артефакты:** Результаты выполнения (отчеты, логи, сгенерированные конфигурации) сохраняются как GitLab Artifacts для аудита и отладки.
+6.  **Окружения:** Каждое деплойное окружение регистрируется в GitLab Environments, что позволяет отслеживать историю развертываний и настраивать Approval Rules для production.
 
 ### Среды выполнения: Docker vs Execution Environments
 
@@ -35,8 +67,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \
-    ansible-core>=2.17.0 \
-    ansible-lint>=24.2.0 \
+    ansible-core>=2.20.0 \
+    ansible-lint>=26.8.0 \
     molecule[docker]
 
 RUN ansible-galaxy collection install \
@@ -83,7 +115,7 @@ images:
 
 dependencies:
   ansible_core:
-    package_pip: ansible-core>=2.17.0
+    package_pip: ansible-core>=2.20.0
   ansible_runner:
     package_pip: ansible-runner
   galaxy:
@@ -139,17 +171,18 @@ deploy_with_ee:
 - `ANSIBLE_STDOUT_CALLBACK: "yaml"` — структурированный и читаемый вывод задач плейбука (вместо длинных строк JSON).
 - `ANSIBLE_PIPELINING: "True"` — ускорение выполнения задач за счет уменьшения количества SSH-соединений (требует отключения `requiretty` в `/etc/sudoers` на хостах).
 - `ANSIBLE_HOST_KEY_CHECKING: "False"` — отключение проверки SSH-ключей для новых хостов (использовать только в доверенных/эфемерных сегментах сети).
+- `ANSIBLE_RETRY_FILES_ENABLED: "False"` — отключение создания `.retry`-файлов в CI, так как файловая система Runner эфемерна.
 
 ### Управление секретами: ID Tokens и OIDC
 
 Вместо хранения статических ключей сервисных аккаунтов рекомендуется использовать **ID Tokens**.
-GitLab генерирует временный JSON Web Token (JWT), который облачный провайдер (например, Yandex Cloud или HashiCorp Vault) обменивает на временные учетные данные. Это полностью исключает хранение секретов в переменных проекта.
+GitLab генерирует временный JSON Web Token (JWT), который менеджер секретов (например, HashiCorp Vault) обменивает на временные учетные данные. Это полностью исключает хранение секретов в переменных проекта.
 
 ---
 
-## Practical YAML-примеры для GitLab CI
+## Практические сценарии
 
-### Пример 1: Полный .gitlab-ci.yml с линтингом, тестированием и деплоем
+### Сценарий 1: Полный .gitlab-ci.yml с линтингом, тестированием и деплоем
 
 ```yaml
 # .gitlab-ci.yml — полный пайплайн Ansible + GitLab CI
@@ -194,9 +227,9 @@ syntax_check:
 # Тестирование ролей через Molecule
 test_molecule:
   stage: test
-  image: docker:24.0
+  image: docker:27.0
   services:
-    - docker:24.0-dind
+    - docker:27.0-dind
   variables:
     DOCKER_HOST: tcp://docker:2375
   script:
@@ -209,9 +242,9 @@ test_molecule:
 # Сборка Execution Environment
 build_ee:
   stage: build
-  image: docker:24.0
+  image: docker:27.0
   services:
-    - docker:24.0-dind
+    - docker:27.0-dind
   variables:
     DOCKER_HOST: tcp://docker:2375
   before_script:
@@ -259,7 +292,7 @@ deploy_production:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 ```
 
-### Пример 2: Multi-host parallel deploy с health check
+### Сценарий 2: Multi-host parallel deploy с health check
 
 ```yaml
 # playbooks/rolling_deploy.yml
@@ -349,7 +382,7 @@ deploy_rolling:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 ```
 
-### Пример 3: Canary Deployment через Ansible + GitLab CI
+### Сценарий 3: Canary Deployment через Ansible + GitLab CI
 
 ```yaml
 # playbooks/canary_deploy.yml
@@ -427,7 +460,7 @@ canary_deploy:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 ```
 
-### Пример 4: Деплой через ansible-pull (Pull-модель)
+### Сценарий 4: Деплой через ansible-pull (Pull-модель)
 
 ```yaml
 # .gitlab-ci.yml — триггер ansible-pull на целевых узлах
@@ -457,7 +490,7 @@ trigger_pull:
     - protected-runner
 ```
 
-### Пример 5: Деплой с Vault и динамическими секретами
+### Сценарий 5: Деплой с Vault и динамическими секретами
 
 ```yaml
 # playbooks/deploy_with_vault.yml
@@ -511,7 +544,7 @@ trigger_pull:
         state: restarted
 ```
 
-### Сценарий 1: Базовая настройка с кэшированием зависимостей
+### Сценарий 6: Базовая настройка с кэшированием зависимостей
 
 Использование `ansible-core` и кэширование установленных ролей/коллекций для ускорения последующих запусков.
 
@@ -537,24 +570,41 @@ trigger_pull:
       fi
 ```
 
-### Сценарий 2: Деплой в Yandex Cloud через ID Tokens
+### Сценарий 7: Деплой с HashiCorp Vault через ID Tokens
 
-Современный метод беспарольной аутентификации.
+Современный метод беспарольной аутентификации в on-prem инфраструктуре.
 
 ```yaml
-deploy_yc:
+deploy_vault_oidc:
   extends: .ansible_base
   id_tokens:
-    MY_JWT_TOKEN:
-      aud: https://iam.api.cloud.yandex.net/iam/v1/tokens
+    VAULT_JWT:
+      aud: https://vault.internal.example.com
   script:
-    # Обмен JWT на временный IAM-токен
-    - export YC_IAM_TOKEN=$(curl -s -X POST -H "Content-Type: application/json" -d "{\"jwt\":\"$MY_JWT_TOKEN\"}" https://iam.api.cloud.yandex.net/iam/v1/tokens | jq -r .iamToken)
-    - ansible-playbook -i inventory/prod.yc.yml playbooks/site.yml
+    # Обмен JWT на временный Vault-токен через AppRole
+    - export VAULT_TOKEN=$(curl -s -X POST -H "Content-Type: application/json" -d "{\"jwt\":\"$VAULT_JWT\"}" "$VAULT_ADDR/v1/auth/approle/login" | jq -r .auth.client_token)
+    - ansible-playbook -i inventory/production/hosts.yml playbooks/site.yml
   environment: production
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
 ```
 
-### Сценарий 3: Использование ssh-agent для управления ключами
+**Валидация:**
+```bash
+# После запуска джобы проверьте:
+# 1. Pipeline завершился успешно
+glab ci status
+
+# 2. В логах джобы появилась строка об успешном обмене JWT
+# → Vault token obtained, TTL: 3600s
+
+# 3. На целевом хосте применены изменения
+ansible -i inventory/production/hosts.yml all -m ping
+# → host | SUCCESS => {"changed": false, "ping": "pong"}
+```
+
+### Сценарий 8: Использование ssh-agent для управления ключами
 
 Безопасная передача SSH-ключей без сохранения их на диск раннера.
 
@@ -571,16 +621,16 @@ deploy_ssh_agent:
     - ansible-playbook -i inventory/hosts.ini playbooks/site.yml
 ```
 
-### Сценарий 4: Тестирование ролей через Molecule
+### Сценарий 9: Тестирование ролей через Molecule
 
 Интеграция тестирования ролей с использованием Docker-in-Docker (DinD).
 
 ```yaml
 test_molecule:
   stage: test
-  image: docker:24.0
+  image: docker:27.0
   services:
-    - docker:24.0-dind
+    - docker:27.0-dind
   variables:
     DOCKER_HOST: tcp://docker:2375
   script:
@@ -589,7 +639,7 @@ test_molecule:
     - molecule test
 ```
 
-### Сценарий 5: Обработка критических ошибок (any_errors_fatal)
+### Сценарий 10: Обработка критических ошибок (any_errors_fatal)
 
 Для предотвращения частичного деплоя и неконсистентности инфраструктуры.
 
@@ -605,14 +655,14 @@ test_molecule:
     ```yaml
     deploy:
       script:
-        - ansible-playbook site.yml --extra-vars "ansible_callback_whitelist=json"
+        - ansible-playbook site.yml --extra-vars "ANSIBLE_STDOUT_CALLBACK=json"
       artifacts:
         paths:
           - deployment_report.json
         when: always
     ```
 
-### Сценарий 6: Безопасный Ansible Vault (Тип File)
+### Сценарий 11: Безопасный Ansible Vault (Тип File)
 
 Передача пароля Vault через защищенную переменную типа File.
 
@@ -628,7 +678,7 @@ deploy_vault:
 
 ## GitLab CI Inputs для управления Ansible
 
-GitLab CI Inputs (`spec:inputs`) — механизм типизации параметров, заменяющий свободные переменные на структурированные элементы интерфейса с валидацией на этапе компиляции. Подробности синтаксиса, типов данных и ограничений см. в SSoT **[Переменные и лучшие практики](../Advanced/workflow_rules/variables_best_practices.md)**.
+GitLab CI Inputs (`spec:inputs`) — механизм типизации параметров, заменяющий свободные переменные на структурированные элементы интерфейса с валидацией на этапе компиляции. Подробности синтаксиса, типов данных и ограничений см. в **[Переменные и лучшие практики](../Advanced/workflow_rules/variables_best_practices.md)**.
 
 ### Выбор окружения и плейбука через Inputs
 
@@ -786,9 +836,9 @@ include:
 ```yaml
 test_playbook_multi_os:
   stage: test
-  image: docker:24.0
+  image: docker:27.0
   services:
-    - name: docker:24.0-dind
+    - name: docker:27.0-dind
       alias: docker
     - name: ubuntu:22.04
       alias: target-ubuntu
@@ -816,6 +866,39 @@ test_playbook_multi_os:
 2. **Protected Runners для Production:** Джобы деплоя на production помечены `tags: [protected-runner]`, что ограничивает их запуск только выделенными раннерами с доступом к продакшен-сегменту.
 3. **Централизованный Include:** Чтение CI-конфигурации через `include: remote` из защищенного репозитория исключает возможность инъекции кода через форк.
 4. **Минимизация прав:** Раннер для тестов не имеет доступа к production-секретам (Environment Scoped Variables). Маскированные переменные с флагом `Protected` недоступны в пушах из feature-веток.
+
+## Граничные случаи
+
+| Сценарий | Проблема | Решение |
+| :--- | :--- | :--- |
+| **Большие инвентари (1000+ хостов)** | Длинное время выполнения, таймауты SSH | Используйте `ansible-pull` (Pull-модель) или динамический инвентарь с сериализацией `serial: "10%"`. Увеличьте `ANSIBLE_TIMEOUT` и `forks` в `ansible.cfg`. |
+| **Частичный деплой при ошибке** | `strategy: linear` останавливается на первом хосте | Добавьте `serial: 1` или `serial: "25%"` с `max_fail_percentage: 10`. Используйте `any_errors_fatal: true` для критических изменений. |
+| **Дрейф конфигурации** | Целевой хост изменен вручную | Внедрите регулярные пайплайны с `ansible-playbook --check --diff` и оповещениями при обнаружении дрейфа. |
+| **Зацикливание зависимостей EE** | Сборка EE падает из-за конфликтов версий | Используйте `pip install -r requirements.txt` с зафиксированными версиями. Включите `--no-cache` для полной пересборки. |
+| **SSH-agent forwarding в DinD** | Ключ не попадает в сервис-контейнер | Используйте `SSH_AUTH_SOCK` переменную или монтируйте `.ssh` директорию через `volumes` в сервисе DinD. |
+| **Vault и ephemeral runners** | Секрет недоступен после перезапуска джобы | Используйте ID Tokens с коротким TTL вместо статических `RoleID`/`SecretID`. Храните `VAULT_TOKEN` только в переменных окружения джобы. |
+| **Запуск Molecule в shared runners** | Конфликт портов Docker | Используйте отдельный `DOCKER_HOST` для каждой джобы или ограничьте теги Molecule джобыми на выделенных раннерах. |
+| **Поведение `requiretty`** | `sudo: no tty present and no askpass program specified` | Отключите `requiretty` в `/etc/sudoers` на целевых хостах или используйте `ANSIBLE_PIPELINING: "True"` только после проверки совместимости. |
+
+## Валидация и проверка
+
+Каждый этап пайплайна должен иметь явные проверки корректности выполнения:
+
+1.  **Линтинг:** `ansible-lint playbooks/ --profile=production -p` должен завершаться с `Passed: N, Failed: 0`.
+2.  **Синтаксис:** `ansible-playbook playbooks/site.yml --syntax-check` не должен возвращать ошибок.
+3.  **Dry-run:** Перед первым деплоем в production выполните `ansible-playbook playbooks/site.yml --check --diff` и убедитесь, что `changed=0` на идемпотентных задачах.
+4.  **Ping:** После применения инвентаря проверьте доступность всех хостов: `ansible all -m ping`.
+5.  **Health check:** После деплоя убедитесь, что сервис отвечает на `/health` с HTTP 200.
+6.  **Артефакты:** Проверьте, что артефакты (отчеты, логи) сохраняются в GitLab и доступны после завершения пайплайна.
+
+## Очистка
+
+- **Временные файлы:** Удаляйте `.vault_pass`, SSH-ключи и временные токены в `after_script` или через `rm -f` в том же `script` блоке.
+- **Docker-слои:** На раннерах с DinD регулярно очищайте кеш: `docker system prune -a --filter "until=24h"` или настройте `--no-cache` в `ansible-builder build`.
+- **Кеш GitLab CI:** Ограничьте срок хранения кеша `.ansible/` переменной `cache:expire_in` (рекомендуется 7 дней).
+- **Артефакты:** Настройте `expire_in` для артефактов (рекомендуется 7–90 дней в зависимости от требований аудита).
+
+---
 
 ## Troubleshooting
 
@@ -1018,18 +1101,6 @@ rollback:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 ```
 
-### Rollback через Helm (для Kubernetes)
-
-```yaml
-helm_rollback:
-  stage: rollback
-  image: alpine/helm:latest
-  script:
-    - helm rollback myapp --namespace production
-    - kubectl rollout status deployment/myapp -n production
-  when: manual
-```
-
 ---
 
 ## Compliance и аудит
@@ -1051,7 +1122,7 @@ deploy_with_audit:
     - |
       ansible-playbook playbooks/site.yml \
         -i inventory/production/hosts.yml \
-        --extra-vars "ansible_callback_whitelist=json" \
+        --extra-vars "ANSIBLE_STDOUT_CALLBACK=json" \
         -e "gitlab_user=$GITLAB_USER_LOGIN" \
         -e "gitlab_commit=$CI_COMMIT_SHA" \
         2>&1 | tee deployment_report.json
@@ -1099,6 +1170,7 @@ deploy_with_audit:
 - **no_log: true:** Обязательно используйте в задачах, обрабатывающих пароли, API-ключи и другие секреты.
 - **Статический анализ:** Внедрите `ansible-lint` как блокирующую стадию пайплайна для обеспечения качества кода.
 - **Изоляция:** Используйте разные раннеры (Protected Runners) для стадий деплоя на Production.
+- **Верификация зависимостей:** Проверяйте GPG-подписи коллекций и ролей, устанавливаемых через `ansible-galaxy`.
 
 ### Смотрите также
 

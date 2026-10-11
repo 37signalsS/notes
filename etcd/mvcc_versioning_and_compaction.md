@@ -29,15 +29,15 @@ etcd использует двухслойную архитектуру хран
 
 2. **BoltDB (на диске)**: B+ дерево (движок `bbolt v1.5.1`), где ключом является номер ревизии. Это гарантирует, что данные записываются последовательно, что оптимально для SSD. BoltDB работает по принципу copy-on-write (CoW): при каждом изменении создаются новые страницы, а старые становятся "мертвыми" (неиспользуемыми) и попадают в Freelist.
 
-   * **Page size**: 4 КБ. Все операции чтения/записи выровнены по границам страниц.
-   * **Freelist (Список свободных страниц)**: После компакции страницы не удаляются физически, а заносятся в Freelist. В BoltDB v1.5.1 алгоритм управления этим списком оптимизирован до O(1), что позволяет эффективно работать с БД размером более 100 ГБ.
+   * **Page size**: по умолчанию равен размеру системной страницы ОС (`os.Getpagesize()`, обычно 4 КБ). Ключи и значения упакованы внутри страницы, а не выровнены по её границам.
+   * **Freelist (Список свободных страниц)**: После компакции страницы не удаляются физически, а заносятся в Freelist. Backend freelist выбирается флагом `--backend-bbolt-freelist-type` (по умолчанию `map`/hashmap с etcd 3.5.0, аллокация O(1)); устройство и стоимость загрузки freelist — в [Внутреннее устройство хранения](./storage_internals.md).
    * **Фрагментация**: Разница между физическим размером файла (`db_total_size`) и реальным объемом данных (`db_total_size_in_use`). Высокая фрагментация замедляет чтение, так как файл становится больше, хотя полезных данных меньше.
 
 ### Consistent Index и связь с Raft
 
 **Consistent Index** — это внутренний счетчик, который Raft использует для отслеживания последней примененной записи. Когда лидер коммитит запись в Raft-логе, он увеличивает Consistent Index. Модуль MVCC применяет запись к BoltDB только один раз, используя этот индекс как идемпотентный ключ. Это предотвращает дублирование данных при перезапуске узла.
 
-### Оптимизации чтения в v3.7.1
+### Оптимизации чтения в v3.7
 
 * **Keys-only Range Optimization**: При запросах, требующих только названия ключей (напр., для проверки существования), etcd извлекает данные напрямую из `treeIndex`, полностью пропуская фазу чтения из BoltDB. Это снижает IOPS и задержки в разы.
 * **RangeStream**: Вместо полной буферизации результата в памяти (что часто приводило к OOM при LIST-запросах в K8s), etcd 3.7 использует потоковую передачу данных из BoltDB сразу в gRPC-канал.
@@ -52,7 +52,7 @@ etcd создает снапшоты для двух целей:
 
 ### Алармы (NOSPACE и CORRUPT)
 
-* **NOSPACE**: Возникает, когда размер БД достигает `--quota-backend-bytes` (по умолчанию 2 ГБ). etcd блокирует ВСЕ операции записи и переходит в режим только для чтения. Для восстановления требуется компакция, дефрагментация и сброс аларма.
+* **NOSPACE**: Возникает, когда размер БД достигает `--quota-backend-bytes` (по умолчанию 2 ГБ). etcd переходит в режим обслуживания, принимающий только чтения и удаления; запись отклоняется с ошибкой `mvcc: database space exceeded`. Для восстановления требуется компакция, дефрагментация и сброс аларма.
 * **CORRUPT**: Возникает при аппаратных сбоях, некорректном завершении или повреждении файлов данных. Требуется восстановление из снапшота (offline restore).
 
 ---
@@ -118,7 +118,12 @@ EOF
 Рекомендуется настраивать автоматическую компакцию для предотвращения бесконечного роста БД.
 
 ```bash
-# Режим periodic: Авто-компакция каждые 5 минут (K8s standard)
+# Режим periodic: авто-компакция каждые 5 минут.
+# В Kubernetes компакцию выполняет kube-apiserver (--etcd-compaction-interval, дефолт 5m);
+# включайте etcd-стороннюю авто-компакцию только если компакция НЕ выполняется
+# на стороне API-сервера — конкурирующие компакторы вызывают
+# "mvcc: required revision has been compacted" на длинных watch-потоках
+# (см. ./garbage_collection.md, ./kubernetes_integration.md)
 etcd --auto-compaction-mode=periodic --auto-compaction-retention=5m
 
 # Режим revision: Сохранение последних 10 000 ревизий
@@ -137,7 +142,7 @@ etcdctl defrag --endpoints=https://10.0.0.11:2379
 etcdctl defrag --cluster
 
 # Офлайн дефрагментация файла БД (через etcdutl, требует остановки etcd)
-etcddutl defrag --data-dir /var/lib/etcd
+etcdutl defrag --data-dir /var/lib/etcd
 ```
 
 **Валидация через метрики:**
@@ -154,10 +159,10 @@ curl -s http://localhost:2379/metrics | grep etcd_mvcc_db_total_size
 
 ```bash
 # 1. Получить текущую ревизию
-rev=$(etcdctl endpoint status --write-out="json" | egrep -o '"revision":[0-9]*' | egrep -o '[0-9]*' | head -n 1)
+rev=$(etcdctl endpoint status --write-out="json" | egrep -o '"revision":[0-9]*' | egrep -o '[0-9].*')
 
 # 2. Выполнить компакцию
-etcdctl compaction $rev
+etcdctl compact $rev
 
 # 3. Дефрагментация (поочередно на каждом узле)
 etcdctl defrag --cluster
@@ -170,20 +175,11 @@ etcdctl alarm disarm
 ### Офлайн-инспекция БД через etcdutl
 
 ```bash
-# Проверка статуса снапшота
+# Проверка статуса снапшота (колонки: hash, revision, total keys, total size, version)
 etcdutl snapshot status backup.db -w table
-# → Hash: 1a2b3c4d, Revision: 512340, Total key count: 1254300
 
-# Валидация снапшота
-etcdutl snapshot verify /backup/etcd-snapshot-2026-08-23.db
-# → snapshot verify passed, revision: 512340
-
-# Экспорт ключей в формате JSON (offline)
-etcdutl db --data-dir /var/lib/etcd get /config/ -w json
-
-# Проверка здоровья базы данных (offline)
-etcdutl health --data-dir /var/lib/etcd
-# → health check passed
+# Хеш истории KV снапшота (колонки: hash, hash revision, compact revision)
+etcdutl hashkv backup.db -w table
 ```
 
 ### Проверка производительности (etcdctl check perf)
@@ -193,11 +189,13 @@ etcdctl check perf --load="s"  # s (small), m (medium), l (large), xl (x-large)
 # → PASS: Throughput is 150 writes/s
 ```
 
-**Интерпретация порогов (ориентировочно для NVMe):**
-- **Small (s):** PASS при > 100 writes/s.
-- **Medium (m):** PASS при > 50 writes/s.
-- **Large (l):** PASS при > 20 writes/s.
-- **X-Large (xl):** PASS при > 5 writes/s.
+**Интерпретация порогов** (PASS при throughput ≥ 90% от rate limit, slowest request < 500 мс, stddev < 100 мс):
+- **Small (s):** 50 клиентов, rate limit 150 writes/s, PASS при ≥ 135 writes/s.
+- **Medium (m):** 200 клиентов, rate limit 1 000 writes/s, PASS при ≥ 900 writes/s.
+- **Large (l):** 500 клиентов, rate limit 8 000 writes/s, PASS при ≥ 7 200 writes/s.
+- **X-Large (xl):** 1 000 клиентов, rate limit 15 000 writes/s, PASS при ≥ 13 500 writes/s.
+
+Детали (модели нагрузки, флаги `--auto-compact`/`--auto-defrag`, инструмент `benchmark`) — в **[Тестирование производительности](./benchmarking.md)**.
 
 **Troubleshooting:**
 - FAIL на `s` или `m` указывает на проблемы с диском (HDD вместо SSD, высокий iowait) или сетью между участниками.

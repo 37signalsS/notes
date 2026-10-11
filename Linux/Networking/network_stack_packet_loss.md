@@ -252,7 +252,7 @@ sudo sysctl --system
 
 **Edge Cases:**
 *   **VRF и conntrack:** По умолчанию conntrack не разделяет соединения по VRF — при overlapping IP в разных VRF возможны коллизии (требуется VRF-aware conntrack в новых ядрах). Фильтрация — `meta l3mdev` в nftables.
-*   **UDP race condition:** При параллельных UDP-запросах с одного сокета возможны задержки ровно 1000 мс или 5000 мс (таймауты ретрансмиссии). Решение: NodeLocal DNSCache, `single-request-reopen`.
+*   **UDP race condition:** При параллельных UDP-запросах с одного сокета возможны задержки ровно 1000 мс или 5000 мс (таймауты ретрансмиссии). Решение: NodeLocal DNSCache, `single-request-reopen` (только glibc; musl/Alpine игнорирует).
 
 ---
 

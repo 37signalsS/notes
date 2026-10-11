@@ -91,7 +91,7 @@ kubectl logs -n logging -l app.kubernetes.io/name=fluent-bit --tail=10
 * **Логи с определенным request_id:** `request_id: "abc-123"`
 
 #### Использование ES|QL (Kibana 8.14+ GA)
-Позволяет выполнять сложные цепочки действий прямо в интерфейсе **Discover**:
+Позволяет выполнять сложные цепочки действий прямо в интерфейсе **Discover**; полный справочник языка (команды, REST API, права, async-запросы) — в [ES|QL — конвейерный язык запросов](../../../ELK_Stack/Elasticsearch/esql-query-language.md):
 
 **Пример 1: Топ-10 подов по количеству ошибок в production:**
 ```esql
@@ -177,15 +177,7 @@ FROM logs-kubernetes-*
 
 ### Экспорт и импорт Saved Objects (GitOps)
 
-Для версионирования конфигурации Kibana:
-
-1. Перейдите в **Stack Management** → **Saved Objects**.
-2. Выберите объекты для экспорта (дашборды, Data Views, правила алертинга).
-3. Нажмите **Export** → формат **NDJSON**.
-4. Сохраните файл в Git-репозиторий.
-5. Для импорта на другом кластере: **Import** → выберите NDJSON-файл.
-
-**Best Practice:** Включайте экспорт в CI/CD pipeline для автоматического развёртывания конфигурации Kibana в разных окружениях (dev, staging, production).
+Для версионирования конфигурации Kibana (дашборды, Data Views, правила алертинга) используйте экспорт в **NDJSON** через **Stack Management → Saved Objects** и храните файлы в Git. Полная последовательность (UI и API), а также встраивание в CI/CD — в [Kibana: Поиск, визуализация и управление, раздел «Экспорт и импорт объектов через UI и API (GitOps)»](../../../ELK_Stack/Kibana/kibana_search_and_visualization.md).
 
 ## Best Practices
 
@@ -196,7 +188,7 @@ FROM logs-kubernetes-*
 - **Используйте Source Filtering** в Data View для исключения ненужных полей (ускоряет загрузку).
 
 ### Безопасность
-- **Включите RBAC** для ограничения доступа к敏感ным данным.
+- **Включите RBAC** для ограничения доступа к чувствительным данным.
 - **Используйте Space-aware roles** для мультитенантности.
 - **Включите Audit Logs** для отслеживания действий пользователей.
 - **Настройте TLS** для соединения Kibana с Elasticsearch.
@@ -243,6 +235,8 @@ kubectl exec -it <pod-elasticsearch> -n logging -- \
 2. Используйте Source Filtering в Data View для исключения ненужных полей.
 3. Проверьте производительность Elasticsearch (CPU, RAM, диск).
 4. Оптимизируйте визуализации (меньше панелей, проще запросы).
+
+Механизм исполнения запросов дашбордом, диагностика конкретной панели через Inspector и настройки Advanced Settings — в [Kibana: Производительность дашбордов и запросов](../../../ELK_Stack/Kibana/kibana_dashboard_performance.md).
 
 ### Ошибки аутентификации
 **Симптом:** `401 Unauthorized` при подключении к Elasticsearch.

@@ -1,35 +1,80 @@
 # Регистрация GitLab Runner
 
+**Актуально для:** GitLab Runner 19.3.x / GitLab 19.3.x
+
 ## Определения
 
-**GitLab Runner** — это агент (приложение на языке Go), который опрашивает сервер GitLab на наличие заданий (jobs), выполняет их и возвращает результат (логи, артефакты). Runner работает по принципу исходящих соединений (Pull-модель) и не требует входящего доступа извне.
+**GitLab Runner** — агент (приложение на Go), который опрашивает сервер GitLab на наличие заданий (jobs), выполняет их и возвращает результат (логи, артефакты). Runner работает по принципу исходящих соединений (Pull-модель) и не требует входящего доступа извне.
 
 **Executor (Исполнитель)** — компонент Runner, определяющий изолированную среду выполнения задания (Docker, Shell, Kubernetes, VirtualBox). Подробнее см. **[Обзор GitLab Runner и Executor](../Advanced/gitlab_ci_runners_executors.md)**.
 
 **Runner Manager** — экземпляр службы `gitlab-runner`, запущенный на конкретном хосте. Один менеджер может управлять несколькими зарегистрированными раннерами через один файл конфигурации.
 
-**Токен аутентификации (Authentication Token)** — уникальный секрет с префиксом `glrt-` (например, `glrt-t1_xxxx`). Начиная с версии GitLab 16.0, это основной способ регистрации. Токен привязан к конкретной конфигурации раннера, созданной в интерфейсе GitLab.
+**Authentication Token (`glrt-`)** — уникальный секрет с префиксом `glrt-` (например, `glrt-t1_xxxx`). Начиная с GitLab 16.0, это основной способ регистрации. Токен привязан к конкретной конфигурации раннера, созданной в интерфейсе GitLab. Устаревшие Registration Token отключены по умолчанию в GitLab 17.0+ и будут удалены в GitLab 20.0.
 
-## Основные концепции (GitLab 17.0+)
+**Runner Registration Token (deprecated)** — общий токен для проекта/группы/инстанса. Устарел в пользу `glrt-`. Приведет к ошибке `410 Gone`, если legacy-регистрация отключена администратором.
 
-С выходом GitLab 17.0 старый метод регистрации через *Registration Token* (общий токен для группы или проекта) полностью отключен по умолчанию (ошибка `410 Gone`).
+**Protected Runner** — раннер, который запускает задачи только из защищенных веток или тегов. Используется для секретных окружений (production).
 
-**Архитектура регистрации (UI-First):**
-1.  **Декларация:** Вы создаете запись о раннере в интерфейсе GitLab (Admin, Group или Project). Здесь вы заранее определяете теги, тип исполнения (защищенные ветки) и описание.
+**Paused Runner** — раннер, который не принимает новые задачи, но остается зарегистрированным. Используется дляplanned maintenance.
+
+**Locked Runner** — раннер, привязанный к конкретному проекту. Недоступен для других проектов даже в той же группе.
+
+**Limit** — максимальное количество задач, которое раннер может выполнять одновременно (`limit` в `config.toml`). По умолчанию `0` (без ограничения, до глобального `concurrent`).
+
+## Основные концепции (GitLab 19.x)
+
+### Жизненный цикл регистрации
+
+1.  **Декларация:** Вы создаете запись о раннере в интерфейсе GitLab (Admin, Group или Project). Здесь вы заранее определяете теги, executor, protected-статус и описание.
 2.  **Токенизация:** GitLab генерирует `glrt-` токен. Он отображается один раз и является единственным ключом для связки локального менеджера с серверной записью.
-3.  **Связывание:** Вы запускаете `register` на целевой машине, передавая только URL сервера и `glrt-` токен. Локальные настройки (executor) дополняют серверную конфигурацию.
+3.  **Связывание:** Вы запускаете `register` на целевой машине, передавая URL сервера и `glrt-` токен. Локальные настройки (executor, volumes) дополняют серверную конфигурацию.
+4.  **Валидация:** После регистрации Runner начинает опрашивать GitLab API (`POST /api/v4/jobs/request`) и появляется в списке со статусом `online`.
 
----
+### Версионная совместимость
+
+| GitLab Runner | GitLab Server | Статус |
+| :--- | :--- | :--- |
+| 19.x | 19.x | Текущий стабильный. Полная поддержка Fleeting/Taskscaler. |
+| 18.x | 18.x+ | Поддержка. Registration Token отключен по умолчанию. |
+| 17.x | 17.x | Устаревший. Требуется `--token` с `glrt-`. |
+| 16.x | 16.x | Legacy. Registration Token еще доступен, но deprecated. |
+
+> **Важно:** Runner должен быть не более чем на одну мажорную версию старше GitLab Server. При несовместимости возможны ошибки в API-запросах и логировании.
+
+### Архитектура Runner Manager vs Executor
+
+**Runner Manager** — процесс-демон (`gitlab-runner`), который:
+- Регистрируется на GitLab-сервере через API
+- Опрашивает сервер на наличие задач (polling)
+- Управляет жизненным циклом задач
+- Управляет конфигурацией из `config.toml`
+
+**Executor** — модуль внутри Manager, который определяет **как** будет выполнена задача:
+- Создает изолированную среду (контейнер, ВМ, Pod)
+- Запускает скрипты задачи
+- Управляет ресурсами (CPU, память, диск)
+- Уничтожает среду после выполнения
+
+Один Manager может иметь несколько секций `[[runners]]` с разными executor'ами.
 
 ## Предварительные требования (Prerequisites)
 
-### Версии и совместимость
+### Аппаратные ресурсы
 
-| GitLab Runner | GitLab Server | Примечания |
+| Компонент | Минимум | Рекомендация |
 | :--- | :--- | :--- |
-| 17.x | 17.x | Текущий стабильный. Поддержка Fleeting/Taskscaler. |
-| 16.x | 16.x+ | Введен `glrt-` токен. Registration Token отключен по умолчанию. |
-| 15.x | 15.x | Устаревший. Требуется `--registration-token` (deprecated). |
+| **RAM** | 4 ГБ | 8 ГБ+ для Docker/Kubernetes executor |
+| **CPU** | 2 ядра | 4 ядра+ для параллельных задач |
+| **Диск** | 20 ГБ SSD | 50 ГБ+ SSD для кэша и артефактов |
+
+### Программное обеспечение
+
+| Компонент | Минимум | Рекомендация | Проверка |
+| :--- | :--- | :--- | :--- |
+| **GitLab Runner** | 19.0 | 19.3.x | `gitlab-runner --version` |
+| **Docker Engine** | 24.0 | 27.0 | `docker --version` |
+| **GitLab Server** | 19.0 | 19.3.x | `curl https://gitlab.example.com/api/v4/version` |
 
 ### Установка gitlab-runner
 
@@ -44,14 +89,15 @@ sudo apt-get install gitlab-runner
 
 # Проверка версии
 gitlab-runner --version
-# → Version:      17.x.x
+# → Version:      19.3.1
 ```
 
-#### Linux (RHEL/CentOS/Fedora)
+#### Linux (RHEL/CentOS/Fedora/Rocky)
 
 ```bash
 curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.rpm.sh" | sudo bash
-sudo yum install gitlab-runner
+sudo dnf install gitlab-runner
+# или sudo yum install gitlab-runner
 ```
 
 #### Docker (как контейнер)
@@ -60,7 +106,7 @@ sudo yum install gitlab-runner
 # Регистрация через временный контейнер
 docker run --rm -it \
   -v /srv/gitlab-runner/config:/etc/gitlab-runner \
-  gitlab/gitlab-runner:alpine register \
+  gitlab/gitlab-runner:alpine-v19.3.1 register \
     --non-interactive \
     --url "https://gitlab.example.com/" \
     --token "glrt-YOUR_TOKEN" \
@@ -82,9 +128,10 @@ sudo gitlab-runner list
 # Проверка связи с сервером
 sudo gitlab-runner verify
 # → Verifying runner... is alive                        runner=abc12345
-```
 
----
+# Диагностика (детальный скрипт)
+# См. раздел "Диагностический скрипт" в [Обзор GitLab Runner и Executor](../Advanced/gitlab_ci_runners_executors.md)
+```
 
 ## Практические сценарии
 
@@ -93,18 +140,20 @@ sudo gitlab-runner verify
 Этот сценарий предполагает запуск раннера в Docker-контейнере для изоляции процессов сборки.
 
 #### 1. Создание в интерфейсе GitLab
+
 1.  Перейдите в **Settings > CI/CD > Runners** (или **Admin Area > Runners** для общего раннера).
 2.  Нажмите **New project runner**.
 3.  Выберите платформу (`Linux`) и укажите **Tags** (например, `docker, nodejs`).
 4.  Нажмите **Create runner** и скопируйте токен `glrt-...`.
 
 #### 2. Выполнение регистрации (One-off container)
+
 Используйте временный контейнер для генерации `config.toml`:
 
 ```bash
 docker run --rm -it \
   -v /srv/gitlab-runner/config:/etc/gitlab-runner \
-  gitlab/gitlab-runner:alpine-v17.5.0 \
+  gitlab/gitlab-runner:alpine-v19.3.1 \
   register \
     --non-interactive \
     --url "https://gitlab.example.com/" \
@@ -116,18 +165,21 @@ docker run --rm -it \
 ```
 
 #### 3. Запуск постоянного сервиса
+
 ```bash
 docker run -d --name gitlab-runner --restart always \
   -v /srv/gitlab-runner/config:/etc/gitlab-runner \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  gitlab/gitlab-runner:alpine-v17.5.0
+  gitlab/gitlab-runner:alpine-v19.3.1
 ```
 
 ---
 
-### Сценарий 2: Регистрация на Linux (Shell Executor)
+### Сценарий 2: Регистрация на Linux/macOS/Windows (Shell Executor)
 
-Подходит для задач, требующих прямого доступа к ресурсам хоста (например, для сборки системных пакетов).
+Подходит для задач, требующих прямого доступа к ресурсам хоста (например, для сборки системных пакетов, доступа к локальному железу).
+
+#### Linux/macOS
 
 ```bash
 # Регистрация
@@ -142,11 +194,28 @@ sudo gitlab-runner status
 # → gitlab-runner: Service is running
 ```
 
+#### Windows (PowerShell Core)
+
+```powershell
+# Регистрация (от имени Administrator)
+gitlab-runner register `
+  --non-interactive `
+  --url "https://gitlab.example.com/" `
+  --token "glrt-YOUR_TOKEN_HERE" `
+  --executor "shell" `
+  --shell "pwsh"
+
+# Проверка статуса
+gitlab-runner status
+```
+
+> **Примечание:** Для Windows используйте `pwsh` (PowerShell Core). Docker executor на Windows поддерживает только Windows-контейнеры через Docker Desktop. Многие Linux-образы для CI/CD несовместимы с Windows-контейнерами.
+
 ---
 
 ### Сценарий 3: Массовая регистрация через API (IaC)
 
-Для автоматизации через Ansible или Terraform используйте GitLab API. Требуется Personal Access Token (PAT) с правами `api`.
+Для автоматизации через Ansible, Terraform или скрипты используйте GitLab API. Требуется Personal Access Token (PAT) с правами `api`.
 
 ```bash
 # 1. Создание записи раннера через API
@@ -168,7 +237,7 @@ gitlab-runner register --non-interactive --url "https://gitlab.example.com/" --t
 
 ### Сценарий 4: Использование шаблонов конфигурации (--template-config)
 
-Если вам нужно применить сложные настройки (например, лимиты памяти в Docker или настройки кэширования S3) при регистрации множества раннеров, используйте файл-шаблон.
+Если вам нужно применить сложные настройки (например, лимиты памяти в Docker или настройки кэширования) при регистрации множества раннеров, используйте файл-шаблон.
 
 **Файл `template.toml`:**
 ```toml
@@ -181,7 +250,7 @@ gitlab-runner register --non-interactive --url "https://gitlab.example.com/" --t
     Type = "s3"
     Path = "shared-cache"
     [runners.cache.s3]
-      ServerAddress = "s3.amazonaws.com"
+      ServerAddress = "minio.internal:9000"
       BucketName = "my-gitlab-cache"
 ```
 
@@ -208,7 +277,7 @@ sudo gitlab-runner register \
   --url "https://gitlab.example.com/" \
   --token "glrt-YOUR_TOKEN" \
   --executor "docker" \
-  --docker-image "docker:24.0" \
+  --docker-image "docker:27.0" \
   --docker-privileged \
   --docker-volumes "/var/run/docker.sock:/var/run/docker.sock" \
   --description "DinD Runner"
@@ -224,7 +293,7 @@ sudo gitlab-runner register \
   executor = "docker"
 
   [runners.docker]
-    image = "docker:24.0"
+    image = "docker:27.0"
     privileged = true
     volumes = ["/var/run/docker.sock:/var/run/docker.sock"]
     allowed_images = ["docker:*", "alpine:*"]
@@ -236,9 +305,9 @@ sudo gitlab-runner register \
 ```yaml
 build_image:
   stage: build
-  image: docker:24.0
+  image: docker:27.0
   services:
-    - docker:24.0-dind
+    - docker:27.0-dind
   variables:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
@@ -249,6 +318,8 @@ build_image:
     - dind-runner
 ```
 
+> **Безопасность:** `privileged = true` дает Runner'у полный доступ к ядру хоста. Для production используйте **Kaniko** или **BuildKit без привилегий**. Подробнее см. **[Обзор GitLab Runner и Executor](../Advanced/gitlab_ci_runners_executors.md)**.
+
 ---
 
 ### Сценарий 6: Регистрация Group Runner (Групповой раннер)
@@ -256,10 +327,11 @@ build_image:
 Доступен всем проектам внутри группы. Идеален для общих стандартов CI/CD.
 
 #### 1. Создание в интерфейсе GitLab
-1. Перейдите в **Group > Settings > CI/CD > Runners**.
-2. Нажмите **New group runner**.
-3. Укажите теги и настройки (例如 `group-runner, docker`).
-4. Скопируйте `glrt-` токен.
+
+1.  Перейдите в **Group > Settings > CI/CD > Runners**.
+2.  Нажмите **New group runner**.
+3.  Укажите теги и настройки (например `group-runner, docker`).
+4.  Скопируйте `glrt-` токен.
 
 #### 2. Регистрация на хосте
 
@@ -322,7 +394,7 @@ helm install gitlab-runner gitlab/gitlab-runner \
     memory_limit = "2Gi"
     service_cpu_limit = "500m"
     service_memory_limit = "1Gi"
-    helper_image = "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v17.x.x"
+    helper_image = "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v19.x.x"
     poll_timeout = 600
 
   [runners.cache]
@@ -383,7 +455,7 @@ helm install gitlab-runner gitlab/gitlab-runner \
 
 ### Сценарий 9: Настройка кэширования (S3/MinIO)
 
-Для распределённого кэша между несколькими раннерами.
+Для распределённого кэша между несколькими раннерами. В качестве бэкенда можно использовать MinIO (self-hosted S3-совместимое хранилище) или любое другое S3-совместимое решение.
 
 ```toml
 [[runners]]
@@ -455,6 +527,27 @@ scrape_configs:
 
 ---
 
+### Сценарий 11: Регистрация Windows Runner (Shell/PowerShell)
+
+Для задач, требующих Windows-среды (`.NET Framework`, PowerShell-скрипты, Windows-specific тесты).
+
+```powershell
+# Регистрация на Windows хосте
+gitlab-runner register `
+  --non-interactive `
+  --url "https://gitlab.example.com/" `
+  --token "glrt-YOUR_TOKEN_HERE" `
+  --executor "shell" `
+  --shell "pwsh" `
+  --tag-list "windows,pwsh" `
+  --description "Windows Runner"
+```
+
+**Ограничения Windows Runner:**
+- Нет `services` (sidecar-контейнеры)
+- Нет `docker-autoscaler` (Fleeting не поддерживает Windows-инстансы)
+- Docker Desktop требует Linux-контейнеров через WSL2 для совместимости с большинствами CI/CD-образов
+
 ## После регистрации: Структура config.toml
 
 После успешной регистрации в файле `/etc/gitlab-runner/config.toml` появляется блок `[[runners]]`.
@@ -463,9 +556,107 @@ scrape_configs:
 *   **`check_interval`**: Частота опроса сервера GitLab (в секундах).
 *   **`token`**: Здесь хранится ваш `glrt-` токен. Никогда не передавайте его третьим лицам.
 *   **`executor`**: Выбранный тип среды выполнения.
-*   **`pull_policy`**: Определяет, когда Runner скачивает Docker-образ. Значение `["if-not-present"]` предотвращает повторное скачивание неизменяемых образов (например, `docker:24.0-dind`) при каждом запуске задачи, что сокращает время подготовки стадий и нагрузку на сеть.
+*   **`limit`**: Максимальное количество задач для этого runner'а (0 = без ограничения).
+*   **`protected`**: Запускать только из защищенных веток/тегов.
+*   **`tag_list`**: Теги для маршрутизации задач.
+*   **`pull_policy`**: Определяет, когда Runner скачивает Docker-образ. Значение `["if-not-present"]` предотвращает повторное скачивание неизменяемых образов при каждом запуске задачи.
+*   **`pre_clone_script`**: Команды, выполняемые перед клонированием репозитория.
+*   **`post_build_script`**: Команды, выполняемые после завершения задачи.
 
----
+### Пример multi-runner конфигурации
+
+```toml
+concurrent = 20
+check_interval = 3
+
+[session_server]
+  listen_address = "[::]:8093"
+
+[[runners]]
+  name = "docker-fast"
+  executor = "docker"
+  tags = ["fast", "docker"]
+  limit = 10
+  [runners.docker]
+    image = "ubuntu:24.04"
+    memory = "2g"
+    cpus = "1"
+
+[[runners]]
+  name = "shell-system"
+  executor = "shell"
+  tags = ["system", "admin"]
+  limit = 5
+  protected = true
+```
+
+## Граничные случаи
+
+| Сценарий | Описание | Рекомендация |
+| :--- | :--- | :--- |
+| **Большой инвентарь** | Регистрация 50+ раннеров через API | Используйте пагинацию GitLab API и идемпотентность (`creates` в Ansible) |
+| **Дрейф конфигурации** | `config.toml` изменен вручную | Используйте Infrastructure as Code (Ansible/Terraform) для управления конфигом |
+| **SSH-agent forwarding в DinD** | Задача внутри DinD не имеет доступа к SSH-агенту хоста | Монтируйте `SSH_AUTH_SOCK` или используйте `forward_agent` в `config.toml` |
+| **Vault + ephemeral runners** | Секреты Vault привязаны к runner'у, который удаляется после задачи | Используйте OIDC (`id_tokens`) вместо статических токенов |
+| **Windows + Docker** | Docker Desktop на Windows не поддерживает Linux-контейнеры в production | Используйте отдельный Linux-раннер или WSL2 backend |
+| **Высокая нагрузка на API** | 100+ раннеров опрашивают GitLab одновременно | Увеличьте `check_interval` и используйте `limit` на каждом runner'е |
+| **Обновление во время деплоя** | Runner обновляется, а задачи в выполнении | Используйте rolling update: остановите приём (`gitlab-runner stop`), дождитесь завершения, обновите, запустите |
+| **Сетевые разрывы** | Runner теряет связь с GitLab на время выполнения задачи | Задачи завершатся с таймаутом. Настройте `request_concurrency` и `check_interval` |
+
+## Валидация и проверка
+
+После регистрации выполните следующие проверки:
+
+```bash
+# 1. Версия Runner
+gitlab-runner --version
+# → Version: 19.3.1
+
+# 2. Статус службы
+sudo gitlab-runner status
+# → active (running)
+
+# 3. Список зарегистрированных раннеров
+sudo gitlab-runner list
+# → Runner: abc12345... executor=docker tags=[docker, build]
+
+# 4. Верификация связи
+sudo gitlab-runner verify
+# → Verifying runner... is alive
+
+# 5. Проверка в UI
+# Admin > CI/CD > Runners > Runner должен быть online
+
+# 6. Тестовый запуск задачи
+# Создайте .gitlab-ci.yml с тегом runner'а и запустите pipeline
+
+# 7. Логи Runner'а
+journalctl -u gitlab-runner -f
+# → Listening for jobs
+```
+
+## Очистка
+
+```bash
+# Остановка службы
+sudo gitlab-runner stop
+
+# Удаление раннера из GitLab (через UI или API)
+# Admin > CI/CD > Runners > Delete
+
+# Удаление конфигурации
+sudo rm -rf /etc/gitlab-runner
+
+# Очистка Docker-образов и контейнеров (для Docker executor)
+docker system prune -af
+
+# Удаление кэша
+# Settings > CI/CD > Runners > Clear runner caches
+
+# Удаление Runner из Kubernetes (если использовался Helm)
+helm uninstall gitlab-runner -n gitlab-runners
+kubectl delete namespace gitlab-runners
+```
 
 ## Решение проблем (Troubleshooting)
 
@@ -484,15 +675,17 @@ scrape_configs:
 | **OOM (Out of Memory)** | Задача падает с `Exit code 137` | Увеличьте `memory_limit` в `[runners.docker]` или `[runners.kubernetes]`. |
 | **No space left on device** | Runner не может скачать образ или создать временные файлы | Очистите старые контейнеры: `docker system prune -af`. |
 | **Failed to pull helper image** | Runner не может скачать вспомогательный образ | Проверьте доступ к `registry.gitlab.com` или настройте `helper_image`. |
-| **Stuck in Pending** | Нет раннеров с соответствующими тегами или достигнут лимит `concurrent` | Проверьте `tags` в `.gitlab-ci.yml` и `concurrent` в `config.toml`. |
-| **Cache download failed (403)** | Истек срок действия pre-signed URL или неверные credentials | Проверьте NTP-синхронизацию и доступы IAM-роли к S3-бакету. |
-| **Permission Denied (S3)** | Неверные права IAM или Secret Key | Проверьте `config.toml` Runner'а. Для S3 нужны права `s3:PutObject` и `s3:GetObject`. |
-
----
+| **Stuck in Pending** | Нет раннеров с соответствующими тегами или достигнут лимит `concurrent` | Проверьте `tags` в `.gitlab-ci.yml` и `concurrent`/`limit` в `config.toml`. |
+| **Cache download failed** | Истек срок действия pre-signed URL или неверные credentials | Проверьте NTP-синхронизацию и доступ к кэш-бакету. |
+| **Permission Denied (cache)** | Неверные права доступа к кэш-бакету | Проверьте `config.toml` Runner'а. Для S3-совместимого хранилища нужны права `s3:PutObject` и `s3:GetObject`. |
+| **exec format error** | Несоответствие архитектуры образа (arm64) и хоста (amd64) | Используйте multi-arch образы или QEMU. |
+| **Runner is locked and assigned to project** | Runner привязан к конкретному проекту | Переключите на Group/Instance scope или создайте новый runner. |
+| **Windows: Git not found** | Git for Windows не установлен или не в PATH | Установите Git for Windows и добавьте в системный PATH. |
 
 ## Дополнительная информация
 
 ### Уровни раннеров
+
 1.  **Shared (Общие):** Доступны всем проектам (настраиваются в Admin Area).
 2.  **Group (Групповые):** Доступны всем проектам внутри конкретной группы.
 3.  **Project (Проектные):** Привязаны к одному конкретному репозиторию.
@@ -503,11 +696,12 @@ scrape_configs:
 *   **Runtime Isolation:** Для недоверенного кода всегда используйте Docker или Kubernetes Executor вместо Shell.
 *   **Ротация токенов:** Регулярно обновляйте `glrt-` токены через UI GitLab (Settings > CI/CD > Runners > Edit > Rotate authentication token).
 *   **Masked Variables:** Используйте Masked Variables для секретов — они заменяются на `[masked]` в логах Runner'а.
-*   **OIDC (id_tokens):** Для аутентификации во внешних сервисах (Vault, облачные провайдеры) используйте временные JWT-токены вместо статических ключей.
+*   **OIDC (id_tokens):** Для аутентификации во внешних сервисах (Vault, внутренние системы) используйте временные JWT-токены вместо статических ключей.
 *   **Allowed Images:** В `config.toml` ограничьте список разрешенных Docker-образов для предотвращения запуска вредоносного кода.
 *   **Аудит:** Каждая регистрация и выполнение задачи логируется GitLab (Admin > Audit Events). Проверяйте логи регулярно.
 
 ### Смотрите также
+
 *   **[Обзор GitLab Runner и Executor](../Advanced/gitlab_ci_runners_executors.md)** — архитектура, типы Executor'ов и оптимизация config.toml.
 *   **[GitLab Runner в Docker Compose](./gitlab_runner_docker_compose.md)** — развертывание полного стека локально.
 *   **[Отладка и устранение неполадок](../Advanced/debugging_and_troubleshooting.md)** — диагностика Runner'ов и пайплайнов.

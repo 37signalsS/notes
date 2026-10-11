@@ -1,5 +1,7 @@
 # Безопасность MySQL: TDE, TLS, аутентификация и аудит
 
+**Актуально для:** MySQL 8.0.x / 8.4 LTS
+
 ## Определения
 
 **Transparent Data Encryption (TDE)** — технология прозрачного шифрования данных на диске. В MySQL шифруются табличные пространства InnoDB, бинарные логи и логи транзакций. Процесс полностью прозрачен для SQL-запросов и не требует изменения кода приложения.
@@ -315,6 +317,43 @@ SELECT audit_log_filter_set_user('%', 'log_all');
 -- → фильтр log_all назначен всем пользователям
 ```
 
+### 4. MySQL Enterprise Firewall
+
+Файрвол на уровне SQL-запросов: разрешает только запросы из whitelist'а.
+Входит в **MySQL Enterprise Edition** (в Percona / Community нет).
+
+**Установка и включение:**
+
+```sql
+INSTALL PLUGIN MYSQL_FIREWALL SONAME 'mysql_firewall.so';
+INSTALL PLUGIN MYSQL_FIREWALL_USERS SONAME 'mysql_firewall.so';
+INSTALL PLUGIN MYSQL_FIREWALL_WHITELIST SONAME 'mysql_firewall.so';
+
+SET GLOBAL mysql_firewall_mode = 'RECORDING';   -- или PROTECTING / DETECTING / OFF
+```
+
+**Режимы:**
+
+| Режим | Поведение |
+| :--- | :--- |
+| `OFF` | Файрвол выключен |
+| `RECORDING` | Записывает разрешённые запросы в whitelist (фаза обучения) |
+| `PROTECTING` | Разрешает только whitelist, остальное блокирует |
+| `DETECTING` | Разрешает всё, но подозрительное пишет в error log |
+
+**Профили (MySQL 8.0.23+):** можно группировать учётные записи в
+group profile — один whitelist на несколько пользователей. До 8.0.23
+профиль привязывался к одной учётной записи.
+
+**Привилегии:** `FIREWALL_ADMIN` (управление всеми профилями),
+`FIREWALL_USER` (управление своим профилем), `FIREWALL_EXEMPT`
+(обход файрвола — для администраторов и приложений с динамическим SQL).
+
+**SRE-заметка:** файрвол ломает приложения, генерирующие уникальные
+литералы в каждом запросе — каждый такой запрос попадает в whitelist
+отдельно, и он разрастается. Перед переводом в `PROTECTING` обязательно
+пройти фазу `RECORDING` на реальной нагрузке.
+
 #### Валидация
 
 Логи сохраняются в `datadir/audit.log`. Проверка через ОС:
@@ -325,6 +364,43 @@ tail -f /var/lib/mysql/audit.log | jq .
 ```
 
 Эксплуатационные требования: права на файл — `mysql:mysql`, чтение ограничено группой аудита (`chmod 640`); отправка в SIEM через Vector (см. стек observability); пароли в записях аудита маскируются автоматически, но литералы строк в запросах — нет, поэтому general_log при включенном аудите держите выключенным.
+
+#### Аудит через information_schema (SRE-панель)
+
+Помимо файлового аудита, штатные views позволяют быстро оценить安全 posture без внешних инструментов:
+
+```sql
+-- Все пользователи и их плагины аутентификации
+SELECT user, host, plugin, account_locked, password_expired
+FROM mysql.user
+ORDER BY user;
+
+-- Пользователи с доступом извне (не localhost)
+SELECT user, host, account_locked
+FROM mysql.user
+WHERE host NOT IN ('localhost', '127.0.0.1', '::1')
+  AND host NOT LIKE '10.%'
+  AND host NOT LIKE '192.168.%';
+
+-- Привилегии на уровне схем/таблиц (поиск избыточных GRANT)
+SELECT grantee, table_schema, table_name, privilege_type
+FROM information_schema.SCHEMA_PRIVILEGES
+WHERE grantee NOT LIKE 'mysql.%'
+ORDER BY grantee, table_schema;
+
+-- Статус SSL для активных подключений
+SELECT user, host, ssl_cipher, tls_version
+FROM performance_schema.ssl_account_status
+WHERE ssl_cipher IS NOT NULL;
+
+-- Источник подключений по подсетям
+SELECT SUBSTRING_INDEX(host, '.', 3) AS subnet, COUNT(*) AS connections
+FROM information_schema.PROCESSLIST
+GROUP BY subnet
+ORDER BY connections DESC;
+```
+
+Эти запросы можно интегрировать в Grafana-дашборд или запускать как cron-джобу для периодической проверки baseline.
 
 ---
 
@@ -434,6 +510,156 @@ SELECT user, host FROM mysql.user WHERE host = '%';
 -- → пустой результат или осознанные исключения
 ```
 
+#### X Protocol (порт 33060) — вторая дверь в тот же сервер
+
+В MySQL 8.0 **X Plugin включён по умолчанию**, поэтому `mysqld` поднимает второй
+TCP-порт `33060` рядом с классическим `3306`. Оба порта ведут к **одному и тому же
+серверу, тем же учётным записям, схемам и данным** — правила файрвола, написанные
+только под `3306`, этот порт обычно не закрывают.
+
+Особенность, которую легко пропустить: **`bind-address` не управляет X Plugin**. У него
+собственная привязка.
+
+```ini
+[mysqld]
+# Если X Protocol не используется — выключить плагин целиком.
+# Допустимые значения опции: ON, OFF, FORCE, FORCE_PLUS_PERMANENT
+mysqlx                 = OFF
+
+# Если X Protocol нужен (mysqlsh, MySQL Shell, X DevAPI, mysqlsh --mysqlx) —
+# ограничить его собственным адресом, а не закрывать.
+mysqlx_bind_address    = 127.0.0.1
+mysqlx_port            = 33060
+```
+
+Отключение выполняется только на старте сервера, тремя эквивалентными способами:
+
+| Способ | Где |
+| :--- | :--- |
+| `mysqlx = OFF` в конфигурационном файле | `[mysqld]` в `my.cnf` |
+| `--mysqlx=0` | Командная строка запуска |
+| `--skip-mysqlx` | Командная строка запуска |
+
+Скомпилировать сервер вообще без X Plugin можно только на этапе сборки —
+опция CMake `-DWITH_MYSQLX=OFF`.
+
+Валидация — проверять и конфигурацию, и фактически слушающие сокеты:
+
+```sql
+SHOW VARIABLES LIKE 'mysqlx%';
+-- → Variable_name           | Value
+-- → mysqlx_bind_address     | 127.0.0.1
+-- → mysqlx_port             | 33060
+```
+
+```bash
+# Сокет мог остаться в LISTEN даже при mysqlx=OFF в некоторых сборках —
+# источник истины здесь, а не переменная
+ss -ltnp | grep -E '3306|33060'
+# → LISTEN 0 151 127.0.0.1:3306   0.0.0.0:*    users:(("mysqld",pid=1234,fd=30))
+# → LISTEN 0 151 127.0.0.1:33060  0.0.0.0:*    users:(("mysqld",pid=1234,fd=31))
+```
+
+```bash
+# Правило файрвола должно закрывать оба порта
+sudo nft list ruleset | grep -E '3306|33060'
+# → tcp dport { 3306, 33062 } ip saddr 10.0.0.0/8 accept
+```
+
+`require_secure_transport = ON` отклоняет незащищённые подключения **на обоих**
+протоколах, поэтому он закрывает X Protocol на уровне TLS, но не ограничивает круг
+источников — это задача `mysqlx_bind_address` и файрвола.
+
+> **Практическое правило:** либо выключить X Plugin, либо закрыть `33060` файрволом
+> ровно так же, как `3306`, и задать `mysqlx_bind_address`. Третьего варианта нет.
+> Подробности о подключении через MySQL Shell и административном интерфейсе на
+> `33062` — [Управление соединениями](./connection-management.md).
+
+### 5.2. Защита на уровне ОС и файловой системы
+
+Параметры `my.cnf` не покрывают весь attack surface. SysAdmin-компонент:
+
+```bash
+# Файловые права на datadir и ключам
+chown -R mysql:mysql /var/lib/mysql
+chmod 750 /var/lib/mysql
+chmod 600 /etc/mysql/tls/*-key.pem
+chmod 644 /etc/mysql/tls/*.pem
+
+# Отключение core dumps (могут содержать KEK в памяти)
+echo "core_pattern=|/bin/false" >> /etc/sysctl.conf
+echo "fs.suid_dumpable=0" >> /etc/sysctl.conf
+sysctl -p
+
+# Шифрование swap на уровне ОС (если TDE не покрывает swap)
+cryptsetup open --type plain /dev/sdX swap_crypt
+mkswap /dev/mapper/swap_crypt
+swapon /dev/mapper/swap_crypt
+
+# SELinux/AppArmor: проверить контекст datadir
+ls -Z /var/lib/mysql
+# → system_u:object_r:mysqld_db_t:s0 ... (для RHEL)
+```
+
+Валидация ОС-безопасности:
+
+```bash
+# Ядро: поддержка AES-NI для TDE
+grep -o aes /proc/cpuinfo | head -1
+# → aes (если поддерживается)
+
+# Открытые файловые дескрипторы mysqld
+ls -la /proc/$(pidof mysqld)/fd | wc -l
+# → количество; резкий рост может указывать на утечку
+
+# Core dump настроен на отключение
+sysctl fs.suid_dumpable
+# → 0
+```
+
+### 5.3. Шифрование канала репликации
+
+Репликационный канал передает все изменения: без TLS данные реплики доступны в cleartext на сетевом интерфейсе реплики.
+
+```ini
+[mysqld]
+source_ssl_mode = REQUIRED          # для источника (8.0+)
+replica_ssl_mode = REQUIRED         # для реплики (8.0+)
+```
+
+Применение к существующей репликации:
+
+```sql
+-- На источнике: проверить доступные сертификаты
+SHOW VARIABLES LIKE 'have_ssl';
+-- → YES
+
+-- На реплике: включить SSL для канала
+CHANGE REPLICATION SOURCE TO
+  SOURCE_SSL = 1,
+  SOURCE_SSL_CA = '/etc/mysql/tls/ca.pem',
+  SOURCE_SSL_CERT = '/etc/mysql/tls/client-cert.pem',
+  SOURCE_SSL_KEY = '/etc/mysql/tls/client-key.pem',
+  SOURCE_SSL_VERIFY_SERVER_CERT = 1;
+START REPLICA;
+```
+
+Валидация:
+
+```sql
+SHOW REPLICA STATUS\G
+-- → Source_SSL: Allowed / Active
+-- → Replica_SSL_Verify_Server_Cert: Yes
+```
+
+Аккаунты для репликации должны иметь минимальные привилегии и привязку к хосту:
+
+```sql
+-- На источнике
+CREATE USER 'repl'@'10.0.1.%' IDENTIFIED BY 'Repl-Str0ng-Pass!' REQUIRE SSL;
+GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'repl'@'10.0.1.%';
+```
+
 ---
 
 ### 6. Управление секретами на стороне клиента
@@ -480,6 +706,21 @@ mysql --login-path=prod
 | `SSL connection error: protocol version mismatch` | Старый клиент/коннектор без TLSv1.2+ | Обновить коннектор; временно расширить `tls_version` осознанно, зафиксировав риск |
 | `audit.log` не создается или пуст | `audit_log_policy=NONE`, нет прав на запись, SELinux/AppArmor блокирует | `SELECT @@audit_log_policy;`; проверить права datadir и контекст SELinux (`ls -Z`) |
 
+### Best Practices
+
+1.  **Baseline before hardening:** Сначала снимите baseline: текущие аккаунты, статус SSL, покрытие шифрования. Используйте запросы `information_schema` из раздела 4.
+2.  **Least privilege:** Минимально возможные привилегии. Используйте роли вместо прямых `GRANT`. Никаких `ALL PRIVILEGES` для сервисных аккаунтов. Детали: **[Управление ролями в MySQL](./role_management.md)**.
+3.  **Defense in depth:** Комбинируйте TDE (на диске), TLS (при передаче), политику аутентификации (доступ) и аудит (видимость). Ни один отдельный контроль не достаточен.
+4.  **Key separation:** Храните файл состояния keyring вне `datadir` и вне бэкапов данных. DR-копию ключей — в отдельном контуре безопасности. Ротация KEK — ежеквартально и после изменений в команде.
+5.  **Certificate hygiene:** Собственный CA с SAN. `tls_version = TLSv1.2,TLSv1.3`. Мониторинг срока действия сертификатов и автоматическое продление до истечения.
+6.  **Audit with purpose:** Начните с политики `LOGINS`, расширяйте до `ALL` на период комплаенса. Ротация логов по размеру и времени. Доставка в SIEM — в течение минут, а не часов.
+7.  **OS hardening:** Отключите core dumps (`fs.suid_dumpable=0`), шифруйте swap, SELinux/AppArmor — в режиме enforcing. Права на `datadir`: `mysql:mysql 750`.
+8.  **Network segmentation:** `bind-address` только на внутренний интерфейс. `skip_name_resolve=ON`. Файрвол по allow-list для подсетей приложений. Админ-доступ — только localhost/jump host.
+9.  **Secret management:** Никаких паролей в `my.cnf`, переменных окружения или коде. `mysql_config_editor` для интерактивных клиентов, Vault для инфраструктурных секретов.
+10. **Validate everything:** После каждого изменения запускайте валидационные запросы и `SHOW VARIABLES`. Документируйте исключения и получайте их одобрение.
+
+---
+
 ### Чек-лист безопасности MySQL
 
 1. **Транспорт:** `require_secure_transport=ON`, TLSv1.2+, для внешних клиентов `VERIFY_IDENTITY` с собственным CA.
@@ -495,3 +736,7 @@ mysql --login-path=prod
 - **[Теория шифрования в покое](../Concepts/encryption_at_rest.md)** — общие принципы DEK/KEK.
 - **[Безопасность MariaDB](../MariaDB/security/index.md)** — реализация TDE и аудита в MariaDB.
 - **[Управление ролями в MySQL](./role_management.md)** — RBAC и динамические привилегии.
+- **[Конфигурация MySQL](./configuration.md)** — общие параметры `my.cnf`, включая `require_secure_transport`.
+- **[Безопасность репликационного пользователя и SSL](./replication/setup.md)** — привилегии репликационной учётной записи и TLS-канал репликации.
+- **[Резервное копирование и восстановление](./backup_and_recovery/overview.md)** — шифрование бэкапов и управление ключами при восстановлении.
+- **[Запуск MySQL в Docker](./docker.md)** — особенности безопасности контейнерных развертываний.

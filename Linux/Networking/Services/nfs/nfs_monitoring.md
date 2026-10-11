@@ -302,10 +302,7 @@ node_nfs_mountstats_transport_exe_time{protocol="tcp"}
 | 14351 | NFS Client | Клиентская статистика |
 | 14503 | NFS Overview | Обзорная панель |
 
-```bash
-# Импорт через CLI:
-grafana-cli plugins import 11463
-```
+Импорт через UI: **Dashboards → New → Import**, введите ID дашборда (например, `11463`) и подтвердите. Либо скачайте JSON через Grafana.com API (`https://grafana.com/api/dashboards/<id>/revisions/latest/download`) и загрузите его на странице импорта.
 
 ### Шаг 6: Сбор логов NFS
 

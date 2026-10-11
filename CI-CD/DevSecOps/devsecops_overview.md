@@ -431,3 +431,4 @@ DevSecOps — это надстройка над инженерией ПО, по
 - [Интеграция безопасности в CI/CD](./sast_dast_cicd_integration.md)
 - [Управление секретами в CI/CD](./secrets_management.md)
 - [Атаки на CI/CD](./cicd_attacks.md)
+- [Безопасный релиз на практике: SAST, SCA, сканирование образов и security gates](./secure_release_pipeline.md) — практический пример end-to-end пайплайна с security gates

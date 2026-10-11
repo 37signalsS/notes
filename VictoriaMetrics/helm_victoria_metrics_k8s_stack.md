@@ -198,3 +198,4 @@ kubectl -n monitoring port-forward svc/victoria-metrics-k8s-stack-grafana 3000:8
 - [VictoriaLogs в Kubernetes](./../Kubernetes/MonitoringLogging/victorialogs_k8s_setup.md) — чарты logs, vlmg;
 - [Grafana Helm install](./../Grafana/Installation/grafana_helm_installation.md) — отдельный Grafana;
 - Официальный репозиторий чартов: `https://github.com/VictoriaMetrics/helm-charts`.
+# force reindex test

@@ -12,6 +12,50 @@
 - **Buffered I/O (PostgreSQL):** СУБД использует системный кэш страниц (Page Cache). Это упрощает работу с ОС, но может приводить к "двойному буферированию" (Double Buffering) данных в RAM.
 - **Direct I/O (MySQL/InnoDB):** СУБД обходит системный кэш (`O_DIRECT`), самостоятельно управляя буферами в оперативной памяти, что снижает накладные расходы на копирование данных и уменьшает задержки.
 
+## Предварительные требования
+
+Перед диагностикой дисковых узких мест убедитесь, что на сервере доступны
+необходимые утилиты и привилегии.
+
+**Привилегии:**
+- **ОС-уровень:** `sudo` или root — для доступа к `iostat`, `iotop`, `bpftrace`,
+  `procfs` (`/proc/pressure/io`, `/proc/<pid>/io`).
+- **PostgreSQL:** любая роль с `pg_read_all_stats` (или `pg_monitor`); для
+  `track_io_timing` требуется `pg_read_all_settings` или superuser.
+- **MySQL:** `PROCESS` + `RELOAD` для `SHOW ENGINE INNODB STATUS\G`; просмотр
+  `performance_schema` требует `SELECT` на нужные таблицы или root.
+
+**Утилиты ОС (установить из пакетов):**
+
+| Утилита | Пакет | Назначение |
+| :--- | :--- | :--- |
+| `iostat` | `sysstat` | Метрики дисков (`%util`, `await`, `avgqu-sz`) |
+| `iotop` | `iotop` | Топ процессов по I/O в реальном времени |
+| `biosnoop`, `biolatency` | `bcc-tools` или `bpftrace` | eBPF-трассировка задержек I/O |
+| `df`, `lsblk`, `mount` | `coreutils`/`procps` | Свободное место, таблица разделов, опции монтирования |
+
+**Настройка СУБД:**
+```sql
+-- PostgreSQL: включить сбор timing для I/O
+-- → postgresql.conf: track_io_timing = on
+-- либо динамически (будет сброшено при рестарте):
+ALTER SYSTEM SET track_io_timing = on;
+-- → Query OK, 1 row affected
+SELECT pg_reload_config();
+```
+
+```sql
+-- MySQL: включить performance_schema для sys-схемы
+-- → my.cnf: performance_schema = ON (включено по умолчанию в 8.4)
+-- Проверить доступность sys-схемы:
+SELECT COUNT(*) FROM sys.io_global_by_file_by_latency;
+-- → COUNT(*) = 10 (или аналогичное число файлов)
+```
+
+Если утилиты недоступны, используйте минимальный набор `df`, `iostat`
+(из `sysstat`) и `SHOW ENGINE INNODB STATUS` — это покрывает 80% типовых
+случаев.
+
 ## Основные концепции
 
 ### Основные симптомы
@@ -56,6 +100,8 @@
 Если инфраструктура в норме, переходите к анализу логов самой базы данных.
 - **Включение Slow Log**: Включите логирование запросов, превышающих определенный порог (например, 1 секунда).
 - **Анализ логов**: Используйте инструменты типа `pt-query-digest` (для MySQL) или `pgbadger` (для PostgreSQL) для выявления самых тяжелых запросов.
+- **MySQL:** полный разбор по шагам — **[Анализ медленных запросов](./MySQL/Operations/slow-query-analysis.md)**; разбор инцидентов по симптомам — **[Диагностический runbook MySQL](./MySQL/troubleshooting-runbook.md)**;
+  если `iowait` сочетается с промахами buffer pool и временными таблицами — **[Движки MySQL: InnoDB](./MySQL/Operations/storage_engines_deep_dive.md)**.
 
 #### 3. Уровень Запроса: Анализ плана (EXPLAIN)
 Для конкретного медленного запроса необходимо понять, *как* база данных его выполняет.
@@ -83,10 +129,9 @@ sudo biolatency-bpfcc -D 1 10 # Гистограмма задержек
 
 **Интерпретация результатов:**
 
-- Если `await` (среднее время ожидания) превышает 10–20 мс для HDD или 1–2 мс для SSD — дисковая подсистема перегружена.
-- Если основную нагрузку создают процессы `postgres` или `mysqld`, переходите к анализу внутри БД.
-- **Облачные нюансы (AWS/GCP):** Проверьте метрики Burst Balance (например, `BurstBalance` в AWS EBS). Исчерпание кредитов приводит к троттлингу (throttling), что резко повышает задержки даже при неизменной нагрузке. В AWS gp3 IOPS и Throughput настраиваются независимо.
-- **eBPF трассировка:** Инструмент `biolatency` позволяет увидеть "хвостовые задержки" (Tail Latency), которые могут быть скрыты за средними значениями `iostat`.
+  - Если `await` (среднее время ожидания) превышает 10–20 мс для HDD или 1–2 мс для SSD — дисковая подсистема перегружена.
+  - Если основную нагрузку создают процессы `postgres` или `mysqld`, переходите к анализу внутри БД.
+  - **eBPF трассировка:** Инструмент `biolatency` позволяет увидеть "хвостовые задержности" (Tail Latency), которые могут быть скрыты за средними значениями `iostat`.
 
 ### Шаг 2: Анализ нагрузки внутри базы данных
 
@@ -133,12 +178,14 @@ WHERE wait_event_type = 'IO';
 SELECT file, count_read, sum_timer_read, count_write, sum_timer_write
 FROM sys.io_global_by_file_by_latency
 LIMIT 5;
+-- → result: /var/lib/mysql/ibdata1 | 5000 | 2500000000000 | 3000 | 1500000000000
 
 -- Статистика ожидания по таблицам
 SELECT table_schema, table_name, count_read, sum_timer_read, count_write, sum_timer_write
 FROM sys.schema_table_statistics_with_buffer
 ORDER BY (sum_timer_read + sum_timer_write) DESC
 LIMIT 5;
+-- → result: shop | orders | 4200 | 2000000000000 | 8100 | 4000000000000
 ```
 
 Проверьте статус InnoDB на наличие ожидающих операций:
@@ -189,11 +236,101 @@ SHOW ENGINE INNODB STATUS\G
     *   Для SSD/NVMe рекомендуется `none` или `mq-deadline`.
     *   Подробнее: **[Планировщики ввода-вывода](../Linux/Core/kernel/io_schedulers.md)**.
 
+## Устранение неисправностей (Troubleshooting)
+
+### Симптом → причина → решение
+
+| Симптом | Диагностика | Причина | Решение |
+| :--- | :--- | :--- | :--- |
+| `await` > 20 мс (HDD) / > 2 мс (SSD) постоянно | `iostat -xz 1` | Диск на пределе пропускной способности | SSD/NVMe, LVM striping, разнести WAL |
+| `avgqu-sz` > 32 | `iostat -xz 1` | Очередь запросов растёт | Уменьшить конкуренцию, добавить диски |
+| `%util` = 100% на одном диске, < 50% на другом | `iostat -xz 1` | «Горячий» диск в RAID-массиве | Перераспределить таблицы на файлы |
+| Процессы в статусе `D` | `ps aux \| grep ' D'` | Синхронный `fsync()` блокирует | Отключить `barrier=0` (с BBU) или вынести на SSD |
+| `vm.swappiness` активно используется | `vmstat 1`, `sar -B` | Нехватка RAM, swap-пэйджинг | Увеличить RAM или снизить `shared_buffers`/`innodb_buffer_pool` |
+| `pg_stat_statements`: `blk_read_time` > 50% от `total_exec_time` | Запрос из Шага 2 | Промахи buffer pool → чтения с диска | Добавить индекс или увеличить `shared_buffers` |
+| `innodb_buffer_pool_reads` > 1% от `innodb_buffer_pool_read_requests` | `SHOW GLOBAL STATUS` | Hit ratio < 99% → чтения с диска | Увеличить `innodb_buffer_pool_size` |
+| `temp_blks_written` растёт | Шаг 2 PostgreSQL | Сортировка в памяти не помещается | Увеличить `work_mem` |
+| `wal_keep_size` растёт на реплике | `pg_stat_replication` | Реплика отстаёт, WAL не высвобождается | Проверить I/O реплики через `iostat`, увеличить `max_wal_senders` |
+
+### Требования к устранению
+
+Если после устранения корневой причины (долгая транзакция, нехватка индексов)
+метрики не стабилизируются через 5–10 минут — проблема в аппаратном узле.
+Используйте **biolatency** для поиска tail latency:
+
+```bash
+sudo biolatency-bpfcc 1 10
+# → result: [1-2]       : 50 (50% запросов быстро)
+# → result: [10-20]     : 30 (30% в норме)
+# → result: [100-1000]  : 15 (15% с задержкой > 100 мс — проблемный диск)
+```
+
+Если гистограмма показывает хвост за 50–100 мс — это аппаратный предел,
+а не проблема запросов или конфигурации СУБД.
+
+## Лучшие практики
+
+**Диагностика — не разовая операция.** После каждого вмешательства:
+1. Зафиксировать baseline (`iostat -xz 1 10`, `vmstat 1 10`) до изменений.
+2. Применить изменение (индекс, `shared_buffers`, `work_mem`).
+3. Сравнить `blk_read_time` / `blk_write_time` до и после — если I/O не
+   упало, корень не в диске.
+
+**Разделяйте WAL и данные.** Журнал транзакций (PostgreSQL `pg_wal`, MySQL
+`redolog/ib_logfile`) выполняет **последовательную запись** — на нём
+критична минимальная задержка. Данные выполняют **случайный доступ** — им
+важна пропускная способность. Один диск для обоих создаёт конкуренцию.
+
+**Контролируйте `innodb_flush_method` (MySQL).** В 8.4 значение `O_DIRECT`
+(по умолчанию) избегает double buffering. Не используйте `O_DSYNC`, если
+только WAL не вынесен на отдельный том с `fsync = on`.
+
+**Отключайте `barrier=0` ТОЛЬКО с BBU/UPS.** Без резервного питания
+отключение барьёров записи рискует потерей данных при сбое питания.
+
+**Не держите `track_io_timing` включённым постоянно** на продакшене —
+накладные расходы на `clock_gettime()` в некоторых конфигурациях могут
+добавлять 1–3% CPU. Включайте на время диагностики, выключайте после.
+
+**Используйте `iostat -xz` с интервалом 1s.** Сокращённая выборка
+(например, `iostat -xz 5 3`) скрывает вспышки нагрузки короче 5 секунд.
+
+### Очистка и откат
+
+Все изменения параметров после диагностики должны быть отменены или
+зафиксированы:
+
+| Что изменено | Как откатить |
+| :--- | :--- |
+| `SET track_io_timing = on` (PostgreSQL, runtime) | `ALTER SYSTEM RESET track_io_timing;` + `SELECT pg_reload_config();` |
+| `ALTER SYSTEM SET track_io_timing = on` | `ALTER SYSTEM RESET track_io_timing;` |
+| `SET GLOBAL innodb_buffer_pool_size = ...` | `SET GLOBAL innodb_buffer_pool_size = <былое значение>;` |
+| `SET GLOBAL innodb_io_capacity = ...` | `SET GLOBAL innodb_io_capacity = <былое значение>;` (default в 8.4 = 10000) |
+| `sysctl -w vm.dirty_bytes=...` | `sysctl -w vm.dirty_bytes=0;` (сброс в default) |
+| `mount -o remount,barrier=1 /data` | `mount -o remount,barrier=1 /data;` |
+| `iostat -xz 1` в фоновом режиме | `Ctrl+C` или `kill <PID>` |
+
+Изменения через `ALTER SYSTEM SET` или `sysctl -w` сохраняются в файле
+конфигурации и **не сбрасываются при рестарте сервера**. Проверьте:
+
+```sql
+-- PostgreSQL: изменение через ALTER SYSTEM сохранилось в файле?
+SELECT name, setting, source FROM pg_settings
+WHERE name IN ('track_io_timing', 'shared_buffers', 'work_mem');
+-- → result: track_io_timing | on | ALTER SYSTEM
+```
+
+```bash
+# sysctl: изменение сохранилось в /etc/sysctl.d/?
+sudo sysctl vm.dirty_ratio vm.dirty_background_ratio
+# → vm.dirty_ratio = 20 (если изменялось — удалите из /etc/sysctl.d/)
+```
+
 ## Дополнительная информация
 
 ### Стратегии долгосрочного решения
 
-- **Вертикальное масштабирование:** Переход на более быстрые накопители (NVMe SSD) или использование дисков с гарантированным (provisioned) IOPS в облаке.
+- **Вертикальное масштабирование:** Переход на более быстрые накопители (NVMe SSD) или диски с гарантированной черезпропускной способностью и минимальной задержкой.
 - **Партиционирование:** Разделение гигантских таблиц на части для уменьшения объема данных, сканируемых при одном запросе.
 - **Репликация чтения:** Вынос аналитических запросов на отдельные реплики для разгрузки основного мастера. См. **[Репликация](./Concepts/replication.md)**.
 - **Архивация:** Перенос старых данных в холодные хранилища или специализированные СУБД для аналитики (например, **[ClickHouse](./ClickHouse/clickhouse.md)**).
@@ -206,3 +343,5 @@ SHOW ENGINE INNODB STATUS\G
 - Масштабирование PostgreSQL — **[Масштабирование PostgreSQL](./PostgreSQL/Concepts/scaling.md)**.
 - Оптимизация дискового планировщика Linux — **[Планировщики ввода-вывода](../Linux/Core/kernel/io_schedulers.md)**.
 - Инструменты eBPF для диагностики — **[Трассировка и отладка в Linux](../Linux/Diagnostics/Troubleshooting/tracing_and_debugging.md)**.
+- Бенчмаркинг нагрузки перед изменениями и подбор параметров — **[Бенчмаркинг СУБД](./Concepts/benchmarking.md)**;
+  практические сценарии — **[sysbench](./Concepts/sysbench.md)**.

@@ -1,5 +1,7 @@
 # Docker: Анализ и управление слоями образа
 
+**Актуально для:** Docker 24.x–27.x, Kubernetes 1.29.x–1.32.x, CI/CD-раннеры на основе Linux
+
 ## Определения
 
 - **Слой образа (Image Layer)** — неизменяемый (read-only) слепок файловой системы, создаваемый инструкциями `RUN`, `COPY` или `ADD`. Образ представляет собой стек таких слоев.
@@ -74,6 +76,28 @@ Docker использует драйвер `overlay2` для эффективн�
 ### Жизненный цикл слоя
 
 Каждый слой проходит путь: **инструкция Dockerfile → временный `upperdir` (overlay mount) → commit как read-only слой → сохранение в кэше сборки → push/pull в реестр → переиспользование при следующей сборке**. Инвалидация кэша происходит каскадно: изменение слоя N сбрасывает кэш всех последующих слоев N+1, N+2… Детально про порядок инструкций и инвалидацию — в **[Оптимизации сборки](../../Dockerfile/Docker_best_practices/build_optimization.md)**.
+
+### Управление слоями с точки зрения SRE/DevOps
+
+С точки зрения эксплуатации слои образа — это не только размер артефакта, но и:
+- **Потребление диска на хосте:** каждый запущенный контейнер создаёт writable layer поверх read-only слоёв образа. На хостах с большим количеством контейнеров ( оркестраторы, CI-раннеры) это может приводить к заполнению диска.
+- **Сетевой трафик при деплое:** при `docker pull` тянутся только недостающие слои; повторное деплой того же образа не передаёт данные по сети. Это основа кэширования на registry edge и CI-runner'ах.
+- **Кэш BuildKit на раннере:** локальный кэш ускоряет повторные сборки, но при переполнении диска требует ручного или автоматического prune. На эфемерных раннерах кэш уничтожается вместе с виртуальной машиной; на self-hosted пулах — накапливается.
+- **containerd snapshotter (Docker 29.0+):** при включённом `containerd-snapshotter` слои хранятся дважды — в content store (сжатые) и в snapshotter (распакованные). Это увеличивает потребление диска примерно в 1.5–2 раза по сравнению с классическим overlay2.
+- **Дeduplication на хосте:** Docker автоматически дедуплицирует слои между образами (один и тот же слой `sha256:...` хранится единожды). `docker system df` показывает экономию; при удалении последнего образа, использующего слой, он становится dangling и занимает место до prune.
+
+Для мониторинга потребления диска слоями используйте:
+```bash
+docker system df
+# → TYPE            TOTAL     ACTIVE    SIZE      RECLAIMABLE
+# → Images          12        5         4.1GB     2.3GB (56%)
+# → Containers      8         8         1.2GB     0B
+# → Local Volumes   5         3         3.4GB     1.1GB (32%)
+# → Build Cache     34        0         1.8GB     1.8GB
+
+docker system df -v
+# → детализация по образам и слоям с дайджестами
+```
 
 ## Практические сценарии
 
@@ -245,6 +269,32 @@ docker run --rm my-app:slim python -c "import app; print('ok')"
 
 **Ограничение:** docker-slim не знает о файлах, загружаемых динамически в рантайме, поэтому требует прогона реальных сценариев использования (`--http-probe` / кастомные команды). Подробнее — в **[Инструментах оптимизации Dockerfile](../../Dockerfile/dockerfile_optimization_tools.md)**.
 
+### Сценарий 8: Экспорт/импорт кэша BuildKit для CI
+
+На самоcтоятельных (self-hosted) раннерах с ограниченным диском или высоким trafiкcом можно экспортировать кэш BuildKit в registry и переиспользовать его между пайплайнами, не сохраняя локально:
+
+```bash
+# Экспорт кэша в registry (в конце пайплайна)
+docker buildx build \
+  --cache-to type=registry,ref=my-registry.com/build-cache/my-app:main \
+  --cache-from type=registry,ref=my-registry.com/build-cache/my-app:main \
+  -t my-registry.com/my-app:$CI_COMMIT_SHA \
+  --push .
+
+# Импорт кэша при следующей сборке (в начале пайплайна)
+docker buildx build \
+  --cache-from type=registry,ref=my-registry.com/build-cache/my-app:main \
+  -t my-registry.com/my-app:$CI_COMMIT_SHA \
+  --push .
+```
+
+**Валидация:** при успешном импорте в логах сборки появляется `=> CACHED` для тех шагов, которые не изменились. Кэш в registry занимает место аналогично образам; настройте retention policy для тегов `build-cache/*`.
+
+**SRE-нюансы:**
+- Используйте отдельный репозиторий или namespace для кэша, чтобы не смешивать с продакшен-образами.
+- Для air-gapped окружений кэш нельзя экспортировать в внешний registry; используйте `type=local` с shared volume или Nexus/Artifactory как локальный registry.
+- `--cache-to=type=inline` помещает кэш прямо в манифест образа (подходит для маленьких проектов, увеличивает размер образа).
+
 ## Дополнительная информация
 
 ### Сравнение методов управления размером
@@ -275,6 +325,12 @@ docker run --rm my-app:slim python -c "import app; print('ok')"
 | Место на диске растёт после пересборок | Осиротевшие (dangling) слои | `docker images -f dangling=true`, `docker system df` | `docker system prune -f` (см. Best Practices) |
 | `mount` / `too many layers` при сборке | Превышен лимит 128 нижних слоев overlay2 | `docker history my-app \| wc -l` | Укрупнить `RUN`, применить multi-stage |
 | Секрет попал в образ, хотя удалён в следующем `RUN` | Whiteout только скрывает файл | `docker save` + распаковка слоя (Сценарий 6) | Использовать `--mount=type=secret` (BuildKit), а не `COPY` секрета |
+| Диск self-hosted раннера заполнен кэшем BuildKit | `buildx prune` не настроен / кэш накапливается между задачами | `docker system df` — Build Cache > 10GB | Добавить prune в post-job шаг: `docker buildx prune -f -a --filter "until=24h"` |
+| `docker system df` показывает высокий Reclaimable, но `prune` не освобождает место | Образы используются running containers или имеют теги | `docker ps -a`, `docker images` | Удалить неиспользуемые контейнеры (`docker container prune`) или пересобрать с `--squash` для немедленного эффекта |
+| containerd snapshotter: диск занят вдвое больше ожидаемого | Docker 29.0+ с `containerd-snapshotter` хранит слои в content store + snapshotter | `df -h /var/lib/containerd`, `du -sh /var/lib/docker` | Оценить компрессию content store; дляProduction рассмотреть классический overlay2 или настроить retention |
+| `docker scout` не запускается в CI | Отсутствует `docker scout login` или плагин не установлен в раннере | `docker scout version` → error | Установить плагин: `docker plugin install docker/scout` или использовать standalone binary |
+| Кэш BuildKit не импортируется в air-gapped окружение | `--cache-from type=registry` требует доступа к registry | `docker buildx build` → `cache import: failed` | Использовать `type=local` с shared volume или Nexus registry внутри периметра |
+| `docker buildx imagetools inspect` не показывает слои | Образ pushed в OCI-формате без legacy Docker media types | `docker buildx build --output type=image` с `--provenance` | Использовать `--format type=docker` при push или `skopeo inspect --raw` |
 
 ### Best Practices & Cleanup
 
@@ -287,26 +343,47 @@ docker run --rm my-app:slim python -c "import app; print('ok')"
   # → Images          12        5         4.1GB     2.3GB (56%)
   # → Build Cache     34        0         1.8GB     1.8GB
   ```
+- **Автоматическая очистка на CI-раннерах:** добавьте в post-job шаг пайплайна:
+  ```bash
+  docker buildx prune -f -a --filter "until=24h"
+  docker builder prune -f --filter "until=24h"
+  docker system prune -f --filter "until=24h"
+  ```
+  На GitHub-hosted/GitLab shared раннерах это не обязательно — ВМ удаляется. На self-hosted пулах prune обязателен.
 - **Очистка висячих слоев и кэша:**
   ```bash
   docker system prune -f            # удаляет dangling images, containers, networks
   docker buildx prune -f            # очищает build cache BuildKit
   docker builder prune -f           # альтернатива для legacy builder
   ```
+- **Retention policy для BuildKit cache:** если используете `--cache-to type=registry`, настройте retention на уровне registry (Harbor: `artifactRetention`, GHCR: package settings) — кэш без retention растёт бесконечно.
+- **SRE-мониторинг:** добавьте в метрики/дашборды:
+  - `docker system df` — процент reclaimable
+  - `docker info` — `BuildKit`, `Storage Driver`, количество образов/контейнеров
+  - Дисковое пространство `/var/lib/docker` и `/var/lib/containerd` (для Docker 29+)
+  - Для оркестраторов: `kubectl top node` + `df -h` на каждом узле
 - **Откат и безопасность:** операции squashing и docker-slim **необратимы** локально — всегда сохраняйте исходный `Dockerfile` и тег до модификации (например, `my-app:pre-slim`). Восстановить слой после `docker system prune` можно только из реестра (`docker pull`).
 - **Осторожно с `docker image prune -a`:** удаляет все неиспользуемые образа, что может сломать локальные контейнеры; применяйте только на CI-runner'ах или после подтверждения.
+- **containerd snapshotter:** при переходе на Docker 29+ с `containerd-snapshotter` учитывайте двойное хранение слоёв; для систем с ограниченным диском оцените компрессию content store (`/var/lib/containerd`) и настройте `--containerd-snapshotter` параметры.
+- **ImagePullPolicy в Kubernetes:** `imagePullPolicy: Always` отключает использование локального кэша на узле и заставляет kubelet тянуть все слои при каждом деплое; для production используйте `IfNotPresent` с дайджестами.
+- **Эфемерные vs self-hosted раннеры:** на эфемерных раннерах prune не требуется — ВМ удаляется; на self-hosted добавляйте prune в pipeline и мониторьте `/var/lib/docker` через node-exporter.
 
 ### Edge Cases
 
 - **`<missing>` в `docker history`** — не ошибка. Означает, что слой собран в BuildKit или пришёл из реестра; локально доступны только метаданные промежуточного шага.
 - **0B-слои (ENV/LABEL/EXPOSE/WORKDIR/CMD/ENTRYPOINT)** не создают данных в ФС, но меняют `config.json` образа, поэтому изменяют его дайджест.
 - **Whiteout сохраняет файл физически.** Удалённый в следующем `RUN` секрет остаётся в нижнем слое и виден через `docker save` (см. Сценарий 6 / Troubleshooting). Для секретов используйте `RUN --mount=type=secret`.
-- **Opaque whiteout** — удаление всей директории создаёт в `upperdir` пустую директорию с атрибутом `trusted.overlay.opaque=y`, полностью скрывающую содержимое нижних слоев.
-- **Лимит 128 слоев** в `overlay2` (ограничение длины аргументов `mount`) — при превышении сборка падает.
-- **Squash уничтожает кэш слоев** → каждое обновление требует полной перекачки слоя; для частых патчей это контрпродуктивно.
+- **Opaque whiteout** — удаление всей директории создаёт в `upperdir` пустую директорию с атрибутом `trusted.overlay.opaque=y`, полностью скрывающим содержимое нижних слоев.
+- **Лимит 128 слоёв** в `overlay2` (ограничение длины аргументов `mount`) — при превышении сборка падает.
+- **Squash уничтожает кэш слоёв** → каждое обновление требует полной перекачки слоя; для частых патчей это контрпродуктивно.
 - **containerd snapshotter (Docker 29.0+):** слои могут храниться дважды (content store + распакованный snapshotter), что увеличивает потребление диска на хосте.
 - **Multi-stage ленивость:** BuildKit может вообще не создавать слои промежуточных стадий, если они не используются в финальном образе — `docker history` финального образа их не покажет.
 - **`dive` и реестр:** `dive` анализирует только локально доступные образы (через daemon); для анализа удалённого образа сначала нужен `docker pull` либо используйте Сценарий 5.
+- **BuildKit cache import/export и air-gap:** в изолированных сетях `type=registry` недоступен; используйте `type=local` с общим volume или внутренний registry (Nexus, Harbor). Retention policy для тегов кэша должна быть отдельной от образов.
+- **CoW overhead на write-heavy workloads:** базы данных, очереди, логи на overlay2 могут давать латентность до 2x при первом copy-up. Для production используйте named volumes или `tmpfs` для write-intensive директорий.
+- **Page Cache thrashing при нехватке RAM:** при переполнении памяти ядро вытесняет страницы кэша overlay2; повторный доступ к базовым слоям идёт с диска. Для SRE: мониторинг `pgpgout`/`pgins` через `sar -B` или `vmstat`.
+- **Layer deduplication и hardlink:** Docker пытается хардлинкать идентичные файлы между слоями; на файловых системах без `ftype=1` (XFS) или `reflink=1` это может не работать, что снижает эффективность хранения.
+- **`docker system df` vs `du -sh /var/lib/docker`:** `docker system df` считает только используемые объекты; `du` показывает физическое место на диске. Разница = dangling/unreferenced слои, готовые к prune.
 
 ### См. также
 

@@ -14,7 +14,7 @@
 
 Grafana обновляется инкрементально: рекомендуется идти по мажорным версиям по одной (11 → 12 → 13), не «перепрыгивать» через мажор. Схема БД мигрирует автоматически при первом старте новой версии; обратного хода нет, поэтому обязателен свежий бэкап ДО обновления.
 
-Обновление затрагивает три независимые плоскости: (1) сам бинарник/образ Grafana, (2) схему БД (мигрирует сама), (3) плагины (обновляются отдельно, часто через провиженинг или `grafana-cli`). Несовпадение версии плагина с Grafana — частая причина «Grafana не стартует» после апгрейда.
+Обновление затрагивает три независимые плоскости: (1) сам бинарник/образ Grafana, (2) схему БД (мигрирует сама), (3) плагины (обновляются отдельно, часто через провиженинг или `grafana cli`). Несовпадение версии плагина с Grafana — частая причина «Grafana не стартует» после апгрейда.
 
 Миграция типа СУБД (MySQL ↔ PostgreSQL) — отдельная задача, не выполняемая штатным апгрейдом; делается через экспорт состояния по API и пересоздание БД. Прямого конвертера БД Grafana нет.
 
@@ -38,7 +38,7 @@ grafana-server -v
 # Бэкап ДО обновления (см. grafana_backup_restore.md)
 # Обновление пакета
 sudo apt-get update
-sudo apt-get install -y grafana=13.1.0
+sudo apt-get install -y grafana=13.2.3
 
 # Запуск — Grafana сама накатит миграции схемы
 sudo systemctl restart grafana-server
@@ -48,7 +48,7 @@ sudo systemctl restart grafana-server
 
 ```bash
 curl -s http://localhost:3000/api/health
-# → {"database":"ok","status":"ok","version":"13.1.0"}
+# → {"database":"ok","status":"ok","version":"13.2.3"}
 journalctl -u grafana-server -n 50 --no-pager | grep -i "migrat\|error" 
 # → "migrations completed" без ошибок
 ```
@@ -57,7 +57,7 @@ journalctl -u grafana-server -n 50 --no-pager | grep -i "migrat\|error"
 
 ```bash
 # В docker-compose.yml поменять тег образа на целевой (не :latest в проде!)
-sed -i 's/grafana:12.4.0/grafana:13.1.0/' docker-compose.yml
+sed -i 's/grafana:12.4.0/grafana:13.2.3/' docker-compose.yml
 
 docker compose pull grafana
 docker compose up -d grafana
@@ -69,8 +69,9 @@ docker compose up -d grafana
 ### Сценарий 3. Обновление через Helm
 
 ```bash
+helm repo add grafana-community https://grafana-community.github.io/helm-charts
 helm repo update
-helm upgrade grafana grafana/grafana --version 13.1.0 -f values.yaml -n monitoring
+helm upgrade grafana grafana-community/grafana --version 13.5.0 -f values.yaml -n monitoring
 # → новый ReplicaSet; миграции при старте пода
 ```
 
@@ -78,16 +79,16 @@ helm upgrade grafana grafana/grafana --version 13.1.0 -f values.yaml -n monitori
 
 ```bash
 # Обновить все установленные плагины
-grafana-cli plugins update-all
+grafana cli plugins update-all
 
 # Или конкретный
-grafana-cli plugins update grafana-piechart-panel
+grafana cli plugins update grafana-piechart-panel
 
 # Установленные (для сверки версий)
-grafana-cli plugins ls
+grafana cli plugins ls
 ```
 
-Если плагин несовместим с новой Grafana, Grafana заблокирует его загрузку и запишет ошибку в лог; обновите плагин или временно удалите (`grafana-cli plugins remove <id>`).
+Если плагин несовместим с новой Grafana, Grafana заблокирует его загрузку и запишет ошибку в лог; обновите плагин или временно удалите (`grafana cli plugins remove <id>`).
 
 ### Сценарий 5. Откат (rollback)
 
@@ -178,7 +179,7 @@ docker exec -ti postgres-grafana psql -U postgres -c "CREATE DATABASE grafana;"
 
 ```yaml
   grafana:
-    image: grafana/grafana:13.1.3
+    image: grafana/grafana:13.2.3
     container_name: grafana
     user: "472:472"
     depends_on:
@@ -235,7 +236,7 @@ chmod +x grafana-migrate_linux_amd64-v2.2.3
 
 ```yaml
   grafana:
-    image: grafana/grafana:13.1.3
+    image: grafana/grafana:13.2.3
     container_name: grafana
     user: "472:472"
     depends_on:
@@ -266,7 +267,7 @@ docker logs -f grafana
 
 ```bash
 curl -s http://localhost:3000/api/health
-# → {"database":"ok","status":"ok","version":"13.1.3"}
+# → {"database":"ok","status":"ok","version":"13.2.3"}
 ```
 
 Проверьте авторизацию и отображение дашбордов.
@@ -301,7 +302,7 @@ curl -s http://localhost:3000/api/health
 | Симптом | Причина | Решение |
 | --- | --- | --- |
 | `database migration failed` при старте | Дамп от более новой версии или повреждённая БД | Восстановить БД из бэкапа нужной версии |
-| Grafana не стартует, `plugin X incompatible` | Плагин несовместим с новой версией | `grafana-cli plugins update <id>` или `remove` |
+| Grafana не стартует, `plugin X incompatible` | Плагин несовместим с новой версией | `grafana cli plugins update <id>` или `remove` |
 | Дашборды сломались после 11→12 | API Keys помечены Legacy, изменения в Alerting | Перевести API Keys в Service Accounts, перепроверить правила алертов |
 | `secret_key` mismatch после переезда | Секреты источников не расшифровываются | Перенести тот же `secret_key` |
 | Откат не работает (БД новее) | Схема мигрировала вперёд | Только восстановление из бэкапа нужной версии |

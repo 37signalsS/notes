@@ -180,3 +180,4 @@ curl -s http://vmstorage-0:8482/metrics | grep -E '^vm_(rows|parts|merges|isRead
 - [vmbackup/vmrestore](./vmbackup_restore.md) — бэкап vmstorage;
 - [DR: аварийное восстановление](./disaster_recovery.md) — сценарии потери нод/кластера;
 - [Enterprise: storage node groups](./enterprise_features.md) — изоляция тенантов на группах vmstorage.
+# force reindex test

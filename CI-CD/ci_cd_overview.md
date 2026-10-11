@@ -428,3 +428,6 @@ vault read -field=password kv/data/ci/staging/db
 * **[Типичный поток пайплайна](./Core_Concepts/pipeline_workflow.md)** — глубокое погружение в Fail-Fast и DAG.
 * **[Управление парком раннеров](./runner-fleet-management.md)** — административные аспекты, квоты и политики распределения ресурсов.
 * **[Linux-администрирование для CI/CD-узлов](./Core_Concepts/linux_sysadmin_for_ci.md)** — systemd, лимиты ресурсов, сеть и диски хостов раннеров.
+* **[Управление изменениями и CAB](./Core_Concepts/change_management.md)** — процессы Change Management и Change Advisory Board в контексте CI/CD.
+* **[Capacity Planning для CI/CD](./Core_Concepts/capacity_planning.md)** — планирование мощности пайплайнов, раннеров и реестров.
+* **[Database CI/CD: Автоматизация миграций](../../Databases/Concepts/migrations/database-ci-cd.md)** — интеграция миграций баз данных в пайплайн.

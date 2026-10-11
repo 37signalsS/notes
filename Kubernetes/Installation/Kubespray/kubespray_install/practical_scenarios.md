@@ -541,6 +541,79 @@ ansible-playbook -i inventory/my_cluster/hosts.yaml --become \
 # → Показывает, какие изменения были бы применены, без реального выполнения
 ```
 
+### 10. Preflight-проверка узлов перед установкой
+
+#### Цель
+
+Проверить соответствие узлов требованиям Kubernetes (ОС, Python, swap, модули ядра, IP-forwarding) до запуска `cluster.yml`, чтобы не обнаруживать проблемы на середине развертывания.
+
+#### Плейбук проверки
+
+Kubespray не включает отдельный preflight-плейбук, но паттерн проверки — Ansible `command` с `register` и `assert`:
+
+```yaml
+# playbooks/preflight.yml (кастомный плейбук)
+- name: Preflight checks
+  hosts: k8s_cluster
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Check active swap devices
+      command: swapon --show
+      register: active_swap
+      changed_when: false
+
+    - name: Assert base prerequisites
+      ansible.builtin.assert:
+        that:
+          - ansible_system == "Linux"
+          - ansible_distribution in ["Ubuntu", "Debian"]
+          - ansible_python_version is version("3", ">=")
+          - active_swap.stdout == ""
+
+    - name: Gather loaded kernel modules
+      command: lsmod
+      register: lsmod_output
+      changed_when: false
+
+    - name: Set loaded modules fact
+      ansible.builtin.set_fact:
+        loaded_modules: "{{ lsmod_output.stdout_lines | map('regex_replace', '^(\\S+).*', '\\1') | list }}"
+
+    - name: Assert required kernel modules
+      ansible.builtin.assert:
+        that:
+          - "'overlay' in loaded_modules"
+          - "'br_netfilter' in loaded_modules"
+
+    - name: Check IP forwarding
+      command: sysctl -n net.ipv4.ip_forward
+      register: ip_forward
+      changed_when: false
+
+    - name: Assert IP forwarding enabled
+      ansible.builtin.assert:
+        that:
+          - ip_forward.stdout == "1"
+```
+
+Запуск:
+
+```bash
+ansible-playbook -i inventory/my_cluster/hosts.yaml playbooks/preflight.yml
+```
+
+#### Что проверяет Kubespray сам
+
+Часть этих условий Kubespray закрывает в своих ролях, поэтому preflight-плейбук нужен в первую очередь для раннего обнаружения проблем:
+
+| Условие | Где закрывается в Kubespray |
+| :--- | :--- |
+| Swap отключен | `roles/kubernetes/preinstall/tasks/0010-swapoff.yml` (при `kubelet_fail_swap_on`) |
+| `net.ipv4.ip_forward=1` | `roles/kubernetes/preinstall/tasks/0080-system-configurations.yml` |
+| Модуль `br_netfilter` | `roles/kubernetes/node/tasks/main.yml` (загрузка + persist в `/etc/modules-load.d/kubespray-br_netfilter.conf`) |
+| Модуль `overlay` | `roles/container-engine/containerd/templates/containerd.service.j2` (`ExecStartPre=-/sbin/modprobe overlay`) |
+
 ---
 
 ## Устранение неполадок

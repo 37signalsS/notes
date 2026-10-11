@@ -117,3 +117,4 @@ curl -s 'http://localhost:10428/select/tempo/api/search?limit=5' | jq .
 - [VictoriaMetrics: обзор](./overview.md) — позиция продукта в стеке;
 - [vmauth](./vmauth_overview.md) — как прикрыть `/insert`/`/select`;
 - [OpenTelemetry: обзор](../OpenTelemetry/opentelemetry_overview.md) — сбор и агрегация трейсов перед VictoriaTraces.
+# force reindex test

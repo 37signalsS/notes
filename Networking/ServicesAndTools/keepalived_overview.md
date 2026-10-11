@@ -570,7 +570,7 @@ keepalived --show-config
 keepalived --dump
 
 # Сброс текущей статистики в файл /tmp/keepalived.stats
-kill -SIGUSR1 $(cat /var/run/keepalived.pid)
+kill -SIGUSR2 $(cat /var/run/keepalived.pid)
 
 # Проверка версии и доступных опций
 keepalived -v

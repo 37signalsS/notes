@@ -1,5 +1,7 @@
 # Репликация на основе GTID (Global Transaction Identifier)
 
+**Актуально для:** MySQL 5.7 / 8.0+ / 8.4 LTS (5.6 — базовая поддержка)
+
 ## Определения
 
 **GTID (Global Transaction Identifier)** — уникальный идентификатор транзакции, автоматически присваиваемый каждой транзакции при её выполнении на источнике (source). Он гарантирует однозначную идентификацию транзакции во всём кластере репликации и остается неизменным при передаче по всей топологии.
@@ -64,6 +66,78 @@
 - **Однородность:** Все узлы в топологии должны использовать идентичный режим `gtid_mode`.
 - **Фильтры репликации:** При использовании `replicate_do_db` или `replicate_ignore_db` отфильтрованные транзакции всё равно попадают в `gtid_executed` как **пустые транзакции**. Это необходимо, чтобы реплика "помнила" о факте их получения и не запрашивала их снова при переключении на другой источник.
 
+## Предварительные требования
+
+### Среда и инфраструктура
+
+| Категория | Требование | Описание |
+| :--- | :--- | :--- |
+| **Время** | NTP / chrony | Синхронизация времени между всеми узлами топологии обязательна. Расхождение во времени приводит к некорректным записям в бинарных логах и ошибкам мониторинга. |
+| **Сеть** | TCP/3306 | Доступ по сети между Source и Replica без фаервольных блокировок. Для стабильной работы рекомендуется настроить `SO_KEEPALIVE` и отказоустойчивые маршруты. |
+| **Хранилище** | Ненадежный I/O | Бинарные логи и Relay Log должны размещаться на дисках с защитой от сбоев (RAID, ECC). NFS и сетевые ФС не рекомендуются для `log_bin` и `relay_log`. |
+| **ОС** | Linux 2.6+ / systemd | Для управления службой MySQL через `systemctl`. На production-хостах отключите transparent huge pages (THP) для снижения задержек InnoDB. |
+| **Ресурсы** | CPU/RAM | Для MTS (параллельной репликации) рекомендуется не менее 4 ядер и 8 ГБ RAM на реплике. Размер `innodb_buffer_pool_size` должен покрывать активный датасет. |
+
+### Требования к версиям и параметрам
+
+- **Минимальная версия для GTID:** MySQL 5.6 (базовая поддержка). Для production-использования рекомендуется **MySQL 5.7** или **8.0+**.
+- **Формат бинарного лога:** `binlog_format = ROW` (обязателен для корректной работы GTID).
+- **Совместимость GTID-режима:** Все узлы топологии должны использовать одинаковый `gtid_mode` (`ON`, `ON_PERMISSIVE`, `OFF_PERMISSIVE`, `OFF`).
+- **Пользователь репликации:** Отдельная учетная запись с грантом `REPLICATION SLAVE` и, при необходимости, `BACKUP_ADMIN` для Clone Plugin.
+
+## Валидация
+
+После включения GTID и настройки репликации выполните проверки для подтверждения корректной работы.
+
+### Проверка режима GTID
+
+```sql
+-- На всех узлах топологии:
+SHOW VARIABLES LIKE 'gtid_mode';
+-- Ожидаемое значение: ON
+
+SHOW VARIABLES LIKE 'enforce_gtid_consistency';
+-- Ожидаемое значение: ON
+```
+
+### Проверка состояния репликации
+
+```sql
+-- На реплике:
+SHOW REPLICA STATUS\G
+-- Критические поля:
+-- Replica_IO_Running: Yes
+-- Replica_SQL_Running: Yes
+-- Source_Auto_Position: 1
+-- Retrieved_Gtid_Set: не пустой
+-- Executed_Gtid_Set: не пустой
+```
+
+### Проверка отсутствия анонимных транзакций
+
+```sql
+SHOW STATUS LIKE 'ONGOING_ANONYMOUS_TRANSACTION_COUNT';
+-- Должно быть 0 в стабильном состоянии
+```
+
+### Проверка консистентности GTID
+
+```sql
+-- Все полученные транзакции применены?
+-- Retrieved_Gtid_Set — поле вывода SHOW REPLICA STATUS, а не системная переменная.
+-- В табличной форме его даёт RECEIVED_TRANSACTION_SET в Performance Schema.
+SELECT GTID_SUBSET(
+         (SELECT RECEIVED_TRANSACTION_SET
+          FROM performance_schema.replication_connection_status
+          LIMIT 1),
+         @@GLOBAL.gtid_executed) AS is_synced;
+-- Ожидаемое значение: 1
+
+-- Наличие "дырок" (непримененных транзакций)
+SELECT @@GLOBAL.gtid_executed;
+-- Интерпретация: диапазоны 1-10, 15-20 означают, что транзакции 11-14 еще не применены или пропущены
+```
+
 ## Практические сценарии
 
 ### 1. Включение режима GTID через конфигурацию
@@ -124,7 +198,7 @@ START REPLICA;
 
 ### 4. Пропуск проблемной транзакции
 
-В режиме GTID нельзя использовать `SET GLOBAL SQL_SLAVE_SKIP_COUNTER`. Вместо этого нужно "подделать" выполнение транзакции, создав пустую запись с этим ID.
+В режиме GTID нельзя использовать `SET GLOBAL SQL_SLAVE_SKIP_COUNTER` (8.0.18+ — `sql_replica_skip_counter`; оператор отклоняется при `gtid_mode=ON`). Вместо этого нужно "подделать" выполнение транзакции, создав пустую запись с этим ID. GTID берут из `Last_SQL_Error` (при MTS — из `APPLYING_TRANSACTION` в `performance_schema.replication_applier_status_by_worker`).
 
 ```sql
 -- 1. Определяем проблемный GTID из SHOW REPLICA STATUS (поле Last_SQL_Error)
@@ -137,14 +211,17 @@ SET GTID_NEXT='AUTOMATIC';
 START REPLICA;
 ```
 
+Если реплика ведёт бинарный лог и может стать источником в будущем, пустая транзакция попадёт в поток репликации — во избежание: `FLUSH LOGS; PURGE BINARY LOGS TO 'binlog.000146';`. Методы пропуска без GTID (счётчик событий, сдвиг позиции) — **[Обработка ошибок SQL-потока](./replication_sql_errors.md)**.
+
 ### 5. Восстановление из дампа и gtid_purged
 
 При развертывании новой реплики из бэкапа необходимо сообщить серверу, какие транзакции уже есть в данных. Утилита `mysqldump` с флагом `--set-gtid-purged=ON` делает это автоматически.
 
 **Ручное управление (MySQL 8.0+):**
 ```sql
--- Полная очистка состояния GTID (требует RESET MASTER)
-RESET MASTER; 
+-- Полная очистка состояния GTID
+-- В MySQL 5.7 и 8.0 — RESET MASTER (оператор удалён начиная с MySQL 8.4)
+RESET BINARY LOGS AND GTIDS;
 
 -- Установка начального набора транзакций (перезаписывает gtid_purged)
 SET GLOBAL gtid_purged = '3E11FA47-71CA-11E1-9E33-C80AA9429562:1-1000000';
@@ -154,24 +231,7 @@ SET GLOBAL gtid_purged = '3E11FA47-71CA-11E1-9E33-C80AA9429562:1-1000000';
 SET GLOBAL gtid_purged = '+4F22BC81-82DB-11E2-9F44-D90BB0530673:1-500';
 ```
 
-### 6. Устранение ошибки 1236 (Missing GTIDs on Source)
-
-**Ситуация:** Реплика запрашивает транзакции, которые мастер уже удалил из своих бинарных логов (`PURGE BINARY LOGS`). В `SHOW REPLICA STATUS` видна ошибка:
-`Got fatal error 1236 from master when reading data from binary log: 'The slave is connecting using CHANGE MASTER TO MASTER_AUTO_POSITION = 1, but the master has purged binary logs containing GTIDs that the slave requires.'`
-
-**Причины:**
-- Реплика была выключена слишком долго.
-- На мастере слишком агрессивно настроен `binlog_expire_logs_seconds`.
-
-**Решение (если данные можно синхронизировать вручную):**
-1. Определить отсутствующий набор на мастере:
-   ```sql
-   -- На мастере: смотрим что осталось
-   SELECT @@GLOBAL.gtid_purged;
-   ```
-2. Если `gtid_purged` мастера содержит транзакции, нужные реплике, значит данные в логах утеряны. Нужно либо пересоздать реплику из нового бэкапа, либо вручную добавить недостающие GTID как пустые транзакции (если уверены, что данные консистентны).
-
-### 7. Автоматизация через Clone Plugin
+### 6. Автоматизация через Clone Plugin
 
 При использовании `Clone Plugin` в MySQL 8.0+ состояние GTID передается автоматически.
 1. При выполнении `CLONE INSTANCE FROM ...` реплика копирует все данные и `Executed_Gtid_Set`.
@@ -186,7 +246,11 @@ SET GLOBAL gtid_purged = '+4F22BC81-82DB-11E2-9F44-D90BB0530673:1-500';
 
 ```sql
 -- Проверка: все ли транзакции, полученные из бинлогов (Retrieved), уже применены (Executed)
-SELECT GTID_SUBSET(@@GLOBAL.Retrieved_Gtid_Set, @@GLOBAL.gtid_executed) AS is_synced;
+SELECT GTID_SUBSET(
+         (SELECT RECEIVED_TRANSACTION_SET
+          FROM performance_schema.replication_connection_status
+          LIMIT 1),
+         @@GLOBAL.gtid_executed) AS is_synced;
 
 -- Поиск "дырок" (gap) в транзакциях
 -- Если набор gtid_executed выглядит как 1-10, 15-20, значит транзакции 11-14 еще не дошли или пропущены
@@ -198,11 +262,12 @@ SELECT @@GLOBAL.gtid_executed;
 -- Проверка статуса потока применения (Applier)
 SELECT * FROM performance_schema.replication_applier_status_by_worker;
 
--- Детальный статус соединения и лаг по GTID
+-- Детальный статус соединения и прогресса координатора MTS
 SELECT 
     CHANNEL_NAME, 
-    LAST_QUEUED_TRANSACTION, 
-    LAST_APPLIED_TRANSACTION 
+    SERVICE_STATE,
+    LAST_PROCESSED_TRANSACTION,
+    LAST_ERROR_NUMBER, LAST_ERROR_MESSAGE 
 FROM performance_schema.replication_applier_status_by_coordinator;
 ```
 
@@ -234,6 +299,221 @@ mysqlbinlog --exclude-gtids="3E11FA47-71CA-11E1-9E33-C80AA9429562:542" /var/lib/
 - Прямая GTID-репликация между MySQL 8.x и MariaDB 11+ невозможна без использования логического дампа.
 - MariaDB не требует `enforce_gtid_consistency = ON`.
 
+## Устранение неисправностей
+
+### Ошибка 1789 (Source Has Purged Required GTIDs)
+
+**Ситуация:** Реплика запрашивает транзакции, которые источник уже удалил из своих бинарных логов (`PURGE BINARY LOGS`). В журнале ошибок реплики появляется:
+
+```
+2026-05-20T10:05:00.123456Z 12 [System] [MY-010068] [Server] Error reading relay log event
+Got fatal error 1789 from master when reading data from binary log:
+'The slave is connecting using CHANGE MASTER TO MASTER_AUTO_POSITION = 1, but the master has purged binary logs containing GTIDs that the slave requires.'
+```
+
+В `SHOW REPLICA STATUS` эта же ситуация отражается как:
+
+```
+Last_IO_Error: Got fatal error 1789 from master when reading data from binary log: ...
+```
+
+> **Важно:** номер 1789 (`ER_SOURCE_HAS_PURGED_REQUIRED_GTIDS`) — это *конкретная* причина. Номер 1236 (`ER_SOURCE_FATAL_ERROR_READING_BINLOG`) — *обёртка*: он сопровождает практически любую фатальную ошибку чтения бинарного лога, в том числе случай с очищенными логами. В логе часто присутствуют обе строки подряд: сначала 1789 с описанием, затем 1236 как общий конверт. Диагностировать нужно по 1789.
+
+**Причины:**
+- Реплика была выключена слишком долго.
+- На источнике слишком агрессивно настроен `binlog_expire_logs_seconds`.
+- На источнике выполнен `RESET BINARY LOGS AND GTIDS` (с 8.1; в 5.7/8.0 — `RESET MASTER`) при работающих репликах.
+
+**Решение (если данные можно синхронизировать вручную):**
+1. Определить отсутствующий набор на источнике:
+   ```sql
+   -- На источнике: смотрим, что осталось и что уже выполнено
+   SELECT @@GLOBAL.gtid_purged, @@GLOBAL.gtid_executed;
+   ```
+2. Найти, какие именно GTID требуются реплике и отсутствуют в `gtid_executed` источника:
+   ```sql
+   -- На реплике: её точка старта
+   SELECT @@GLOBAL.gtid_executed;
+   ```
+3. Если в `gtid_purged` источника содержится нужный реплике набор, данные в логах утеряны безвозвратно. Варианты:
+   - пересоздать реплику из свежего бэкапа (`mysqldump`/`xtrabackup` + ручная настройка, см. [setup_guide.md](setup_guide.md));
+   - **только** если данные не критичны и вы уверены в консистентности — «пропустить» недостающие GTID: продублировать их как пустые транзакции на источнике либо выставить их вручную в `gtid_purged` реплики (см. [4. Пропуск проблемной транзакции](#4-пропуск-проблемной-транзакции)). Это маскирует потерю данных, а не устраняет её.
+
+### Ошибка 1782 (Cannot set GTID_NEXT to ANONYMOUS when GTID_MODE is ON)
+
+**Ситуация:** 
+```
+ERROR 1782 (HY000): Can not set @@SESSION.GTID_NEXT to 'ANONYMOUS' when @@SESSION.GTID_MODE is ON.
+```
+
+**Причина:** В соединении с включённым GTID кто-то пытается выполнить `SET @@SESSION.GTID_NEXT = 'ANONYMOUS'` — в том числе устаревший код репликации, скрипты бэкапа или ORM, вручную подставляющие GTID.
+
+**Решение:**
+1. Найти источник запроса: искать в cron-задачах, скриптах бэкапа, конфигурации ORM и в процедурах, которые работают с `sql_slave_skip_counter`/`sql_replica_skip_counter`.
+2. Убрать явное присваивание `GTID_NEXT = 'ANONYMOUS'` — в режиме `ON` анонимные транзакции запрещены.
+3. Проверить фактический режим на всех узлах: `SHOW VARIABLES LIKE 'gtid_mode';`
+   - Если источник `ON`, а реплика `OFF_PERMISSIVE` или `OFF` — привести все узлы к единому значению `ON` (переключение требует перезапуска и остановки репликации).
+
+> Не путать с другой ошибкой настройки: `Fatal error: The replication applier thread coordinates failed to initialize because the source has disabled GTIDs.` относится к несовместимости режимов между узлами, а не к 1782.
+
+### Ошибка 1885 (Replica Has More GTIDs Than Source)
+
+**Ситуация:** `ERROR 1885 (HY000): Replica failed to initialize relay log structure: Replica has more GTIDs than source, which is the source's UUID: ...`
+
+**Симптом:** applier-очередь реплики содержит транзакции, которых источник не знает.
+
+**Причины:**
+- На источнике выполнен `RESET BINARY LOGS AND GTIDS` (с 8.1; в 5.7/8.0 — `RESET MASTER`, обнуляет GTID-историю) при работающей реплике — реплика продолжает применять старые и новые транзакции, и её `gtid_executed` обгоняет источник.
+- Ручное вмешательство в `gtid_purged` / `gtid_executed`.
+- Физическое клонирование `auto.cnf` вместе с data-директорией (тогда UUID совпадают — см. ошибку 1593).
+
+**Решение:**
+1. Зафиксировать состояние обеих сторон до любых действий:
+   ```sql
+   -- На источнике и на реплике
+   SELECT @@server_uuid, @@GLOBAL.gtid_executed, @@GLOBAL.gtid_purged;
+   ```
+2. Определить «островные» GTID реплики — есть ли в них транзакции, которых нет на источнике:
+   ```sql
+   SELECT @@GLOBAL.gtid_executed AS replica_gtids\G
+   ```
+3. Если в `gtid_executed` реплики есть транзакции, отсутствующие у источника, — источник был потерян или сброшен. Единственный корректный путь: переинициализировать реплику из свежего бэкапа актуального состояния источника.
+4. Если разница только в пустых транзакциях, созданных ранее для пропуска GTID, — пересоберите реплику: чистая реплика дешевле и надёжнее, чем ручная правка `gtid_executed`.
+
+### Ошибка 2026 (CR_SSL_CONNECTION_ERROR)
+
+**Ситуация:** `Replica_IO_Running: Connecting` с ошибкой вида `SSL connection error: errno 1440` или `Error reading packet from server: Connection SSL/TLS handshake failed`.
+
+**Решение:**
+1. Убедитесь, что на источнике для пользователя репликации включён `REQUIRE SSL`:
+   ```sql
+   SHOW CREATE USER 'repl'@'%'\G
+   ```
+2. Проверьте валидность сертификатов и права доступа к файлам ключей (пути задаются в `SOURCE_SSL_*`, файлы читает **клиент**, то есть реплика).
+3. Настройте параметры SSL в `CHANGE REPLICATION SOURCE TO`:
+   ```sql
+   CHANGE REPLICATION SOURCE TO
+     SOURCE_SSL = 1,
+     SOURCE_SSL_CA = '/var/lib/mysql/ssl/ca.pem',
+     SOURCE_SSL_CERT = '/var/lib/mysql/ssl/client-cert.pem',
+     SOURCE_SSL_KEY = '/var/lib/mysql/ssl/client-key.pem',
+     SOURCE_SSL_VERIFY_SERVER_CERT = 1;
+   ```
+4. Проверьте совпадение TLS-версий и cipher suites между клиентом и сервером (`SHOW VARIABLES LIKE '%ssl%';`, `SHOW STATUS LIKE 'Ssl_cipher';`).
+
+> Не путать с ошибкой **2068** (`CR_LOAD_DATA_LOCAL_INFILE_REJECTED`) — она означает, что клиент отклонил попытку сервера прочитать локальный файл (`LOAD DATA LOCAL INFILE`), и к SSL отношения не имеет.
+
+### Ошибка 1593 (Duplicate UUID)
+
+**Ситуация:** `Fatal error: The slave I/O thread stops because source and slave have equal MySQL server UUIDs.`
+
+**Причина:** Файл `auto.cnf` был скопирован физически вместе с данными при создании реплики.
+
+**Решение:**
+1. Остановите MySQL: `systemctl stop mysql`
+2. Удалите файл `auto.cnf` в data-директории реплики.
+3. Запустите MySQL — новый UUID сгенерируется автоматически.
+4. Повторно настройте репликацию.
+
+### Проблема: GTID-пурдж при долгой остановке реплики
+
+Если реплика выключена дольше чем `binlog_expire_logs_seconds` на источнике, при перезапуске она запросит отсутствующие GTID и остановится с ошибкой 1789.
+
+**Профилактика:**
+- На репликах с длительными окнами обслуживания настройте `binlog_expire_logs_seconds` на источнике больше, чем максимальный допустимый простой.
+- Используйте `SOURCE_DELAY` для создания отложенной реплики — это позволяет защититься от логических ошибок, но не заменяет бэкапы.
+
+## Рекомендации
+
+### Проектирование и развертывание
+
+1. **Всегда используйте GTID для новых систем.** Классическая репликация по координатам (`File:Pos`) не обеспечивает автоматического позиционирования и усложняет операционные процедуры.
+2. **Единство режима GTID.** Все узлы топологии должны использовать одинаковый `gtid_mode`. Смешанный режим (`ON_PERMISSIVE`/`OFF_PERMISSIVE`) допустим только на этапе миграции.
+3. **ROW-формат бинарного лога.** Используйте `binlog_format = ROW` на всех серверах. Это гарантирует идентичность данных и является обязательным условием для Group Replication.
+4. **Перед изменением `gtid_mode` создайте бэкап.** Миграция с `OFF` на `ON` необратима без сброса бинарных логов.
+5. **Используйте Clone Plugin для инициализации** (MySQL 8.0.17+). Это сокращает время простоя и исключает ошибки при ручном копировании данных.
+
+### Эксплуатация и мониторинг
+
+6. **Мониторьте `gtid_executed` и полученный GTID-набор.** Разница между ними указывает на задержку или сбой в репликации:
+   ```sql
+   -- Retrieved_Gtid_Set — поле SHOW REPLICA STATUS, а не системная переменная
+   SELECT @@GLOBAL.gtid_executed AS executed,
+          (SELECT RECEIVED_TRANSACTION_SET
+           FROM performance_schema.replication_connection_status
+           LIMIT 1) AS retrieved;
+   ```
+7. **Не смешивайте GTID и не-GTID узлы** в одной топологии. Это приводит к непредсказуемому поведению при Failover.
+8. **Используйте `SOURCE_DELAY` для защиты от логических ошибок.** Отложенная реплика (например, 30 минут) позволяет откатиться после ошибочного `DROP TABLE` или массового `UPDATE`.
+9. **Настройте алертинг на рост `gtid_purged` на мастере.** Если `gtid_purged` приближается к размеру `gtid_executed`, это означает активную ротацию логов. Убедитесь, что реплики не отстают.
+10. **Регулярно проверяйте Crash-Safe параметры.** В MySQL 5.6/5.7 `master_info_repository` и `relay_log_info_repository` по умолчанию равны `FILE` — проверьте, что задано `TABLE` явно. С MySQL 8.0 дефолт `TABLE`; не downgrade на `FILE`. Обе переменные **удалены в MySQL 8.3.0** — на 8.4 LTS не проверяйте их через `SHOW VARIABLES`.
+
+### Безопасность
+
+11. **Шифрование трафика репликации.** Используйте `SOURCE_SSL = 1` и сертификаты для защиты бинарных логов при передаче по сети.
+12. **Привилегии пользователя репликации.** Минимальные права: `REPLICATION SLAVE`, `REPLICATION CLIENT`. Для Clone Plugin дополнительно `BACKUP_ADMIN`. Никогда не используйте `root` для репликации.
+13. **Аудит изменений GTID.** Любое ручное изменение `gtid_executed` или `gtid_purged` должно быть документировано и подтверждено.
+
+## Граничные случаи
+
+### Смешанный режим GTID и Non-GTID
+
+MySQL поддерживает переходный режим через `gtid_mode = OFF_PERMISSIVE` и `ON_PERMISSIVE`. Однако:
+- В `OFF_PERMISSIVE` сервер создает **анонимные транзакции** (без GTID), которые не фиксируются в `gtid_executed`.
+- При переключении на `ON_PERMISSIVE` сервер начинает генерировать GTID, но продолжает принимать анонимные.
+- Полный переход на `ON` возможен только когда `ONGOING_ANONYMOUS_TRANSACTION_COUNT = 0`.
+
+**Риск:** Если в топологии есть узел в `OFF_PERMISSIVE`, а другой в `ON`, репликация работает, но анонимные транзакции не переносятся автоматически при переключении мастера.
+
+### Частичные GTID-наборы при восстановлении
+
+При развертывании реплики из бэкапа `gtid_purged` должен содержать все транзакции, зафиксированные в бэкапе. Если `gtid_purged` установлен неправильно (меньше реального набора), реплика применит повторно транзакции из источника, что приведет к ошибкам дублирования ключей (1062).
+
+**Валидация:**
+```sql
+-- Проверьте, что gtid_purged покрывает все транзакции бэкапа
+SELECT @@GLOBAL.gtid_purged;
+```
+
+### Delayed Replication с GTID
+
+Задержанная реплика (`SOURCE_DELAY = N`) работает с GTID корректно:
+- Источник продолжает отправлять все транзакции, включая те, что должны быть отложены.
+- Реплика применяет их с задержкой, но сохраняет позицию в `gtid_executed`.
+- При переключении на отложенную реплику как новый источник она передаст все свои GTID, и остальные реплики автоматически вычислят разницу.
+
+**Ограничение:** Delayed Replication защищает только от логических ошибок на источнике. При полном отказе основного дата-центра возможна потеря данных за окно задержки.
+
+### Повреждение `mysql.gtid_executed`
+
+Таблица `mysql.gtid_executed` является критически важной. При её повреждении (отказ диска, некорректное завершение `mysqld`) сервер может:
+- Потерять информацию о выполненных транзакциях
+- Начать повторное применение транзакций
+- Войти в состояние неконсистентности
+
+**Восстановление:**
+1. Если `log_bin = ON`: используйте `binlog_gtid_simple_recovery = ON` для ускорения пересканирования бинарных логов.
+2. Если бинарные логи недоступны: переинициализируйте реплику из бэкапа.
+3. Никогда не удаляйте или не модифицируйте строки в `mysql.gtid_executed` напрямую через DML.
+
+### Перестройка реплики с изменением данных
+
+Если на реплике были выполнены дополнительные транзакции (например, через `super_read_only = OFF`), её `gtid_executed` будет содержать "лишние" GTID. При повторном подключении к источнику с `SOURCE_AUTO_POSITION = 1` источник увидит, что реплика запросила транзакции, которых нет в её наборе, и репликация остановится с ошибкой.
+
+**Решение:** Сбросьте состояние реплики перед повторным подключением:
+```sql
+RESET REPLICA ALL;
+-- или полный сброс (только если данные можно перезагрузить):
+-- в MySQL 5.7 и 8.0 — RESET MASTER
+RESET BINARY LOGS AND GTIDS;
+```
+
+### Мультисорсная репликация и GTID
+
+При использовании нескольких каналов репликации (Multi-Source) каждый канал имеет свой набор GTID в `gtid_executed`. GTID-репликация корректно обрабатывает транзакции из разных источников, так как `source_id` (UUID) уникален для каждого сервера.
+
+**Важно:** При настройке Multi-Source обязательно используйте `replicate_same_server_id = 0` (значение по умолчанию в 8.0) для предотвращения дублирования транзакций от одного и того же источника.
+
 ### См. также
 
 - **[Настройка репликации в MySQL](./setup_guide.md)**
@@ -241,3 +521,46 @@ mysqlbinlog --exclude-gtids="3E11FA47-71CA-11E1-9E33-C80AA9429562:542" /var/lib/
 - **[Форматы бинарного лога](./binlog_formats.md)**
 - **[Multi-Source репликация](./multi-source.md)**
 - **[Управление бинарным логом](./binlog_management.md)** — процедуры PITR и очистки.
+- **[Механизм репликации в MySQL](./master_slave_mechanism.md)** — архитектура потоков и Writesets.
+- **[MySQL в Docker](../docker.md)** — развертывание в контейнерах.
+- **[MySQL Operator](../mysql_operator.md)** — автоматизация управления кластерами в Kubernetes.
+
+## Практический блок (дополнение)
+
+### AUTO_POSITION: как работает
+
+`SOURCE_AUTO_POSITION=1` (8.0) / `MASTER_AUTO_POSITION=1` использует GTID для автоматического определения позиции. Реплика сравнивает свой `gtid_executed` с наборами транзакций на мастере и продолжает с первой недостающей GTID-транзакции. Это исключает ручной поиск File:Pos.
+
+```sql
+CHANGE REPLICATION SOURCE TO
+  SOURCE_HOST='master',
+  SOURCE_PORT=3306,
+  SOURCE_USER='repl',
+  SOURCE_PASSWORD='pass',
+  SOURCE_AUTO_POSITION=1;
+START REPLICA;
+```
+
+### Практическая валидация GTID
+
+```sql
+SHOW REPLICA STATUS\G
+-- Retrieved_Gtid_Set: что I/O-поток получил с мастера
+-- Executed_Gtid_Set:   что SQL-поток успешно применил
+
+SELECT @@GLOBAL.gtid_executed;  -- применённые GTID на текущем сервере
+SELECT @@GLOBAL.gtid_purged;    -- GTID, удалённые из бинлогов
+```
+
+### Типичные ошибки и решения (быстрые)
+
+- **Разрыв GTID (gap), бинлоги purged:** восстановить реплику из свежего бэкапа с полной GTID-позицией, затем `AUTO_POSITION=1`.
+- **GTID уже существует:** часто следствие некорректного подключения/восстановления. Проанализировать `gtid_executed` до принятия решения.
+- **RESET REPLICA vs RESET REPLICA ALL:** `RESET REPLICA ALL` полностью сбрасывает конфиг подключения (нужно пересоздавать `CHANGE REPLICATION SOURCE TO`). `RESET REPLICA` оставляет параметры подключения.
+
+### Практический чек-лист failover с GTID
+
+1. Сравнить `Executed_Gtid_Set` на всех репликах — выбрать реплику, чей набор содержит все транзакции источника и не содержит «лишних» локальных (проверка — `GTID_SUBSET`/`GTID_SUBTRACT`, см. `failover_switchover.md`).
+2. На кандидате: `STOP REPLICA; RESET REPLICA ALL;` → промоутить (`read_only=OFF`, `super_read_only=OFF`).
+3. На остальных репликах: `CHANGE REPLICATION SOURCE TO ... SOURCE_AUTO_POSITION=1; START REPLICA;`
+4. Проверить `Replica_IO_Running=Yes`, `Replica_SQL_Running=Yes`, отсутствие ошибок.

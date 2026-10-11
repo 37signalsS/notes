@@ -297,3 +297,4 @@ curl -s http://localhost:8429/metrics | grep -E "^vm_persistentqueue_"
 - [Prometheus: Remote Read/Write](./../Prometheus/scaling/remote_read_write.md) — SSoT по протоколу Remote Write (PRW 1/2);
 - [HTTP API VictoriaMetrics](./http_api_reference.md) — эндпоинты приёма `/api/v1/write`, импорт;
 - [Enterprise-функции](./enterprise_features.md) — Streaming Aggregation, vmgateway.
+# force reindex test

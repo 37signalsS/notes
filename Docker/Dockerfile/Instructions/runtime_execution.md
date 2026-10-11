@@ -1,8 +1,10 @@
 # Инструкции Dockerfile: CMD, ENTRYPOINT и USER
 
+**Актуально для:** Docker 20.10+
+
 ## Определения
 
-**`ENTRYPOINT`** — инструкция, определяющая основной исполняемый файл (процесс), который будет запущен при старте контейнера. Она фиксирует "предназначение" контейнера (например, это веб-сервер, база данных или утилита). `ENTRYPOINT`不易被 переопределена — пользователю доступно только изменение аргументов через `CMD`.
+**`ENTRYPOINT`** — инструкция, определяющая основной исполняемый файл (процесс), который будет запущен при старте контейнера. Она фиксирует "предназначение" контейнера (например, это веб-сервер, база данных или утилита). `ENTRYPOINT` не должна быть переопределена пользователем без явного намерения — доступно только изменение аргументов через `CMD`.
 
 **`CMD`** — инструкция, задающая команду или аргументы по умолчанию. В комбинации с `ENTRYPOINT` она выступает в роли списка параметров, которые пользователь может легко переопределить при запуске. `CMD` предназначен для предоставления параметров по умолчанию, которые могут быть заменены при запуске контейнера.
 
@@ -398,6 +400,62 @@ EXPOSE 3000
 CMD ["node", "dist/server.js"]
 ```
 
+## Валидация
+
+### Проверка метаданных образа
+
+```bash
+# USER, ENTRYPOINT и CMD
+docker inspect --format 'User: {{.Config.User}} | Entrypoint: {{json .Config.Entrypoint}} | CMD: {{json .Config.Cmd}}' <image_id>
+# → User: 10001 | Entrypoint: ["/usr/bin/tini","--"] | CMD: ["python","app.py"]
+
+# Полная история слоёв
+docker history <image_id> --no-trunc
+```
+
+### Проверка PID 1 и сигналов
+
+```bash
+# PID 1 в запущенном контейнере
+docker exec mycontainer ps -p 1 -o pid,comm,args
+# → PID 1: /sbin/tini -- python app.py
+
+# Зомби-процессы
+docker exec mycontainer ps aux | grep -w Z
+# → USER PID ... STAT ... COMMAND
+# → root 7 ... Z ... [python] <defunct>
+
+# Graceful shutdown
+time docker stop --timeout 30 mycontainer
+# → real 0m2.134s (если приложение завершилось gracefully)
+docker inspect --format='{{.State.ExitCode}}' mycontainer
+# → 0 (корректное завершение) или 137 (SIGKILL) или 143 (SIGTERM)
+```
+
+### Проверка пользователя
+
+```bash
+# Какой пользователь запускает процесс
+docker exec mycontainer id
+# → uid=10001(appuser) gid=10001(appuser) groups=10001(appuser)
+
+# Проверка прав на файлы
+docker exec mycontainer ls -la /app
+# → -rw-r--r-- 1 appuser appuser ... app.py
+```
+
+### Проверка entrypoint-скрипта
+
+```bash
+# Диагностика exec "$@"
+docker exec mycontainer ps aux
+# PID 1: /bin/bash /entrypoint.sh  ← плохо, shell не заменён
+# PID 7: python app.py
+
+# Правильно: PID 1 должен быть приложением или tini
+# PID 1: /sbin/tini -- python app.py
+```
+
 ## Типичные ошибки и их решение
 
 ### Ошибка 1: Контейнер завершается сразу (exit code 0)
@@ -733,6 +791,68 @@ RUN echo "Hello from bash"
 
 # Exec-form: bash НЕ используется
 RUN ["echo", "Hello directly"]
+```
+
+### Флаг `--init` в docker run
+
+Docker может автоматически внедрить `tini` как PID 1 без изменения образа:
+
+```bash
+docker run --init myapp
+# Эквивалентно ENTRYPOINT ["/sbin/tini", "--"] в Dockerfile
+```
+
+**Важно:** `--init` добавляет `tini` только для `docker run`. В Docker Compose используйте `init: true`:
+
+```yaml
+services:
+  app:
+    image: myapp
+    init: true
+```
+
+### USER и Rootless Docker
+
+В Rootless-режиме Docker не может создавать пользователей с UID < 60000 без дополнительных настроек. Используйте UID >= 60000 или настраивайте `subuid/subgid`:
+
+```bash
+# Проверка доступного диапазона UID
+cat /etc/subuid
+cat /etc/subgid
+```
+
+### Multi-service контейнеры (s6-overlay)
+
+Для контейнеров с несколькими процессами используйте system-менеджеры:
+
+```dockerfile
+FROM alpine:3.21
+RUN apk add --no-cache s6-overlay-s6
+COPY s6-services/ /etc/cont-init.d/
+ENTRYPOINT ["/init"]
+CMD []
+```
+
+**Примечание:** Multi-service контейнеры нарушают принцип одного процесса на контейнер. Используйте только когда нет альтернативы (legacy-приложения, совместимость с существующими CI/CD пайплайнами).
+
+### docker exec с переопределением USER
+
+```bash
+# Временный запуск команды от root для отладки
+docker exec -u 0 mycontainer cat /etc/shadow
+
+# Запуск shell от имени привилегированного пользователя
+docker exec -u 0 -it mycontainer /bin/sh
+```
+
+### ENTRYPOINT и сигналы в systemd
+
+При запуске Docker в systemd-юните используйте `Delegate=yes` для корректной обработки сигналов:
+
+```ini
+# /etc/systemd/system/docker.service.d/delegate.conf
+[Service]
+Delegate=yes
 ```
 
 ## Дополнительная информация

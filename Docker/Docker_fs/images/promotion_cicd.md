@@ -1,5 +1,7 @@
 # Продвижение образов Docker в CI/CD
 
+**Актуально для:** Docker 24.x–27.x, Kubernetes 1.29.x–1.32.x, CI/CD-раннеры на основе Linux
+
 ## Определения
 
 - **Продвижение образа (Image Promotion)** — процесс переноса и квалификации одного и того же неизменяемого артефакта через цепочку окружений (например, `Dev` → `Staging` → `Production`) после успешного прохождения проверок (тестов, сканирований). На каждом шаге продвижения физические слои образа не пересобираются, а лишь изменяется его «адрес» в реестре (тег, дайджест или расположение).
@@ -60,10 +62,10 @@
 1. **Build** — сборка единственного образа, вывод его дайджеста в артефакт пайплайна (например, файл `image_digest.txt`).
 2. **Test** — прогон unit/integration тестов внутри образа или против него (например, `docker run <image> pytest`).
 3. **Scan (Quality Gate)** — сканирование на CVE (`trivy`, `grype`); блокировка при критических уязвимостях.
-4. **Sign (Quality Gate)** — подпись образа (`cosign sign`) после успешных проверок.
-5. **Promote** — копирование/тегирование в целевой реестрь/репозиторий (`:staging`, `:production`).
-6. **Deploy** — развёртывание в Kubernetes/Compose с фиксацией по дайджесту.
-7. **Verify** — проверка, что в кластере крутится именно подписанный образ нужного дайджеста.
+  4. **Sign (Quality Gate)** — подпись образа (`cosign sign`) после успешных проверок.
+  5. **Promote** — копирование/тегирование в целевой реестр/репозиторий (`:staging`, `:production`).
+  6. **Deploy** — развёртывание в Kubernetes/Compose с фиксацией по дайджесту.
+  7. **Verify** — проверка, что в кластере крутится именно подписанный образ нужного дайджеста.
 
 ### Выбор стратегии именования тегов при продвижении
 
@@ -75,6 +77,19 @@
 - **По версии пайплайна/run-id** (`my-reg.com/app:build-42`) — удобно для отладки и отката к конкретному прогону CI.
 
 Рекомендация: внутри пайплайна всегда оперируйте дайджестом и тегом `:sha-<commit>`, а «человекочитаемые» теги окружений/SemVer навешивайте как алиасы в самом конце продвижения. Подробнее — в разделе «Версионирование и тегирование образов» (см. См. также).
+
+### Эфемерные CI-раннеры и безопасность хранения артефактов
+
+В современных пайплайнах раннеры часто являются эфемерными (одноразовыми контейнерами или виртуальными машинами), что накладывает ограничения на хранение промежуточных данных:
+
+- **Нет персистентного состояния:** любые данные, записанные на локальный диск раннера, теряются после завершения job. Поэтому дайджест и промежуточные артефакты должны передаваться между стадиями через артефакты пайплайна (GitHub Actions outputs, GitLab artifacts) или внешнее хранилище.
+- **Очистка кеша Docker:** если пайплайн использует `docker pull`/`docker push`, после завершения job необходимо очищать кеш, чтобы исключить утечку данных между запусками:
+  ```bash
+  docker image prune -f --filter "until=1h"
+  docker builder prune -f --filter "until=1h"
+  ```
+- **Минимизация прав:** на CI-раннере используйте `skopeo`/`crane` вместо монтирования Docker socket. Если Docker необходим, применяйтеrootless mode или ограниченный контекст (`docker context create` с правами только на целевой реестр).
+- **Секреты в рантайме:** секреты (ключи подписи, credentials реестра) должны передаваться через защищённые переменные окружения пайплайна, а не фиксироваться в конфигурационных файлах или образах.
 
 ## Практические сценарии
 
@@ -97,6 +112,42 @@ crane version              # → v0.20.2
 cosign version             # → 2.2.3
 trivy --version            # → Version: 0.50.1
 ```
+
+### Кэширование сборок в CI (BuildKit Cache)
+
+Для ускорения повторных сборок в CI настройте удалённое кэширование BuildKit. Это особенно полезно при частых запусках пайплайна на одном коде — повторная сборка будет использовать кэш слоёв вместо полной перекачки.
+
+**Настройка кэша в GitHub Actions:**
+
+```yaml
+- name: Build with cache
+  run: |
+    docker buildx build \
+      --platform linux/amd64,linux/arm64 \
+      -t my-reg.com/app:sha-${{ github.sha }} \
+      --cache-from type=registry,ref=my-reg.com/app:buildcache \
+      --cache-to type=registry,ref=my-reg.com/app:buildcache,mode=max \
+      --push .
+```
+
+**Настройка кэша в GitLab CI:**
+
+```yaml
+build:
+  stage: build
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_BUILDKIT: "1"
+  script:
+    - docker buildx build \
+        --cache-from type=registry,ref=$CI_REGISTRY_IMAGE:buildcache \
+        --cache-to type=registry,ref=$CI_REGISTRY_IMAGE:buildcache,mode=max \
+        -t $CI_REGISTRY_IMAGE:sha-$CI_COMMIT_SHORT_SHA --push .
+```
+
+Параметры: `--cache-from` указывает, откуда импортировать кэш; `--cache-to` — куда экспортировать после сборки; `mode=max` сохраняет полный кэш (включая неиспользованные слои), `mode=min` — только использованные (меньше места в реестре).
 
 ### Сценарий 1: Продвижение через стандартный Docker CLI
 
@@ -233,25 +284,35 @@ crane digest my-reg.com/app:production
 
 В GitOps-модели продвижение образа часто означает обновление тега (или дайджеста) в Git-репозитории с конфигурацией (Helm или Kustomize). Истина (source of truth) о том, какой образ в каком окружении, хранится в Git, а не в реестре.
 
-**Вариант А. Автоматический Image Updater (ArgoCD Image Updater):** сервис опрашивает реестр и сам коммитит новый тег в Git при появлении версии, подходящей под маску (SemVer). Пример `argocd-image-updater.yaml`:
+**Вариант А. Автоматический Image Updater (ArgoCD Image Updater v1.x):** сервис опрашивает реестр и сам коммитит новый тег в Git при появлении версии, подходящей под маску (SemVer). Пример `ImageUpdater` CR:
 
 ```yaml
-apiVersion: argoproj.io/v1beta1
-kind: ImageUpdaterConfiguration
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: staging-image-updater
+  namespace: argocd
 spec:
-  images:
-    - name: my-reg.com/app
-      # маска обновления: следить за semver-тегами, обновлять до последнего patch
-      updateStrategy: semver
-      # в каком файле и с каким полем обновлять тег
-      helm:
-        image:
-          # parameters указывают на values.yaml: image.tag
-          - name: image.tag
-            value: staging
+  writeBackConfig:
+    method: "git"
+    gitConfig:
+      repository: "git@github.com:myorg/infra.git"
+      branch: "main"
+      writeBackTarget: "helmvalues:./apps/my-app/values.yaml"
+  applicationRefs:
+  - namePattern: "my-app-staging"
+    images:
+    - alias: "app"
+      imageName: "my-reg.com/app:^1.2"
+      commonUpdateSettings:
+        updateStrategy: "semver"
+        allowTags: "^v?[0-9]+\\.[0-9]+\\.[0-9]+$"
+        ignoreTags: ["latest", "dev", "rc"]
 ```
 
 После запуска Image Updater сам делает коммит вида `build(app): pin image my-reg.com/app to 1.2.3`, ArgoCD синхронизирует кластер, и в Staging попадает новый образ без ручного вмешательства.
+
+> **Примечание:** В v0.x использовался `ImageUpdaterConfiguration` CRD и аннотации на Application. В v1.0+ это заменено на `ImageUpdater` CR с полями `applicationRefs`, `images`, `writeBackConfig`. См. [миграцию](../GitOps/ArgoCD/argocd_image_updater.md#миграция-с-v0x-аннотации-на-v1x-crd).
 
 **Вариант Б. Ручное продвижение через CI (Kustomize):** обновляем дайджест в `kustomization.yaml` и коммитим:
 
@@ -390,6 +451,68 @@ promote:
 
 **Валидация:** в реестре появился тег `:staging`/`:production` с тем же дайджестом, что и `:sha-...`, образ подписан, а скан не нашёл критических CVE (пайплайн дошёл до шага promote).
 
+### Сценарий 7: Продвижение в Jenkins
+
+Jenkins требует явного управления Docker-демоном (обычно через `docker` плагин или `docker-in-docker` в агентах). Ниже — пример Declarative Pipeline, использующий `crane` для promotion по дайджесту.
+
+```groovy
+pipeline {
+    agent any
+    environment {
+        REGISTRY = 'my-reg.com'
+        IMAGE = "${REGISTRY}/app"
+        COSIGN_KEY = credentials('cosign-key')
+    }
+    stages {
+        stage('Build') {
+            steps {
+                script {
+                    docker.build("${IMAGE}:sha-${env.GIT_COMMIT}")
+                    sh "docker push ${IMAGE}:sha-${env.GIT_COMMIT}"
+                    env.IMAGE_DIGEST = sh(
+                        script: "crane digest ${IMAGE}:sha-${env.GIT_COMMIT}",
+                        returnStdout: true
+                    ).trim()
+                }
+            }
+        }
+        stage('Test') {
+            steps {
+                sh "docker run --rm ${IMAGE}@${env.IMAGE_DIGEST} pytest"
+            }
+        }
+        stage('Scan') {
+            steps {
+                sh "trivy image --exit-code 1 --severity CRITICAL ${IMAGE}@${env.IMAGE_DIGEST}"
+            }
+        }
+        stage('Sign') {
+            steps {
+                withCredentials([string(credentialsId: 'cosign-password', variable: 'COSIGN_PASSWORD')]) {
+                    sh "cosign sign --key env://COSIGN_KEY ${IMAGE}@${env.IMAGE_DIGEST}"
+                }
+            }
+        }
+        stage('Promote') {
+            when {
+                branch 'main'
+            }
+            steps {
+                sh "crane tag ${IMAGE}@${env.IMAGE_DIGEST} production"
+            }
+        }
+    }
+    post {
+        always {
+            sh 'docker image prune -f'
+            cleanWs()
+        }
+    }
+}
+```
+
+**Валидация:** Jenkins-раннер выполнил все стадии, в реестре появился тег `:production`, привязанный к тому же дайджесту, что и `:sha-...`.
+
 ## Дополнительная информация
 
 ### Безопасность и проверка подписи
@@ -451,6 +574,62 @@ promote:
 
 - **Tag retention в GitLab:** правила в `Settings → Repository → Tag rules` автоматически удаляют старые теги по регулярке/возрасту.
 
+### Политики продвижения на уровне кластера (Policy-as-Code)
+
+Помимо сканирования и подписи на этапе CI, продвижение можно дополнительно контролировать на стороне кластера с помощью **Admission Controllers**. Это обеспечивает defense-in-depth: даже если злоумышленник получит доступ к реестру и зальёт непроверенный образ, кластер отклонит его запуск.
+
+**Kyverno — проверка подписи и источника при promotion:**
+
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-promoted-images
+spec:
+  validationFailureAction: Enforce
+  rules:
+    - name: check-signature
+      match:
+        any:
+        - resources:
+            kinds:
+            - Pod
+      verifyImages:
+      - imageReferences:
+        - "my-reg.com/production/*"
+        attestations:
+        - predicateType: cosign.sigstore.dev/attestation/v1
+          attestor:
+            entries:
+            - keys:
+                publicKeys: |-
+                  -----BEGIN PUBLIC KEY-----
+                  ...
+                  -----END PUBLIC KEY-----
+```
+
+**OPA Gatekeeper — ограничение тегов в production-неймспейсе:**
+
+```yaml
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sBlockedTag
+metadata:
+  name: production-must-use-digest
+spec:
+  match:
+    kinds:
+    - apiGroups: [""]
+      kinds: ["Pod"]
+    namespaces: ["production"]
+  parameters:
+    allowedTags: ["production"]
+    requireDigest: true
+```
+
+Эти политики гарантивают, что в production попадают только те образы, которые:
+1. Прошли все Quality Gates в CI (подпись, скан, тесты).
+2. Зафиксированы по дайджесту или доверенному тегу.
+
 ### Устранение неполадок (Troubleshooting)
 
 | Симптом | Вероятная причина | Диагностика | Решение |
@@ -462,6 +641,10 @@ promote:
 | `cosign verify` падает с `no matching signatures` | Образ не подписан или ключ не тот | `cosign triangulate image` + проверка публичного ключа | Подпишите тем же ключом/идентичностью, что и при верификации |
 | Multi-arch скопирован не полностью | Забыт флаг `--all` в `skopeo`/`crane copy` | `skopeo inspect --raw` показывает один манифест вместо индекса | Повторите копию с `--all` |
 | Тег `:production` указывает не на тот образ | Перезапись тега другим прогоном CI | `crane digest :production` ≠ ожидаемому | Фиксируйте деплой по `@sha256:...`, а не по тегу |
+| `no space left on device` на CI-раннере | Кэш Docker или временные файлы заполнили диск | `docker system df` | Очистите кеш: `docker system prune -f --filter "until=1h"` |
+| `crane: tag not found` | Исходный тег удален или не запушен | `crane ls my-reg.com/app` | Убедитесь, что исходный тег существует и доступен |
+| `trivy: failed to download vulnerability DB` | Проблемы с сетью или устаревшая база Trivy | `trivy --skip-db-update image ...` | Обновите базу: `trivy image --download-db-only` или используйте кешированный mirror |
+| `cosign: certificate expired` | Keyless-подпись через Fulcio/Rekor с истёкшим сертификатом | Проверьте срок действия сертификата в логах | Ротойтируйте ключи или используйте ключ-based подпись для критических образов |
 
 ### Лучшие практики и очистка окружения (Best Practices & Cleanup)
 
@@ -472,17 +655,17 @@ promote:
 - **Используйте skopeo/crane без демона** на CI-раннерах — быстрее и безопаснее, чем монтировать Docker socket.
 - **Настраивайте retention/GC**, иначе реестр переполнится уникальными SHA-тегами.
 - **Очистка CI-раннера:** `skopeo`/`crane` не оставляют локальных слоёв; если использовали `docker pull`, очищайте кеш:
-
   ```bash
   docker image prune -f   # → Total reclaimed space: 1.1GB
+  docker builder prune -f --filter "until=1h"
   ```
-
 - **Откат (rollback):** продвижение обратимо перетегированием/копированием предыдущего дайджеста:
-
   ```bash
   crane tag my-reg.com/app@<previous_sha256> production
   kubectl rollout undo deploy/app -n production   # или переставить image по старому дайджесту
   ```
+- **Canary / Blue-Green с фиксацией по дайджесту:** при стратегиях canary или blue-green используйте дайджест как источник истины для версии; тег `:canary`/`:blue` — лишь алиас. Это позволяет атомарно переключать трафик между точными версиями артефактов.
+- **Изоляция секретов:** ключи подписи (`cosign.key`) и credentials реестра никогда не фиксируются в репозитории; используйте защищённые переменные CI и секрет-менеджеры (HashiCorp Vault, SOPS).
 
 ### Граничные случаи и ограничения (Edge Cases)
 
@@ -497,5 +680,6 @@ promote:
 ## См. также
 
 - **[Идентичность и неизменяемость артефактов](./branch_artifacts.md)** — глубокий разбор SHA-дайджестов и антипаттерна повторной сборки.
+- **[Registry HTTP API v2](../../Docker_registries/registry_api_v2.md)** — протокол, поверх которого работают `skopeo`/`crane`: auth flow, эндпоинты, ошибки.
 - **[Версионирование и тегирование образов](../../Docker_registries/image_versioning_and_tagging.md)** — стратегии выбора имён тегов (SemVer, SHA, окружения).
 - **[Подпись и верификация Docker-образов](../../Docker_security/image_signature_and_verification.md)** — работа с Cosign, keyless и политики Kyverno.

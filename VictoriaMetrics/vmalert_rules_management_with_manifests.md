@@ -873,3 +873,4 @@ A: Проверьте `type: vlogs` на уровне группы, наличи
 - [VMAlert Operator CRD Docs](https://docs.victoriametrics.com/operator/resources/vmalert/)
 - [VMRule CRD Docs](https://docs.victoriametrics.com/operator/resources/vmrule/)
 - [LogsQL Alerting Guide](https://docs.victoriametrics.com/victorialogs/vmalert/)
+# force reindex test

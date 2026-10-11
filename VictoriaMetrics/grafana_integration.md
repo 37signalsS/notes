@@ -142,3 +142,4 @@ curl -s 'http://victorialogs:9428/select/logsql/query' \
 - [Grafana: шаблонизация](./../Grafana/grafana_templating.md) — template-переменные;
 - [VictoriaMetrics: настройка VictoriaLogs в Kubernetes](./../Kubernetes/MonitoringLogging/victorialogs_k8s_setup.md) — Helm-установка с VL-plugin;
 - [vmauth: прокси и маршрутизация](./vmauth_overview.md) — единая точка входа для Grafana.
+# force reindex test

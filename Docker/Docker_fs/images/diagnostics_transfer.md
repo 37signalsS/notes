@@ -1,16 +1,18 @@
 # Docker: Перенос и экспорт образов (save, load, export, import)
 
+**Актуально для:** Docker 24.x–29.x, containerd 1.7.x–2.4.x, Kubernetes 1.29.x–1.32.x, Podman 5.x–6.x, nerdctl v2.x, skopeo v1.14+–v1.24+
+
 Команды сериализации данных в архивы формата `tar` позволяют перемещать образы и файловые системы в изолированные среды (air-gapped) или выполнять миграцию данных без использования сетевых реестров. Это критически важный механизм для доставки артефактов в закрытые контуры, резервного копирования и аварийного восстановления.
 
 ## Предварительные требования
 
 Перед выполнением практических сценариев убедитесь, что соблюдены условия:
 
-- **Docker Engine** версии **24.0+** (BuildKit включён по умолчанию с 23.0+). Проверка: `docker version --format '{{.Server.Version}}'` → `27.3.1`. Для старых версий сборки multi-arch потребуется явный `docker buildx`.
+- **Docker Engine** версии **24.0+** (BuildKit включён по умолчанию с 23.0+). Проверка: `docker version --format '{{.Server.Version}}'` → `29.8.1`. Для старых версий сборки multi-arch потребуется явный `docker buildx`.
 - **Доступ к рантайму**: сокет `/var/run/docker.sock` (штатный демон) либо `DOCKER_HOST`, либо сокет целевого рантайма (containerd `/run/containerd/containerd.sock`). Без прав — `permission denied while trying to connect to the Docker daemon socket`.
 - **Утилиты хоста** для диагностики и целостности: `tar`, `file`, `sha256sum`; для сжатия — `gzip` и (рекомендуется) `zstd`; для подписанной доставки — `gpg` (опционально).
 - **Целевые инструменты по сценариям**:
-  - Для загрузки в Kubernetes-рантайм — `nerdctl` ≥ 1.0 (Docker-совместимый CLI для containerd) или низкоуровневый `ctr` (containerd); для CRI-O — `podman`.
+  - Для загрузки в Kubernetes-рантайм — `nerdctl` v2.x (Docker-совместимый CLI для containerd) или низкоуровневый `ctr` (containerd); для CRI-O — `podman` v5.x–v6.x.
   - Для daemonless-переноса и multi-arch — `skopeo` ≥ 1.14 (проверка: `skopeo --version` → `skopeo version 1.23.0`).
   - Для сборки/инспекта multi-arch — `docker buildx` (проверка: `docker buildx version`).
 - **Для air-gapped**: физический носитель (USB/внешний диск) с достаточным объёмом под архивы; носитель должен быть доверенным (целостность проверяется `sha256sum`/`gpg` на обоих концах).
@@ -48,6 +50,37 @@ Docker предоставляет два набора команд для раб
 2. **Размер архивов**: `docker save` сохраняет все слои. Если образ основан на тяжелом базовом слое, архив будет весить много. Для уменьшения размера используйте сжатие (`gzip`, `zstd`).
 3. **Метаданные при импорте**: При использовании `docker import` можно заново задать инструкции (`--change`), чтобы восстановить базовую функциональность (например, `CMD` или `ENV`).
 4. **Многоархитектурность (Multi-arch)**: Стандартный `docker save` сохраняет образ только для текущей архитектуры. Для переноса multi-arch манифестов рекомендуется использовать `skopeo` или `buildx imagetools`.
+
+### Архитектура архивов
+
+Архивы, создаваемые `docker save`, `docker export` и `skopeo`, имеют принципиально разную внутреннюю структуру, что определяет их применение в операционных процессах.
+
+**Формат `docker save` (Docker 25.0+ — OCI Image Layout):**
+- **`oci-layout`**: маркер `{"imageLayoutVersion": "1.0.0"}`.
+- **`index.json`**: OCI image index; дескрипторы манифестов несут аннотации `org.opencontainers.image.ref.name` (тег) и имя образа.
+- **`blobs/sha256/<digest>`**: все blob'ы — OCI-манифесты, config blob'ы и слои. Слои — **несжатые** tar (`application/vnd.oci.image.layer.v1.tar`), именованные по `diff_id`.
+- **`manifest.json`** (обратная совместимость): список записей `RepoTags` + пути к blobs (`Config`, `Layers`). Один архив может содержать несколько образов.
+- **`repositories`**: отображение тегов на дайджесты для обратного разрешения имён; присутствует только при наличии тегов.
+- Таймстемпы в архиве стабильны (epoch) с Docker 27.0 — вывод воспроизводим.
+- При загрузке `docker load` восстанавливает теги, дайджесты и слои в том же порядке, сохраняя возможность кэширования.
+- Архивы Docker ≤24 (legacy-формат): `config/<sha256>.json`, `<layer-id>/layer.tar` вместо `blobs/`; `docker load` читает оба формата.
+
+**Формат `docker export` (Container FS Archive):**
+- Единственный плоский tar-архив без манифеста и слоёв.
+- Содержит смонтированное представление `merged` из overlay2: все файлы из образов + writable layer, объединённые в единое дерево.
+- Device-файлы, симлинки, права доступа копируются как есть; extended attributes (xattr/ACL) могут обрезаться.
+- Нет информации о том, какой файл от какого слоя — whiteout-файлы (`.wh.`) отсутствуют, так как слой уже применён.
+
+**Формат OCI Archive (`skopeo copy`):**
+- Соответствует спецификации OCI Image Layout (версия layout `1.0.0`; OCI Image Spec 1.1 — полная структура — в **[OCI Image Spec: структура образа изнутри](./oci_image_spec.md)**).
+- Содержит `oci-layout` (версия схемы), `index.json` (manifest list для multi-arch) или `manifest.json` (одиночный образ), `blobs/sha256/<digest>`.
+- Идентификаторы — content-addressable: каждый blob адресуется своим дайджестом.
+- `skopeo inspect oci-archive:...` читает `index.json`/`manifest.json` без загрузки в демон, что критично для air-gapped диагностики.
+
+**SRE-значение структуры:**
+- В `docker save` удалённые секреты физически остаются в нижних слоях (whiteout скрывает, но не удаляет). Для аудита содержимого архива используйте `tar -tf` + grep на чувствительные имена файлов.
+- В `docker export` writable layer сплющивается, но временные файлы и логи из running контейнера могут попасть в архив — проверяйте содержимое перед переносом.
+- Размер `docker save` напрямую пропорционален сумме всех уникальных слоёв; `docker export` — размеру верхнего слоя. Планируйте объём носителя под максимальный из этих вариантов.
 
 ## Практические сценарии
 
@@ -231,12 +264,13 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 Перед загрузкой полезно убедиться, что архив не повреждён и содержит ожидаемое.
 
 ```bash
-# Содержимое tar-архива от docker save (структура слоёв)
+# Содержимое tar-архива от docker save (Docker 25+: OCI Layout)
 tar -tf nginx-stable.tar
-# → 0d...json
+# → oci-layout
+# → index.json
 # → manifest.json
 # → repositories
-# → blob/sha256/...
+# → blobs/sha256/...
 
 # Проверка типа и целостности (нет ли обрыва архива)
 tar -tvf nginx-stable.tar >/dev/null && echo "ARCHIVE_OK"
@@ -277,6 +311,11 @@ sha256sum -c nginx-stable.tar.sha256
 | `failed to decrypt` при `load` | Образ подписан/зашифрован (cosign) | сначала расшифруйте через `cosign`/`skopeo copy` с ключом; обычный `load` не расшифровывает |
 | `manifest unknown` / `404` при загрузке из архива в реестр | В архиве нет нужного тега/дайджеста | `skopeo inspect oci-archive:...`; исправьте имя назначения `docker-daemon:<name>:<tag>` |
 | `ctr: image already exists` при повторном импорте | Образ с тем же ID уже в хранилище | `ctr -n k8s.io images rm <ref>` перед повторным импортом |
+| Архив `docker save` превышает лимит `/tmp` на CI-раннере | Образ с большим базовым слоем; недостаточно места для распаковки | Используйтеpipe с `zstd -T0`; проверьте размер через `docker save ... | wc -c`; выносите `/var/lib/docker` на отдельный раздел |
+| `docker load` проходит, но образ имеет тег `none` | В архиве нет `repositories` или тег не восстановился | `docker images` — проверьте теги; используйте `docker tag <id> <name>:<tag>` вручную |
+| Образ после `docker load` не запускается на другой архитектуре | Сохранён образ только для архитектуры источника | `docker buildx imagetools inspect`; переносите `skopeo copy --all` или соберите multi-arch локально |
+| Dайджест образа после `docker load` не совпадает с исходным | В архиве altered слои или повреждение при переносе | `docker inspect --format '{{index .RepoDigests 0}}'` до и после; перезагрузите из исходного архива |
+| Накопление архивов `.tar` на хосте заполняет диск | `docker save` не удалён после успешной `load`; кэш BuildKit растёт | Автоматизируйте `rm` архивов после загрузки; `docker system prune -f` |
 
 ## Рекомендации и очистка
 
@@ -287,6 +326,14 @@ sha256sum -c nginx-stable.tar.sha256
 - При `docker import` восстанавливайте через `--change` минимально необходимый набор: `ENTRYPOINT`, `CMD`, `ENV`, `WORKDIR`, `EXPOSE`, `USER`.
 - Для multi-arch всегда используйте `skopeo copy --all` или `buildx`; `docker save` сохраняет только текущую платформу.
 - Не сохраняйте секреты в образе перед `docker save`: удалённые в следующем `RUN` файлы физически остаются в нижних слоях и видны через распаковку архива (см. **[Управление слоями](./layer_management.md)**, раздел о whiteout). Для секретов используйте `RUN --mount=type=secret` (BuildKit).
+
+**SRE-паттерны для переноса и инвентаря образов:**
+- В CI/CD pipelines используйте `docker save`/`load` или `skopeo copy` вместо прямого `docker pull` из реестра в air-gapped джобах — это даёт контроль над целостностью и RTO.
+- Планируйте размер архива под Writetime: `docker save` одного образа с базовым alpine может быть 10–50 MB, а с базовым ubuntu — 100–300 MB; на CI-раннерах с ограниченным `/tmp` это критично.
+- Для compliance-сред (PCI-DSS, ФЗ-152, внутренние политики) фиксируйте дайджест образа до и после переноса: `docker inspect --format '{{index .RepoDigests 0}}'` → sha256. Несоответствие означает подмену или повреждение.
+- На Kubernetes-узлах с containerd: `docker save`/`load` работают через shim, но для прямого управления используйте `nerdctl -n k8s.io` или `ctr` — это исключает конфликты с kubelet.
+- При аварийном восстановлении (DR) тестируйте `docker load` на «чистом» хосте периодически: битые архивы или изменившиеся форматы обнаруживаются только при реальной загрузке.
+- Архивируйте не только образы, но и манифесты развёртываний (Helm values, Kustomize overlays) — перенос образа без конфигурации деплоя не даёт рабочего сервиса.
 
 **Очистка окружения (revert / cleanup):**
 ```bash
@@ -315,19 +362,23 @@ sudo ctr -n k8s.io images rm docker.io/library/my-app:latest
 - **`export` теряет всё, кроме файловой системы.** Исчезают `CMD`, `ENTRYPOINT`, `ENV`, `WORKDIR`, `EXPOSE`, `USER`, история слоёв и метаданные реестра. Восстанавливайте их через `--change` при `import`.
 - **Whiteout и секреты.** В `docker save` удалённые в поздних слоях файлы физически остаются в нижних слоях (whiteout только скрывает их). Распаковка архива раскроет «удалённые» секреты — не кладите их в образ.
 - **`import` без `--change`** даёт образ без точки входа и переменных окружения — контейнер не запустится корректно.
-- **containerd image store (Docker 29.1+ / containerd 2.0):** образы хранятся нативно в containerd; `docker save`/`load` прозрачны, но поведение `RepoDigests` и интеграция с Kubernetes меняются (см. «Примечания по версиям»).
+- **containerd image store (Docker 29.0+ fresh installs / containerd 2.3.x):** образы хранятся нативно в containerd; `docker save`/`load` прозрачны, но поведение `RepoDigests` и интеграция с Kubernetes меняются (см. «Примечания по версиям»).
 - **Специальные файлы:** `docker export` переносит обычную ФС; симлинки копируются как ссылки, но device-файлы, пайпы и расширенные атрибуты (xattr/ACL) могут обрабатываться неполно — для спец-образов это ограничение.
 - **Размер:** `docker save` включает ВСЕ базовые слои образа, даже если вам нужен только один верхний слой приложения. Для частичного переноса используйте `skopeo copy` выборочно.
 - **CRI-O/Podman vs Docker:** `podman save`/`load` совместимы по формату OCI с Docker, но `podman load` не примет `--change` как `docker import` (для сборки используйте `podman build`/`Containerfile`).
 - **Windows-контейнеры:** используют иной формат слоёв и изоляцию; архивы Windows-образов не переносимы на Linux-хост и наоборот.
+- **Air-gapped audit trail:** при переносе через физический носитель фиксируйте в ITSM/ tickets: source host, дату, дайджест архива (`sha256sum`), ответственный. Это покрывает compliance-требования и упрощает расследование инцидентов.
+- **RTO/RPO для image recovery:** `docker load` на 1 GB архиве занимает 30–120 секунд; `docker save` на production-хосте может создавать archive в течение минут. Планируйте DR-тесты с учётом этих цифр.
+- **Build Cache и registry mirror:** `docker save` не включает Build Cache. При переносе для повторной сборки используйте `docker buildx build --cache-from` или registry mirror, а не архив образа.
+- **Signing и admission control:** в Kubernetes с `cosign`/`Kyverno`/`Gatekeeper` импортированный через `docker load` образ должен быть повторно подписан или пройти admission, иначе Pod останется в `ImageInspectError`/`CreateContainerConfigError`.
 
 ## Примечания по версиям
 
 - **Docker Engine 24.0+**: BuildKit используется по умолчанию; команды `save`/`load`/`export`/`import` стабильны и применимы ко всем современным версиям (27/28/29).
-- **skopeo ≥ 1.14**: поддерживает `oci-archive:`, флаг `--all` для multi-arch, `skopeo inspect` для daemonless-проверки. Рекомендуется ≥ 1.14 (проверено на 1.23.0).
-- **nerdctl ≥ 1.0**: Docker-совместимый CLI для containerd; флаг `-n k8s.io` обязателен для загрузки образов в Kubernetes.
-- **containerd image store (Docker 29.1 / containerd 2.0):** образы физически лежат в containerd; `docker save`/`skopeo` прозрачны, но `RepoDigests` формируется иначе, и дефолтное хранилище может отличаться от классического `/var/lib/docker`. Для большинства сценариев перенос прозрачен.
-- **podman**: версии 4.x полностью совместимы по OCI-формату с Docker для `save`/`load`/`import`.
+- **skopeo ≥ 1.14**: поддерживает `oci-archive:`, флаг `--all` для multi-arch, `skopeo inspect` для daemonless-проверки. Текущий стабильный релиз — 1.24.1 (проверено на 1.24.1).
+- **nerdctl v2.x**: Docker-совместимый CLI для containerd; флаг `-n k8s.io` обязателен для загрузки образов в Kubernetes.
+- **containerd image store (Docker 29.1 / containerd 2.0):** образы физически лежат в containerd; `docker save`/`skopeo` прозрачны, но `RepoDigests` формируется иначе, и дефолтное хранилище может отличаться от классического `/var/lib/docker`. Для SRE: при миграции на containerd image store проверьте скрипты, парсящие `/var/lib/docker`, и мониторинг диска.
+- **podman v5.x–v6.x**: полностью совместимы по OCI-формату с Docker для `save`/`load`/`import`.
 
 ## Дополнительная информация
 
@@ -355,6 +406,62 @@ sudo ctr -n k8s.io images rm docker.io/library/my-app:latest
   # → Loaded image: my-app:latest
   ```
 
+**Производительность save/load:**
+
+- **Без сжатия** — максимальная скорость; архив занимает больше места. Подходит для быстрого локального переноса по SSD.
+- **gzip** — универсальная совместимость; сжатие медленнее zstd. Используйте `gzip -1` для скорости или `gzip -6` (дефолт) для баланса.
+- **zstd** — рекомендуемый выбор: сжатие и распаковка в разы быстрее gzip при сопоставимом размере (для `docker push` zstd/fastest — дефолт, ~10x быстрее gzip). Уровни: `zstd -3` (быстро), `zstd -19` (максимальное сжатие, медленно).
+
+**Чанкирование больших архивов** (для USB-носителей и файловых лимитов):
+```bash
+# Разбиение архива на чанки по 20 ГБ
+docker save my-app:latest | zstd | split -b 20G - my-app.tar.zst.
+# → my-app.tar.zst.aa, my-app.tar.zst.ab, ...
+
+# Сборка и загрузка на целевом хосте
+cat my-app.tar.zst.* | zstdcat | docker load
+# → Loaded image: my-app:latest
+```
+
+**Частичное извлечение из архива `docker save`** (без полной распаковки):
+```bash
+# Только manifest.json
+tar -xOf nginx-stable.tar manifest.json | jq .
+
+# Список слоёв
+tar -tf nginx-stable.tar | grep blobs/
+
+# Извлечение одного слоя (в Docker 25+ слои — несжатые tar-блобы)
+tar -xOf nginx-stable.tar blobs/sha256/<digest> | tar -tvf -
+```
+
+**Глубокий разбор `docker import --change`:**
+
+Флаг `--change` (`-c`) применяет инструкции Dockerfile к создаваемому образу. Поддерживаются **только метаданные (configuration) инструкции** — `CMD`, `ENTRYPOINT`, `ENV`, `EXPOSE`, `HEALTHCHECK`, `LABEL`, `ONBUILD`, `STOPSIGNAL`, `USER`, `VOLUME`, `WORKDIR`. Инструкции `RUN`, `COPY`, `ADD` **не поддерживаются** — `import` не выполняет команды, только задаёт метаданные.
+
+```bash
+# Полный набор метаданных при импорте
+docker import \
+  --change "ENV APP_HOME=/app" \
+  --change "WORKDIR /app" \
+  --change "EXPOSE 8080" \
+  --change "USER appuser" \
+  --change 'ENTRYPOINT ["./start.sh"]' \
+  --change 'CMD ["--port", "8080"]' \
+  snapshot.tar my-image:latest
+
+# Проверка восстановленных метаданных
+docker inspect my-image:latest --format '{{.Config}}'
+
+# Комментарий к импорту (отображается в истории)
+docker import --message "Imported from prod snapshot" snapshot.tar my-image:latest
+docker history my-image:latest
+# → IMAGE   CREATED   CREATED BY   SIZE    COMMENT
+# → abc123  ...                   110MB   Imported from prod snapshot
+```
+
+Порядок флагов `--change` важен (см. Сценарий 3): они применяются в том же порядке, что и инструкции в Dockerfile, поэтому `ENV`/`WORKDIR` следует задавать до `CMD`/`ENTRYPOINT`.
+
 ### Сравнение с Commit
 
 Команда `docker commit` создает образ на основе изменений в контейнере, но, в отличие от `docker export`, она сохраняет всю историю слоев и метаданные исходного образа. `export` же полностью "сплющивает" (flattens) файловую систему.
@@ -364,6 +471,7 @@ sudo ctr -n k8s.io images rm docker.io/library/my-app:latest
 ### См. также
 
 - **[Основы Docker-образов](./docker_images_basics.md)** — структура и слои.
+- **[OCI Image Spec: структура образа изнутри](./oci_image_spec.md)** — манифест, config blob, media types, OCI Layout.
 - **[Реестры Docker](../../docker_registries.md)** — хранение артефактов.
-- **[Работа в изолированных средах (Air-gapped)](../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md)** — стратегии доставки в закрытые контуры.
+- **[Работа в изолированных средах (Air-gapped)](../../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md)** — стратегии доставки в закрытые контуры.
 - **[Резервное копирование и восстановление](../docker_backup_restore.md)** — стратегии бэкапа томов, образов и данных контейнеров.

@@ -1,5 +1,7 @@
 # Переменные и секреты GitLab CI/CD
 
+**Актуально для:** GitLab 17.x–19.x
+
 ## Определения
 
 *   **Переменные CI/CD** — динамические значения, используемые для управления логикой пайплайна, конфигурацией окружений и передачи параметров между задачами.
@@ -10,8 +12,19 @@
 *   **Сырая переменная (`Raw`)** — переменная, для которой отключено автоматическое расширение вложенных ссылок (`expansion`). Гарантирует, что спецсимволы (например, `$`) будут восприняты буквально.
 *   **GitLab Secrets Manager** — нативное решение для управления секретами (GA с версии **19.2**), обеспечивающее безопасное хранение, версионирование и инъекцию секретов.
 *   **OIDC (OpenID Connect)** — метод аутентификации пайплайна во внешних системах (Vault, Kubernetes, менеджеры секретов) через `ID Tokens`.
+*   **`dotenv` переменные** — пары `key=value`, передаваемые между задачами через `artifacts:reports:dotenv`. Используются для динамических данных, вычисленных в предыдущих стадиях.
+*   **`spec:inputs`** — типизированные параметры компонентов (Pipeline Inputs), доступные с версии **17.11**. В отличие от переменных, интерполируются на этапе компиляции YAML.
 
 ## Базовые концепции
+
+### Архитектура управления переменными
+
+В GitLab 19.x управление переменными строится на принципе **явных контрактов** и многоуровневой иерархии. Основные компоненты:
+
+1.  **Источники переменных** — 14 уровней приоритета от Script-level (высший) до Predefined (низший). Полная иерархия описана ниже.
+2.  **Хранилища секретов** — GitLab Secrets Manager (встроенное, 19.2+), внешние системы (Vault), CI/CD Variables.
+3.  **Инъекция в среду выполнения** — Runner получает переменные до запуска `script`, обеспечивая изоляцию между задачами.
+4.  **Валидация** — `spec:inputs` обеспечивает типизацию на этапе компиляции; `rules` — на этапе разрешения пайплайна.
 
 ### Иерархия и приоритет переменных (Precedence)
 
@@ -32,6 +45,22 @@
 13. **Deployment variables**: Специфичные для конкретного окружения (`environment`).
 14. **Predefined variables**: Системные переменные GitLab (`CI_COMMIT_SHA`). Имеют самый низкий приоритет.
 
+> **Важно:** `spec:inputs` не являются CI/CD переменными и не участвуют в этой иерархии. Они интерполируются на этапе компиляции YAML до разрешения переменных.
+
+### Scoping переменных
+
+Для обеспечения безопасности (Security by Design) применяются следующие механизмы изоляции:
+
+*   **Environment Scope** — секреты продакшена доступны только задачам с `environment: name: production`. Настраивается через `environment_scope` в UI переменной.
+*   **Protected Scoping** — флаг `Protected` гарантирует, что переменная не будет доступна в пайплайнах, запущенных из незащищенных веток (защита от кражи секретов через Fork/Feature branches).
+*   **Minimum Role Requirement (19.2+)** — настройка, позволяющая ограничить возможность использования переменных пайплайна только для ролей `Maintainer` и выше.
+
+### Эволюция управления секретами
+
+1.  **Наследование и переопределение (Legacy)** — глобальные переменные на уровне проекта/группы. Главный недостаток — сложность отслеживания источника значения (Configuration Drift).
+2.  **Композиция через шаблоны** — `extends` и `!reference`. Позволяет переиспользовать блоки, но не обеспечивает валидацию входящих данных.
+3.  **Изоляция и типизация (Modern)** — **CI/CD Components** и `spec:inputs`. Каждый модуль имеет четко определенный интерфейс, описание и типы данных.
+
 ### UI-конфигурация переменных
 
 С версии **19.x** расширены возможности описания переменных в `.gitlab-ci.yml` для удобства ручного запуска:
@@ -42,7 +71,7 @@
 ### Безопасность и управление доступом
 
 #### Защита CI_JOB_TOKEN (GitLab 18.0+)
-Доступ через `CI_JOB_TOKEN` ограничен белым списком (**Allowlist**). 
+Доступ через `CI_JOB_TOKEN` ограничен белым списком (**Allowlist**).
 *   **Тонкая настройка прав (Fine-grained Permissions):** С версии **18.3** можно ограничивать область действия токена конкретными правами (`read_registry`, `write_pages` и т.д.).
 *   **Git Push (18.4+):** Токен позволяет выполнять `git push` в текущий репозиторий, упрощая автоматическое версионирование.
 
@@ -54,7 +83,16 @@
 Для интеграции с внешними хранилищами секретов (Vault, менеджеры секретов) рекомендуется OIDC. Это позволяет Runner'у получать временный токен доступа на основе `ID Token`, исключая хранение долгоживущих секретов.
 
 #### Программное управление переменными (API)
-Переменные проекта и группы могут создаваться, обновляться и удаляться программно через **GitLab REST API**. Это позволяет реализовать сценарии динамической переконфигурации инфраструктуры (например, ротация ключей внешним сервисом или изменение лимитов нагрузки на основе данных мониторинга). Подробные примеры вызовов и сценарии автоматизации описаны в SSoT: **[Программная автоматизация: API и Webhooks](../Advanced/api_and_webhooks_automation.md)**.
+Переменные проекта и группы могут создаваться, обновляться и удаляться программно через **GitLab REST API**. Это позволяет реализовать сценарии динамической переконфигурации инфраструктуры (например, ротация ключей внешним сервисом или изменение лимитов нагрузки на основе данных мониторинга). Подробные примеры вызовов и сценарии автоматизации описаны в **[Программная автоматизация: API и Webhooks](../Advanced/api_and_webhooks_automation.md)**.
+
+### Передача данных между задачами (dotenv)
+
+Механизм `artifacts:reports:dotenv` позволяет передавать вычисленные значения из одной задачи в другую в DAG-пайплайнах. Задача-производитель записывает пары `key=value` в файл, который передается как артефакт. Задачи-потребители получают эти переменные автоматически.
+
+**Ограничения:**
+*   Dotenv переменные видны только в задачах, указанных в `needs`.
+*   Не работают между инстансами матричных задач (`parallel:matrix`) — для этого используйте артефакты или API.
+*   Изменения переменных в `script` не видны в `after_script` (выполняется в отдельном shell).
 
 ## Практические сценарии
 
@@ -201,51 +239,6 @@ verify_rotation:
     - rotate_db_password
 ```
 
-### Сценарий 8: Управление секретами для Terraform
-
-Безопасная передача учетных данных Terraform через переменные окружения.
-
-```yaml
-stages:
-  - plan
-  - apply
-
-.terraform_base:
-  image: hashicorp/terraform:1.9
-  before_script:
-    - cd terraform/
-    - terraform init -backend-config="backend.hcl"
-  variables:
-    # Секреты передаются через переменные окружения
-    TF_VAR_db_password: $DB_PASSWORD
-    TF_VAR_api_key: $API_KEY
-
-terraform_plan:
-  extends: .terraform_base
-  stage: plan
-  script:
-    - terraform plan -out=tfplan -var-file="production.tfvars"
-  artifacts:
-    paths:
-      - terraform/tfplan
-    expire_in: 1 day
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-terraform_apply:
-  extends: .terraform_base
-  stage: apply
-  script:
-    - terraform apply -auto-approve tfplan
-  dependencies:
-    - terraform_plan
-  environment:
-    name: production
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
-```
-
 ### Сценарий 9: Интеграция с Ansible Vault
 
 Использование Ansible Vault для управления секретами в playbooks.
@@ -338,21 +331,111 @@ deploy_alerts:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 ```
 
-## Дополнительная информация
+## Операции и команды
 
--   **[Основы GitLab CI/CD](./gitlab_ci_basics.md)** — база по стадиям и архитектуре.
--   **[Программная автоматизация: API и Webhooks](../Advanced/api_and_webhooks_automation.md)** — SSoT по программному управлению и обратной связи.
--   **[Интеграция с HashiCorp Vault](../Tutorials/vault_kubernetes_integration.md)** — детальное руководство по JWT/OIDC.
-*   **[Управление секретами в CI/CD](../../DevSecOps/secrets_management.md)** — методология и общие принципы.
-*   **[Предопределенные переменные GitLab](https://docs.gitlab.com/ee/ci/variables/predefined_variables.html)** — полный официальный список.
+### Управление переменными через GitLab REST API
 
-> **Критичные изменения последних версий:**
->
-> *   **19.2**: **GitLab Secrets Manager** перешел в GA. Расширен аудит доступа.
-> *   **19.0**: Минимальная версия для использования нативного Secrets Manager.
-> *   **18.6**: Изменено поведение по умолчанию для расширения вложенных переменных (теперь отключено).
-> *   **18.3**: Автоматическое маскирование всех новых переменных и тонкие настройки прав для `CI_JOB_TOKEN`.
-> *   **18.0**: Введен обязательный Allowlist для межпроектного использования `CI_JOB_TOKEN`.
+**Получение списка переменных проекта:**
+
+```bash
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/variables" | \
+  jq '.[] | {key, value, protected, masked, environment_scope}'
+```
+
+**Создание переменной:**
+
+```bash
+curl --request POST \
+  --header "PRIVATE-TOKEN: $TOKEN" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "key": "DB_PASSWORD",
+    "value": "secure_password",
+    "protected": true,
+    "masked": true,
+    "environment_scope": "*"
+  }' \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/variables"
+```
+
+**Обновление переменной:**
+
+```bash
+curl --request PUT \
+  --header "PRIVATE-TOKEN: $TOKEN" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "value": "new_secure_password",
+    "protected": true,
+    "masked": true
+  }' \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/variables/DB_PASSWORD"
+```
+
+**Удаление переменной:**
+
+```bash
+curl --request DELETE \
+  --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/variables/DB_PASSWORD"
+```
+
+### Валидация конфигурации
+
+**Проверка через CI Lint API:**
+
+```bash
+curl --request POST \
+  --header "PRIVATE-TOKEN: $TOKEN" \
+  --header "Content-Type: application/json" \
+  --data '{"content": "'"$(cat .gitlab-ci.yml)"'"}' \
+  "https://gitlab.example.com/api/v4/ci/lint"
+```
+
+**Просмотр merged YAML:**
+
+```bash
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/merge_requests/$MR_IID/ci_config"
+```
+
+**CLI-валидация:**
+
+```bash
+# Локальная проверка
+glab ci lint
+glab ci lint --dry-run --variable CI_COMMIT_BRANCH=main
+
+# Проверка всех веток
+for BRANCH in main develop feature/test; do
+  glab ci lint --dry-run --variable CI_COMMIT_BRANCH=$BRANCH
+done
+```
+
+### Диагностика переменных в пайплайне
+
+```yaml
+debug_vars:
+  stage: .pre
+  script:
+    # Вывод всех переменных (осторожно с секретами!)
+    - env | sort
+    
+    # Просмотр конкретной переменной
+    - echo "Current branch: $CI_COMMIT_BRANCH"
+    - echo "Deploy target: $DEPLOY_ENV"
+    
+    # Проверка, задана ли переменная
+    - |
+      if [ -z "$DB_PASSWORD" ]; then
+        echo "ERROR: DB_PASSWORD is not set"
+        exit 1
+      fi
+  needs: []
+  rules:
+    - when: always
+```
 
 ## Диагностика и устранение неполадок
 
@@ -366,6 +449,10 @@ deploy_alerts:
 | `Variable value is invalid` | Невалидные символы в имени или значении переменной | Используйте только латинские буквы, цифры и нижнее подчеркивание в имени. Значение не должно содержать `=` в начале. |
 | `Vault connection refused` | Vault недоступен или неверный адрес | Проверьте `VAULT_ADDR`, убедитесь что Vault запущен и доступен из сети Runner. |
 | `OIDC token validation failed` | Неверный `aud` (audience) или истекший токен | Проверьте соответствие `aud` в `id_tokens` и настройках OIDC-провайдера (Vault, Kubernetes). |
+| `Variable expansion failed` | Циклическая ссылка переменных (`$A` ссылается на `$B`, `$B` на `$A`) | Проверьте вложенные ссылки. С версии 18.6+ expansion отключен по умолчанию. |
+| `spec:inputs not found` | Неверный путь к компоненту или имя input | Проверьте `include:component` и `spec:inputs`. |
+| `dotenv не передается` | Задача не в `needs` или артефакт не найден | Добавьте задачу в `needs`. Проверьте путь к файлу в `artifacts:reports:dotenv`. |
+| `Переменная не раскрывается` | Включено `raw: true` или отключено expansion | Проверьте атрибуты переменной. Для сложных значений с `$` используйте `raw: true`. |
 
 ### Методы диагностики
 
@@ -390,15 +477,24 @@ debug_env:
       fi
 ```
 
-#### Использование CI Lint для проверки переменных
+#### Отладка приоритетов переменных
 
 ```bash
-# Проверка конфигурации через API
-curl --request POST \
-  --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-  --header "Content-Type: application/json" \
-  --data '{"content": "'"$(cat .gitlab-ci.yml)"'"}' \
-  "https://gitlab.example.com/api/v4/ci/lint"
+# Шаг 1: Проверьте merged YAML
+glab ci lint --show-expanded
+
+# Шаг 2: Выведите переменные в пайплайне
+env | sort | grep -E "^(CI_|GITLAB_|DEPLOY_)" | head -30
+
+# Шаг 3: Проверьте API переменные проекта
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/projects/$PROJECT_ID/variables" | \
+  jq '.[] | {key, protected, masked, environment_scope}'
+
+# Шаг 4: Сравните с переменными группы
+curl --header "PRIVATE-TOKEN: $TOKEN" \
+  "https://gitlab.example.com/api/v4/groups/$GROUP_ID/variables" | \
+  jq '.[] | {key, protected, masked, environment_scope}'
 ```
 
 #### Проверка доступа к Secrets Manager
@@ -415,6 +511,22 @@ check_secrets:
       else
         echo "Warning: Secrets Manager not configured"
       fi
+```
+
+#### Отладка `rules:variables`
+
+```yaml
+# Проблема: правило if не работает
+# Решение: добавьте отладочный вывод
+debug_rules:
+  stage: .pre
+  script:
+    - echo "CI_PIPELINE_SOURCE=$CI_PIPELINE_SOURCE"
+    - echo "CI_COMMIT_BRANCH=$CI_COMMIT_BRANCH"
+    - echo "CI_MERGE_REQUEST_ID=$CI_MERGE_REQUEST_ID"
+    - echo "CI_COMMIT_TAG=$CI_COMMIT_TAG"
+  rules:
+    - when: always
 ```
 
 ## Лучшие практики
@@ -440,11 +552,98 @@ check_secrets:
 1. **Cache Dependencies**: Кэшируйте зависимости (pip, npm, go mod) для ускорения сборки.
 2. **Use `needs`**: Запускайте задачи параллельно через DAG вместо последовательного выполнения.
 3. **Artifacts Cleanup**: Настройте `expire_in` для артефактов, чтобы не переполнять хранилище.
-4. **Distributed Cache**: Используйте S3-compatible хранилище для кэша в кластере Runner.
+4. **Distributed Cache**: Используйте S3/MinIO-совместимое хранилище для кэша в кластере Runner.
+5. **Minimize `dotenv` файлы**: Передавайте только необходимые значения между задачами.
 
-### Отладка
+### Эксплуатация
 
-1. **CI_DEBUG_TRACE**: Включайте только при необходимости (увеличивает размер логов).
-2. **`gitlab-runner exec`**: Тестируйте конфигурацию локально перед коммитом.
-3. **Lint Before Push**: Используйте CI Lint (UI или API) для проверки синтаксиса.
-4. **Temporary Variables**: Для отладки создавайте переменные с `expires_at`.
+1. **Разделяйте Runner'ы по назначению**: Используйте теги (`build`, `test`, `deploy`, `gpu`, `macos`) для маршрутизации задач. Не запускайте production-деплой на общих Runner'ах.
+2. **Настраивайте `protected` Runner'ы**: Для задач, работающих с продуктивными секретами, используйте Runner'ы, доступные только из защищенных веток.
+3. **Используйте Fleeting для автоскейлинга**: Вместо `docker-machine` переходите на Fleeting + Taskscaler (GitLab 17.0+) для динамического масштабирования через API оркестраторов.
+4. **Ведите журнал изменений конфигурации**: Все изменения в `.gitlab-ci.yml` должны проходить код-ревью. Используйте Merge Request для отслеживания эволюции пайплайнов.
+5. **Тестируйте изменения в staging**: Используйте отдельный инстанс GitLab или группу для тестирования новых версий Runner'ов и конфигураций перед обновлением production.
+
+## Особенности и ограничения (Edge Cases)
+
+### Технические лимиты переменных
+
+| Параметр | Лимит | Примечание |
+|:---|:---|:---|
+| Максимум переменных проекта | 500 | Включая group/instance |
+| Максимальная длина значения | 10 КБ | Для masked: минимум 8 символов |
+| Максимум `spec:inputs` | 50 | На компонент |
+| Максимальная длина имени переменной | 255 символов | Регистронезависимое |
+
+### Несовместимость переменных
+
+| Конфликт | Описание | Решение |
+|:---|:---|:---|
+| `masked` + значения с пробелами | GitLab не может маскировать строки с пробелами | Используйте `type: file` |
+| `masked` + короткие значения (<8 символов) | Слишком короткие для надежного маскирования | Увеличьте длину или используйте `type: file` |
+| `protected` + незащищенные ветки | Переменная недоступна в feature branches | Временно отключите `protected` для тестов |
+| `raw: true` + `expansion` | `raw` отключает расширение вложенных ссылок | Используйте `raw` только при необходимости |
+| `dotenv` + `needs` | Dotenv переменные видны только в зависимых задачах | Добавьте задачу в `needs` |
+| `spec:inputs` + переменные | Inputs обрабатываются до переменных | Динамические имена переменных через inputs невозможны |
+
+### Масштаб репозитория
+
+*   **Большие репозитории (>1GB)**: Могут вызывать таймауты при `git clone`. Используйте `GIT_DEPTH: "1"` для shallow clone или настройте `GIT_STRATEGY: fetch`.
+*   **Монорепозитории**: При множественных `include` из разных проектов учитывайте лимит 50 файлов на пайплайн. Используйте `rules:changes` для запуска только затронутых сервисов.
+
+### Параллелизм и ресурсы
+
+*   **Конфликты ресурсов**: При параллельном выполнении задач убедитесь, что они не конфликтуют по портам, файлам или Docker-образам. Используйте `resource_group` для взаимного исключения.
+*   **Ограничение параллелизма**: Глобальный параметр `concurrent` в `config.toml` ограничивает максимальное количество одновременных задач на Runner. При превышении задачи переходят в статус `pending`.
+
+### Секреты и переменные
+
+*   **Автоматическое маскирование**: GitLab автоматически маскирует переменные, помеченные как `masked`, в логах. Однако если секрет попадает в вывод команды (например, `echo $SECRET`), он будет замаскирован только если формат переменной уникален.
+*   **Переменные с `masked: true`**: Должны содержать минимум 8 символов и не могут содержать `\n`. Для многострочных данных используйте тип `File`.
+*   **Приоритет переменных**: Если переменная определена на нескольких уровнях (instance, group, project, job), побеждает значение с наивысшим приоритетом.
+
+### Версионная совместимость
+
+| Функция | Минимальная версия | Примечание |
+|:---|:---|:---|
+| `spec:inputs` (базовый) | 17.0+ | Типизация, значения по умолчанию |
+| `spec:inputs` + `regex` | 17.10+ | Валидация регулярными выражениями |
+| `spec:inputs` + `options` | 18.0+ | Выпадающий список в UI |
+| `description` в Variables | 19.0+ | Описание переменных в UI |
+| GitLab Secrets Manager (GA) | 19.2+ | Нативное управление секретами |
+| `raw: true` для переменных | 17.3+ | Отключение расширения вложенных ссылок |
+| Default masked | 18.3+ | Автоматическое маскирование новых переменных |
+| `CI_JOB_TOKEN` Fine-grained | 18.3+ | Тонкая настройка прав токена |
+| Inbound Allowlist | 17.0+ | Защита `CI_JOB_TOKEN` белым списком |
+| `id_tokens` (OIDC) | 16.0+ | Федеративная аутентификация |
+
+### Специфичные ограничения
+
+*   **Windows Runner**: Нет поддержки `services` (Docker Compose-style sidecar) и `docker-autoscaler`. Ограниченная совместимость с CI/CD-образами (Ubuntu-based).
+*   **Shell Executor**: Отсутствует изоляция между задачами. Задачи могут конфликтовать по файлам, переменным среды и портам. Используйте только для простых системных задач.
+*   **`gitlab-runner exec`**: Не поддерживает `services`, `include`, Protected/Masked переменные и кэш/артефакты. Используйте только для локальной отладки синтаксиса.
+
+## Дополнительная информация
+
+*   **[Основы GitLab CI/CD](./gitlab_ci_basics.md)** — база по стадиям и архитектуре.
+*   **[Сканирование безопасности в GitLab CI/CD](./gitlab_ci_security_scanning.md)** — SAST, DAST, Secret Detection, Dependency Scanning.
+*   **[Container Registry в GitLab CI/CD](../Advanced/container_registry.md)** — управление образами, cleanup, immutable tags.
+*   **[Программная автоматизация: API и Webhooks](../Advanced/api_and_webhooks_automation.md)** — справочник по программному управлению и обратной связи.
+*   **[Управление секретами в CI/CD](../../DevSecOps/secrets_management.md)** — методология и общие принципы.
+*   **[Compliance и Audit в GitLab CI/CD](../Advanced/compliance_and_audit.md)** — Pipeline Execution Policies, Audit Trail.
+*   **[Предопределенные переменные GitLab](https://docs.gitlab.com/ee/ci/variables/predefined_variables.html)** — полный официальный список.
+
+> **Критичные изменения последних версий:**
+>
+> *   **19.2**: **GitLab Secrets Manager** перешел в GA. Расширен аудит доступа.
+> *   **19.0**: Минимальная версия для использования нативного Secrets Manager.
+> *   **18.6**: Изменено поведение по умолчанию для расширения вложенных переменных (теперь отключено).
+> *   **18.4**: `CI_JOB_TOKEN` позволяет выполнять `git push` в текущий репозиторий.
+> *   **18.3**: Автоматическое маскирование всех новых переменных и тонкие настройки прав для `CI_JOB_TOKEN`.
+> *   **18.0**: Введен обязательный Allowlist для межпроектного использования `CI_JOB_TOKEN`.
+
+> **Требования к инфраструктуре (v17.x–19.x):**
+>
+> *   **PostgreSQL**: Минимальная версия **17**.
+> *   **Redis**: Поддержка **Redis 7+** или **Valkey**.
+> *   **Безопасность**: Enforced **Job Token Allowlist** (18.0+) — межпроектные взаимодействия через токены должны быть явно разрешены в настройках.
+> *   **Осторожная миграция**: Рекомендуется тестирование на staging-окружении перед обновлением Production-инстанса.

@@ -174,7 +174,7 @@ cAdvisor требует доступа к Docker socket и предоставл�
 
 ```yaml
   cadvisor:
-    image: ghcr.io/google/cadvisor:v0.60.5
+    image: ghcr.io/google/cadvisor:v0.60.6
     container_name: cadvisor
     pid: host
     network_mode: host

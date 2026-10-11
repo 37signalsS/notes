@@ -1,5 +1,7 @@
 # Ключи кэша и политики в GitLab CI
 
+**Актуально для:** GitLab 18.x / GitLab Runner 19.x
+
 ## Требования и предварительные условия
 
 ### Версия GitLab и поддержка функций
@@ -7,24 +9,27 @@
 | Функция | Минимальная версия | Примечание |
 | :--- | :--- | :--- |
 | `cache:key` (статический/динамический) | 8.0+ | Базовая поддержка ключей |
-| `cache:key:files` | 11.3+ | Хеш по содержимому файлов |
+| `cache:key:files` | 11.3+ | Хеш по содержимому файлов (максимум 2 файла) |
+| `cache:key:files_commits` | 18.4+ | Хеш по последнему коммиту файлов (максимум 2 файла) |
 | `cache:key:prefix` | 11.3+ | Статический префикс к хешу файлов |
 | `cache:policy` (`pull`/`push`) | 8.10+ | Управление направлением передачи |
 | `cache:when` | 8.8+ | Условия сохранения кэша |
-| `fallback_keys` (1 ключ) | 12.0+ | Первый резервный ключ |
 | `fallback_keys` (до 5) | 16.0+ | Расширенная цепочка поиска |
 | `unprotect` | 15.0+ | Доступ к кэшу защищённых веток |
 | `zstd` сжатие | 16.2+ | Алгоритм сжатия по умолчанию |
 | `CACHE_COMPRESSION_LEVEL` | 16.11+ | Управление уровнем сжатия |
-| `cache:key:files` (лимит файлов) | 17.x+ | Максимум 2 файла (Gitaly лимит) |
+| `CACHE_COMPRESSION_FORMAT` | 16.2+ | Выбор алгоритма сжатия (`zip`, `zipzstd`, `tarzstd`) |
+| `FF_SKIP_NOOP_CACHE` | 16.0+ | Пропуск загрузки при отсутствии изменений |
+| `CACHE_FALLBACK_KEY` (глобальный) | 8.0+ | Глобальный резервный ключ для всех задач |
 
 ### Необходимые знания
 
 - Базовый синтаксис `.gitlab-ci.yml` и жизненный цикл пайплайна
-- Различие между кэшем и артефактами
-- Предопределённые переменные (`$CI_COMMIT_REF_SLUG`, `$CI_JOB_NAME`, `$CI_DEFAULT_BRANCH`)
+- Различие между кэшем и артефактами (подробнее — в **[сравнении механизмов](./caching_overview.md)**)
+- Предопределённые переменные (`$CI_COMMIT_REF_SLUG`, `$CI_JOB_NAME`, `$CI_DEFAULT_BRANCH`, `$CI_NODE_INDEX`)
 - Настройка Runner'ов и Distributed Cache (S3/MinIO)
 - Принципы безопасного кэширования (cache poisoning, isolation)
+- Переменные оптимизации сжатия: `CACHE_COMPRESSION_FORMAT`, `CACHE_COMPRESSION_LEVEL`, `FF_USE_FASTZIP`, `FF_SKIP_NOOP_CACHE`
 
 ### Целевая аудитория
 
@@ -62,7 +67,7 @@ cache:
 - `$CI_CONCURRENT_ID`: Используется для изоляции кэша между параллельными запусками одной и той же задачи на одном Runner'е (например, в матричных сборках).
 - `$CI_JOB_IMAGE`: Полезно для разделения кэша, если задачи используют разные Docker-образы (например, `node:18` и `node:20`), предотвращая смешивание бинарных несовместимых модулей.
 
-#### 3. Ключ по хешу файлов (cache:key:files) — Рекомендуемый подход
+#### 3. Ключ по хешу файлов (`cache:key:files`) — Рекомендуемый подход
 ```yaml
 cache:
   key:
@@ -76,10 +81,30 @@ cache:
 **Принцип работы:** GitLab (через Gitaly) вычисляет SHA256 хеш содержимого указанных файлов. Если зависимости не менялись, используется существующий кэш.
 **Параметры:**
 - `prefix`: Позволяет добавить статический префикс к хешу. Критично при мажорных обновлениях рантаймов (Node.js 18 -> 20), когда хеш `package-lock.json` идентичен, но бинарные зависимости требуют пересборки.
-**Ограничения Gitaly (17.x+):**
-GitLab ограничивает количество файлов до 2-х и накладывает лимиты на вызовы Gitaly для предотвращения таймаутов генерации пайплайна в монорепозиториях. Если файлов больше, Gitaly может не успеть ответить за отведенное время (таймаут создания pipeline).
+**Ограничения Gitaly (текущие):**
+- Максимум **2 файла** или glob-паттерна на ключ. Gitaly выполняет один `git log` на каждый путь; превышение лимита приводит к таймауту создания пайплайна в монорепозиториях.
+- Если файл отсутствует, он игнорируется при расчёте хеша. Если ни один файл не найден, fallback ключ становится `default`.
+- Поддерживаются glob-паттерны (например, `**/package.json`), но они не перекрывают файл в корне репозитория.
 
-#### 4. Ключ с префиксом (cache:key:prefix)
+#### 3.1. Ключ по последнему коммиту (`cache:key:files_commits`) — GitLab 18.4+
+
+```yaml
+cache:
+  key:
+    files_commits:
+      - package-lock.json
+      - Gemfile.lock
+    prefix: "prod-deps-$CI_JOB_NAME"
+  paths:
+    - node_modules/
+```
+**Принцип работы:** Вместо хеша содержимого файлов вычисляется хеш их истории коммитов (SHA последнего изменения). Кэш пересоздаётся при каждом новом коммите, затрагивающем указанные файлы, даже если содержимое не изменилось.
+**Отличие от `files`:** Полезно, когда lock-файл пересоздаётся автоматическими инструментами (renovate, dependabot) без изменения зависимостей — кэш всё равно обновится, отражая новый контекст сборки.
+**Ограничения:**
+- Максимум 2 файла/паттерна.
+- Несовместим с `cache:key:files` в одном блоке кэша.
+
+#### 4. Ключ с префиксом (`cache:key:prefix`)
 
 ```yaml
 cache:
@@ -109,12 +134,12 @@ test_job:
 
 ### Защита и изоляция кэша
 
-С версии GitLab 15.0 по умолчанию включена строгая изоляция кэша между **защищёнными** (`protected`) и **незащищёнными** ветками. Это фундаментальная мера DevSecOps для предотвращения атак "cache poisoning".
+С версии GitLab 15.0 по умолчанию включена строгая изоляция кэша между **защищёнными** (`protected`) и **незащищёнными** ветками. С GitLab 18.4.5 поведение суффиксов уточнено: суффикс `-protected` добавляется для пайплайнов, запущенных пользователем с ролью Maintainer или Owner, а также для защищённых тегов. Во всех остальных случаях добавляется `-non_protected`.
 
 **Механизм работы:**
 Под капотом GitLab автоматически добавляет скрытый суффикс к ключу кэша перед запросом в хранилище:
-- `-protected` для пайплайнов в защищённых ветках/тегах.
-- `-non_protected` для всех остальных (feature-ветки, merge requests).
+- `-protected` для пайплайнов в защищённых ветках/тегах, запущенных Maintainer/Owner.
+- `-non_protected` для всех остальных (feature-ветки, merge requests, Developer role на защищённых ветках).
 
 **Управление изоляцией (unprotect):**
 Параметр `unprotect: true` отключает добавление суффикса для незащищенных веток, позволяя им читать кэш защищенных.
@@ -157,11 +182,26 @@ test_job:
         - vendor/ruby
 ```
 
+**Глобальный резервный ключ (`CACHE_FALLBACK_KEY`):**
+Помимо per-cache `fallback_keys`, GitLab поддерживает глобальную переменную `CACHE_FALLBACK_KEY`. Она используется, если ни `cache:key`, ни `fallback_keys` не дали результата. Порядок поиска: `cache:key` → `fallback_keys` → `CACHE_FALLBACK_KEY`.
+
+```yaml
+variables:
+  CACHE_FALLBACK_KEY: "global-deps-cache"
+
+test_job:
+  cache:
+    key: deps-$CI_COMMIT_REF_SLUG
+    paths:
+      - vendor/ruby
+```
+
 **Алгоритм поиска Runner'ом:**
 1. Пытается найти архив по точному совпадению `key` (например, `deps-feature-x-non_protected`).
 2. Если не найден, поочередно проверяет ключи из списка `fallback_keys` (например, `deps-main-non_protected`, затем `deps-global-non_protected`).
-3. Первый найденный архив скачивается и распаковывается.
-4. Если ни один не найден, задача выполняется с пустой директорией `paths`.
+3. Если ни один fallback не найден, проверяется глобальный `CACHE_FALLBACK_KEY`.
+4. Первый найденный архив скачивается и распаковывается.
+5. Если ни один не найден, задача выполняется с пустой директорией `paths`.
 
 ## Практические сценарии
 
@@ -297,7 +337,7 @@ test:sharded:
       policy: push
 ```
 
-## Производительность и сжатие (Алгоритмы zstd и fastzip)
+## Производительность и сжатие (Zstd, Fastzip, CACHE_COMPRESSION_FORMAT)
 
 Кэш перед отправкой архивируется. В огромных проектах архивация может занимать больше времени, чем скачивание пакетов.
 
@@ -307,8 +347,15 @@ test:sharded:
 2. **Алгоритм Fastzip (Исторический/Альтернативный):**
    - Если `zstd` недоступен, Runner можно перевести на использование `fastzip` (алгоритм на Go) вместо встроенного unzip-бинарника.
    - Включается переменной: `FF_USE_FASTZIP: "true"`.
+3. **`CACHE_COMPRESSION_FORMAT` (GitLab Runner 16.2+):**
+   - Позволяет явно выбрать формат архива: `zip` (legacy), `zipzstd` (параллельное сжатие zstd в zip-контейнере), `tarzstd` (максимальное сжатие).
+   - Пример: `CACHE_COMPRESSION_FORMAT: "zipzstd"` — оптимально для многоядерных Runner'ов с кэшами >500 МБ.
+   - На single-core Runner'ах или для маленьких кэшей используйте `zip` или `zipzstd` с `CACHE_COMPRESSION_LEVEL: "fastest"`.
+4. **`FF_SKIP_NOOP_CACHE` (GitLab 16.0+):**
+   - Пропускает этап `uploading cache`, если содержимое директорий не изменилось с момента последней загрузки.
+   - Включается переменной: `FF_SKIP_NOOP_CACHE: "true"`.
 
-**Рекомендация:** На современных версиях GitLab полагайтесь на `zstd` и политику `pull` для максимизации скорости.
+**Рекомендация:** На современных версиях GitLab полагайтесь на `zipzstd` и политику `pull` для максимизации скорости. Для дополнительного ускорения включите `FF_USE_FASTZIP: "true"` и `FF_SKIP_NOOP_CACHE: "true"`.
 
 ## Валидация и отладка ключей кэша
 
@@ -384,16 +431,21 @@ wc -c package-lock.json
 | Не использовать `unprotect: true` для зависимостей | Cache poisoning через MR | Критический |
 | `policy: pull` для тестов | Предотвращение перезаписи кэша | Высокий |
 | `fallback_keys` вместо статических ключей | Изоляция веток + кэш main | Высокий |
-| Ограничение `files` до 2 файлов | Предотвращение Gitaly timeout | Средний |
+| Ограничение `files`/`files_commits` до 2 файлов | Предотвращение Gitaly timeout | Средний |
+
+**Примечание:** Детальный разбор угроз cache poisoning, механизма суффиксов `-protected`/`-non_protected` и контрольных мер см. в **[Лучшие практики кэширования](./cache_best_practices.md#безопасность-security)**.
 
 ### Производительность
 
 | Практика | Описание | Приоритет |
 | :--- | :--- | :--- |
 | `policy: pull` для build-only задач | Нет фазы архивации | Высокий |
-| `zstd` сжатие (по умолчанию 16.2+) | Лучшее сжатие при низком CPU | Средний |
+| `zipzstd` (`CACHE_COMPRESSION_FORMAT`) для больших кэшей | Параллельное сжатие, скорость > zip | Высокий |
+| `FF_SKIP_NOOP_CACHE` | Пропуск загрузки при отсутствии изменений | Средний |
 | `expire_in` для промежуточных кэшей | Освобождение места в S3 | Средний |
 | Уникальные ключи для матриц | Предотвращение коллизий | Средний |
+
+**Примечание:** Метрики cache hit rate, рекомендации по настройке `CACHE_COMPRESSION_LEVEL` и мониторингу см. в **[Лучшие практики кэширования](./cache_best_practices.md#мониторинг-и-наблюдаемость)**.
 
 ### Организация
 
@@ -412,7 +464,9 @@ wc -c package-lock.json
 | :--- | :--- | :--- |
 | Кэшей на задачу | 4 | Используйте минимально необходимое количество |
 | Файлов в `cache:key:files` | 2 (Gitaly лимит) | Оставьте только lock-файлы |
+| Файлов в `cache:key:files_commits` | 2 (Gitaly лимит) | Оставьте только lock-файлы |
 | `fallback_keys` | 5 (GitLab 16.0+) | Достаточно для большинства сценариев |
+| Глобальный `CACHE_FALLBACK_KEY` | 1 | Используется как последний резерв |
 | Размер кэша | Ограничен диском Runner'а или S3 bucket | Настройте Lifecycle в S3 |
 | `prefix` в `key:files` | Без лимита | Используйте короткие префиксы |
 
@@ -462,6 +516,92 @@ test:
       - .cache/
 ```
 
+**`files_commits` с пустым коммитом:**
+```yaml
+# Проблема: если файл существует, но коммитов с его участием нет, хеш будет детерминированным
+# Решение: убедитесь, что файл реально меняется в истории
+cache:
+  key:
+    files_commits: [package-lock.json]
+```
+
+## Sysadmin: управление хранилищем и наблюдаемость
+
+### Очистка локального кэша Runner'а
+
+Для shell-раннеров на bare-metal или VM:
+
+```bash
+# Просмотр локального кэша
+ls -la /home/gitlab-runner/cache/
+
+# Проверка размера
+du -sh /home/gitlab-runner/cache/
+
+# Очистка кэшей старше 3 дней
+find /home/gitlab-runner/cache/ -name "*.zip" -mtime +3 -delete
+
+# Автоматическая очистка через cron (root)
+# /etc/cron.d/gitlab-runner-cache
+0 2 * * * gitlab-runner find /home/gitlab-runner/cache/ -name "*.zip" -mtime +3 -delete
+```
+
+### Управление S3/MinIO жизненным циклом
+
+```json
+// Lifecycle policy для автоматического удаления старых кэшей
+{
+  "Rules": [
+    {
+      "ID": "ExpireCacheAfter3Days",
+      "Status": "Enabled",
+      "Expiration": { "Days": 3 },
+      "Filter": { "Prefix": "cache/" }
+    },
+    {
+      "ID": "AbortIncompleteMultipart",
+      "Status": "Enabled",
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 },
+      "Filter": { "Prefix": "cache/" }
+    }
+  ]
+}
+```
+
+```bash
+# Применение lifecycle policy через MinIO Client
+mc ilm import myminio/gitlab-runner-cache < lifecycle.json
+mc ilm ls myminio/gitlab-runner-cache
+```
+
+### Мониторинг эффективности кэширования
+
+| Метрика | Целевое значение | Как измерить |
+| :--- | :--- | :--- |
+| **Cache hit rate** | > 80% | Логи Runner'а: `Checking cache for <key>... Downloading` (miss) vs `Downloading` (hit) |
+| **Cache download time** | < 30 сек | Метрика `job_duration_seconds` с разбивкой по этапам |
+| **Cache size** | < 1 GB на кэш | `du -sh` на директории кэша или API объектного хранилища |
+| **Gitaly timeout rate** | 0% | Мониторинг GitLab: `gitaly_requests_duration_seconds` |
+
+**Команды для диагностики:**
+
+```bash
+ # Просмотр логов Runner'а для анализа кэша
+ # В логах задачи ищите:
+ grep -E "(Checking cache|Downloading|Creating cache|Uploading|Archive is up to date)" job.log
+
+ # Примеры логов и их значение:
+ # "Checking cache for my-key-v123..." → Runner ищет кэш
+ # "Downloading https://s3.../cache.zip" → Cache miss, загрузка
+ # "Archive is up to date! Skipping upload" → FF_SKIP_NOOP_CACHE работает
+ # "Creating cache..." → Cache miss, создание нового кэша
+
+ # Просмотр объектов в S3 (MinIO)
+ mc ls myminio/gitlab-runner-cache/ --summarize
+```
+
+**Примечание:** Детальную настройку Prometheus-мониторинга, индикаторы cache hit rate и рекомендации SRE по ревизии кэшей см. в **[Лучшие практики кэширования](./cache_best_practices.md#мониторинг-и-наблюдаемость)**.
+
 ## Устранение неполадок
 
 ### Типичные ошибки
@@ -470,11 +610,14 @@ test:
 | :--- | :--- | :--- |
 | `Cache not found for key` | Ключ не совпадает или кэш отсутствует | Проверьте `unprotect`, используйте `fallback_keys` |
 | `Gitaly timeout` | Слишком много файлов в `cache:key:files` | Оставьте максимум 2 файла |
+| `Gitaly timeout` при `files_commits` | Слишком много файлов или паттернов | Оставьте максимум 2 файла/паттерна |
 | `No space left on device` | Локальный диск Runner'а забит | Настройте очистку или перейдите на S3 |
 | `403 Forbidden` (S3) | Истёк pre-signed URL или неверные credentials | Проверьте NTP и IAM-роли |
 | Кэш не обновляется | `policy: pull` или `when: on_success` + падение | Проверьте политику и условия сохранения |
 | Кэш "отравлен" | `unprotect: true` на зависимостях | Удалите `unprotect`, очистите кэш |
 | Матричные задачи делят кэш | `key` не содержит переменных матрицы | Добавьте `$TARGET` в ключ |
+| `zstd: not found` | Старый образ Runner'а или ОС | Обновите Runner до 16.2+ или установите `zstd` |
+| Кэш не сжимается (`zipzstd` игнорируется) | `CACHE_COMPRESSION_FORMAT` не поддерживается Runner'ом | Проверьте версию Runner'а; используйте `zip` как fallback |
 
 ### Диагностика через Runner
 
@@ -505,8 +648,12 @@ curl --request DELETE --header "PRIVATE-TOKEN: $TOKEN" \
 ```
 
 ## Дополнительная информация
-- **[Лучшие практики кэширования](./cache_best_practices.md)** — детальный разбор Gitaly Load и стратегий.
-- **[Обзор механизма кэширования](./caching_overview.md)** — архитектура, уровни хранения, сравнение с артефактами.
-- **[Практические сценарии](./cache_scenarios.md)** — готовые конфигурации для Node.js, Python, Java, Docker.
+
+- **[Обзор механизма кэширования](./caching_overview.md)** — архитектура, уровни хранения, сравнение кэша и артефактов.
+- **[Лучшие практики кэширования](./cache_best_practices.md)** — детальный разбор Gitaly Load, безопасность, мониторинг, управление хранилищем и SRE-рекомендации.
+- **[Практические сценарии](./cache_scenarios.md)** — готовые конфигурации для Node.js, Python, Go, Rust, Java, PHP, Ruby, Terraform, Ansible, Salt, Helm, Docker.
 - **[Артефакты в GitLab CI](./gitlab_ci_artifacts.md)** — передача данных между стадиями.
+- **[Кэш и директивки пайплайна](./cache_pipeline_directives.md)** — взаимодействие `rules`, `needs`, `interruptible` и `resource_group` с кэшем.
+- **[Кэш в downstream-пайплайнах](./cache_downstream_pipelines.md)** — наследование кэша в parent-child и multi-project пайплайнах.
+- **[Кэш и executor'ы](./cache_executor_specifics.md)** — особенности кэширования для Docker, Shell, Kubernetes и Instance executor'ов.
 - **[Матричные сборки и сериализация](../workflow_rules/matrix_builds_and_serialization.md)** — изоляция кэша в матричных задачах.

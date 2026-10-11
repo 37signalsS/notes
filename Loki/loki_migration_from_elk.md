@@ -261,7 +261,7 @@ filter {
 output {
   elasticsearch {
     hosts => ["http://elasticsearch:9200"]
-    index => "logs-%{+YYYY.MM.dd}"
+    index => "logs-%{{yyyy.MM.dd}}"
   }
 }
 ```

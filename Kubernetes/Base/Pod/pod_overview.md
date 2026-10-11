@@ -10,6 +10,76 @@
 
 ---
 
+## Подробный разбор Pause Container (Инфраструктурный контейнер)
+
+### Архитектура и роль
+
+Pause container (образ `registry.k8s.io/pause:<version>`) — это **минимальный контейнер** (~100-200KB), написанный на C/Go, который:
+1. **Создает namespaces** при старте Pod: Network, IPC, UTS (PID — опционально через `shareProcessNamespace`)
+2. **Держит namespaces живыми** до полного завершения Pod
+3. **Служит родительским процессом (PID 1)** в namespace для сиротских процессов (reaper), корректно обрабатывая `SIGCHLD` и `waitpid()`
+
+### Жизненный цикл Pod и Pause Container
+
+```
+1. Kubelet получает Pod Spec от API-сервера
+2. CRI (containerd/CRI-O) создает Pod Sandbox:
+   └─ Запускает Pause Container (создает namespaces)
+3. Последовательно запускаются контейнеры Pod:
+   ├─ Init Containers (по порядку)
+   ├─ Native Sidecars (init + restartPolicy: Always)
+   └─ App Containers (основная бизнес-логика)
+4. Все контейнеры присоединяются к namespaces Pause Container
+5. При завершении App Container'ов:
+   ├─ Pause Container продолжает держать namespaces
+   ├─ Kubelet получает статус через CRI
+   └─ При удалении Pod: все контейнеры останавливаются → Pause Container останавливается → namespaces уничтожаются
+```
+
+### Важные технические детали
+
+| Аспект | Описание |
+| :--- | :--- |
+| **Образ** | `registry.k8s.io/pause:3.10` (актуально для K8s 1.30+). Версия привязана к версии Kubernetes. |
+| **Ресурсы** | Запрашивает минимальные ресурсы (CPU: 0, Memory: ~0). Не учитывается в квотах пода. |
+| **PID 1** | Внутри network/ipc/uts namespace Pause — PID 1. Основные контейнеры имеют свои PID namespace (если не включен shareProcessNamespace). |
+| **Сигналы** | Pause корректно обрабатывает `SIGTERM`, `SIGCHLD`. При `SIGTERM` ждет завершения дочерних процессов. |
+| **Обновление** | При обновлении образа pause (K8s upgrade) — пересоздается при следующем рестарте Pod. |
+
+### Диагностика Pause Container
+
+```bash
+# Найти pause контейнеры на узле
+crictl ps --name pause
+# → CONTAINER           IMAGE               CREATED             STATE      NAME      ATTEMPT   POD ID
+# → 1a2b3c4d5e6f        registry.k8s.io/pause:3.10  2 hours ago   Running    pause     0         abc123...
+
+# Проверить namespace'ы пода через pause
+crictl inspect 1a2b3c4d5e6f | jq .info.runtimeSpec.linux.namespaces
+# → [{"type":"network"},{"type":"ipc"},{"type":"uts"}...]
+
+# Логи pause контейнера (обычно пусты, но полезны при проблемах с CRI)
+crictl logs 1a2b3c4d5e6f
+```
+
+### Типичные проблемы
+
+| Проблема | Симптом | Причина | Решение |
+| :--- | :--- | :--- | :--- |
+| **Pod застрял в `ContainerCreating`** | Pause не запускается | Ошибка CNI (плагин не настроил сеть), образ pause недоступен | Проверить логи CNI, доступность registry.k8s.io |
+| **Порт занят** | `ErrImageNeverPull` / `CrashLoopBackOff` | Конфликт `hostPort` или порт уже слушается в namespace | Проверить `ss -tlnp` на узле, изменить порт |
+| **Зомби-процессы** | Утечка PID, OOM | Pause не делает reaping (устаревший образ) | Обновить Kubernetes / образ pause |
+
+### Интервью-вопрос: «Что происходит, если основной контейнер упадет, а pause останется?»
+
+**Ответ:** Pause container продолжит держать сетевой namespace (IP, порты), IPC и UTS. Kubelet через CRI видит, что основной контейнер завершился с ошибкой. В зависимости от `restartPolicy`:
+- `Always` / `OnFailure` → Kubelet перезапускает основной контейнер в **том же** Pod Sandbox (тот же IP, те же volumes)
+- `Never` → Pod переходит в `Completed` / `Failed`, Pause останавливается при удалении Pod
+
+**Ключевой момент:** IP-адрес пода **не меняется** при перезапуске контейнера внутри одного Pod, так как namespace держит pause container.
+
+---
+
 ## Базовые концепции
 
 ### Почему Pod? (Аналогия с процессами ОС)

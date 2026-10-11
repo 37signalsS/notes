@@ -7,7 +7,7 @@
 ## Определения
 
 - **Renovate** — бот автоматического обновления зависимостей (работает self-hosted или как приложение Git-форжа), управляемый конфигом `renovate.json`.
-- **Dependabot** — встроенный в GitHub механизм авто-PR по зависимостям (конфиг `dependabot.yml`).
+- **Dependabot** — встроенный в GitHub механизк авто-PR по зависимостям (конфиг `dependabot.yml`). Подробно о конфигурации для GitHub Actions, security/version updates, auto-merge — в **[dedicated файле](../Github_CI/dependabot.md)**.
 - **Lockfile** — файл фиксации точных версий (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.sum`), гарантирующий воспроизводимость (см. **[Управление артефактами](./artifact_management.md)**).
 - **SCA (Software Composition Analysis)** — анализ состава зависимостей на уязвимости (Trivy, npm audit, Snyk, Grype).
 - **SBOM** — перечень компонентов; обязателен для комплаенса (см. **[Управление артефактами](./artifact_management.md)**).
@@ -75,6 +75,7 @@ Lockfile фиксирует точные версии транзитивных �
 ```
 
 ### Сценарий 2: Конфигурация Dependabot
+> **Примечание:** эта секция — краткий обзор. Для полной конфигурации Dependabot (github-actions ecosystem, security updates, grouping, auto-merge через workflow) — в **[dedicated файле](../Github_CI/dependabot.md)**.
 ```yaml
 # .github/dependabot.yml
 version: 2
@@ -227,3 +228,4 @@ Major-обновления исключаются правилом `matchUpdateT
 - **[Управление артефактами](./artifact_management.md)** — SBOM, lockfile, воспроизводимость, pin по digest.
 - **[DevSecOps: обзор](DevSecOps/devsecops_overview.md)** — место SCA в цепочке поставок.
 - **[Ключи кэша в GitLab CI](GitLab_CI/Advanced/gitlab_ci_caching/cache_keys.md)** — кэш зависимостей для быстрого аудита.
+- **[GitHub Dependabot](../Github_CI/dependabot.md)** — полная конфигурация Dependabot для GitHub (security updates, version updates, github-actions ecosystem, auto-merge, API управление alert-ами).

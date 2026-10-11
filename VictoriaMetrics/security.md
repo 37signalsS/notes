@@ -129,3 +129,4 @@ echo | openssl s_client -connect localhost:8428 -servername localhost 2>/dev/nul
 - [vmauth: прокси и маршрутизация](./vmauth_overview.md) — пользователи, ACL, токены;
 - [VictoriaMetrics: обзор](./overview.md) — флаги и сетевые порты;
 - [Prometheus: безопасность](../Prometheus/security.md) — аналог для стека Prometheus.
+# force reindex test

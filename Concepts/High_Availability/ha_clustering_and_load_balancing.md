@@ -1,5 +1,9 @@
 # Кластеризация и балансировка нагрузки для высокой доступности
 
+**Актуально для:** Linux HA stacks 2024+ (Pacemaker/Corosync, Keepalived, IPVS, HAProxy, Nginx), HTTP/3 (QUIC), gRPC, Gateway API v1.30+
+
+---
+
 ## Предварительные требования
 
 Для полноценного понимания данного раздела предполагается знакомство с:
@@ -39,13 +43,13 @@
 *   **Преимущества:** Экстремально высокая производительность, низкая нагрузка на CPU. Не требует расшифровки TLS (SSL Passthrough).
 *   **Технология Direct Server Return (DSR):** Метод, при котором балансировщик (например, IPVS) обрабатывает только входящие пакеты, а ответные пакеты бэкенд отправляет клиенту напрямую. 
     *   *Зачем:* В веб-трафике ответ обычно в десятки раз больше запроса. DSR устраняет «бутылочное горлышко» на исходящем канале балансировщика.
-*   **Инструменты:** **IPVS (LVS)**, **HAProxy** (mode `tcp`), Cloud NLB.
+*   **Инструменты:** **IPVS (LVS)**, **HAProxy** (mode `tcp`), `ipvsadm`.
 
 #### 2. Уровень L7 (Прикладной)
 Балансировка с анализом содержимого протокола (HTTP, gRPC, MySQL).
 *   **Преимущества:** Умная маршрутизация на основе URL (например, `/api` на один пул, `/static` на другой), привязка сессий (Sticky Sessions), терминация SSL/TLS, WAF-фильтрация.
-*   **Вызов 2026 года:** Обязательная поддержка **HTTP/3 (QUIC)** и мультиплексирования в **gRPC**, где одно TCP-соединение несет множество запросов, требуя балансировки каждого стрима отдельно.
-*   **Инструменты:** **Nginx**, **Envoy**, **HAProxy** (mode `http`), Cloud ALB.
+*   **Актуальные вызовы:** Обязательная поддержка **HTTP/3 (QUIC)** и мультиплексирования в **gRPC**, где одно TCP-соединение несет множество запросов, требуя балансировки каждого стрима отдельно.
+*   **Инструменты:** **Nginx**, **Envoy**, **HAProxy** (mode `http`), `ipvsadm` (L7 через `ip_vs_http`).
 
 ### Алгоритмы распределения нагрузки
 
@@ -77,10 +81,29 @@
 
 ### Проверки состояния (Health Checks)
 
-- **TCP Check:** Проверка доступности порта (открытие/закрытие соединения).
-- **HTTP Check:** Запрос к эндпоинту (например, `/healthz`) с ожиданием статус-кода `200 OK`.
-- **gRPC Check:** Проверка работоспособности по нативному протоколу gRPC.
+Health checks — критически важный механизм для автоматического исключения нерабочих бэкендов из балансировки. Неправильно настроенные проверки приводят к Flapping или, наоборот, к отправке трафика на упавшие узлы.
+
+#### Типы проверок
+
+- **TCP Check:** Проверка доступности порта (открытие/закрытие соединения). Быстрая, но не гарантирует работоспособность приложения.
+- **HTTP Check:** Запрос к эндпоинту (например, `/healthz`) с ожиданием статус-кода `200 OK`. Проверяет не только порт, но и работоспособность приложения.
+- **gRPC Check:** Проверка работоспособности по нативному протоколу gRPC. Критична для микросервисных архитектур.
+- **SSL/TLS Check:** Проверка срока действия сертификата и цепочки доверия.
+
+#### Параметры настройки
+
+| Параметр | Описание | Рекомендация |
+| :--- | :--- | :--- |
+| `interval` | Частота проверок | 5-10 сек для критичных сервисов, 30 сек для второстепенных |
+| `timeout` | Таймаут ожидания ответа | 2-5 сек (должен быть меньше `interval`) |
+| `fall` | Количество провалов перед исключением | 3-5 |
+| `rise` | Количество успехов перед возвратом | 2-3 |
+| `port` | Порт для проверки | Должен совпадать с портом сервиса или быть отдельным health port |
+
 - **Passive Health Check (Outlier Detection):** Анализ реального трафика. Балансировщик исключает узел, если тот начинает возвращать аномальное количество ошибок (например, 5xx) без специальных проверочных запросов.
+  - **Конфигурация HAProxy:** `error-log-status` + `track-sc` + `agent-check`.
+  - **Конфигурация Envoy:** `outlier_detection` с `consecutive_5xx`, `interval`, `base_ejection_time`.
+  - **Конфигурация Nginx Plus:** `peer` Health Checks с `max_fails` и `fail_timeout`.
 
 ## Практические сценарии
 
@@ -89,17 +112,161 @@
 * **Shared-Nothing:** Каждый узел автономен. Состояние синхронизируется через внешнее хранилище или репликацию (например, Redis, Cassandra). Это наиболее масштабируемый подход.
 * **Shared-Disk:** Узлы используют общее блочное или файловое хранилище (SAN, Ceph, NFS). Упрощает переключение (Failover) данных, но создает риск **SPOF** на уровне дисковой системы.
 
+### Graceful Shutdown и Connection Draining
+
+При выводе узла из балансировки (плановое обслуживание или автоскейлинг) важно корректно завершить активные соединения, избежав `Connection Reset` и ошибок `5xx` у клиентов.
+
+#### Механизм
+
+1.  **Уведомление балансировщика:** Узел переводится в режим `drain`/`standby`. Балансировщик перестает направлять *новые* соединения на этот узел.
+2.  **Ожидание завершения:** Узел продолжает обслуживать *существующие* соединения до их естественного завершения или до истечения таймаута.
+3.  **Принудительное завершение:** Если по истечении таймаута соединения остались, узел завершает работу принудительно (`SIGTERM` → `SIGKILL`).
+
+#### Конфигурация инструментов
+
+**HAProxy:**
+```bash
+# Вывод сервера из балансировки (drain mode)
+echo "disable server web_pool/srv2" | socat stdio /var/run/hapexe-enter/haproxy.sock
+
+# Таймаут ожидания завершения соединений
+timeout server 30s
+timeout tunnel 1m  # Для WebSocket/long-poll
+```
+
+**Nginx:**
+```bash
+# Graceful shutdown
+worker_shutdown_timeout 30s;
+
+# В upstream: медленное удаление сервера
+resolvers 10.0.0.1 valid=30s;
+set $backend_server "http://web_pool";
+```
+
+**Keepalived + IPVS:**
+```bash
+# В конфиге Keepalived: weight 0 убирает сервер из rotation
+virtual_server 10.0.0.100 443 {
+    real_server 192.168.1.10 443 {
+        weight 0  # drain mode
+```
+
+#### Проверка работы Connection Draining
+
+```bash
+# 1. Отслеживание активных соединений на draining-узле
+ss -tnp | grep <backend_ip>
+
+# 2. Логи балансировщика: убедитесь, что новые запросы не идут на draining-узел
+tail -f /var/log/haproxy.log | grep draining
+
+# 3. Проверка HTTP-кодов: при корректном drain должно быть 200/5xx только от активных соединений
+curl -s -o /dev/null -w "%{http_code}" http://lb/healthz
+```
+
 ### Современные среды развертывания
 
 #### 1. Kubernetes
+
 - **kube-proxy:** Базовая L4 балансировка внутри кластера через iptables или высокопроизводительный **IPVS**.
 - **Ingress Controller:** Традиционная L7 точка входа (Nginx Ingress, Traefik).
 - **Gateway API:** Современный стандарт Kubernetes (v1.30+), приходящий на смену Ingress. Обеспечивает разделение ролей (инфраструктура vs приложение) и нативную поддержку L4/L7 маршрутизации через `HTTPRoute` и `TCPRoute`. См. **[Обзор Gateway API](../../Kubernetes/Networking/gateway_api/definitions.md)**.
+- **Topology Aware Routing:** В K8s 1.21+ можно направлять трафик на бэкенды в той же зоне, уменьшая латентность. Настраивается через `topologyKeys` в Service.
 
 #### 2. Service Mesh (Envoy / Istio / Linkerd)
+
 Балансировка переносится на сторону клиента (**Client-side Balancing**).
 - **Sidecar-модель:** Балансировка через прокси Envoy внутри каждого пода.
 - **Ambient-модель (Sidecar-less):** Разделение на легкий L4-прокси (**Ztunnel**) на каждом узле и Waypoint-прокси для L7-логики. Обеспечивает mTLS и сложную балансировку с минимальным оверхедом.
+- **Failover в Mesh:** При отказе узла клиентский sidecar автоматически исключает его из ротации на основе passive health checks (异常率, соединения без ответа).
+
+### Bare-metal и виртуализированные среды
+
+#### 1. IPVS (IP Virtual Server) + Keepalived
+
+Классическая L4 балансировка для on-premise инфраструктуры.
+- **Режимы:** NAT (широкий), DSR (Direct Server Return, высокая производительность), TUN (туннелирование).
+- **Алгоритмы:** `rr`, `wrr`, `lc`, `wlc`, `lblc`, `lblcr`, `dh` (destination hashing), `sh` (source hashing), `sed` (shortest expected delay), `nq` (never queue).
+- **Scheduler Tuning:** Для производительности используйте `sed` или `nq` вместо `rr`. Пакеты `ip_vs` ядра Linux обрабатывают балансировку без перехода в пользовательское пространство.
+
+```bash
+# Пример: IPVS + Keepalived на двух узлах
+# Узел 1 (MASTER):
+ipvsadm -A -t 10.0.0.100:443 -s rr
+ipvsadm -a -t 10.0.0.100:443 -r 192.168.1.10:443 -g -w 2
+ipvsadm -a -t 10.0.0.100:443 -r 192.168.1.11:443 -g -w 1
+
+# Keepalived конфиг (фрагмент):
+vrrp_instance VI_1 {
+    state MASTER
+    interface eth0
+    virtual_router_id 51
+    priority 100
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass <HACLUSTER_PASSWORD>
+    }
+    virtual_ipaddress {
+        10.0.0.100/32 dev eth0
+    }
+}
+```
+
+#### 2. HAProxy
+
+Самый распространенный балансировщик для L4/L7.
+- **Mode TCP:** Прозрачная балансировка без разбора протокола. Подходит для TLS-passthrough, MySQL, PostgreSQL, Redis.
+- **Mode HTTP:** Полноценный reverse proxy с заголовками, cookies, retries, circuit breaking.
+- **Performance Tuning:**
+  - `nbproc` / `nbthread`: количество процессов/потоков. По умолчанию 1 процесс = все ядра через `cpu-map`.
+  - `maxconn`: общий лимит соединений. Для высоконагруженных систем: `maxconn 100000`.
+  - `tune.ssl.default-dh-param`: минимум 2048 для безопасного TLS.
+
+```bash
+# Пример: HAProxy TCP mode с health check и connection draining
+frontend web_frontend
+    bind *:443
+    mode tcp
+    default_backend web_pool
+
+backend web_pool
+    mode tcp
+    balance roundrobin
+    option tcp-check
+    server srv1 192.168.1.10:443 check inter 5s fall 3 rise 2
+    server srv2 192.168.1.11:443 check inter 5s fall 3 rise 2
+
+    # Graceful shutdown: при изменении weight=0 HAProxy не разрушает соединения
+    # Вывод через: echo "set weight web_pool/srv1 0" | socat stdio /var/run/haproxy.sock
+```
+
+#### 3. Nginx / Angie
+
+- **Nginx:** L7 балансировщик с модульной архитектурой. Поддерживает `upstream` с алгоритмами `round-robin`, `least_conn`, `hash`, `ip_hash`.
+- **Angie:** Форк Nginx с дополнительными возможностями (активная проверка состояния, API управления, L7 балансировка встроена).
+- **Key Optimization:** Используйте `worker_processes auto;` и `worker_rlimit_nofile 65536;` для высокой нагрузки.
+
+```bash
+# Пример: Nginx upstream с least_conn и passive health check
+upstream backend {
+    least_conn;
+    server 192.168.1.10:443 max_fails=3 fail_timeout=30s;
+    server 192.168.1.11:443 max_fails=3 fail_timeout=30s;
+    keepalive 32;
+}
+
+server {
+    listen 443 ssl;
+    location / {
+        proxy_pass https://backend;
+        proxy_next_upstream error timeout http_500;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 30s;
+    }
+}
+```
 
 ### Глобальная балансировка (GSLB)
 
@@ -122,11 +289,22 @@
 | :--- | :--- | :--- | :--- |
 | **Неравномерная нагрузка (Skew)** | Использование Round Robin для запросов разной тяжести или долгоживущие соединения (gRPC). | `ipvsadm -Ln --stats` — статистика соединений по серверам; `ss -s` — общая статистика соединений; `curl -s http://lb/metrics \| grep active_connections` | Перейти на **Least Connections**. Проверить поддержку балансировки стримов (L7) для HTTP/2. |
 | **Flapping (Дребезг)** | Нестабильная сеть или слишком агрессивные таймауты Health Checks. | `ipvsadm -Ln --connection \| grep <backend>` — проверка активных соединений; `journalctl -u haproxy -f` — логи HAProxy в реальном времени; `ping -i 0.1 <backend>` — латентность | Увеличить `fall` (кол-во провалов до исключения) и `interval`. Проверить логи бэкенда на GC-паузы. |
-| **Потеря сессий** | Отсутствие Sticky Sessions при наличии локального состояния (Auth/Cart) в приложении. | `curl -v -c /tmp/cookies http://lb/login` — проверка установки cookie; `haproxy -c -f /etc/haproxy/haproxy.cfg` — валидация конфигурации | Включить Cookie-based persistence. В 2026 году рекомендуется вынос состояния в **Redis Cluster**. |
+| **Потеря сессий** | Отсутствие Sticky Sessions при наличии локального состояния (Auth/Cart) в приложении. | `curl -v -c /tmp/cookies http://lb/login` — проверка установки cookie; `haproxy -c -f /etc/haproxy/haproxy.cfg` — валидация конфигурации | Включить Cookie-based persistence. Рекомендуется вынос состояния в **Redis Cluster** или JWT. |
 | **Задержки на L7** | Высокая нагрузка на CPU балансировщика из-за TLS-терминации или WAF. | `ss -tnp \| grep <lb_pid>` — открытые соединения; `perf top -p <lb_pid>` — профилирование CPU; `openssl s_client -connect lb:443` — проверка TLS | Использовать аппаратное ускорение TLS или перенести терминацию на отдельный слой (Edge). |
 | **Бэкенд не принимает трафик** | Health Check не проходит; бэкенд помечен как DOWN. | `ipvsadm -Ln` — проверка статуса серверов; `curl -s http://lb/healthz` — проверка health check эндпоинта; `systemctl status <backend>` — статус сервиса | Проверить health check конфигурацию. Убедиться, что health check эндпоинт возвращает 200 OK. |
 | **Высокий RTT на L4** | Проблемы с сетевым стеком; DSR не работает; асимметричный маршрут. | `tcpdump -i <interface> port 80` — захват пакетов; `ip route get <client_ip>` — проверка маршрута; `ethtool -S <interface> \| grep error` — ошибки на интерфейсе | Проверить маршрутизацию. Убедиться, что DSR настроен правильно (ответный трафик идет напрямую от бэкенда к клиенту). |
 | **N+M кластер: элементы не переключаются** | Кворум не собран; фенсинг не настроен; STONITH-агент не работает. | `pcs status` — статус кластера; `stonith_admin -H` — статус STONITH; `corosync-cfgtool -s` — статус линков | Проверить кворум, STONITH, настроить `pcs cluster auth` и `pcs stonith create`. |
+| **TCP port exhaustion на балансировщике** | Не хватает локальных портов для исходящих соединений (`ip_local_port_range`). | `ss -s` — количество соединений в `syn_sent`/`established`; `cat /proc/sys/net/ipv4/ip_local_port_range` | Увеличить диапазон: `echo "1024 65535" > /proc/sys/net/ipv4/ip_local_port_range`. Включить `net.ipv4.tcp_tw_reuse=1`. |
+| **DSR: ответный трафик не возвращается напрямую** | Асимметричная маршрутизация или отсутствие loopback для VIP. | `ip route get <client_ip>` с бэкенда; `arping -D -I <iface> <vip>` — проверка gratuitous ARP | Убедиться, что на бэкендах включен `arp_ignore=1` и `arp_announce=2`. Проверить, что VIP доступен на loopback или отдельном интерфейсе. |
+| **Flapping при высокой нагрузке** | Health check interval слишком короткий; GC-паузы на бэкенде > timeout. | `journalctl -u haproxy -f` — логи; `curl -w "%{time_total}\n" http://backend/healthz` — замер времени ответа | Увеличить `timeout` health check до 5-10 сек. Включить passive health checks вместо агрессивных активных. |
+| **HTTP/2 connection leak** | HAProxy/Nginx не ограничивает количество стримов на соединение; клиент держит соединение открытым. | `ss -tnp | grep <lb_pid>` — старые соединения; `tcpdump -i <iface> -n port 443` — анализ пакетов | Включить `http-request set-var(req.streams) int(0)` и отслеживать. Настроить `max_request_rate` и `timeout http-request`. |
+| **IPVS: IP fragmentation** | MTU mismatch между балансировщиком и бэкендами; фрагментация пакетов. | `ip link show <iface>` — MTU; `ping -M do -s 1472 <backend>` — проверка PMTU | Согласовать MTU на всех интерфейсах. Для IPVS DSR увеличьте MTU на jumbo frames (9000) или уменьшите MSS. |
+| **Health check flapping: бэкенд постоянно UP/DOWN** | Нестабильная сеть или timeout health check < реального времени ответа под нагрузкой. | `journalctl -u haproxy -f | grep check`; `ping -c 100 <backend>` — процент потерь | Увеличить `timeout` и `fall`/`rise`. Проверьте сеть на packet loss: `ethtool -S <iface> | grep -E "drop|error"`. |
+| **gRPC health check не работает** | Нет поддержки gRPC health checking на балансировщике или в приложении. | `grpcurl -plaintext <backend>:50051 grpc.health.v1.Health/Check` — проверка вручную | Разверните `grpc-health-probe` как sidecar или включите native gRPC health check в HAProxy 2.6+ (`grpc-check`). |
+| **Вес бэкендов (weight) не применяется** | В IPVS: не указан scheduler `-s wrr`. В HAProxy: `balance` не настроен. | `ipvsadm -Ln` — алгоритм балансировки; `haproxy -c -f /etc/haproxy/haproxy.cfg` — валидация | Для IPVS пересоздайте правило с `-s wrr`. Для HAProxy добавьте `balance roundrobin` или `balance leastconn`. |
+| **IPVS: conntrack table full** | Таблица отслеживания соединений переполнена; новые соединения отбрасываются. | `conntrack -C` — текущее количество; `cat /proc/sys/net/netfilter/nf_conntrack_max` — лимит; `dmesg | grep conntrack` | Увеличить лимит: `echo "1048576" > /proc/sys/net/netfilter/nf_conntrack_max`. Отключить conntrack для известных трафиков (`-j NOTRACK` в iptables). |
+| **Пакеты не доходят до бэкенда** | Firewall на балансировщике или бэкенде блокирует трафик; неверный `bind`/`real_server` IP. | `iptables -L -n -v`; `tcpdump -i <iface> host <backend_ip> and port <port>` | Открыть порты на балансировщике и бэкендах. Проверить `ipvsadm -Ln` — совпадают ли IP и порты. |
+| **VIP мигрирует, но ARP кеширован на соседних хостах** | После failover VIP балансировщика соседние хосты держат старый MAC. | `arping -D -I <iface> <vip>` — отправка gratuitous ARP; `tcpdump -i <iface> arp` — наблюдение | Настроить `garp_interval` в Keepalived или выполнить `arping` после подъема VIP. Уменьшить `cache_timeout` в `/proc/sys/net/ipv4/neigh/*/base_reachable_time_ms`. |
 
 ---
 
@@ -142,6 +320,16 @@
 8. **Мониторинг всех бэкендов:** Настройте алерты на разницу в нагрузке между серверами > 20%. Используйте Prometheus + Grafana для визуализации распределения трафика.
 9. **Тестирование failover:** Регулярно отключайте бэкенды по одному и проверяйте, что трафик переключается без потерь соединений.
 10. **Резервирование балансировщика:** Используйте пару балансировщиков (Active-Passive через VRRP или Active-Active через DNS round-robin) для устранения SPOF.
+11. **Connection Draining — обязателен:** При выводе узла из балансировки используйте `drain` mode. HAProxy: `disable server`, Nginx: `worker_shutdown_timeout`, Keepalived: `weight 0`. Без draining клиенты получат 5xx.
+12. **Мониторинг метрик балансировщика:** Собирайте `active_connections`, `bytes_in/out_rate`, `http_response_time_avg`, `http_connect_rate` по каждому бэкенду. Настройте алерты на `backend_down` и `queue_full`.
+13. **TLS-терминация и аппаратное ускорение:** Для высоконагруженных систем используйте аппаратное ускорение TLS (AES-NI, Intel QAT) или вынесите терминацию на отдельный слой (Edge/Ingress Controller).
+14. **Валидация конфигурации:** Автоматизируйте проверку конфигов: `haproxy -c -f /etc/haproxy/haproxy.cfg`, `nginx -t`, `ipvsadm -L -n` в CI/CD pipeline. Ошибка в конфиге балансировщика = отказ всего сервиса.
+15. **Логирование и трассировка:** Включите логирование HTTP-запросов с `trace-id`/`request-id`. В HAProxy: `option httplog` + `capture request header X-Request-ID len 36`. Это позволяет отслеживать запрос через балансировщик → бэкенд → БД.
+16. **Ограничение скорости (Rate Limiting):** Настройте `rate-limit` на уровне балансировщика для защиты бэкендов от burst-нагрузки и DDoS. HAProxy: `stick-table` + `http-request track-sc`. Nginx: `limit_req_zone`.
+17. **Таймауты соответствуют SLA:** `timeout connect`, `timeout server`, `timeout http-request` должны быть согласованы с ожиданиями клиента. Для API с SLA 99.9% timeout не должен превышать 5 сек.
+18. **Конфигурация под версионирование:** Храните конфиги HAProxy/Nginx/IPVS в Git. Используйте Ansible/Terraform для deployment. Конфиг балансировщика — критическая инфраструктура, его потеря = downtime.
+19. **Тестирование Health Checks:** Регулярно проверяйте, что health check действительно детектирует сбой. Останавливайте бэкенд и убеждайтесь, что балансировщик исключает его за время, соответствующее `fall * interval`.
+20. **Избегайте Session Affinity без необходимости:** Sticky Sessions нарушают балансировку и усложняют failover. Используйте JWT или внешнее хранилище сессий (Redis) вместо IP-hash или cookie-based affinity.
 
 ## Граничные случаи и ограничения (Edge Cases)
 
@@ -151,10 +339,34 @@
 - **P2C и малые пулы:** При пуле из 2-3 серверов P2C вырождается в Round Robin. Используйте классические алгоритмы для малых пулов.
 - **gRPC и L4 балансировка:** При L4 балансировке gRPC одно TCP-соединение перенаправляется на один бэкенд. Если используется HTTP/2 multiplexing, все стримы попадают на один сервер. Решение: L7 балансировка или client-side balancing.
 - **Anycast и BGP:** Anycast требует собственного AS и IP-пространства. При сбое одного узла BGP-конвергенция занимает 30-60 секунд. Для мгновенного переключения используйте BFD (Bidirectional Forwarding Detection).
+- **IPVS conntrack table overflow:** При высокой нагрузке таблица `nf_conntrack` может переполниться, что приведет к отбрасыванию пакетов. Мониторьте `conntrack -C` и увеличьте `nf_conntrack_max`.
+- **HTTP/2 connection coalescing:** Браузеры coalesce соединения к одному бэкенду. При выходе бэкенда из балансировки все соединения к нему разрываются. Используйте `max_concurrent_streams` для ограничения.
+- **Keepalived и gratuitous ARP:** После failover VIP может не обновиться в ARP-таблицах соседей. Настройте `garp_interval` и `garp_master_delay` в Keepalived.
+- **SSL session reuse и performance:** Повторное использование SSL-сессий (session tickets, session IDs) критично для производительности TLS. HAProxy/Nginx должны передавать `SSL-SESSION-ID` клиентам.
+- **Backend overloaded с медленными запросами:** При большом количестве медленных запросов (например, отчетов)Least Connections может направить все новые запросы на один бэкенд. Используйте P2C или ограничьте `maxconn` на бэкенд.
+- **Health check bypass через localhost:** Если балансировщик и бэкенд на одном хосте, health check через loopback (127.0.0.1) обходит сеть и быстрее, но не детектирует сетевые проблемы.
+- **IPVS и NFTables/iptables coexistence:** В новых дистрибутивах (Debian 12+, RHEL 9+) nftables может конфликтовать с ipvsadm. Убедитесь, что `ip_vs` модуль загружен и `nft` правила не блокируют VIP трафик.
+- **DNS round-robin без Health Checks:** Простой DNS round-robin не удаляет нерабочие узлы из пула. TTL кэширования может составлять минуты. Используйте DNS-based GSLB с health checking (PowerDNS, BIND + plugins).
+- **Graceful shutdown race condition:** Если балансировщик не успевает завершить соединения перед остановкой бэкенда, клиенты получат `RST`. Настройте `timeout stop-server` в systemd и `shutdown_timeout` в Keepalived.
 
 ### См. также
 - **[Механизмы Failover и Heartbeat](./ha_failover_mechanisms.md)** — теория кворума, VRRP, STONITH.
 - **[Управление задержками (Tail Latency)](./tail_latency_mitigation.md)** — как балансировка влияет на p99.
+
+---
+
+## Проверка и валидация
+
+1.  **Статус балансировщика:** `systemctl status haproxy` / `systemctl status nginx` / `ipvsadm -Ln` — сервис активен, правила применены.
+2.  **Health Checks:** `curl -s http://lb/healthz` — все бэкенды возвращают `200 OK`. Проверьте, что упавший бэкенд помечен как `DOWN`/`inactive`.
+3.  **Распределение нагрузки:** `ipvsadm -Ln --stats` или HAProxy stats page — убедитесь, что трафик распределяется согласно выбранному алгоритму.
+4.  **Connection draining:** Выведите узел в `drain` mode и проверьте, что новые соединения не направляются на него: `ss -tnp | grep <draining_ip>` — количество соединений должно уменьшаться.
+5.  **DSR (если используется):** С бэкенда выполните `tcpdump -i <iface> host <client_ip> and port <port>` — ответный трафик должен идти напрямую клиенту, минуя балансировщик.
+6.  **Graceful shutdown:** Остановите бэкенд (`systemctl stop app`) и убедитесь, что балансировщик не посылает новые запросы, а существующие завершаются gracefully.
+7.  **Failover балансировщика (если VRRP):** Перезагрузите MASTER-балансировщик. VIP должен переехать на BACKUP в течение `advert_int` (обычно 1 сек). Проверьте: `ip addr show` на обоих узлах.
+8.  **Мониторинг:** Проверьте метрики в Prometheus: `haproxy_backend_up{backend="web_pool"}`, `ip_vs_conn_total`, `nginx_connections_active`.
+9.  **Логи:** Убедитесь, что логи балансировщика содержат `trace-id`/`request-id` и доступны в ELK/Grafana Loki.
+10. **Валидация конфигурации:** `haproxy -c -f /etc/haproxy/haproxy.cfg`, `nginx -t`, `keepalived -C -f /etc/keepalived/keepalived.conf` — вывод без ошибок.
 
 ---
 
@@ -179,3 +391,14 @@
 - [ ] Резервирование балансировщика (VRRP или Active-Active)
 - [ ] Мониторинг настроен: распределение трафика по бэкендам, latency, error rate
 - [ ] Тест failover выполнен: отключение бэкенда по одному, проверка отсутствия потерь
+- [ ] Connection Draining протестирован: вывод узла из балансировки не вызывает 5xx у клиентов
+- [ ] Graceful shutdown настроен на бэкендах: при остановке сервис завершает активные соединения
+- [ ] Таймауты согласованы с SLA: `timeout server`, `timeout connect`, `timeout http-request`
+- [ ] TLS-терминация настроена с аппаратным ускорением или отдельным Edge-слоем
+- [ ] Валидация конфигурации автоматизирована в CI/CD (`haproxy -c`, `nginx -t`)
+- [ ] Логи балансировщика содержат `trace-id`/`request-id` и доступны в централизованном хранилище
+- [ ] Rate Limiting настроен для защиты бэкендов от burst-нагрузки
+- [ ] Конфиги балансировщика хранятся в Git и развертываются через IaC (Ansible/Terraform)
+- [ ] Health Checks протестированы: остановка бэкенда детектируется за `fall * interval`
+- [ ] Мониторинг настроен на разницу нагрузки между бэкендами > 20%
+- [ ] Алерты настроены: `backend_down`, `queue_full`, `high_error_rate`, `latency_p99`
