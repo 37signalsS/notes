@@ -1,319 +1,494 @@
 # GitHub CLI (gh): Управление GitHub из терминала
 
-**Актуально для:** GitHub CLI (gh) v2.99+, октябрь 2026 (API v3/v4, Extensions, Aliases, `gh repo read-file/read-dir`, `--attach` для PR/Issue, `gh issue develop --worktree`, `gh pr checkout --worktree`, Semantic search, `gh project` / `gh discussion` / `gh skill`)
+**Актуально для:** GitHub CLI (gh) 2.102.x
 
-GitHub CLI (`gh`) — официальный клиент командной строки от GitHub. Позволяет управлять Pull Requests, Issues, Releases, Actions, Projects, Discussions и многими другими функциями GitHub прямо из терминала, минуя веб-интерфейс. CLI работает с REST API (через `gh api`) и встроенными подкомандами, которые являются thin wrapper над API.
+GitHub CLI (`gh`) — официальный инструмент командной строки для взаимодействия с GitHub.com и локальными серверами GitHub Enterprise Server (GHES). Утилита предоставляет прямой доступ к операциям платформы (Pull Requests, Issues, Releases, Actions, Secrets, Variables, Actions Cache, Attestations) без необходимости использования веб-интерфейса, а также выступает в роли клиента к REST API (v3) и GraphQL API (v4). В инфраструктурной практике DevOps, SRE и системного администрирования `gh` применяется для автоматизации пайплайнов, headless-аутентификации на раннерах, аудита состояния воркфлоу, администрирования репозиториев и проверки цепочки поставок ПО.
 
 ## Определения
 
-- **GitHub CLI (gh)**: Официальный CLI-клиент для взаимодействия с GitHub. Устанавливается отдельно (`brew install gh` / `apt install gh` / `winget install --id GitHub.cli`) и аутентифицируется через `gh auth login`.
-- **Authentication token**: Персональный токен (Fine-grained PAT — рекомендуется) или OAuth App token, сохраняемый в `~/.config/gh/hosts.yml`. CLI использует его для всех запросов к API.
-- **`gh api`**: Универсальная подкоманда для прямого вызова любого REST или GraphQL endpoint. Используется, когда нет встроенной подкоманды.
-- **Extension**: Плагин для gh, написанный на любом языке. Устанавливается через `gh extension install`. Запускается как подпроцесс.
-- **Alias**: Псевдоним (alias) для подкоманд, сокращающий длинные цепочки флагов. Создаётся через `gh alias set`. Хранится в `~/.config/gh/aliases.yml`.
-- **Enterprise Server**: CLI поддерживает github.com и локальные GitHub Enterprise Server (GHE) через `--hostname` и отдельные профили аутентификации.
-- **`gh repo read-file` / `gh repo read-dir`** (preview, v2.95+): Чтение файлов и листинг директорий удалённого репозитория без клонирования. Поддерживают `--ref` (branch/tag/commit), `--json`, `--jq`, `--template`, `--output` (write to file).
-- **`--attach` flag** (v2.99+): Загрузка вложений (изображения, видео) в Issues, PRs, комментарии. Повторяемый флаг, батчи до 50 файлов.
-- **Worktree support** (v2.99+): `gh issue develop --checkout --worktree <path>` и `gh pr checkout --worktree <path>` — создание linked branch в отдельном git worktree, не затрагивая текущую рабочую копию.
-- **Semantic search** (v2.99+): `gh search issues --search-type semantic|hybrid` — семантический поиск по issue/PR (требует GitHub.com или GHEC).
-- **Projects v2 CLI** (`gh project`): Управление Projects (v2) — создание, поля, items, views.
-- **Discussions CLI** (`gh discussion`): Управление GitHub Discussions — list, view, create, comment, category.
-- **Skills CLI** (`gh skill`): Управление GitHub Copilot skills для агентов (preview).
+- **GitHub CLI (`gh`)**: Консольный клиент от GitHub, скомпилированный на Go. Предоставляет высокоуровневые интерфейсы к объектам платформы и низкоуровневый доступ к API через подкоманду `gh api`.
+- **Authentication Token**: Токен доступа (Fine-grained Personal Access Token, Classic PAT или GitHub App Installation Token), применяемый для авторизации запросов к API.
+- **`gh api`**: Универсальная подкоманда для отправки произвольных REST и GraphQL запросов к GitHub API с поддержкой встроенной пагинации, кэширования заголовков и обработки статус-кодов.
+- **Extension**: Модуль расширения базовой функциональности `gh`, оформленный как отдельный Git-репозиторий с исполняемым файлом `gh-<name>` и запускаемый CLI как дочерний процесс.
+- **Alias**: Пользовательский псевдоним подкоманды или цепочки флагов, сохраняемый в конфигурации CLI для сокращения стандартных операций.
+- **GitHub Enterprise Server (GHES)**: On-premises инсталляция платформы GitHub, доступ к которой настраивается через указание хоста (`--hostname`) или переменной окружения `GH_HOST`.
+- **`gh repo read-file` / `gh repo read-dir`**: Встроенные подкоманды для удалённого чтения содержимого файлов и листинга директорий в репозитории без выполнения операции `git clone`.
+- **Git Worktree Support**: Встроенная поддержка механизма `git worktree` в командах `gh pr checkout --worktree` и `gh issue develop --worktree`, позволяющая изолировать проверку ветки в отдельном каталоге без переключения текущего рабочего дерева.
+- **Attestation (`gh attestation`)**: Криптографически подписанное свидетельство о сборке и происхождении артефакта (SLSA provenance на базе Sigstore), проверяемое утилитой `gh` перед деплоем или установкой пакета.
+- **Actions Cache (`gh cache`)**: Механизм управления сохранёнными кэшами GitHub Actions на уровне репозитория для мониторинга квот и очистки устаревших данных.
 
-## Предварительные требования
+## Архитектура и принципы работы
 
-- **GitHub CLI (gh) v2.95+** для `gh repo read-file/read-dir`, v2.99+ для `--attach`, worktree, semantic search, `gh project` / `gh discussion` / `gh skill`
-- **curl** + **jq** для raw HTTP запросов (альтернатива `gh api`)
-- **Аутентификация**: Fine-grained PAT (рекомендуется), classic PAT (legacy), OAuth App token, или GitHub App Installation Token
-- **Сеть**: доступ к `api.github.com` (или вашему GES endpoint)
-- **Git** v2.38+ для worktree поддержки (`git worktree` команда)
-- **Для Actions**: `GITHUB_TOKEN` автоматически доступен в workflow (1,000 req/hr, 15,000 для GHE Cloud)
+### Движок CLI и абстракция над API
 
-## Архитектура и аутентификация
-
-### Модель аутентификации
+GitHub CLI выполняет роль интеллектуального интерфейса между пользователем/скриптом и HTTP API GitHub:
 
 ```text
-gh auth login
-    ↓
-Fine-grained PAT (ghp_...) или OAuth App token
-    ↓
-Saved to ~/.config/gh/hosts.yml (encrypted или в plaintext)
-    ↓
-Все подкоманды используют токен для API-вызовов
++--------------------------------------------------------------------------+
+|                     Пользовательский ввод / CI Скрипт                    |
++--------------------------------------------------------------------------+
+                                     |
+               +---------------------+---------------------+
+               |                                           |
+               v                                           v
+    Высокоуровневые подкоманды                 Низкоуровневый клиент
+    (gh pr, gh run, gh secret, ...)                  (gh api)
+               |                                           |
+               +---------------------+---------------------+
+                                     |
+                                     v
+                       Движок авторизации и контекста
+              (Разрешение токена: Env -> Keyring -> hosts.yml)
+                                     |
+                                     v
+                       HTTP Transport / TLS Клиент
+                  (Поддержка GHES, прокси, CA-сертификатов)
+                                     |
+               +---------------------+---------------------+
+               |                                           |
+               v                                           v
+     GitHub REST API (v3)                        GitHub GraphQL API (v4)
+   (https://api.github.com или                (https://api.github.com/graphql
+    https://ghes.corp/api/v3)                  или https://ghes.corp/api/graphql)
 ```
 
-- **Fine-grained PAT** (рекомендуется): настраивается с минимальными правами на конкретные репозитории/организации. Жизненный цикл токена можно ограничить (30/60/90 дней или custom).
-- **Classic PAT** (устаревает): широкие права, жизненный цикл до 30 дней (или never для enterprise).
-- **OAuth App**: для enterprise-окружений, когда нужен SSO. CLI запускает браузер для OAuth flow.
+При выполнении высокоуровневых команд (`gh pr create`, `gh run watch`, `gh release upload`) утилита транслирует аргументы в соответствующие REST или GraphQL вызовы:
+1. GraphQL применяется по умолчанию там, где требуется выборка комплексных связанных данных (детали PR со статусами проверок, комментариями и рецензентами) за один сетевой запрос, что минимизирует расход лимитов API (Rate Limits).
+2. REST API используется для бинарных загрузок, потоковой передачи логов и стандартных операций над ресурсами.
+3. Команды автоматически отслеживают заголовки ответа `X-RateLimit-Remaining` и `Retry-After`, выводя понятные предупреждения при исчерпании квот.
 
-### Конфигурация для Enterprise Server
+### Модель хранения учетных данных и порядок их разрешения
 
-```bash
-# Аутентификация на локальном GHE
-gh auth login --hostname ghe.example.com --with-token < token.txt
+При выполнении любого сетевого запроса CLI ищет токен авторизации по строгой иерархии приоритетов:
 
-# Переключение между хостами
-gh auth status --hostname ghe.example.com
-gh api --hostname ghe.example.com /user
-```
+1. **`GH_TOKEN`**: Переменная окружения наивысшего приоритета. Если задана, CLI использует её значение и полностью игнорирует сохранённые файлы конфигурации.
+2. **`GITHUB_TOKEN`**: Вторичная переменная окружения (стандартно экспортируемая внутри сред GitHub Actions runner).
+3. **`GH_ENTERPRISE_TOKEN`**: Специальная переменная окружения для обращений к хостам GitHub Enterprise Server.
+4. **Системный менеджер паролей (OS Keyring)**: На Linux — Secret Service API (`libsecret`), на macOS — Keychain, на Windows — Credential Manager.
+5. **Файл конфигурации хостов (`~/.config/gh/hosts.yml`)**: Применяется, если системный менеджер паролей недоступен или отключен в настройках.
 
-### Файлы конфигурации CLI
+### Структура каталогов и конфигурационные файлы
 
-| Файл | Назначение |
+Все параметры работы CLI сохраняются в пользовательском профиле:
+
+| Путь к файлу / каталогу | Назначение |
 |---|---|
-| `~/.config/gh/hosts.yml` | Аутентификация (токены, hostname, user, git_protocol) |
-| `~/.config/gh/aliases.yml` | Пользовательские aliases |
-| `~/.config/gh/config.yml` | Настройки: editor, pager, prompt, git_protocol, extensions |
-| `~/.local/share/gh/extensions/` | Установленные extensions (или `GH_EXTENSION_DIR`) |
+| `~/.config/gh/config.yml` | Глобальные настройки: редактор (`editor`), протокол Git (`git_protocol`), пейджер (`pager`), поведение подсказок (`prompt`). |
+| `~/.config/gh/hosts.yml` | Профили авторизации: сопоставление хостов (`github.com`, домены GHES), логинов, токенов и протоколов передачи. |
+| `~/.config/gh/aliases.yml` | Зарегистрированные пользовательские псевдонимы (aliases). |
+| `~/.local/share/gh/extensions/` | Каталог установленных расширений (`GH_EXTENSION_DIR`). |
+
+Пример содержимого `~/.config/gh/hosts.yml`:
+
+```yaml
+github.com:
+    user: devops-lead
+    oauth_token: ghp_xxxxxxxxxxxxxxxxxxxx
+    git_protocol: ssh
+ghes.corp.local:
+    user: sre-admin
+    oauth_token: ghp_yyyyyyyyyyyyyyyyyyyy
+    git_protocol: https
+```
+
+### Модель неинтерактивного исполнения (Headless Automation)
+
+В автоматизированных средах (cron, bash-скрипты развертывания, systemd unit, CI/CD раннеры) интерактивные запросы ввода приводят к зависанию процесса. Для обеспечения детерминированного headless-исполнения:
+- Переменная `GH_PROMPT_DISABLED=1` гарантирует немедленное завершение с ошибкой вместо попытки интерактивного запроса в TTY.
+- Флаг `-R <owner>/<repo>` или переменная `GH_REPO` исключает необходимость нахождения процесса внутри клонированного репозитория Git.
+- Флаг `--hostname` или переменная `GH_HOST` явно адресует запросы на нужный сервер GHES.
 
 ## Практические сценарии
 
-### Сценарий 1: Базовая аутентификация и проверка статуса
+### Сценарий 1: Установка и неинтерактивная настройка в Linux
 
-**Предварительные требования**: Установленный `gh` (v2.70+).
+Установка пакета и настройка авторизации на сервере управления без использования веб-браузера.
+
+**Предварительные требования**:
+- Дистрибутив Linux (Debian/Ubuntu, RHEL/Rocky, Alpine) с правами суперпользователя.
+- Сгенерированный Fine-grained PAT или Classic PAT с правами `repo`, `read:org`.
 
 ```bash
-# Аутентификация в GitHub (OAuth flow через браузер)
-gh auth login
-# → Выбираем: GitHub.com / GitHub Enterprise Server
-# → Аутентификация: HTTPS / SSH
-# → Настроить как default? Yes
+# Установка в Debian / Ubuntu
+sudo mkdir -p -m 755 /etc/apt/keyrings
+wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null
+sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+sudo apt update && sudo apt install -y gh
 
-# Проверить статус аутентификации
+# Проверка версии
+gh --version
+# → gh version 2.102.0 (2026-09-30)
+
+# Неинтерактивная авторизация через токен из переменной окружения
+export GH_TOKEN="ghp_v4l1dt0k3nEx4mpl3Str1ng000000000000"
+echo "$GH_TOKEN" | gh auth login --with-token
+
+# Настройка git credential helper для автоматической авторизации git через gh
+gh auth setup-git
+
+# Проверка статуса авторизации
 gh auth status
 # → github.com
-# →   ✓ Logged in to github.com as <username> (GitHub.com)
-# →   ✓ GITHUB_TOKEN (персональный токен)
-
-# Для скриптов — аутентификация через токен
-echo $GH_TOKEN | gh auth login --with-token
-
-# Список репозиториев
-gh repo list
-# → owner/repo1   Description    public
-# → owner/repo2   Description    private
+# →   ✓ Logged in to github.com account devops-bot (hosts.yml)
+# →   - Active account: true
+# →   - Git operations protocol: https
+# →   - Token: ghp_************************************
+# →   - Token scopes: 'repo', 'read:org'
 ```
 
-- **Валидация**: `gh auth status` показывает `Logged in to github.com`; `gh repo list` возвращает репозитории с доступом токена.
+- **Валидация**: Команда `gh auth status` возвращает код `0` и подтверждает статус `Logged in to github.com account <username>`.
 
-### Сценарий 2: Работа с Pull Requests из терминала
+### Сценарий 2: Интеграция с локальным GitHub Enterprise Server (GHES) и корпоративным CA
+
+Подключение системного администратора к внутреннему корпоративному серверу GHES, использующему приватный корневой центр сертификации.
+
+**Предварительные требования**:
+- Доступность инсталляции GHES по адресу `https://ghes.corp.local`.
+- Файл корневого сертификата компании `/etc/ssl/certs/corp-ca.pem`.
+- PAT для пользователя на сервере GHES.
 
 ```bash
-# Создание PR с автоматическим заполнением из коммита и открытием в браузере
-gh pr create --fill --web
-# → Creating pull request for feature/auth from main
-# → https://github.com/owner/repo/pull/42
+# Авторизация на конкретном сервере GHES с передачей токена через stdin
+echo "$GHES_TOKEN" | gh auth login --hostname ghes.corp.local --with-token
 
-# Создание PR с указанием заголовка и описания
-gh pr create --title "feat: add auth module" \
-  --body "Implements OAuth2 authentication with PKCE" \
-  --reviewer "@org/team-backend" \
-  --assignee "@me" \
-  --label "feature,auth"
+# Передача пути к корпоративному CA-сертификату для корректной валидации TLS
+export SSL_CERT_FILE=/etc/ssl/certs/corp-ca.pem
 
-# Просмотр статуса CI/CD проверок
-gh pr checks
-# → ✓ test (2m) — passed
-# → ✓ lint (45s) — passed
+# Проверка соединения и метаданных инсталляции GHES через REST API
+gh api --hostname ghes.corp.local /api/v3/meta --jq '{installed_version: .installed_version, ver: .ver}'
+# → {
+# →   "installed_version": "3.16.2",
+# →   "ver": "3.16.2"
+# → }
 
-# Просмотр диффа PR
-gh pr diff
-# → diff --git a/src/auth.js b/src/auth.js
-# → + export function login() { ... }
+# Настройка хоста по умолчанию для текущей сессии
+export GH_HOST="ghes.corp.local"
 
-# Одобрение PR
-gh pr review 42 --approve --body "LGTM"
-
-# Squash + удаление ветки
-gh pr merge 42 --squash --delete-branch
-# → ✓ Squashed and merged pull request #42
-
-# Список открытых PR с фильтром
-gh pr list --state open --author "@me" --label "priority: high"
-
-# Просмотр PR по номеру
-gh pr view 42 --web
-# → Открывает PR в браузере
+# Список репозиториев на сервере GHES
+gh repo list internal-infra --limit 2
+# → internal-infra/ansible-playbooks  Private  2026-10-01T08:12:00Z
+# → internal-infra/terraform-modules  Private  2026-09-28T14:22:15Z
 ```
 
+- **Валидация**: Запрос `gh api --hostname ghes.corp.local /api/v3/meta` возвращает JSON с ключом `installed_version`, подтверждая успешное прохождение TLS-хэндшейка и авторизации.
+
+### Сценарий 3: Автоматизация секретов и переменных окружения
+
+Управление переменными и зашифрованными секретами CI/CD без использования веб-интерфейса и без оставления паролей в командной строке.
+
+**Предварительные требования**:
+- Права администратора или право записи в репозиторий `org/backend-service`.
+- Локальный конфигурационный файл с переменными окружения `.env.secrets`.
+
 ```bash
-# Просмотр последних смёрженных PR
-gh pr list --state merged --limit 3
-# → #142  feat: add caching      Merged  2 hours ago
-# → #141  fix: auth timeout      Merged  3 days ago
-# → #139  chore: deps update     Merged  1 week ago
+# Создание репозиторного секрета из переменной окружения
+export DB_PASSWORD="SuperSecretPassword123!"
+echo "$DB_PASSWORD" | gh secret set DB_PASSWORD -R org/backend-service
+
+# Установка секрета для конкретного окружения (Environment)
+echo "prod-db-token-xyz" | gh secret set DB_AUTH_TOKEN \
+  --repo org/backend-service \
+  --env production
+
+# Пакетная загрузка секретов из файла key=value
+cat << 'EOF' > /tmp/deploy.secrets
+REGISTRY_USER=ci-builder
+REGISTRY_PASSWORD=TokenSecretHashValue999
+EOF
+
+gh secret set -f /tmp/deploy.secrets -R org/backend-service
+rm -f /tmp/deploy.secrets
+# → ✓ Set secrets for org/backend-service
+
+# Установка незашифрованной переменной окружения Actions (Variables)
+gh variable set LOG_LEVEL --body "debug" -R org/backend-service --env staging
+# → ✓ Created variable LOG_LEVEL for org/backend-service
+
+# Просмотр списка настроенных секретов репозитория
+gh secret list -R org/backend-service
+# → NAME               UPDATED
+# → DB_PASSWORD        2026-10-11T12:00:00Z
+# → REGISTRY_PASSWORD  2026-10-11T12:00:02Z
+# → REGISTRY_USER      2026-10-11T12:00:02Z
+
+# Просмотр переменных окружения
+gh variable list -R org/backend-service --env staging
+# → NAME       VALUE   UPDATED
+# → LOG_LEVEL  debug   2026-10-11T12:01:10Z
 ```
 
-### Сценарий 3: Управление Issues и Releases
+- **Валидация**: Вызовы `gh secret list` и `gh variable list` отображают добавленные ключи без вывода их закрытых значений.
+
+### Сценарий 4: Диагностика, управление и мониторинг CI/CD пайплайнов (SRE Runbook)
+
+Оперативное реагирование на сбои пайплайнов, анализ логов упавших шагов и неинтерактивный перезапуск.
+
+**Предварительные требования**:
+- Доступ к репозиторию `org/backend-service` с настроенными GitHub Actions.
 
 ```bash
-# Список открытых issue с меткой "bug"
-gh issue list --label "bug" --state open
-# → #41   Login fails after password reset   Open    2 days ago
+# Получение списка последних 5 прогонов с фильтром по упавшим (failure)
+gh run list -R org/backend-service --status failure --limit 3
+# → STATUS  TITLE                WORKFLOW  BRANCH  EVENT  ID          ELAPSED  AGE
+# → ✗       fix: payment engine  CI        main    push   1122334455  4m12s    15m
+# → ✗       feat: add cache      CI        dev     push   1122334410  2m10s    1h
+# → ✗       chore: deps bump     Nightly   main    sched  1122333890  1m05s    6h
 
-# Создать issue из шаблона
-gh issue create --template "Bug_report" --title "Cache miss on cold start" --body "Steps to reproduce..."
+# Просмотр логов только упавших шагов (failed jobs) без выгрузки полного архива
+gh run view 1122334455 -R org/backend-service --log-failed
+# → CI / test (job 3344556677):
+# → Error: Process completed with exit code 1.
+# → FAIL tests/unit/payment_test.py::test_card_charge
 
-# Просмотр последних 3 закрытых issue
-gh issue list --state closed --limit 3
+# Перезапуск исключительно упавших задач прогона
+gh run rerun 1122334455 -R org/backend-service --failed-jobs
+# → ✓ Requested re-run of failed jobs in run 1122334455
 
-# Создание релиза
-gh release create "v1.4.2" \
-  --title "Release 1.4.2" \
-  --notes "Patch release with auth fixes" \
-  dist/app-1.4.2.tar.gz checksums.txt
+# Мониторинг прогона в реальном времени с кодом возврата пайплайна (--exit-status)
+# Флаг --exit-status вернёт ненулевой код (код 1), если воркфлоу завершится ошибкой
+gh run watch 1122334455 -R org/backend-service --exit-status
+# → ✓ main · CI · 1122334455: Succeeded 2s ago  (job test ✓ 1m30s)
+echo "Статус выполнения: $?"
+# → Статус выполнения: 0
 
-# Генерация заметок релиза из PR
-gh release create "v1.4.2" --generate-notes
-
-# Список релизов
-gh release list
-# → v1.4.2   Latest  Published  2 days ago
-# → v1.4.1           Published  1 week ago
-
-# Просмотр релиза
-gh release view v1.4.2 --web
+# Аварийная отмена зависшего или дублирующегося прогона
+gh run cancel 1122334410 -R org/backend-service
+# → ✓ Request to cancel run 1122334410 was submitted
 ```
 
-### Сценарий 4: Управление Actions и CI/CD из CLI
+- **Валидация**: `echo $?` после `gh run watch --exit-status` возвращает `0` при успешном прогоне и `1` при падении, что позволяет использовать команду в bash-скриптах деплоя: `gh run watch "$RUN_ID" --exit-status || exit 1`.
+
+### Сценарий 5: Публикация релизов и проверка цепочки поставок (Supply Chain Attestation)
+
+Сборка, публикация бинарного релиза с контрольными суммами и криптографическая проверка происхождения артефакта через Sigstore attestations.
+
+**Предварительные требования**:
+- Собранный дистрибутив `dist/app-v1.5.0.tar.gz`.
+- Сгенерированный файл контрольных сумм `dist/checksums.sha256`.
 
 ```bash
-# Просмотр текущих запусков workflow
-gh run list --limit 5
-# → 234567890  CI   ✓ Succeeded  1m ago  main
-# → 234567889  CI   ✗ Failed     3m ago  feature/auth
+# Генерация файла контрольных сумм SHA-256
+cd dist
+sha256sum app-v1.5.0.tar.gz > checksums.sha256
+cd ..
 
-# Просмотр деталей запуска
-gh run view 234567890
-# → Name:          CI (main)
-# → Status:        Succeeded
-# →   build  ✓  3m  ubuntu-latest
-# →   test   ✓  2m  ubuntu-latest
+# Создание релиза с автоматической генерацией Release Notes из коммитов и PR
+gh release create "v1.5.0" \
+  -R org/backend-service \
+  --title "Release v1.5.0" \
+  --generate-notes \
+  dist/app-v1.5.0.tar.gz dist/checksums.sha256
+# → https://github.com/org/backend-service/releases/tag/v1.5.0
 
-# Ожидание завершения запуска
-gh run watch
-# → ✓ main · CI · 234567890: Succeeded 12s ago  (job build ✓ 5s)
+# Скачивание ассета на целевом сервере для установки
+gh release download "v1.5.0" \
+  -R org/backend-service \
+  -p "app-v1.5.0.tar.gz" \
+  -p "checksums.sha256" \
+  -D /tmp/deploy
+# → Downloaded app-v1.5.0.tar.gz
+# → Downloaded checksums.sha256
 
-# Просмотр логов конкретного шага
-gh run view 234567890 --job build --log
+# Валидация контрольной суммы
+cd /tmp/deploy
+sha256sum -c checksums.sha256
+# → app-v1.5.0.tar.gz: OK
 
-# Повторный запуск проваленного пайплайна
-gh run rerun 234567889 --failed-jobs
-
-# Отмена запущенного пайплайна
-gh run cancel 234567891
+# Проверка криптографической аттестации артефакта (SLSA build provenance)
+gh attestation verify /tmp/deploy/app-v1.5.0.tar.gz \
+  --owner org
+# → ✓ Loaded digest sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 for app-v1.5.0.tar.gz
+# → ✓ Initialized verification material from public Good Health Ledger
+# → ✓ The attestation was signed by repository org/backend-service on commit 8a1f4b3
 ```
 
-### Сценарий 5: Прямые API-вызовы через `gh api`
+- **Валидация**: Вывод `gh attestation verify` подтверждает подлинность сборщика и совпадение хеша артефакта с записью в реестре подписей.
 
-`gh api` — универсальный клиент. Работает с REST и GraphQL:
+### Сценарий 6: Управление Pull Requests и изолированные Git Worktrees
+
+Рецензирование и тестирование изменений PR без переключения веток в текущем репозитории разработчика или администратора.
+
+**Предварительные требования**:
+- Git версии 2.38+ с поддержкой `git worktree`.
+- Локальный клон репозитория.
 
 ```bash
-# REST: информация о репозитории
-gh api repos/{owner}/{repo} --jq '.stargazer_count'
+# Неинтерактивное создание PR из текущей ветки в main
+gh pr create \
+  --title "fix(db): increase connection pool timeout" \
+  --body "Resolves SRE-1042 connection starvation under high load." \
+  --reviewer "org/sre-team" \
+  --label "bug,database"
+# → Creating pull request for fix/db-timeout into main in org/backend-service
+# → https://github.com/org/backend-service/pull/154
 
-# REST: список установок GitHub App
-gh api /app/installations --jq '.[].id'
+# Просмотр результатов CI-проверок для созданного PR
+gh pr checks 154
+# → ✓ test (unit)         passed  2m10s
+# → ✓ lint (flake8)       passed  45s
+# → ✓ security (codeql)   passed  3m15s
 
-# REST: создание токена установки с суженными правами
-gh api /app/installations/12345/access_tokens -X POST \
-  -f permissions='{"contents":"write","issues":"read"}'
+# Выкатка PR в отдельное git worktree без затрагивания текущей рабочей копии
+gh pr checkout 154 --worktree /tmp/review-pr-154
+# → Preparing worktree (new branch 'fix/db-timeout')
+# → HEAD is now at 8b43f11 fix(db): increase connection pool timeout
 
-# GraphQL: информация о текущем пользователе
-gh api graphql -f query='query { viewer { login name email } }'
+# Проверка файлов в изолированном каталоге
+ls -la /tmp/review-pr-154/config/database.yml
+# → -rw-r--r-- 1 devops devops 1042 Oct 11 12:15 /tmp/review-pr-154/config/database.yml
 
-# GraphQL: список последних 5 PR с их статусом
+# Завершение проверки и удаление временного worktree
+git worktree remove /tmp/review-pr-154
+# → Removed worktree /tmp/review-pr-154
+
+# Слияние PR методом squash с удалением исходной ветки
+gh pr merge 154 --squash --delete-branch --subject "fix(db): increase connection pool timeout (#154)"
+# → ✓ Squashed and merged pull request #154
+# → ✓ Deleted branch fix/db-timeout
+```
+
+- **Валидация**: `gh pr view 154 --json state --jq .state` возвращает `MERGED`.
+
+### Сценарий 7: Инспекция файлов и каталогов удаленного репозитория без клонирования
+
+Чтение конфигурационных файлов, манифестов или скриптов из удалённого репозитория на сервере, где не требуется клонировать весь репозиторий.
+
+**Предварительные требования**:
+- `gh` версии 2.95+.
+- Права на чтение репозитория `org/infra-configs`.
+
+```bash
+# Чтение структуры каталога на ветке main
+gh repo read-dir systemd/ -R org/infra-configs --ref main
+# → .
+# → ├── node-exporter.service (642 B)
+# → ├── prometheus.service    (814 B)
+# → └── vector.service        (920 B)
+
+# Чтение содержимого файла конфигурации непосредственно в stdout
+gh repo read-file systemd/vector.service -R org/infra-configs --ref main
+# → [Unit]
+# → Description=Vector Log Agent
+# → After=network.target
+# →
+# → [Service]
+# → ExecStart=/usr/bin/vector --config /etc/vector/vector.yaml
+# → Restart=always
+# →
+# → [Install]
+# → WantedBy=multi-user.target
+
+# Выгрузка файла в локальную файловую систему (--output)
+gh repo read-file systemd/vector.service -R org/infra-configs --ref v2.4.0 --output /etc/systemd/system/vector.service
+# → Wrote 920 bytes to /etc/systemd/system/vector.service
+```
+
+- **Валидация**: Проверка целостности файла `head -n 2 /etc/systemd/system/vector.service` показывает корректный заголовок `[Unit]`.
+
+### Сценарий 8: Прямые REST и GraphQL API-вызовы через `gh api`
+
+Извлечение инфраструктурных данных, информации о раннерах и управление вебхуками через прямой HTTP-мост CLI с пагинацией и фильтрацией.
+
+**Предварительные требования**:
+- Токен с правами `admin:org` или `repo`.
+
+```bash
+# REST: получение списка активных self-hosted раннеров организации с пагинацией
+gh api --paginate /orgs/my-org/actions/runners \
+  --jq '.runners[] | {id: .id, name: .name, os: .os, status: .status, busy: .busy}'
+# → {
+# →   "busy": false,
+# →   "id": 142,
+# →   "name": "srv-runner-01",
+# →   "os": "Linux",
+# →   "status": "online"
+# → }
+
+# REST: отправка тестового ping на существующий webhook
+gh api -X POST /repos/org/backend-service/hooks/98765432/pings
+# → HTTP/2.0 204 No Content
+
+# GraphQL: запрос последних 2 упавших воркфлоу с деталями шагов
 gh api graphql -f query='
 query {
-  repository(owner: "owner", name: "repo") {
-    pullRequests(last: 5, states: OPEN) {
-      nodes { title author { login } commits { totalCount } }
+  repository(owner: "org", name: "backend-service") {
+    checkRuns(last: 2, filterBy: {checkConclusion: FAILURE}) {
+      nodes {
+        name
+        status
+        conclusion
+        title
+      }
     }
   }
-}'
-
-# REST: обновление settings репозитория (branch protection через rulesets)
-gh api -X PUT /repos/{owner}/{repo}/branches/main/protection \
-  -f "required_status_checks[strict]"=true \
-  -f "required_pull_request_reviews[required_approving_review_count]"=1
+}' --jq '.data.repository.checkRuns.nodes[]'
+# → {
+# →   "conclusion": "FAILURE",
+# →   "name": "test-matrix (3.11)",
+# →   "status": "COMPLETED",
+# →   "title": "Tests failed on Python 3.11"
+# → }
 ```
 
-### Сценарий 6: Управление секретами через CLI
+- **Валидация**: Запрос возвращает валидный структурированный JSON без HTTP-ошибок (статусы 200/204).
+
+### Сценарий 9: Управление кэшем Actions и дисковым пространством
+
+Аудит и очистка дискового кэша GitHub Actions на уровне репозитория для предотвращения превышения квоты хранения (10 ГБ на репозиторий).
+
+**Предварительные требования**:
+- Права записи в репозиторий `org/backend-service`.
 
 ```bash
-# Список секретов репозитория
-gh secret list
-# → NAME          UPDATED
-# → NPM_TOKEN     2026-10-10
-# → AWS_ACCESS_KEY  2026-09-15
+# Вывод списка сохранённых ключей кэша с размером в МБ
+gh cache list -R org/backend-service --limit 10
+# → ID       KEY                                   SIZE (MB)  CREATED AT
+# → 8899001  Linux-poetry-3.11-hash-abc12345       342.15     2026-10-10T14:00:00Z
+# → 8899002  Linux-npm-cache-hash-def67890         128.40     2026-10-10T14:15:00Z
+# → 8899003  Linux-go-build-hash-ghi99999          850.10     2026-10-09T08:30:00Z
 
-# Установить секрет
-gh secret set AWS_ACCESS_KEY_ID --body "$AWS_ACCESS_KEY_ID"
+# Удаление устаревшего кэша по конкретному ключу
+gh cache delete "Linux-go-build-hash-ghi99999" -R org/backend-service
+# → ✓ Deleted cache key Linux-go-build-hash-ghi99999
 
-# Установить секрет из файла
-gh secret set APP_PRIVATE_KEY --body "$(cat private-key.pem)"
-
-# Удалить секрет
-gh secret remove NPM_TOKEN
-
-# Аналогично для organization
-gh secret list --type organization
-gh secret set ORG_TOKEN --body "$TOKEN" --type organization --org {org}
+# Полная очистка всего кэша репозитория (например, при отравлении кэша зависимостей)
+gh cache delete --all -R org/backend-service
+# → ✓ Deleted 2 caches
 ```
 
-### Сценарий 7: Aliases и Extensions
+- **Валидация**: Повторный вызов `gh cache list -R org/backend-service` возвращает пустой список (`No caches found`).
 
-**Aliases** — сокращения для часто используемых команд:
+### Сценарий 10: Пользовательские псевдонимы (Aliases) для автоматизации рутины DevOps
+
+Создание постоянных сокращений и макросов команд CLI для локальной консоли инженера.
 
 ```bash
-# Создать alias для часто используемого паттерна
-gh alias set create-pr 'pr create --fill --web'
-# Теперь: gh create-pr
+# Создание alias для быстрого создания PR с немедленным заполнением и назначением на себя
+gh alias set quick-pr 'pr create --fill --assignee "@me"'
 
-# Alias с шаблоном и переменными
-gh alias set cleanup-merged '
-  pr list --state merged --limit 50 --json number,headRefName \
-  --template "{{range .}}{{if eq .HeadRefName \"feature/\"}}{{.Number}} {{end}}{{end}}"'
+# Проверка вызова alias
+gh quick-pr
+# → Creating pull request for feature/cache into main...
 
-# Список aliases
+# Создание параметризованного alias для просмотра упавших задач воркфлоу
+gh alias set failed-run 'run view "$1" --log-failed'
+
+# Вызов с параметром run ID
+gh failed-run 1122334455
+# → Выводит лог падения задачи
+
+# Просмотр зарегистрированных aliases
 gh alias list
+# → failed-run: run view "$1" --log-failed
+# → quick-pr:   pr create --fill --assignee "@me"
+
+# Удаление alias
+gh alias delete quick-pr
+# → ✓ Deleted alias quick-pr
 ```
 
-**Extensions** — плагины, написанные сообществом:
-
-```bash
-# Установить extension
-gh extension install actions/cache-cleanup
-gh extension install seachicken/repo-dependency-graph
-
-# Список extensions
-gh extension list
-# → actions/cache-cleanup
-# → seachicken/repo-dependency-graph
-
-# Вызов extension
-gh cache-cleanup --repo {owner}/{repo}
-```
-
-### Сценарий 8: Управление Codespaces из CLI
-
-```bash
-# Список codespaces
-gh codespace list
-# → name          state     branch
-# → repo-main     Running   main
-
-# Создать codespace
-gh codespace create --repo {owner}/{repo} --branch main --machine "M (8 cores)"
-
-# Подключиться к codespace
-gh codespace code --repo {owner}/{repo}
-
-# Остановить/удалить codespace
-gh codespace stop --octal-repo {owner}/{repo}
-gh codespace delete --octal-repo {owner}/{repo}
-```
+- **Валидация**: `gh alias list` выводит актуальный перечень сохранённых псевдонимов из файла `~/.config/gh/aliases.yml`.
 
 ## Команды и справочник
 
@@ -321,62 +496,101 @@ gh codespace delete --octal-repo {owner}/{repo}
 
 | Подкоманда | Назначение |
 |---|---|
-| `gh auth login` / `gh auth logout` | Аутентификация |
-| `gh auth status` | Проверка статуса |
-| `gh repo` | Управление репозиториями (clone, create, view, list) |
-| `gh pr` | Pull Requests (create, view, merge, diff, checks, list) |
-| `gh issue` | Issues (create, list, view, close, comment) |
-| `gh run` | Workflow runs (list, view, watch, rerun, cancel) |
-| `gh release` | Releases (create, view, list, upload, delete) |
-| `gh secret` | Secrets (list, set, remove) |
-| `gh api` | Прямые API-вызовы (REST, GraphQL) |
-| `gh extension` | Управление extensions |
-| `gh alias` | Управление aliases |
-| `gh codespace` | Управление Codespaces |
-| `gh cache` | Управление кэшем Actions |
-| `gh label` | Управление метками (labels) |
-| `gh gist` | Управление gists |
-| `gh search` | Поиск по репозиториям, issues, PRs |
+| `gh auth login` / `logout` | Интерактивная или headless-авторизация в GitHub.com или GHES. |
+| `gh auth status` | Проверка токенов, активных учетных записей и доступных областей (scopes). |
+| `gh auth setup-git` | Интеграция `gh` в качестве git credential helper в `~/.gitconfig`. |
+| `gh repo` | Управление репозиториями: `clone`, `create`, `list`, `view`, `read-file`, `read-dir`. |
+| `gh pr` | Управление Pull Requests: `create`, `list`, `view`, `diff`, `checks`, `merge`, `checkout`. |
+| `gh issue` | Управление Issues: `create`, `list`, `view`, `close`, `comment`, `develop`. |
+| `gh run` | Управление прогонами Actions: `list`, `view`, `watch`, `rerun`, `cancel`, `download`. |
+| `gh workflow` | Управление файлами workflow: `list`, `view`, `enable`, `disable`, `run`. |
+| `gh release` | Управление релизами: `create`, `list`, `view`, `download`, `upload`, `delete`. |
+| `gh secret` | Управление зашифрованными секретами: `list`, `set`, `remove`. |
+| `gh variable` | Управление переменными окружения Actions: `list`, `set`, `get`, `delete`. |
+| `gh cache` | Управление кэшем Actions: `list`, `delete`. |
+| `gh attestation` | Криптографическая проверка происхождения артефактов: `verify`, `download`. |
+| `gh api` | Прямые сетевые запросы к REST и GraphQL API с пагинацией и JSON-фильтрацией. |
+| `gh alias` | Управление пользовательскими псевдонимами команд: `set`, `list`, `delete`. |
+| `gh extension` | Управление модулями расширения: `install`, `list`, `upgrade`, `remove`. |
 
-### Полезные флаги для `gh` и `gh api`
+### Флаги форматирования и контекста
 
-| Флаг | Описание |
+| Флаг | Контекст | Описание |
+|---|---|---|
+| `-R, --repo <[HOST/]OWNER/REPO>` | Глобальный | Явный выбор репозитория вне зависимости от текущего каталога Git. |
+| `--hostname <HOST>` | `gh auth`, `gh api` | Адресация конкретного сервера GitHub Enterprise Server. |
+| `--json <fields>` | Большинство команд | Вывод структурированного JSON вместо форматированной таблицы (например, `--json number,title,state`). |
+| `-q, --jq <expression>` | При `--json` или `gh api` | Фильтрация вывода встроенным синтаксисом jq (например, `-q '.[].name'`). |
+| `-t, --template <string>` | Большинство команд | Форматирование вывода через шаблоны Go template (например, `-t '{{range .}}{{.title}}{{"\n"}}{{end}}'`). |
+| `--paginate` | `gh api` | Автоматический последовательный обход всех страниц выдачи по заголовкам `Link`. |
+| `--exit-status` | `gh run watch` | Возврат ненулевого кода ошибки при завершении прогона в статусе `failure`. |
+
+### Переменные окружения
+
+| Переменная | Назначение |
 |---|---|
-| `--jq '.field'` | JSON-парсинг вывода (на основе jq) |
-| `--template '{{.}}'` | Go-шаблоны для кастомного вывода |
-| `--json field1,field2` | Вывод только указанных полей JSON |
-| `--limit N` | Ограничение количества результатов |
-| `--state open` / `--state merged` | Фильтр по статусу |
-| `-R {owner}/{repo}` | Явное указание репозитория (для скриптов) |
+| `GH_TOKEN` / `GITHUB_TOKEN` | Токен авторизации (переопределяет системные хранилища и файлы конфигурации). |
+| `GH_ENTERPRISE_TOKEN` | Токен авторизации для запросов к хостам GHES. |
+| `GH_HOST` | Хост по умолчанию (например, `ghes.corp.local`). |
+| `GH_REPO` | Репозиторий по умолчанию для команд, запущенных вне дерева Git. |
+| `GH_CONFIG_DIR` | Каталог файлов конфигурации (по умолчанию `~/.config/gh`). |
+| `GH_PROMPT_DISABLED` | Запрет интерактивных запросов ввода (`1` — немедленная ошибка при отсутствии параметров). |
+| `GH_DEBUG` | Режим отладки сетевых вызовов (`api` выводит полные HTTP заголовки и тело ответов). |
+| `SSL_CERT_FILE` / `SSL_CERT_DIR` | Путь к корпоративному CA-сертификату для TLS-проверок. |
+| `NO_COLOR` | Отключение ANSI-цветов в выводе для чистоты логов автоматизации. |
+
+### Коды возврата (Exit Codes)
+
+| Код | Значение | Диагностика / Решение |
+|---|---|---|
+| `0` | Успешное выполнение команды | Стандартный код успеха. |
+| `1` | Общая ошибка выполнения или сбой процесса | Ошибка валидации API, сбой воркфлоу при `--exit-status`, ошибка аргументов. |
+| `2` | Ошибка парсинга командной строки | Неверный синтаксис флагов или неизвестная подкоманда. |
+| `4` | Ошибка авторизации (Authentication required) | Токен отсутствует, истёк или не имеет достаточных прав доступа. |
 
 ## Устранение неполадок
 
-| Симптом | Причина | Решение |
-|---|---|---|
-| `error: failed to login: api already in use` | Токен уже используется другим процессом | `gh auth logout --hostname github.com` и повторить `gh auth login` |
-| `403 Resource not accessible by integration` | Fine-grained PAT не имеет нужных прав | Проверить scopes в Settings → Developer settings → Fine-grained PAT |
-| `401 Bad credentials` на `gh api` | Токен истёк или неверный | Обновить токен через `gh auth login`; `echo $GH_TOKEN \| gh auth login --with-token` |
-| `rate limit exceeded` | Превышен лимит API (5000/hr для PAT) | Дождаться сброса лимита; для интенсивных скриптов — использовать GraphQL (менее избыточный) |
-| `gh: command not found` | CLI не установлен или не в PATH | `brew install gh` (macOS), `sudo apt install gh` (Linux), `winget install --id GitHub.cli` (Windows) |
-| `pull_request_target` не работает в workflow | Workflow запущен в fork, а не в upstream | `pull_request_target` работает только для upstream-воркфлоу; для fork используйте `pull_request` с `gh` |
-| Alias не работает | Синтаксическая ошибка в alias | `gh alias list` для проверки; `gh alias delete <name>` для исправления |
-| Extension "command not found" | Extension не установлен правильно | `gh extension install <owner>/<name>`; проверить, что extension добавлен в PATH |
+| Симптом | Причина | Диагностика | Решение |
+|---|---|---|---|
+| Процесс в CI/CD зависает без вывода логов | Команда ожидает интерактивного ввода подтверждения в TTY (например, `gh pr create` без всех флагов) | Проверить процесс: висит в состоянии ожидания `stdin` | Экспортировать `export GH_PROMPT_DISABLED=1` и передавать все обязательные флаги (`--title`, `--body`, `--fill`) явно. |
+| `HTTP 401: Bad credentials` | Истёк срок действия токена или токен отозван | `gh auth status` | Обновить токен: перевыпустить PAT и обновить значение переменной `GH_TOKEN` или выполнить `echo "$TOKEN" \| gh auth login --with-token`. |
+| `HTTP 403: Resource not accessible by integration` | Токену не хватает прав (scopes) на выполнение операции или в workflow не заданы `permissions` | Проверить scopes через `gh auth status` или блок `permissions:` в файле YAML | Для PAT: добавить необходимые разрешения (`repo`, `actions:write`, `attestations:write`). В Actions: явно объявить требуемый scope в секции `permissions`. |
+| `HTTP 403: API rate limit exceeded` | Превышен лимит запросов к API (5000 req/h для PAT, 60 req/h для unauthenticated) | `gh api rate_limit` | Использовать аутентифицированные запросы; переписать массовые REST-вызовы на GraphQL; настроить экспоненциальную задержку (backoff). |
+| `x509: certificate signed by unknown authority` | Сервер GHES использует самоподписанный сертификат или внутренний корпоративный CA | Запустить команду с отладкой: `GH_DEBUG=api gh api /api/v3/meta` | Указать доверенный сертификат: `export SSL_CERT_FILE=/etc/ssl/certs/corp-ca.pem`. |
+| Ошибка Git: `fatal: could not read Username` после настройки `gh auth setup-git` | Устаревший helper или отсутствие доступа к credential helper в headless среде | `git config -l \| grep credential` | Проверить наличие `gh auth setup-git`; в headless скриптах явно передавать токен через URL: `https://x-access-token:${GH_TOKEN}@github.com/org/repo.git`. |
+| `fatal: '<path>' already exists` при `gh pr checkout --worktree` | Каталог для worktree уже существует в файловой системе | `git worktree list` | Удалить старое дерево: `git worktree remove <path>` или указать новый путь. |
+| `attestation verification failed: signature does not match` | Артефакт был модифицирован после сборки или указан неверный репозиторий сборщика | Вычислить SHA-256 артефакта вручную: `sha256sum <file>` | Убедиться в неизменности файла; проверить параметр `--owner` и точное соответствие ревизии коммита. |
 
 ## Лучшие практики
 
-1. **Fine-grained PAT с минимальными правами**: не используйте classic PAT; создавайте fine-grained PAT с нужными scopes ровно на те репозитории/организации, которые нужно.
-2. **`--jq` и `--template` для парсинга**: используйте эти флаги, чтобы не парсить JSON вручную в bash-скриптах.
-3. **Aliases для повторяющихся паттернов**: `gh alias set` экономит время на длинных цепочках команд.
-4. **GraphQL для bulk-операций**: если нужно получить связанные данные из нескольких endpoint-ов, используйте `gh api graphql` — один запрос вместо нескольких REST-вызовов (экономия rate limit).
-5. **Extensions для расширения функционала**: `actions/cache-cleanup`, `seachicken/repo-dependency-graph` и другие extension-ы покрывают громоздкие manual сценарии.
-6. **Для CI/CD**: используйте `gh run watch` в локальном dev для мониторинга прогонов в реальном времени; `gh run view --log` для отладки.
-7. **Для безопасности**: храните токен в `~/.config/gh/hosts.yml` (CLI шифрует), а не в env-переменных в CI.
+1. **Принцип наименьших привилегий (Least Privilege)**:
+   - Откажитесь от Classic PAT с глобальным правом `repo`. Используйте Fine-grained PAT с доступом только к конкретным репозиториям и изолированным операциям (например, только чтение Issues или только запись Releases).
+   - В автоматизированных пайплайнах отдавайте предпочтение кратковременным токенам GitHub App (Installation Access Token) с периодом жизни 1 час.
+
+2. **Стандарты неинтерактивного скриптинга в CI/CD**:
+   - Всегда объявляйте `GH_PROMPT_DISABLED=1` в начале скриптов автоматизации, чтобы предотвратить зависания при возникновении непредвиденных диалоговых запросов.
+   - Никогда не парсите текстовые ASCII-таблицы стандартного вывода `gh` через `awk` или `sed`. Используйте флаги `--json <fields>` в сочетании с встроенным фильтром `--jq` (`-q`).
+
+3. **Отказоустойчивость и обработка ошибок**:
+   - При мониторинге пайплайнов всегда указывайте флаг `--exit-status`: `gh run watch "$RUN_ID" --exit-status`. Это гарантирует прерывание вызывающего скрипта при падении задачи.
+   - Проверяйте код завершения команд `$?`: код `4` сигнализирует о деградации токена авторизации, требующей ротации секрета, а не повтора сетевого запроса.
+
+4. **Оптимизация квот API**:
+   - Для выборки связанных данных используйте `gh api graphql`, объединяющий несколько вызовов к сущностям в единый сетевой пакет.
+   - Для массового чтения коллекций в REST API применяйте встроенный флаг `--paginate` вместо ручного цикла по номерам страниц `?page=N`.
+
+5. **Гигиена дискового пространства и кэшей**:
+   - На регулярной основе очищайте старые Actions кэши через `gh cache delete`, предотвращая вытеснение актуальных слоев сборки при достижении лимита репозитория.
+   - Удаляйте временные рабочие деревья (`git worktree remove`) после завершения локальных проверок PR.
 
 ## Дополнительная информация
 
-- **[Рабочие процессы в Git](../Git/git_workflows.md#инструменты-командной-строки)** — использование `gh` для PR создания, слияния и CI-мониторинга. (Исходный контент о `gh` переехал сюда.)
-- **[Инструменты Git TUI и CLI](../Git/git_tools.md)** — TUI-клиенты (lazygit, gitui, tig) и прочие CLI-улучшения.
-- **[Release Management](./Release_Management.md)** — `gh release create`/`gh release upload` для публикации релизов.
-- **[Git автоматизация](./Git_Automation.md)** — `gh api` для branch protection, `git push` через GITHUB_TOKEN/App-токен.
-- **[GitHub API](./github_api.md)** — REST и GraphQL endpoint-ы, rate limits, pagination.
-- **Официальная документация**: [GitHub CLI](https://cli.github.com/manual/), [gh api](https://cli.github.com/manual/gh_api), [gh extensions](https://cli.github.com/manual/gh_extension).
+- **[Управление релизами](./Release_Management.md)** — публикация артефактов, неизменяемые релизы и генерация Attestations в GitHub Actions.
+- **[Работа с GitHub API](./github_api.md)** — подробная спецификация REST и GraphQL API, архитектура первичных и вторичных Rate Limits, ETag-кэширование.
+- **[Управление секретами в GitHub Actions](./secrets_management.md)** — уровни видимости секретов (Organization, Repository, Environment) и политики маскирования.
+- **[Self-hosted раннеры GitHub Actions](./self_hosted_runners.md)** — администрирование собственных раннеров, регистрация через токены и мониторинг состояния.
+- **[Правила защиты веток и Rulesets](./rulesets.md)** — управление политиками слияния PR, bypass-списками и защитой веток через API.
+- **[Git автоматизация](./Git_Automation.md)** — автоматизация коммитов, тегов и проверок в CI/CD.
+- **[Рабочие процессы в Git](../Git/git_workflows.md)** — совместная работа с ветками и слияниями.
+- **[Инструменты Git TUI и CLI](../Git/git_tools.md)** — альтернативные утилиты командной строки и визуальные TUI-клиенты.
+- **Официальная документация GitHub CLI**: [Руководство по GitHub CLI](https://cli.github.com/manual/), [Справочник подкоманд gh api](https://cli.github.com/manual/gh_api), [Управление расширениями gh extension](https://cli.github.com/manual/gh_extension).

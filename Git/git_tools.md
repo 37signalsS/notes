@@ -381,7 +381,7 @@ lazygit
 
 ### Сценарий 5: Работа с Pull Requests через GitHub/GitLab CLI
 
-> **Ссылка**: Комплексная документация GitHub CLI (`gh`) — управление PR, Releases, Actions, Codespaces, API-вызовы, aliases, extensions — в **[dedicated файле](../Github_CI/github_cli.md)**.
+> **Ссылка**: Комплексная документация GitHub CLI (`gh`) — управление PR, Releases, Actions, API-вызовы, aliases, extensions — в **[dedicated файле](../Github_CI/github_cli.md)**.
 
 **GitHub CLI (gh):**
 

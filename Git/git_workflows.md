@@ -509,7 +509,7 @@ git push origin main
 
 Работа с PR/MR из терминала (`gh pr create/review/merge`, `glab mr create/approve/merge`), проверка статуса CI (`gh pr checks`), переключение на ветку чужого PR (`gh pr checkout`), TUI-клиенты (`lazygit`, `tig`) и диагностика пайплайнов описаны в **[Инструменты Git — сценарии](./git_tools.md)**.
 
-Работа с GitHub CLI (`gh`) для управления PR, Releases, Actions, Codespaces и прямыми API-вызовами — в **[dedicated файле](../Github_CI/github_cli.md)**.
+Работа с GitHub CLI (`gh`) для управления PR, Releases, Actions и прямыми API-вызовами — в **[dedicated файле](../Github_CI/github_cli.md)**.
 
 ---
 

@@ -1,251 +1,425 @@
-# GitHub Codespaces: Cloud-разработка в браузере
+# GitHub Codespaces: Воспроизводимые контейнеризированные среды разработки
 
-**Актуально для:** GitHub Codespaces, октябрь 2026 (Codespaces with GPU, prebuilds, devcontainer CLI, codespace secrets, lifecycle hooks); для GitHub Enterprise Server — пока не поддерживается (только Cloud)
+**Актуально для:** GitHub Codespaces (спецификация Development Containers 2026, devcontainer CLI, prebuilds, lifecycle hooks, gh CLI >= 2.50)
 
-GitHub Codespaces — это полностью управляемая cloud-среда разработки (VS Code в браузере или в Desktop), запускаемая на виртуальной машине GitHub. Codespaces интегрирован с `devcontainer.json` спецификацией: конфигурация окружения (образ, зависимости, расширения, секреты) хранится в репозитории — разработчик получает готовую среду "одним кликом" из любого устройства.
+GitHub Codespaces — это управляемая платформа предоставления изолированных сред разработки на базе Linux-контейнеров, стандартизированная открытой спецификацией `devcontainer.json` (Development Containers). Конфигурация окружения (базовый образ, системные пакеты, утилиты администрирования, расширения редактора, порты и хуки жизненного цикла) хранится непосредственно в Git-репозитории как код. Это гарантирует детерминированность среды для всех участников команды, устраняет проблему дрейфа локальных конфигураций и упрощает онбординг инженеров.
 
 ## Определения
 
-- **Codespace**: Запущенная виртуальная машина с готовой dev-средой. Хранится в облаке, имеет свою файловую систему и туннель к `github.com`.
-- **devcontainer.json**: Манифест конфигурации codespace (или локального dev-контейнера). Описывает: базовый образ/Dockerfile, features, VS Code extensions, postCreateCommand, forwarding ports.
-- **Prebuild**: Заранее собранная среда (image + dependencies) на основе `devcontainer.json`, чтобы при создании codespace не ждать `postCreateCommand`.
-- **Codespace Secrets**: Секреты, доступные внутри codespace (настраиваются в Settings → Codespaces). Шифруются для конкретного codespace.
-- **Port Forwarding**: Автоматическое проброс портов из VM на публичный URL (https://{port}-{codespace}-{owner}.githubpreview.dev) или локальный туннель.
-- **Lifecycle Hooks**: Хуки `postCreateCommand`, `onCreateCommand`, `updateContentCommand` — выполняются на разных этапах создания/обновления codespace.
-- **Machine Types**: Размеры VM (Small: 2-core/4GB, Medium: 4-core/8GB, Large: 8-core/16GB, Premium: 16-core/32GB + GPU).
+- **Codespace**: Запущенный изолированный экземпляр среды разработки (виртуальная машина Linux с запущенным контейнером devcontainer и агентом удаленного подключения).
+- **devcontainer.json**: Декларативный манифест спецификации Development Containers (`containers.dev`), описывающий состав контейнера, подключаемые фичи (Features), переменные окружения, проброс портов и команды инициализации.
+- **Dev Container Features**: Переиспользуемые самодостаточные модули установки инструментов и пакетов (например, Docker-in-Docker, Git, утилиты системного мониторинга), подключаемые в `devcontainer.json`.
+- **Lifecycle Hooks**: Хуки жизненного цикла контейнера (`initializeCommand`, `onCreateCommand`, `updateContentCommand`, `postCreateCommand`, `postStartCommand`, `postAttachCommand`), управляющие сборкой и подготовкой рабочего места.
+- **Prebuild**: Механизм предварительной сборки devcontainer-образа и выполнения тяжелых зависимостей по триггеру (push в ветку) для сокращения времени старта codespace до нескольких секунд.
+- **Codespace Secrets**: Изолированные зашифрованные переменные окружения, настраиваемые специально для сред Codespaces на уровне пользователя или организации/репозитория (не путать с GitHub Actions Secrets).
+- **Port Forwarding**: Механизм туннелирования сетевых портов из контейнера на локальную рабочую станцию через SSH-туннель или защищенный HTTPS-прокси.
+- **Dotfiles**: Механизм автоматической персонализации рабочего окружения (bashrc, zshrc, tmux, gitconfig) инженера путем клонирования персонального репозитория при старте сессии.
+- **Recovery Container**: Аварийный режим запуска Codespaces с базовым минимальным контейнером, активируемый при фатальных ошибках сборки основного `devcontainer.json` для устранения сбоев конфигурации.
 
 ## Архитектура и devcontainer
 
-### Жизненный цикл codespace
+### Архитектурная модель
 
 ```text
-GitHub → VM (Linux) → devcontainer.json → Dockerfile/features → VS Code
-    │
-    1. Create codespace (из репо + branch)
-    2. Build devcontainer (из image + features)
-    3. Run lifecycle hooks (onCreateCommand → postCreateCommand)
-    4. User gets VS Code в браузере или Desktop
-    5. Idle timeout (30 min default) → авто-остановка
-    6. Auto-delete (after configured TTL: 1 day / 3 days / 1 week)
+[Клиент: Браузер / VS Code Desktop / SSH-клиент]
+                      │ (Зашифрованный туннель / WebSocket / SSH)
+                      ▼
+[Хостовая VM (Linux KVM)]
+  ├── Docker Engine / Containerd
+  │     │
+  │     ▼
+  │   [Dev Container (изолированное окружение разработчика)]
+  │     ├── VS Code Server / OpenSSH Daemon
+  │     ├── Системные утилиты, CLI, рантаймы
+  │     └── Монтирование: /workspaces/<repo-name> (персистентный том)
+  │
+  ├── Хранилище:
+  │     ├── /workspaces (сохраняется между перезапусками)
+  │     └── /workspaces/.codespaces/.persistedshare (персистентный системный кэш)
+  └── Служебный агент Codespaces (управление жизненным циклом, секреты, токены)
 ```
 
-### Минимальная конфигурация devcontainer
+### Порядок выполнения Lifecycle Hooks
+
+Спецификация `devcontainer.json` определяет строгую последовательность исполнения команд инициализации:
+
+```text
+1. initializeCommand     → Выполняется на ХОСТЕ до создания контейнера
+2. onCreateCommand       → Выполняется ВНУТРИ контейнера сразу после его создания
+3. updateContentCommand   → Выполняется ВНУТРИ контейнера при скачивании/обновлении репозитория
+4. postCreateCommand     → Выполняется ВНУТРИ контейнера после завершения сборки и монтирования
+5. postStartCommand      → Выполняется ВНУТРИ контейнера при КАЖДОМ запуске/пробуждении
+6. postAttachCommand     → Выполняется ВНУТРИ контейнера при подключении клиентской сессии
+```
+
+| Хук | Контекст выполнения | Назначение для SRE / DevOps | Поведение при ненулевом коде возврата |
+|---|---|---|---|
+| `initializeCommand` | Хост-система | Локальные подготовительные скрипты, проверка переменных окружения | Остановка сборки с ошибкой |
+| `onCreateCommand` | Внутри контейнера | Установка низкоуровневых системных пакетов (`apt-get install`), создание служебных каталогов | Остановка сборки с ошибкой |
+| `updateContentCommand` | Внутри контейнера | Загрузка зависимостей проекта (кэшируется в prebuilds) | Остановка сборки с ошибкой |
+| `postCreateCommand` | Внутри контейнера | Установка git-хуков (`pre-commit install`), первичная сборка проекта, настройка локальных БД | Остановка сборки с ошибкой |
+| `postStartCommand` | Внутри контейнера | Запуск фоновых сервисов, демонов, прогрев кэшей при старте сессии | Логируется предупреждение, codespace запускается |
+| `postAttachCommand` | Внутри контейнера | Вывод диагностического приветствия в терминал, проверка статуса сервисов | Логируется предупреждение |
+
+### Файловая система и персистентность данных
+
+1. **Рабочая директория (`/workspaces/<repo-name>`)**:
+   - Смонтирована на выделенный блочный том.
+   - Все изменения файлов репозитория, неотслеживаемые файлы и untracked ветки Git сохраняются между перезапусками и пересборками (`Rebuild Container`).
+2. **Корневая ФС контейнера (`/`, `/tmp`, `/var`, `/home/vscode`)**:
+   - При обычной остановке (`Stop`) и запуске (`Start`) состояние контейнера сохраняется.
+   - При полной пересборке (`Full Rebuild`) контейнер уничтожается и пересоздается с нуля. Любые пакеты, установленные вручную вне `devcontainer.json`, удаляются.
+3. **Персистентный системный каталог**:
+   - Каталог `/workspaces/.codespaces/.persistedshare` сохраняется даже при полной пересборке контейнера. Используется для сохранения истории bash/zsh, кэша расширений и служебных логов.
+
+## Практические сценарии
+
+### Сценарий 1: Конфигурация devcontainer.json для системного администрирования и SRE
+
+Конфигурация включает поддержку Docker-in-Docker, утилиты управления инфраструктурой, безопасность от непривилегированного пользователя и проверку синтаксиса.
 
 ```json
+// .devcontainer/devcontainer.json
 {
-  "name": "Python dev",
-  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "name": "DevOps & SRE Workstation",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
   "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
-    "ghcr.io/devcontainers/features/aws-cli:1": {}
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": true,
+      "configureZshAsDefaultShell": true,
+      "upgradePackages": true,
+      "username": "vscode"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "enableDockerDind": true
+    },
+    "ghcr.io/devcontainers/features/git:1": {
+      "version": "latest"
+    }
   },
-  "postCreateCommand": "pip install -r requirements.txt && pre-commit install",
-  "onCreateCommand": "echo 'Codespace ready!'",
+  "remoteUser": "vscode",
+  "runArgs": [
+    "--init",
+    "--cap-add=SYS_PTRACE",
+    "--security-opt", "seccomp=unconfined"
+  ],
+  "containerEnv": {
+    "HISTFILE": "/workspaces/.codespaces/.persistedshare/bash_history",
+    "SHELL": "/usr/bin/zsh"
+  },
+  "forwardPorts": [8080, 9090],
+  "portsAttributes": {
+    "8080": {
+      "label": "Application Service",
+      "onAutoForward": "notify",
+      "visibility": "private"
+    },
+    "9090": {
+      "label": "Metrics Endpoint",
+      "onAutoForward": "silent",
+      "visibility": "private"
+    }
+  },
+  "onCreateCommand": "sudo apt-get update && sudo apt-get install -y jq curl iputils-ping dnsutils net-tools",
+  "postCreateCommand": "docker --version && echo 'DevOps workstation ready'",
   "customizations": {
     "vscode": {
       "extensions": [
-        "ms-python.python",
-        "ms-python.vscode-pylance",
-        "github.copilot"
+        "ms-azuretools.vscode-docker",
+        "redhat.vscode-yaml",
+        "tamasfe.even-better-toml",
+        "eamodio.gitlens"
       ],
       "settings": {
-        "python.pythonPath": "/usr/local/bin/python"
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "files.trimTrailingWhitespace": true,
+        "files.insertFinalNewline": true
       }
     }
   }
 }
 ```
 
-## Практические сценарии
+### Сценарий 2: Управление и автоматизация через GitHub CLI (`gh codespace`)
 
-### Сценарий 1: Создание codespace из репозитория
+Управление Codespaces без открытия браузера через официальный CLI `gh`.
 
 ```bash
-# 1. Создать codespace через CLI (gh CLI >= 2.0)
+# 1. Просмотр доступных конфигураций машин для репозитория
+gh codespace machines --repo my-org/sre-infra
+# → NAME                 DISPLAY NAME  CORES  RAM (GiB)  STORAGE (GiB)
+# → standardLinux32gb   4 cores       4      16         32
+# → basicLinux           2 cores       2      8          32
+
+# 2. Создание codespace с явным указанием ветки и конфигурации машины
 gh codespace create \
-  --repo {owner}/{repo} \
+  --repo my-org/sre-infra \
   --branch main \
-  --machine "M (4 cores)" \
-  --devcontainer-path .devcontainer/devcontainer.json
+  --machine standardLinux32gb \
+  --idle-timeout 30m
+# → Creating codespace...
+# → Codespace 'verbose-space-invention-abc123' created.
 
-# → Creating codespace "fragrant-fish-sticks-xyz"...
-# → https://github.com/features/codespaces/codespaces/fragrant-fish-sticks-xyz
+# 3. Получение списка активных сред в формате JSON для автоматизации
+gh codespace list --json name,state,repository,gitStatus
+# → [
+# →   {
+# →     "gitStatus": {"ahead": 0, "behind": 0, "hasUncommittedChanges": false},
+# →     "name": "verbose-space-invention-abc123",
+# →     "repository": "my-org/sre-infra",
+# →     "state": "Available"
+# →   }
+# → ]
 
-# 2. Открыть codespace в браузере
-gh codespace code --repo {owner}/{repo}
+# 4. Выполнение одиночной команды внутри запущенного codespace через SSH
+gh codespace ssh -c verbose-space-invention-abc123 -- "uptime && df -h /workspaces"
+# → 20:05:30 up 12 min,  0 users,  load average: 0.12, 0.08, 0.05
+# → Filesystem      Size  Used Avail Use% Mounted on
+# → /dev/root        30G  4.2G   26G  14% /workspaces
 
-# 3. Или открыть в VS Code Desktop
-gh codespace code --repo {owner}/{repo} --editor vscode
-
-# 4. Список codespaces
-gh codespace list
-# → NAME                    STATE     BRANCH  CREATED AT
-# → fragile-fish-sticks-abc  Running   main    2026-10-11T10:00:00Z
-
-# 5. Остановить/удалить
-gh codespace stop --repo {owner}/{repo}
-gh codespace delete --repo {owner}/{repo}
+# 5. Остановка codespace
+gh codespace stop -c verbose-space-invention-abc123
+# → Stopping codespace...
+# → Codespace 'verbose-space-invention-abc123' stopped.
 ```
 
-- **Валидация**: codespace в статусе `Running`, в браузере открывается VS Code, `postCreateCommand` выполнен (см. в терминале output).
+### Сценарий 3: Нативная настройка OpenSSH и передача файлов
 
-### Сценарий 2: Prebuild для ускорения создания
-
-Prebuild собирает образ и зависимости заранее — создание codespace занимает секунды, а не минуты.
-
-```json
-// .devcontainer/devcontainer.json
-{
-  "name": "Fast Node.js dev",
-  "image": "mcr.microsoft.com/devcontainers/typescript-node:20",
-  "postCreateCommand": "npm ci",
-  "customizations": {
-    "codespaces": {
-      "openFiles": [
-        "README.md",
-        "src/index.ts"
-      ],
-      "openPreview": "http://localhost:3000"
-    }
-  }
-}
-```
-
-Через UI: Settings → Code and automation → Codespaces → Prebuilds → Create prebuild.
+Интеграция с локальным SSH-клиентом для использования стандартных утилит (`ssh`, `scp`, `rsync`, Ansible).
 
 ```bash
-# Принудительный запуск prebuild через workflow
-# .github/workflows/codespaces-prebuild.yml
-name: "Codespaces Prebuild"
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-jobs:
-  prebuild:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Trigger prebuild
-        run: gh api -X POST /repos/{owner}/{repo}/dispatches \
-          -f event_type="codespaces:prebuild"
+# 1. Генерация конфигурационного файла OpenSSH для подключения к Codespaces
+gh codespace ssh --config > ~/.ssh/codespaces_config
+
+# 2. Подключение конфигурации в ~/.ssh/config:
+# Добавить строку:
+# Include ~/.ssh/codespaces_config
+
+# 3. Прямое подключение по стандартному SSH-протоколу:
+ssh cs-verbose-space-invention-abc123.my-org-sre-infra
+# → Welcome to Ubuntu 24.04 LTS (GNU/Linux 6.5.0 x86_64)
+# → vscode@codespaces-abc123:/workspaces/sre-infra$
+
+# 4. Копирование файлов и директорий между локальной машиной и codespace
+# Копирование локального файла в codespace:
+gh codespace cp ./deploy.sh remote:/workspaces/sre-infra/deploy.sh -c verbose-space-invention-abc123
+# → deploy.sh: 100% |████████████████████████████████████████| (4.2 KB/s)
+
+# Копирование сгенерированного артефакта из codespace на локальную машину:
+gh codespace cp remote:/workspaces/sre-infra/output.log ./output.log -c verbose-space-invention-abc123
+# → output.log: 100% |████████████████████████████████████████| (18.1 KB/s)
 ```
 
-### Сценарий 3: Port forwarding и проброс портов
+### Сценарий 4: Port Forwarding и сетевая изоляция
+
+Проброс локальных портов сетевых сервисов и управление доступом к ним.
 
 ```bash
-# 1. В codespace: запустить сервер на порту 3000
-# → VS Code автоматически обнаружит и создаст туннель
-# → URL: https://3000-fragrant-fish-sticks-xyz.githubpreview.dev
+# 1. Просмотр проброшенных портов запущенного окружения
+gh codespace ports -c verbose-space-invention-abc123
+# → SRC PORT  DST PORT  VISIBILITY  LABEL
+# → 8080      8080      private     Application Service
+# → 9090      9090      private     Metrics Endpoint
 
-# 2. Вручную пробросить порт через CLI
-gh codespace ports forward 3000 --repo {owner}/{repo}
+# 2. Локальный проброс удаленного порта (туннелирование на локальный порт 18080)
+gh codespace ports forward 8080:18080 -c verbose-space-invention-abc123
+# → Forwarding port 8080 to localhost:18080...
 
-# 3. Пример devcontainer.json с forwardPorts
-{
-  "name": "Node dev",
-  "image": "mcr.microsoft.com/devcontainers/node:20",
-  "forwardPorts": [3000, 5173],
-  "postCreateCommand": "npm install && npm run dev"
-}
+# 3. Изменение политики видимости порта:
+# Доступные значения: private (только текущий пользователь), org (участники организации), public (все)
+gh codespace ports visibility 8080:org -c verbose-space-invention-abc123
+# → Port 8080 visibility set to org
 ```
 
-- **Auto-forward**: VS Code автоматически пробрасывает порт, когда приложение слушает на `0.0.0.0:<port>`.
-- **Port visibility**: `public` (всем) или `private` (только владельцу/команде) — настраивается в VS Code UI или через devcontainer.
+> [!WARNING]
+> Для проброса портов приложение внутри devcontainer обязано слушать адрес `0.0.0.0`, а не `127.0.0.1` (loopback). Процессы, привязанные к `127.0.0.1`, недоступны прокси-демону Codespaces и не туннелируются.
 
-### Сценарий 4: Codespace Secrets
+### Сценарий 5: Секреты окружения (Codespace Secrets)
+
+Codespaces использует отдельное изолированное хранилище секретов. Секреты репозитория GitHub Actions **не передаются** в Codespaces автоматически по соображениям безопасности.
 
 ```bash
-# 1. Установить кодовспейс secret
-gh codespace secrets set DATABASE_URL --body "postgres://user:pass@db:5432"
+# 1. Создание персонального секрета Codespaces через CLI
+gh codespace secrets set SRE_VAULT_TOKEN --body "s.abcdef1234567890"
+# → Set secret SRE_VAULT_TOKEN for your codespaces
 
-# 2. Список secrets
+# 2. Создание секрета на уровне репозитория с явным назначением репозиториев
+gh codespace secrets set INTERNAL_REGISTRY_TOKEN \
+  --repo my-org/sre-infra \
+  --body "token-value-xyz"
+# → Set secret INTERNAL_REGISTRY_TOKEN for repository my-org/sre-infra
+
+# 3. Просмотр существующих секретов
 gh codespace secrets list
-# → NAME          UPDATED
-# → DATABASE_URL   2026-10-11
+# → NAME                     UPDATED
+# → SRE_VAULT_TOKEN          2026-10-11
+# → INTERNAL_REGISTRY_TOKEN  2026-10-11
 
-# 3. Использовать в devcontainer.json
-{
-  "env": {
-    "DATABASE_URL": "${localEnv:DATABASE_URL}"
-  },
-  "postCreateCommand": "echo \"DB_URL=$DATABASE_URL\" >> .env"
-}
+# 4. Использование секрета в devcontainer.json через подстановку локального окружения:
+# {
+#   "containerEnv": {
+#     "VAULT_TOKEN": "${localEnv:SRE_VAULT_TOKEN}"
+#   }
+# }
 
-# 4. Удалить secret
-gh codespace secrets unset DATABASE_URL
+# 5. Удаление секрета
+gh codespace secrets unset SRE_VAULT_TOKEN
+# → Removed secret SRE_VAULT_TOKEN
 ```
 
-### Сценарий 5: Жизненный цикл и hooks
+### Сценарий 6: Ускорение запуска через Prebuilds
 
-```json
-// .devcontainer/devcontainer.json — lifecycle
-{
-  "name": "Full-stack dev",
-  "image": "mcr.microsoft.com/devcontainers/python:3.12",
-  "onCreateCommand": "apt-get update && apt-get install -y postgresql-client",  // один раз при создании
-  "updateContentCommand": "pip install -r requirements.txt --upgrade",  // при checkout изменился
-  "postCreateCommand": "pre-commit install --hook-dir .pre-commit-config.yaml && echo 'Ready!'"  // после каждого создания/перезапуска
-}
-```
+Prebuilds компилируют devcontainer, выкачивают Docker-слои и выполняют `onCreateCommand` и `updateContentCommand` заранее. Когда инженер запрашивает создание Codespace, развертывание занимает 5–10 секунд вместо ожидания длительной сборки контейнера.
 
-| Hook | Выполняется | Когда использовать |
+1. **Создание конфигурации предварительной сборки**:
+   - Настройка осуществляется через интерфейс репозитория: `Settings` → `Codespaces` → `Set up prebuild`.
+   - Либо через вызов REST API GitHub:
+     ```bash
+     gh api -X POST /repos/my-org/sre-infra/codespaces/prebuilds \
+       -f branch="main" \
+       -f location="WestEurope"
+     # → { "id": 142857, "branch": "main", "status": "queued" }
+     ```
+2. **Просмотр состояния и журналов Prebuilds**:
+   ```bash
+   gh api /repos/my-org/sre-infra/codespaces/prebuilds
+   # → [
+   # →   {
+   # →     "id": 142857,
+   # →     "branch": "main",
+   # →     "status": "completed",
+   # →     "updated_at": "2026-10-11T12:00:00Z"
+   # →   }
+   # → ]
+   ```
+
+### Сценарий 7: Персонализация окружения через Dotfiles
+
+Codespaces поддерживает автоматическую инъекцию персональных утилит и конфигураций каждого инженера:
+
+1. Создается публичный репозиторий `dotfiles` в личном профиле GitHub (например, `github.com/username/dotfiles`).
+2. В репозиторий помещаются конфигурационные файлы (`.zshrc`, `.tmux.conf`, `.gitconfig`) и скрипт установки `install.sh` (или `bootstrap.sh`).
+3. Пример `install.sh`:
+   ```bash
+   #!/usr/bin/env bash
+   set -euo pipefail
+
+   # Создание симлинков на конфигурации
+   ln -sf "$(pwd)/.zshrc" "$HOME/.zshrc"
+   ln -sf "$(pwd)/.tmux.conf" "$HOME/.tmux.conf"
+
+   # Настройка Git aliases
+   git config --global alias.co checkout
+   git config --global alias.br branch
+   git config --global alias.ci commit
+   git config --global alias.st status
+
+   echo "Dotfiles successfully initialized"
+   ```
+4. В персональных настройках GitHub (`Settings` → `Codespaces` → `Dotfiles`) включается чекбокс `Automatically install dotfiles` и выбирается репозиторий `dotfiles`. При каждом старте любого Codespace скрипт исполняется автоматически.
+
+## Операции и команды
+
+### Справочник команд `gh codespace`
+
+| Команда | Аргументы / Флаги | Назначение |
 |---|---|---|
-| `onCreateCommand` | Один раз при создании VM | Установка системных утилит |
-| `updateContentCommand` | При изменении контента репо | Обновление зависимостей |
-| `postCreateCommand` | После каждого создания/перезапуска | npm install, pre-commit install |
+| `gh codespace list` | `--json <fields>`, `-q <query>` | Вывод списка codespaces в табличном или машиночитаемом формате |
+| `gh codespace create` | `-r <repo>`, `-b <branch>`, `-m <machine>`, `--idle-timeout <dur>` | Создание нового codespace с заданными параметрами |
+| `gh codespace code` | `-c <name>`, `--web`, `--editor <ide>` | Открытие сессии в браузере или локальном редакторе |
+| `gh codespace ssh` | `-c <name>`, `--config`, `-- <cmd>` | Подключение по SSH или выполнение удаленной команды |
+| `gh codespace cp` | `-c <name>`, `-r`, `<src> <dst>` | Копирование файлов между локальной системой и codespace |
+| `gh codespace ports` | `-c <name>` | Список проброшенных сетевых портов |
+| `gh codespace ports forward` | `<remote>:<local>`, `-c <name>` | Туннелирование удаленного порта на локальный хост |
+| `gh codespace ports visibility` | `<port>:{private\|org\|public}`, `-c <name>` | Управление правами доступа к сетевому порту |
+| `gh codespace stop` | `-c <name>` | Остановка работающего codespace |
+| `gh codespace delete` | `-c <name>`, `--all`, `--days <N>` | Удаление указанного или всех неиспользуемых codespaces |
+| `gh codespace rebuild` | `-c <name>`, `--full` | Пересборка devcontainer (с флагом `--full` с очисткой кэша) |
+| `gh codespace logs` | `-c <name>`, `-b` (bundle) | Просмотр или выгрузка архива логов сборки и работы |
 
-## Команды и API-операции
+### Автоматизация системного администратора
 
-### CLI (`gh codespace`)
+```bash
+# 1. Массовая остановка всех работающих codespaces пользователя для экономии квот
+gh codespace list --json name,state -q '.[] | select(.state == "Available") | .name' | while read -r cs; do
+  echo "Stopping $cs..."
+  gh codespace stop -c "$cs"
+done
+# → Stopping verbose-space-invention-abc123...
+# → Codespace 'verbose-space-invention-abc123' stopped.
 
-| Команда | Описание |
-|---|---|
-| `gh codespace create` | Создать codespace |
-| `gh codespace code` | Открыть в браузере/VS Code |
-| `gh codespace list` | Список codespaces |
-| `gh codespace stop` | Остановить codespace |
-| `gh codespace delete` | Удалить codespace |
-| `gh codespace ports` | Управление port forwarding |
-| `gh codespace secrets` | Управление secrets |
-| `gh codespace ssh` | SSH в codespace |
-| `gh codespace logs` | Логи codespace |
+# 2. Выгрузка полного диагностического архива логов при ошибке создания
+gh codespace logs -c verbose-space-invention-abc123 -b ./codespace-logs.zip
+# → Bundle saved to ./codespace-logs.zip
 
-### API
+# 3. Аудит запущенных сред организации через REST API
+gh api /orgs/my-org/codespaces --paginate --jq '.codespaces[] | {name: .name, user: .owner.login, state: .state, machine: .machine.display_name}'
+# → {"machine":"4 cores","name":"cs-101","state":"Available","user":"developer1"}
+```
 
-| Операция | Endpoint |
-|---|---|
-| Список codespaces | `GET /repos/{owner}/{repo}/codespaces` |
-| Создать codespace | `POST /repos/{owner}/{repo}/codespaces` |
-| Удалить codespace | `DELETE /repos/{owner}/{repo}/codespaces/{codespace_name}` |
-| Codespace secrets | `GET/POST/PUT /repos/{owner}/{repo}/codespaces/secrets` |
-| Ports | `GET /repos/{owner}/{repo}/codespaces/{name}/ports` |
+### GitHub REST API для Codespaces
+
+| Операция | HTTP метод и эндпоинт | Описание |
+|---|---|---|
+| Список сред пользователя | `GET /user/codespaces` | Возвращает все активные и остановленные codespaces текущего пользователя |
+| Список сред репозитория | `GET /repos/{owner}/{repo}/codespaces` | Возвращает codespaces в рамках конкретного репозитория |
+| Создать среду в репозитории | `POST /repos/{owner}/{repo}/codespaces` | Создание codespace с передачей `branch`, `machine`, `devcontainer_path` |
+| Остановка среды | `POST /user/codespaces/{codespace_name}/stop` | Принудительная остановка машины |
+| Старт остановленной среды | `POST /user/codespaces/{codespace_name}/start` | Запуск остановленной машины |
+| Удаление среды | `DELETE /user/codespaces/{codespace_name}` | Безвозвратное удаление codespace и связанных томов |
+| Управление секретами репозитория | `GET, PUT, DELETE /repos/{owner}/{repo}/codespaces/secrets` | Чтение метаданных, запись и удаление шифрованных секретов |
+| Управление Prebuilds | `GET, POST /repos/{owner}/{repo}/codespaces/prebuilds` | Конфигурирование автоматической предсборки |
 
 ## Устранение неполадок
 
-| Симптом | Причина | Решение |
-|---|---|---|
-| `postCreateCommand` fails | Нет зависимостей в образе, или network error | Проверить `image` и `features` в devcontainer.json; использовать `--retry` |
-| Port не пробрасывается | Приложение слушает `localhost`, а не `0.0.0.0` | В devcontainer: `listen on 0.0.0.0:port` |
-| `403` при создании codespace | Нет лицензии на codespace | Проверить тариф; org-level billing |
-| Codespace stuck в `Creating` | Prebuild не готов или image слишком большой | Проверить prebuild status в UI; уменьшить image |
-| `codespace secrets` не работают | Secret не синхронизирован с VM | `gh codespace secrets set` + перезапуск codespace |
-| SSH в codespace не работает | SSH keys не настроены | `gh codespace ssh --repo {owner}/{repo} --keygen` |
+| Симптом | Причина | Диагностика | Решение |
+|---|---|---|---|
+| Сбой сборки devcontainer при старте (`Creation failed`) | Синтаксическая ошибка в `devcontainer.json`, невалидный базовый образ или сбой хука | Запустить `gh codespace logs -c <name>` или открыть codespace в аварийном режиме Recovery Container | Исправить ошибку в `devcontainer.json` в окне Recovery Container и выполнить команду `Codespaces: Rebuild Container` |
+| Служба запущена, но порт не доступен через Forwarding | Приложение слушает сетевой интерфейс `127.0.0.1` (loopback) вместо `0.0.0.0` | В терминале codespace выполнить `ss -tulpn` или `netstat -tlpn` | Переконфигурировать приложение для прослушивания адреса `0.0.0.0` |
+| Команда `docker` выдает ошибку `Cannot connect to Docker daemon` | В `devcontainer.json` не подключена фича Docker-in-Docker или не запущен демон dockerd | Проверить наличие сокета `ls -la /var/run/docker.sock` и статус `sudo service docker status` | Подключить фичу `ghcr.io/devcontainers/features/docker-in-docker:2` и добавить флаг `--init` в `runArgs` |
+| Ошибка `Permission denied` при записи в `/workspaces/<repo>` | Несоответствие UID/GID между пользователем контейнера и владельцем смонтированного тома | Выполнить `id` и `ls -ld /workspaces/<repo-name>` | Указать `remoteUser: "vscode"` (UID 1000) либо добавить `sudo chown -R vscode:vscode /workspaces` в `postCreateCommand` |
+| Переменные из Codespace Secrets отсутствуют в сессии | Секрет был создан после старта codespace, либо секрет не привязан к данному репозиторию | Проверить вывод `env \| grep SECRET` и `gh codespace secrets list` | Добавить доступ к репозиторию в настройках секрета и перезапустить codespace (`gh codespace stop` + старт) |
+| SSH-подключение отклоняется (`Permission denied / connection reset`) | Не сгенерирован или устарел ключ подключения `gh` | Проверить локальный конфиг `~/.ssh/codespaces_config` | Перегенерировать конфиг через `gh codespace ssh --config > ~/.ssh/codespaces_config` |
+
+### Восстановление через Recovery Container
+
+Если контейнер падает при инициализации из-за критической ошибки в Dockerfile или хуках жизненного цикла:
+
+1. Codespaces автоматически определяет невозможность поднятия целевого devcontainer и предлагает опцию: **«Open in recovery container»**.
+2. В режиме восстановления запускается стандартный изолированный контейнер с установленным Git и редактором. Вся директория `/workspaces/<repo-name>` остается смонтированной.
+3. Администратор или разработчик редактирует `.devcontainer/devcontainer.json` прямо в редакторе, исправляя опечатки или удаляя сбойный хук.
+4. В командной палитре (`Ctrl+Shift+P` / `F1`) вызывается команда: `Codespaces: Rebuild Container`.
+5. Среда пересобирается с исправленной конфигурацией.
 
 ## Лучшие практики
 
-1. **devcontainer.json в repo**: всегда храните dev-конфигурацию в репозитории — любой contributor получает одинаковую среду.
-2. **Prebuilds для больших проектов**: включайте prebuilds для Node.js/Python проектов с тяжёлыми зависимостями — создание codespace занимает 5–10 секунд вместо 5–10 минут.
-3. **Machine types**: используйте Small для легких задач, Medium/Large для компиляции и тестов, Premium + GPU для ML.
-4. **Port visibility**: `private` по умолчанию — не делайте публичными debug-интерфейсы.
-5. **postCreateCommand быстрый**: выносите тяжёлые сборки в prebuild; `postCreateCommand` должен быть <2 мин.
-6. **Очистка**: настраивайте TTL (auto-delete через 1 день/3 дня/неделю); остановка через 30 мин неактивности.
-7. **Codespace Secrets**: используйте `${localEnv:VAR}` в devcontainer для проброса secrets — не hardcode.
-8. **VS Code extensions**: перечисляйте в `customizations.vscode.extensions` только нужные — лишние extensions замедляют запуск.
+1. **Хранение конфигурации в Git**:
+   - Конфигурация `.devcontainer/devcontainer.json` и сопутствующие файлы должны находиться в репозитории проекта и проходить обязательный код-ревью.
+2. **Фиксация версий базовых образов и Features**:
+   - Никогда не используйте тег `:latest` для системных образов в промышленной разработке. Явно фиксируйте мажорные и минорные версии (`ubuntu:24.04`, `docker-in-docker:2`).
+3. **Разделение задач между Lifecycle Hooks**:
+   - Системные бинарные зависимости ставьте в `onCreateCommand` (чтобы они попали в prebuild кэш).
+   - Зависимости проекта устанавливайте в `updateContentCommand`.
+   - В `postCreateCommand` оставляйте только легкие финальные операции (установка git-хуков, генерация локальных конфигов). Это минимизирует время старта.
+4. **Безопасность сетевых портов**:
+   - Оставляйте видимость проброшенных портов в значении `private` по умолчанию.
+   - Никогда не переключайте служебные порты баз данных, redis или метрик в режим `public`.
+5. **Настройка политик организации (Policies)**:
+   - Администраторам организации рекомендуется задавать политики:
+     - Ограничение максимального размера виртуальных машин (например, запрет машин более 4 cores без одобрения).
+     - Принудительный таймаут простоя (`idle timeout` не более 30 минут) для предотвращения списания квот в нерабочее время.
+     - Ограничение времени хранения неактивных сред (`retention period` не более 7 дней).
+6. **Непривилегированный пользователь**:
+   - Всегда настраивайте `remoteUser: "vscode"` вместо работы под `root`. Для команд, требующих повышенных привилегий, используйте беспарольный `sudo` внутри контейнера.
+7. **Персонализация через Dotfiles**:
+   - Выносите пользовательские предпочтения (zsh-темы, алиасы, плагины) в персональные репозитории `dotfiles`, сохраняя `devcontainer.json` максимально чистым и командным.
 
 ## Дополнительная информация
 
-- **[GitHub CLI](./github_cli.md)** — `gh codespace` и `gh api` для управления codespaces из терминала.
-- **[GitHub API](./github_api.md)** — REST API для управления codespaces, secrets, ports.
-- **[Сетевая безопасность](./network-security.md)** — egress для codespace VM.
-- **Официальная документация**: [Codespaces](https://docs.github.com/en/codespaces), [devcontainer.json](https://containers.dev/), [Prebuilds](https://docs.github.com/en/codespaces/prebuilding-your-codespace).
+- **[GitHub CLI](./github_cli.md)** — консольный клиент `gh` для управления репозиториями, секретами и прямых вызовов API.
+- **[GitHub API](./github_api.md)** — справочник эндпоинтов REST и GraphQL для автоматизации инфраструктуры GitHub.
+- **[Сетевая безопасность](./network-security.md)** — сетевая изоляция, egress-фильтрация и политики IP allow list.
+- **[Управление секретами](./secrets_management.md)** — архитектура безопасного хранения и ротации секретов.
+- **Официальная спецификация Development Containers**: [containers.dev](https://containers.dev/).
+- **Официальная документация GitHub**: [GitHub Codespaces Documentation](https://docs.github.com/en/codespaces).
