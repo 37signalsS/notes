@@ -538,6 +538,8 @@ curl -s http://localhost:16686/api/services | grep -o "synthetic-probe"
 *   Расчет аппаратных ресурсов, CPU, RAM и дисковой емкости: **[Capacity Planning для Jaeger](./jaeger_capacity_planning.md)**
 *   Низкоуровневая настройка ClickHouse, Elasticsearch и Kafka: **[Storage Deep Dive](./jaeger_storage_deep_dive.md)**
 *   Кластеризация, отказоустойчивость и Disaster Recovery: **[High Availability и DR](./jaeger_high_availability.md)**
+*   Стратегии сэмплирования и 2-Tier кластер: **[Стратегии сэмплирования в Jaeger](./jaeger_sampling_strategies.md)**
+*   Диагностика и устранение разрывов трасс: **[Broken Traces & Context Propagation](./jaeger_context_propagation_troubleshooting.md)**
 *   Подключение Jaeger к Grafana и корреляция Trace-to-Metrics: **[Интеграция Jaeger с Grafana](./jaeger_grafana_integration.md)**
 *   Настройка трассировки в Istio и Envoy: **[Интеграция Jaeger с Service Mesh](./jaeger_service_mesh_integration.md)**
 *   Конфигурация протокола OTLP, буферов и сжатия: **[OTLP Configuration для Jaeger](./jaeger_otlp_configuration.md)**

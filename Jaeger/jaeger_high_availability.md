@@ -826,6 +826,205 @@ echo "test-span-payload-dr-verification" | /opt/kafka/bin/kafka-console-producer
 
 ---
 
+### Сценарий 5: Graceful Shutdown, дрейн очередей и Persistent Queue при Rolling Updates в Kubernetes
+
+**Задача:** Предотвратить потерю спанов, находящихся в памяти и очередях коллектора, при плановых обновлениях подов (`kubectl rollout restart`), выселении подов (`kubectl drain`) и автомасштабировании.
+
+#### Проблема потери данных при SIGTERM:
+1. При получении сигнала `SIGTERM` процесс OTel/Jaeger немедленно закрывает входящие порты и начинает сброс внутренних буферов.
+2. Однако контроллер эндпоинтов Kubernetes (`kube-proxy`, IPVS, CNI) обновляет сетевые таблицы с задержкой в 2–5 секунд. В этот интервал клиентские сервисы продолжают слать gRPC-запросы в закрывающийся под, получая ошибки `Unavailable`.
+3. Если буфер экспортера (`queue`) хранится только в RAM, а база данных медленно подтверждает запись, по истечении `terminationGracePeriodSeconds` процесс принудительно убивается сигналом `SIGKILL`, уничтожая оставшиеся в памяти спаны.
+
+#### 1. Конфигурация надежного сброса через Persistent Queue (`file_storage`)
+
+В Jaeger v2 для гарантии сохранности очередей при перезапусках подключается расширение `file_storage`:
+
+```yaml
+extensions:
+  file_storage:
+    directory: /var/lib/jaeger/buffer
+    timeout: 5s
+    compaction:
+      on_rebound: true
+      directory: /var/lib/jaeger/buffer/compact
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: clickhouse_main
+    sending_queue:
+      enabled: true
+      num_consumers: 16
+      queue_size: 25000
+      # Буферизация на диске защищает от потери при рестартах пода
+      storage: file_storage
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 5m
+```
+
+#### 2. Тюнинг манифеста Deployment в Kubernetes
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger-collector
+  namespace: observability
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    spec:
+      # Достаточное время на сброс дисковых очередей и досыл данных в СУБД
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: jaeger
+          image: jaegertracing/jaeger:2.2.0
+          lifecycle:
+            preStop:
+              exec:
+                # Пауза 10 секунд гарантирует, что kube-proxy успел исключить под из iptables/IPVS
+                # до того, как Jaeger закроет OTLP порты
+                command: ["/bin/sh", "-c", "sleep 10"]
+          volumeMounts:
+            - name: buffer-storage
+              mountPath: /var/lib/jaeger/buffer
+      volumes:
+        - name: buffer-storage
+          emptyDir:
+            sizeLimit: 10Gi
+```
+
+#### 3. Валидация штатного завершения в логах
+
+```bash
+# Инициация планового перезапуска пула коллекторов
+kubectl rollout restart deployment/jaeger-collector -n observability
+# → deployment.apps/jaeger-collector restarted
+
+# Просмотр логов останавливаемого пода
+kubectl logs -n observability <terminating-pod-name> -c jaeger --tail=50
+# → {"level":"info","msg":"Received SIGTERM signal. Initiating shutdown..."}
+# → {"level":"info","msg":"Stopping OTLP gRPC and HTTP receivers..."}
+# → {"level":"info","msg":"Flushing remaining spans in exporter queues to storage..."}
+# → {"level":"info","msg":"Exporter queue drained successfully. 0 spans remaining."}
+# → {"level":"info","msg":"Everything stopped? Welcome to the universe! Process exited gracefully."}
+```
+
+---
+
+### Сценарий 6: Продакшен-мониторинг и алертинг через PrometheusRule (Alertmanager)
+
+**Задача:** Настроить проактивный мониторинг работоспособности кластера Jaeger v2 и выявление переполнения очередей, деградации хранилища и потери спанов до того, как инцидент повлияет на SRE-команды.
+
+#### Манифест `PrometheusRule` для Prometheus Operator
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: jaeger-cluster-alerts
+  namespace: observability
+  labels:
+    role: alert-rules
+    prometheus: k8s-prometheus
+spec:
+  groups:
+    - name: jaeger_v2_operational_alerts
+      rules:
+        # 1. Отклонение спанов на входе (проблемы сети, сериализации, квот)
+        - alert: JaegerReceiverRefusedSpansHigh
+          expr: |
+            (
+              sum(rate(otelcol_receiver_refused_spans_total[5m])) 
+              / 
+              (sum(rate(otelcol_receiver_accepted_spans_total[5m])) + sum(rate(otelcol_receiver_refused_spans_total[5m])))
+            ) * 100 > 1.0
+          for: 3m
+          labels:
+            severity: warning
+            tier: observability
+          annotations:
+            summary: "Jaeger Collector отклоняет более 1% входящих спанов"
+            description: "Текущий процент отказа: {{ $value | printf \"%.2f\" }}%. Возможная причина: переполнение буферов, невалидные OTLP структуры или mTLS сбои."
+
+        # 2. Насыщение очереди экспортера (риск переполнения буфера записи)
+        - alert: JaegerExporterQueueSaturationCritical
+          expr: |
+            (
+              max(otelcol_exporter_queue_size) by (pod, exporter)
+              / 
+              max(otelcol_exporter_queue_capacity) by (pod, exporter)
+            ) > 0.85
+          for: 2m
+          labels:
+            severity: critical
+            tier: observability
+          annotations:
+            summary: "Очередь экспортера Jaeger переполнена более чем на 85%"
+            description: "Экспортер {{ $labels.exporter }} на поде {{ $labels.pod }} заполнен на {{ $value | printf \"%.2f\" }}%. Узкое место в дисковой подсистеме ClickHouse или перегрузка сети."
+
+        # 3. Экстренный сброс спанов процессором memory_limiter (OOM Protection)
+        - alert: JaegerMemoryLimiterDroppingSpans
+          expr: sum(rate(otelcol_processor_dropped_spans_total{processor="memory_limiter"}[3m])) > 0
+          for: 1m
+          labels:
+            severity: critical
+            tier: observability
+          annotations:
+            summary: "Jaeger Memory Limiter принудительно отбрасывает спаны"
+            description: "Потребление памяти коллектора превысило пороговые значения limit_percentage. Срочно увеличьте RAM-лимиты или включите агрессивное сэмплирование."
+
+        # 4. Ошибки физической записи в ClickHouse / Elasticsearch
+        - alert: JaegerStorageWriteFailures
+          expr: sum(rate(otelcol_exporter_send_failed_spans_total[5m])) > 0
+          for: 2m
+          labels:
+            severity: critical
+            tier: observability
+          annotations:
+            summary: "Ошибки физической фиксации спанов в хранилище"
+            description: "Экспортер не может записать пачки спанов в ClickHouse. Проверьте статус readonly в репликах СУБД, дисковое пространство и логи драйвера."
+
+        # 5. Критический лаг вычитывания из Kafka (при стриминговой топологии)
+        - alert: JaegerKafkaConsumerLagHigh
+          expr: sum(kafka_consumergroup_lag{topic="jaeger-spans"}) > 100000
+          for: 5m
+          labels:
+            severity: warning
+            tier: observability
+          annotations:
+            summary: "Накопление лага консьюмеров Jaeger Ingester в Kafka"
+            description: "Необработанный лаг в топике jaeger-spans превысил 100 000 спанов (текущее значение: {{ $value }}). Увеличьте число реплик Ingester."
+```
+
+#### Валидация правил алертинга через PromQL
+
+```bash
+# Проверка срабатывания формулы насыщенности очереди в Prometheus API
+curl -sS "http://prometheus.observability.svc:9090/api/v1/query?query=max(otelcol_exporter_queue_size)/max(otelcol_exporter_queue_capacity)" | jq .
+# → {
+# →   "status": "success",
+# →   "data": {
+# →     "resultType": "vector",
+# →     "result": [
+# →       {
+# →         "metric": { "exporter": "jaeger_storage_exporter/clickhouse_main" },
+# →         "value": [ 1773315000, "0.12" ]
+# →       }
+# →     ]
+# →   }
+# → }
+```
+
+---
+
 ## Операции и команды
 
 Сводная таблица регламентных и аварийных команд при эксплуатации отказоустойчивого контура:

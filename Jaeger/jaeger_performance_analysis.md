@@ -131,6 +131,41 @@ $$P(\text{задержка}) = 1 - (1 - 0.01)^{30} = 1 - (0.99)^{30} \approx 1 -
 | **Prometheus Server** | 4 ядра CPU, 16 GB RAM | 8 ядер CPU, 32 GB RAM | Хранение метрик `spanmetrics` (контроль кардинальности тегов) |
 | **Jaeger Query Service** | 2 ядра CPU, 4 GB RAM | 8 ядер CPU, 16 GB RAM | Статeless-компонент, легко масштабируется горизонтально за LB |
 
+### 2.7 Критический порядок процессоров в конвейере Jaeger v2 (Pipeline Guardrails)
+
+Порядок следования процессоров в конфигурационном блоке `pipelines.traces.processors` является строго детерминированным. Нарушение порядка приводит к аварийным завершениям коллектора по OOM, утечкам конфиденциальных данных и ложным срабатываниям фильтров:
+
+```text
+[Receivers] 
+     │
+     ▼
+┌──────────────────────────────┐
+│ 1. memory_limiter            │ ──► СТРОГО ПЕРВЫМ: защита от OOM до любых аллокаций
+└──────────────┬───────────────┘
+               ▼
+┌──────────────────────────────┐
+│ 2. k8sattributes / resourcedet│ ──► Обогащение спанов метаданными пода/ноды
+└──────────────┬───────────────┘
+               ▼
+┌──────────────────────────────┐
+│ 3. transform (OTTL)          │ ──► Маскирование PII до попадания в буферы и сэмплирование
+└──────────────┬───────────────┘
+               ▼
+┌──────────────────────────────┐
+│ 4. tail_sampling             │ ──► Принятие решений над полным графом до батчинга
+└──────────────┬───────────────┘
+               ▼
+┌──────────────────────────────┐
+│ 5. batch                     │ ──► СТРОГО ПОСЛЕДНИМ ПЕРЕД ЭКСПОРТОМ: упаковка пачек в СУБД
+└──────────────┬───────────────┘
+               ▼
+[Exporters / Connectors]
+```
+
+* **Правило 1 (`memory_limiter` строго первый):** Если поставить `batch` или `tail_sampling` перед `memory_limiter`, спаны сначала осядут в объемных очередях оперативной памяти. При пиковом всплеске трафика Linux OOM Killer уничтожит процесс коллектора до того, как `memory_limiter` успеет инициировать защитный сброс данных.
+* **Правило 2 (`transform` до `tail_sampling`):** Очистка конфиденциальных данных (пароли, токены) должна выполняться до буферизации, чтобы чувствительные данные не оставались в оперативной памяти на интервал `decision_wait`.
+* **Правило 3 (`batch` строго последним перед экспортерами):** `batch` задерживает передачу спанов на интервал `timeout` (1–2 секунды). Если поставить `batch` перед `tail_sampling`, это искусственно искажает расчет времени жизни спанов и ломает тайминги `decision_wait`.
+
 ---
 
 ## 3. Практические сценарии
@@ -581,6 +616,80 @@ chmod +x check_slo.sh
 # → Запросов > 1500ms: 7 (0.0379%)
 # → OK: Сервис находится в пределах бюджета ошибок SLO.
 ```
+
+---
+
+### Сценарий 9: Построение топологии зависимостей сервисов на лету через Servicegraph Connector
+
+**Задача:** Автоматизировать расчет направленного графа связей между микросервисами в реальном времени без развертывания тяжелых внешних джоб обработки спанов (устаревший batch `jaeger-spark-dependencies`).
+
+#### 1. Архитектура коннектора `servicegraph`
+В Jaeger v2 коннектор `servicegraph` перехватывает спаны типа `SpanKindClient` и `SpanKindServer`, сопоставляет родительские и дочерние вызовы по `parent_span_id` и генерирует три метрики топологии в Prometheus:
+* `traces_service_graph_request_total`: суммарное число вызовов между `client` и `server`.
+* `traces_service_graph_request_failed_total`: число вызовов с ошибками (`failed="true"`).
+* `traces_service_graph_request_server_seconds_bucket`: гистограмма времени ответа клиент-серверного взаимодействия.
+
+#### 2. Конфигурация Jaeger v2 с коннектором `servicegraph`
+
+```yaml
+connectors:
+  servicegraph:
+    dimensions:
+      - connection.type
+    store:
+      ttl: 20s
+      max_items: 10000
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
+  batch:
+    send_batch_size: 4096
+    timeout: 1s
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: clickhouse_main
+
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: "traces_servicegraph"
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [jaeger_storage_exporter, servicegraph]
+
+    metrics/servicegraph:
+      receivers: [servicegraph]
+      processors: [memory_limiter]
+      exporters: [prometheus]
+```
+
+#### 3. Валидация выгрузки топологии через Prometheus API
+
+```bash
+# Проверка счетчиков графа вызовов между клиентом (api-gateway) и сервером (auth-service)
+curl -sS "http://127.0.0.1:8889/metrics" | grep "traces_servicegraph_request_total"
+# → # HELP traces_servicegraph_request_total Total number of requests between services
+# → # TYPE traces_servicegraph_request_total counter
+# → traces_servicegraph_request_total{client="api-gateway",server="auth-service",failed="false"} 8420
+# → traces_servicegraph_request_total{client="api-gateway",server="auth-service",failed="true"} 14
+# → traces_servicegraph_request_total{client="api-gateway",server="order-service",failed="false"} 3910
+```
+
+Метрики `traces_servicegraph_*` напрямую подключаются в панели **Grafana Node Graph Panel**, формируя динамическую интерактивную карту сервисов с индикацией задержек ребер и частоты сбоев.
 
 ---
 

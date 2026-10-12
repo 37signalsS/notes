@@ -1,243 +1,203 @@
-# ArgoCD: Настройка SSO через GitLab
+# Argo CD: Настройка SSO через GitLab
 
-**Актуально для:** Argo CD v3.4+ (покрывает v3.4.x, v3.5.x, v3.6.x; отличаются `oidc.config` нативная интеграция, JWT `users.session.duration` дефолты, `groups` claim поведение). Dex остаётся обязательным посредником для GitLab-коннектора — нативный OIDC в v3.x не поддерживает GitLab-специфичные поля `groups` и вложенные группы.
+**Актуально для:** Argo CD v3.5+ (покрывает v3.4.x, v3.5.x, v3.6.x; Kubernetes 1.28–1.32+; bare-metal / on-premise; Dex v2.41+; GitLab Self-managed 16.x–17.x / SaaS; Casbin RBAC, OIDC / PKCE flow)
 
-Настройка Single Sign-On (SSO) в Argo CD через GitLab позволяет централизованно управлять доступом пользователей, используя существующие учетные записи и группы GitLab. Для реализации используется встроенный сервер **Dex** — федеративный OpenID Connect (OIDC) провайдер, выступающий посредником между Argo CD и внешними Identity Providers (IdP).
+Настройка Single Sign-On (SSO) в Argo CD через GitLab позволяет централизованно управлять доступом инженеров, используя корпоративные учетные записи и иерархию групп GitLab. В архитектуре Argo CD аутентификация через GitLab реализуется с помощью встроенного федеративного провайдера **Dex** (`argocd-dex-server`), выступающего OIDC-посредником между сервером Argo CD (`argocd-server`) и API/OAuth2 GitLab. Использование Dex является стандартом для GitLab, так как обеспечивает поддержку вложенных подгрупп (nested subgroups), сопоставление уровней доступа участников (`getGroupsPermission`) и фильтрацию списков групп.
+
+---
 
 ## Предварительные требования
 
-Для успешной настройки SSO через GitLab необходимы следующие компоненты:
+Перед настройкой интеграции SSO убедитесь в выполнении следующих условий в on-premise окружении:
 
-| № | Требование | Детали | Команда проверки | Ожидаемый результат |
-|---|------------|--------|------------------|---------------------|
-| 1 | **Kubernetes кластер** | v1.28+ (рекомендуется для полной поддержки OIDC и SSA) | `kubectl version --short` | `Server Version: v1.28.x` или выше |
-| 2 | **Argo CD установлен** | v3.4+ (покрывает v3.4.x, v3.5.x, v3.6.x) | `kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server` | Все поды `argocd-server`, `argocd-dex-server`, `argocd-repo-server`, `argocd-application-controller` в статусе `Running` |
-| 3 | **Dex сервер работает** | Под `argocd-dex-server` в статусе `Running` | `kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-dex-server` | `argocd-dex-server-xxxxx   1/1     Running   0          5d` |
-| 4 | **GitLab доступен** | SaaS (gitlab.com) или Self-managed 15.0+ | `curl -I https://gitlab.example.com` | `HTTP/2 200` (или `302` для редиректа на логин) |
-| 5 | **HTTPS настроен для Argo CD** | Внешний URL с валидным TLS-сертификатом | `curl -I https://argocd.example.com` | `HTTP/2 200`; сертификат валиден (`openssl s_client -connect argocd.example.com:443 -servername argocd.example.com < /dev/null 2>&1 | grep -i verify`) |
-| 6 | **Административный доступ к кластеру** | Права на редактирование ConfigMap/Secret в namespace `argocd` | `kubectl auth can-i patch configmap -n argocd` | `yes` |
-| 7 | **CLI `argocd` установлен и настроен** | Версия, совместимая с сервером | `argocd version` | `argocd: v3.4.x`<br>`argocd-server: v3.4.x` |
-| 8 | **GitLab Application зарегистрировано** | Application ID и Secret получены в GitLab | (проверяется на Шаге 1) | Application ID и Secret доступны |
-| 9 | **DNS/Ingress настроен** | Callback URL `https://<argocd-url>/api/dex/callback` разрешается и доступен из интернета | `curl -I https://argocd.example.com/api/dex/callback` | `HTTP/2 200` или `302` (redirect к GitLab) |
+| № | Компонент / Требование | Описание и контекст | Команда проверки | Ожидаемый результат |
+|---|------------------------|---------------------|------------------|---------------------|
+| 1 | **Kubernetes кластер** | v1.28–v1.32+ (bare-metal / on-premise под управлением kubeadm, RKE2, Talos) | `kubectl version --short 2>/dev/null \|\| kubectl version` | `Server Version: v1.28.x` (или выше) |
+| 2 | **Компоненты Argo CD** | v3.5.x установлены в пространстве имен `argocd` | `kubectl get pods -n argocd -l app.kubernetes.io/part-of=argocd` | Поды `argocd-server`, `argocd-dex-server`, `argocd-repo-server`, `argocd-application-controller` в статусе `Running` |
+| 3 | **Сервер Dex** | Под `argocd-dex-server` запущен и готов к обработке gRPC-запросов | `kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-dex-server` | `argocd-dex-server-xxxxx   1/1     Running   0          5d` |
+| 4 | **Инстанс GitLab** | GitLab Self-managed (v16.0–v17.x) или SaaS (gitlab.com), доступный по сети из кластера | `curl -k -s -o /dev/null -w "%{http_code}\n" https://gitlab.example.com` | `200` или `302` |
+| 5 | **Внешний HTTPS Ingress** | Доменное имя Argo CD с валидным TLS-сертификатом (Let's Encrypt / внутренний корпоративный CA) | `openssl s_client -connect argocd.example.com:443 -servername argocd.example.com < /dev/null 2>&1 \| grep -i "verify return code"` | `Verify return code: 0 (ok)` |
+| 6 | **Административные права** | Права на чтение и запись ресурсов `ConfigMap` и `Secret` в пространстве имен `argocd` | `kubectl auth can-i patch configmap -n argocd` | `yes` |
+| 7 | **Утилиты командной строки** | `argocd` CLI v3.5+, `kubectl`, `jq`, `base64`, `openssl` установлены на рабочей станции | `argocd version --client --short` | `argocd: v3.5.x` |
+| 8 | **Сетевой маршрут Dex → GitLab** | Отсутствие блокировок сетевых политик (NetworkPolicy / фаервол) для Egress из подов Dex в порт 443 GitLab | `kubectl exec -n argocd deploy/argocd-dex-server -- nc -zv gitlab.example.com 443` | `gitlab.example.com (x.x.x.x:443) open` |
 
-> **Важно:** Для Self-managed GitLab с самоподписанным CA — подготовьте base64-кодированный корневой сертификат (`cat ca.crt | base64 -w0`) для параметра `rootCAData` в `dex.config`.
+> **Важно:** Если корпоративный GitLab использует внутренний самоподписанный центр сертификации (Internal Enterprise CA), подготовьте base64-кодированный корневой сертификат (`cat internal-ca.crt | base64 -w0`) для директивы `rootCAData` в конфигурации коннектора.
+
+---
 
 ## Определения
 
 | Термин | Определение |
 |--------|-------------|
-| **SSO (Single Sign-On)** | Технология единого входа, позволяющая пользователю аутентифицироваться один раз и получать доступ к множеству приложений без повторной аутентификации. В Argo CD реализуется через OIDC-посредник (Dex или нативный `oidc.config`). |
-| **Dex** | Федеративный OpenID Connect (OIDC) провайдер, выступающий посредником между Argo CD и внешними Identity Providers (IdP). Dex поддерживает коннекторы: GitLab, GitHub, Google, LDAP, SAML, OIDC. В Argo CD развёртывается как под `argocd-dex-server`. Обязателен для GitLab-коннектора. |
-| **OIDC (OpenID Connect)** | Протокол идентификации на базе OAuth 2.0, расширяющий его информацией о пользователе через Claims. Использует `Authorization Code Flow` с PKCE для веб-приложений. |
-| **RBAC (Role-Based Access Control)** | Механизм разграничения прав доступа на основе ролей, сопоставленных с группами пользователей из OIDC-токена. Настраивается через `argocd-rbac-cm`. |
-| **Claims** | Набор утверждений (атрибутов) о пользователе, возвращаемый IdP в OIDC ID Token: `sub` (subject), `email`, `groups`, `preferred_username`, `profile`. В GitLab `groups` содержит полные пути групп (`path/to/group`). |
-| **ID Token** | JWT-токен, содержащий Claims пользователя, подписанный IdP. Используется Dex для извлечения групп и email. |
-| **Authorization Code Flow** | OIDC-поток: 1) редирект к IdP → 2) вход пользователя → 3) callback с `code` → 4) обмен `code` на `access_token` + `id_token` → 5) извлечение Claims. |
-| **groupMemberAttributes** | Параметр Dex-коннектора GitLab. При `true` — Dex запрашивает полную иерархию групп (включая вложенные) при каждом входе через GitLab API. При `false` (по умолчанию) — только прямые группы, кэшируются после первого входа. |
-| **argocd-cm** | ConfigMap в namespace `argocd` для глобальной конфигурации Argo CD: `url`, `dex.config`, `oidc.config`, `users.session.duration`, `admin.enabled`. |
-| **argocd-rbac-cm** | ConfigMap в namespace `argocd` для RBAC-политик: `policy.csv`, `policy.default`, `scopes`. |
-| **argocd-secret** | Secret в namespace `argocd` для хранения чувствительных данных: `gitlab.clientSecret`, `oidc.clientSecret`, `admin.password`, `server.secretkey`. |
-| **Callback URL** | URL, на который IdP возвращает пользователя после аутентификации: `https://<argocd-url>/api/dex/callback`. Должен совпадать точно с тем, что зарегистрировано в GitLab Application. |
-| **Scopes (OIDC)** | Области доступа, запрашиваемые у IdP. Для GitLab: `openid`, `profile`, `email`, `groups`, `read_api`. В `argocd-rbac-cm` параметр `scopes: "[groups]"` определяет, какой claim используется для групп. |
-| **users.session.duration** | Параметр в `argocd-cm`, определяющий TTL JWT-сессии (по умолчанию 24h). Влияет на время жизни токена и кэш групп из OIDC. |
+| **SSO (Single Sign-On)** | Технология единой точки входа, позволяющая пользователю единожды пройти аутентификацию в IdP (GitLab) и получить доступ к API и веб-интерфейсу Argo CD без локальных паролей. |
+| **Dex** | Легковесный федеративный OpenID Connect (OIDC) провайдер с открытым исходным кодом (`github.com/dexidp/dex`), поставляемый в составе дистрибутива Argo CD (`argocd-dex-server`). Выступает шлюзом между Argo CD и коннекторами внешних систем идентификации. |
+| **OIDC (OpenID Connect)** | Протокол идентификации поверх спецификации OAuth 2.0, передающий профиль пользователя и списки групп через криптографически подписанный токен ID Token (JWT). |
+| **IdP (Identity Provider)** | Поставщик удостоверений — система, хранящая учетные записи пользователей и групп (в данном контексте — инстанс GitLab). |
+| **Authorization Code Flow с PKCE** | Стандартный поток OIDC для веб-приложений: браузер получает временный авторизационный код в IdP с защитой от перехвата (Proof Key for Code Exchange), который сервер обменивает на токены по защищенному каналу бэкенда. |
+| **ID Token** | Формат JSON Web Token (JWT), подписанный ключами IdP или Dex, содержащий набор клеймов (`claims`) о пользователе: `sub`, `email`, `groups`, `preferred_username`. |
+| **Claims** | Пары «ключ-значение» внутри полезной нагрузки JWT, содержащие идентификаторы субъекта, почту и перечень групп. В GitLab группы передаются в виде полных путей с учетом регистра: `path/to/subgroup`. |
+| **getGroupsPermission** | Специфичный параметр Dex GitLab Connector: при включении (`true`) дополняет список групп суффиксом роли участника в GitLab (например, `infra/k8s-admins:maintainer`, `shop/devs:developer`). |
+| **useLoginAsID** | Параметр Dex GitLab Connector: при значении `true` использует строковый логин GitLab (`preferred_username`) в качестве клейма `sub` вместо неизменяемого числового ID (`12345`). |
+| **argocd-cm** | Системный ConfigMap глобальных настроек Argo CD: внешний URL (`url`), конфигурация Dex (`dex.config`), параметры сессий (`users.session.duration`), статус локального админа (`admin.enabled`). |
+| **argocd-rbac-cm** | Системный ConfigMap Casbin RBAC: файл правил `policy.csv`, дефолтная роль `policy.default`, режим сопоставления `policy.matchMode` и источники клеймов `scopes`. |
+| **argocd-secret** | Системный Secret пространства имен `argocd`, используемый для безопасного хранения `gitlab.clientSecret`, пароля администратора и ключей подписи сессий. |
+| **Callback URL** | Эндпоинт обратного вызова Dex: `https://<argocd-url>/api/dex/callback`, на который GitLab перенаправляет браузер пользователя после успешного ввода учетных данных. |
+| **Casbin Engine** | Встроенный механизм авторизации Argo CD, сопоставляющий субъектов (`g`, группы из OIDC) с ролями и правилами доступа (`p`, политики к ресурсам приложений, репозиториев и проектов). |
 
-## Базовые концепции
+---
 
-### Архитектура взаимодействия
+## Архитектура и базовые концепции
+
+### Архитектура компонентов аутентификации
+
+В архитектуре Argo CD сервер управления интерфейсом и API (`argocd-server`) не общается напрямую с GitLab OAuth API. Роль шлюза выполняет встроенный сервис `argocd-dex-server`:
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│              Argo CD SSO через GitLab: Архитектура OIDC            │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐          │
-│  │   Пользователь│───▶│ argocd-server│───▶│ argocd-dex   │          │
-│  │   (Браузер)  │◀───│ (API/UI)     │◀───│ (OIDC-посредник)│        │
-│  └──────────────┘    └──────────────┘    └──────────────┘          │
-│         │                   │                   │                   │
-│         │                   │                   ▼                   │
-│         │                   │         ┌──────────────┐             │
-│         │                   │         │    GitLab     │             │
-│         │                   │         │  (IdP/Issuer) │             │
-│         │                   │         └──────────────┘             │
-│         │                   │                   │                   │
-│         │                   ▼                   ▼                   │
-│         │         ┌──────────────┐    ┌──────────────┐             │
-│         │         │ argocd-rbac  │    │ OIDC-токен   │             │
-│         │         │ (Политики)   │    │ (Claims:     │             │
-│         │         └──────────────┘    │  email,      │             │
-│         │                             │  groups)     │             │
-│         │                             └──────────────┘             │
-│         │                                                           │
-│         ▼                                                           │
-│  ┌──────────────┐                                                   │
-│  │ Доступ к UI  │                                                   │
-│  │ и API ArgoCD │                                                   │
-│  └──────────────┘                                                   │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│               Argo CD SSO: Топология взаимодействия компонентов                │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│   ┌──────────────┐     HTTPS (TLS 443)      ┌─────────────────────────────┐     │
+│   │   Браузер    │─────────────────────────▶│    Ingress Controller       │     │
+│   │ Пользователя │                          │   (NGINX / HAProxy / Envoy) │     │
+│   └──────────────┘                          └─────────────────────────────┘     │
+│          ▲   ▲                                             │                    │
+│          │   │                                      Маршрутизация               │
+│          │   │                                ┌────────────┴────────────┐       │
+│          │   │                                ▼                         ▼       │
+│          │   │                       ┌─────────────────┐       ┌──────────────┐ │
+│          │   │                       │  argocd-server  │       │  argocd-dex  │ │
+│          │   │                       │   (UI & API)    │       │   (Порт 5556)│ │
+│          │   │                       └─────────────────┘       └──────────────┘ │
+│          │   │                                │ gRPC (Внутренний)       ▲       │
+│          │   │                                └─────────────────────────┘       │
+│          │   │                                                          │       │
+│          │   └────────────────────── OAuth2 Flow ───────────────────────┤       │
+│          │                          (Авторизация в браузере)            │       │
+│          ▼                                                              ▼       │
+│   ┌────────────────────────────────────────────────────────────────────────┐    │
+│   │                    Корпоративный GitLab (IdP)                          │    │
+│   │        OAuth Application: /oauth/authorize, /oauth/token, /api/v4/user │    │
+│   └────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Пошаговый процесс OIDC Authorization Code Flow:**
+### Пошаговый протокол OIDC Authorization Code Flow
 
-1. **Запрос:** Пользователь инициирует вход в веб-интерфейсе Argo CD (через UI или CLI `argocd login --sso`).
-2. **Редирект к Dex:** `argocd-server` перенаправляет запрос к `argocd-dex-server` (endpoint `/auth`).
-3. **Редирект к IdP (GitLab):** Dex формирует authorize URL с параметрами `client_id`, `redirect_uri`, `scope`, `state`, `nonce` и перенаправляет браузер пользователя к GitLab (`/oauth/authorize`).
-4. **Аутентификация в GitLab:** Пользователь вводит учетные данные (или использует существующую сессию GitLab).
-5. **Авторизация (согласие):** GitLab запрашивает согласие пользователя на доступ к запрошенным scopes (`openid`, `profile`, `email`, `groups`, `read_api`).
-6. **Callback к Dex:** После успешного входа GitLab возвращает authorization `code` на `redirect_uri` Dex (`/callback`).
-7. **Обмен токена:** Dex обменивает `code` на `access_token` и `id_token` через Token Endpoint GitLab (`/oauth/token`).
-8. **Валидация и извлечение Claims:** Dex валидирует подпись `id_token` (JWKS от GitLab), извлекает Claims: `sub`, `email`, `preferred_username`, `groups` (полные пути), `groups_direct`.
-9. **Создание сессии:** Dex создает сессию (хранится в Redis или in-memory), устанавливает session cookie (`dex.session`), перенаправляет пользователя обратно в Argo CD.
-10. **Авторизация в Argo CD:** `argocd-server` читает session cookie, получает Claims из Dex, применяет политики из `argocd-rbac-cm` (`policy.csv`, `g,` маппинг групп на роли), выдает JWT-токен пользователю (TTL = `users.session.duration`).
+Процесс сквозной аутентификации пользователя строится по следующему алгоритму:
 
-### Почему Dex обязателен для GitLab (v3.4+)
+1. **Инициация входа:** Пользователь открывает веб-интерфейс Argo CD и нажимает кнопку **«LOG IN VIA GITLAB»** (или выполняет команду `argocd login argocd.example.com --sso`).
+2. **Формирование редиректа:** `argocd-server` запрашивает у `argocd-dex-server` URL авторизации и возвращает браузеру HTTP-редирект (302) на эндпоинт `/api/dex/auth/gitlab`.
+3. **Запрос авторизации к GitLab:** Dex генерирует параметры `state`, криптографический `nonce`, хэш `code_challenge` (PKCE) и перенаправляет браузер на GitLab:
+   `https://gitlab.example.com/oauth/authorize?client_id=...&redirect_uri=https://argocd.example.com/api/dex/callback&response_type=code&scope=openid+profile+email+read_user&state=...`
+4. **Аутентификация пользователя:** Пользователь вводит логин и пароль в GitLab (или использует активную сессию / 2FA).
+5. **Подтверждение прав (Consent):** При первой авторизации GitLab запрашивает подтверждение доступа приложения Argo CD к профилю и списку групп.
+6. **Возврат кода (Authorization Callback):** GitLab перенаправляет браузер на `https://argocd.example.com/api/dex/callback?code=AUTH_CODE&state=...`.
+7. **Обмен кода на токены (Backchannel):** Под `argocd-dex-server` напрямую (через внутрикластерный Egress) отправляет POST-запрос на GitLab `/oauth/token`, передавая `code`, `client_id`, `client_secret` и `code_verifier`.
+8. **Получение данных профиля и групп:** Dex отправляет запрос к GitLab API (`/api/v4/user` и `/api/v4/groups`) с полученным `access_token` для извлечения полного дерева групп пользователя.
+9. **Генерация внутреннего токена Dex:** Dex сохраняет сессию во внутреннем хранилище (in-memory или Redis) и передает подписанный JWT ID Token обратно в `argocd-server`.
+10. **Авторизация в Casbin:** `argocd-server` валидирует токен Dex, извлекает клеймы `email` и `groups`, сопоставляет их с правилами в `argocd-rbac-cm` (`policy.csv`) и генерирует собственную сессионную куку `argocd.token` со сроком жизни `users.session.duration`.
 
-| Особенность | Нативный `oidc.config` (v3.0+) | Dex GitLab Connector |
-|-------------|-------------------------------|---------------------|
-| **Вложенные группы** | ❌ Не поддерживает | ✅ `groupMemberAttributes: true` |
-| **Автообновление групп** | ❌ Только при первом логине | ✅ При каждом входе (с `groupMemberAttributes: true`) |
-| **`groups` claim** | ❌ Не извлекается корректно | ✅ Полные пути `path/to/group` |
-| **Централизованная конфигурация** | ❌ Разделена между `argocd-cm` и `argocd-rbac-cm` | ✅ Вся конфигурация в `argocd-cm` (`dex.config`) |
-| **Мульти-провайдерность** | ✅ Поддерживается | ✅ Несколько коннекторов в одном `dex.config` |
+### Сравнение: Встроенный Dex vs Нативный `oidc.config`
 
-**Вывод:** Для GitLab **всегда используйте Dex**. Нативный `oidc.config` подходит только для GitHub, Google, LDAP, Azure AD (SAML/OIDC), где структура групп проще.
+В Argo CD v3.5+ существует возможность прямой интеграции с OIDC-провайдерами через секцию `oidc.config` в обход Dex. Однако для GitLab использование Dex является критически важным:
 
-### Claims в GitLab OIDC
+| Функциональность | Нативный `oidc.config` (Argo CD) | Dex GitLab Connector (`dex.config`) |
+|------------------|----------------------------------|-------------------------------------|
+| **Вложенные подгруппы (Subgroups)** | Ограниченная поддержка (требуются специальные клеймы в GitLab CI/OIDC) | Полная поддержка (Dex рекурсивно опрашивает дерево групп через GitLab API) |
+| **Уровни доступа (`getGroupsPermission`)** | ❌ Не поддерживается | ✅ Поддерживается (добавляет `:maintainer`, `:developer`, `:owner`) |
+| **Фильтрация групп (Whitelist)** | ❌ Отсутствует (все группы пользователя попадают в токен) | ✅ Поддерживается директивой `groups: [...]` |
+| **Защита от переполнения HTTP-заголовков** | ❌ Риск падения с HTTP 431 при >50 групп у пользователя | ✅ Фильтрация уменьшает размер ID Token |
+| **Запрос к GitLab API** | Работает только по стандартному OIDC UserInfo | Использует специализированный REST клиент GitLab v4 API |
+| **Кастомный CA для IdP** | Требует монтирования томов с сертификатами в `argocd-server` | Настраивается декларативно через строковый параметр `rootCAData` |
 
-GitLab возвращает следующие Claims в OIDC ID Token:
+**Вывод:** Для GitLab Self-managed и SaaS в производственных средах всегда настраивайте интеграцию через **`dex.config`**.
 
-| Claim | Описание | Пример | Примечание |
-|-------|----------|--------|------------|
-| `sub` | Уникальный идентификатор пользователя (immutable) | `gitlab|12345678` | Формат: `gitlab\|<user_id>` |
-| `email` | Email пользователя | `user@example.com` | Может быть скрыт в настройках профиля |
-| `preferred_username` | Имя пользователя в GitLab | `john-doe` | Используется для отображения в UI |
-| `groups` | **Все группы** (включая вложенные, если `groupMemberAttributes: true`) | `["infra/team", "shop/backend", "org/suborg/team"]` | **Полные пути**, case-sensitive |
-| `groups_direct` | Только прямые группы (без вложенных) | `["infra/team"]` | Доступно всегда |
-| `profile` | URL профиля в GitLab | `https://gitlab.com/john-doe` | — |
+### Структура клеймов (Claims) GitLab и сопоставление групп
 
-> **Критично для RBAC:** Группы в Claims передаются как **полные пути** (`path/to/group`), а не просто имена. В `policy.csv` маппинг должен использовать точное совпадение строки: `g, "infra/kubernetes-admins", role:admin`.
+При успешном запросе Dex формирует для Argo CD следующий набор клеймов:
 
-### Политики доступа: Синтаксис и логика
-
-Argo CD использует собственный синтаксис политик в `argocd-rbac-cm` (Casper/Go RBAC):
-
-**Структура политики:**
-```
-p, <роль>, <ресурс>, <действие>, <объект>, <решение>
-g, <субъект>, <роль>
-```
-
-**Параметры политики (`p,`):**
-
-| Поле | Описание | Примеры |
-|------|----------|---------|
-| **Роль** | Имя роли (префикс `role:`) | `role:admin`, `role:dev-shop`, `role:readonly` |
-| **Ресурс** | Тип ресурса Argo CD | `applications`, `clusters`, `repositories`, `projects`, `certificates`, `accounts`, `gpgkeys`, `extensions` |
-| **Действие** | Операция над ресурсом | `get`, `create`, `update`, `delete`, `sync`, `override`, `action/<custom>` |
-| **Объект** | Паттерн имени ресурса (glob: `*`, `?`) | `*/*`, `shop/*`, `shop/frontend-*`, `prod/cluster-*` |
-| **Решение** | Разрешение или запрет | `allow`, `deny` |
-
-**Группировка / Маппинг групп (`g,`):**
-```
-g, "<-gitlab-group-path>", <роль>
+```json
+{
+  "iss": "https://argocd.example.com/api/dex",
+  "sub": "CiQxMjM0NTY3OBIGZ2l0bGFi",
+  "aud": "argo-cd",
+  "exp": 1776000000,
+  "iat": 1775913600,
+  "email": "alex.sre@example.com",
+  "email_verified": true,
+  "name": "Alex SRE",
+  "preferred_username": "alex-sre",
+  "groups": [
+    "infrastructure",
+    "infrastructure/kubernetes",
+    "infrastructure/kubernetes:maintainer",
+    "projects/payment-gateway",
+    "projects/payment-gateway:developer"
+  ]
+}
 ```
 
-**Пример полной конфигурации `argocd-rbac-cm`:**
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: argocd-rbac-cm
-  namespace: argocd
-data:
-  policy.default: role:readonly
-  policy.csv: |
-    # Полные права для группы infra/kubernetes-admins
-    g, "infra/kubernetes-admins", role:admin
-    
-    # Кастомная роль для разработчиков проекта shop
-    p, role:dev-shop, applications, get, shop/*, allow
-    p, role:dev-shop, applications, sync, shop/*, allow
-    p, role:dev-shop, applications, override, shop/*, allow
-    
-    # Маппинг вложенной группы GitLab на роль
-    g, "shop-team/backend-devs", role:dev-shop
-    
-    # Явный запрет удаления для разработчиков
-    p, role:dev-shop, applications, delete, shop/*, deny
-    
-    # Доступ к репозиториям для CI-бота
-    g, "ci/cd-bots", role:ci-bot
-    p, role:ci-bot, repositories, get, *, allow
-    p, role:ci-bot, repositories, create, *, allow
+> **Критическое правило сопоставления групп в Casbin:**
+> 1. Пути групп всегда передаются **полными путями от корня инстанса** через прямой слеш (`infrastructure/kubernetes`), а не просто конечным именем подгруппы.
+> 2. Строки путей чувствительны к регистру (**case-sensitive**): `Infrastructure/Kubernetes` и `infrastructure/kubernetes` считаются разными группами.
+> 3. Если включен параметр `getGroupsPermission: true`, Dex генерирует две записи для каждой группы: имя группы и имя группы с суффиксом роли (`:owner`, `:maintainer`, `:developer`, `:reporter`, `:guest`).
 
-  # Области для OIDC claims (только для OIDC/SSO пользователей)
-  scopes: "[groups]"
-```
+---
 
-**Приоритет правил:**
-1. `deny` всегда имеет приоритет над `allow` (explicit deny wins).
-2. Правила проверяются сверху вниз (first match wins для одного действия).
-3. Если ни одно правило не совпало — действие запрещено (default: `policy.default: role:readonly`).
-
-**Стандартные роли Argo CD:**
-
-| Роль | Описание |
-|------|----------|
-| `role:readonly` | Только `get` для всех ресурсов |
-| `role:admin` | Полный доступ ко всем ресурсам (`*/*, allow`) |
-| `role:developer` | `get`, `sync`, `override` для applications (по умолчанию для новых пользователей до v3.0) |
-
-## Практические сценарии
+## Практические сценарии и конфигурация
 
 ### Шаг 1: Регистрация приложения в GitLab
 
-1. В GitLab перейдите в **Settings → Applications** (на уровне инстанса или конкретной группы).
-2. Заполните параметры:
+Приложение можно зарегистрировать на уровне всего инстанса (Admin Area) или на уровне корневой группы команд. Для производственных инсталляций рекомендуется регистрация на уровне инстанса:
 
-| Параметр | Значение | Описание |
-| :--- | :--- | :--- |
-| **Name** | `ArgoCD` | Отображаемое имя приложения |
-| **Redirect URI** | `https://<argocd-url>/api/dex/callback` | URI для возврата после аутентификации |
-| **Confidential** | `Yes` (включено) | Обязательно для OIDC |
-| **Scopes** | `openid`, `profile`, `email`, `read_api` | Минимально необходимые области доступа |
-| **_expire_token_after** | `3600` | Время жизни токена (рекомендуется 1 час) |
+1. В GitLab откройте **Admin Area → Applications** (или **Settings → Applications** в корневой группе).
+2. Заполните параметры приложения:
+   - **Name:** `Argo CD Production`
+   - **Redirect URI:** `https://argocd.example.com/api/dex/callback`
+   - **Trusted:** `No` (или `Yes`, если хотите пропустить экран подтверждения consent screen для сотрудников).
+   - **Confidential:** `Yes` (Обязательно! Включает валидацию Client Secret на бэкенде Dex).
+   - **Scopes:**
+     - `openid` — обязателен для протокола OIDC.
+     - `profile` — получение имени и логина пользователя.
+     - `email` — получение корпоративного email адреса.
+     - `read_user` — **критически необходим** для Dex: позволяет запрашивать членство в группах через GitLab REST API v4.
+3. Нажмите кнопку **Save application**.
+4. Скопируйте сгенерированные значения:
+   - **Application ID** (публичный идентификатор клиента).
+   - **Secret** (секретный ключ клиента, отображается единожды).
 
-3. Сохраните **Application ID** и **Secret**.
+### Шаг 2: Безопасное хранение секрета в Kubernetes
 
-**Примечание для Self-managed GitLab:**
-- Убедитесь, что GitLab доступен по HTTPS с валидным сертификатом.
-- Если используется внутренний CA — добавьте корневой сертификат в `argocd-cm` (см. Шаг 3).
+В соответствии со стандартом GitOps и практиками безопасности, секреты никогда не должны храниться в открытом виде в `ConfigMap`. Значение `clientSecret` размещается в секрете `argocd-secret` в пространстве имен `argocd`.
 
-### Шаг 2: Хранение секрета в Kubernetes
-
-Для обеспечения безопасности `clientSecret` рекомендуется хранить в `argocd-secret`.
-
-**Вариант А: Редактирование существующего секрета**
+**Вариант А: Быстрое добавление через kubectl:**
 ```bash
-# Кодирование секрета в base64
-echo -n "ваш_секрет_gitlab" | base64
-
-# Добавление в argocd-secret
-kubectl edit secret -n argocd argocd-secret
+# Добавление/обновление ключа gitlab.clientSecret в существующий секрет
+kubectl patch secret argocd-secret -n argocd --type merge -p "{\"stringData\": {\"gitlab.clientSecret\": \"glcpr-9876543210abcdeffedcba0123456789\"}}"
+# → secret/argocd-secret patched
 ```
-Добавьте поле `gitlab.clientSecret` в секцию `data`.
 
-**Вариант Б: Декларативный манифест (External Secrets / SOPS)**
-Если вы используете GitOps для секретов, определите поле в `stringData`:
+**Вариант Б: Декларативный манифест (SOPS / Sealed Secrets для bare-metal):**
 ```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-secret
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-secret
+    app.kubernetes.io/part-of: argocd
+type: Opaque
 stringData:
-  gitlab.clientSecret: "ваш_секрет_gitlab"
+  # Ключ, на который ссылается $gitlab.clientSecret в dex.config
+  gitlab.clientSecret: "glcpr-9876543210abcdeffedcba0123456789"
 ```
 
-**Важно:**
-- Никогда не храните секреты в `argocd-cm` — используйте `argocd-secret`.
-- Для продакшена рекомендуется использовать External Secrets Operator или Sealed Secrets.
+### Шаг 3: Конфигурация Dex в ConfigMap `argocd-cm`
 
-### Шаг 3: Настройка коннектора в ConfigMap
-
-Отредактируйте `argocd-cm` для настройки связи с GitLab.
+Отредактируйте `argocd-cm`, указав внешний базовый URL инстанса и параметры коннектора Dex.
 
 ```yaml
 apiVersion: v1
@@ -245,56 +205,120 @@ kind: ConfigMap
 metadata:
   name: argocd-cm
   namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cm
+    app.kubernetes.io/part-of: argocd
 data:
+  # Внешний URL интерфейса Argo CD (строго без завершающего слеша)
   url: https://argocd.example.com
+
+  # Длительность сессии JWT токена пользователя (по умолчанию 24h)
+  users.session.duration: "24h"
+
+  # Конфигурация встроенного сервера Dex
   dex.config: |
+    logger:
+      level: info
+      format: json
     connectors:
       - type: gitlab
         id: gitlab
         name: GitLab
         config:
-          baseURL: https://gitlab.example.com # URL вашего GitLab инстанса
-          clientID: <application_id>
+          # URL корпоративного GitLab (для SaaS: https://gitlab.com)
+          baseURL: https://gitlab.example.com
+          clientID: "1a2b3c4d5e6f7a8b9c0d1e2f"
+          # Подстановка значения из Secret argocd-secret (ключ gitlab.clientSecret)
           clientSecret: $gitlab.clientSecret
           redirectURI: https://argocd.example.com/api/dex/callback
-          # Дополнительные настройки для безопасности и групп:
-          requestedScopes: ["openid", "profile", "email", "groups"]
-          # Автоматическое обновление Groups при каждом входе
-          # groupMemberAttributes: true
-          # Фильтрация групп (опционально)
-          # groups: ["infra/*", "shop/*"]
+          
+          # Опционально: фильтрация групп (whitelist).
+          # Если указано, в токен попадут ТОЛЬКО перечисленные группы.
+          # Если пользователь не состоит ни в одной из них, вход будет отклонен.
+          groups:
+            - infrastructure/kubernetes
+            - infrastructure/sre-team
+            - development/platform-devs
+            - security/secops
+          
+          # Включение ролевых суффиксов к группам (:owner, :maintainer, :developer)
+          getGroupsPermission: true
+          
+          # Использовать логин пользователя вместо числового ID в качестве sub
+          useLoginAsID: false
 ```
 
-**Примечание для Self-managed GitLab с внутренним CA:**
-Если GitLab использует самоподписанный сертификат, добавьте корневой сертификат в `argocd-cm`:
+#### Настройка для GitLab с корпоративным самоподписанным CA
+
+Если инстанс GitLab защищен внутренним центром сертификации, Dex завершит рукопожатие с ошибкой `x509: certificate signed by unknown authority`. Добавьте корневой сертификат в директиву `rootCAData`:
+
+```bash
+# Получение base64 строки сертификата в одну строку
+cat /etc/ssl/certs/corporate-internal-ca.crt | base64 -w0
+# → LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCg==...
+```
+
+Фрагмент манифеста `argocd-cm`:
 ```yaml
-dex.config: |
-  logger:
-    level: debug
-  connectors:
-    - type: gitlab
-      ...
-      config:
-        rootCAData: <base64_encoded_ca_cert>
+data:
+  dex.config: |
+    connectors:
+      - type: gitlab
+        id: gitlab
+        name: Corporate GitLab
+        config:
+          baseURL: https://gitlab.internal.lan
+          clientID: "corporate_app_id"
+          clientSecret: $gitlab.clientSecret
+          redirectURI: https://argocd.example.com/api/dex/callback
+          getGroupsPermission: true
+          # Base64-кодированный PEM-сертификат внутреннего CA
+          rootCAData: "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCg=="
 ```
 
-**Примечание для GitLab.com (SaaS):**
+### Шаг 4: Конфигурация Ingress для поддержки Dex Callback
+
+Для корректной работы OIDC Ingress Controller обязан корректно передавать заголовки `X-Forwarded-*` и проксировать эндпоинты `/api/dex/*` на сервис `argocd-server`.
+
+Пример манифеста для **NGINX Ingress Controller**:
+
 ```yaml
-dex.config: |
-  connectors:
-    - type: gitlab
-      id: gitlab
-      name: GitLab
-      config:
-        baseURL: https://gitlab.com
-        clientID: <application_id>
-        clientSecret: $gitlab.clientSecret
-        requestedScopes: ["openid", "profile", "email", "groups"]
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server-ingress
+  namespace: argocd
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "128k"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "8"
+    nginx.ingress.kubernetes.io/proxy-busy-buffers-size: "256k"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - argocd.example.com
+      secretName: argocd-server-tls
+  rules:
+    - host: argocd.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  name: https
 ```
 
-### Шаг 4: Настройка политик доступа (RBAC)
+> **Важно:** Обратите внимание на аннотации `proxy-buffer-size: "128k"`. Если пользователь состоит в нескольких десятках групп GitLab, размер куки авторизации и заголовка HTTP может превысить дефолтные 4KB NGINX, что вызовет ошибку `502 Bad Gateway`.
 
-Маппинг групп GitLab на роли ArgoCD выполняется в `argocd-rbac-cm`.
+### Шаг 5: Настройка политик доступа (RBAC) в `argocd-rbac-cm`
+
+Управление правами доступа осуществляется в `argocd-rbac-cm`. Политики сопоставляют группы GitLab (извлеченные Dex) со стандартными и пользовательскими ролями Casbin.
 
 ```yaml
 apiVersion: v1
@@ -302,380 +326,323 @@ kind: ConfigMap
 metadata:
   name: argocd-rbac-cm
   namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-rbac-cm
+    app.kubernetes.io/part-of: argocd
 data:
+  # Дефолтная роль для любого аутентифицированного пользователя
   policy.default: role:readonly
+
+  # Включение регулярных выражений или glob-паттернов (glob по умолчанию)
+  policy.matchMode: glob
+
+  # Извлечение групп из клейма groups в токене Dex
+  scopes: "[groups]"
+
   policy.csv: |
-    # Группа 'infra-admins' получает полные права
-    g, "infra/kubernetes-admins", role:admin
-    
-    # Кастомная роль для разработчиков проекта 'shop'
-    p, role:dev-shop, applications, get, shop/*, allow
-    p, role:dev-shop, applications, sync, shop/*, allow
-    
-    # Маппинг вложенной группы GitLab на роль
-    g, "shop-team/backend-devs", role:dev-shop
+    # =========================================================================
+    # 1. Администраторы инфраструктуры (SRE / Platform Team)
+    # Полный доступ ко всем ресурсам и кластерам
+    # =========================================================================
+    g, "infrastructure/sre-team", role:admin
+    g, "infrastructure/kubernetes:maintainer", role:admin
+    g, "infrastructure/kubernetes:owner", role:admin
+
+    # =========================================================================
+    # 2. Роль для разработчиков платформенных сервисов (Platform Devs)
+    # Доступ к просмотру, синхронизации и оверрайду параметров приложений проекта core
+    # =========================================================================
+    p, role:platform-developer, applications, get, core/*, allow
+    p, role:platform-developer, applications, sync, core/*, allow
+    p, role:platform-developer, applications, action/*, core/*, allow
+    p, role:platform-developer, logs, get, core/*, allow
+    p, role:platform-developer, exec, create, core/*, allow
+    # Явный запрет на удаление приложений
+    p, role:platform-developer, applications, delete, core/*, deny
+
+    # Привязка группы разработчиков с правами Maintainer в GitLab
+    g, "development/platform-devs:maintainer", role:platform-developer
+    g, "development/platform-devs:developer", role:platform-developer
+
+    # =========================================================================
+    # 3. Роль аудиторов и инженеров безопасности (SecOps)
+    # Чтение приложений, просмотр логов и событий в режиме read-only
+    # =========================================================================
+    p, role:secops-auditor, applications, get, *, allow
+    p, role:secops-auditor, logs, get, *, allow
+    p, role:secops-auditor, clusters, get, *, allow
+    p, role:secops-auditor, repositories, get, *, allow
+    g, "security/secops", role:secops-auditor
+
+    # =========================================================================
+    # 4. Сервисные аккаунты CI/CD автоматизации
+    # =========================================================================
+    p, role:ci-deployer, applications, sync, *, allow
+    p, role:ci-deployer, applications, get, *, allow
+    g, "ci/pipeline-runner", role:ci-deployer
 ```
 
-*Важно: Названия групп в GitLab при использовании OIDC передаются как полные пути (`path/to/group`).*
+### Шаг 6: Маппинг групп на уровне AppProject (Изоляция команд)
 
-### Шаг 5: Верификация и тестирование
-
-**1. Проверка логов Dex:**
-```bash
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-dex-server --tail=50 -f
-```
-
-**2. Вход через UI:**
-- Откройте URL ArgoCD в браузере.
-- Нажмите **LOGIN VIA GITLAB**.
-- Введите учетные данные GitLab.
-- Проверьте, что вы авторизованы и видите нужные приложения.
-
-**3. Проверка Claims:**
-```bash
-# Просмотр информации о текущем пользователе
-argocd account get
-
-# Просмотр Roles и Groups
-argocd admin settings rbac
-```
-
-**4. Проверка политик:**
-```bash
-# Проверка доступа конкретного пользователя к конкретному приложению
-argocd admin settings rbac can role:dev-shop get applications shop/frontend
-# → YES или NO
-
-# Проверка доступа группы
-argocd admin settings rbac can role:admin get clusters
-# → YES
-```
-
-### Шаг 6: Обновление групп при входе (Auto-Refresh)
-
-По умолчанию Dex обновляет Claims (группы) только при первом входе. Для автоматического обновления групп при каждом входе включите параметр `groupMemberAttributes`:
+В мультитенантных средах права можно делегировать напрямую внутри манифеста `AppProject` через секцию `.spec.roles`. Это исключает разрастание глобального файла `policy.csv`.
 
 ```yaml
-dex.config: |
-  connectors:
-    - type: gitlab
-      config:
-        groupMemberAttributes: true
-        requestedScopes: ["openid", "profile", "email", "groups"]
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: billing-system
+  namespace: argocd
+spec:
+  description: "Проект биллинговых сервисов компании"
+  sourceRepos:
+    - "https://gitlab.example.com/billing/*"
+  destinations:
+    - namespace: "billing-prod"
+      server: "https://kubernetes.default.svc"
+    - namespace: "billing-stage"
+      server: "https://kubernetes.default.svc"
+  
+  # Локальные роли проекта с привязкой к OIDC-группам GitLab
+  roles:
+    - name: billing-lead
+      description: "Тимлиды биллинга: полный контроль приложений проекта"
+      policies:
+        - p, proj:billing-system:billing-lead, applications, *, billing-system/*, allow
+      groups:
+        - "billing/team-leads"
+        - "billing/core-service:maintainer"
+
+    - name: billing-developer
+      description: "Разработчики: просмотр и ручной запуск синхронизации"
+      policies:
+        - p, proj:billing-system:billing-developer, applications, get, billing-system/*, allow
+        - p, proj:billing-system:billing-developer, applications, sync, billing-system/*, allow
+      groups:
+        - "billing/developers:developer"
 ```
 
-**Важно:** Это может увеличить время входа на 1-2 секунды из-за дополнительных запросов к GitLab API.
+---
 
-## Валидация и верификация конфигурации
+## Операции и команды
 
-Следующие процедуры позволяют подтвердить корректность настройки SSO на каждом этапе.
+Сводка типовых команд системного инженера для управления, верификации и тестирования SSO.
 
-### 1. Проверка доступности GitLab и регистрации Application
+### Проверка работоспособности компонентов и логов
 
-```bash
-# Проверка доступности GitLab
-curl -I https://gitlab.example.com
-# → HTTP/2 200 или 302 (редирект на логин)
+| Цель операции | Команда CLI / kubectl | Ожидаемый результат / Примечание |
+|---------------|-----------------------|----------------------------------|
+| Проверка статуса подов Dex и API | `kubectl get pods -n argocd -l "app.kubernetes.io/name in (argocd-server,argocd-dex-server)"` | `Running` у всех реплик |
+| Проверка логов Dex в реальном времени | `kubectl logs -n argocd -l app.kubernetes.io/name=argocd-dex-server -c dex --tail=50 -f` | JSON-логи Dex с сообщениями коннектора |
+| Проверка gRPC эндпоинта Dex изнутри пода | `kubectl exec -n argocd deploy/argocd-server -- nc -zv argocd-dex-server 5556` | `argocd-dex-server (x.x.x.x:5556) open` |
+| Проверка OIDC Discovery в GitLab | `curl -s https://gitlab.example.com/.well-known/openid-configuration \| jq '.issuer, .authorization_endpoint'` | Вывод эндпоинтов авторизации GitLab |
 
-# Проверка OIDC Discovery Endpoint (GitLab)
-curl -s https://gitlab.example.com/.well-known/openid-configuration | jq '.authorization_endpoint, .token_endpoint, .jwks_uri'
-# → "https://gitlab.example.com/oauth/authorize"
-# → "https://gitlab.example.com/oauth/token"
-# → "https://gitlab.example.com/oauth/discovery/keys"
-```
-
-### 2. Проверка Callback URL и TLS
+### Тестирование аутентификации и сессий
 
 ```bash
-# Проверка доступности callback URL из интернета
-curl -I https://argocd.example.com/api/dex/callback
-# → HTTP/2 200 или 302 (redirect к GitLab authorize)
-
-# Проверка TLS сертификата Argo CD
-openssl s_client -connect argocd.example.com:443 -servername argocd.example.com < /dev/null 2>&1 | grep -i "verify return code"
-# → verify return code: 0 (ok)
-```
-
-### 3. Проверка конфигурации Dex (argocd-cm)
-
-```bash
-# Просмотр dex.config
-kubectl get configmap argocd-cm -n argocd -o jsonpath='{.data.dex\.config}' | head -50
-# → connectors:...
-# →   - type: gitlab
-# →     id: gitlab
-# →     config:
-# →       baseURL: https://gitlab.example.com
-# →       clientID: <application_id>
-# →       clientSecret: $gitlab.clientSecret
-
-# Проверка секрета в argocd-secret
-kubectl get secret argocd-secret -n argocd -o jsonpath='{.data.gitlab\.clientSecret}' | base64 -d
-# → ваш_секрет_gitlab (должен совпадать с GitLab Application Secret)
-```
-
-### 4. Проверка статуса пода Dex
-
-```bash
-# Статус пода
-kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-dex-server -o wide
-# → argocd-dex-server-xxxxx   1/1     Running   0          5d   10.244.1.5   node-1   <none>
-
-# Логи успешного старта Dex
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-dex-server --tail=20
-# → time="2026-01-15T10:30:00Z" level=info msg="Starting Dex"
-# → time="2026-01-15T10:30:01Z" level=info msg="Listening on 0.0.0.0:5556"
-# → time="2026-01-15T10:30:01Z" level=info msg="Connector gitlab configured"
-```
-
-### 5. Проверка RBAC конфигурации (argocd-rbac-cm)
-
-```bash
-# Просмотр policy.csv и scopes
-kubectl get configmap argocd-rbac-cm -n argocd -o jsonpath='{.data.policy\.csv}'
-# → g, "infra/kubernetes-admins", role:admin
-# → p, role:dev-shop, applications, get, shop/*, allow
-# → ...
-
-# Проверка scopes
-kubectl get configmap argocd-rbac-cm -n argocd -o jsonpath='{.data.scopes}'
-# → "[groups]"
-
-# Проверка policy.default
-kubectl get configmap argocd-rbac-cm -n argocd -o jsonpath='{.data.policy\.default}'
-# → role:readonly
-```
-
-### 6. Тестовый вход и проверка Claims (End-to-End)
-
-```bash
-# Вход через CLI (откроет браузер)
+# 1. Вход через SSO в командной строке (открывает локальный порт и браузер)
 argocd login argocd.example.com --sso
+# → Opening browser for authentication
+# → Successfully logged in to 'argocd.example.com'
 
-# Проверка информации о пользователе после входа
+# 2. Проверка учетных данных текущего пользователя и перечня групп
 argocd account get
-# → User: user@example.com
-# → Groups: ["infra/kubernetes-admins", "shop/backend"]
+# → Username: alex.sre@example.com
 # → Logged In: true
-# → Authenticated: true
+# → Roles: role:admin
+# → Groups: infrastructure/kubernetes, infrastructure/kubernetes:maintainer
 
-# Проверка групп через RBAC can
-argocd admin settings rbac can role:admin get applications
-# → YES
+# 3. Валидация синтаксиса политик в ConfigMap
+argocd admin settings rbac validate
+# → Policy is valid
 
-argocd admin settings rbac can role:dev-shop sync applications shop/frontend
-# → YES
+# 4. Проверка прав конкретной роли или группы к ресурсу (Dry-Run проверка)
+argocd admin settings rbac can role:platform-developer sync applications "core/backend"
+# → Yes
+
+argocd admin settings rbac can role:platform-developer delete applications "core/backend"
+# → No
 ```
 
-### 7. Проверка автоматического обновления групп (groupMemberAttributes)
+### Декодирование и инспекция сессионного токена
+
+Для отладки переданных групп можно извлечь токен текущей сессии и распарсить полезную нагрузку JWT:
 
 ```bash
-# 1. Добавьте пользователя в новую группу в GitLab
-# 2. Выйдите и зайдите снова (или подождите истечения сессии)
-argocd login argocd.example.com --sso
-
-# 3. Проверьте, что новая группа появилась
-argocd account get
-# → Groups: [..., "new/group/path"]
+# Извлечение токена из локального конфига ~/.argocd/config и парсинг payload
+grep "auth-token" ~/.argocd/config | awk '{print $2}' | tr -d '"' | cut -d. -f2 | base64 -d 2>/dev/null | jq '{sub, iss, exp, groups}'
+# → {
+# →   "sub": "alex.sre@example.com",
+# →   "iss": "argo-cd",
+# →   "exp": 1776000000,
+# →   "groups": [
+# →     "infrastructure/kubernetes",
+# →     "infrastructure/kubernetes:maintainer"
+# →   ]
+# → }
 ```
+
+### Применение изменений и ротация секретов
+
+```bash
+# 1. Применение обновленного argocd-cm без перезапуска кластера
+kubectl apply -f argocd-cm.yaml
+# → configmap/argocd-cm configured
+
+# 2. Перезапуск подов Dex и Argo CD Server для гарантированного сброса кэша
+kubectl rollout restart deployment argocd-dex-server argocd-server -n argocd
+# → deployment.apps/argocd-dex-server restarted
+# → deployment.apps/argocd-server restarted
+
+# 3. Ожидание завершения перезапуска
+kubectl rollout status deployment argocd-server -n argocd --timeout=60s
+# → deployment "argocd-server" successfully rolled out
+```
+
+---
 
 ## Диагностика и устранение неисправностей
 
-### Алгоритм диагностики (8 шагов)
+### Алгоритм диагностики сбоев SSO
+
+При возникновении проблем со входом следуйте поэтапному алгоритму локализации:
 
 ```
-ПРОБЛЕМА: SSO не работает / ошибка входа / нет прав
+Проблема: Ошибка авторизации SSO / нет доступа к приложениям
 │
-├─ 1. Проверка подов: `kubectl get pods -n argocd` — все ли Running?
-│   └─ Нет → Логи падающего пода → Исправьте конфигурацию/секреты
+├── 1. Проверка доступности пода Dex:
+│    `kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-dex-server`
+│    └── Статус CrashLoopBackOff? → Синтаксическая ошибка в dex.config (YAML/отступы)
 │
-├─ 2. Проверка Dex логов: `kubectl logs -n argocd -l app.kubernetes.io/name=argocd-dex-server`
-│   ├─ "Invalid redirect URI" → Шаг 3
-│   ├─ "TLS handshake failed" → Шаг 4
-│   ├─ "Client secret mismatch" → Шаг 5
-│   └─ "Connector not found" → Проверьте dex.config в argocd-cm
+├── 2. Проверка логов Dex:
+│    `kubectl logs -n argocd -l app.kubernetes.io/name=argocd-dex-server -c dex --tail=100`
+│    ├── "redirect_uri_mismatch" → Несовпадение URL в GitLab и argocd-cm (Шаг 3)
+│    ├── "certificate signed by unknown authority" → Ошибка TLS CA GitLab (Шаг 4)
+│    ├── "invalid_client" → Неверный Secret в argocd-secret (Шаг 5)
+│    └── "failed to get user groups" → Недостаточно прав у OAuth App (нет scope read_user)
 │
-├─ 3. Проверка Callback URL: совпадает ли в GitLab и argocd-cm точно?
-│   └─ Исправьте redirect URI в GitLab или argocd-cm
+├── 3. Проверка совпадения Callback URL:
+│    В GitLab: https://argocd.example.com/api/dex/callback
+│    В argocd-cm: redirectURI: https://argocd.example.com/api/dex/callback
 │
-├─ 4. Проверка TLS/CA: самоподписанный сертификат GitLab?
-│   └─ Добавьте rootCAData в dex.config
+├── 4. Проверка TLS и сертификата CA:
+│    Проверьте rootCAData в dex.config и доступность gitlab по HTTPS из пода Dex.
 │
-├─ 5. Проверка секрета: clientSecret в argocd-secret совпадает с GitLab?
-│   └─ Обновите секрет: base64encode(new_secret) → argocd-secret
+├── 5. Проверка Secret:
+│    `kubectl get secret argocd-secret -n argocd -o jsonpath='{.data.gitlab\.clientSecret}' | base64 -d`
 │
-├─ 6. Пользователь вошел, но нет прав → Проверка RBAC
-│   ├─ `argocd account get` → Groups: [] → Шаг 7
-│   └─ Groups есть, но не совпадают с policy.csv → Шаг 8
-│
-├─ 7. Группы не приходят из GitLab
-│   ├─ requestedScopes включает "groups"?
-│   ├─ groupMemberAttributes: true (для вложенных)?
-│   ├─ Пользователь член хотя бы одной группы в GitLab?
-│   └─ GitLab API доступен из кластера (нет NetworkPolicy)?
-│
-└─ 8. Несовпадение групп в policy.csv
-    ├─ `argocd account get` показывает точные имена групп (case-sensitive, полные пути)
-    ├─ policy.csv: g, "exact/path/from/claims", role:xxx
-    └─ scopes: "[groups]" в argocd-rbac-cm
+└── 6. Пользователь авторизован, но видит пустой экран (Нет прав):
+     ├── Выполните `argocd account get` — присутствуют ли группы в выводе?
+     ├── Если групп нет: проверьте scope `read_user` в GitLab и членство пользователя.
+     └── Если группы есть: сравните вывод групп со строками в `policy.csv` (регистр, слэши, суффиксы).
 ```
 
-### Расширенная таблица ошибок
+### Матрица типовых ошибок и их устранение
 
-| Ошибка / Симптом | Причина | Диагностика | Решение |
-|------------------|---------|-------------|---------|
-| `Invalid redirect URI` | Несоответствие URL в GitLab и `argocd-cm` (протокол, хост, путь, слэш) | Сравните `redirectURI` в `argocd-cm` и GitLab Application | Исправьте на точное совпадение: `https://<argocd-url>/api/dex/callback` (HTTPS, без лишних слэшей) |
-| `Internal Server Error (500)` в Dex | Ошибка связи с GitLab, неверный Secret, или ошибка парсинга конфига | `kubectl logs -n argocd -l app.kubernetes.io/name=argocd-dex-server` | Проверьте `clientSecret` в `argocd-secret`; доступность GitLab из кластера; валидность YAML в `dex.config` |
-| `TLS handshake failed` / `x509: certificate signed by unknown authority` | Самоподписанный/недоверенный CA сертификат GitLab | `curl -v https://gitlab.example.com`; логи Dex | Добавьте `rootCAData: <base64_ca>` в `dex.config` коннектора |
-| `Client secret mismatch` / `invalid_client` | `clientSecret` в `argocd-secret` не совпадает с GitLab Application | `kubectl get secret argocd-secret -n argocd -o jsonpath='{.data.gitlab\.clientSecret}' \| base64 -d` | Обновите секрет в `argocd-secret` (base64) или пересоздайте GitLab Application |
-| `Groups not received` / `groups: []` | `requestedScopes` не включает `groups`; пользователь не в группах; `groupMemberAttributes: false` для вложенных | `argocd account get` → Groups: []; проверьте `requestedScopes` в `dex.config` | Добавьте `"groups"` в `requestedScopes`; включите `groupMemberAttributes: true`; проверьте членство в GitLab |
-| `Groups truncated` / `claims too large` | OIDC токен >4KB (много групп у пользователя) | `argocd account get` → Groups обрезаны; логи Dex: `claims size exceeds limit` | Используйте `groups` filter в `dex.config`: `groups: ["infra/*", "shop/*"]`; или уменьшите кол-во групп пользователя |
-| `User logged in but no permissions` | Несовпадение имен групп в `policy.csv` с Claims (case-sensitive, полные пути) | `argocd account get` → Groups: ["Infra/Admins"]; `policy.csv`: `g, "infra/admins", role:admin` | Исправьте `policy.csv` на точное совпадение: `g, "Infra/Admins", role:admin` |
-| `Dex pod CrashLoopBackOff` | Синтаксическая ошибка в `dex.config` (YAML, отступы, незакрытые кавычки) | `kubectl logs -n argocd -l app.kubernetes.io/name=argocd-dex-server` | Исправьте YAML в `argocd-cm`; проверьте `kubectl apply -f <(kubectl get cm argocd-cm -n argocd -o yaml)` |
-| `argocd-server` не видит Dex | Сетевая недоступность между подами; Dex не слушает порт 5556 | `kubectl exec -it argocd-server-xxx -n argocd -- wget -qO- http://argocd-dex-server:5556/healthz` | Проверьте Service `argocd-dex-server`; NetworkPolicies; ClusterDNS |
-| `Token expired` / `401 Unauthorized` | JWT токен истек (`users.session.duration` дефолт 24h) | `argocd account generate-token ... \| cut -d. -f2 \| base64 -d \| jq '.exp'` | Увеличьте `users.session.duration` в `argocd-cm` (например, `720h`); перелогиньтесь |
-| `SSO groups not updated` | Dex кэширует группы; `groupMemberAttributes: false` (дефолт) | Группы в GitLab изменились, но `argocd account get` показывает старые | Включите `groupMemberAttributes: true` в `dex.config`; или требуйте релогин пользователей |
-| `Native OIDC groups not working` | Попытка использовать нативный `oidc.config` для GitLab | `oidc.config` в `argocd-cm` настроен, но группы не приходят | Переключитесь на Dex (`dex.config` с `type: gitlab`) — нативный OIDC не поддерживает GitLab groups |
-| `Multiple connectors conflict` | Два коннектора с одинаковым `id` в `dex.config` | Логи Dex: `duplicate connector id` | Убедитесь, что у каждого коннектора уникальный `id` (`gitlab`, `google`, `ldap`...) |
-| `AppProject denies access despite RBAC allow` | RBAC разрешает, но AppProject `sourceRepos`/`destinations` запрещает ресурс | `argocd app get <app>` → Project: `my-project`; проверьте AppProject spec | Настройте AppProject: `sourceRepos`, `destinations`, `clusterResourceWhitelist` |
-| `Callback URL returns 404` | Ingress/Route не пробрасывает `/api/dex/callback` на `argocd-dex-server` | `curl -I https://argocd.example.com/api/dex/callback` → 404 | Настройте Ingress: path `/api/dex/*` → service `argocd-dex-server:5556` |
+| Симптом / Ошибка в логах | Первопричина | Метод диагностики | Способ решения |
+|--------------------------|--------------|-------------------|----------------|
+| `redirect_uri_mismatch` / `The redirect URI provided is missing or not allowed` | Несовпадение адреса обратного вызова в настройках GitLab Application и параметре `redirectURI` в `dex.config` | Сравните значение в GitLab с `kubectl get cm argocd-cm -n argocd -o yaml \| grep redirectURI` | Установите точный URL: `https://argocd.example.com/api/dex/callback` (проверьте схему HTTPS и отсутствие завершающего слэша). |
+| `x509: certificate signed by unknown authority` | Инстанс GitLab использует самоподписанный сертификат или внутренний корпоративный CA, которому не доверяет контейнер Dex | Логи `argocd-dex-server`: `tls: failed to verify certificate` | Экспортируйте корневой CA в base64 и добавьте его в параметр `rootCAData` в `dex.config`. |
+| `invalid_client` / `Client authentication failed` | Ключ `clientSecret` в Kubernetes Secret `argocd-secret` не соответствует секрету приложения в GitLab | Проверьте значение секрета: `kubectl get secret argocd-secret -n argocd -o jsonpath='{.data.gitlab\.clientSecret}' \| base64 -d` | Скопируйте актуальный Secret из GitLab Application и обновите `argocd-secret` через patch или SOPS. |
+| Группы отсутствуют (`Groups: []` в выводе `argocd account get`) | 1. В GitLab Application не выдан scope `read_user`.<br>2. Пользователь не состоит в группах.<br>3. Группа приватная и токен приложения не имеет к ней доступа. | 1. Проверьте scopes в настройках GitLab Application.<br>2. Запустите curl от имени полученного токена к `/api/v4/groups`. | Добавьте scope `read_user` в GitLab Application. Если в `dex.config` задан список `groups: [...]`, убедитесь, что целевые группы включены в whitelist. |
+| `HTTP 431 Request Header Fields Too Large` / `502 Bad Gateway` | Пользователь состоит в >50 группах GitLab; суммарный размер заголовка `Cookie` и ID Token превысил буфер Ingress | Ошибка `431` в браузере или `upstream sent too big header` в логах NGINX Ingress | 1. Увеличьте `proxy-buffer-size: "128k"` в аннотациях Ingress.<br>2. Ограничьте размер токена с помощью фильтрации `groups: [...]` в `dex.config`. |
+| Пользователь входит, но получает ошибку доступа (`Permission Denied`) | Несовпадение имен групп в `argocd-rbac-cm` (`policy.csv`) с реальными клеймами токена (разница в регистре или неполный путь) | Выполните `argocd account get` под проблемным пользователем и изучите поле `Groups` | Исправьте `policy.csv`. Пути должны быть полными: `infrastructure/kubernetes`, а не просто `kubernetes`. Учитывайте суффикс `:maintainer`, если включен `getGroupsPermission: true`. |
+| `argocd-dex-server` в статусе `CrashLoopBackOff` | Синтаксическая ошибка в блоке `dex.config` (неправильный отступ YAML, использование табуляций вместо пробелов) | `kubectl logs -n argocd -l app.kubernetes.io/name=argocd-dex-server` выдает `error parsing config file` | Проверьте YAML валидатором (`yq`). Исправьте отступы в `ConfigMap` `argocd-cm`. |
+| Ошибка соединения `dial tcp ...:5556: connect: connection refused` | `argocd-server` не может достучаться до `argocd-dex-server` из-за правил NetworkPolicy или сбоя Service | `kubectl exec -n argocd deploy/argocd-server -- nc -zv argocd-dex-server 5556` | Проверьте Service `argocd-dex-server` в namespace `argocd` и сетевые политики NetworkPolicy, блокирующие внутренний трафик. |
+| Изменения прав в GitLab не применяются у пользователя | Dex кэширует сессию, а `argocd-server` использует действующий JWT-токен до истечения его TTL | `users.session.duration` по умолчанию составляет 24 часа | Пользователь должен выполнить явный логаут в UI (кнопка Log Out) и войти повторно, либо администратор уменьшает `users.session.duration`. |
 
-### Команды для глубокой диагностики
-
-```bash
-# 1. Полный дамп конфигурации SSO
-kubectl get configmap argocd-cm -n argocd -o yaml > argocd-cm-backup.yaml
-kubectl get configmap argocd-rbac-cm -n argocd -o yaml > argocd-rbac-cm-backup.yaml
-kubectl get secret argocd-secret -n argocd -o yaml > argocd-secret-backup.yaml
-
-# 2. Проверка OIDC flow вручную (для отладки)
-# Получите authorize URL из логов Dex или соберите вручную:
-# https://gitlab.example.com/oauth/authorize?client_id=<client_id>&redirect_uri=https%3A%2F%2Fargocd.example.com%2Fapi%2Fdex%2Fcallback&response_type=code&scope=openid+profile+email+groups&state=<state>&nonce=<nonce>
-
-# 3. Проверка JWKS GitLab (валидация id_token)
-curl -s https://gitlab.example.com/oauth/discovery/keys | jq '.keys[] | {kid, kty, use, n, e}'
-
-# 4. Декодирование id_token (после успешного входа, из браузера DevTools → Application → Cookies → dex.session)
-# Скопируйте значение cookie, декодируйте JWT payload (часть между точками):
-echo "<id_token_payload_base64>" | base64 -d | jq '.sub, .email, .groups, .preferred_username'
-
-# 5. Проверка сессий в Dex (если Redis)
-kubectl exec -it -n argocd deployment/argocd-dex-server -- redis-cli KEYS "session:*"
-kubectl exec -it -n argocd deployment/argocd-dex-server -- redis-cli GET "session:<session_id>"
-
-# 6. Проверка RBAC кэша в argocd-server
-kubectl exec -it -n argocd deployment/argocd-server -- argocd admin settings rbac
-
-# 7. События в namespace argocd
-kubectl get events -n argocd --sort-by='.lastTimestamp' | tail -30
-```
+---
 
 ## Рекомендации и лучшие практики
 
-### Безопасность
+### Архитектура и отказоустойчивость (SRE)
 
-- **HTTPS обязателен:** Argo CD должен быть доступен по HTTPS с валидным TLS-сертификатом (Let's Encrypt, cert-manager, или корпоративный CA).
-- **Секреты в argocd-secret:** Никогда не храните `clientSecret` в `argocd-cm`. Используйте `argocd-secret` или External Secrets Operator / Sealed Secrets для GitOps.
-- **Минимальные Scopes:** Используйте только необходимые scopes: `openid`, `profile`, `email`, `groups`. Избегайте `api` scope (дает полный доступ к GitLab API).
-- **Время жизни токенов:** Настройте `_expire_token_after` в GitLab Application (рекомендуется 3600 секунд / 1 час). В Argo CD установите `users.session.duration: "720h"` (30 дней) для пользователей, `8760h` (1 год) для bot-аккаунтов.
-- **AppProject:** Всегда создавайте отдельные AppProject для разных команд/окружений с ограничениями по источникам (`sourceRepos`), назначениям (`destinations`) и кластерным ресурсам.
-- **Dex rootCAData:** Для Self-managed GitLab с внутренним CA всегда добавляйте `rootCAData` в `dex.config` — не отключайте проверку TLS.
-- **Admin пользователь:** Оставьте локального `admin` с паролем (в `argocd-secret`) как аварийный доступ на случай недоступности Dex/GitLab. Отключите только в продакшене после проверки SSO: `admin.enabled: "false"` в `argocd-cm`.
+- **Отказоустойчивость Dex (High Availability):** По умолчанию под `argocd-dex-server` развертывается в единственной реплике с хранилищем сессий in-memory. Для production увеличьте количество реплик до 2 и настройте общее хранилище сессий в Redis:
+  ```yaml
+  # В dex.config:
+  storage:
+    type: redis
+    config:
+      host: argocd-redis:6379
+      db: 1
+  ```
+- **Защита доступности (PDB):** Создайте `PodDisruptionBudget` для `argocd-dex-server` (`minAvailable: 1`), чтобы плановые обновления нод кластера не приводили к недоступности аутентификации инженеров.
+- **Мониторинг метрик Dex:** Настройте сбор метрик Prometheus со встроенного порта Dex (порт 5558). Ключевые метрики для алертинга:
+  - `dex_oidc_requests_total{status="error"}` — количество неудачных запросов авторизации к IdP.
+  - `dex_grpc_requests_total{grpc_code!="OK"}` — сбои межкомпонентного взаимодействия между `argocd-server` и Dex.
 
-### Производительность
+### Практики безопасности (SecOps & Sysadmin)
 
-- **Кеширование Groups:** Если GitLab содержит много групп (>100 на пользователя), используйте `groupMemberAttributes: false` для ускорения входа (обновление групп только при первом входе). Включайте `true` только если критически важны вложенные группы.
-- **Фильтрация групп:** Используйте `groups: ["infra/*", "shop/*"]` в `dex.config` для ограничения запрашиваемых групп — уменьшает размер ID Token и нагрузку на GitLab API.
-- **Dex Logging:** В продакшене установите `logger.level: info` (не `debug`) для снижения нагрузки на логирование и диски.
-- **Redis для Dex:** В HA-режиме настройте `storage.config.redis` в `dex.config` для общего кэша сессий между репликами `argocd-dex-server`.
+- **Аварийный доступ (Break-Glass Account):** Не удаляйте локального пользователя `admin` полностью. Задайте ему сложный 32-значный случайный пароль, сохраните его в корпоративном Vault и активируйте только в случае аварийной недоступности GitLab/Dex:
+  ```yaml
+  # В argocd-cm для production:
+  admin.enabled: "false" # Включайте временно при падении IdP
+  ```
+- **Принцип наименьших привилегий (Least Privilege):** Никогда не устанавливайте `policy.default: role:admin`. Дефолтным значением всегда должно быть `role:readonly` либо полное отсутствие прав (пользователь без маппинга группы не видит ни одного приложения).
+- **Минимальный набор Scopes:** Ограничьте запрашиваемые у GitLab области доступа только необходимыми: `openid`, `profile`, `email`, `read_user`. Никогда не выдавайте scope `api` (полный доступ к GitLab API с правами записи).
+- **Своевременная ротация секретов:** Внедрите регламент ротации OAuth Client Secret (каждые 90–180 дней). Процедура выполняется без простоя: генерация второго секрета в GitLab Application → обновление `argocd-secret` → перезапуск `argocd-dex-server`.
+- **Аудит входов в систему:** Настройте экспорт логов `argocd-server` и `argocd-dex-server` в централизованную систему сбора логов (Elasticsearch / OpenSearch / Loki). Логируйте события `successful login` и `authentication failure` с фиксацией IP-адресов и email.
 
-### Надежность
+---
 
-- **Мониторинг Dex:** Добавьте алерты на `CrashLoopBackOff` пода `argocd-dex-server` и на `dex_grpc_requests_total{grpc_code!="OK"}` (Prometheus метрики Dex).
-- **Fallback:** Настройте `policy.default: role:readonly` для пользователей без явного маппинга групп — безопасный дефолт.
-- **Тестирование:** Перед изменением политик проверяйте доступ через `argocd admin settings rbac can <role> <action> <resource>`.
-- **Backup конфигурации:** Регулярно делайте бэкап `argocd-cm`, `argocd-rbac-cm`, `argocd-secret` (например, через Velero или `kubectl get ... -o yaml > backup.yaml`).
-- **Disaster Recovery:** Документируйте процедуру восстановления SSO: 1) восстановить секреты, 2) восстановить ConfigMaps, 3) перезапустить `argocd-dex-server` и `argocd-server`.
+## Ограничения и граничные случаи
 
-### Операционные практики
+1. **Ограничение на размер заголовков и OIDC-токена:** Если инженер состоит более чем в 80–100 группах GitLab, размер ID Token превысит стандартный лимит HTTP-заголовков (4–8 KB). Решение: обязательное использование директивы `groups: [...]` (whitelist) в `dex.config`, которая отсекает посторонние группы на этапе формирования токена.
+2. **Задержка отзыва прав при блокировке пользователя:** При увольнении сотрудника или удалении его из группы GitLab активный токен сессии Argo CD остается валидным до истечения срока `users.session.duration` (до 24 часов). Для немедленного отзыва доступа выполните сброс сессий в Redis либо уменьшите `users.session.duration` до `4h`–`8h`.
+3. **Регистрозависимость подгрупп GitLab:** GitLab допускает создание групп с заглавными буквами в отображаемом имени, но в системных путях нормализует их к нижнему регистру (slug). При сопоставлении в Casbin используйте именно URL-путь группы: если URL группы `https://gitlab.example.com/Infra-Core/K8s`, то в `policy.csv` указывается `infra-core/k8s`.
+4. **Сервисные аккаунты и автоматизация CI/CD:** Попытка использовать SSO для пайплайнов GitLab CI — частая архитектурная ошибка. OIDC Authorization Code Flow требует браузера и интерактивного входа человека. Для автоматизации CI/CD используйте локальные сервисные аккаунты Argo CD (`argocd account create <bot-name>`) с долгоживущими JWT API токенами или короткоживущими проектными токенами AppProject.
+5. **Влияние `useLoginAsID`:** По умолчанию (`useLoginAsID: false`) клейм `sub` формируется из внутреннего числового ID пользователя в GitLab. Если включить `useLoginAsID: true`, идентификатором станет логин пользователя. Помните: если пользователь изменит свой username в GitLab, Argo CD воспримет его как нового пользователя с потерей персональных настроек.
 
-- **Логирование:** Для отладки временно включайте `logger.level: debug` в `dex.config`, после диагностики возвращайте `info`.
-- **Группы:** Если группы не отображаются — проверяйте `requestedScopes` (должен включать `groups`) и членство пользователя в GitLab.
-- **Вложенные группы:** Для поддержки вложенных групп обязательно `groupMemberAttributes: true` в `dex.config`.
-- **Ротация секретов:** Регулярно ротируйте `clientSecret` в GitLab и обновляйте в `argocd-secret` (без даунтайма: обновите секрет → перезапустите `argocd-dex-server`).
-- **Аудит входов:** Логи Dex содержат `user_login` события — настройте сбор в SIEM для аудита доступа.
-
-## Ограничения и edge cases
-
-### Ограничения
-
-1. **GitLab Groups через Dex:** Вложенные группы поддерживаются только через Dex (не через нативный OIDC Argo CD).
-2. **Лимит Claims:** OIDC-токен ограничен размером (обычно 4KB). Если у пользователя >50 групп, некоторые группы могут быть обрезаны. Решение: фильтр `groups: ["pattern/*"]` в `dex.config`.
-3. **Кеширование сессий:** Dex кэширует сессии в Redis (или in-memory). При изменении групп в GitLab пользователю необходимо перезайти (или истечение сессии по `users.session.duration`).
-4. **Нативный OIDC vs Dex:** Для GitLab **обязательно** использовать Dex (нативный `oidc.config` не поддерживает GitLab-специфичные поля `groups` и вложенные группы).
-5. **Dex Single Replica по умолчанию:** В стандартной установке `argocd-dex-server` — 1 реплика. Для HA увеличьте `replicas` и настройте Redis storage.
-6. **Нет поддержки SAML в Dex для GitLab:** GitLab коннектор в Dex — только OIDC. Для SAML используйте нативный `oidc.config` с SAML IdP (не GitLab).
-
-### Edge Cases
-
-1. **Пользователь в нескольких группах:** Argo CD объединяет права всех ролей, назначенных пользователю через группы (union of permissions). `deny` правила имеют приоритет над `allow` из других ролей.
-2. **Группа не существует в GitLab:** Если группа удалена из GitLab, Dex не вернет её в Claims при следующем входе. Соответствующая роль в Argo CD перестанет применяться.
-3. **Самоподписанный сертификат GitLab:** Добавьте `rootCAData` в конфигурацию коннектора. Без этого TLS handshake упадет.
-4. **GitLab Group Membership через LDAP:** Если пользователь является членом группы через LDAP-синхронизацию в GitLab, GitLab все равно возвращает эту группу в OIDC Claims — Dex не отличает источник членства.
-5. **Несколько коннекторов:** Каждый коннектор должен иметь уникальный `id`. Пользователь может войти через любой доступный коннектор. Claims объединяются по `sub` (если совпадает).
-6. **RBAC и AppProject:** Политики RBAC работают совместно с AppProject. Даже если роль разрешает `sync`, AppProject может запретить этот ресурс через `sourceRepos`, `destinations`, `clusterResourceWhitelist`.
-7. **Отзыв доступа в GitLab:** При отзыве доступа пользователя в GitLab (удаление из групп, блокировка аккаунта) его сессия в Argo CD остается активной до истечения времени жизни JWT токена (`users.session.duration`, дефолт 24h). Принудительный логаут: удалите сессию в Redis или перезапустите `argocd-server`.
-8. **Case-sensitivity групп:** Маппинг `g, "Infra/Admins", role:admin` не сработает для группы `infra/admins` из OIDC — требуется точное совпадение строки (включая регистр и слеши). Проверяйте через `argocd account get`.
-9. **scopes влияет только на OIDC:** Параметр `scopes: "[groups]"` в `argocd-rbac-cm` влияет только на группы из OIDC-токена. Локальные пользователи и JWT-токены не используют scopes.
-10. **Token lifetime vs Session duration:** GitLab `_expire_token_after` (access token TTL) ≠ Argo CD `users.session.duration` (JWT TTL). Настраивайте независимо: GitLab — 1h, Argo CD — 30d.
-11. **Redirect URI mismatch при Ingress path-based routing:** Если Ingress использует path-based routing (`/argocd/*`), callback URL должен включать путь: `https://domain.com/argocd/api/dex/callback`. И в GitLab, и в `argocd-cm` должен быть полный путь.
-12. **Dex не обновляет email при смене в GitLab:** Email в Claims обновляется только при релогина. Для критических изменений требуйте перезаход.
-13. **NetworkPolicy блокирует Dex → GitLab:** Если применяете NetworkPolicies, разрешите egress от `argocd-dex-server` к GitLab IP/домену на 443 порт.
-14. **argocd-server не перезапускается при изменении argocd-cm:** Изменения в `argocd-cm` (dex.config, oidc.config, users.session.duration) требуют перезапуска `argocd-server` для применения: `kubectl rollout restart deployment argocd-server -n argocd`.
-15. **Bot-аккаунты (CI/CD):** Для сервисных аккаунтов используйте локальные аккаунты Argo CD (`argocd account create bot --password ...`) или JWT с длительным TTL (`users.session.duration: "8760h"`), а не SSO — SSO требует интерактивного браузера.
+---
 
 ## Дополнительная информация
 
-## Дополнительная информация
+### Использование нескольких провайдеров в Dex
 
-### Использование нескольких коннекторов
+Dex позволяет одновременно поддерживать несколько коннекторов, что актуально для сред с разделением между штатными сотрудниками и подрядчиками:
 
-Dex позволяет одновременно настроить несколько провайдеров (например, GitLab для сотрудников и Google для подрядчиков). Каждый коннектор должен иметь уникальный `id`.
-
-**Пример: GitLab + Google:**
 ```yaml
 dex.config: |
   connectors:
     - type: gitlab
-      id: gitlab
-      name: GitLab (Corporate)
+      id: gitlab-corp
+      name: GitLab Corporate
       config:
         baseURL: https://gitlab.example.com
-        clientID: <gitlab_client_id>
+        clientID: "corp_client_id"
         clientSecret: $gitlab.clientSecret
-        requestedScopes: ["openid", "profile", "email", "groups"]
-    - type: google
-      id: google
-      name: Google (Contractors)
-      config:
-        clientID: <google_client_id>
-        clientSecret: $google.clientSecret
         redirectURI: https://argocd.example.com/api/dex/callback
-        hostedDomains: ["contractor.example.com"]
+        getGroupsPermission: true
+
+    - type: ldap
+      id: ldap-corp
+      name: Active Directory
+      config:
+        host: ldap.example.com:636
+        insecureNoSSL: false
+        bindDN: "cn=argocd,ou=services,dc=example,dc=com"
+        bindPW: $ldap.bindPW
+        userSearch:
+          baseDN: "ou=users,dc=example,dc=com"
+          filter: "(sAMAccountName={{login}})"
+          username: sAMAccountName
+          idAttr: sAMAccountName
+          emailAttr: mail
+          nameAttr: displayName
 ```
 
 ### См. также
 
-- [ArgoCD: Установка и настройка HA](./argocd_installation_and_setup.md)
-- [Диагностика и мониторинг ArgoCD](./argocd_troubleshooting_and_monitoring.md)
-- [ArgoCD: Автоматизация через API и Ansible](./argocd_api_automation.md)
-- [RBAC — модель доступа](./argocd_rbac_deep.md) — Модель доступа, policy.csv, встроенные роли, JWT-токены, диагностика.
-- [AppProject — изоляция проектов](./argocd_appproject_deep.md) — Изоляция проектов, квоты, restrictions, кастомные роли.
-- [Безопасность](./argocd_security_hardening.md) — GPG, NetworkPolicies, mTLS, SecurityContext, proxy, audit logging.
-- [Мультитенантность](./argocd_multi_tenancy.md) — Паттерны мультитенантности, tenant isolation, project-per-team.
+- [Argo CD: RBAC — модель доступа Casbin, policy.csv и проектные роли](./argocd_rbac_deep.md) — Исчерпывающее руководство по Casbin, гранулярным правам и синтаксису политик.
+- [Argo CD: AppProject — изоляция проектов](./argocd_appproject_deep.md) — Настройка мультитенантности, локальных проектных ролей и ограничений репозиториев.
+- [Argo CD: Установка и настройка HA](./argocd_installation_and_setup.md) — Развертывание отказоустойчивой инфраструктуры Argo CD в Kubernetes.
+- [Безопасность и харденинг Argo CD](./argocd_security_hardening.md) — Сетевые политики NetworkPolicy, mTLS, защита секретов и харденинг подов.
+- [Мультитенантность в Argo CD](./argocd_multi_tenancy.md) — Стратегии разделения команд, сред и кластеров.
+- [Диагностика и мониторинг Argo CD](./argocd_troubleshooting_and_monitoring.md) — Мониторинг Prometheus, метрики Dex и решение эксплуатационных проблем.
+- [Автоматизация через API и CLI](./argocd_api_automation.md) — Генерация токенов сервисных аккаунтов для CI/CD без использования браузерного SSO.
 
 ### Официальные ресурсы
 
-- [ArgoCD OIDC Configuration](https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/gitlab/)
-- [Dex GitLab Connector Specs](https://dexidp.io/docs/connectors/gitlab/)
-- [ArgoCD RBAC Configuration](https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/)
+- [Документация Argo CD — Управление пользователями и SSO](https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/)
+- [Спецификация коннектора Dex GitLab](https://dexidp.io/docs/connectors/gitlab/)
+- [Руководство по Casbin RBAC в Argo CD](https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/)
+- [Документация GitLab — OAuth 2.0 Identity Provider](https://docs.gitlab.com/ee/integration/oauth_provider.html)

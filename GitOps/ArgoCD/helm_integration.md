@@ -1,814 +1,848 @@
 # Интеграция Argo CD с Helm
 
-**Актуально для:** Argo CD v3.4+ (покрывает v3.4.x, v3.5.x, v3.6.x; отличаются Server-Side Diff по умолчанию, Progressive Syncs Beta, Multiple Sources стабилизация)
-
-## Предварительные требования
-
-Перед работой с интеграцией Argo CD и Helm убедитесь в выполнении следующих условий:
-
-1. **Кластер Kubernetes:** версия v1.26+ (рекомендуется v1.28+ для полной поддержки Server-Side Apply и OCI).
-   ```bash
-   kubectl version --short
-   # → Client Version: v1.28.x, Server Version: v1.28.x
-   ```
-
-2. **Argo CD установлен и доступен:** проверьте статус подов:
-   ```bash
-   kubectl get pods -n argocd
-   # → NAME                                        READY   STATUS    RESTARTS   AGE
-   # → argocd-application-controller-0             1/1     Running   0          5d
-   # → argocd-repo-server-xxxxx                    1/1     Running   0          5d
-   # → argocd-server-xxxxx                         1/1     Running   0          5d
-   # → argocd-dex-server-xxxxx                     1/1     Running   0          5d
-   ```
-
-3. **Helm установлен:** v4.0+ (рекомендуется) или v3.12+ (legacy). Проверка:
-   ```bash
-   helm version
-   # → version.BuildInfo{Version:"v4.0.2", GitCommit:"...", GitTreeState:"clean", GoVersion:"go1.21.x"}
-   ```
-
-4. **CLI `argocd`:** Установлен (версия, совместимая с сервером) и настроен вход:
-   ```bash
-   argocd version
-   argocd login <ARGOCD_SERVER> --username admin --password <password>
-   # → 'admin:login' logged in successfully
-   # Context '<ARGOCD_SERVER>' updated
-   ```
-
-5. **Git-репозиторий:** Доступен с манифестами или Helm-чартами. Проверьте доступность:
-   ```bash
-   git ls-remote <REPO_URL> HEAD
-   # → <commit-hash>	HEAD
-   ```
-
-6. **RBAC:** Права администратора кластера для первоначальной настройки репозиториев и проектов. Для операций управления приложениями достаточно соответствующих ролей в AppProject.
-   ```bash
-   kubectl auth can-i create applications --namespace argocd
-   # → yes
-   ```
-
-7. **OCI-реестр доступен** (если используются OCI-артефакты): проверьте доступность реестра и наличие credentials в `argocd` namespace.
-   ```bash
-   kubectl get secret -n argocd -l argocd.argoproj.io/secret-type=repository
-   # → NAME                 TYPE     DATA   AGE
-   # → oci-registry-creds   Opaque   4      1h
-   ```
-
-8. **Понимание AppProject** — Helm-интеграция тесно связана с проектами для ограничения источников чартов (см. [AppProject](./argocd_appproject_deep.md)).
+**Актуально для:** Argo CD v3.5+ (покрывает v3.4.x, v3.5.x, v3.6.x; Helm v3.14–v3.16+ / Helm v4.x; Kubernetes 1.28–1.32+; bare-metal / on-premise)
 
 ## Определения
 
-**Helm** — пакетный менеджер для Kubernetes, использующий формат чартов для декларативного описания приложений. Версии: v3 (legacy, 2020) и v4 (2024+, отказ от legacy API, встроенный SSA).
+- **Helm** — пакетный менеджер для Kubernetes, использующий формат чартов для декларативного описания и шаблонизации ресурсов кластера.
+- **Helm-чарт (Chart)** — структурированный архив или каталог, содержащий манифесты Go-шаблонов (`templates/`), метаданные (`Chart.yaml`), переменные по умолчанию (`values.yaml`), схему валидации (`values.schema.json`) и блокировки зависимостей (`Chart.lock`).
+- **Файлы значений (Values Files)** — YAML-документы конфигурации, передаваемые в шаблонизатор Helm для переопределения переменных чарта под конкретные окружения (development, staging, production).
+- **OCI-артефакты (OCI Artifacts)** — открытый стандарт упаковки и распространения Helm-чартов через реестры контейнеров OCI (Harbor, Gitea, Quay, Docker Registry) с использованием протокола `oci://`.
+- **Multiple Sources** — механизм Argo CD (`spec.sources`), позволяющий объединять в рамках одного объекта `Application` базовый чарт из внешнего реестра (HTTP/OCI) и файлы конфигурации (`values.yaml`) из приватного Git-репозитория с адресацией через `$ref`.
+- **sourceHydrator (Hydration Engine)** — внутренний компонент `argocd-repo-server`, отвечающий за подготовку источников, параллельное клонирование/скачивание, компиляцию зависимостей (`helm dependency build`) и генерацию плоского YAML-потока.
+- **Server-Side Apply (SSA)** — механизм применения конфигураций Kubernetes через API-сервер (`fieldManager=argocd`), устраняющий ограничение аннотации `kubectl.kubernetes.io/last-applied-configuration` (лимит 262 144 байт / 256 KB) и предотвращающий коллизии полей.
+- **Helm Hooks** — аннотации жизненного цикла чарта (`helm.sh/hook`), управляющие запуском вспомогательных ресурсов (миграции БД, проверка готовности) до или после развертывания основного релиза.
+- **Sync Waves** — механизм упорядочивания синхронизации Argo CD (`argocd.argoproj.io/sync-wave`), делящий развертывание на фазы от отрицательных к положительным индексам с ожиданием перехода ресурсов в состояние `Healthy`.
+- **Resource Tracking Collision** — конфликт владения ресурсом, возникающий при совпадении метки отслеживания Argo CD (`app.kubernetes.io/instance`) с именем Helm-релиза (`{{ .Release.Name }}`), приводящий к сбою синхронизации из-за неизменяемости селекторов `spec.selector.matchLabels`.
+- **AppProject** — логическая граница безопасности Argo CD, изолирующая приложения по разрешенным репозиториям источников (`sourceRepositories`), целевым кластерам и типам манифестов.
+- **Config Management Plugins (CMP v2)** — механизм расширения рендеринга через sidecar-контейнеры в поде `argocd-repo-server`, применяемый для запуска утилит шифрования (Helm-secrets, SOPS, AVP) поверх стандартного Helm.
 
-**Helm-чарт (Chart)** — упакованный набор манифестов и шаблонов (Go templates + Sprig), описывающих связанные ресурсы Kubernetes. Состоит из `Chart.yaml`, `values.yaml`, `templates/`, опционально `Chart.lock`, `values.schema.json`, `README.md`.
+## Архитектура и базовые концепции
 
-**Файлы значений (Values)** — внешние параметры конфигурации (YAML), позволяющие адаптировать один чарт под разные окружения (dev, staging, prod). Приоритет наложения: `values.yaml` (базовый) → `values-<env>.yaml` (переопределения) → CLI `--set` (высший приоритет).
+### Внутренний конвейер рендеринга в `argocd-repo-server`
 
-**OCI-артефакты (OCI Artifacts)** — современный стандарт упаковки и хранения Helm-чартов в Docker-реестрах (Harbor, GHCR, Quay, локальные реестры). Используют `application/vnd.cncf.helm.chart.content.v1.tar+gzip` media type. Поддерживаются с Argo CD v2.3+, стабильны в v3.1+.
+Argo CD не выполняет команды `helm install` или `helm upgrade` в целевом кластере. Вместо этого компонент `argocd-repo-server` компилирует манифесты локально в оперативной памяти и изолированной файловой системе, после чего передает сгенерированный чистый поток YAML в `argocd-application-controller` для применения через стандартный Kubernetes API.
 
-**Multiple Sources** — механизм Argo CD (v2.6+, стабилен v3.0+), позволяющий объединять в одном приложении чарт из внешнего репозитория (Helm/OCI) и конфигурации (`values.yaml`) из приватного Git-репозитория через `sources[]` + `ref: values`.
-
-**AppProject** — логическая группировка приложений в Argo CD с ограничениями по источникам (`sourceRepositories`), целевым кластерам (`destinations`) и namespace. Критичен для Helm: ограничивает, какие репозитории чартов может использовать приложение.
-
-**Server-Side Apply (SSA)** — режим применения манифестов через Kubernetes API (`fieldManager=argocd`), обходящий лимит аннотации `last-applied-configuration` (256 KB). В Argo CD v3.4+ включён по умолчанию для больших чартов через `syncOptions: ServerSideApply=true`.
-
-**Config Management Plugins (CMP)** — механизм расширения рендеринга Argo CD через sidecar-контейнеры в `repo-server` (CMP v2, v2.6+) или процесс в основном контейнере (CMP v1, legacy). Позволяет использовать Helmwave, Helmfile, helm-secrets, Kustomize поверх Helm.
-
-**sourceHydrator** — компонент Argo CD (v2.6+), отвечающий за подготовку источников перед рендерингом: клонирование Git, скачивание OCI/Helm-чартов, разрешение зависимостей (`helm dependency build`), выполнение CMP-плагинов.
-
-## Базовые концепции
-
-### Архитектура рендеринга Helm в Argo CD
-
-Argo CD рендерит Helm-чарты на стороне `argocd-repo-server` через компонент `sourceHydrator` (v2.6+):
-
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                        argocd-repo-server (Контейнер генерации)                        │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                        │
+│   Входящие источники (spec.sources / spec.source):                                     │
+│   ├── Git Репозиторий (манифесты, values, local chart) ──▶ Bare Cache Repo             │
+│   ├── OCI Реестр (Harbor: oci://harbor.internal/...)   ──▶ Ephemeral Cache (/tmp)     │
+│   └── HTTP Helm Repo (ChartMuseum / Nexus)             ──▶ Helm Cache (/tmp/helm)      │
+│                                                                                        │
+│                                           │                                            │
+│                                           ▼                                            │
+│   ┌────────────────────────────────────────────────────────────────────────────────┐   │
+│   │                      sourceHydrator Workspace (/tmp/_app/...)                  │   │
+│   ├────────────────────────────────────────────────────────────────────────────────┤   │
+│   │ 1. Git Fetch / Shallow Clone (--depth=1)                                       │   │
+│   │ 2. Helm / OCI Pull (извлечение .tgz архива чарта)                              │   │
+│   │ 3. Разрешение subcharts: `helm dependency build` (при наличии Chart.lock)      │   │
+│   │ 4. Монтирование вторичных источников: $values/ -> /tmp/values/values/          │   │
+│   └────────────────────────────────────────────────────────────────────────────────┘   │
+│                                           │                                            │
+│                                           ▼                                            │
+│   ┌────────────────────────────────────────────────────────────────────────────────┐   │
+│   │                         Helm Engine (helm template)                            │   │
+│   ├────────────────────────────────────────────────────────────────────────────────┤   │
+│   │ Выполнение:                                                                    │   │
+│   │ helm template <releaseName> <chartDir> \                                       │   │
+│   │   --namespace <targetNamespace> \                                              │   │
+│   │   --values /tmp/values/values-base.yaml \                                      │   │
+│   │   --values /tmp/values/values-prod.yaml \                                      │   │
+│   │   --set key=value ...                                                          │   │
+│   │                                                                                │   │
+│   │ Валидация: проверка values.schema.json (при наличии)                           │   │
+│   │ Фильтрация: обработка флага --skip-crds (настраивается в spec.source.helm)     │   │
+│   └────────────────────────────────────────────────────────────────────────────────┘   │
+│                                           │                                            │
+│                                           ▼                                            │
+│   ┌────────────────────────────────────────────────────────────────────────────────┐   │
+│   │                        In-Memory / Redis Manifest Cache                        │   │
+│   │    Ключ: mfst|<repoURL>|<revision>|<app-signature> (TTL: по умолчанию 5 мин)   │   │
+│   └────────────────────────────────────────────────────────────────────────────────┘   │
+│                                           │                                            │
+└───────────────────────────────────────────┼────────────────────────────────────────────┘
+                                            │ gRPC (:8081)
+                                            ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                              argocd-application-controller                             │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│ 1. Вычисление Diff (Live State кластера vs Target State из Manifest Cache)             │
+│ 2. Преобразование Helm Hooks в Argo CD Resource Hooks и Sync Waves                     │
+│ 3. Внедрение метаданных отслеживания (Tracking ID: annotation или label)               │
+│ 4. Применение через Kube API: Client-Side Apply или Server-Side Apply (fieldManager)   │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│              Argo CD + Helm: Pipeline рендеринга (v3.x)                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌──────────────┐     ┌──────────────────┐     ┌──────────────────────┐   │
-│  │   Источники  │────▶│  sourceHydrator  │────▶│  Helm Template / CMP │   │
-│  │              │     │  (в repo-server) │     │  (рендеринг)         │   │
-│  │ • Git (HTTP/ │     │                  │     │                      │   │
-│  │   SSH)       │     │ 1. Clone/fetch   │     │ • helm template      │   │
-│  │ • Helm repo  │     │ 2. OCI pull      │     │ • CMP plugin         │   │
-│  │ • OCI reg    │     │ 3. dep build     │     │ • Kustomize overlay  │   │
-│  │ • Directory  │     │ 4. Plugin exec   │     │                      │   │
-│  └──────────────┘     └──────────────────┘     └──────────────────────┘   │
-│         │                    │                         │                   │
-│         ▼                    ▼                         ▼                   │
-│  ┌──────────────┐     ┌──────────────────┐     ┌──────────────────────┐   │
-│  │ Кэш          │     │ Подготовленные   │     │  YAML манифесты      │   │
-│  │ (in-memory,  │     │ источники        │     │  (Deploy, Svc,       │   │
-│  │  TTL 5m)     │     │ (chart + values) │     │   ConfigMap, etc.)   │   │
-│  └──────────────┘     └──────────────────┘     └──────────────────────┘   │
-│                                                             │               │
-│                                                             ▼               │
-│                                              ┌──────────────────────────┐   │
-│                                              │ Application Controller  │   │
-│                                              │ (sync, apply, prune)    │   │
-│                                              │ fieldManager=argocd     │   │
-│                                              └──────────────────────────┘   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
 
-**Процесс рендеринга (пошагово):**
+### Отличия модели Argo CD от классического Helm CLI
 
-1. **Application Controller** ставит задачу в очередь синхронизации.
-2. **sourceHydrator** (в `repo-server` поде) подготавливает источники:
-   - Git: shallow clone (`--depth=1` по умолчанию) или полный клон
-   - Helm repo: `helm pull` чарта в кэш (`/tmp/helm-cache/`)
-   - OCI: `oras pull` или `helm registry` в кэш
-   - Directory: чтение локальных файлов
-   - Выполнение `helm dependency build` при наличии `Chart.lock`
-   - Запуск CMP-плагинов (sidecar в CMP v2)
-3. **Helm Template Engine** выполняет рендеринг: `helm template <release> <chart> -f <values...>`
-4. **Результат** (YAML манифесты) кэшируется в памяти `repo-server` (TTL ~5 минут, настраивается `repo.server.cache.expiration`)
-5. **Application Controller** применяет манифесты через Kubernetes API:
-   - **Client-Side Apply** (по умолчанию): `kubectl apply` с аннотацией `last-applied-configuration`
-   - **Server-Side Apply** (`ServerSideApply=true`): `kubectl apply --server-side --field-manager=argocd`
+Понимание архитектурных различий между Argo CD и Helm CLI критично для предотвращения ошибок сопровождения в производственной среде:
 
-**Важно:** Argo CD **не выполняет** `helm install`/`helm upgrade`. Он только рендерит манифесты и применяет их через API Kubernetes. Это означает, что:
-- Helm-релизы **не создаются** в кластере (нет записей в Secret `sh.helm.release.v1`).
-- Управление состоянием через Helm CLI невозможно (`helm list`, `helm status` не работают).
-- Для отката используется Argo CD Rollback (`argocd app rollback`), а не `helm rollback`.
-- `helm history` недоступен — история в `argocd app history`.
-
-### Подход 1: Нативная поддержка Helm-репозиториев
-
-Argo CD выполняет рендеринг чарта (`helm template`) на стороне `argocd-repo-server`. В версии v3.4+ обеспечена полная поддержка **Helm 4** (v4.0+), что повышает безопасность за счет отказа от устаревших API.
-
-**Helm 4 vs Helm 3 в контексте Argo CD:**
-
-| Параметр | Helm 3 | Helm 4 |
+| Характеристика | Helm CLI (`helm install / upgrade`) | Argo CD GitOps (`argocd-repo-server`) |
 | :--- | :--- | :--- |
-| **Server-Side Apply** | Опционально (флаг) | Встроенная поддержка, в Argo CD — `syncOptions: ServerSideApply=true` |
-| **OCI-поддержка** | Экспериментальная (`helm registry`) | Стабильный OCI API (`helm pull/push oci://`) |
-| **Безопасность** | Устаревшие API (K8s ≤1.22) | Отказ от legacy API, требует K8s 1.25+ |
-| **Производительность** | Стандартная | Оптимизированный рендеринг, меньше аллокаций |
-| **values.schema.json** | Опциональная валидация | Встроенная строгая валидация по умолчанию |
+| **Хранение состояния (Release State)** | Создает Secret вида `sh.helm.release.v1.<name>.v<num>` в целевом namespace. | **Не создает** Secret релиза. Состояние фиксируется декларативно в объекте `Application` и кеше Git. |
+| **Управление релизами** | `helm list`, `helm history`, `helm status` отображают релиз и его ревизии. | Helm CLI видит namespace пустым. Управление выполняется через `argocd app get`, `argocd app history`. |
+| **Механизм отката** | `helm rollback <name> <rev>` восстанавливает состояние из Secret релиза. | `argocd app rollback` переключает целевой Git-коммит или ревизию OCI в манифесте `Application`. |
+| **Дрейф конфигурации (Drift Detection)** | Отсутствует. Ручные изменения через `kubectl edit` игнорируются до следующего `upgrade`. | Непрерывный мониторинг дрейфа. При `selfHeal: true` ручные правки немедленно перезаписываются. |
+| **Жизненный цикл CRD** | Каталог `crds/` устанавливается только при первой установке, обновления CRD игнорируются. | Управляется флагом `skipCrds` и Sync Waves. Позволяет непрерывно и безопасно обновлять CRD. |
+| **Объем манифестов** | Ограничен аннотацией `last-applied-configuration` (256 KB) при использовании 3-way merge. | Поддерживает Server-Side Apply (`ServerSideApply=true`), обходя любые ограничения размера аннотаций. |
 
-#### Традиционный Helm-репозиторий (HTTP/HTTPS)
+### Режимы подключения Helm-источников
+
+Argo CD поддерживает три архитектурных формата поставки чартов:
+
+1. **Традиционный HTTP/HTTPS Helm-репозиторий:**
+   - Хранилища: ChartMuseum, Nexus Repository, JFrog Artifactory, внутренний HTTP-сервер.
+   - Метаданные: `index.yaml`, содержащий ссылки на архивы `.tgz`.
+   - Настройка в Argo CD: тип репозитория `helm`.
+2. **OCI-совместимый реестр контейнеров:**
+   - Хранилища: Harbor (on-premise), Quay, Gitea Container Registry, локальный Docker Distribution Registry.
+   - Спецификация: OCI Image Manifest с `mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip`.
+   - Адресация: `repoURL` указывает на путь реестра без протокола или с `oci://`, `chart` задает имя артефакта, `targetRevision` строго фиксирует SemVer-тег (`1.2.3`) или SHA256-дайджест.
+3. **Локальный чарт из Git-репозитория:**
+   - Размещение: каталог с чартом хранится в общем репозитории инфраструктуры (монорепозиторий).
+   - `repoURL` указывает на Git-репозиторий (`git@gitlab.internal:...` или `https://...`), а `path` — на относительный путь к каталогу с `Chart.yaml`.
+
+### Иерархия разрешения параметров и значений (Precedence Hierarchy)
+
+При сборке чарта `argocd-repo-server` объединяет значения из нескольких источников в строгом порядке приоритета. Каждое последующее значение переопределяет предыдущее:
+
+```text
+1. Базовый values.yaml внутри чарта (Chart.yaml defaults)
+   │
+   ▼
+2. Файлы valuesFiles (в порядке их перечисления в Application)
+   ├── $values/environments/base/values.yaml
+   └── $values/environments/production/values.yaml (переопределяет base)
+   │
+   ▼
+3. Блок инлайн-значений helm.values (многострочный YAML-текст)
+   │
+   ▼
+4. Блок структурированных инлайн-значений helm.valuesObject (YAML/JSON объект)
+   │
+   ▼
+5. Параметры helm.parameters (--set name=value)
+   │
+   ▼
+6. Файловые параметры helm.fileParameters (--set-file name=path) [Высший приоритет]
+```
+
+### Преобразование Helm Hooks в нативные хуки и волны Argo CD
+
+Стандартные хуки жизненного цикла Helm транслируются компонентом `argocd-application-controller` в фазы синхронизации GitOps:
+
+| Helm Hook (`helm.sh/hook`) | Преобразование в Argo CD Hook | Поведение в Argo CD |
+| :--- | :--- | :--- |
+| `pre-install`, `pre-upgrade` | `argocd.argoproj.io/hook: PreSync` | Выполняется перед применением основных манифестов релиза. |
+| `post-install`, `post-upgrade` | `argocd.argoproj.io/hook: PostSync` | Выполняется после перехода всех основных манифестов в состояние `Synced` и `Healthy`. |
+| `pre-delete` | `argocd.argoproj.io/hook: PreDelete` | Выполняется перед удалением приложения (при каскадном удалении). |
+| `post-delete` | `argocd.argoproj.io/hook: PostDelete` | Выполняется после полного удаления ресурсов приложения. |
+| `test` | **Игнорируется** | Не выполняется при обычной синхронизации; не блокирует деплой. |
+| `helm.sh/hook-weight: "<n>"` | `argocd.argoproj.io/sync-wave: "<n>"` | Числовой вес транслируется в соответствующую волну синхронизации. |
+| `helm.sh/hook-delete-policy: hook-succeeded` | `argocd.argoproj.io/hook-delete-policy: HookSucceeded` | Хук-ресурс удаляется после успешного выполнения задачи. |
+| `helm.sh/hook-delete-policy: before-hook-creation` | `argocd.argoproj.io/hook-delete-policy: BeforeHookCreation` | Предыдущий экземпляр хука удаляется перед созданием нового. |
+
+> [!WARNING]
+> Если чарт содержит одновременно аннотации `helm.sh/hook` и `argocd.argoproj.io/hook`, аннотации Argo CD имеют абсолютный приоритет. Для обеспечения детерминированности в GitOps рекомендуется переводить хуки на нативные аннотации Argo CD.
+
+### Конфликт метки отслеживания ресурсов (`app.kubernetes.io/instance`)
+
+В стандартных чартах Helm (включая популярные библиотеки Bitnami и Helm Classic) общепринятый шаблон селекторов ресурсов генерирует метку:
 
 ```yaml
+metadata:
+  labels:
+    app.kubernetes.io/name: {{ include "common.names.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
-  source:
-    repoURL: 'https://charts.bitnami.com/bitnami'
-    chart: 'redis'
-    targetRevision: 16.8.9  # Фиксированная версия, не latest
-    helm:
-      # Опционально: дополнительные values-файлы из того же репозитория
-      valueFiles:
-        - values-prod.yaml
-      # Опционально: параметры рендеринга
-      parameters:
-        - name: redis.password
-          value: "secret"
-      # Опционально: пропуск CRD валидации при первом деплое
-      skipCrds: false
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "common.names.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
 ```
 
-#### OCI-совместимый репозиторий
+**Механика коллизии:**
+1. По умолчанию в устаревших версиях Argo CD метод отслеживания ресурсов использовал метку `app.kubernetes.io/instance: <Application-Name>`.
+2. Если имя объекта `Application` (`corp-redis-app`) не совпадает со значением `spec.source.helm.releaseName` (`redis-cluster`), Argo CD принудительно перезаписывает метку `app.kubernetes.io/instance` на `corp-redis-app`.
+3. Так как поле `spec.selector.matchLabels` у объектов `Deployment`, `StatefulSet` и `DaemonSet` в Kubernetes является **неизменяемым (immutable)** после создания, API-сервер отвергает обновление с фатальной ошибкой:
+   ```text
+   The Deployment "redis-cluster" is invalid: spec.template.metadata.labels: Invalid value: field is immutable
+   ```
+4. Приложение блокируется в состоянии `SyncFailed` и бесконечного цикла расхождения `OutOfSync`.
 
-Для работы с OCI-реестрами необходимо предварительно настроить учетные данные в настройках Argo CD.
+**Системное решение:**
+В корпоративном кластере администраторы обязаны настроить метод отслеживания на использование аннотаций в ConfigMap `argocd-cm`:
 
-**1. Создание секрета для OCI-реестра:**
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  # Полностью исключает перезапись метки app.kubernetes.io/instance
+  application.resourceTrackingMethod: annotation
+```
+
+После переключения Argo CD фиксирует право собственности через аннотацию `argocd.argoproj.io/tracking-id`, сохраняя исходную метку релиза Helm нетронутой.
+
+## Практические сценарии и конфигурация
+
+### Предварительные требования и валидация окружения
+
+Перед настройкой интеграции проверьте соответствие версий компонентов и сетевую доступность инфраструктуры:
+
+```bash
+# 1. Проверка версии сервера и клиента Kubernetes (требуется v1.28+)
+kubectl version --output=yaml
+# → clientVersion:
+# →   gitVersion: v1.31.1
+# → serverVersion:
+# →   gitVersion: v1.30.4
+
+# 2. Проверка состояния подов ядра Argo CD в пространстве имен argocd
+kubectl get pods -n argocd -l app.kubernetes.io/part-of=argocd
+# → NAME                                                READY   STATUS    RESTARTS   AGE
+# → argocd-application-controller-0                     1/1     Running   0          14d
+# → argocd-repo-server-678b7c5b6b-q7w2x                 1/1     Running   0          14d
+# → argocd-server-5d688cf86d-p4vlm                      1/1     Running   0          14d
+
+# 3. Проверка установленного Helm CLI на рабочей станции инженера
+helm version --short
+# → v3.16.2+g136519f
+
+# 4. Проверка прав ServiceAccount на управление ресурсами Application
+kubectl auth can-i create applications.argoproj.io -n argocd
+# → yes
+```
+
+---
+
+### Сценарий 1: Декларативное развертывание из On-Premise OCI-реестра (Harbor)
+
+Развертывание чарта из корпоративного реестра Harbor с самоподписанным сертификатом удостоверяющего центра (Corporate Internal CA) и аутентификацией по роботу-токену.
+
+#### Шаг 1: Добавление CA-сертификата реестра в Argo CD
+
+Для предотвращения ошибки `x509: certificate signed by unknown authority` добавьте корневой сертификат Harbor в ConfigMap `argocd-tls-certs-cm`:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-tls-certs-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+data:
+  # Имя ключа должно совпадать с FQDN хоста реестра
+  harbor.corp.internal: |
+    -----BEGIN CERTIFICATE-----
+    MIIExtCCA0mgAwIBAgIUQ7m... (Содержимое Root CA в PEM-формате)
+    -----END CERTIFICATE-----
+```
+
+```bash
+kubectl apply -f harbor-ca-cm.yaml
+# → configmap/argocd-tls-certs-cm configured
+```
+
+#### Шаг 2: Создание секрета учетных данных OCI-репозитория
+
+Репозитории OCI настраиваются через секреты с меткой `argocd.argoproj.io/secret-type: repository`:
+
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: oci-registry-creds
+  name: repo-harbor-oci-charts
   namespace: argocd
   labels:
     argocd.argoproj.io/secret-type: repository
+type: Opaque
 stringData:
-  url: ghcr.io/argoproj/charts
-  username: <имя-пользователя>
-  password: <токен>
-  type: oci
+  type: helm
+  enableOCI: "true"
+  name: harbor-corp-oci
+  url: harbor.corp.internal/helm-charts
+  username: "robot$argocd-puller"
+  password: "HarborRobotTokenSecretValue123"
 ```
 
-**2. Применение секрета:**
 ```bash
-kubectl apply -f oci-secret.yaml
-# → secret/oci-registry-creds created
+kubectl apply -f repo-harbor-secret.yaml
+# → secret/repo-harbor-oci-charts created
+
+# Проверка регистрации репозитория в Argo CD
+argocd repo list
+# → TYPE  NAME             REPO                                    STATUS      MESSAGE
+# → helm  harbor-corp-oci  harbor.corp.internal/helm-charts       Successful
 ```
 
-**3. Манифест Application:**
+#### Шаг 3: Манифест Application для OCI-чарта
+
 ```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ingress-nginx-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
+  project: default
   source:
-    repoURL: 'ghcr.io/argoproj/charts'
-    chart: 'argo-cd'
-    targetRevision: '5.50.0'  # Точная версия тега в OCI
+    repoURL: harbor.corp.internal/helm-charts
+    chart: ingress-nginx
+    targetRevision: 4.11.2
+    helm:
+      releaseName: ingress-nginx
+      values: |
+        controller:
+          replicaCount: 3
+          metrics:
+            enabled: true
+          service:
+            externalTrafficPolicy: Local
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ingress-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
 ```
 
-**Нюансы v3.4+:**
-- **Производительность:** Repo-server кеширует результаты рендеринга (in-memory, TTL 5m), снижая нагрузку на Git и сеть.
-- **Строгая валидация:** Поддержка `values.schema.json` включена по умолчанию — невалидные values блокируют синхронизацию.
-- **OCI credentials:** Для приватных реестров настройте credentials через Kubernetes Secret (как выше) или в `argocd-cm` ключ `repositories`.
-- **Поведение targetRevision:** В OCI это точный тег (semver) или digest (`sha256:...`); не поддерживает диапазоны вроде `5.x.x`.
+---
 
-### Подход 2: Использование нескольких источников (Multiple Sources)
+### Сценарий 2: Production Multi-Source паттерн (Разделение чарта и конфигураций)
 
-Это промышленный стандарт для GitOps-процессов. Он позволяет использовать публичный "золотой" чарт и хранить специфичные для компании `values.yaml` в отдельном закрытом репозитории.
+Изоляция версионирования публичного или платформенного чарта (находящегося в общем OCI-реестре) от прикладных конфигураций окружений (находящихся в приватном репозитории GitLab).
 
 ```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: postgresql-ha-cluster
+  namespace: argocd
 spec:
+  project: default
   sources:
-    - repoURL: 'https://charts.bitnami.com/bitnami'
-      chart: 'redis'
-      targetRevision: 16.8.9
+    # Первичный источник: бинарный Helm-чарт из OCI-реестра
+    - repoURL: harbor.corp.internal/helm-charts
+      chart: postgresql-ha
+      targetRevision: 14.2.1
       helm:
+        releaseName: postgres-main
         valueFiles:
-          - $values/infra/redis/values-prod.yaml
-    - repoURL: 'https://github.com/my-org/gitops-config.git'
-      targetRevision: HEAD
-      ref: values # Алиас для обращения из первого источника через $values/
+          - $configs/clusters/baremetal-prod/base-values.yaml
+          - $configs/clusters/baremetal-prod/postgres-overrides.yaml
+    # Вторичный источник: Git-репозиторий конфигураций окружений
+    - repoURL: git@gitlab.corp.internal:sre-team/cluster-configs.git
+      targetRevision: release/2026.4
+      ref: configs
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: database
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - RespectIgnoreDifferences=true
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      jsonPointers:
+        - /spec/replicas
 ```
 
-**Ключевые преимущества:**
-- **Разделение ответственности:** Инфраструктурная команда управляет чартом, команды разработки — значениями.
-- **Атомарность:** Все изменения конфигурации фиксируются в Git, обеспечивая полный аудит.
-- **Безопасность:** Секреты и специфичная конфигурация хранятся в приватном репозитории, а не в публичном чарте.
+---
 
-**Пример: Multiple Sources с несколькими values-файлами (слои конфигурации):**
+### Сценарий 3: Локальные сабчарты и зависимости в Air-Gapped контуре
+
+В закрытых промышленных сегментах (Air-Gap / без прямого доступа в Интернет) чарты часто оформляются в виде Umbrella-структуры с локальными зависимостями через протокол `file://`.
+
+#### Структура репозитория чарта:
+
+```text
+gitops-monorepo/
+└── charts/
+    └── platform-portal/
+        ├── Chart.yaml
+        ├── Chart.lock
+        ├── values.yaml
+        ├── charts/
+        │   ├── common-lib-1.2.0.tgz
+        │   └── worker-backend-3.4.1.tgz
+        └── templates/
+            └── portal-deployment.yaml
+```
+
+#### Файл `Chart.yaml`:
+
 ```yaml
+apiVersion: v2
+name: platform-portal
+version: 1.0.0
+dependencies:
+  - name: common-lib
+    version: 1.2.0
+    repository: "file://./charts/common-lib-1.2.0.tgz"
+  - name: worker-backend
+    version: 3.4.1
+    repository: "file://./charts/worker-backend-3.4.1.tgz"
+```
+
+#### Манифест Application:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-portal-airgap
+  namespace: argocd
 spec:
-  sources:
-    - repoURL: 'https://charts.bitnami.com/bitnami'
-      chart: 'postgresql'
-      targetRevision: 12.5.0
-      helm:
-        valueFiles:
-          - $values/apps/my-app/values-base.yaml      # Базовые настройки
-          - $values/apps/my-app/values-prod.yaml      # Продакшн-переопределения
-          - $values/apps/my-app/values-secrets.yaml   # Секреты (через AVP/Vault)
-    - repoURL: 'https://github.com/my-org/gitops-config.git'
-      targetRevision: main
-      ref: values
+  project: default
+  source:
+    repoURL: git@gitlab.corp.internal:enterprise/gitops-apps.git
+    targetRevision: main
+    path: charts/platform-portal
+    helm:
+      releaseName: platform-portal
+      valueFiles:
+        - ../../environments/prod/portal-values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: platform
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
 ```
 
-**Важно:** Ссылка на значения из внешнего репозитория начинается с `$values/` (символ доллара + имя `ref`). Порядок `valueFiles` определяет приоритет наложения: последнее значение побеждает.
+> [!IMPORTANT]
+> Если файл `Chart.lock` присутствует в каталоге, `argocd-repo-server` автоматически выполняет `helm dependency build`. При использовании локальных архивов в каталоге `charts/` эти архивы обязаны быть закоммичены в Git, иначе процесс сборки в изолированном контуре завершится сбоем.
 
-**Внутренняя механика Multiple Sources (v3.4+):**
-1. `sourceHydrator` клонирует все источники параллельно
-2. Источник с `ref: values` монтируется в `/tmp/values/<ref>/`
-3. Первый источник (chart) обращается к `$values/...` → разрешается в `/tmp/values/values/...`
-4. `helm template` запускается с объединённым набором `-f` файлов
+---
 
-### Подход 3: Рендеринг манифестов в CI
+### Сценарий 4: Декларативное управление CRD и операторами с Server-Side Apply
 
-Манифесты генерируются внешней системой (GitLab CI, GitHub Actions) и сохраняются в Git как чистый YAML.
+При развертывании тяжелых инфраструктурных чартов (например, `kube-prometheus-stack` или `victoria-metrics-k8s-stack`) стандартный клиентский `kubectl apply` падает из-за превышения лимита 256 KB в аннотации `last-applied-configuration`. Кроме того, ресурсы оператора пытаются создаться до того, как API-сервер зарегистрирует CRD.
 
-**Когда использовать:**
-- Требуется глубокое патчирование через Kustomize, которое невозможно средствами Helm.
-- Необходимо сканирование манифестов (Trivy/Checkov) *до* их попадания в кластер.
-- Используются сложные генераторы (например, Jsonnet), не поддерживаемые Argo CD нативно.
-
-**Пример CI-пайплайна (GitHub Actions):**
 ```yaml
-jobs:
-  render:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Render Helm
-      run: |
-        helm dependency update charts/my-app
-        helm template my-app charts/my-app \
-          -f values/prod.yaml \
-          --output-dir ./manifests
-
-    - name: Scan manifests
-      run: |
-        trivy config ./manifests --severity CRITICAL,HIGH
-        kubeconform ./manifests
-
-    - name: Commit to GitOps repo
-      run: |
-        git add ./manifests
-        git commit -m "chore: update manifests for prod"
-        git push
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring-stack
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: harbor.corp.internal/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 62.6.0
+    helm:
+      releaseName: monitoring
+      skipCrds: false
+      values: |
+        prometheus:
+          prometheusSpec:
+            retention: 30d
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  storageClassName: local-nvme-sc
+                  resources:
+                    requests:
+                      storage: 200Gi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # Включает применение через API server с менеджером fieldManager=argocd (обходит лимит 256 KB)
+      - ServerSideApply=true
+      # Игнорирует отсутствие CRD на этапе валидации dry-run при первом развертывании
+      - SkipDryRunOnMissingResource=true
 ```
 
-## Продвинутая интеграция через плагины (CMP v2)
+---
 
-Для инструментов, выходящих за рамки стандартного `helm template` (например, Helmwave, Helmfile или расшифровка секретов через `helm-secrets`), используются **[Config Management Plugins](./argocd_custom_tooling.md)**.
+### Сценарий 5: Масштабирование через ApplicationSet с Git-генератором
 
-**Сценарий использования Helmwave через CMP:**
-1. В `repo-server` добавляется sidecar с бинарным файлом `helmwave`.
-2. В манифесте `Application` указывается имя плагина.
-3. Плагин выполняет сборку графа зависимостей и рендеринг всех ресурсов стека.
-
-**Сравнение CMP v1 и CMP v2:**
-
-| Характеристика | CMP v1 (Legacy) | CMP v2 (Modern) |
-| :--- | :--- | :--- |
-| **Архитектура** | Процесс в основном контейнере | Sidecar-контейнер |
-| **Безопасность** | Общее пространство имен | Изолированный контейнер |
-| **Зависимости** | Ограничены основным образом | Полная независимость |
-| **Обнаружение** | Ручная настройка | Автоматическое (Discovery) |
-
-Подробнее: **[Custom Tooling и плагины (CMP)](./argocd_custom_tooling.md)**.
-
-## Масштабирование через ApplicationSet
-
-Для управления сотнями однотипных Helm-приложений используется генератор `Git`.
+Шаблонизация сотен инсталляций сервисов по каталогам bare-metal кластеров с автоматическим извлечением значений.
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: helm-apps
+  name: internal-services-helm
   namespace: argocd
 spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
   generators:
-  - git:
-      repoURL: https://github.com/my-org/gitops-repo.git
-      directories:
-      - path: apps/*
+    - git:
+        repoURL: git@gitlab.corp.internal:platform/cluster-workloads.git
+        revision: main
+        directories:
+          - path: workloads/prod/*
   template:
     metadata:
-      name: '{{path.basename}}'
+      name: 'prod-{{ index (split "/" .path) 2 }}'
+      labels:
+        environment: production
+        workload-type: microservice
     spec:
       project: default
-      source:
-        repoURL: 'https://charts.example.com'
-        chart: 'common-app-engine'
-        targetRevision: 1.2.0
-        helm:
-          valueFiles:
-          - '{{path}}/values.yaml'
+      sources:
+        - repoURL: harbor.corp.internal/helm-charts
+          chart: corp-microservice-archetype
+          targetRevision: 2.5.0
+          helm:
+            releaseName: '{{ index (split "/" .path) 2 }}'
+            valueFiles:
+              - '$config/{{ .path }}/values.yaml'
+        - repoURL: git@gitlab.corp.internal:platform/cluster-workloads.git
+          targetRevision: main
+          ref: config
       destination:
         server: https://kubernetes.default.svc
-        namespace: production
+        namespace: 'app-{{ index (split "/" .path) 2 }}'
       syncPolicy:
         automated:
           prune: true
           selfHeal: true
         syncOptions:
-        - CreateNamespace=true
+          - CreateNamespace=true
+          - ServerSideApply=true
 ```
 
-**Типы генераторов для Helm:**
+---
 
-| Генератор | Описание | Пример использования |
-| :--- | :--- | :--- |
-| **Git** | Читает директории/ветки из Git | Микросервисы в разных папках |
-| **List** | Статический список кластеров/окружений | dev, staging, prod |
-| **Cluster** | Все подключенные кластеры | Multi-cluster развертывание |
-| **Matrix** | Комбинация двух генераторов | Git + Cluster |
-| **SCM Provider** | Динамическое создание из GitLab/GitHub API | Feature-ветки |
+### Сценарий 6: Шифрование секретов поверх Helm через CMP v2 и SOPS
 
-Подробнее: **[Синхронизация и политики](./synchronization.md)**.
+Для безопасного хранения значений с паролями и токенами в Git используется связка Helm и Mozilla SOPS через изолированный Config Management Plugin (CMP v2).
 
-## Специфичные Sync Options для Helm
-
-В Argo CD существуют параметры, критичные для стабильного деплоя чартов:
-
-| Параметр | Описание | По умолчанию |
-| :--- | :--- | :--- |
-| **SkipDryRunOnMissingResource=true** | Позволяет игнорировать ошибки `dry-run`, если чарт создает CRD и ресурсы на их основе в одной транзакции. Критично для первого деплоя Operators. | false |
-| **ServerSideApply=true** | Рекомендуется для чартов с огромными манифестами (например, Prometheus Operator) для обхода лимита аннотаций (256 KB). | false |
-| **CreateNamespace=true** | Автоматическое создание целевого Namespace, если он отсутствует. | false |
-| **Prune=true** | Удаление ресурсов в кластере, которых больше нет в Git. | false |
-| **SelfHeal=true** | Автоматический откат ручных правок в кластере к состоянию в Git. | false |
-| **RespectIgnoreDifferences=true** | Использование настроек `ignoreDifferences` не только для визуализации, но и при синхронизации. | false |
-| **Replace=true** | Использование `kubectl replace` вместо `apply` (для ресурсов с неизменяемыми полями). | false |
-
-**Пример использования:**
-```yaml
-spec:
-  syncPolicy:
-    syncOptions:
-    - CreateNamespace=true
-    - Prune=true
-    - SelfHeal=true
-    - ServerSideApply=true
-    - SkipDryRunOnMissingResource=true
-    - RespectIgnoreDifferences=true
-```
-
-**Взаимодействие параметров:**
-- `SelfHeal=true` + `RespectIgnoreDifferences=true` — SelfHeal не перезаписывает поля из `ignoreDifferences`.
-- `SkipDryRunOnMissingResource=true` + CRD Operators — позволяет.deployать CRD и ресурсы одновременно.
-- `ServerSideApply=true` + большой чарт — обходит лимит аннотации `last-applied-configuration`.
-
-## Практические сценарии
-
-### Сценарий 1: Интеграция с Vault через AVP
-
-Использование **Argo CD Vault Plugin** позволяет на лету подставлять секреты в Helm-шаблоны без их хранения в Git.
+#### Шаг 1: Конфигурация плагина `plugin.yaml`
 
 ```yaml
-spec:
-  sources:
-    - repoURL: 'https://charts.bitnami.com/bitnami'
-      chart: 'redis'
-      targetRevision: 16.8.9
-      helm:
-        valueFiles:
-          - $values/apps/redis/values.yaml
-    - repoURL: 'https://github.com/my-org/gitops-config.git'
-      targetRevision: HEAD
-      ref: values
-      plugin:
-        name: argocd-vault-plugin
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cmp-helm-sops-config
+  namespace: argocd
+data:
+  plugin.yaml: |
+    apiVersion: argoproj.io/v1alpha1
+    kind: ConfigManagementPlugin
+    metadata:
+      name: helm-sops-renderer
+    spec:
+      version: v1.0
+      discover:
+        fileName: "sops-values.enc.yaml"
+      generate:
+        command: ["bash", "-c"]
+        args:
+          - |
+            set -euo pipefail
+            sops -d sops-values.enc.yaml > /tmp/decrypted-values.yaml
+            helm template "$ARGOCD_APP_NAME" . \
+              --namespace "$ARGOCD_APP_NAMESPACE" \
+              -f values.yaml \
+              -f /tmp/decrypted-values.yaml
+            rm -f /tmp/decrypted-values.yaml
 ```
 
-Подробнее: **[Интеграция с Vault](./argocd_vault_integration.md)**.
-
-### Сценарий 2: Локальные зависимости чартов
-
-Argo CD умеет автоматически запускать `helm dependency build`, если в репозитории обнаружен `Chart.lock`. Это позволяет использовать `file://` зависимости для локальных сабчартов.
-
-```bash
-# Структура репозитория
-my-app/
-├── Chart.yaml
-├── Chart.lock
-├── charts/
-│   └── common-lib-0.1.0.tgz  # Локальный сабчарт
-├── templates/
-│   └── deployment.yaml
-└── values.yaml
-```
-
-**Важно:** Argo CD автоматически обнаружит `Chart.lock` и выполнит `helm dependency build` перед рендерингом.
-
-### Сценарий 3: Multi-environment с Values-Overlay
-
-Использование разных values-файлов для dev, staging и prod окружений.
+#### Шаг 2: Использование плагина в манифесте `Application`
 
 ```yaml
-# Application для dev
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: my-app-dev
+  name: secured-api-gateway
+  namespace: argocd
 spec:
-  sources:
-    - repoURL: 'https://charts.bitnami.com/bitnami'
-      chart: 'redis'
-      targetRevision: 16.8.9
-    - repoURL: 'https://github.com/my-org/gitops-config.git'
-      targetRevision: main
-      ref: values
-      helm:
-        valueFiles:
-          - $values/environments/dev/values.yaml
+  project: default
+  source:
+    repoURL: git@gitlab.corp.internal:infra/secured-apps.git
+    targetRevision: main
+    path: apps/gateway
+    plugin:
+      name: helm-sops-renderer
   destination:
-    server: https://kubernetes-dev.example.com
-    namespace: development
+    server: https://kubernetes.default.svc
+    namespace: gateway
 ```
 
-### Сценарий 4: Откат через Argo CD
+---
 
-Поскольку Argo CD не создает Helm-релизы, откат выполняется через Argo CD Rollback:
+### Сценарий 7: On-Premise CI-пайплайн (GitLab CI) для валидации Helm-чартов
 
-```bash
-# Просмотр истории синхронизаций
-argocd app history my-app
+Предотвращение попадания синтаксических ошибок и некорректных значений в GitOps-репозиторий.
 
-# Откат к предыдущей версии
-argocd app rollback my-app
+```yaml
+# .gitlab-ci.yml
+stages:
+  - lint-and-test
+  - conformance
 
-# Откат к конкретному коммиту
-argocd app rollback my-app <commit-hash>
+variables:
+  HELM_VERSION: "v3.16.2"
+  KUBECONFORM_VERSION: "v0.6.7"
+
+helm-lint:
+  stage: lint-and-test
+  image: harbor.corp.internal/ci-tools/helm-ci:latest
+  script:
+    - echo "==> Запуск Helm lint для всех чартов"
+    - helm lint charts/my-service -f environments/production/values.yaml
+    - echo "==> Локальная проверка схемы values.schema.json"
+    - helm template test-release charts/my-service -f environments/production/values.yaml --dry-run > /dev/null
+
+kubeconform-validate:
+  stage: conformance
+  image: harbor.corp.internal/ci-tools/kubeconform:latest
+  script:
+    - echo "==> Рендеринг манифестов"
+    - helm template test-release charts/my-service -f environments/production/values.yaml > rendered-manifests.yaml
+    - echo "==> Валидация схемы Kubernetes 1.30"
+    - kubeconform -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' -strict -summary rendered-manifests.yaml
 ```
 
-### Сценарий 5: Тестирование чарта перед деплоем
+## Операции и команды
 
-Валидация чарта перед применением в кластере:
+Практический справочник команд для инженера DevOps и SRE при эксплуатации интеграции:
+
+### Проверка репозиториев и рендеринга
 
 ```bash
-# Локальный рендеринг
-helm template my-app ./charts/my-app -f values/prod.yaml > rendered.yaml
-
-# Валидация схемы
-helm lint ./charts/my-app -f values/prod.yaml
-
-# Dry-run в кластере (без реального применения)
-helm template my-app ./charts/my-app -f values/prod.yaml | kubectl apply --dry-run=client -f -
-
-# Проверка через Argo CD
-argocd app diff my-app --local ./charts/my-app
-```
-
-## Валидация
-
-### 1. Проверка доступности Helm-репозитория
-```bash
-# Список настроенных репозиториев в Argo CD
+# Просмотр подключенных репозиториев
 argocd repo list
-# → REPO URL                          TYPE     CONNECTION STATUS
-# → https://charts.bitnami.com/bitnami  helm     Successful
+# → TYPE  NAME             REPO                                    STATUS      MESSAGE
+# → helm  harbor-corp-oci  harbor.corp.internal/helm-charts       Successful
 
-# Тест подключения к конкретному репозиторию
-argocd repo get https://charts.bitnami.com/bitnami
-# → Name:  bitnami
-# → Type:  helm
-# → URL:   https://charts.bitnami.com/bitnami
+# Принудительная очистка кеша репозитория и проверка доступности
+argocd repo get harbor.corp.internal/helm-charts --refresh
+# → Name: harbor-corp-oci
+# → Type: helm
+# → URL: harbor.corp.internal/helm-charts
 # → Connection Status: Successful
+
+# Просмотр скомпилированных манифестов приложения без применения в кластер
+argocd app manifests ingress-nginx-prod | head -n 30
+# → ---
+# → # Source: ingress-nginx/templates/controller-deployment.yaml
+# → apiVersion: apps/v1
+# → kind: Deployment
+# → metadata:
+# →   name: ingress-nginx-controller
 ```
 
-### 2. Валидация чарта перед деплоем
+### Анализ различий (Diff) и валидация
+
 ```bash
-# Локальный рендеринг с выводом в файл
-helm template my-app ./charts/my-app -f values/prod.yaml > rendered.yaml
-# → (создает rendered.yaml с манифестами)
+# Просмотр расхождений между Git/Helm и текущим состоянием кластера
+argocd app diff ingress-nginx-prod
+# → ===== apps/Deployment ingress-system/ingress-nginx-controller ======
+# → 28c28
+# → <   replicas: 2
+# → ---
+# → >   replicas: 3
 
-# Валидация синтаксиса и лучших практик
-helm lint ./charts/my-app -f values/prod.yaml
-# → ==> Linting ./charts/my-app
-# → [INFO] Chart.yaml: icon is recommended
-# → 1 chart(s) linted, 0 chart(s) failed
+# Проверка расхождений с использованием Server-Side Diff (учитывает мутирующие вебхуки)
+argocd app diff ingress-nginx-prod --server-side-diff
+# → (Выводит только реальные смысловые изменения без мутаций кластера)
 
-# Dry-run в кластере (client-side, без применения)
-helm template my-app ./charts/my-app -f values/prod.yaml | kubectl apply --dry-run=client -f -
-# → deployment.apps/my-app created (dry-run)
-# → service/my-app created (dry-run)
-
-# Валидация через Argo CD (сравнение с текущим состоянием)
-argocd app diff my-app --local ./charts/my-app
-# → No differences found  (или показывает diff)
+# Проверка рендеринга с локальными значениями перед коммитом
+argocd app diff ingress-nginx-prod --local ./charts/ingress-nginx -f custom-values.yaml
+# → (Показывает изменения, которые произойдут при применении локального каталога)
 ```
 
-### 3. Проверка рендеринга через Argo CD (server-side)
+### Синхронизация, откат и управление
+
 ```bash
-# Просмотр сгенерированных манифестов без применения
-argocd app manifest my-app > generated.yaml
-# → (YAML манифесты, которые будут применены)
+# Ручной запуск синхронизации с принудительной очисткой кеша repo-server
+argocd app sync ingress-nginx-prod --force --prune
+# → TIMESTAMP                  GROUP        KIND   NAMESPACE       NAME    STATUS    HEALTH        HOOK  MESSAGE
+# → 2026-10-12T20:45:10+03:00  apps   Deployment  ingress-system  ingress  Synced   Healthy              deployment.apps/ingress-nginx-controller configured
 
-# Проверка через server-side dry-run (v3.5+)
-argocd app diff my-app --server-side-dry-run
-# → проверяет с учетом мутирующих вебхуков
+# Откат приложения к предыдущей успешной ревизии
+argocd app rollback ingress-nginx-prod
+# → Rollback to revision 4.11.1 initiated successfully
+
+# Просмотр истории версий и изменений приложения
+argocd app history ingress-nginx-prod
+# → ID  DATE                           REVISION  SOURCE
+# → 1   2026-10-10 11:20:00 +0300 MSK  4.10.0    harbor.corp.internal/helm-charts
+# → 2   2026-10-11 14:15:30 +0300 MSK  4.11.1    harbor.corp.internal/helm-charts
+# → 3   2026-10-12 20:45:10 +0300 MSK  4.11.2    harbor.corp.internal/helm-charts
 ```
 
-### 4. Проверка Multiple Sources конфигурации
-```bash
-# Проверка разрешения $values ссылок
-argocd app get my-app -o yaml | grep -A 20 "sources:"
-# → sources:
-# → - repoURL: https://charts.bitnami.com/bitnami
-# →   chart: redis
-# →   targetRevision: 16.8.9
-# →   helm:
-# →     valueFiles:
-# →     - $values/infra/redis/values-prod.yaml
-# → - repoURL: https://github.com/my-org/gitops-config.git
-# →   targetRevision: HEAD
-# →   ref: values
-```
+## Диагностика и устранение неисправностей
 
-### 5. Проверка OCI-реестра
-```bash
-# Проверка секрета репозитория
-kubectl get secret oci-registry-creds -n argocd -o yaml
-# → apiVersion: v1
-# → data:
-# →   password: <base64>
-# →   type: b2Np
-# →   url: Z2hjci5pby9hcmdvcHJvai9jaGFydHM=
-# →   username: <base64>
+### Алгоритм систематической диагностики инцидентов
 
-# Тест пулла чарта из OCI (локально)
-helm pull oci://ghcr.io/argoproj/charts/argo-cd --version 5.50.0
-# → Pulled: ghcr.io/argoproj/charts/argo-cd:5.50.0
-# → Digest: sha256:...
-```
-
-### 6. Проверка ApplicationSet генерации
-```bash
-# Просмотр сгенерированных Application
-argocd appset get helm-apps -o tree
-# → helm-apps
-# → ├── my-app-1 (Synced)
-# → ├── my-app-2 (OutOfSync)
-# → └── my-app-3 (Synced)
-
-# Детальная информация о генераторе
-argocd appset get helm-apps -o yaml | grep -A 30 "generators:"
-```
-
-### 7. Валидация Sync Options
-```bash
-# Проверка эффективных sync options приложения
-argocd app get my-app -o yaml | grep -A 20 "syncOptions:"
-# → syncOptions:
-# → - CreateNamespace=true
-# → - Prune=true
-# → - SelfHeal=true
-# → - ServerSideApply=true
-# → - SkipDryRunOnMissingResource=true
-```
-
-## Диагностика и мониторинг
-
-### Пошаговый алгоритм диагностики при ошибке синхронизации Helm
+При возникновении сбоев синхронизации Helm-приложений SRE-инженер следует алгоритму декомпозиции проблемы:
 
 ```text
-1. argocd app get <app-name>
-   ├── Status: OutOfSync/Degraded? → Перейдите к шагу 2
-   ├── Status: Synced? → Проблема не в синхронизации (проверьте health)
-   └── Status: Unknown? → Проблема с контроллером / repo-server
+1. Определение статуса приложения:
+   argocd app get <app-name>
+   ├── ComparisonError? ──▶ Ошибка рендеринга манифестов в repo-server (Шаг 2)
+   ├── Synced / Degraded? ──▶ Манифесты применились, сбой на уровне Pod/Workload (Шаг 5)
+   └── OutOfSync / SyncFailed? ──▶ Ошибка Kube API при применении (SSA / Селекторы) (Шаг 4)
 
-2. argocd app diff <app-name>
-   ├── Diff показывает изменения? → Перейдите к шагу 3
-   ├── Ошибка "Helm template failed"? → Проблема рендеринга (шаг 4)
-   ├── Ошибка "values not found"? → Проблема путей values (шаг 5)
-   └── Ошибка "CRD not found"? → Добавьте SkipDryRunOnMissingResource=true
+2. Проверка генерации манифестов:
+   argocd app manifests <app-name>
+   ├── Ошибка "Helm template failed"? ──▶ Ошибка синтаксиса шаблонов или schema validation (Шаг 3)
+   ├── Ошибка "values file not found"? ──▶ Ошибка в пути $ref или имени ветки Multiple Sources
+   └── Ошибка "DeadlineExceeded"? ──▶ Таймаут repo-server при клонировании или выполнении
 
-3. kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server -f
-   ├── Ошибка в логах repo-server? → Анализ ошибки рендеринга
-   ├── Ошибка "chart not found"? → Проверьте repoURL/targetRevision
-   ├── Ошибка "dependency build failed"? → Проверьте Chart.lock и доступность
-   └── Ошибка OCI pull? → Проверьте секрет repository credentials
+3. Локальная проверка шаблонизатора (эмуляция repo-server):
+   helm template <release> <chart-source> -f <values-files...>
+   ├── Воспроизводится локально? ──▶ Исправить опечатки в values.yaml или шаблоне Go
+   └── Локально успешно? ──▶ Проблема в сетевом доступе или OCI credentials в кластере
 
-4. Локальная проверка чарта:
-   helm template <release> <chart> -f <values...>
-   ├── Успех? → Проблема в окружении Argo CD (кэш, версия Helm)
-   └── Ошибка? → Исправьте чарт/values локально
+4. Анализ логов применения в Application Controller:
+   kubectl logs -n argocd deploy/argocd-application-controller --tail=100 | grep <app-name>
+   ├── "field is immutable" ──▶ Конфликт метки instance с неизменяемым matchLabels
+   └── "annotation length limit exceeded" ──▶ Включить ServerSideApply=true
 
-5. Проверка путей values (Multiple Sources):
-   argocd app get <app-name> -o yaml | grep -A 10 "valueFiles:"
-   ├── Пути начинаются с $values/? → Проверьте ref источника
-   ├── Файлы существуют в Git? → git ls-remote / проверка в UI
-   └── Регистр пути совпадает? → Case-sensitive!
-
-6. argocd app history <app-name>
-   ├── Есть успешные синхронизации? → Сравните с последней удачной
-   └── Нет? → Первая синхронизация — проверьте CRD, namespace, RBAC
+5. Анализ логов вычислительного ядра repo-server:
+   kubectl logs -n argocd deploy/argocd-repo-server -c repo-server --tail=100
+   ├── "x509: certificate signed by unknown authority" ──▶ Добавить CA в argocd-tls-certs-cm
+   └── "OOMKilled / signal: killed" ──▶ Увеличить memory limit пода repo-server
 ```
 
-### Базовые команды диагностики
+### Команды глубокой инспекции среды `argocd-repo-server`
 
 ```bash
-# Просмотр состояния приложения
-argocd app get my-app
+# 1. Поиск критических ошибок компиляции шаблонов в логах repo-server
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server -c repo-server --tail=200 | grep -E "level=error|helm template|sourceHydrator"
 
-# Просмотр diff
-argocd app diff my-app
+# 2. Проверка утилизации памяти и обнаружение OOMKilled перезапусков
+kubectl describe pod -n argocd -l app.kubernetes.io/name=argocd-repo-server | grep -E "Limits:|Requests:|Last State:|Exit Code:"
+# → Limits:
+# →   memory:  4Gi
+# → Last State: Terminated
+# →   Exit Code: 137 (137 свидетельствует об OOMKilled)
 
-# Просмотр diff с server-side (v3.5+, учитывает мутирующие вебхуки)
-argocd app diff my-app --server-side-diff
-
-# Просмотр сгенерированных манифестов
-argocd app manifest my-app
-
-# Просмотр истории синхронизаций
-argocd app history my-app
-
-# Просмотр логов контроллера приложений
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller -f
-
-# Просмотр логов repo-server (рендеринг Helm, sourceHydrator)
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server -f
-
-# Просмотр логов sourceHydrator (v3.4+)
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server -f | grep -i sourcehydrator
-
-# Просмотр событий в namespace argocd
-kubectl get events -n argocd --sort-by='.lastTimestamp'
-
-# Проверка кэша repo-server (очистка через перезапуск)
+# 3. Принудительный сброс дискового и оперативного кеша рендеринга
 kubectl rollout restart deployment argocd-repo-server -n argocd
+# → deployment.apps/argocd-repo-server restarted
+
+# 4. Проверка времени рендеринга манифестов через Prometheus метрики
+kubectl port-forward -n argocd deploy/argocd-repo-server 8084:8084 > /dev/null 2>&1 &
+curl -s http://127.0.0.1:8084/metrics | grep "argocd_git_request_duration_seconds"
 ```
 
-### Расширенная таблица ошибок
+### Таблица типовых инцидентов и решений
 
-| Ошибка / Симптом | Причина | Диагностика | Решение |
+| Симптом / Текст ошибки | Первопричина | Метод диагностики | Инженерное решение |
 | :--- | :--- | :--- | :--- |
-| `Helm template failed` | Ошибка в синтаксисе шаблонов Helm / невалидные values | `helm template .` локально; логи repo-server | Исправьте шаблоны/values; проверьте `values.schema.json` |
-| `values.yaml not found` / `stat /tmp/values/...: no such file` | Неверный путь в `valueFiles` или неверный `ref` | `argocd app get -o yaml \| grep valueFiles` | Исправьте путь; проверьте `ref` имя; case-sensitive |
-| `CRD not found` / `dry-run failed` | Чарт создает CRD и ресурсы одновременно | `argocd app diff` показывает ошибку на CRD | Добавьте `SkipDryRunOnMissingResource=true` в syncOptions |
-| `OCI login failed` / `unauthorized` | Ошибка аутентификации в OCI-реестре | `kubectl get secret -n argocd -l argocd.argoproj.io/secret-type=repository` | Исправьте секрет: `url`, `username`, `password`, `type: oci` |
-| `Chart dependency build failed` | Ошибка сборки зависимостей (`Chart.lock` невалиден) | Логи repo-server: `helm dependency build` | Исправьте `Chart.yaml`; выполните `helm dependency build` в CI |
-| `values.schema.json invalid` | Несоответствие values-файла схеме чарта | `helm lint` или `helm template` покажет ошибку | Приведите values в соответствие со схемой |
-| `ApplicationSet generation failed` | Ошибка в шаблоне ApplicationSet (переменные) | `argocd appset get <name> -o yaml` | Проверьте `{{path.basename}}`, генератор, синтаксис шаблона |
-| `Server-Side Apply failed` / `field is immutable` | Попытка изменить immutable поле через SSA | `argocd app diff --server-side-diff` | Добавьте `Replace=true` в syncOptions для ресурса |
-| `repo-server: chart not found` | Неправильный `repoURL`, `chart` или `targetRevision` | `argocd repo list`; `helm search repo <chart>` | Исправьте параметры source; проверьте доступность репозитория |
-| `repo-server: repository not accessible` | Сеть/аутентификация к Helm/OCI репозиторию | `kubectl exec -it repo-server -- wget -qO- <repoURL>` | Настройте credentials; проверьте сетевые политики |
-| `Multiple Sources: ref not found` | Источник с `ref: values` не найден или не клонирован | `argocd app get -o yaml \| grep -A 5 "ref: values"` | Добавьте второй источник с правильным `ref` |
-| `Cache stale` / `old values rendered` | Застарел кэш repo-server (TTL 5m) | `kubectl rollout restart deployment argocd-repo-server` | Перезапуск repo-server; или подождите TTL |
-| `Chart.lock missing` / `dependencies not built` | `Chart.lock` отсутствует в репозитории | Проверьте Git: `ls -la charts/` | Добавьте `Chart.lock` в Git; выполните `helm dependency build` в CI |
-| `Target revision not found` | Тег/ветка/коммит не существует в источнике | `git ls-remote <repoURL> <targetRevision>` | Исправьте `targetRevision` на существующий |
-| `Hook failed` / `pre-sync hook failed` | Ошибка выполнения Helm hook (Job не завершился) | `kubectl get jobs -n <namespace> -l argocd.argoproj.io/hook` | Исправьте hook; проверьте RBAC для Job; увеличьте timeout |
+| `Helm template failed: execution error at (my-chart/templates/...): nil pointer evaluating interface` | В переданных `values.yaml` отсутствует обязательная переменная, требуемая шаблоном. | `helm template test ./chart -f values.yaml` | Добавить недостающую секцию в переопределения `values.yaml` или объявить значение по умолчанию в чарте. |
+| `stat /tmp/_app/.../values-prod.yaml: no such file or directory` | Опечатка в пути `helm.valueFiles` или неверное имя псевдонима `$ref` во вторичном источнике. | `argocd app get <app> -o yaml \| grep -A 10 sources:` | Проверить чувствительность к регистру (case-sensitive) и точное совпадение алиаса `$ref`. |
+| `spec.template.metadata.labels: Invalid value: field is immutable` | Конфликт метки отслеживания `app.kubernetes.io/instance` между именем Application и `releaseName`. | `argocd app diff <app>` показывает изменение селектора в `Deployment` | Переключить отслеживание на аннотации в `argocd-cm`: `application.resourceTrackingMethod: annotation`. |
+| `x509: certificate signed by unknown authority` при OCI pull | Реестр Harbor использует корпоративный или самоподписанный SSL/TLS сертификат. | Логи `argocd-repo-server`: `failed to do request: Head ...` | Добавить корневой сертификат реестра в ConfigMap `argocd-tls-certs-cm`. |
+| `dry-run failed: CustomResourceDefinition ... not found` | Чарт создает CRD и экземпляры Custom Resource в одной транзакции синхронизации. | Ошибка на этапе пре-валидации dry-run перед развертыванием | Добавить флаг в спецификацию: `syncOptions: ["SkipDryRunOnMissingResource=true"]`. |
+| `metadata.annotations: Too long: must have at most 262144 bytes` | Размер генерируемого манифеста превысил 256 KB лимит аннотации `last-applied-configuration`. | Ошибка API сервера `422 Unprocessable Entity` | Включить применение на стороне сервера: `syncOptions: ["ServerSideApply=true"]`. |
+| `rpc error: code = DeadlineExceeded desc = context deadline exceeded` | Repo-server не успел склонировать монорепозиторий или скомпилировать зависимости за 90 секунд. | Метрика `argocd_git_request_duration_seconds` превышает порог | Увеличить `controller.repo.server.timeout.seconds: "180"` в ConfigMap `argocd-cmd-params-cm`. |
+| `command 'helm dependency build' failed: exit status 1` | Отсутствует доступ к внешнему репозиторию сабчарта из закрытого контура. | Логи `repo-server`: `no repository definition -- unable to update` | Предварительно упаковать зависимости в каталог `charts/` и зафиксировать `Chart.lock` в Git. |
+| `values.schema.json validation failed: field 'replicas' must be integer` | Значение в `values.yaml` нарушает JSON-схему чарта (например, передана строка `"3"` вместо числа `3`). | `helm lint ./chart -f values.yaml` | Привести типы данных в соответствие с требованиями схемы `values.schema.json`. |
+| `repo-server OOMKilled (Exit Code 137)` | Всплеск аллокации памяти при параллельном рендеринге нескольких тяжелых чартов. | `kubectl describe pod argocd-repo-server` показывает `OOMKilled: true` | Увеличить `resources.limits.memory` до `4Gi–8Gi`, включить `repo.server.use.shallow.clone: "true"`. |
+| `Out of Sync: drift on replicas` при использовании HPA | Контроллер HPA динамически масштабирует реплики, а Argo CD воспринимает это как дрейф. | `argocd app diff` постоянно указывает на расхождение в `/spec/replicas` | Добавить секцию `ignoreDifferences` для пути `/spec/replicas` целевого контроллера. |
+| `Target revision 'v2.x' not found in OCI registry` | В OCI-реестре запрошен динамический диапазон версий или тег, не поддерживаемый реестром. | `helm pull oci://... --version v2.x` завершается ошибкой 404 | В OCI-реестрах указывать только фиксированные SemVer теги (`2.1.4`) или точный дайджест. |
 
-### Команды для глубокой диагностики
+## Лучшие практики
 
-```bash
-# 1. Полный дамп состояния приложения
-argocd app get my-app -o yaml > app-state.yaml
+### Архитектура и надежность
 
-# 2. Сравнение локального рендеринга с Argo CD
-helm template my-app ./charts/my-app -f values/prod.yaml > local.yaml
-argocd app manifest my-app > argocd.yaml
-diff -u local.yaml argocd.yaml
+1. **Декомпозиция Umbrella-чартов:**
+   - Избегайте монолитных чартов, объединяющих десятки независимых компонентов кластера (база данных, бэкенд, ingress, мониторинг) в единый релиз.
+   - Используйте паттерн **ApplicationSet** или **Multiple Sources**: каждый компонент развертывается как независимый объект `Application`. Это изолирует радиус поражения (blast radius) при сбое и ускоряет рендеринг.
+2. **Фиксация ревизий и блокировка зависимостей:**
+   - Запрещено использовать псевдо-теги `latest`, плавающие ветки `main` или динамические диапазоны версий `1.x` в продуктивных средах.
+   - Всегда фиксируйте `targetRevision` на конкретном SemVer-теге чарта (`1.14.2`) и фиксируйте файл `Chart.lock` в Git для исключения неожиданных обновлений сабчартов.
+3. **Строгая валидация схем (Contract Testing):**
+   - Разрабатывайте файл `values.schema.json` для каждого внутреннего чарта. Это позволяет отклонять синтаксически неверные конфигурации на этапе pre-commit / CI до их передачи в `argocd-repo-server`.
 
-# 3. Проверка кэша repo-server (очистка через перезапуск)
-kubectl rollout restart deployment argocd-repo-server -n argocd
+### Системное администрирование и сайзинг `argocd-repo-server`
 
-# 4. Логи sourceHydrator для Multiple Sources
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server -f | grep -E "sourceHydrator|MultipleSources"
+1. **Гарантированные ресурсы (QoS Guaranteed):**
+   - Нагрузка на процессор и оперативную память в `argocd-repo-server` носит резко выраженный пиковый характер при синхронизации десятков приложений.
+   - Для стабильной работы на bare-metal кластерах задайте следующие параметры ресурсов в `argocd-repo-server`:
+     ```yaml
+     resources:
+       requests:
+         cpu: 1000m
+         memory: 2Gi
+       limits:
+         cpu: 4000m
+         memory: 6Gi
+     ```
+2. **Оптимизация работы с Git:**
+   - Включите shallow cloning в ConfigMap `argocd-cmd-params-cm` для ускорения выгрузки монорепозиториев:
+     ```yaml
+     data:
+       repo.server.use.shallow.clone: "true"
+       repo.server.parallelism.limit: "10"
+     ```
+3. **Изоляция дискового пространства `/tmp`:**
+   - Смонтируйте том `emptyDir` с типом `Memory` или скоростным NVMe-диском для каталога `/tmp` пода `argocd-repo-server` для минимизации задержек ввода-вывода при частой распаковке архивов чартов.
 
-# 5. Проверка OCI pull credentials
-kubectl exec -it -n argocd deployment/argocd-repo-server -- \
-  oras pull ghcr.io/argoproj/charts/argo-cd:5.50.0 --username $USER --password $TOKEN
+### Безопасность в On-Premise контуре
 
-# 6. Проверка kubeconform валидации (если настроено)
-kubeconform -summary -strict <(argocd app manifest my-app)
-```
-
-## Рекомендации и лучшие практики
-
-### Производительность
-
-- **Используйте Server-Side Apply:** Включайте `ServerSideApply=true` для чартов с манифестами >256 KB (обход лимита аннотаций).
-- **Кеширование:** Repo-server кеширует результаты рендеринга. Используйте `targetRevision` с фиксированными версиями, а не `latest`.
-- **Shallow Git Cloning:** Используйте `--depth` для монорепозиториев (>1000 файлов).
-
-### Безопасность
-
-- **Фиксация версий:** Запрещено использовать `targetRevision: latest`. Всегда фиксируйте Major или Minor версию для предсказуемости.
-- **OCI-безопасность:** Используйте короткоживущие токены или IAM-роли для доступа к реестрам образов вместо статических паролей.
-- **Сканер секретов:** Включайте `trivy config` и `kubeconform` в CI-пайплайны перед слиянием изменений в GitOps-репозиторий.
-- **AppProject:** Всегда создавайте отдельные проекты для разных команд/окружений.
-
-### Надежность
-
-- **Миграция на Helm v4:** В 2026 году рекомендуется полностью отказаться от Helm v3 в пользу v4 из-за встроенной поддержки SSA и улучшенной работы с OCI.
-- **Тестирование:** Включайте `helm lint` и `kubeconform` в CI-пайплайны перед слиянием изменений в GitOps-репозиторий.
-- **Валидация схемы:** Используйте `values.schema.json` для автоматической проверки values-файлов.
-- **Откат:** Используйте `argocd app rollback` вместо `helm rollback`, так как Argo CD не создает Helm-релизы.
-
-## Ограничения и edge cases
-
-### Ограничения
-
-1. **Нет Helm-релизов:** Argo CD не создает записей в Secret `sh.helm.release`. Управление через Helm CLI невозможно.
-2. **Лимит аннотаций:** Клиентский Apply ограничивает размер манифестов (256 KB). Для больших чартов используйте Server-Side Apply.
-3. **Cross-namespace ресурсы:** Автоматическая синхронизация работает только в рамках одного namespace.
-4. **ApplicationSet и `automated`:** Стандартный флаг `syncPolicy.automated` внутри шаблона ApplicationSet игнорируется. Решение о запуске синхронизации принимает контроллер `ApplicationSet`.
-5. **Множественные ApplicationSets:** Если ресурс управляется несколькими ApplicationSets, возникает конфликт. Используйте `FailOnSharedResource=true`.
-
-### Edge Cases
-
-1. **CRD и ресурсы в одной транзакции:** Если чарт создает CRD и ресурсы на их основе (Operators: Prometheus, Cert-Manager, Istio), добавьте `SkipDryRunOnMissingResource=true` в `syncOptions`. Без этого dry-run упадет с ошибкой "CRD not found" на ресурсах, зависящих от CRD.
-
-2. **Мутирующие вебхуки:** Если в кластере есть вебхуки, изменяющие манифесты (Istio sidecar injection, Kyverno, OPA Gatekeeper), используйте Server-Side Diff (v3.5+): `argocd app diff <name> --server-side-diff` или аннотация `argocd.argoproj.io/compare-options: ServerSideDiff=true` — модификации мутирующих вебхуков учитываются и удаляются из diff по умолчанию.
-
-3. **Helm-зависимости из приватных источников:** Если чарт зависит от сабчартов в приватных Helm/OCI репозиториях — используйте `helm repo add` с credentials в CI при сборке `Chart.lock`, или Multiple Sources с отдельным секретом `repository` для каждого приватного источника.
-
-4. **OCI-реестры с самоподписанными сертификатами:** Добавьте CA-сертификат в `argocd-cm` через `tls.clientCAData` (base64 PEM) или смонтируйте CA в `repo-server` под. Иначе `oras pull` / `helm registry` упадет с `x509: certificate signed by unknown authority`.
-
-5. **Ручные правки через kubectl:** Argo CD автоматически откатит изменения при включенном `selfHeal=true`. Используйте `RespectIgnoreDifferences=true` для полей, которые можно менять вручную (например, `replicas` в HPA, annotations для внешних инструментов).
-
-6. **Проблемы с зависимостями:** Если `Chart.lock` отсутствует в репозитории, Argo CD **не выполнит** `helm dependency build` автоматически. Убедитесь, что зависимости собраны в CI (`helm dependency build && git add Chart.lock && git commit`).
-
-7. **Откат при Progressive Sync:** Если приложение находится в процессе Progressive Sync (ApplicationSet `syncPolicy.steps`), откат через `argocd app rollback` может нарушить логику поэтапной раскатки. Используйте `argocd appset abort <appset>` для остановки прогрессивного деплоя перед откатом.
-
-8. **Server-Side Apply + `Replace=true` конфликт:** Не используйте `ServerSideApply=true` и `Replace=true` одновременно для одного приложения — они используют разные стратегии применения. `Replace` нужен только для immutable полей (например, `Service.spec.clusterIP`, `PVC.spec`).
-
-9. **Multiple Sources: порядок valueFiles важен:** В `valueFiles` порядок определяет приоритет: последний файл перезаписывает предыдущие. `$values/...` пути разрешаются относительно корня Git-репозитория с `ref: values`.
-
-10. **Case-sensitivity в Multiple Sources:** Пути в `$values/` и имена `ref:` чувствительны к регистру. `ref: Values` не сработает для `$values/...` — должно быть точное совпадение.
-
-11. **TargetRevision в OCI:** В OCI-реестрах `targetRevision` должен быть точным тегом (semver: `5.50.0`) или digest (`sha256:...`). Диапазоны вроде `5.x.x` или `latest` **не поддерживаются** — OCI не имеет понятия "версии" как Helm-репозитории.
-
-12. **Shallow clone и Git history:** Argo CD использует shallow clone (`--depth=1`) по умолчанию. Для `targetRevision` с конкретным коммитом/тегом, которого нет в shallow клоне, синхронизация упадет. Решение: увеличьте `depth` в `argocd-cm` (`repository.credentials.depth`) или используйте теги.
-
-13. **Helm 3 vs 4 в одном кластере:** Argo CD v3.4+ использует встроенный Helm 4 SDK. Если в CI используется Helm 3 для рендеринга — результаты могут отличаться (SSA, OCI, schema validation). Рекомендуется унифицировать версию Helm в CI и Argo CD.
-
-14. **Kustomize поверх Helm (CMP):** При использовании CMP для Kustomize overlay поверх Helm-чарта — порядок: Helm template → Kustomize. `kustomization.yaml` должен ссылаться на `chart/` директорию или сгенерированные манифесты.
-
-15. **FailOnSharedResource в ApplicationSet:** При управлении одним ресурсом несколькими ApplicationSets — включите `FailOnSharedResource=true` в спецификации ApplicationSet, чтобы предотвратить конфликты синхронизации (race condition между контроллерами).
-
-16. **Sync Windows + Helm hooks:** [Sync Windows](./synchronization/scenarios/sync_windows.md) блокируют синхронизацию, но **не блокируют** выполнение Helm hooks (`pre-sync`, `post-sync`). Hooks могут выполниться вне окна синхронизации — учитывайте при планировании.
-
-17. **Resource tracking annotation limit:** При использовании `ServerSideApply=true` аннотация `field.cattle.io/manager` заменяет `last-applied-configuration`, но Argo CD всё равно добавляет `argocd.argoproj.io/sync-options` для отслеживания. При очень больших манифестах (>1MB) возможны проблемы с лимитом etcd (1MB на объект).
+1. **Изоляция через AppProject:**
+   - Ограничивайте список доверенных репозиториев (`sourceRepositories`) в манифестах `AppProject`. Это предотвращает загрузку неавторизованных чартов из внешних источников.
+     ```yaml
+     spec:
+       sourceRepositories:
+         - 'harbor.corp.internal/helm-charts'
+         - 'git@gitlab.corp.internal:apps/*'
+     ```
+2. **Исключение секретов из Git:**
+   - Не передавайте чувствительные параметры через `helm.parameters` в открытом виде в манифесте `Application`.
+   - Используйте расширения CMP v2 (SOPS, HashiCorp Vault / OpenBao, External Secrets Operator) для доставки секретов в кластер.
+3. **Сетевые политики (NetworkPolicies):**
+   - Ограничьте исходящий трафик (Egress) пода `argocd-repo-server` только внутренними адресами корпоративных Git-серверов (GitLab, Gitea) и OCI-реестров (Harbor), заблокировав неконтролируемый доступ во внешние сегменты сети.
 
 ## Дополнительная информация
 
-### См. также
+### Связанные материалы базы знаний
 
-- [Обзор Argo CD](./argocd_overview.md)
-- [Синхронизация и политики](./synchronization.md)
-- [Custom Tooling и плагины (CMP)](./argocd_custom_tooling.md)
-- [Официальная документация: Helm Support](https://argo-cd.readthedocs.io/en/stable/user-guide/helm/)
-- [Multiple Sources и sourceHydrator](./argocd_multi_source_apps.md) — Multiple Sources, sourceHydrator, Helm+Git, CI-рендеринг vs Multi-Source.
-- [Отслеживание ресурсов](./argocd_resource_tracking.md) — Методы отслеживания ресурсов: Label, Annotation, Annotation+Label.
-- [Удаление и очистка](./argocd_deletion_and_cleanup.md) — Prune, Cascading Deletion, Propagation Policy, Orphan, Finalizers.
+- [Обзор архитектуры Argo CD](./argocd_overview.md) — компоненты ядра, модель синхронизации и жизненный цикл приложений.
+- [Multiple Sources и sourceHydrator](./argocd_multi_source_apps.md) — детальная архитектура гидрации манифестов, объединение репозиториев и разрешение конфликтов LWW.
+- [Отслеживание ресурсов и Tracking ID](./argocd_resource_tracking.md) — специфика методов `annotation`, `label`, предотвращение коллизий селекторов.
+- [Диагностика и мониторинг Argo CD](./argocd_troubleshooting_and_monitoring.md) — сбор метрик Prometheus, трассировка gRPC и решение проблем производительности.
+- [Custom Tooling и плагины (CMP v2)](./argocd_custom_tooling.md) — разработка и интеграция sidecar-плагинов для нестандартных инструментов сборки манифестов.
+- [Интеграция с Vault](./argocd_vault_integration.md) — динамическая интерполяция секретов в манифесты при рендеринге.
+- [Управление через ApplicationSets](./argocd_applicationsets.md) — генераторы Git, List, Matrix для масштабного развертывания чартов.
+- [Политики синхронизации и Sync Options](./synchronization.md) — детальный разбор параметров `ServerSideApply`, `SkipDryRunOnMissingResource`, `Replace`.
 
 ### Ссылки на базу знаний Helm
 
-- [Обзор Helm](../../Kubernetes/ToolsUtilities/Helm/helm_overview.md)
-- [Структура Helm-чарта](../../Kubernetes/ToolsUtilities/Helm/helm_chart_structure.md)
-- [Основные команды и рабочий процесс](../../Kubernetes/ToolsUtilities/Helm/helm_commands_and_workflow.md)
-- [Зависимости и библиотечные чарты](../../Kubernetes/ToolsUtilities/Helm/helm_dependencies_and_library_charts.md)
-- [Шаблонизация в Helm](../../Kubernetes/ToolsUtilities/Helm/helm_templating.md)
+- [Обзор Helm и концепции чартов](../../Kubernetes/ToolsUtilities/Helm/helm_overview.md)
+- [Структура Helm-чарта и управление зависимостями](../../Kubernetes/ToolsUtilities/Helm/helm_chart_structure.md)
+- [Хуки и тестирование в Helm](../../Kubernetes/ToolsUtilities/Helm/helm_hooks_and_tests.md)
+- [Шаблонизация и функции Go-templates в Helm](../../Kubernetes/ToolsUtilities/Helm/helm_templating.md)
+- [Основные команды и рабочий процесс Helm](../../Kubernetes/ToolsUtilities/Helm/helm_commands_and_workflow.md)
+
+### Официальная документация
+
+- [Argo CD Documentation: Helm](https://argo-cd.readthedocs.io/en/stable/user-guide/helm/)
+- [Argo CD Documentation: Multiple Sources](https://argo-cd.readthedocs.io/en/stable/user-guide/multiple-sources/)
+- [Helm Official Documentation: Chart Development Guide](https://helm.sh/docs/topics/charts/)

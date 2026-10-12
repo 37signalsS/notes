@@ -1,334 +1,684 @@
 # GitOps: Образы контейнеров и их жизненный цикл
 
-В GitOps образ контейнера является ключевым артефактом, который связывает процессы непрерывной интеграции (CI) и непрерывной доставки (CD). Правильное управление образами — основа предсказуемости, прослеживаемости и безопасности всей системы: именно digest образа становится той единственной переменной, которой достаточно для описания состояния приложения в кластере.
+**Актуально для:** OCI Image/Distribution Spec 1.1, Docker 27.x/28.x, Harbor 2.12+/2.15.x, Kargo v1.11.x, Flux v2.4.x, Argo CD Image Updater v1.0.x, Cosign v2.4+/v3.x
+
+В GitOps образ контейнера является ключевым неизменяемым артефактом, связывающим процессы непрерывной интеграции (CI) и непрерывной доставки (CD). Правильное управление образами — основа предсказуемости, прослеживаемости и отказоустойчивости инфраструктуры: именно криптографический digest образа становится той единственной детерминированной переменной, которой достаточно для описания желаемого состояния приложения в кластере.
 
 ## Определения
 
-- **Образ контейнера (Container Image)**: Неизменяемый (immutable) бинарный пакет, включающий приложение и его зависимости. В GitOps-конвейере образ является «грузом» (payload), который доставляется в кластер на основе изменений в Git.
-- **Тег (Tag)**: Человекочитаемая метка (`v1.2.3`, `latest`), указывающая на конкретный манифест образа. В отличие от digest тег может быть перезаписан, поэтому в GitOps он рассматривается как указатель, а не идентификатор.
-- **OCI (Open Container Initiative) Артефакты**: Стандарт упаковки, позволяющий хранить в реестрах не только образы, но и Helm-чарты, манифесты, SBOM и подписи.
-- **OCI 1.1 Referrers API**: Механизм, позволяющий связывать дополнительные артефакты (подписи, результаты сканирования) с основным образом через граф зависимостей без изменения digest образа. Для реестров без поддержки API используется резервная схема тегов (tag-based fallback).
-- **Реестр образов (Image Registry)**: Централизованное хранилище артефактов (например, Harbor, GitHub Container Registry, Amazon ECR). Современные реестры выполняют роль Unified Artifact Hub: единое хранилище образов, чартов и сопутствующих аттестаций.
-- **Дайджест (Digest)**: Уникальный неизменяемый SHA256-хеш содержимого образа. Использование дайджестов (`image@sha256:...`) вместо тегов гарантирует побайтовую идентичность развернутого кода.
-- **Мульти-архитектурный образ (Multi-arch Image)**: Группа образов для разных архитектур (amd64, arm64), объединенных под одним индексом манифестов (OCI Image Index / Docker Manifest List).
-- **SBOM (Software Bill of Materials)**: Формализованный список всех компонентов и зависимостей внутри образа. Основные форматы — SPDX и CycloneDX.
-- **Подпись (Signature)**: Криптографическое подтверждение происхождения образа, создаваемое инструментами Sigstore (Cosign) или Notation и хранимое рядом с образом в реестре.
-- **Аттестация (Attestation)/Провенанс (Provenance)**: Подписанные метаданные о том, как был собран образ (окружение сборки, исходный коммит, параметры пайплайна) в формате SLSA Provenance.
-- **SLSA (Supply-chain Levels for Software Artifacts)**: Фреймворк для обеспечения целостности цепочки поставок ПО: уровни зрелости от L0 до L4 описывают, насколько гарантировано происхождение артефакта.
+- **Образ контейнера (Container Image)**: Неизменяемый (immutable) пакет, включающий приложение, системные библиотеки и конфигурацию среды исполнения. В GitOps-конвейере образ является неделимой полезной нагрузкой (payload), доставляемой в кластер на основе коммитов в Git.
+- **Тег (Tag)**: Человекочитаемая ссылка (`v1.2.3`, `latest`), указывающая на конкретный манифест образа. В отличие от digest тег является мутабельным (может быть перезаписан), поэтому в GitOps он служит лишь первичным указателем при публикации, но не гарантией неизменности.
+- **Дайджест (Digest)**: Уникальный неизменяемый SHA256-хеш содержимого манифеста или индекса образа (`image@sha256:...`). Использование дайджестов гарантирует побайтовую идентичность развернутого кода на всех узлах кластера.
+- **OCI (Open Container Initiative) Артефакты**: Стандарт упаковки и распространения, позволяющий хранить в реестрах не только образы ОС, но и Helm-чарты, манифесты Kustomize, спецификации SBOM и криптографические подписи.
+- **OCI 1.1 Referrers API**: Механизм спецификации OCI Distribution, связывающий зависимые артефакты (подписи, результаты сканирования, аттестации) с целевым образом через граф зависимостей без изменения дайджеста самого образа.
+- **Реестр образов (Image Registry)**: Централизованный сервис хранения и распределения артефактов (например, Harbor, GitLab Container Registry, Forgejo/Gitea). Выполняет роль единого центра дистрибуции OCI-артефактов.
+- **Proxy Cache (Pull-through кэш)**: Режим работы локального реестра, кэширующий внешние публичные образы для ускорения загрузки на узлы, экономии WAN-трафика и защиты от сбоев внешних сетей и rate limits.
+- **Мульти-архитектурный образ (Multi-arch Image / OCI Image Index)**: Объединение манифестов для различных аппаратных платформ (`linux/amd64`, `linux/arm64`) под единым именем и тегом через индекс манифестов.
+- **SBOM (Software Bill of Materials)**: Формализованный машиночитаемый перечень компонентов и библиотек образа (форматы SPDX, CycloneDX).
+- **Подпись (Signature) и Аттестация (Attestation)**: Криптографическое подтверждение целостности и происхождения образа (инструменты Cosign, Notation) и метаданные сборки (SLSA Provenance), хранящиеся рядом с артефактом.
+- **Image Pull Policy (`IfNotPresent`, `Always`, `Never`)**: Директива kubelet, определяющая необходимость сетевого запроса в реестр при создании контейнера.
+- **Image Garbage Collection (Kubelet Image GC)**: Автоматическая очистка неиспользуемых слоев образов демоном kubelet на диске рабочего узла при достижении порогов заполнения файловой системы.
+- **Dangling Blobs (Несвязанные блобы)**: Слои данных в хранилище реестра, оставшиеся после удаления тегов манифестов и требующие физической очистки через Garbage Collection (GC).
 
-## Базовые концепции
+## Архитектура и базовые концепции
 
 ### Разделение ответственности CI и CD
 
-GitOps устанавливает четкую границу между сборкой артефакта и его развертыванием:
+GitOps устанавливает строгую границу между созданием артефакта и его развертыванием:
 
-- **CI (Build & Push)**: Пайплайн собирает код, создает мульти-архитектурный образ, генерирует SBOM, подписывает его и публикует в OCI-реестр. Результат CI — **новый неизменяемый артефакт**.
-- **CD (Pull & Reconcile)**: GitOps-контроллер (Argo CD, Flux) обнаруживает новый образ или изменение тега в Git и синхронизирует состояние кластера. Результат CD — **обновленное состояние Runtime**.
+- **CI (Build & Push)**: Пайплайн компилирует код, собирает мульти-архитектурный образ, генерирует SBOM, сканирует уязвимости, подписывает артефакт и публикует его в OCI-реестр. Результат CI — **новый неизменяемый артефакт с зафиксированным digest**.
+- **CD (Pull & Reconcile)**: GitOps-контроллер (Argo CD, Flux) обнаруживает изменение манифеста в Git (или регистрирует новый образ через автоматизацию) и приводит рантайм кластера в соответствие. Результат CD — **актуальное состояние рабочих нагрузок в кластере**.
 
-Из этого разделения следует важное правило: CD никогда не пересобирает артефакт. Продвижение между средами — это всегда продвижение одного и того же digest, а не повторная сборка из того же коммита (сборка не детерминирована из-за временных меток и плавающих зависимостей базовых слоев).
+Главный принцип: **CD никогда не пересобирает артефакт**. Продвижение между средами (Dev → Staging → Production) — это перенос одного и того же хеша digest. Повторная сборка из того же коммита недопустима: она не гарантирует побайтовую идентичность из-за плавающих временных меток слоев и обновления базовых пакетов в репозиториях ОС.
 
-### Жизненный цикл образа
+### Жизненный цикл образа в GitOps
 
 ```text
-Code → Build (multi-arch) → Scan (Trivy/Grype) → SBOM (syft)
-     → Sign (cosign) + Attest (provenance)
-     → Push to Registry (digest фиксируется)
-     → Promote (тот же digest: staging → production)
-     → Deploy (GitOps-контроллер сверяет digest)
-     → Runtime (kubelet проверяет digest при PullPolicy)
+Code Commit
+    │
+    ▼
+[CI Pipeline] ──► Multi-arch Build (Docker Buildx / Rootless BuildKit)
+    │
+    ├──► Уязвимости: Trivy/Grype (FAIL при CRITICAL)
+    ├──► SBOM: Syft (CycloneDX / SPDX)
+    ├──► Sign & Attest: Cosign (SLSA Provenance via Referrers)
+    │
+    ▼
+[OCI Registry (Harbor)] ──► Фиксация уникального sha256 Digest
+    │
+    ▼
+[Promotion Engine (Kargo)] ──► Создание Freight (Digest + Helm/Git commit)
+    │                             │
+    │                             ▼
+    ├──► Stage: Staging ────► Verification Tests (AnalysisRun / Smoke Tests)
+    │                             │
+    └──► Stage: Production ◄──────┘ (После успешного гейта / Approval)
+          │
+          ▼
+    [Git Repository] ──► Запись закрепленного digest в манифест values.yaml
+          │
+          ▼
+    [GitOps Agent] ────► Argo CD / Flux выполняет синхронизацию
+          │
+          ▼
+    [Node Kubelet] ────► Containerd проверяет подпись (Kyverno) и пуллит digest
 ```
 
-Каждая стрелка — отдельный этап с собственными гарантиями: сканирование блокирует уязвимые сборки до публикации, подпись доказывает, что образ собран доверенным пайплайном, а digest-pinning исключает подмену содержимого после проверки. Разрыв любого звена (например, подпись не прикреплена к образу) должен останавливать продвижение — это реализуется политиками Kyverno/Gatekeeper или проверками Kargo.
+Каждый этап жизненного цикла сопровождается жесткими контрольными гейтами:
+1. **Гейт сборки**: блокировка отправки в реестр при обнаружении критических CVE без патчей.
+2. **Гейт криптографии**: подпись артефакта и прикрепление provenance до публикации в staging.
+3. **Гейт продвижения**: переход артефакта на следующий этап только после прохождения тестов на предыдущем без изменения digest.
+4. **Гейт допуска (Admission Control)**: проверка подписи с помощью [политик безопасности](./gitops-policy-management.md) (Kyverno) на уровне API-сервера Kubernetes перед созданием пода.
 
-### OCI-центричный подход
+### OCI 1.1 Referrers API и граф связанных артефактов
 
-Современный GitOps переходит от хранения всех манифестов в Git к гибридной модели:
-1. **Реестр как единое хранилище артефактов**: Helm-чарты и Kustomize-пакеты хранятся в OCI-реестре рядом с образами.
-2. **Referrers API**: Проверки безопасности (аттестации) прикрепляются к образу. GitOps-контроллер проверяет наличие валидной подписи перед деплоем, используя Referrers API реестра.
-3. **Эффективность**: Пуллинг OCI-артефактов значительно быстрее клонирования тяжелых Git-репозиториев.
+В спецификации OCI 1.1 артефакты организуются в направленный граф. Дополнительные метаданные связываются с базовым образом через поле `subject` в манифесте:
 
-При этом Git остается источником декларативного желаемого состояния (какие версии где должны работать) — меняется лишь способ хранения самих пакетов: собранные чарты публикуются как OCI-артефакты, а в Git хранится код чартов и values.
+```text
+               ┌───► Manifest: Image (linux/amd64)
+               │
+Image Index ───┼───► Manifest: Image (linux/arm64)
+   ▲           │
+   │           └───► Manifest: Image (linux/riscv64)
+   │
+   ├── [Subject] ─── Manifest: Cosign Signature (application/vnd.dev.cosign.simplesigning.v1+json)
+   ├── [Subject] ─── Manifest: CycloneDX SBOM (application/vnd.cyclonedx+json)
+   └── [Subject] ─── Manifest: SLSA Provenance Attestation (application/vnd.in-toto+json)
+```
 
-### Слои и кэширование
+**Преимущества для Sysadmin и DevOps:**
+- Подписи и SBOM не требуют создания искусственных тегов-пустышек вида `sha256-<hash>.sig`.
+- При перемещении или репликации образа инструменты (`skopeo copy --all`, Harbor Replication) автоматически копируют весь граф связанных объектов.
+- Admission Controllers и сканеры безопасности обращаются к `v2/<name>/referrers/<digest>` напрямую, не опрашивая списки тегов.
 
-Понимание слоистой структуры критично для скорости rollout'ов: kubelet скачивает только отсутствующие на узле слои. Практические следствия:
-- **Базовый образ — общий для всех сервисов**: изменение общей базы распространяется одним слоем; частые полные пересборки «толстых» образов замедляют деплои во всем парке.
-- **Порядок инструкций Dockerfile**: редко меняемое (зависимости) раньше часто меняемого (код приложения) — иначе кэш сборки бесполезен, а diff между версиями равен размеру всего приложения.
-- **Минимизация**: Distroless/Alpine-базы и multi-stage сборка сокращают поверхность атаки и объем скачивания. Для sidecar-образов Argo CD это же требование актуально из-за автоскейлинга repo-server.
+### Структура слоев, базовые образы и скорость раскатки
+
+Слоистая модель хранения OCI непосредственно определяет задержку развертывания (Rollout Latency) в Kubernetes:
+- **Базовые слои (Base Layers)**: Использование унифицированных базовых образов (Distroless, Alpine, минимальный Debian) внутри компании позволяет узлам кластера кэшировать общие слои для сотен сервисов.
+- **Оптимизация Dockerfile**: Инструкции упорядочиваются от редко меняющихся к часто меняющимся. Зависимости языка (`go.mod`, `pom.xml`, `package.json`) кэшируются до добавления исходного кода.
+- **Минимизация накладных расходов**: Применение Multi-stage сборок и Distroless-образов исключает компиляторы, утилиты отладки и пакетные менеджеры, уменьшая размер образа с сотен мегабайт до десятков, что сокращает время `ImagePull` и разгружает дисковую подсистему узла.
+
+### Топология локальных реестров и High Availability (On-prem)
+
+В изолированных дата-центрах и bare-metal инсталляциях реестр образов является критической точкой отказа (SPOF):
+1. **Высокая доступность (HA)**: Развертывание [Harbor в режиме HA](../../Docker/Docker_registries/Harbor/installation.md) с внешним PostgreSQL кластером (Patroni), реплицируемым Redis (Sentinel/Cluster) и распределенным объектным хранилищем (S3-совместимый MinIO или Ceph RGW) с многократной репликацией данных.
+2. **Proxy Cache (Pull-through кэш)**: Для филиалов и изолированных сегментов сети настраиваются локальные проекты Harbor в режиме Proxy Cache. Запросы к внешним ресурсам кэшируются локально, предотвращая блокировки пайплайнов из-за сетевых сбоев WAN.
+3. **P2P-дистрибуция (P2P Preheat)**: При кластерах с сотнями рабочих узлов одномоментный pull нового образа может перегрузить сетевой стек реестра. Интеграция с [Dragonfly P2P](../../Docker/Docker_registries/Harbor/p2p_preheat.md) распределяет слои между самими рабочими нодами по одноранговой сети.
+
+### Взаимодействие Kubelet, Containerd и хранилища образов
+
+При запуске пода рабочий узел выполняет строгую последовательность действий:
+
+```text
+Pod Scheduled ──► Kubelet (SyncPod)
+                      │
+                      ▼
+               CRI: PullImage Request ──► Containerd
+                                              │
+                                              ├── Проверка локального кэша (/var/lib/containerd)
+                                              ├── Обращение к mirrors/hosts.toml
+                                              ├── Аутентификация (Secret / hosts.toml)
+                                              ├── Скачивание недостающих слоев (Content Store)
+                                              └── Распаковка в Snapshotter (overlayfs)
+```
+
+#### Поведение ImagePullPolicy в GitOps:
+- `IfNotPresent`: Kubelet проверяет локальное наличие образа. Если образ указан по **тегу** (`app:v1.2.0`) и уже есть на ноде, kubelet **не обращается в сеть**. Если тег был перезаписан в реестре, нода продолжит крутить старый код. Если указан **digest** (`app@sha256:...`), гарантия соблюдается абсолютно: если digest совпадает, локальный образ идентичен требуемому.
+- `Always`: При каждом создании контейнера kubelet опрашивает реестр. Для тегов это запрашивает манифест из сети (нагружая реестр и замедляя старт пода). Для digest сетевой запрос подтверждает неизменность хеша без перекачивания слоев.
+- `Never`: Контейнер запускается исключительно из предзагруженного на ноду образа (используется для системных компонентов и air-gapped окружений с жестким pre-pull).
+
+#### Kubelet Image Garbage Collection и DiskPressure:
+Kubelet непрерывно отслеживает заполнение файловой системы, где хранятся образы (по умолчанию точка монтирования `/var/lib/containerd`):
+- `imageGCHighThresholdPercent` (по умолчанию `80%`): Процент занятого диска, при котором kubelet инициирует немедленный сбор мусора неиспользуемых образов.
+- `imageGCLowThresholdPercent` (по умолчанию `70%`): Целевой процент, до которого kubelet удаляет неиспользуемые слои (от самых старых по времени последнего использования к новым).
+- `imageMinimumGCAge` (по умолчанию `2m`): Минимальное время жизни образа на узле, до истечения которого он защищен от сборки мусора.
+
+Если очистка образов не успевает освободить место и диск заполняется до порогов эвикшна (`imagefs.available<15%` или `nodefs.available<10%`), узел переходит в состояние `DiskPressure`, перестает принимать новые поды и начинает принудительно выселять существующие. Подробный разбор сценариев приведен в [руководстве по диагностике дискового пространства](../../Kubernetes/Troubleshooting/Common_Errors/PodEvicted/disk_eviction.md).
+
+### Управление аутентификацией: Secret против containerd `hosts.toml`
+
+Для доступа к защищенным реестрам в Kubernetes применяются два подхода:
+1. **Namespace-scoped (`imagePullSecrets`)**: Создание секрета типа `kubernetes.io/dockerconfigjson` в каждом пространстве имен и привязка к ServiceAccount или Pod spec. Минус для SRE: необходимость дублирования и синхронизации секретов между десятками namespace.
+2. **Cluster-wide (Node-level via containerd `hosts.toml`)**: Настройка аутентификации и корневых сертификатов CA напрямую на рабочих узлах в конфигурации containerd. Все поды кластера получают доступ к внутреннему реестру без необходимости объявления `imagePullSecrets` в прикладных манифестах.
 
 ## Практические сценарии
 
-### Сценарий 1: Мульти-архитектурные образы в GitOps
+### Сценарий 1: Мульти-архитектурная сборка и инспекция OCI-индексов
 
-**Проблема**: В инфраструктуре используются узлы как на `amd64`, так и на `arm64` (например, Apple Silicon или AWS Graviton).
+**Проблема**: В инфраструктуре используются bare-metal узлы разных архитектур (`amd64` и `arm64`). Необходимо собирать единый артефакт, гарантируя корректное выполнение на любой архитектуре.
 
-**Предварительные требования**: `docker buildx` (входит в Docker Desktop / плагин buildx), доступ к реестру с поддержкой OCI Image Index (Harbor v2, GHCR, ECR); для сборки под чужую архитектуру — эмулятор QEMU (`docker run --privileged --rm tonistiigi/binfx --install arm64,amd64`) или нативные раннеры.
+**Предварительные требования**: `docker buildx` с драйвером `docker-container`, эмулятор QEMU для компиляции под другую архитектуру (или распределенные нативные раннеры), утилита `crane`.
 
-**Действия**:
-1. Соберите образ для нескольких платформ:
+**Настройка и сборка**:
+1. Инициализируйте rootless builder с поддержкой кросс-компиляции:
    ```bash
-   docker buildx create --name multiarch --use   # одноразовый builder
+   docker buildx create --name enterprise-builder --driver docker-container --use
+   # → enterprise-builder
+   docker buildx inspect --bootstrap
+   # → Name: enterprise-builder, Driver: docker-container, Status: running, Platforms: linux/amd64, linux/arm64
+   ```
+
+2. Выполните сборку и публикацию мультиплатформенного индекса:
+   ```bash
    docker buildx build \
      --platform linux/amd64,linux/arm64 \
-     -t registry.com/app:1.2.3 \
-     --provenance=false \        # упрощенный манифест; включать при использовании attestation-манифестов
+     --tag harbor.internal/core/auth-service:2.4.1 \
+     --provenance=mode=max \
      --push .
-   # → result: успешно собрано и запушено; в реестре создан OCI Image Index
+   # → exporting to image
+   # → pushing manifest for harbor.internal/core/auth-service:2.4.1
    ```
-2. Проверьте структуру индекса:
+
+3. Проверьте манифест OCI Image Index через `crane`:
    ```bash
-   docker buildx imagetools inspect registry.com/app:1.2.3
-   # → result: Manifests: linux/amd64 sha256:..., linux/arm64 sha256:...
+   crane manifest harbor.internal/core/auth-service:2.4.1 | jq .
+   # → result:
+   # {
+   #   "schemaVersion": 2,
+   #   "mediaType": "application/vnd.oci.image.index.v1+json",
+   #   "manifests": [
+   #     {
+   #       "mediaType": "application/vnd.oci.image.manifest.v1+json",
+   #       "digest": "sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069",
+   #       "platform": { "architecture": "amd64", "os": "linux" }
+   #     },
+   #     {
+   #       "mediaType": "application/vnd.oci.image.manifest.v1+json",
+   #       "digest": "sha256:4d61736f6e20697320677265617420656e67696e656572212121212121212121",
+   #       "platform": { "architecture": "arm64", "os": "linux" }
+   #     }
+   #   ]
+   # }
    ```
-3. В Git-манифесте укажите тег `1.2.3`. Kubernetes при пуллинге автоматически выберет нужный слой на основе архитектуры узла, сохранив единое желаемое состояние в Git.
 
-**Граничные случаи**: если какая-то архитектура не была собрана (например, сборка arm64 упала, а пайплайн продолжился), под на arm64-узле получит ошибку `exec format error` — проверяйте наличие всех платформ в индексе до продвижения.
+### Сценарий 2: Многоэтапный промоушен артефактов через Kargo
 
-**Инструменты сборки без демона**: классический [Kaniko](../../Docker/Dockerfile/dockerfile_kaniko.md) (сборка внутри K8s без privileged) был архивирован Google в июне 2025; актуальные варианты — поддерживаемый форк Chainguard (`chainguard-dev/kaniko`), community-образы `osscontainertools/kaniko`, либо BuildKit rootless/Buildah. Синтаксис вызова kaniko-исполнителя не изменился.
+**Проблема**: Необходимо обеспечить безопасный переход образов между средами Staging и Production с фиксацией digest и прохождением верификационных тестов, исключив ручные правки манифестов.
 
-### Сценарий 2: Продвижение образов через Kargo
-
-**Проблема**: Необходимо безопасно переносить изменения из `Staging` в `Production`, не пересобирая образ.
-
-**Концепция**: **Kargo** (актуальная линейка v1.11) отслеживает появление новых артефактов в реестрах через ресурс `Warehouse`. Найденная комбинация артефактов фиксируется как `Freight` (версионный набор: digest образа + версия чарта + коммит Git). При успешном прохождении проверок в `Stage` `Staging` Kargo обновляет манифесты в Git для `Production` через promotion step `argocd-update`, используя тот же digest, который был проверен ранее. Это гарантирует, что в продакшене работает побайтово идентичный артефакт.
+**Реализация**: Kargo отслеживает новые версии в реестре через ресурс `Warehouse`, формирует неизменяемый `Freight` и передает его по стадиям `Stage`. Детальная архитектура Kargo описана в [Kargo: promotion-пайплайны](./kargo_promotion_pipelines.md).
 
 ```yaml
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
-  name: app
+  name: auth-service-warehouse
+  namespace: kargo-apps
 spec:
-  freightCreationPolicy: Automatic
   subscriptions:
     - image:
-        repoURL: registry.com/app
+        repoURL: harbor.internal/core/auth-service
+        semverConstraint: ^2.4.0
         discoveryLimit: 5
-        semverConstraint: ^1.2.0       # какие теги считать кандидатами
-        # alias не задан явно → по умолчанию совпадает с именем репозитория;
-        # доступ к тегу в шагах: ${{ images.registry.com/app.Tag }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: staging
+  namespace: kargo-apps
+spec:
+  requestedFreight:
+    - origin: { kind: Warehouse, name: auth-service-warehouse }
+      sources: { direct: true }
+  promotionMechanisms:
+    gitRepoUpdates:
+      - repoURL: https://git.internal/gitops/infra.git
+        readCounterpart: { branch: main }
+        writeCounterpart: { branch: main }
+        helm:
+          images:
+            - valueKey: image.digest
+              value: ${{ imageFrom(warehouse("auth-service-warehouse")).Digest }}
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: prod
+  namespace: kargo-apps
 spec:
   requestedFreight:
-    - origin: {name: app, kind: Warehouse}
-      sources: {directStages: [staging]}  # продвигаем только то, что прошло staging
-  promotion:
-    steps:
-      - uses: argocd-update
-        as: update-app
-        config:
-          apps:
-            - name: app-prod
-              sources:
-                - repoURL: https://git.example.com/deploy.git
-                  desiredRevision: main
-                  helm:
-                    images:
-                      - key: image.tag    # какой параметр обновить в values
-                        value: ${{ images.registry.com/app.Tag }}
-                        # digest-pinning: Tag → Digest для фиксации по sha256
+    - origin: { kind: Warehouse, name: auth-service-warehouse }
+      sources: { stages: [staging] }
+  verification:
+    analysisTemplates:
+      - name: smoke-test-gate
+  promotionMechanisms:
+    gitRepoUpdates:
+      - repoURL: https://git.internal/gitops/infra.git
+        readCounterpart: { branch: main }
+        writeCounterpart: { branch: main }
+        helm:
+          images:
+            - valueKey: production.image.digest
+              value: ${{ imageFrom(warehouse("auth-service-warehouse")).Digest }}
 ```
 
-**Валидация**:
+**Проверка состояния в CLI**:
 ```bash
-kubectl get warehouses,freights,stages -n kargo-demo
-# → result: Warehouse/app FREIGHTS app-abc123... ; Stage/prod PHASE=Ready
-kubectl get promotions -n kargo-demo -l kargo.akuity.io/stage=prod
-# → result: история продвижений с указанием Freight и результата шагов
+kargo get freight --project kargo-apps
+# → NAME         ALIAS         ORIGIN                   AGE
+# → 5a4b3c2d     auth-2.4.1    auth-service-warehouse   12m
+
+kargo get stages --project kargo-apps
+# → NAME      CURRENT FREIGHT   HEALTHY   PHASE
+# → staging   auth-2.4.1        True      Ready
+# → prod      auth-2.4.0        True      Ready
 ```
 
-Альтернативы: собственный CI-job с `yq`/PR-ботом (проще, но без аудита и verification-гейтов) или Flux-подобная автоматизация (см. Сценарий 3). Kargo выгоден там, где сред три и больше и нужны формальные гейты (подпись, health checks, ручные approvals) — развернутая модель Warehouse/Freight/Stage и verification разобраны в [Kargo: promotion-пайплайны](./kargo_promotion_pipelines.md).
+### Сценарий 3: Декларативная автоматизация обновления образов в GitOps
 
-### Сценарий 3: Автоматизация обновления (Image Automation)
+Для автоматического обновления тегов и дайджестов в Git-репозиториях применяются контроллеры автоматизации.
 
-Автоматическая синхронизация тегов (и дайджестов) в Git при появлении новых версий в реестре.
+#### Вариант А: Flux Image Update Automation (Native Digest Pinning)
+Flux считывает реестр, выбирает версию по политике и фиксирует изменение в Git с записью полного `sha256 digest`:
 
-- **Flux Image Automation** (API `image.toolkit.fluxcd.io/v1` — GA; линейки контроллеров v1.2.x):
-  - `ImageRepository`: Сканирует реестр (с поддержкой облачных провайдеров аутентификации: `spec.provider: aws/azure/gcp`).
-  - `ImagePolicy`: Определяет правила выбора версии (например, `semver: 1.x.x`); умеет резолвить digest выбранного тега.
-  - `ImageUpdateAutomation`: Создает коммит в Git с обновленным тегом; поддерживает digest pinning — запись полного `image@sha256:` вместо тега.
-  ```yaml
-  apiVersion: image.toolkit.fluxcd.io/v1
-  kind: ImageRepository
-  metadata:
-    name: app
-    namespace: flux-system
-  spec:
-    image: registry.com/app
-    interval: 5m
-    exclusionList: ["^.*-rc$", "^.*-debug$"]   # игнорировать пререлизы
-  ---
-  apiVersion: image.toolkit.fluxcd.io/v1
-  kind: ImagePolicy
-  metadata:
-    name: app
-    namespace: flux-system
-  spec:
-    imageRepositoryRef: {name: app}
-    policy:
-      semver: {range: 1.x.x}
-  ```
-  ```bash
-  flux reconcile image repository app -n flux-system
-  # → result: annotation updated, scanned registry in 1.2s
-  kubectl describe imagepolicy app -n flux-system | grep Latest
-  # → result: Latest Image: registry.com/app:1.2.7
-  ```
+```yaml
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: auth-service
+  namespace: flux-system
+spec:
+  image: harbor.internal/core/auth-service
+  interval: 5m
+  secretRef:
+    name: harbor-registry-credentials
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImagePolicy
+metadata:
+  name: auth-service-policy
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: auth-service
+  policy:
+    semver:
+      range: 2.x.x
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageUpdateAutomation
+metadata:
+  name: auth-service-automation
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  git:
+    checkout:
+      ref:
+        branch: main
+    commit:
+      author:
+        email: fluxbot@internal
+        name: Flux Image Automator
+      messageTemplate: "chore(deps): update auth-service to {{ .Selected.Tag }} digest {{ .Selected.Digest }}"
+    push:
+      branch: main
+  update:
+    path: ./clusters/production/apps
+    strategy: Setters
+```
 
-- **Argo CD Image Updater**: проект развивается в org `argoproj-labs`; с версии v1.0 конфигурация переехала с аннотаций на декларативный CRD `ImageUpdater` (аннотационный подход объявлен legacy и обслуживается ограниченно). Контроллер обновляет параметры приложений напрямую через API Argo CD (write-back в Git опционален). Рекомендуется для Dev/QA сред.
-  ```yaml
-  apiVersion: argocd-image-updater.argoproj.io/v1alpha1
-  kind: ImageUpdater
-  metadata:
-    name: dev-apps            # CR ищет Applications в СВОЕМ namespace
-    namespace: argocd
-  spec:
-    applicationRefs:
-      - labelSelector: {matchLabels: {env: dev}}
-        images:
-          - alias: app
-            imageName: registry.com/app
-            delayTags: 10m              # дать время сканированию после пуша
-            updateStrategy: semver
-            commonUpdateSettings:
-              writeBackConfig:
-                method: git             # фиксировать изменение обратно в Git
-                target: env/dev/values.yaml
-                branch: main
-  ```
+В файле манифеста приложения добавляется маркер-сеттер:
+```yaml
+# clusters/production/apps/deployment.yaml
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: harbor.internal/core/auth-service:2.4.1@sha256:7f83b1657ff1... # {"$imagepolicy": "flux-system:auth-service-policy"}
+```
 
-**Выбор инструмента**: Flux-автоматизация — когда Git-коммиты обязательны и нужен digest pinning; Image Updater — когда достаточно быстрого обновления Dev-приложений без лишних коммитов; **Renovate** — когда нужен единый PR-бот для образов, Helm-чартов и прочих зависимостей с ревью и гейтами ([детально](./renovate_dependency_updates.md)); Kargo — когда нужна цепочка сред с гейтами (см. Сценарий 2).
+#### Вариант Б: Argo CD Image Updater (CRD-режим v1.0+)
+Современная версия Image Updater использует манифесты `ImageUpdater` вместо аннотаций:
 
-### Сценарий 4: Зеркалирование в закрытых контурах (Air-gapped)
+```yaml
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: core-services-updater
+  namespace: argocd
+spec:
+  applicationRefs:
+    - labelSelector:
+        matchLabels:
+          environment: staging
+      images:
+        - alias: auth
+          imageName: harbor.internal/core/auth-service
+          updateStrategy: semver
+          commonUpdateSettings:
+            writeBackConfig:
+              method: git
+              target: environments/staging/values.yaml
+              branch: main
+```
 
-В изолированных сетях GitOps-контроллер не имеет доступа к публичным реестрам.
+**Проверка выполнения обновления**:
+```bash
+flux reconcile image repository auth-service -n flux-system
+# → ✔ reconciliation finished in 1.45s, found 18 tags
+kubectl get imagepolicy auth-service-policy -n flux-system
+# → NAME                  LATEST IMAGE                                     READY
+# → auth-service-policy   harbor.internal/core/auth-service:2.4.1@sha256:7f83b1...   True
+```
 
-**Реализация**:
-1. Используйте `skopeo` или встроенные функции **Harbor** для зеркалирования (Replication) образов из внешнего реестра во внутренний.
+### Сценарий 4: Air-gapped зеркалирование и Proxy Cache в изолированном контуре
+
+**Проблема**: Изолированный промышленный кластер не имеет прямого доступа в Интернет. Требуется доставить базовые образы и Helm-чарты с проверкой целостности.
+
+1. **Копирование артефакта через `skopeo`**:
+   Утилита `skopeo` переносит образы напрямую между реестрами без запуска локального Docker-демона:
    ```bash
-   # Ручное зеркало одного образа со всеми платформами и подписями
+   # Синхронизация мульти-архитектурного индекса со всеми слоями и подписями
    skopeo copy --all \
-     docker://docker.io/library/nginx:1.27 \
-     docker://harbor.local/library/nginx:1.27
-   # → result: copied blob sha256:... (по слоям; --all переносит весь индекс)
+     --src-creds "$EXTERNAL_USER:$EXTERNAL_PASS" \
+     --dest-creds "$HARBOR_USER:$HARBOR_PASS" \
+     docker://registry.opensource.org/library/redis:7.2.5 \
+     docker://harbor.internal/cache/redis:7.2.5
+   # → Getting image source signatures
+   # → Copying blob sha256:a1b2c3...
+   # → Copying config sha256:d4e5f6...
+   # → Writing manifest to image destination
+   # → Storing list signatures
    ```
-   В Harbor репликация настраивается правилом (Administration → Replication): endpoint-провайдер `docker-hub`/`acr`/`ecr`, триггер `scheduled` или `event-based`, фильтры по именам репозиториев и тегам. Для чартов используется тот же механизм (OCI-чарты реплицируются как артефакты).
-2. В Git-манифестах используйте внутренние адреса, либо настройте `ImagePullSecrets` и зеркала на уровне рантайма. Для containerd 1.5+ конфигурация выполняется через `hosts.toml` без перезагрузки демона — детальное руководство: [Air-gapped ошибки Image Pull](../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md).
-3. Проверяйте полноту зеркала до переключения прод-трафика:
+
+2. **Настройка Proxy Cache в Harbor**:
+   В веб-интерфейсе Harbor создается проект `dockerhub-proxy` с типом **Proxy Cache**, указывающий на upstream-реестр. Образы запрашиваются через локальный адрес:
+   `harbor.internal/dockerhub-proxy/library/nginx:1.27`.
+   Первый запрос скачивает и сохраняет слои локально; все последующие запросы от сотен узлов обслуживаются из локального NVMe-хранилища Harbor без расхода внешнего канала.
+
+3. **Конфигурация зеркала на рабочих узлах (containerd `hosts.toml`)**:
+   Для перенаправления запросов к внешним реестрам на внутренний кэш без изменения манифестов настройте containerd на каждом узле:
+   ```toml
+   # /etc/containerd/certs.d/docker.io/hosts.toml
+   server = "https://registry-1.docker.io"
+
+   [host."https://harbor.internal/v2/dockerhub-proxy"]
+     capabilities = ["pull", "resolve"]
+     ca = ["/etc/ssl/certs/harbor-internal-ca.crt"]
+     [host."https://harbor.internal/v2/dockerhub-proxy".header]
+       Authorization = ["Basic dXNlcjpwYXNzd29yZA=="]
+   ```
+
+4. Примените конфигурацию без перезагрузки containerd (containerd перечитывает директорию `certs.d` динамически при каждом pull):
    ```bash
-   skopeo inspect --raw docker://harbor.local/library/nginx:1.27 | jq -r '.manifests[].platform.architecture'
-   # → result: amd64 \n arm64   (все платформы присутствуют во внутреннем реестре)
+   crictl pull docker.io/library/nginx:1.27
+   # → Image is up to date for docker.io/library/nginx:1.27
    ```
 
-**Граничные случаи**: rate limits Docker Hub ломают запланированные репликации — используйте аутентифицированный pull при зеркалировании; Referrers API не всегда поддерживается транзитными реестрами — проверяйте, что подписи переносятся (`skopeo copy --all` копирует связанные артефакты только в новых версиях; иначе повторная подпись после импорта).
+Подробное руководство по отладке сетевых изоляций представлено в [Air-gapped ошибки Image Pull](../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md).
 
-### Сценарий 5: Полный конвейер CI: сборка, сканирование, SBOM, подпись
+### Сценарий 5: Полный защищенный CI/CD-конвейер: сборка, сканирование, SBOM и подпись
 
-Минимальный production-grade пайплайн публикации образа (GitLab CI / GitHub Actions — шаги идентичны):
+Production-ready конвейер сборки на базе GitLab CI с использованием локального HashiCorp Vault для хранения ключей подписи (без внешних облачных зависимостей):
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-IMAGE="registry.com/app:${CI_COMMIT_SHORT_SHA}"
 
-# 1. Сборка мульти-архитектурного образа
-docker buildx build --platform linux/amd64,linux/arm64 -t "$IMAGE" --push .
+IMAGE_NAME="harbor.internal/core/auth-service"
+TAG="${CI_COMMIT_SHORT_SHA}"
+IMAGE_URI="${IMAGE_NAME}:${TAG}"
 
-# 2. Сканирование на уязвимости; блокируем Critical/High
-trivy image --exit-code 1 --severity CRITICAL,HIGH "$IMAGE"
-# → result: при наличии критических уязвимостей exit 1, пайплайн падает ДО подписи
+echo "=== 1. Multi-arch сборка ==="
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --tag "$IMAGE_URI" \
+  --provenance=mode=max \
+  --push .
+# → result: образ собран и опубликован в Harbor
 
-# 3. Генерация SBOM и прикрепление как аттестации OCI 1.1
-syft "$IMAGE" -o cyclonedx-json > sbom.cdx.json
-cosign attest --predicate sbom.cdx.json --type cyclonedx "$IMAGE"
+echo "=== 2. Сканирование безопасности (Trivy) ==="
+trivy image \
+  --exit-code 1 \
+  --severity CRITICAL \
+  --ignore-unfixed \
+  "$IMAGE_URI"
+# → result: CRITICAL vulnerabilities: 0. Exit code 0.
 
-# 4. Подпись образа (keyless через OIDC пайплайна либо ключом из KMS/Vault)
-cosign sign --yes "$IMAGE"
+echo "=== 3. Генерация SBOM (Syft) и аттестация OCI 1.1 ==="
+syft "$IMAGE_URI" -o cyclonedx-json=auth-sbom.json
+cosign attest \
+  --key "hashivault://cosign-signer" \
+  --type cyclonedx \
+  --predicate auth-sbom.json \
+  --yes \
+  "$IMAGE_URI"
+# → result: Attestation uploaded for harbor.internal/core/auth-service@sha256:...
 
-# 5. Генерация SLSA provenance (кто/где/из чего собран)
-cosign attest --predicate provenance.json --type slsaprovenance "$IMAGE"
+echo "=== 4. Криптографическая подпись образа ==="
+cosign sign \
+  --key "hashivault://cosign-signer" \
+  --yes \
+  "$IMAGE_URI"
+# → result: Signature uploaded for harbor.internal/core/auth-service@sha256:...
+
+echo "=== 5. Получение закрепленного Digest для GitOps ==="
+IMAGE_DIGEST=$(crane digest "$IMAGE_URI")
+echo "PINNED_IMAGE=${IMAGE_NAME}@${IMAGE_DIGEST}" > build.env
+# → result: PINNED_IMAGE записан для последующего шага коммита в GitOps-репозиторий
 ```
 
-**Валидация связанности артефактов**:
+### Сценарий 6: Управление жизненным циклом: политики ретенции и безопасный Garbage Collection в Harbor
+
+**Проблема**: Неконтролируемый рост реестра из-за сборок feature-веток переполняет дисковые массивы. Удаление записей в UI освобождает только метаданные, но не физическое дисковое пространство.
+
+**Архитектура очистки в Harbor**:
+1. **Удаление манифестов (Soft Delete)**: Удаление тега через UI или API удаляет связь в базе данных PostgreSQL. Сами слои (blobs) остаются на диске, чтобы не сломать другие образы, использующие эти же слои.
+2. **Garbage Collection (Физическая очистка)**: Job Service сканирует реестр, находит блобы, на которые не ссылается ни один манифест, и удаляет их из хранилища.
+
+**Скрипт автоматизированной ротации старых PR-образов через Harbor API v2**:
 ```bash
-cosign verify --certificate-identity-regexp '^https://gitlab\.com/org/.+$' \
-  --certificate-oidc-issuer https://gitlab.com registry.com/app:abc1234
-# → result: Verified OK   (подпись доверенного пайплайна)
+#!/usr/bin/env bash
+set -euo pipefail
 
-cosign triangulate registry.com/app:abc1234 | xargs crane manifest | jq .
-# → result: манифест referrers с типами application/vnd.cncf.cosign..., cyclonedx
-```
+HARBOR_URL="https://harbor.internal"
+PROJECT="core"
+REPO="auth-service"
+AUTH="admin:${HARBOR_ADMIN_PASSWORD}"
 
-Далее политики в кластере ([Kyverno/Gatekeeper](./gitops-policy-management.md)) блокируют деплой образов без валидной подписи, а [журналы аудита](./audit_logs.md) связывают digest с коммитом и одобрившим ревьюером.
-
-### Сценарий 6: Ретенция и очистка реестра
-
-Без политики очистки реестр неограниченно растет: динамические среды и PR-сборки генерируют сотни одноразовых тегов.
-
-1. **Retention rules в Harbor** (Project → Retention): например, «хранить последние 10 semver-тегов на репозиторий, теги вида `sha-*` — 7 дней, `latest` — всегда». Правила применяются по cron-расписанию GC.
-2. **Quota per project**: лимит хранилища + alerting при приближении к порогу — защита от остановки пайплайнов из-за переполнения.
-3. **Иммунитет продовых digest**: правила ретенции должны исключать теги, на которые указывают production-манифесты. Digest pinning усугубляет риск: если GC удалит слой, на который ссылается закрепленный digest, деплой упадет с `manifest unknown`. Минимум за окно отката (например, 90 дней) старые digest обязаны жить.
-4. **Очистка со стороны CI**: для ephemeral-окружений удаляйте образы вместе с окружением (API Harbor: `DELETE /projects/{p}/repositories/{r}/artifacts/{ref}`).
-
-```bash
-# Пример: удалить все PR-теги старше 7 дней через Harbor API v2
-curl -s -u "$HARBOR_USER:$HARBOR_PASS" \
-  "https://harbor.local/api/v2.0/projects/app/repositories/backend/artifacts?page_size=100" \
-  | jq -r '.[] | select(.tags[]?.name | test("^pr-")) |
-           select((.pull_time // .push_time) < (now - 604800 | todate)) | .digest' \
-  | while read d; do
-      curl -sf -X DELETE -u "$HARBOR_USER:$HARBOR_PASS" \
-        "https://harbor.local/api/v2.0/projects/app/repositories/backend/artifacts/$d"
+# Получить список артефактов с тегами вида 'pr-*' старше 14 дней
+curl -s -u "$AUTH" \
+  "${HARBOR_URL}/api/v2.0/projects/${PROJECT}/repositories/${REPO}/artifacts?page_size=100" \
+  | jq -r '.[] | select(.tags != null) |
+           select(.tags[].name | test("^pr-")) |
+           select((.push_time | fromdateiso8601) < (now - 1209600)) |
+           .digest' \
+  | while read -r DIGEST; do
+      echo "Удаление устаревшего PR-артефакта: $DIGEST"
+      curl -s -X DELETE -u "$AUTH" \
+        "${HARBOR_URL}/api/v2.0/projects/${PROJECT}/repositories/${REPO}/artifacts/${DIGEST}"
     done
-# → result: HTTP 200 на каждый удаленный артефакт
+# → result: HTTP 200 на каждый удаленный манифест
 ```
 
-## Типичные проблемы и их решение
+**Запуск Garbage Collection без остановки работы**:
+В современных версиях Harbor сборщик мусора запускается без перевода реестра в глобальный Read-Only режим (Non-blocking GC):
+```bash
+curl -s -X POST -u "$AUTH" \
+  -H "Content-Type: application/json" \
+  -d '{"schedule":{"type":"Manual"},"parameters":{"delete_untagged":true,"dry_run":false}}' \
+  "${HARBOR_URL}/api/v2.0/system/gc/schedule"
+# → result: {"status": "success", "job_id": 4821}
+```
 
-| Симптом | Причина | Решение |
+*Важное правило для SRE*: Политика хранения (Retention Policy) должна иметь исключения (Immunity Rules) для всех дайджестов, развернутых в Production и Staging кластерах, с запасом по времени не менее SLA на откат (обычно 90 дней).
+
+### Сценарий 7: SRE-мониторинг и наблюдаемость доставки образов
+
+**Метрики рабочего узла (Kubelet Prometheus Metrics)**:
+- `kubelet_container_image_pull_duration_seconds_bucket`: Гистограмма времени скачивания образов. Резкий рост 95-го перцентиля сигнализирует о деградации сети, перегрузке дисков реестра или скачивании избыточно больших слоев.
+- `kubelet_container_image_pull_errors_total`: Счетчик ошибок пуллинга (таймауты, ошибки авторизации, сбои DNS).
+- `container_fs_inodes_free` и `node_filesystem_avail_bytes`: Запас свободного места на файловой системе образов (`/var/lib/containerd`).
+
+**Метрики реестра Harbor**:
+- `harbor_project_storage_bytes`: Использование хранилища в разрезе проектов.
+- `harbor_task_status_count{type="GC"}`: Статус и длительность выполнения задач сборки мусора.
+- `harbor_up`: Доступность ключевых компонентов (core, registry, jobservice, postgresql).
+
+**Prometheus Alerting Rules для кластера**:
+```yaml
+groups:
+  - name: image_delivery_alerts
+    rules:
+      - alert: KubeletHighImagePullErrors
+        expr: rate(kubelet_container_image_pull_errors_total[5m]) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокая частота ошибок загрузки образов на узле {{ $labels.instance }}"
+          description: "На узле происходят регулярные сбои ImagePullBackOff/ErrImagePull (> 0.05 ошибок/сек)."
+
+      - alert: KubeletImagePullLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(kubelet_container_image_pull_duration_seconds_bucket[5m])) by (le)) > 120
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "95% задержка загрузки образов превышает 2 минуты"
+          description: "Замедление скачивания образов блокирует горизонтальное автоскейлирование (HPA)."
+
+      - alert: HarborProjectStorageQuotaNearLimit
+        expr: (harbor_project_storage_bytes / harbor_project_quota_bytes) > 0.85
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Квота проекта Harbor {{ $labels.project_name }} исчерпана на 85%"
+          description: "При достижении 100% CI/CD-пайплайны будут заблокированы ошибкой Push Quota Exceeded."
+```
+
+## Операции и команды
+
+Сводная таблица утилит командной строки для системных администраторов и инженеров DevOps:
+
+| Инструмент | Команда | Назначение |
 | :--- | :--- | :--- |
-| `ImagePullBackOff: manifest unknown` после отката | Тег был перезаписан или digest удален политикой ретенции | Переключить манифест на существующий digest; ввести правило ретенции с окном > периода отката (см. Сценарий 6) |
-| `exec format error` при запуске пода | В индексе образа отсутствует платформа узла (например, собран только amd64, а узел arm64) | Собрать полный индекс (`--platform linux/amd64,linux/arm64`), проверить `buildx imagetools inspect` до продвижения |
-| ArgoCD показывает OutOfSync сразу после деплоя по digest | Kustomize/Helm подменяет digest на тег либо image updater конфликтует с ручными правками | Зафиксировать digest в самом манифесте, исключить поле из ignoreDifferences-конфликтов, использовать один механизм автоматизации (Сценарий 3) |
-| `toomanyrequests` от Docker Hub в пайплайнах | Анонимные rate limits реестра | Зеркалирование базовых образов во внутренний реестр + аутентифицированный pull (Сценарий 4) |
-| Подпись не находится при `cosign verify`, хотя подписывали | Реестр не поддерживает Referrers API — артефакт лежит по tag-based схеме | Обновить cosign до актуальной версии (fallback включен), либо включить поддержку referrers в Harbor; проверить `cosign triangulate` |
-| Деплой заблокирован политикой «нет подписи» после зеркалирования | Репликация перенесла образ без связанных аттестаций | Повторно подписать после импорта или настроить перенос referrers (`skopeo copy --all`, свежие версии) |
-| Медленные rollout'ы больших образов | Слои не кэшируются на узлах: пересборка ломает слои зависимостей | Исправить порядок Dockerfile (зависимости раньше кода), общий slim/distroless base, pre-pull через DaemonSet для критичных узлов |
+| **skopeo** | `skopeo inspect docker://harbor.internal/core/auth:2.4.1` | Просмотр JSON-манифеста без скачивания слоев |
+| **skopeo** | `skopeo copy --all docker://src/app:v1 docker://dst/app:v1` | Межреестровое копирование всех платформ и подписей |
+| **skopeo** | `skopeo delete docker://harbor.internal/core/auth:2.4.1` | Удаление тега/манифеста из удаленного реестра |
+| **crane** | `crane digest harbor.internal/core/auth:2.4.1` | Быстрое получение точного sha256 digest образа |
+| **crane** | `crane manifest harbor.internal/core/auth:2.4.1` | Получение полного манифеста или индекса OCI |
+| **crane** | `crane export harbor.internal/core/auth:2.4.1 - \| tar -tvf -` | Просмотр содержимого файловой системы образа без Docker |
+| **cosign** | `cosign verify --key cosign.pub harbor.internal/core/auth:2.4.1` | Проверка криптографической подписи образа |
+| **cosign** | `cosign verify-attestation --key cosign.pub --type cyclonedx ...` | Проверка аттестации и валидности SBOM |
+| **cosign** | `cosign tree harbor.internal/core/auth:2.4.1` | Отображение дерева связанных Referrers (подписи, SBOM) |
+| **docker buildx** | `docker buildx imagetools inspect harbor.internal/core/auth:2.4.1` | Инспекция поддерживаемых платформ в индексе |
+
+### Примеры практического выполнения команд:
+
+1. **Получение точного дайджеста для фиксации в GitOps-манифесте**:
+   ```bash
+   crane digest harbor.internal/core/auth-service:2.4.1
+   # → sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069
+   ```
+
+2. **Проверка дерева связанных артефактов OCI 1.1**:
+   ```bash
+   cosign tree harbor.internal/core/auth-service:2.4.1
+   # → 📦 Supply Chain Security Tree
+   #   └── 🧾 Manifest: harbor.internal/core/auth-service:2.4.1 (sha256:7f83b165...)
+   #       ├── 🔏 Signature: sha256:3a1b2c...
+   #       ├── 📋 Attestation (cyclonedx): sha256:9f8e7d...
+   #       └── 📋 Attestation (slsaprovenance): sha256:1a2b3c...
+   ```
+
+3. **Проверка аутентификации реестра через skopeo**:
+   ```bash
+   skopeo login harbor.internal --username deploy-bot --password "$DEPLOY_TOKEN"
+   # → Login Succeeded!
+   ```
+
+## Диагностика и устранение неполадок
+
+| Симптом | Первопричина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| `ImagePullBackOff: manifest unknown` после отката | Зафиксированный тег был перезаписан или удален сборщиком мусора (GC) в реестре | `skopeo inspect docker://harbor.internal/...` возвращает 404 | Переключить манифест на резервный digest; настроить в Harbor политику Retention с окном хранения > SLA отката |
+| `exec format error` при старте контейнера на узле | В OCI Image Index отсутствует архитектура процессора узла (например, собран только `amd64`, а узел `arm64`) | `uname -m` на узле показывает `aarch64`; `crane manifest <image>` не содержит секции `arm64` | Собрать образ через `docker buildx build --platform linux/amd64,linux/arm64` и переопубликовать индекс |
+| `x509: certificate signed by unknown authority` | Kubelet/containerd не доверяет внутреннему CA self-hosted реестра | `crictl pull <image>` завершается ошибкой TLS handshake | Добавить корневой сертификат в `/etc/containerd/certs.d/<registry>/hosts.toml` или в системный trust store ОС узла |
+| `429 Too Many Requests` от внешних публичных реестров | Превышены лимиты на неавторизованные скачивания (Docker Hub rate limits) | Логи kubelet содержат `toomanyrequests: You have reached your unauthenticated limit` | Настроить в Harbor проект Proxy Cache; перенаправить запросы через containerd `hosts.toml` |
+| Argo CD показывает статус `OutOfSync` сразу после деплоя | Kustomize/Helm оверлей подменяет digest обратно на тег, либо Image Updater конфликтует с Git | Проверить Git diff между master-веткой и желаемым состоянием приложения | Зафиксировать digest непосредственно в Git-репозитории; исключить поле тега из мутаций через `ignoreDifferences` |
+| Kubelet переходит в состояние `DiskPressure`, поды выселяются | Дисковый раздел `/var/lib/containerd` переполнен неиспользуемыми слоями образов | `df -h /var/lib/containerd`; `crictl images` показывает гигабайты устаревших слоев | Проверить пороги Kubelet GC (`imageGCHighThresholdPercent: 80`); вынести `/var/lib/containerd` на отдельный диск |
+| Ошибка `push failed: project quota exceeded` в CI | Проект в Harbor исчерпал лимит дискового пространства | `curl /api/v2.0/projects/<id>/summary` показывает заполнение квоты на 100% | Запустить Garbage Collection в Harbor; удалить устаревшие PR-артефакты; увеличить квоту проекта |
+| `cosign verify` сообщает `no matching signatures found` | Реестр не поддерживает OCI 1.1 Referrers API, либо подписи не были скопированы при репликации | `crane manifest <image>` не показывает Referrers; подписи отсутствуют в зеркале | При переносе использовать `skopeo copy --all`; обновить Harbor до 2.11+; повторно подписать образ в целевом реестре |
+| Медленный запуск подов при масштабировании (HPA) | Отсутствие слоев на узле; большой размер образа (>1 Гб); перегрузка сетевого интерфейса | `kubelet_container_image_pull_duration_seconds` > 60 сек | Оптимизировать Dockerfile (Distroless/Alpine); внедрить Pre-pulling через DaemonSet; включить P2P Preheat в Harbor |
+
+## Лучшие практики
+
+### 1. Архитектурная неизменяемость (Immutable Delivery)
+- **Используйте Digest Pinning в Production**: Манифесты в production-окружениях обязаны ссылаться на полный дайджест: `harbor.internal/apps/core:2.4.1@sha256:...`. Тег используется для визуального удобства и поиска, а digest гарантирует идентичность выполнения.
+- **Включите Tag Immutability в реестре**: Для production-репозиториев Harbor активируйте правило **Tag Immutability** для semver-тегов (`v*`, `*.*.*`). Это защищает от случайной или злонамеренной перезаписи релизных образов.
+
+### 2. Защита дисковой подсистемы и стабильность узлов
+- **Выделенный раздел для Container Storage**: Монтируйте директорию данных рантайма контейнеров (`/var/lib/containerd` или `/var/lib/docker`) на отдельный физический диск или LVM-том. Это гарантирует, что при внезапном переполнении слоев образов системный раздел ОС (`/`) не заблокируется, а операционная система сохранит управляемость.
+- **Тюнинг порогов Kubelet Image GC**: Для нод с высокими темпами развертываний настройте пороги kubelet:
+  ```yaml
+  imageMinimumGCAge: 5m
+  imageGCHighThresholdPercent: 75
+  imageGCLowThresholdPercent: 65
+  ```
+
+### 3. Эффективность сети и изоляция
+- **Развертывайте Proxy Cache**: Все запросы к публичным ресурсам должны проходить через локальный кэширующий реестр. Это экономит внешний интернет-канал компании на 80–90% и защищает инфраструктуру от внешних инцидентов.
+- **Cluster-wide аутентификация**: Настраивайте доверие к локальным реестрам через `hosts.toml` на уровне образов ОС узлов (Golden Images / Ansible), исключая ручное управление сотнями `imagePullSecrets` в пространствах имен.
+
+### 4. Политики безопасности цепочки поставок (Supply Chain Security)
+- **Блокировка на уровне Admission Control**: Настройте политики Kyverno, запрещающие запуск подов:
+  1. С плавающим тегом `latest`.
+  2. Без явного указания digest (или без валидной криптографической подписи доверенной корпоративной CI).
+  3. От пользователей с правами root (UID 0).
+- **Автоматическая аттестация**: Каждая сборка обязана сопровождаться генерацией SBOM и provenance-аттестацией в формате SLSA.
+
+### 5. Предварительный прогрев критичных образов (Pre-pulling)
+- Для приложений, масштабируемых через Horizontal Pod Autoscaler (HPA), скачивание слоев размером в сотни мегабайт во время всплеска нагрузки приводит к недопустимым задержкам. Используйте легковесный DaemonSet, периодически выполняющий `imagePull` базовых слоев на все узлы кластера.
 
 ## Дополнительная информация
 
-Для настройки безопасности и версионирования изучите следующие разделы:
-- **[Версионирование и тегирование образов](../../Docker/Docker_registries/image_versioning_and_tagging.md)** — подробные стратегии SemVer и CalVer.
-- **[Подписание и верификация образов](../../Docker/Docker_security/image_signature_and_verification.md)** — практическое руководство по Cosign.
-- **[Управление артефактами в CI/CD](../../CI-CD/artifact_management.md)** — общие принципы жизненного цикла.
+Смежные разделы базы знаний:
+- **[Версионирование и тегирование Docker-образов](../../Docker/Docker_registries/image_versioning_and_tagging.md)** — SemVer, CalVer и стратегии иммутабельности.
+- **[Подписание и верификация Docker-образов](../../Docker/Docker_security/image_signature_and_verification.md)** — глубокое погружение в Cosign, Notation и Admission Controller.
+- **[Управление артефактами в CI/CD](../../CI-CD/artifact_management.md)** — организация жизненного цикла артефактов.
+- **[Kargo: promotion-пайплайны](./kargo_promotion_pipelines.md)** — управление этапами продвижения артефактов.
+- **[Renovate: автоматизация зависимостей](./renovate_dependency_updates.md)** — управление версиями образов и чартов через PR.
+- **[GitOps: Журналы аудита и трассируемость](./audit_logs.md)** — аудит поставок от коммита до пода.
+- **[Обзор Argo CD](../ArgoCD/argocd_overview.md)** · **[Argo CD Image Updater](../ArgoCD/argocd_image_updater.md)** · **[Обзор Flux](../flux.md)**
+- **[Harbor: Обзор реестра](../../Docker/Docker_registries/Harbor/overview.md)** · **[Harbor: Репликация](../../Docker/Docker_registries/Harbor/replication.md)** · **[Harbor: Эксплуатация](../../Docker/Docker_registries/Harbor/operations.md)**
+- **[Air-gapped ошибки Image Pull](../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md)** · **[Диагностика Image Pull](../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/diagnostics.md)**
+- **[Kaniko и альтернативы сборки без демона](../../Docker/Dockerfile/dockerfile_kaniko.md)** · **[Стратегии очистки Docker FS](../../Docker/Docker_fs/cleanup_gc_strategies.md)**
 
-См. также:
-- **[GitOps: Журналы аудита и трассируемость](./audit_logs.md)** — прослеживаемость образов.
-- **[Обзор Argo CD](../ArgoCD/argocd_overview.md)** · **[Image Updater: детальное руководство](../ArgoCD/argocd_image_updater.md)** · **[Обзор Flux](../flux.md)**
-- **[Обзор Harbor](../../Docker/Docker_registries/Harbor/overview.md)** — развертывание собственного реестра.
-
-Внешние ресурсы:
-- [Kargo: документация](https://docs.kargo.io/) — Warehouse/Freight/Stages и promotion steps.
-- [Flux: Image Update guide](https://fluxcd.io/flux/guides/image-update/) — включая digest pinning.
-- [Sigstore Cosign](https://docs.sigstore.dev/cosign/signing/overview/) — подписание и аттестации.
-- [OCI Distribution Spec 1.1: Referrers](https://github.com/opencontainers/distribution-spec/blob/main/spec.md#listing-referrers) — API связанных артефактов.
+Внешние спецификации и стандарты:
+- [OCI Distribution Specification v1.1](https://github.com/opencontainers/distribution-spec/blob/main/spec.md) — официальная спецификация OCI Referrers API.
+- [OCI Image Specification v1.1](https://github.com/opencontainers/image-spec/blob/main/spec.md) — структура манифестов и индексов.
+- [Kargo Documentation](https://docs.kargo.io/) — оркестрация продвижения артефактов.
+- [Flux Image Automation Guide](https://fluxcd.io/flux/guides/image-update/) — автоматизация обновления образов в Git.
+- [Sigstore Cosign Documentation](https://docs.sigstore.dev/cosign/overview/) — подписание и аттестация OCI-артефактов.
 
 ## Вопросы для собеседования
 
-### Почему в production пинуют digest, а не тег?
-Тег — изменяемый указатель: его можно перезаписать (`docker push` тем же тегом), и «откат на v1.2.3» даст непредсказуемое содержимое. Digest — хеш манифеста образа: неизменяем, гарантирует побайтовую идентичность того, что сканировалось и подписывалось. Тег остается человекочитаемой меткой рядом с digest.
+### Почему в production-манифестах GitOps обязательно указывать digest, а не тег?
+**Ответ:** Тег является мутабельным указателем (mutable pointer). Его можно случайно или намеренно перезаписать в реестре (`docker push` с тем же тегом, но другим кодом). Если в Git указан только тег, кластер при перезапуске подов или масштабировании на новые узлы может получить непредсказуемое содержимое. Откат на коммит с тегом `v1.2.3` не гарантирует возврат к прежнему коду. Digest — это криптографический SHA256-хеш манифеста. Он иммутабелен: указание digest гарантирует побайтовую идентичность артефакта, который прошел тестирование, сканирование и подписание.
 
-### Чем опасен плавающий тег `latest` в GitOps-манифесте?
-Нарушает принцип версионируемости: ревизия не фиксируется — откат невозможен, аудит бессмыслен, узлы кластера могут работать с разными содержимыми одного «тега» после перезаписи в реестре.
+### Чем опасен плавающий тег `latest` в декларативной инфраструктуре?
+**Ответ:** Тег `latest` нарушает главный принцип GitOps — воспроизводимость и детерминированность. При `latest`:
+1. В Git отсутствует запись о конкретной версии работающего кода (теряется трассируемость и аудит).
+2. Разные узлы одного кластера могут исполнять разные версии одного и того же сервиса (если один узел скачал `latest` вчера, а второй — сегодня после пуша новой версии).
+3. Невозможно выполнить автоматический или ручной откат (Rollback) через откат коммита в Git.
 
-### Как организовать доставку образов в air-gapped контур?
-Зеркалирование во внутренний реестр (Harbor Replication или `skopeo copy --all` с переносом платформ и referrers/подписей), все ссылки в манифестах — только на внутренний реестр, digest сверяется при переносе. Проверять, что политики верификации подписей работают против зеркала.
+### В чем разница между удалением тега через Harbor API и запуском Garbage Collection?
+**Ответ:** Удаление тега через веб-интерфейс или REST API Harbor выполняет логическое удаление (Soft Delete): из базы данных PostgreSQL удаляется запись тега и ссылка на манифест. Физические блобы (слои данных) остаются на дисковом хранилище, чтобы не нарушить целостность других образов, которые могут делить эти слои. Реальное освобождение дискового пространства происходит только при запуске Garbage Collection (GC) через Job Service: сборщик мусора обходит все сохраненные блобы, находит те, на которые больше нет ссылок ни от одного манифеста (dangling blobs), и удаляет их из хранилища.
 
-### Где именно проверяется подпись Cosign и что она гарантирует?
-На границах потребления: admission-политика Kyverno verifyImages/Gatekeeper блокирует поды без подписи доверенного identity, плюс проверка в CI перед промоушеном. Подпись привязана к digest и гарантирует автора сборки; целостность после подписания обеспечивает сам digest, а не подпись.
+### Как работает механизм Kubelet Image Garbage Collection и чем грозит неправильная настройка порогов?
+**Ответ:** Kubelet периодически опрашивает рантайм (containerd) и проверяет свободное место на дисковом разделе хранения образов. При превышении `imageGCHighThresholdPercent` (по умолчанию 80%) kubelet удаляет неиспользуемые контейнерами образы (начиная с самых старых по времени последнего использования) до тех пор, пока занятое пространство не опустится до `imageGCLowThresholdPercent` (по умолчанию 70%). Если пороги настроены слишком высоко, диск может заполниться до порогов Hard Eviction (`imagefs.available<15%`), что вызовет состояние `DiskPressure` и массовое принудительное выселение подов с узла. Если пороги слишком низкие — kubelet будет непрерывно удалять образы, заставляя ноду заново скачивать их при каждом масштабировании или перезапуске подов.
 
-### Какой главный урок из заморозки каталога Bitnami?
-Зависимость от чужого публичного реестра — архитектурный риск: политика вендора может сломать ваши пайплайны за один день. Ответственная практика — зеркалировать используемые образы и чарты в собственный реестр и обновлять их контролируемо, а не тянуть напрямую из внешних источников.
+### Как организовать надежную доставку образов в air-gapped контур без доступа к Интернету?
+**Ответ:**
+1. На границе внешнего контура настраивается буферный реестр (Harbor/skopeo-скрипты), который выполняет синхронизацию необходимых публичных образов с проверкой их подписей и уязвимостей.
+2. Перенос в изолированный контур осуществляется через защищенный транспорт (диод данных или физические носители) в виде архивов OCI (`skopeo copy docker-archive:...`) либо через межсетевой шлюз репликации Harbor.
+3. Внутри закрытого контура развернут локальный HA-кластер Harbor.
+4. На рабочих узлах containerd настраивается через `/etc/containerd/certs.d/` с указанием локального зеркала и доверенного внутреннего CA-сертификата.
+5. Политики Admission Control в кластере проверяют, что все образы поступают исключительно из внутреннего домена Harbor и подписаны корпоративным ключом.

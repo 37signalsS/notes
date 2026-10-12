@@ -35,7 +35,7 @@
 Система самостоятельно принимает решения на основе метрик (CPU, RAM, RPS) без участия человека.
 *   **Горизонтальное**: [HPA](HPA/index.md) и [KEDA](./keda/keda_concepts.md).
 *   **Вертикальное**: [VPA](vpa_detailed.md).
-*   **Инфраструктурное**: [Cluster Autoscaler](cluster_autoscaler_detailed.md) и [Karpenter](./Karpenter/overview.md).
+*   **Инфраструктурное**: [Cluster Autoscaler](cluster_autoscaler_detailed.md) и [Karpenter](cluster_autoscaler_vs_karpenter.md).
 
 ## Базовые концепции
 
@@ -49,7 +49,7 @@
 | **Приложение** | Поды | [KEDA](./keda/keda_concepts.md) | Горизонтальное | Scale-to-Zero, событийные триггеры |
 | **Приложение** | Ресурсы | [VPA](vpa_detailed.md) | Вертикальное | Рекомендации и In-Place Resize / Recreate |
 | **Инфраструктура** | Узлы | [Cluster Autoscaler](cluster_autoscaler_detailed.md) | Горизонтальное | Управление Node Groups |
-| **Инфраструктура** | Узлы | [Karpenter](./Karpenter/overview.md) | Горизонтальное | Прямое создание узлов (Group-less) |
+| **Инфраструктура** | Узлы | [Karpenter](cluster_autoscaler_vs_karpenter.md) | Горизонтальное | Прямое создание узлов (Group-less) |
 | **Инфраструктура** | Ресурсы | [In-Place Resize](in_place_pod_resize.md) | Вертикальное | Обновление cgroups без перезагрузки |
 
 ### Детальный разбор компонентов
@@ -87,7 +87,7 @@ VPA решает проблему «угадывания» правильных 
 
 #### Karpenter
 
-Подробное описание архитектуры, жизненного цикла NodePool/NodeClaim, сравнение с Cluster Autoscaler и операционные сценарии приведены в **[Karpenter: Обзор и основные концепции](./Karpenter/overview.md)**. Для on-premise окружений (bare-metal, private cloud) Karpenter не предназначен — используйте Cluster Autoscaler с Cluster API или Volcano для пакетных нагрузок.
+Подробное описание архитектуры, жизненного цикла NodePool/NodeClaim, сравнение с Cluster Autoscaler и операционные сценарии приведены в **[Cluster Autoscaler vs Karpenter](cluster_autoscaler_vs_karpenter.md)**. Для on-premise окружений (bare-metal, private cloud) Karpenter не предназначен — используйте Cluster Autoscaler с Cluster API или Volcano для пакетных нагрузок.
 
 #### KEDA (Kubernetes Event-driven Autoscaling)
 

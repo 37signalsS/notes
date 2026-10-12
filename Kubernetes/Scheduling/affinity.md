@@ -500,25 +500,29 @@ metadata:
   namespace: kube-system
 data:
   policy.yaml: |
-    apiVersion: "descheduler/v1alpha1"
+    apiVersion: "descheduler/v1alpha2"
     kind: "DeschedulerPolicy"
-    strategies:
-      "RemoveDuplicates": # Удаляет скопившиеся на одном узле реплики
-         enabled: true
-      "RemovePodsViolatingTopologySpreadConstraints": # Исправляет перекосы maxSkew
-         enabled: true
-         params:
-           includeSoftConstraints: false
-      "LowNodeUtilization": # Перемещает поды с перегруженных узлов
-         enabled: true
-         params:
-           nodeResourceUtilizationThresholds:
-             thresholds:
-               cpu: 50
-               memory: 50
-             targetThresholds:
-               cpu: 80
-               memory: 80
+    profiles:
+      - name: AffinityRebalance
+        pluginConfig:
+          - name: "RemoveDuplicates"
+          - name: "RemovePodsViolatingTopologySpreadConstraint"
+            args:
+              includeSoftConstraints: false
+          - name: "LowNodeUtilization"
+            args:
+              thresholds:
+                cpu: 50
+                memory: 50
+              targetThresholds:
+                cpu: 80
+                memory: 80
+        plugins:
+          balance:
+            enabled:
+              - "RemoveDuplicates"
+              - "RemovePodsViolatingTopologySpreadConstraint"
+              - "LowNodeUtilization"
 ```
 
 **Валидация:**

@@ -1,352 +1,707 @@
-# HPA: Cost и Right-sizing — оптимизация requests и затрат
+# HPA: Cost и Right-sizing — оптимизация requests и аппаратных затрат
+
+**Актуально для:** Kubernetes 1.28–1.35 (API autoscaling/v2)
+
+В данном руководстве рассматриваются методы оптимизации параметров `resources.requests` и `resources.limits` (Right-sizing) рабочих нагрузок Kubernetes под управлением Horizontal Pod Autoscaler (HPA) в инфраструктурах Bare-Metal и On-Premise. Анализируется влияние завышенных и заниженных запросов на работу планировщика (kube-scheduler), точность работы HPA, плотность размещения подов (bin-packing) и совокупную стоимость владения (TCO/CapEx) аппаратными ресурсами кластера.
+
+---
 
 ## Определения
 
-**Right-sizing** — процесс настройки `resources.requests` и `resources.limits` контейнеров на основе реального потребления ресурсов. Цель — найти баланс между производительностью (достаточно ресурсов) и стоимостью (нет лишних ресурсов).
+**Right-sizing** — систематический процесс выравнивания запрашиваемых ресурсов (`resources.requests`) и жестких ограничений (`resources.limits`) контейнеров с их фактическим профилем потребления. Основная цель — устранение избыточного резервирования без риска деградации производительности (CPU Throttling) или аварийной остановки процессов (OOMKilled).
 
-**Over-provisioning** — ситуация, когда `requests` завышены относительно реального потребления. Результат: HPA не чувствителен к нагрузке (метрика не растёт), Cluster Autoscaler создает лишние узлы, растут затраты.
+**Over-provisioning (Избыточное выделение)** — конфигурация, при которой `requests` контейнеров существенно превышают реальное потребление ресурсов (например, выделено 2000m CPU при среднем потреблении 200m). Приводит к искажению расчета утилизации в HPA, блокировке планирования других подов и нерациональному расходованию серверных мощностей.
 
-**Under-provisioning** — ситуация, когда `requests` занижены относительно реального потребления. Результат: HPA агрессивно масштабирует (метрика быстро растёт), поды могут быть OOMKilled или throttled, растет количество реплик.
+**Under-provisioning (Недостаточное выделение)** — конфигурация с заниженными `requests` относительно реального профиля нагрузки. Вызывает ложные срабатывания HPA, избыточное горизонтальное разрастание (scale-out), дефицит ресурсов на узлах и деградацию времени отклика сервиса.
 
-**Cost per Request** — стоимость обработки одного запроса. Рассчитывается как: `(sum(requests × price_per_resource) × time) / total_requests`. Ключевая метрика для FinOps.
+**Resource Slack (Ресурсный зазор / Недоутилизация)** — разница между зарезервированной емкостью (`requests`), учитываемой планировщиком, и фактически потребляемыми ресурсами на уровне ядра Linux (`usage`). Представляет собой «мертвый капитал» инфраструктуры.
 
----
+**Allocatable Capacity (Аллоцируемая емкость узла)** — объем вычислительных ресурсов узла (`status.allocatable`), доступный для распределения пользовательским подам после вычета резервов операционной системы (`system-reserved`), системных демонов кластера (`kube-reserved`) и порога вытеснения (`eviction-hard`).
 
-## Теоретический блок
+**Working Set Memory** — объем оперативной памяти контейнера, вычисляемый Kubelet как общее использование за вычетом неактивных страниц файлового кэша (`container_memory_working_set_bytes = usage - inactive_file`). Именно эта метрика используется подсистемой памяти ядра Linux и Kubelet для принятия решений об эвикции и OOMKilled.
 
-### Как requests влияют на HPA
+**CFS Quota и Throttling** — механизм планировщика Completely Fair Scheduler ядра Linux, ограничивающий время использования процессорных ядер контейнером при наличии `limits.cpu`. Если контейнер исчерпывает выделенную квоту за период (по умолчанию 100 мс), его потоки принудительно замораживаются (throttling), что вызывает рост задержек (latency).
 
-HPA рассчитывает утилизацию по формуле:
-
-```
-utilization = (current_usage / requests) × 100%
-```
-
-**Пример влияния requests на поведение HPA:**
-
-| Сценарий | requests.cpu | Текущее потребление | Утилизация | HPA решение |
-|:---|:---|:---|:---|:---|
-| Завышены (over) | 1000m | 200m | 20% | Не масштабирует (цель 70%) |
-| Правильно | 250m | 200m | 80% | Масштабирует |
-| Занижены (under) | 100m | 200m | 200% | Агрессивно масштабирует |
-
-### Как requests влияют на Cluster Autoscaler
-
-CA использует `requests` для принятия решений о добавлении узлов:
-
-```
-Если (sum(requests) на всех подах) > (суммарная capacity узлов):
-  → Создать новый узел
-```
-
-**Пример:**
-- Узел: 4 CPU, 16Gi RAM
-- Pod: requests.cpu=1000m, requests.memory=2Gi
-- CA помещает на узел: 4 пода (4×1000m = 4000m ≤ 4 CPU)
-- Если requests завышены (2000m на под): CA помещает только 2 пода, создает больше узлов
-
-### Цепочка: requests → HPA → CA → Cost
-
-```
-requests.cpu = 500m (завышено, реальное потребление = 200m)
-  → HPA видит 40% утилизации (цель 70%)
-    → HPA не масштабирует
-      → При пике: приложение тормозит, HPA не реагирует
-        → ИЛИ: CA создает узлы для подов, которые потребляют только 200m
-          → Paying for 500m, using 200m = 60% waste
-```
-
-### Методология right-sizing
-
-#### Шаг 1: Сбор данных (7-14 дней)
-
-Нужно собрать метрики потребления в разных режимах:
-- Рабочие часы (пиковая нагрузка)
-- Ночные часы (минимальная нагрузка)
-- Выходные/праздники
-
-#### Шаг 2: Анализ перцентилей
-
-| Метрика | Рекомендуемый перцентиль | Почему |
-|:---|:---|:---|
-| CPU (requests) | P95 | HPA масштабирует по среднему, P95 покрывает 95% времени |
-| CPU (limits) | P99 | Ограничение на экстремальные пики |
-| Memory (requests) | P99 | Память не масштабируется, нужен запас |
-| Memory (limits) | P99 + 20% | Запас под GC, spikes |
-
-#### Шаг 3: Расчёт оптимальных requests
-
-```
-requests.cpu = P95 потребления × 1.2 (запас 20%)
-requests.memory = P99 потребления × 1.3 (запас 30%)
-limits.cpu = P99 потребления × 1.5 (запас 50%)
-limits.memory = P99 потребления × 1.5
-```
-
-#### Шаг 4: Валидация через VPA и Goldilocks
-
-1. Установите VPA в режиме `Off` для сбора рекомендаций
-2. Дождитесь накопления данных (7+ дней)
-3. Сравните рекомендации VPA с вашими расчётами
-4. Если расхождение > 30% — скорректируйте requests
-
-#### Шаг 5: Проверка влияния на HPA
-
-```bash
-# Проверка утилизации после правки requests
-kubectl top pods -l app=my-app --containers
-
-# Проверка HPA: должен масштабировать при пике
-kubectl get hpa my-app-hpa -w
-
-# PromQL: утилизация CPU vs target
-# utilization = (current_usage / requests) × 100%
-# HPA масштабирует, когда utilization > target (например, 70%)
-```
-
-#### Шаг 6: Проверка влияния на CA
-
-```bash
-# Проверка: CA создает узлы из-за завышенных requests?
-kubectl get nodes -o custom-columns=NAME:.metadata.name,cpu-alloc:.status.allocatable.cpu,memory-alloc:.status.allocatable.memory
-
-# Проверка: сколько подов помещается на узел?
-# Поды с requests.cpu=200m на узле с 4 CPU: 4000m / 200m = 20 подов
-# Поды с requests.cpu=1000m на узле с 4 CPU: 4000m / 1000m = 4 пода
-```
-
-#### Шаг 7: Итеративная оптимизация
-
-| Параметр | Целевое значение | Как проверить |
-|----------|------------------|---------------|
-| CPU requests | P95 + 20% | `kubectl top pods`, VPA recommendations |
-| Memory requests | P99 + 30% | `kubectl top pods`, VPA recommendations |
-| HPA target utilization | 60-80% | `kubectl get hpa`, PromQL |
-| CA over-provisioning | < 20% | Сравнение requests vs allocatable на узлах |
+**Cost of Allocation (Стоимость аллокации на On-Premise)** — финансовая и ресурсная модель учета, при которой стоимость инфраструктуры относится на команды и сервисы на основе гарантированно занятых ими ресурсов (`requests`), так как именно `requests` определяют необходимость закупки серверов, блейд-корзин, систем питания и охлаждения.
 
 ---
 
-## Практический блок
+## Архитектура и принцип работы
 
-### Инструменты для анализа
+### Взаимосвязь requests, HPA и аппаратной емкости кластера
 
-#### 1. VPA Recommender (рекомендации)
+В Kubernetes планирование рабочих нагрузок и принятие решений о горизонтальном масштабировании неразрывно связаны через спецификацию ресурсов контейнеров:
 
-```bash
-# Установка VPA в режиме Off (только рекомендации)
-helm install vpa fairwinds-stable/vpa \
-  --namespace monitoring \
-  --set recommender.enabled=true
+```mermaid
+flowchart TD
+    subgraph Spec ["Спецификация Workload"]
+        REQ["resources.requests<br/>(Гарантия)"]
+        LIM["resources.limits<br/>(Потолок)"]
+    end
 
-# Создание VPA для рекомендаций
+    subgraph SchedulerPlane ["Планирование (kube-scheduler)"]
+        ALLOC["Node Allocatable Capacity"]
+        BIN["Bin-Packing на узлы<br/>(По сумме requests)"]
+    end
+
+    subgraph ScalingPlane ["Масштабирование (HPA Controller)"]
+        METR["Метрики потребления<br/>cAdvisor / Metrics Server"]
+        CALC["Расчет утилизации:<br/>usage / requests"]
+        REPL["Желаемое число реплик:<br/>desiredReplicas"]
+    end
+
+    subgraph InfraPlane ["Инфраструктура Bare-Metal / On-Premise"]
+        CAP["Емкость пула серверов<br/>(CPU Cores / RAM GiB)"]
+        PEND["Pending Pods / Дефицит нод"]
+        COST["Аппаратные затраты (CapEx/OpEx)"]
+    end
+
+    REQ --> BIN
+    ALLOC --> BIN
+    BIN --> CAP
+    
+    REQ --> CALC
+    METR --> CALC
+    CALC --> REPL
+    REPL -->|Новые поды| REQ
+    
+    CAP -->|Переполнение| PEND
+    CAP --> COST
+```
+
+1. **Планировщик (kube-scheduler)** оперирует исключительно значениями `requests`. Поды размещаются на узле до тех пор, пока сумма `requests` всех контейнеров не превысит `status.allocatable` узла. Реальное потребление процессора и памяти планировщиком не учитывается.
+2. **Контроллер HPA** в `kube-controller-manager` вычисляет процент утилизации ресурсов по отношению к `requests`.
+3. **Физическая инфраструктура** испытывает искусственный голод, если поды резервируют больше ресурсов, чем потребляют, препятствуя запуску других задач.
+
+### Математическая модель HPA и влияние искаженных requests
+
+Алгоритм вычисления количества реплик контроллером HPA определяется формулой:
+
+$$\text{desiredReplicas} = \left\lceil \text{currentReplicas} \times \left( \frac{\text{currentMetricValue}}{\text{desiredMetricValue}} \right) \right\rceil$$
+
+При использовании масштабирования по целевой утилизации (`TargetUtilization`):
+
+$$\text{currentMetricValue} = \frac{\sum_{i=1}^{N} \text{usage}_i}{\sum_{i=1}^{N} \text{requests}_i} \times 100\%$$
+
+#### Аномалия завышенных requests (Over-provisioning)
+
+Пусть микросервис настроен со следующими параметрами:
+- `requests.cpu`: `1000m`
+- Фактическое потребление в штатном режиме: `200m`
+- Целевая утилизация в HPA (`targetCPUUtilizationPercentage`): `70%`
+
+Текущая утилизация, фиксируемая HPA:
+
+$$\text{currentMetricValue} = \frac{200\text{m}}{1000\text{m}} \times 100\% = 20\%$$
+
+При возрастании трафика нагрузка на каждый под увеличивается в 2.5 раза (до `500m`). Однако для HPA утилизация составляет:
+
+$$\text{currentMetricValue} = \frac{500\text{m}}{1000\text{m}} \times 100\% = 50\%$$
+
+Так как $50\% < 70\%$, HPA не инициирует масштабирование. Сервис испытывает деградацию отклика, очереди запросов растут, но автоскейлер бездействует. При этом 10 реплик сервиса заблокировали на физических узлах 10 процессорных ядер, реально утилизируя лишь 2–5 ядер.
+
+#### Аномалия заниженных requests (Under-provisioning)
+
+Пусть для того же сервиса задано:
+- `requests.cpu`: `100m`
+- Штатное потребление: `200m`
+- Целевая утилизация: `70%`
+
+Текущая утилизация:
+
+$$\text{currentMetricValue} = \frac{200\text{m}}{100\text{m}} \times 100\% = 200\%$$
+
+HPA стремится масштабировать нагрузку до максимально допустимого значения `maxReplicas`. Кластер наполняется избыточными репликами, планировщик исчерпывает свободную емкость узлов, новые поды зависают в статусе `Pending`, провоцируя инфраструктурный кризис.
+
+### Разделение механики для сжимаемых и несжимаемых ресурсов
+
+| Характеристика | CPU (Сжимаемый ресурс) | Memory (Несжимаемый ресурс) |
+| :--- | :--- | :--- |
+| **Реакция на превышение requests** | Контейнер использует свободные такты узла по весам CFS shares. | Контейнер продолжает работу, пока на узле есть свободная RAM. |
+| **Реакция на превышение limits** | CFS Bandwidth Throttling (потеря производительности без падения процесса). | Немедленное завершение процесса ядром Linux: `OOMKilled` (Exit Code 137). |
+| **Поведение при дефиците узла** | Kubelet не вытесняет поды из-за дефицита CPU. | Kubelet инициирует Eviction подов с классом QoS `BestEffort` и `Burstable`. |
+| **Применимость для HPA** | **Рекомендуется**. Быстро отражает изменения входящего сетевого трафика и нагрузки. | **С высокой осторожностью**. Runtimes (JVM, Go, Node.js) не отдают память ОС сразу, искажая метрику. |
+| **Метрика ядра** | `container_cpu_usage_seconds_total` (cgroups `cpu.stat`). | `container_memory_working_set_bytes` (cgroups `memory.current` - inactive file). |
+
+### Архитектура конвейера сбора данных и вычисления рекомендаций
+
+Для построения безопасного контура Right-sizing в On-Premise инфраструктуре применяется разделение контуров анализа и применения:
+
+```mermaid
+flowchart LR
+    subgraph DataCollection ["1. Сбор метрик"]
+        CAD["cAdvisor (Kubelet)"] --> PROM["Prometheus"]
+        CAD --> MS["Metrics Server"]
+    end
+
+    subgraph RecommendationEngine ["2. Аналитический движок"]
+        MS --> VPA["VPA Recommender<br/>(updateMode: Off)"]
+        PROM --> VPA
+        VPA --> GOLD["Goldilocks Dashboard / CLI"]
+        PROM --> OC["OpenCost / Kubecost Core"]
+    end
+
+    subgraph EvaluationReview ["3. Экспертная оценка"]
+        GOLD --> SRE["Инженер SRE / DevOps"]
+        OC --> SRE
+    end
+
+    subgraph ApplicationDelivery ["4. Доставка в кластер"]
+        SRE --> GITOPS["GitOps Репозиторий<br/>(Helm / Kustomize)"]
+        GITOPS --> K8S["Kubernetes API<br/>Deployment spec.resources"]
+    end
+```
+
+Использование VPA Recommender исключительно в режиме `updateMode: "Off"` гарантирует, что ни один рабочий под не будет перезапущен автоматически, а рассчитанные перцентили послужат основой для контролируемого обновления спецификаций в репозиториях конфигураций.
+
+---
+
+## Практические сценарии и конфигурация
+
+### Методология Right-sizing в 6 шагов
+
+```
+Шаг 1: Накопление метрик (7-14 дней, покрытие пиков нагрузки)
+  ↓
+Шаг 2: Расчет перцентилей (P95 CPU, P99 Memory Working Set)
+  ↓
+Шаг 3: Формирование спецификации с коэффициентами запаса
+  ↓
+Шаг 4: Развертывание VPA Recommender в режиме Off для проверки
+  ↓
+Шаг 5: Аудит через Goldilocks и расчет On-Premise стоимости
+  ↓
+Шаг 6: Применение в Staging → Production и валидация HPA
+```
+
+1. **Сбор данных:** Минимальный интервал мониторинга — 7 дней (для сервисов с недельным циклом активности — 14 дней).
+2. **Формула расчета CPU:**
+   - $\text{requests.cpu} = \text{P95}(\text{usage}) \times 1.15 \dots 1.20$ (запас 15–20% на всплески до реакции HPA).
+   - $\text{limits.cpu} = \text{P99}(\text{usage}) \times 1.50 \dots 2.00$ (либо снятие лимитов при наличии контроля через CPU Quota в Namespace).
+3. **Формула расчета Memory:**
+   - $\text{requests.memory} = \text{P99}(\text{working\_set}) \times 1.25 \dots 1.30$ (запас 25–30% для предотвращения вытеснения).
+   - $\text{limits.memory} = \text{requests.memory} \times 1.20 \dots 1.30$ (защитный буфер под пиковую обработку пакетов или сборку мусора).
+4. **Калибровка HPA:** Целевая утилизация `averageUtilization` устанавливается на уровне 60–75%.
+
+---
+
+### Сценарий 1: Развертывание автономного VPA Recommender (Режим Off)
+
+Для проведения аудита без риска непредвиденной перезагрузки подов разворачивается только компонент `vpa-recommender` (без `vpa-updater` и мутирующего вебхука `vpa-admission-controller`).
+
+Манифест объекта VPA для целевого сервиса:
+
+```yaml
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
 metadata:
-  name: my-app-vpa
+  name: billing-service-vpa
+  namespace: production
+  labels:
+    app.kubernetes.io/name: billing-service
+    app.kubernetes.io/component: rightsizing-audit
 spec:
   targetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: my-app
+    name: billing-service
   updatePolicy:
-    updateMode: "Off"  # Только рекомендации, не применяются
+    updateMode: "Off"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "app"
+        mode: "Auto"
+        minAllowed:
+          cpu: 100m
+          memory: 128Mi
+        maxAllowed:
+          cpu: 4000m
+          memory: 8Gi
+        controlledValues: RequestsAndLimits
+      - containerName: "prom-exporter"
+        mode: "Off"
 ```
 
-**Просмотр рекомендаций:**
+Параметры манифеста:
+- `updateMode: "Off"`: запрещает контроллеру изменять спецификацию запущенных подов; расчет ведется исключительно в поле `status.recommendation`.
+- `minAllowed` и `maxAllowed`: защитные пороги, предотвращающие генерацию аномально низких или опасно высоких рекомендаций.
+- `controlledValues: RequestsAndLimits`: предписывает VPA рассчитывать рекомендации как для гарантированных запросов, так и для пределов.
+- `mode: "Off"` для контейнера `prom-exporter`: исключает вспомогательные контейнеры (sidecars) из анализа ресурсов.
+
+---
+
+### Сценарий 2: Комплексная оптимизация Workload (До и После)
+
+#### Конфигурация до проведения Right-sizing
+
+```yaml
+# Исходный Deployment с завышенными requests
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-processor
+  namespace: production
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: order-processor
+  template:
+    metadata:
+      labels:
+        app: order-processor
+    spec:
+      containers:
+        - name: app
+          image: internal-registry.local/apps/order-processor:v2.14.0
+          resources:
+            requests:
+              cpu: "2000m"
+              memory: "4Gi"
+            limits:
+              cpu: "4000m"
+              memory: "8Gi"
+---
+# Исходный HPA
+apiVersion: autoscaling.v2/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: order-processor-hpa
+  namespace: production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: order-processor
+  minReplicas: 4
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+Проблема: фактическое среднее потребление подов составляет `350m` CPU и `1.2Gi` RAM. Средняя утилизация в HPA составляет всего $350 / 2000 = 17.5\%$. HPA никогда не поднимает число реплик выше 4. Четыре пода блокируют на серверах 8 физических ядер и 16 GiB RAM.
+
+#### Конфигурация после проведения Right-sizing
+
+На основе 14-дневного анализа VPA и Prometheus определены: P95 CPU = `380m`, P99 Memory Working Set = `1.3Gi`.
+
+```yaml
+# Скорректированный Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-processor
+  namespace: production
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: order-processor
+  template:
+    metadata:
+      labels:
+        app: order-processor
+    spec:
+      containers:
+        - name: app
+          image: internal-registry.local/apps/order-processor:v2.14.0
+          resources:
+            requests:
+              cpu: "450m"       # P95 (380m) * 1.18
+              memory: "1700Mi"  # P99 (1.3Gi) * 1.28
+            limits:
+              cpu: "1500m"      # Запас на пиковую обработку
+              memory: "2500Mi"  # Буфер против OOMKilled
+---
+# Скорректированный HPA со стабилизацией
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: order-processor-hpa
+  namespace: production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: order-processor
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 20
+          periodSeconds: 60
+```
+
+Эффект оптимизации в On-Premise кластере:
+
+| Показатель | До оптимизации | После оптимизации | Результат |
+| :--- | :--- | :--- | :--- |
+| **Гарантия CPU на под** | 2000m | 450m | Высвобождено 77.5% емкости на под |
+| **Гарантия RAM на под** | 4096 MiB | 1700 MiB | Высвобождено 58.5% памяти |
+| **Базовый резерв кластера (minReplicas)** | 8 ядер / 16 GiB | 1.35 ядра / 5.1 GiB | **Высвобождено 6.65 ядер CPU** |
+| **Реакция HPA при всплеске** | Отсутствует (утилизация < 50%) | Точное масштабирование при 300m+ | Надежность SLA сервиса |
+| **Плотность подов на ноду (32 ядра)** | Максимум 15 подов | До 60 подов | Увеличение плотности в 4 раза |
+
+---
+
+### Сценарий 3: Расчет стоимости ресурсов в On-Premise инфраструктуре
+
+Для расчета стоимости инфраструктуры без привязки к публичным облакам применяется модель OpenCost / Kubecost с локальной матрицей цен физического оборудования.
+
+Конфигурационный файл локального биллинга OpenCost (`custom-cost-model.json`):
+
+```json
+{
+  "provider": "custom",
+  "description": "On-Premise Bare-Metal Infrastructure Cluster Costs",
+  "cpuCostPerCoreMonthly": 12.50,
+  "ramCostPerGiBMonthly": 1.80,
+  "storageCostPerGiBMonthly": 0.08,
+  "zoneNetworkCostPerGiB": 0.00
+}
+```
+
+Расчет месячной стоимости гарантированного резервирования (Cost of Allocation) для сервиса:
+
+$$\text{Cost}_{\text{workload}} = \sum \left( \text{requests.cpu} \times \text{Cost}_{\text{CPU}} + \text{requests.memory} \times \text{Cost}_{\text{RAM}} \right) \times \text{avgReplicas}$$
+
+Пример вычисления для `order-processor`:
+- До оптимизации: $(2 \times 12.50 + 4 \times 1.80) \times 4 = (25.0 + 7.2) \times 4 = 128.80$ у.е./мес.
+- После оптимизации (при средних 4 репликах): $(0.45 \times 12.50 + 1.66 \times 1.80) \times 4 = (5.625 + 2.988) \times 4 = 34.45$ у.е./мес.
+- **Чистая экономия аппаратного бюджета: 73.2%**.
+
+---
+
+### Сценарий 4: Правила мониторинга и алертинга Prometheus
+
+Для непрерывного контроля качества Right-sizing и выявления деградации HPA применяются правила Prometheus:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: rightsizing-hpa-rules
+  namespace: monitoring
+  labels:
+    role: alert-rules
+spec:
+  groups:
+    - name: kubernetes.rightsizing
+      rules:
+        # 1. Завышенные CPU requests (Over-provisioning)
+        - alert: PodCPUOverProvisioned
+          expr: |
+            (
+              sum(kube_pod_container_resource_requests{resource="cpu"}) by (namespace, pod)
+              - sum(rate(container_cpu_usage_seconds_total{container!=""}[15m])) by (namespace, pod)
+            )
+            / sum(kube_pod_container_resource_requests{resource="cpu"}) by (namespace, pod) * 100 > 65
+          for: 6h
+          labels:
+            severity: warning
+            team: platform-sre
+          annotations:
+            summary: "Обнаружен существенный Over-provisioning по CPU для {{ $labels.pod }}"
+            description: "Контейнеры пода {{ $labels.pod }} в namespace {{ $labels.namespace }} не доутилизируют более 65% запрошенного CPU в течение 6 часов. Текущий slack: {{ $value | printf \"%.1f\" }}%."
+
+        # 2. Риск исчерпания памяти (Under-provisioning / OOM risk)
+        - alert: PodMemoryNearLimit
+          expr: |
+            sum(container_memory_working_set_bytes{container!=""}) by (namespace, pod, container)
+            / sum(kube_pod_container_resource_limits{resource="memory"}) by (namespace, pod, container) * 100 > 85
+          for: 5m
+          labels:
+            severity: critical
+            team: platform-sre
+          annotations:
+            summary: "Контейнер {{ $labels.container }} близок к OOMKilled"
+            description: "Использование Working Set памяти контейнером {{ $labels.container }} превышает 85% от лимита в течение 5 минут."
+
+        # 3. HPA заблокирован на minReplicas при высокой нагрузке
+        - alert: HPAStuckAtMinReplicas
+          expr: |
+            (
+              kube_horizontalpodautoscaler_status_current_replicas
+              == kube_horizontalpodautoscaler_spec_min_replicas
+            )
+            and on(namespace, horizontalpodautoscaler)
+            (
+              kube_horizontalpodautoscaler_status_target_metric{metric="cpu"} > 0
+            )
+          for: 12h
+          labels:
+            severity: info
+            team: platform-sre
+          annotations:
+            summary: "HPA {{ $labels.horizontalpodautoscaler }} не масштабируется"
+            description: "HPA в пространстве {{ $labels.namespace }} удерживает минимальное число реплик более 12 часов. Вероятна причина завышенных requests."
+```
+
+---
+
+## Эксплуатация и команды
+
+### Оперативный аудит через CLI
+
+#### 1. Проверка текущего потребления и утилизации подов
+
 ```bash
-kubectl get vpa my-app-vpa -o yaml | grep -A 20 "recommendation"
-# → containerRecommendations:
-#   - containerName: app
-#     lowerBound:
-#       cpu: 100m
-#       memory: 128Mi
-#     target:
-#       cpu: 250m      # Рекомендуемые requests
-#       memory: 384Mi
-#     upperBound:
-#       cpu: 500m
-#       memory: 512Mi
+kubectl top pods -n production --containers -l app=order-processor
+```
+Ожидаемый вывод:
+```text
+# → POD                               NAME   CPU(cores)   MEMORY(bytes)
+# → order-processor-78d4c9f9b5-2v8x9  app    342m         1289Mi
+# → order-processor-78d4c9f9b5-k9xl2  app    358m         1312Mi
+# → order-processor-78d4c9f9b5-zq1p4  app    330m         1260Mi
 ```
 
-#### 2. Goldilocks (визуализация рекомендаций)
+#### 2. Анализ аллоцированной емкости узлов с помощью kube-capacity
+
+Утилита `kube-capacity` сопоставляет фактическое использование с запрошенными ресурсами узлов:
 
 ```bash
-# Установка Goldilocks
-helm install goldilocks fairwinds-stable/goldilocks \
-  --namespace monitoring
-
-# Просмотр рекомендаций
-kubectl port-forward -n monitoring svc/goldilocks 8080:80
-# Открыть http://localhost:8080
+kube-capacity --pods --namespace production --sort cpu.util
+```
+Ожидаемый вывод:
+```text
+# → NODE               POD                               CPU REQUESTS   CPU LIMITS   CPU USAGE   MEMORY REQUESTS   MEMORY LIMITS   MEMORY USAGE
+# → node-worker-01.dc  *                                 24500m (76%)   32000m (100%) 6200m (19%) 96Gi (75%)        120Gi (93%)     42Gi (32%)
+# → node-worker-01.dc  order-processor-78d4c9f9b5-2v8x9  450m (1%)      1500m (4%)   342m (1%)   1700Mi (1%)       2500Mi (1%)     1289Mi (1%)
+# → node-worker-02.dc  order-processor-78d4c9f9b5-k9xl2  450m (1%)      1500m (4%)   358m (1%)   1700Mi (1%)       2500Mi (1%)     1312Mi (1%)
 ```
 
-#### 3. Kubecost (анализ затрат)
+#### 3. Извлечение рекомендаций VPA Recommender
 
 ```bash
-# Установка Kubecost
-helm install kubecost cost-analyzer \
-  --namespace kubecost \
-  --set kubecostToken="YOUR_TOKEN"
-
-# Просмотр cost allocation
-kubectl port-forward -n kubecost svc/cost-analyzer 9090:9090
+kubectl get vpa billing-service-vpa -n production -o yaml
+```
+Ожидаемый вывод:
+```yaml
+# → apiVersion: autoscaling.k8s.io/v1
+# → kind: VerticalPodAutoscaler
+# → metadata:
+# →   name: billing-service-vpa
+# →   namespace: production
+# → status:
+# →   conditions:
+# →   - status: "True"
+# →     type: RecommendationProvided
+# →   recommendation:
+# →     containerRecommendations:
+# →     - containerName: app
+# →       lowerBound:
+# →         cpu: 250m
+# →         memory: 850Mi
+# →       target:
+# →         cpu: 450m
+# →         memory: 1700Mi
+# →       uncappedTarget:
+# →         cpu: 450m
+# →         memory: 1700Mi
+# →       upperBound:
+# →         cpu: 1200m
+# →         memory: 3200Mi
 ```
 
-### PromQL для анализа right-sizing
+Интерпретация полей VPA:
+- `lowerBound`: минимальное расчетное значение. Если текущие `requests` ниже этого порога, рабочая нагрузка недополучает ресурсы.
+- `target`: базовое рекомендуемое значение для установки в `requests`.
+- `upperBound`: верхняя граница потребления с учетом пиковых выбросов нагрузки.
+- `uncappedTarget`: рекомендация VPA без учета ограничений `minAllowed`/`maxAllowed`.
 
-**1. Фактическое потребление vs requests:**
+#### 4. Пакетная выгрузка сводки Goldilocks
+
+```bash
+goldilocks summary -n production --exclude-containers="istio-proxy,prom-exporter"
+```
+Ожидаемый вывод:
+```text
+# → Deployment: order-processor
+# →   Container: app
+# →     Guaranteed (QoS):
+# →       Requests: CPU: 450m, Memory: 1700Mi
+# →       Limits:   CPU: 450m, Memory: 1700Mi
+# →     Burstable (QoS):
+# →       Requests: CPU: 450m, Memory: 1700Mi
+# →       Limits:   CPU: 1500m, Memory: 2500Mi
+```
+
+---
+
+### Аналитические PromQL запросы для аудита
+
+#### 1. Фактическая утилизация CPU относительно requests в процентах
+
 ```promql
-# CPU: фактическое потребление vs requests (в процентах)
-sum(rate(container_cpu_usage_seconds_total{
-  namespace="$namespace", pod=~"$pod.*"
-}[5m])) by (pod)
+sum(rate(container_cpu_usage_seconds_total{container!="",namespace="production"}[5m])) by (pod)
 /
-sum(kube_pod_container_resource_requests{
-  namespace="$namespace", pod=~"$pod.*", resource="cpu"
-}) by (pod) * 100
+sum(kube_pod_container_resource_requests{resource="cpu",namespace="production"}) by (pod) * 100
 ```
 
-**2. Over-provisioning (requests >> usage):**
+#### 2. Объем неиспользуемой процессорной мощности (CPU Slack) в абсолютных ядрах
+
 ```promql
-# Поды, где requests > 2× фактического потребления
-(
-  kube_pod_container_resource_requests{resource="cpu"}
-  - sum(rate(container_cpu_usage_seconds_total[5m])) by (pod, namespace)
-) / kube_pod_container_resource_requests{resource="cpu"} * 100 > 50
+sum(kube_pod_container_resource_requests{resource="cpu",namespace="production"}) by (namespace)
+-
+sum(rate(container_cpu_usage_seconds_total{container!="",namespace="production"}[5m])) by (namespace)
 ```
 
-**3. Under-provisioning (usage >> requests):**
+#### 3. Соотношение Working Set памяти к гарантированным requests
+
 ```promql
-# Поды, где потребление > 80% requests (риск OOM/throttle)
-sum(rate(container_cpu_usage_seconds_total[5m])) by (pod, namespace)
-/ kube_pod_container_resource_requests{resource="cpu"} * 100 > 80
+sum(container_memory_working_set_bytes{container!="",namespace="production"}) by (pod)
+/
+sum(kube_pod_container_resource_requests{resource="memory",namespace="production"}) by (pod) * 100
 ```
 
-**4. Стоимость HPA:**
+#### 4. Выявление контейнеров с жестким CPU Throttling
+
 ```promql
-# Примерная стоимость CPU (в условных единицах)
-sum(
-  kube_pod_container_resource_requests{resource="cpu"}
-  * on(pod, namespace) group_left()
-  kube_pod_info
-) * $cpu_price_per_core
+sum(rate(container_cpu_cfs_throttled_periods_total{container!="",namespace="production"}[5m])) by (pod, container)
+/
+sum(rate(container_cpu_cfs_periods_total{container!="",namespace="production"}[5m])) by (pod, container) * 100 > 15
 ```
 
-### Сценарий: Оптимизация HPA после right-sizing
+---
 
-**До оптимизации:**
-```yaml
-# Завышенные requests
-resources:
-  requests:
-    cpu: "1000m"    # Реальное потребление: 200m
-    memory: "1Gi"   # Реальное потребление: 256Mi
-# HPA: averageUtilization: 70%
-# Результат: HPA не масштабирует (utilization = 20%)
-# Cluster Autoscaler создает узлы для "phantom" ресурсов
+## Диагностика и устранение неполадок
+
+### Диагностическая матрица инцидентов
+
+| Симптом | Первопричина | Метод диагностики | Решение |
+| :--- | :--- | :--- | :--- |
+| **HPA не масштабирует при росте latency** | Завышенные `requests.cpu` приводят к низкой относительной утилизации. | Сравнить `kubectl top pod` с `spec.resources.requests.cpu`. Проверить статус HPA. | Выполнить Right-sizing: снизить `requests.cpu` до реального P95 потребления. |
+| **Аварийный перезапуск пода: OOMKilled (Exit Code 137)** | Занижен `limits.memory` либо игнорирование пиков Working Set / утечек памяти. | `kubectl describe pod <name>` (`Last State: Terminated, Reason: OOMKilled`). Проверить `dmesg` на узле. | Увеличить `limits.memory` на 25–30% выше P99. Настроить лимиты кучи в рантайме. |
+| **Дребезг реплик HPA (Flapping/Thrashing)** | Целевая утилизация слишком близка к текущей; нет окна стабилизации. | Анализ графика реплик: колебания между min и max в интервале 1–3 минут. | Включить `behavior.scaleDown.stabilizationWindowSeconds: 300` и скорректировать target. |
+| **Поды зависают в статусе Pending при Scale-Up** | Фрагментация ресурсов (Bin-packing issue) или исчерпание физической ноды. | `kubectl describe pod <name>` (`0/N nodes available: Insufficient cpu`). | Декомпозиция размера подов, установка **[Descheduler](../descheduler.md)** для уплотнения нод. |
+| **VPA Recommender выдает пустые рекомендации** | Недоступен Metrics Server или VPA не накопил достаточную историю метрик. | `kubectl logs -n kube-system deploy/vpa-recommender`. Проверить статус VPA объекта. | Убедиться в работоспособности Metrics Server и выждать не менее 24–48 часов сбора данных. |
+
+### Пошаговый сценарий: Устранение OOMKilled после снижения лимитов памяти
+
+Если в процессе Right-sizing приложение подверглось OOMKilled:
+
+1. **Проверка причины завершения контейнера:**
+   ```bash
+   kubectl get pod -l app=order-processor -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[*].lastState.terminated.reason}{"\tExitCode:"}{.status.containerStatuses[*].lastState.terminated.exitCode}{"\n"}{end}'
+   ```
+   Ожидаемый вывод:
+   ```text
+   # → order-processor-78d4c9f9b5-2v8x9  OOMKilled  ExitCode:137
+   ```
+
+2. **Анализ кривой потребления памяти перед падением:**
+   Снять показания `container_memory_working_set_bytes` в Prometheus за последние 30 минут до момента перезагрузки:
+   ```promql
+   container_memory_working_set_bytes{pod="order-processor-78d4c9f9b5-2v8x9",container="app"}
+   ```
+   Если на графике наблюдается линейный монотонный рост без плато — в приложении присутствует утечка памяти (Memory Leak), и регулировка лимитов лишь отсрочит падение.
+
+3. **Сверка параметров рантайма приложения:**
+   - Для Java (JVM): убедиться, что задан флаг `-XX:MaxRAMPercentage=75.0` (не использовать жесткий `-Xmx`, если размер контейнера может динамически меняться).
+   - Для Go: убедиться, что задана переменная окружения `GOMEMLIMIT=1400MiB` (при `limits.memory: 1700Mi`), что гарантирует запуск сборщика мусора (GC) до того, как контейнер достигнет порога cgroups OOM.
+   - Для Node.js: проверить опцию `--max-old-space-size`.
+
+4. **Экстренная стабилизация:**
+   Временно поднять `limits.memory` на 30%, оставив `requests.memory` на уровне стабильного P99, пока профилирование памяти не завершено.
+
+---
+
+## Лучшие практики
+
+### 1. Выбор перцентилей и коэффициентов запаса
+
+- **CPU:** базовые `requests` рассчитываются по **P95** потребления за 7–14 дней с коэффициентом $1.15 \dots 1.20$.
+- **Память:** базовые `requests` рассчитываются по **P99** Working Set памяти с коэффициентом $1.25 \dots 1.30$. Память является несжимаемым ресурсом, поэтому экономия на ней не должна создавать риск вытеснения пода Kubelet'ом.
+- **Целевая утилизация в HPA:** устанавливается в диапазоне **60–75%**. Значения выше 80% приводят к тому, что при резком скачке входящего трафика поды уходят в троттлинг до того, как HPA и Kubelet успеют запустить и перевести новые реплики в состояние `Ready`.
+
+### 2. Согласование классов Quality of Service (QoS)
+
+Kubernetes определяет три класса обслуживания подов:
+
+```mermaid
+flowchart TD
+    subgraph Guaranteed ["Guaranteed QoS"]
+        G_REQ["requests == limits (CPU и RAM)"]
+        G_USE["СУБД, брокеры сообщений (Kafka, Redis, PostgreSQL)<br/>Максимальный приоритет при OOM, отсутствие троттлинга"]
+    end
+
+    subgraph Burstable ["Burstable QoS (Стандарт для HPA)"]
+        B_REQ["requests < limits"]
+        B_USE["Stateless API, веб-приложения, микросервисы<br/>Эффективное уплотнение, гибкость масштабирования"]
+    end
+
+    subgraph BestEffort ["BestEffort QoS"]
+        BE_REQ["requests и limits не заданы"]
+        BE_USE["Низкоприоритетные batch-задачи<br/>Первые кандидаты на эвикцию при дефиците ноды"]
+    end
 ```
 
-**После оптимизации:**
-```yaml
-# Правильные requests (на основе P95 + запас)
-resources:
-  requests:
-    cpu: "250m"     # P95 = 200m × 1.2
-    memory: "384Mi" # P99 = 300Mi × 1.3
-  limits:
-    cpu: "500m"     # P99 = 350m × 1.5
-    memory: "512Mi"
-# HPA: averageUtilization: 70%
-# Результат: HPA масштабирует при реальной нагрузке
-# Cluster Autoscaler создает только необходимые узлы
-```
+- Для подов под управлением HPA оптимальным является класс **Burstable** (`requests < limits`). Это позволяет планировщику плотно упаковывать поды по `requests`, а подам — кратковременно задействовать свободные ресурсы узла до момента срабатывания масштабирования.
+- Для критических stateful-нагрузок (базы данных, где HPA не используется) применяется класс **Guaranteed** (`requests == limits`).
 
-**Эффект:**
-| Метрика | До | После | Экономия |
-|:---|:---|:---|:---|
-| requests.cpu на под | 1000m | 250m | 75% |
-| Реплики при нагрузке | 3 (HPA не реагировал) | 8 (HPA масштабировал) | Более точное |
-| Узлов CA | 6 | 3 | 50% |
-| Стоимость CPU | $600/мес | $200/мес | 66% |
+### 3. Настройка параметров рантаймов при Right-sizing
 
-### Мониторинг cost метрик
+При ограничении лимитов контейнера необходимо явно передавать ограничения внутрь рантайма приложения:
+- **Java 17+:** `-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:MinRAMPercentage=50.0`. Это предотвращает конфликт между JVM и подсистемой cgroups v2.
+- **Go 1.19+:** `GOMEMLIMIT` должен быть установлен на уровне 80–85% от `limits.memory`, а `GOMAXPROCS` — выровнен с выделенной процессорной квотой через библиотеку `go.uber.org/automaxprocs`.
+- **Node.js:** `--max-old-space-size=<значение_в_мегабайтах>` (примерно 75% от лимита памяти контейнера).
 
-```yaml
-# Алерт: HPA не масштабирует из-за завышенных requests
-groups:
-  - name: rightsizing
-    rules:
-      - alert: OverProvisionedCPU
-        expr: |
-          (
-            kube_pod_container_resource_requests{resource="cpu"}
-            - sum(rate(container_cpu_usage_seconds_total[5m])) by (pod, namespace)
-          ) / kube_pod_container_resource_requests{resource="cpu"} * 100 > 70
-        for: 1h
-        labels:
-          severity: info
-        annotations:
-          summary: "Завышенные CPU requests: {{ $labels.pod }}"
-          description: "Requests превышают потребление на {{ $value }}%. Рекомендуется right-sizing."
+### 4. Автоматизация аудита через GitOps-пайплайн
 
-      - alert: HPAStuckAtMin
-        expr: |
-          kube_horizontalpodautoscaler_status_current_replicas
-          == kube_horizontalpodautoscaler_spec_min_replicas
-          and
-          kube_horizontalpodautoscaler_status_condition{
-            condition="ScalingLimited",status="false"
-          } == 1
-        for: 2h
-        labels:
-          severity: info
-        annotations:
-          summary: "HPA {{ $labels.horizontalpodautoscaler }} не масштабируется"
-          description: "HPA на minReplicas > 2 часа. Возможно, requests завышены."
-```
+Автоматическое применение изменений ресурсов через VPA (`updateMode: "Auto"`) в production-средах On-Premise несет риски циклического перезапуска подов. Рекомендуемый подход:
+1. Запуск VPA Recommender или Goldilocks в режиме фонового сбора данных (`Off`).
+2. Периодический экспорт рекомендаций скриптом автоматизации раз в месяц / спринт.
+3. Формирование Pull Request с обновленными `resources.requests` в GitOps-репозиторий (ArgoCD/Flux).
+4. Прогон нагрузочного тестирования в Staging и контролируемый мерж в Production.
 
 ---
 
 ## Дополнительная информация
 
-### Чек-лист right-sizing
+### Чек-лист проверки эффективности Right-sizing
 
-1. [ ] Собраны метрики за 7-14 дней (VPA Recommender или Prometheus)
-2. [ ] Определены P95/P99 для CPU и Memory
-3. [ ] requests установлены = P95 × 1.2 (CPU), P99 × 1.3 (Memory)
-4. [ ] limits установлены = P99 × 1.5
-5. [ ] HPA averageUtilization настроен (обычно 60-70%)
-6. [ ] Протестировано в staging перед применением в production
-7. [ ] Настроен мониторинг (over/under-provisioning alerts)
-8. [ ] Периодический пересмотр (ежемесячно или при изменении нагрузки)
-
-### Типичные ошибки
-
-| Ошибка | Последствие | Решение |
-|:---|:---|:---|
-| requests = limits (Burstable) | OOMKilled при spike | requests < limits |
-| requests = фактическому usage | Нет запаса, HPA не успевает | requests = usage × 1.2 |
-| requests завышены в 5× | HPA не масштабирует, CA раздувает кластер | Right-sizing по P95 |
-| limits не заданы | Unbounded, конкурентная борьба за CPU | Всегда задавать limits |
-| Нет разницы между env | Dev=prod requests, перерасход | Разные requests для different environments |
-
-### Советы для собеседования
-
-**Вопрос:** Как оптимизировать requests для HPA?
-**Ответ:** Метод из 3 шагов:
-1. **Сбор:** VPA Recommender в режиме Off собирает P95/P99 потребления за 8-14 дней
-2. **Расчёт:** requests = P95 × 1.2 (CPU), P99 × 1.3 (Memory)
-3. **Валидация:** Тестирование в staging, мониторинг over/under-provisioning через Prometheus
-
-Ключевой инсайт: завышенные requests = HPA не чувствителен к нагрузке + CA создает лишние узлы = переплата 50-70%.
+- [ ] Все рабочие нагрузки в namespace имеют явно заданные `requests.cpu` и `requests.memory`.
+- [ ] VPA Recommender развернут и собирает метрики более 7 непрерывных дней.
+- [ ] Ни один под под управлением HPA не находится в классе QoS `BestEffort`.
+- [ ] Значения `requests.cpu` покрывают P95 профиля нагрузки с запасом не менее 15%.
+- [ ] Параметры кучи рантаймов (JVM, Go, Node.js) согласованы с `limits.memory`.
+- [ ] HPA настроен на целевую утилизацию 60–75% и снабжен окном стабилизации `scaleDown` не менее 300 секунд.
+- [ ] Настроены алерты Prometheus на Over-provisioning (slack > 65%) и приближение к OOMKilled (> 85% limit).
+- [ ] Проведена проверка фрагментации узлов через `kube-capacity`.
 
 ---
 
 ### См. также
 
-- **[HPA: Продвинутые темы](./hpa_advanced.md)** — взаимодействие с ResourceQuota и VPA
-- **[KEDA: FinOps](../keda/keda-finops.md)** — финансовая сторона масштабирования
-- **[VPA](../vpa_detailed.md)** — рекомендации по requests
-- **[Cluster Autoscaler](../cluster_autoscaler_detailed.md)** — инфраструктурное масштабирование
-- **[Kubecost](../../MonitoringLogging/kubecost.md)** — анализ затрат
-- **[Goldilocks](../../ToolsUtilities/goldilocks.md)** — визуализация рекомендаций
+- **[HPA: Основные концепции](./hpa_concepts.md)** — математический алгоритм, типы метрик и подресурс `/scale`.
+- **[HPA: Практические сценарии](./hpa_scenarios.md)** — типовые манифесты масштабирования по CPU, памяти и кастомным метрикам.
+- **[HPA: Продвинутые темы](./hpa_advanced.md)** — поведение `behavior`, окна стабилизации и взаимодействие с cgroups.
+- **[VPA: Вертикальное масштабирование](../vpa_detailed.md)** — подробное руководство по архитектуре и режимам работы VPA.
+- **[Autoscaling в On-Premise / Bare-Metal](../on_premise_autoscaling.md)** — специфика управления емкостью на физических серверах и CAPI.
+- **[Cluster Autoscaler](../cluster_autoscaler_detailed.md)** — взаимодействие с инфраструктурными провайдерами.
+- **[Descheduler](../descheduler.md)** — балансировка и уплотнение подов на узлах для устранения фрагментации.
+- **[KEDA: FinOps](../keda/keda-finops.md)** — финансовые аспекты масштабирования по внешним событиям.
+- **[Goldilocks](../../ToolsUtilities/goldilocks.md)** — развертывание и эксплуатация контроллера рекомендаций.
+- **[Kubecost и OpenCost](../../MonitoringLogging/kubecost.md)** — учет и аллокация затрат на инфраструктуру Kubernetes.

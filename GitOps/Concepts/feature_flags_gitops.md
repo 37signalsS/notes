@@ -1,203 +1,470 @@
 # Feature Flags в GitOps: разделение deploy и release
 
-> **Актуальность (2026):** OpenFeature — принятый в CNCF стандарт API управления флагами с SDK для всех основных языков и эталонной реализацией демона **flagd**. Зрелые платформы (Unleash, Flipt, LaunchDarkly) поддерживают OpenFeature-провайдеров, что избавляет приложения от vendor lock-in.
+**Актуально для:** OpenFeature Operator v0.10.x / flagd v0.11.x / Argo CD v3.x / Flux v2.9.x / Kubernetes 1.28–1.32+ (on-premise / bare-metal)
 
-GitOps отвечает на вопрос «какой код в кластере», но не «что из этого кода видят пользователи». Фиче-флаги разделяют эти два решения: деплой новой версии и включение функциональности становятся независимыми операциями — разными коммитами, разными скоростями, разными рисками.
+GitOps отвечает на вопрос «какое состояние манифестов и контейнеров зафиксировано в кластере», но не на вопрос «какая часть исполняемого кода фактически активна для конкретных пользователей». Фиче-флаги (feature flags / feature toggles) разделяют эти два процесса: физическое развертывание новой версии артефакта (deploy) и активация бизнес-функциональности (release) становятся независимыми операциями — с раздельными коммитами, разной скоростью применения и изолированными уровнями риска.
 
 ## Предварительные требования
 
-| Компонент | Требование |
-| :--- | :--- |
-| OpenFeature SDK | Пакет `openfeature` для языка приложения (+ provider для flagd) |
-| flagd | Демон оценки флагов; в Kubernetes — через open-feature-operator или Deployment + ConfigMap |
-| GitOps-агент | Argo CD v3.x / Flux v2.9.x — доставка конфигурации флагов |
-| Прогрессивная доставка (опционально) | Argo Rollouts / Flagger для комбинации с canary |
+| Компонент | Минимальная версия / Требование | Назначение |
+| :--- | :--- | :--- |
+| Kubernetes | v1.28–v1.32+ (on-premise / bare-metal) | Кластерная инфраструктура для запуска рабочих нагрузок |
+| GitOps-контроллер | Argo CD v3.x или Flux v2.9.x | Декларативная доставка манифестов и конфигураций флагов из Git |
+| OpenFeature Operator | v0.10.x (CRD `core.openfeature.dev/v1beta1`) | Мутирующий вебхук для инъекции sidecar-демона flagd и управление CRD |
+| flagd | v0.11.x | Локальный in-process/sidecar демон вычисления флагов (Unix philosophy) |
+| OpenFeature SDK | SDK для языка сервиса (Go, Python, Java, Node.js) | Унифицированный API обращения к флагам с провайдером flagd |
+| Self-hosted платформа | Flipt v1.40+ или Unleash v6.x (on-premise) | Опционально: централизованная платформа для динамических раскаток |
+| Прогрессивная доставка | Argo Rollouts v1.7+ или Flagger v1.38+ | Опционально: управление канареечным трафиком между версиями подов |
+| Утилиты диагностики | `kubectl`, `jq`, `curl`, `grpcurl` | Инспекция CRD, проверка probe и прямое тестирование gRPC/HTTP API |
 
 ## Определения
 
-- **Deployment**: Перемещение артефакта в кластер (новая версия кода работает). **Release**: предоставление функциональности пользователям. GitOps автоматизирует первое; второе без флагов происходит автоматически вместе с первым.
-- **Feature Flag (toggle)**: Условие в коде, переключающее поведение на основе значения из внешнего источника оценки.
-- **OpenFeature**: CNCF-стандарт: единый API (`client.getBooleanValue("flag", false)`) + провайдеры к бэкендам. Приложение не знает, где физически хранятся флаги.
-- **flagd**: Демон оценки флагов от OpenFeature: читает конфигурацию (JSON/HTTP/gRPC), вычисляет значение по правилам таргетинга (включая процентные раскатки), отдает по gRPC/HTTP. Локальный flagd рядом с приложением = оценка без сетевого похода наружу.
-- **Static flags (Git-managed)**: Значения флагов живут в манифестах и меняются коммитом — полный аудит GitOps, но скорость изменения = скорость мержа.
-- **Dynamic flags (runtime platform)**: Платформа (Unleash/Flipt) держит значения у себя, приложения тянут по API/UI. Мгновенное переключение ценой вывода части состояния из Git.
-- **Kill switch**: Заранее подготовленный флаг, позволяющий мгновенно отключить проблемную функциональность без деплоя.
+- **Deployment (развертывание)**: Процесс доставки собранного артефакта (бинарного файла, OCI-образа) в целевое окружение и запуск подов в кластере. В классическом GitOps автоматизируется оператором на основе коммита в Git.
+- **Release (выпуск)**: Предоставление новой функциональности конечным пользователям или внешним системам. Без фиче-флагов релиз происходит автоматически в момент деплоя; с флагами релиз отложен и контролируется отдельно.
+- **Feature Flag (feature toggle)**: Условная конструкция в кодовой базе, изменяющая поведение системы в рантайме на основе значения, вычисленного внешним или локальным движком правил, без перекомпиляции и перезапуска сервиса.
+- **OpenFeature**: Открытый стандарт под эгидой CNCF, задающий вендоро-независимый API оценки флагов. Приложение взаимодействует с унифицированным интерфейсом SDK (`client.getBooleanValue("flag", false)`), не завися от конкретного бэкенда хранения правил.
+- **flagd**: Легковесный open-source демон вычисления флагов от проекта OpenFeature. Читает конфигурацию правил (из файлов, ConfigMap, HTTP или gRPC), оценивает правила таргетинга (включая процентное распределение) локально в оперативной памяти и отдает результат приложению по протоколу gRPC или HTTP.
+- **OpenFeature Operator (OFO)**: Kubernetes-оператор, управляющий жизненным циклом flagd. Автоматически внедряет sidecar-контейнеры flagd в поды приложений через mutating webhook и синхронизирует правила через CRD `FeatureFlag` и `FeatureFlagSource`.
+- **Static Flags (статические флаги)**: Архитектурный подход, при котором правила и значения флагов хранятся непосредственно в Git (манифесты Kubernetes, ConfigMap или CRD). Изменение флага требует Git-коммита и PR. Обеспечивает строгий аудит и воспроизводимость, но скорость применения ограничена временем реконсиляции GitOps.
+- **Dynamic Flags (динамические флаги)**: Подход, при котором значения флагов хранятся в выделенной платформе (self-hosted Flipt или Unleash) и изменяются через UI/API в реальном времени за секунды. Не требует Git-коммита, но выводит часть конфигурации из-под контроля GitOps, создавая риск дрейфа.
+- **Kill Switch (аварийный выключатель)**: Долговременный операционный флаг, предназначенный для мгновенной деактивации ресурсоемкой или дефектной функциональности при аварии без отката релизов и перезапуска подов.
+- **Feature Debt (технический долг флагов)**: Накопление устаревших ветвлений кода и неактуальных конфигураций флагов после завершения релиза, повышающее когнитивную сложность и комбинаторный взрыв в тестировании.
 
-## Базовые концепции
+## Архитектура и базовые концепции
 
-### Почему флаги дополняют GitOps
+### Разделение Deploy и Release в GitOps
 
-| Проблема чистого GitOps | Решение флагами |
-| :--- | :--- |
-| Релиз = деплой: нельзя закатить код без включения функции | Код катится «выключенным», включение — отдельное решение |
-| Откат функциональности = откат версии = новый цикл синхронизации | Kill switch за секунды, без реконсиляции |
-| Canary защищает от технических регрессий (5xx, latency), но не от бизнес-провала | Процентная раскатка флага управляет бизнес-риском при 100% трафика |
-| Hotfix-ветки и cherry-picks ломают линейность истории | Некоторый функционал доживает до релиза под флагом — TBD-friendly |
-
-### Две модели управления значениями флагов
-
-| Критерий | Static (флаги в Git) | Dynamic (платформа флагов) |
-| :--- | :--- | :--- |
-| Скорость изменения | Скорость мержа PR (минуты) | Мгновенно (API/UI) |
-| Аудит | Полный, в Git-истории | Только если платформа экспортирует события |
-| Drift | Невозможен — Git единственный источник | Возможен: правка в UI ≠ Git; нужен экспорт аудита |
-| Кто меняет | Все через PR (включая разработчиков) | Операторы/продакт через UI |
-| Инфраструктура | Ноль дополнительной | Платформа + ее HA + бэкапы |
-
-Практичный гибрид: критичные kill-switch'и и настройки по умолчанию — в Git (static); оперативные эксперименты и раскатки — в платформе (dynamic) с обязательным экспортом событий изменений в аудит ([журналы аудита](./audit_logs.md)).
-
-### Ортогональность canary и флагов
-
-Canary управляет **трафиком между версиями кода**; флаг — **видимостью функции внутри одной версии**. Это разные оси риска:
+Классический цикл GitOps жестко связывает доставку кода с его активацией:
 
 ```text
-Деплой v2.0 (0% пользователей видит new-checkout)
-   → canary по трафику: технические метрики (5xx/p99)     ← зона Rollouts/Flagger
-   → после 100% трафика: флаг 10% → 50% → 100%             ← бизнес-метрики (конверсия, ошибки формы)
+[Коммит в Git] → [CI: сборка образа] → [GitOps: обновление тега] → [Argo CD Sync] → [Поды v2 запущены]
+                                                                                        │
+                                                     Без флагов: пользователи сразу видят код v2 (Deploy == Release)
+                                                     С флагами: код v2 неактивен, флаг = false (Deploy != Release)
 ```
 
-Порядок важен: сначала техническая проверка всей новой версии, потом постепенная экспозиция функциональности. Обратный порядок смешает сигналы: падение конверсии при 10% трафика может быть следствием деградации latency на canary-подах, а не самой функции.
+При отсутствии фиче-флагов обнаружение критического дефекта в новой функциональности требует отката:
+1. Создание revert-коммита или исправление тега образа в Git.
+2. Прохождение проверок CI.
+3. Ожидание цикла синхронизации GitOps-контроллера (poll interval или webhook).
+4. Запуск RollingUpdate / перезапуск подов (минуты или десятки минут).
 
-### Управление долгом флагов
+С применением фиче-флагов новая версия развертывается в кластере с выключенным состоянием флага (`defaultVariant: "off"`). Активация выполняется отдельно. При возникновении сбоя срабатывает kill switch, переводящий логику на старый путь выполнения за миллисекунды.
 
-Флаги имеют свойство накапливаться: каждый добавляет ветвление в тестах и чтении кода. Гигиена:
+### Топология вычислений: Local-First vs Centralized
 
-1. **Именование и реестр**: `<area>-<feature>-<тип>` (например, `checkout-express-release`), описание и владелец в конфигурации флага.
-2. **Дата смерти**: поле expiration в описании; бот (тот же Renovate-style cron или CI-job) открывает issue/PR на удаление просроченных.
-3. **Лимиты**: не больше N активных release-флагов на сервис; cleanup-PR обязателен после стабилизации.
-4. **Типы флагов различать**: release (временно), ops (kill switch — живет долго), experiment (удаляется после A/B), permission (постоянный).
+Критическое требование SRE к фиче-флагам — отсутствие накладных расходов в hot-path приложения. Существуют две основные топологии развертывания движка правил в on-premise Kubernetes:
 
-## Практические сценарии
+```text
+1. Local-First Evaluation (Sidecar / In-Process):
+┌──────────────────────── Pod ────────────────────────┐
+│  ┌───────────────────────┐   gRPC (localhost:8013)  │
+│  │ Контейнер приложения  │ ◄──────────────────────┐ │
+│  │ (OpenFeature SDK)     │                        │ │
+│  └───────────────────────┘                        │ │
+│                                                   ▼ │
+│                                 ┌──────────────────┐│
+│  CRD FeatureFlag (k8s API) ───► │ flagd Sidecar    ││
+│  (или локальный ConfigMap)      │ (O(1) in-memory) ││
+│                                 └──────────────────┘│
+└─────────────────────────────────────────────────────┘
 
-### Сценарий 1: flagd + OpenFeature Operator через GitOps
+2. Centralized Proxy (Кластерный сервис):
+┌─────────────────────────┐               ┌─────────────────────────────────┐
+│ App Pod 1               │  gRPC / HTTP  │ Service: flagd-proxy            │
+├─────────────────────────┤ ────────────► │ ┌─────────────────────────────┐ │
+│ App Pod 2               │               │ │ flagd Deployment (Replicas) │ │
+└─────────────────────────┘               │ └─────────────────────────────┘ │
+                                          └─────────────────────────────────┘
+```
 
-Конфигурация флагов — обычные манифесты, доставляемые Argo CD/Flux:
+| Параметр | Local-First (Sidecar flagd) | Centralized Proxy (Service) | Прямой вызов платформы (Антипаттерн) |
+| :--- | :--- | :--- | :--- |
+| Latency вычисления | **< 0.5 мс** (локальный IPC/loopback) | 1–3 мс (внутрикластерная сеть) | 10–50+ мс (внешний HTTP-запрос) |
+| Точка отказа | Изолирована в рамках пода | Сбой Service ломает группу подов | Падение платформы парализует все сервисы |
+| Расход памяти | ~15–30 МБ RAM на каждый Pod | Фиксированный пул (2–4 пода по 50 МБ) | Отсутствует на стороне пода |
+| Рекомендация для SRE | **Основной стандарт** для высоконагруженных сервисов | Экономия ресурсов в dev/staging или при 1000+ микросервисах | Недопустимо в hot-path продакшена |
+
+### Модели управления: Static, Dynamic и Hybrid
+
+| Критерий | Static (флаги в Git) | Dynamic (self-hosted платформа) | Hybrid (промышленный стандарт) |
+| :--- | :--- | :--- | :--- |
+| Хранение состояния | Git (ConfigMap / `FeatureFlag` CRD) | БД платформы (Flipt / Unleash) | Git (дефолты/CRD) + Платформа (раскатка) |
+| Скорость изменения | 1–3 минуты (PR merge + sync) | < 1 секунды (API / UI) | Мгновенно через API с авто-синхронизацией |
+| Аудит изменений | Неизменяемая история коммитов Git | Журналы БД платформы | Git-история + стриминг событий аудита |
+| Риск GitOps Drift | **Исключен** (Git — единственный источник) | **Высокий** (состояние живет вне Git) | Контролируется через `ignoreDifferences` |
+| Автономность при изоляции сети | **Полная** (работает автономно в кластере) | Требует доступности локальной БД | Полная (локальный кэш flagd) |
+
+**Рекомендованный гибридный подход:**
+1. Все базовые объявления флагов, безопасные значения по умолчанию (`defaultVariant: "off"`) и критические kill-switch'и описываются декларативно в Git и доставляются через Argo CD / Flux.
+2. Оперативные проценты раскатки (fractional targeting) и сегменты тестирования управляются через локально развернутую self-hosted платформу флагов.
+3. Платформа экспортирует все события аудита через webhook в централизованный стек логирования ([журналы аудита](./audit_logs.md)).
+
+### Ортогональность канареечной доставки и фиче-флагов
+
+Канареечные релизы (Canary via Argo Rollouts / Flagger) и фиче-флаги закрывают принципиально разные риски и дополняют друг друга в едином пайплайне:
+
+```text
+[Инфраструктурный уровень]  Canary Deployment (Argo Rollouts)
+                             Управляет трафиком между ВЕРСИЯМИ ПОДОВ (v1 vs v2).
+                             Контроль технических метрик: ошибки сети, 5xx, CPU, p99 latency.
+                                      │
+                                      ▼ (После переключения 100% трафика на v2)
+[Прикладной уровень]        Feature Flag Rollout (flagd / OpenFeature)
+                             Управляет видимостью ФУНКЦИИ ВНУТРИ ВЕРСИИ v2.
+                             Контроль бизнес-метрик: конверсия, ошибки валидации форм, нагрузка на БД.
+```
+
+Такое разделение предотвращает смешивание сигналов: если при канарейке на 10% трафика вырастет время ответа, инженер SRE точно знает, что проблема в коде новой версии контейнера, а не в бизнес-логике новой скрытой фичи, так как фича в этот момент отключена флагом.
+
+### Жизненный цикл и классификация флагов
+
+Для предотвращения деградации кодовой базы флаги классифицируются по типам и времени жизни (TTL):
+
+```text
+           ┌─────────────────────────────────────────────────────────┐
+           │                   Классификация флагов                   │
+           └────────────────────────────┬────────────────────────────┘
+                                        │
+             ┌──────────────────────────┴──────────────────────────┐
+             ▼                                                     ▼
+┌─────────────────────────┐                             ┌─────────────────────────┐
+│     Краткосрочные       │                             │      Долговременные     │
+├─────────────────────────┤                             ├─────────────────────────┤
+│ Release Toggles         │                             │ Ops Toggles             │
+│ (TTL: 1–4 недели)       │                             │ (Kill Switch, Circuit   │
+│ Цель: безопасный релиз  │                             │  Breakers, аварийные)   │
+├─────────────────────────┤                             ├─────────────────────────┤
+│ Experiment Toggles      │                             │ Permission Toggles      │
+│ (TTL: 2–8 недель)       │                             │ (Тарифы, права доступа, │
+│ Цель: A/B тестирование  │                             │  внутренние модули)     │
+└─────────────────────────┘                             └─────────────────────────┘
+```
+
+Правила гигиены технического долга:
+1. **Именование**: Префикс по типу и подсистеме: `rel-<service>-<feature>` для релизных, `ops-<service>-<killswitch>` для аварийных.
+2. **Метка устаревания (Expiration)**: В манифесте флага указывается дата планируемого вывода из эксплуатации.
+3. **Ограничение количества**: Не более 3–5 активных release-флагов на один микросервис одновременно.
+4. **Обязательный Cleanup PR**: Создание задачи на удаление флага из кода и манифестов сразу при создании флага (Definition of Done для релиза).
+
+## Практические сценарии и конфигурация
+
+### Сценарий 1: Декларативное управление флагами через OpenFeature Operator v1beta1
+
+Декларативное описание флагов в виде CRD `FeatureFlag` и источника `FeatureFlagSource` (`core.openfeature.dev/v1beta1`), доставляемых Argo CD или Flux:
 
 ```yaml
-apiVersion: v1
-kind: ConfigMap
+# 1. Описание правил флагов в пространстве имен приложения
+apiVersion: core.openfeature.dev/v1beta1
+kind: FeatureFlag
 metadata:
-  name: checkout-flags
+  name: checkout-feature-flags
   namespace: billing
-data:
-  flags.json: |
-    {
-      "flags": {
-        "new-checkout": {
-          "variants": { "on": true, "off": false },
-          "defaultVariant": "off",
-          "state": "ENABLED"
-        },
-        "express-delivery": {
-          "variants": { "on": true, "off": false },
-          "defaultVariant": "off",
-          "state": "ENABLED",
-          "targeting": {
-            "fractional": [
-              { "var": "userId" },
-              ["on", 10], ["off", 90]
-            ]
-          }
-        }
-      }
-    }
-```
-
-Включение open-feature-operator позволяет декларативно описать источник флагов для подов приложения:
-
-```yaml
-apiVersion: core.openfeature.dev/v1alpha1
-kind: FlagSourceConfiguration
+spec:
+  flagSpec:
+    flags:
+      new-payment-engine:
+        state: ENABLED
+        variants:
+          "on": true
+          "off": false
+        defaultVariant: "off"
+      express-checkout-flow:
+        state: ENABLED
+        variants:
+          "on": true
+          "off": false
+        defaultVariant: "off"
+        targeting:
+          fractional:
+            - ["on", 25]
+            - ["off", 75]
+---
+# 2. Описание источника флагов для sidecar flagd
+apiVersion: core.openfeature.dev/v1beta1
+kind: FeatureFlagSource
 metadata:
-  name: checkout-flagsource
+  name: checkout-flag-source
   namespace: billing
 spec:
   sources:
-    - source: billing/checkout-flags       # namespace/name ConfigMap
-      type: kubernetes
-  defaultSyncProvider: kubernetes
+    - source: billing/checkout-feature-flags
+      provider: kubernetes
   port: 8013
 ```
 
-Приложение оценивает флаг через OpenFeature SDK — значение приходит от локального flagd (sidecar/operator-managed), без похода во внешнюю систему:
+Подключение автоматической инъекции flagd sidecar в Deployment приложения:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-service
+  namespace: billing
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: checkout-service
+  template:
+    metadata:
+      labels:
+        app: checkout-service
+      annotations:
+        # Активация инъекции sidecar через OpenFeature Operator
+        openfeature.dev/enabled: "true"
+        # Привязка к созданному FeatureFlagSource
+        openfeature.dev/featureflagsource: "checkout-flag-source"
+    spec:
+      containers:
+        - name: application
+          image: registry.internal/billing/checkout:v2.4.0
+          ports:
+            - containerPort: 8080
+          env:
+            - name: FLAGD_HOST
+              value: "localhost"
+            - name: FLAGD_PORT
+              value: "8013"
+```
+
+Пример использования в Go с безопасным отказоустойчивым дефолтом (Local Fallback):
 
 ```go
-// Go: оценка с безопасным дефолтом
-enabled := ofClient.Boolean(ctx, "new-checkout", map[string]any{"userId": userID}, false)
-if enabled {
-    renderNewCheckout()
-} else {
-    renderLegacyCheckout()
+package main
+
+import (
+	"context"
+	"log"
+
+	"github.com/open-feature/go-sdk/openfeature"
+	flagd "github.com/open-feature/go-sdk-contrib/providers/flagd/pkg"
+)
+
+func initFeatureClient() openfeature.IClient {
+	// Подключение к локальному sidecar flagd через gRPC (zero network hops)
+	provider := flagd.NewProvider(flagd.WithHost("localhost"), flagd.WithPort(8013))
+	if err := openfeature.SetProviderAndWait(provider); err != nil {
+		log.Printf("Внимание: flagd недоступен, SDK использует fallback: %v", err)
+	}
+	return openfeature.NewClient("checkout-service")
+}
+
+func handleCheckout(ctx context.Context, client openfeature.IClient, userID string) {
+	evalCtx := openfeature.NewTargetingContext(userID, map[string]interface{}{
+		"targetingKey": userID,
+	})
+
+	// При сбое связи с flagd вернется безопасный дефолт (false)
+	enabled, err := client.BooleanValue(ctx, "new-payment-engine", false, evalCtx)
+	if err != nil {
+		log.Printf("Ошибка вычисления флага, применен fallback: %v", err)
+	}
+
+	if enabled {
+		executeModernPaymentPipeline()
+	} else {
+		executeLegacyPaymentPipeline()
+	}
 }
 ```
 
-Проверка:
+Проверка применения и статуса в кластере:
 
 ```bash
-kubectl get configmap checkout-flags -n billing -o jsonpath='{.data.flags\.json}' | jq '.flags["express-delivery"].defaultVariant'
-# → "off"
-kubectl logs deploy/flagd -n billing | grep sync
-# → event=provider_ready source=billing/checkout-flags
+# Проверка готовности CRD флагов
+kubectl get featureflag,featureflagsource -n billing
+# → NAME                                                  AGE
+# → featureflag.core.openfeature.dev/checkout-feature-flags   45s
+# → featureflagsource.core.openfeature.dev/checkout-flag-source 45s
+
+# Проверка наличия внедренного sidecar-контейнера flagd
+kubectl get pods -n billing -l app=checkout-service -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.spec.containers[*].name}{"\n"}{end}'
+# → checkout-service-789bfb846-abc12: application flagd
+# → checkout-service-789bfb846-def34: application flagd
+# → checkout-service-789bfb846-ghi56: application flagd
 ```
 
-### Сценарий 2: Поэтапное включение функции поверх канарейки
+### Сценарий 2: Поэтапное включение функции поверх канареечного деплоя
 
-Релиз новой версии чекаута с двумя уровнями защиты (см. [сценарий 1 прогрессивной доставки](./progressive_delivery_gitops.md)):
+Сквозной регламент вывода функциональности на прод:
 
-1. **Неделя 1 — canary по трафику** (Rollouts): 10% → 50% → 100%. Метрики технические: success rate, p99. Флаг `new-checkout` все это время выключен (`off`) — старый путь кода работает даже на новых подах.
-2. **Неделя 2 — флаговая раскатка**: PR #1 ставит `fractional` до 10%, смотрим конверсию и ошибки оформления заказа 24 часа; PR #2 — 50%; PR #3 — 100% и `defaultVariant: on`.
-3. Каждый шаг — отдельный MR с changelog и ссылкой на дашборд бизнес-метрик: история включений остается в Git.
+1. **Этап 1: Канареечный деплой контейнеров (Argo Rollouts)**
+   - Выкатывается новая версия `v2.4.0`.
+   - Флаг `express-checkout-flow` в Git зафиксирован в `defaultVariant: "off"`.
+   - Контроллер канарейки раскатывает трафик: 10% → 50% → 100%.
+   - Анализируются технические метрики пода: Prometheus HTTP latency p99 < 80ms, 5xx error rate < 0.05%.
+2. **Этап 2: Процентная раскатка бизнес-функциональности (Feature Flag PR #1)**
+   - Создается Git PR, изменяющий таргетинг флага на 10%:
+     ```json
+     "fractional": [["on", 10], ["off", 90]]
+     ```
+   - Argo CD синхронизирует `FeatureFlag` CRD. Sidecar flagd моментально перечитывает правила без перезапуска подов приложения.
+   - SRE и аналитики мониторят бизнес-метрики: количество успешно завершенных платежей, отсутствие бизнес-ошибок в логах.
+3. **Этап 3: Полный релиз и стабилизация (Feature Flag PR #2)**
+   - Перевод флага на 100%:
+     ```yaml
+     defaultVariant: "on"
+     ```
+   - Таргетинг удаляется, функционал доступен всем.
 
-Если на шаге флага что-то идет не так — revert одного маленького PR вместо отката целого релиза.
+### Сценарий 3: Аварийный Kill Switch при инциденте
 
-### Сценарий 3: Kill switch при инциденте
+Два режима локализации аварии:
+
+**Вариант А: Статический откат через Git (плановый)**:
 
 ```bash
-# Static (флаг в Git): отключение через revert — аудит автоматический
-git revert <commit-включившего-флаг> && git push
-# → merge → Argo CD синк → flagd перечитал ConfigMap (~1–2 минуты)
-
-# Dynamic (Unleash): мгновенно через API
-curl -s -X POST "$UNLEASH_URL/api/admin/projects/billing/features/new-checkout/environments/production/off" \
-  -H "Authorization: $UNLEASH_ADMIN_TOKEN"
-# → {"enabled": false}  — секунды
+# 1. Revert коммита включения флага
+git revert <COMMIT_HASH> -m 1
+git push origin main
+# → Argo CD синхронизирует CRD (~1–2 мин в зависимости от sync-политики)
 ```
 
-Правило эксплуатации: любое runtime-переключение фиксируется в инцидент-тикете, а follow-up PR приводит статическое состояние в соответствие — иначе следующий рефакторинг наткнется на рассинхрон «UI против Git».
+**Вариант Б: Экстренный аварийный патч напрямую в кластере (SRE Hot-Fix)**:
+Когда 2 минуты на прохождение Git-пайплайна недопустимы при падении прода:
 
-### Сценарий 4: Дрейф между платформой флагов и Git
+```bash
+# 1. Мгновенный патч defaultVariant в положение "off" напрямую в CRD
+kubectl patch featureflag checkout-feature-flags -n billing --type=merge -p \
+  '{"spec":{"flagSpec":{"flags":{"new-payment-engine":{"defaultVariant":"off"}}}}}'
+# → featureflag.core.openfeature.dev/checkout-feature-flags patched
 
-Если платформа пишет обратно статус (последняя оценка, счетчики) в CRD/ConfigMap, GitOps-агент увидит вечный OutOfSync. Игнорировать нужно **только статусные поля**, но не спецификацию флагов:
+# 2. Проверка немедленного переключения в логах flagd
+kubectl logs -l app=checkout-service -c flagd -n billing --tail=5 | grep -E "(sync|eval)"
+# → event=configuration_change source=billing/checkout-feature-flags defaultVariant=off
+```
+
+> [!WARNING]
+> Любой аварийный `kubectl patch` должен сопровождаться немедленным созданием follow-up коммита в Git. В противном случае следующая автоматическая синхронизация Argo CD вернет значение из Git и снова включит упавшую функцию (GitOps Drift).
+
+### Сценарий 4: Устранение GitOps Drift для CRD флагов в Argo CD и Flux
+
+Если контроллер OpenFeature Operator обновляет статусные поля или служебные метаданные ресурсов, Argo CD видит постоянный дрейф (`OutOfSync`).
+
+Настройка исключения статусных полей в Argo CD `Application`:
 
 ```yaml
-# Argo CD: Application spec.ignoreDifferences
-ignoreDifferences:
-  - group: core.openfeature.dev
-    kind: FeatureFlagConfiguration
-    jsonPointers: ["/status"]
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: billing-flags
+  namespace: argocd
+spec:
+  ignoreDifferences:
+    # Игнорирование служебных полей статуса OpenFeature CRD
+    - group: core.openfeature.dev
+      kind: FeatureFlag
+      jsonPointers:
+        - /status
+    - group: core.openfeature.dev
+      kind: FeatureFlagSource
+      jsonPointers:
+        - /status
 ```
 
-Во Flux эквивалент — патч `.spec.ignore`. Игнорирование `/spec` здесь недопустимо: оно отключит сам механизм доставки значений флагов.
+Эквивалент для Flux в ресурсе `Kustomization`:
 
-## Типовые проблемы и их решение
+```yaml
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: billing-flags
+  namespace: flux-system
+spec:
+  patches:
+    - patch: |
+        $patch: delete
+        apiVersion: core.openfeature.dev/v1beta1
+        kind: FeatureFlag
+        metadata:
+          name: not-used
+        status: {}
+      target:
+        group: core.openfeature.dev
+        kind: FeatureFlag
+```
 
-| Симптом | Причина | Решение |
+### Сценарий 5: Безопасные миграции баз данных под флагами (Expand-Contract)
+
+Использование фиче-флагов без поддержки совместимости схем БД — частая причина сбоев. Для обеспечения нулевого простоя и возможности мгновенного отката флагом применяется паттерн Expand-Contract:
+
+```text
+Фаза 1 (Expand - БД):     Добавление новой колонки `new_data` (NULLable), старая `old_data` остается.
+Фаза 2 (Деплой кода):     Развертывание сервиса с флагом `use-new-schema: off`.
+Фаза 3 (Двойная запись):  Флаг включает параллельную запись в обе колонки, чтение из `old_data`.
+Фаза 4 (Переключение):    Флаг переключает чтение на `new_data`. При сбое — мгновенный откат флага!
+Фаза 5 (Contract - БД):   Удаление старой колонки `old_data` и удаление флага из кода через 2 спринта.
+```
+
+## Операции и команды
+
+Сводка команд администрирования и диагностики инфраструктуры фиче-флагов:
+
+| Операция | Команда | Назначение |
 | :--- | :--- | :--- |
-| Флаги живут годами, код оброс ветвлениями | Нет процесса удаления | Expiration-даты, бот-напоминалка, лимит активных флагов, cleanup-PR обязательным пунктом Definition of Done |
-| Тесты взрываются от числа комбинаций | Все флаги тестируются во всех сочетаниях | CI гоняет дефолтную конфигурацию; комбинации — точечные e2e только для активных раскаток |
-| Оценка флага добавляет latency | Ход в удаленную платформу на каждый вызов | Локальный flagd/sidecar, кеширование провайдера; платформа — источник истины, не hot path |
-| Секреты внутри payload флагов | Флаговый конфиг используют как конфиг приложения | Запретить политикой (conftest/Kyverno); секреты — только через [ESO/SOPS](../secrets_encryption.md) |
-| Прод ведет себя не как staging | Разные значения флагов в средах, рассинхрон | Один источник (Git) + overlays per env; diff флагов между средами — часть ревью PR |
-| Включили флаг — а миграции БД нет | Функциональность завязана на схему | Expand-contract: схема совместима с обоими путями кода; контракт-фаза удаляется после стабилизации |
+| Список CRD флагов | `kubectl get featureflag,featureflagsource -A` | Обзор всех зарегистрированных флагов и источников в кластере |
+| Просмотр конфигурации | `kubectl get featureflag <NAME> -n <NS> -o jsonpath='{.spec.flagSpec}' \| jq .` | Чтение активных правил таргетинга из манифеста |
+| Логи демона flagd | `kubectl logs deploy/<APP> -c flagd -n <NS> --tail=50 -f` | Трассировка событий синхронизации правил и вычислений |
+| Проверка healthcheck | `kubectl exec deploy/<APP> -c flagd -n <NS> -- curl -s http://localhost:8014/healthz` | Проверка liveness probe демона (порт 8014) |
+| Проверка готовности | `kubectl exec deploy/<APP> -c flagd -n <NS> -- curl -s http://localhost:8014/readyz` | Проверка готовности провайдеров синхронизации правил |
+| Тест вычисления (HTTP) | `kubectl exec deploy/<APP> -c flagd -n <NS> -- curl -s -X POST http://localhost:8013/flagd.evaluation.v1.Service/ResolveBoolean -H "Content-Type: application/json" -d '{"flagKey":"<FLAG>"}'` | Ручное тестирование резолвинга флага через локальный API |
+| Сбор метрик flagd | `kubectl exec deploy/<APP> -c flagd -n <NS> -- curl -s http://localhost:8014/metrics \| grep feature_flag` | Инспекция счетчиков Prometheus (`feature_flag_flagd_impression_total`) |
+| Аварийный Kill Switch | `kubectl patch featureflag <NAME> -n <NS> --type=merge -p '{"spec":{"flagSpec":{"flags":{"<FLAG>":{"defaultVariant":"off"}}}}}'` | Экстренное отключение функции в обход Git с последующим PR |
+
+### Примеры диагностических запросов
+
+1. Проверка состояния синхронизации в логах flagd:
+```bash
+kubectl logs deploy/checkout-service -c flagd -n billing --tail=20 | grep -E "(sync|provider|ready)"
+# → {"level":"info","time":"2026-10-12T21:00:00Z","message":"provider sync completed: billing/checkout-feature-flags"}
+# → {"level":"info","time":"2026-10-12T21:00:00Z","message":"flagd readiness probe status: 200 OK"}
+```
+
+2. Сбор статистики вычисления флагов для Prometheus:
+```bash
+kubectl exec deploy/checkout-service -c flagd -n billing -- curl -s http://localhost:8014/metrics | grep -E "feature_flag.*impression"
+# → feature_flag_flagd_impression_total{feature_flag_key="new-payment-engine",feature_flag_provider_name="flagd",feature_flag_reason="STATIC",feature_flag_result_variant="off"} 18452
+```
+
+## Устранение неполадок
+
+| Симптом | Вероятная причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| Рост latency приложения при каждом запросе флага | Сетевой оверхед: SDK настроен на прямой HTTP-запрос к внешней платформе вместо локального sidecar flagd | `kubectl logs deploy/<APP> -n <NS>` (замеры времени вызова SDK); `netstat -an \| grep <PORT>` | Перевести SDK на `localhost:8013` (local-first evaluation через sidecar или IPC); исключить сетевые вызовы в hot-path |
+| Статус OutOfSync в Argo CD / Flux для `FeatureFlag` | Оператор обновляет `.status` или аннотации ресурса, которые GitOps считает дрейфом | `argocd app diff <APP_NAME>` или `kubectl get featureflag <NAME> -o yaml` | Добавить игнорирование `.status` в `ignoreDifferences` (Argo CD) или `.spec.ignore` (Flux) |
+| Sidecar flagd не внедряется в поды | Отсутствуют аннотации на шаблоне пода, либо muting webhook оператора заблокирован политиками | `kubectl get pod <NAME> -o jsonpath='{.metadata.annotations}'`; `kubectl get events -n <NS>` | Проверить аннотации `openfeature.dev/enabled: "true"` именно в `spec.template.metadata.annotations`; проверить права RBAC и доступность webhook OFO |
+| flagd отдает HTTP 412 на `/readyz` | Ошибка провайдера синхронизации: не найден ConfigMap/CRD или синтаксическая ошибка JSON/YAML | `kubectl logs deploy/<APP> -c flagd -n <NS>` | Проверить имя и пространство имен в `FeatureFlagSource`; исправить валидность JSON/YAML в спецификации флагов |
+| Рассинхрон значений флага между подами | Кэширование значения внутри приложения без подписки на стрим событий обновления | Проверить реализацию SDK в коде сервиса; сравнить отдачу разных подов через `/metrics` | Использовать dynamic event listener в SDK или проверять флаг при каждом обращении (flagd локален и оптимизирован для O(1) in-memory) |
+| Ошибки 500 / сбои в БД после включения флага | Функционал требует изменений схемы БД, которые не поддерживают старый путь выполнения | `kubectl logs deploy/<APP> -n <NS> \| grep -E "(SQL\|DB\|QueryException)"` | Применить аварийный kill switch; переработать миграцию по шаблону Expand-Contract |
+| Накопление зомби-флагов в коде и Git | Отсутствует регламент вывода флагов из эксплуатации | Поиск флагов старше 30 дней: `grep -r "feature_flags" manifests/` | Ввести обязательный срок жизни (TTL), настроить CI-линтер устаревших флагов и cleanup PR |
+
+## Лучшие практики
+
+1. **Local-First Evaluation**: Всегда отдавать предпочтение локальному sidecar flagd. Приложение обращается к демону по адресу `127.0.0.1:8013` (gRPC или Unix Domain Socket). Оценка правил происходит локально в оперативной памяти без сетевых задержек.
+2. **Разделение политик отказа (Fail-Closed vs Fail-Open)**:
+   - Для критических бизнес-процессов (платежи, безопасность, валидация прав) дефолтное значение должно быть строго **Fail-Closed** (`false` / отключено).
+   - Для второстепенных элементов (рекомендательные блоки, вспомогательный UI) допускается **Fail-Open** / **Fail-Safe** с отдачей базового контента.
+3. **Строгая изоляция секретов**: Конфигурация флагов предназначена исключительно для маршрутизации логики. Запрещено передавать в `variants` или контексте таргетинга секретные ключи, пароли или токены. Управление секретами должно выполняться строго через специализированные операторы ([ESO/SOPS](../secrets_encryption.md)).
+4. **Аудит и воспроизводимость**:
+   - При статическом управлении каждый шаг раскатки фиксируется в Git через отдельный PR со ссылкой на дашборд мониторинга.
+   - При использовании dynamic/hybrid платформы включить обязательный экспорт логов аудита через webhook в кластерный сборщик логов (Vector/Fluentbit/Loki).
+5. **Ограничение срока жизни (TTL) и гигиена**:
+   - Release-флаг должен жить в кодовой базе не более 1–2 релизных циклов (максимум 30 дней).
+   - Задача на удаление флага из кодовой базы и манифестов GitOps создается одновременно с задачей на его внедрение.
 
 ## Дополнительная информация
 
-- **Связь с метриками доставки**: kill switch снижает MTTR (восстановление секундами вместо деплоя), а release-флаги снижают Change Failure Rate — флаговые практики напрямую улучшают [DORA-метрики GitOps](./dora_metrics_gitops.md).
-- **Аудит dynamic-флагов**: экспорт событий изменений платформы (webhook → Loki) закрывает главный минус UI-управления — см. [экспорт событий контроллеров](./audit_logs.md).
+- **Связь с DORA-метриками**: Практика использования фиче-флагов радикально снижает метрику **FDRT / MTTR** (время восстановления после сбоя) с десятков минут (цикл отката в GitOps) до миллисекунд (срабатывание kill switch). Кроме того, процентная раскатка флагов минимизирует **Change Failure Rate (CFR)**, изолируя потенциальный сбой рамками малой группы пользователей ([DORA-метрики в GitOps](./dora_metrics_gitops.md)).
+- **Трассируемость и аудит**: Регламенты фиксации изменений рантайм-платформ и аудита действий операторов подробно описаны в руководстве [Журналы аудита и трассируемость](./audit_logs.md).
 
 ### См. также
 
-- [Прогрессивная доставка в GitOps](./progressive_delivery_gitops.md) — canary/blue-green, с которыми комбинируются флаги.
-- [Журналы аудита и трассируемость](./audit_logs.md) — фиксация runtime-изменений.
-- [Игнорирование полей в Argo CD](../ArgoCD/synchronization/ignore_differences.md) — управление дрейфом статусных полей.
-- [Git-воркфлоу: trunk-based + Feature Flags](../../Git/git_workflows.md) — процессная сторона флагов.
+- [Прогрессивная доставка в GitOps](./progressive_delivery_gitops.md) — канареечные и blue-green релизы в связке с фиче-флагами.
+- [DORA-метрики в GitOps](./dora_metrics_gitops.md) — измерение влияния отделения deploy от release на метрики команды.
+- [Игнорирование различий в Argo CD](../ArgoCD/synchronization/ignore_differences.md) — решение проблемы бесконечной реконсиляции статусов CRD.
+- [GitOps: Управление секретами и шифрование](../secrets_encryption.md) — безопасное хранение чувствительных данных.
+- [Архитектура фиче-тогглов](../../CI-CD/Testing/feature_toggles/architecture.md) — общие шаблоны проектирования систем флагов в приложениях.
+- [Антипаттерны фиче-тогглов](../../CI-CD/Testing/feature_toggles/antipatterns.md) — типичные ошибки проектирования и эксплуатации флагов.
+- [Рабочие процессы в Git](../../Git/git_workflows.md) — методология Trunk-Based Development с использованием Feature Flags.
+

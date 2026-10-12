@@ -1,91 +1,147 @@
 # Cluster Autoscaler (CA)
 
+**Актуально для:** Kubernetes 1.30–1.33 / Cluster Autoscaler 1.30.x–1.33.x
+
 ## Определения
 
-**Cluster Autoscaler (CA)** — это системный контроллер Kubernetes, предназначенный для автоматического изменения размера вычислительного кластера (количества рабочих узлов). Решение о масштабировании принимается исключительно на основе анализа потребностей подов в ресурсах (`requests`) и их текущего распределения, а не на основе реальной загрузки CPU/RAM.
+**Cluster Autoscaler (CA)** — это базовый контроллер Kubernetes, предназначенный для автоматического изменения размера вычислительного кластера (количества рабочих узлов). Решение о масштабировании принимается исключительно на основе анализа дефицита ресурсов подов (`requests`) в очереди планировщика, а не на основе фактической загрузки CPU/RAM узлов.
 
-**Node Group (ASG / MIG / VMSS)** — логическое объединение идентичных виртуальных или физических машин (одинаковый тип, диск, метки), управляемое облачным провайдером. CA работает именно с абстракцией групп узлов, а не с отдельными инстансами.
+**Node Group (MachineDeployment / MachineSet)** — логическое объединение идентичных виртуальных или физических машин (одинаковый профиль оборудования, дисковая подсистема, метки и taints), управляемое инфраструктурным провайдером (например, Cluster API в on-premise средах). CA управляет кластером через абстракцию групп узлов.
 
-**ProvisioningRequest** — механизм (CRD, Beta в 1.30+), позволяющий запрашивать у CA создание пула узлов определенной емкости до фактического создания подов, что критически важно для пакетных (batch) задач и машинного обучения.
+**Expander** — алгоритмическая стратегия выбора целевой группы узлов при масштабировании вверх (Scale-Up), когда несколько доступных групп способны разместить поды в состоянии `Pending`.
 
-**Dynamic Resource Allocation (DRA)** — фреймворк Kubernetes для запроса специфического оборудования (GPU, TPU, FPGA). CA версии 1.30+ умеет симулировать выделение DRA-ресурсов до создания узла.
+**ProvisioningRequest** — механизм и CRD (`autoscaling.x-k8s.io`, статус Beta в Kubernetes 1.30+), позволяющий декларативно запрашивать выделение пула узлов заданной конфигурации до фактического создания подов, что необходимо для пакетных вычислительных задач (batch/ETL).
 
-**Expander** — стратегия выбора группы узлов при масштабировании вверх, когда `Pending` под может быть размещен в нескольких Node Groups.
+**Dynamic Resource Allocation (DRA)** — фреймворк Kubernetes для запроса специализированных аппаратных ресурсов (сетевые адаптеры SR-IOV, DPU, FPGA, локальные NVMe-диски). Начиная с Kubernetes 1.32 (Structured Parameters, KEP-4381), CA поддерживает симуляцию доступности DRA-ресурсов при принятии решений о масштабировании.
 
-**Scale-Down Cooldown** — период после масштабирования вверх, в течение которого CA не удаляет узлы (по умолчанию 10 минут). Предотвращает «флаппинг» — цикличное добавление и удаление узлов.
+**Scale-Down Cooldown** — интервал защитной паузы после завершения операций масштабирования, предотвращающий «флаппинг» (циклическое добавление и немедленное удаление серверов).
+
+**Pod Disruption Budget (PDB)** — ресурс политики доступности (`policy/v1`), определяющий минимально допустимое количество готовых реплик приложения при добровольном выселении подов во время сжатия кластера (Scale-Down) или обновления узлов.
+
+**Over-provisioning (Pause Pods)** — архитектурный паттерн создания «горячего резерва» вычислительных мощностей с помощью низкоприоритетных спящих подов, вытесняемых реальной рабочей нагрузкой при всплесках трафика.
 
 ---
 
-## Предварительные требования
+## Архитектура и принцип работы
 
-### Версии и компоненты
+### Двухуровневая архитектура масштабирования в On-Premise инфраструктуре
 
-Матрица совместимости строго привязана к минорной версии Kubernetes (начиная с Kubernetes 1.12 CA версионируется в соответствии с K8s). Использование CA неподдерживаемой версии чревато расхождениями в API (например, `Lease` объект, фичи `kube-scheduler`).
+В отказоустойчивой инфраструктуре Kubernetes разделяются два контура управления:
+1. **Control Plane (API-сервер, etcd, Scheduler, Controller Manager):** Разворачивается на выделенных статических серверах или отказоустойчивых виртуальных машинах (через kubeadm, RKE2 или Talos Linux) и не масштабируется автоматически через CA во избежание деградации кворума etcd.
+2. **Data Plane (Worker Nodes):** Масштабируется автоматически контроллером **Cluster Autoscaler** в связке с провайдером инфраструктуры — в частных ЦОД и на bare-metal стандартным интерфейсом выступает **Cluster API (CAPI)** с провайдерами для vSphere (CAPV), Bare-Metal (Metal3 / Ironic) или OpenStack (CAPO).
 
-| Версия Kubernetes | Версия CA | Версия Helm-чарта |
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Kubernetes Control Plane                        │
+│                                                                        │
+│   ┌─────────────────────┐                 ┌────────────────────────┐   │
+│   │   kube-apiserver    │◄────────────────┤   Cluster Autoscaler   │   │
+│   │  (Pending Pods /    │                 │ (Simulation & Decision)│   │
+│   │   Nodes / Metrics)  │                 └───────────┬────────────┘   │
+│   └──────────┬──────────┘                             │                │
+└──────────────┼────────────────────────────────────────┼────────────────┘
+               │                                        │
+               ▼                                        ▼
+    ┌──────────────────────┐               ┌─────────────────────────┐
+    │   kube-scheduler     │               │   Cluster API (CAPI)    │
+    │  (Filters / Scoring) │               │ MachineDeployment Scale │
+    └──────────────────────┘               └────────────┬────────────┘
+                                                        │
+                      ┌─────────────────────────────────┴─────────────┐
+                      ▼                                               ▼
+          ┌───────────────────────────┐                   ┌───────────────────────────┐
+          │  Bare-Metal (Metal3/IPMI) │                   │  Virtualization (vSphere) │
+          │  Physical Server PXE-boot │                   │  VM Clone / Provisioning  │
+          └───────────────────────────┘                   └───────────────────────────┘
+```
+
+### Внутренний цикл управления (Autoscaling Loop)
+
+CA работает как непрерывный управляющий цикл (по умолчанию период сканирования `--scan-interval=10s`):
+1. **Сбор состояния (Listing):** Запрос к API-серверу списка узлов, подов, PDB, PVC, PV и шаблонов групп узлов (`MachineDeployment`).
+2. **Анализ Unschedulable подов:** Отбор подов в статусе `Pending`, получивших от `kube-scheduler` событие `FailedScheduling` (нехватка CPU, памяти, несовпадение `nodeSelector`, `affinity` или `taints`).
+3. **Симуляция планирования (Scheduler Simulation):** CA запускает встроенный алгоритм планировщика. Для каждой доступной группы узлов проверяется: если создать узел из этого шаблона, поместятся ли на нем `Pending` поды с учетом всех ограничений?
+4. **Выбор группы (Expander):** Если поды могут быть размещены в нескольких группах узлов, применяется алгоритм Expander.
+5. **Масштабирование вверх (Scale-Up):** CA отправляет запрос к инфраструктурному контроллеру (например, увеличивает `.spec.replicas` в `MachineDeployment`).
+6. **Анализ недогруженных узлов (Scale-Down Evaluation):** Поиск узлов, суммарные `requests` которых ниже `--scale-down-utilization-threshold`. Если поды узла можно безопасно перенести на другие работающие серверы, запускается таймер невостребованности.
+7. **Масштабирование вниз (Scale-Down Drain & Delete):** По истечении таймера узел помечается taint `ToBeDeletedByClusterAutoscaler`, выполняется выселение подов через Eviction API, после чего узел безопасно удаляется из инфраструктуры.
+
+### Алгоритм симуляции планировщика
+
+CA не опрашивает внешний `kube-scheduler`, а использует скомпилированные библиотеки логики планировщика Kubernetes. При симуляции проверяются:
+- **Емкость узла (Capacity & Allocatable):** Из общей емкости вычитаются системные резервы `kube-reserved` и `system-reserved`, а также ресурсы DaemonSet, которые автоматически запустятся на новом узле.
+- **Tolerations и Taints:** Проверяется совпадение taints шаблона группы узлов с tolerations подов.
+- **Node Affinity и Node Selector:** Проверяются обязательные (`requiredDuringSchedulingIgnoredDuringExecution`) селекторы меток.
+- **Pod Affinity и Pod Anti-Affinity:** Симулируется взаимное размещение подов на новом и существующих узлах кластера с учетом топологических ключей (`topologyKey`).
+- **Topology Spread Constraints:** Проверяется максимальный допустимый перекос (`maxSkew`) между доменами отказа (стойками, зонами).
+- **Связывание томов (Volume Binding):** Для `StorageClass` с `volumeBindingMode: WaitForFirstConsumer` симулируется возможность создания PV в топологическом сегменте нового узла.
+- **DRA (Dynamic Resource Allocation):** Начиная с версии 1.32, CA поддерживает структурированные параметры `ResourceClaim` и проверяет возможность их аллокации драйвером оборудования.
+
+### Механизм масштабирования вверх (Scale-Up)
+
+Триггером для Scale-Up служит наличие хотя бы одного пода в состоянии `Pending`, для которого планировщик зафиксировал невозможность запуска.
+- Если узел можно добавить, CA увеличивает целевой размер группы (`DesiredCapacity` / `.spec.replicas`).
+- Если узел находится в статусе создания дольше `--max-node-provision-time` (по умолчанию 15 минут) и не переходит в `Ready`, CA регистрирует ошибку и временно блокирует дальнейшие попытки добавления узлов в эту группу.
+- Время инициализации в локальных дата-центрах варьируется от 2–5 минут для виртуальных машин до 15–30 минут для bare-metal серверов (PXE-boot, инициализация RAID и IPMI).
+
+### Механизм масштабирования вниз (Scale-Down)
+
+Узел признается кандидатом на удаление, если выполняются **все** следующие условия:
+1. Утилизация по сумме `requests` (CPU и RAM отдельно) строго ниже `--scale-down-utilization-threshold` (по умолчанию 0.5, то есть 50%).
+2. Все поды узла могут быть перемещены на оставшиеся узлы кластера без перегрузки последних и без нарушения ограничений планирования.
+3. Узел находится в состоянии недостаточной загрузки непрерывно в течение `--scale-down-unneeded-time` (по умолчанию 10 минут).
+
+### Факторы, блокирующие Scale-Down
+
+CA **не будет** удалять узел, если на нем обнаружен хотя бы один из следующих блокирующих факторов:
+- **Pod Disruption Budget:** Нарушение лимита PDB (поле `.status.disruptionsAllowed == 0` у целевого приложения).
+- **Аннотация safe-to-evict:** Наличие пода с аннотацией `"cluster-autoscaler.kubernetes.io/safe-to-evict": "false"`.
+- **Локальное хранилище (Local Storage):** Поды, использующие `emptyDir` или `hostPath`, если не выставлен флаг `--skip-nodes-with-local-storage=false`.
+- **Поды без контроллера:** Автономные поды (bare pods), созданные напрямую без Deployment, ReplicaSet, StatefulSet или Job (их удаление приведет к безвозвратной потере рабочей нагрузки).
+- **Системные поды:** Поды в namespace `kube-system`, у которых не настроен персональный PDB (если не выставлен флаг `--skip-nodes-with-system-pods=false`).
+- **Аннотация узла:** Узел помечен аннотацией `"cluster-autoscaler.kubernetes.io/scale-down-disabled": "true"`.
+- **Невозможность размещения:** Поды узла не могут разместиться на оставшихся серверах из-за нехватки свободных ресурсов или жестких правил `podAntiAffinity`.
+
+### Алгоритмы выбора группы узлов (Expanders)
+
+Если `Pending` под может быть размещен на узлах нескольких разных групп, CA применяет выбранный `Expander` (`--expander`):
+
+| Стратегия | Принцип работы | Сценарий применения в On-Premise / Sysadmin |
 | :--- | :--- | :--- |
-| 1.34.x | 1.34.x | 9.51.0+ |
-| 1.33.x | 1.33.x | 9.47.0+ |
-| 1.32.x | 1.32.x | 9.45.0+ |
-| 1.31.x | 1.31.x | 9.38.0+ |
-| 1.30.x | 1.30.x | 9.37.0+ |
-| 1.29.x | 1.29.x | 9.35.0+ |
-| 1.28.x | 1.28.x | 9.34.0+ |
-| 1.27.x | 1.27.x | 9.29.0+ |
+| **`random`** | Выбирает случайную подходящую группу (по умолчанию). | Кластеры с однородными серверами одинаковой конфигурации. |
+| **`most-pods`** | Выбирает группу, способную вместить максимальное количество текущих `Pending` подов. | Массовые параллельные деплои микросервисов. |
+| **`least-waste`** | Выбирает группу, в которой после размещения подов останется минимальный объем неиспользованных CPU и RAM. | Максимизация плотности упаковки (bin-packing) и экономия емкости гипервизора/железа. |
+| **`priority`** | Выбирает группу с наивысшим приоритетом на основе регулярных выражений из ConfigMap. | Разделение пулов серверов по поколениям (High-Performance → Standard → Cold Reserve). |
 
-| Компонент | Минимальная версия | Рекомендуемая | Примечание |
-| :--- | :--- | :--- | :--- |
-| Kubernetes | 1.27 | 1.32+ | Поддерживаемые ветки: `n`, `n-1`, `n-2`, `n-3` |
-| Cluster Autoscaler | 1.27+ | 1.33+ | Поддержка DRA (structured parameters) с 1.32; ProvisioningRequest — Beta с 1.30 |
-| Metrics Server | 0.6.0+ | 0.7.0+ | Не обязателен для CA, но необходим для HPA |
-| Cluster API (on-prem) | v1.5+ | v1.7+ | Для bare-metal через Metal3 / Cluster API Provider |
+> **Примечание:** Стратегия `price` (ценовая оптимизация) поддерживается исключительно для публичных облаков с интеграцией в их Billing API и не применима в on-premise инфраструктуре.
 
-> **Замечание о политике поддержки:** CA выполняет обратный бэкпорт (backport) баг-фиксов и фич облачных провайдеров только в три последние поддерживаемые ветки (N, N-1, N-2). Бэкпорт в более старые ветки возможен только по отдельному issue в upstream.
+---
+
+## Установка и конфигурация
+
+### Матрица совместимости версий
+
+Версия Cluster Autoscaler строго привязана к минорной версии Kubernetes, так как CA использует внутренние структуры данных и типы планировщика соответствующего релиза.
+
+| Версия Kubernetes | Рекомендуемая версия CA | Поддержка API и возможностей |
+| :--- | :--- | :--- |
+| **1.33.x** | `registry.k8s.io/autoscaling/cluster-autoscaler:v1.33.0` | DRA Structured Parameters, In-Place Pod Resize (Beta) |
+| **1.32.x** | `registry.k8s.io/autoscaling/cluster-autoscaler:v1.32.0` | Удаление старого DRA API, обязательный Structured Parameters |
+| **1.31.x** | `registry.k8s.io/autoscaling/cluster-autoscaler:v1.31.0` | Стабильный статус CAPI v1.7+, поддержка SchedulingGates |
+| **1.30.x** | `registry.k8s.io/autoscaling/cluster-autoscaler:v1.30.0` | ProvisioningRequest (Beta), базовая поддержка NodeSwap |
 
 ### Feature Gates
 
-| Feature Gate | Версия | Статус | Описание |
-| :--- | :--- | :--- | :--- |
-| `InPlacePodVerticalScaling` | 1.27 | Beta (1.33+) | Влияет на расчет `requests` при симуляции |
-| `DynamicResourceAllocation` | 1.27 | Beta (1.34+) | Симуляция DRA-ресурсов при scale-up |
-| `NodeSwap` | 1.30 | Alpha | Учитывает swap при расчете емкости узла |
-| `DRAAdminAccess` | 1.32 | Alpha | Доступ администратора кластера к `ResourceClaims` |
-| `DRAPartitionableDevices` | 1.33 | Alpha | Разделение аппаратного устройства между несколькими подами |
+| Feature Gate | Статус в 1.30–1.33 | Влияние на Cluster Autoscaler |
+| :--- | :--- | :--- |
+| `InPlacePodVerticalScaling` | Beta (1.33+) | Учитывает динамическое изменение `requests` контейнеров без перезапуска подов при симуляции емкости узлов. |
+| `DynamicResourceAllocation` | Beta (1.32+) | Симуляция структурированных параметров оборудования (DRA) при расчете Scale-Up. |
+| `NodeSwap` | Beta (1.30+) | Учитывает доступную подкачку памяти узла при проверке лимитов `requests.memory`. |
+| `SchedulingGates` | GA (1.30+) | Поды с активными scheduling gates блокируются и игнорируются CA до снятия гейта. |
 
-> **Важно (Kubernetes 1.32):** старая (alpha) реализация DRA, появившаяся в 1.26, **удалена** в 1.32. Остался только новый «Structured Parameters» подход (KEP-4381). Это изменение было сделано из-за несовместимости старого API с autoscaling (прозрачность доступности ресурсов была недостаточной для принятия решений планировщиком и контроллерами).
+### Минимальные RBAC-права (On-Premise / Cluster API)
 
-### Требования к окружению
-
-**Проверка перед развертыванием:**
-
-```bash
-# Проверка версии Kubernetes
-kubectl version --short
-# → Server Version: v1.30.x
-
-# Проверка наличия Node Groups (облачные провайдеры)
-kubectl get nodes -L topology.kubernetes.io/zone
-# → Узлы должны иметь метки групп (например, karpenter.sh/provisioner-name)
-
-# Проверка RBAC прав для CA
-kubectl auth can-i create deployments --namespace=kube-system
-# → yes
-
-# Проверка доступа к Cloud API (для on-prem — к Cluster API)
-kubectl get endpointslices.discovery.k8s.io
-# → Должен вернуть список или пустой результат без ошибок
-```
-
-### Интеграция с ResourceQuota
-
-CA не учитывает ResourceQuota при принятии решений о масштабировании. Если квота исчерпана:
-- Поды остаются в `Pending`
-- CA добавляет узлы, но поды не могут быть запланированы
-- Необходим мониторинг `resourcequota` и настройка [VPA в режиме Off](./vpa_detailed.md) для корректных `requests`
-
-### Минимальные RBAC-права для CA
-
-CA работает с большим набором API-объектов. Недостаточные права приводят к ошибкам типа `forbidden: User "system:serviceaccount:kube-system:cluster-autoscaler" cannot create/get resource ...`. Полный манифест ролей (используется и Helm-чартом, и Kustomize-установкой):
+Манифест создает сервисный аккаунт и кластерную роль, достаточную для взаимодействия с ядром Kubernetes, Storage API, Coordination API (Leases для HA) и объектами Cluster API (`MachineDeployment`, `MachineSet`, `Machine`).
 
 ```yaml
 apiVersion: v1
@@ -94,17 +150,21 @@ metadata:
   name: cluster-autoscaler
   namespace: kube-system
   labels:
-    k8s-addon: cluster-autoscaler.addons.k8s.io
-    k8s-app: cluster-autoscaler
+    app.kubernetes.io/name: cluster-autoscaler
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: cluster-autoscaler
 rules:
+  # Системные события и координация
   - apiGroups: [""]
     resources: ["events", "endpoints"]
     verbs: ["create", "patch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "get", "update"]
+  # Выселение подов и мониторинг
   - apiGroups: [""]
     resources: ["pods/eviction"]
     verbs: ["create"]
@@ -113,17 +173,15 @@ rules:
     verbs: ["update"]
   - apiGroups: [""]
     resources: ["endpointslices"]
-    verbs: ["get", "list"]
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["create", "get", "update"]
+    verbs: ["get", "list", "watch"]
+  # Управление состоянием узлов и подов
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["list", "watch", "get", "patch", "update"]
   - apiGroups: [""]
     resources: ["pods", "services", "replicationcontrollers", "persistentvolumeclaims", "persistentvolumes"]
-    verbs: ["get", "list", "watch", "update"]
-  - apiGroups: ["apps", "extensions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
     resources: ["daemonsets", "replicasets", "statefulsets"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["policy"]
@@ -132,24 +190,23 @@ rules:
   - apiGroups: ["storage.k8s.io"]
     resources: ["storageclasses", "csinodes", "csidrivers", "csistoragecapacities"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["batch", "extensions"]
+  - apiGroups: ["batch"]
     resources: ["jobs", "cronjobs"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["create"]
-  - apiGroups: ["resource.k8s.io"]
-    resources: ["resourceclaims", "resourceclaimtemplates", "resourceclaims/status"]
-    verbs: ["get", "list", "watch", "update", "patch"]
+  # Декларативное выделение емкости (ProvisioningRequest)
   - apiGroups: ["autoscaling.x-k8s.io"]
     resources: ["provisioningrequests", "provisioningrequests/status"]
     verbs: ["get", "list", "watch", "update", "patch"]
+  # Взаимодействие с инфраструктурным Cluster API (CAPI)
   - apiGroups: ["cluster.x-k8s.io"]
     resources: ["machinedeployments", "machinesets", "machines", "machinepools"]
-    verbs: ["get", "list", "watch", "create", "update", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "delete", "patch"]
+  - apiGroups: ["cluster.x-k8s.io"]
+    resources: ["machinedeployments/scale", "machinesets/scale"]
+    verbs: ["get", "update", "patch"]
   - apiGroups: ["cluster.x-k8s.io"]
     resources: ["machines/status", "machinesets/status", "machinedeployments/status"]
-    verbs: ["get", "update", "patch"]
+    verbs: ["get", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -165,261 +222,56 @@ subjects:
     namespace: kube-system
 ```
 
-> **Примечание:** для провайдеров на базе Cluster API (CAPI) CA требует прав на объекты `machines`, `machinesets`, `machinedeployments`. Для on-prem через Cluster API (vSphere, Metal3) эти разрешения обязательны. Для облачных провайдеров CA фактически не использует CAPI-объекты, но безопаснее оставить разрешения, чтобы избежать ошибок при миграции.
+### Параметры запуска (Флаги командной строки)
 
----
-
-## Основные концепции
-
-### Двухуровневая архитектура масштабирования
-
-В современной парадигме Kubernetes масштабирование разделено:
-1.  **Control Plane (API, etcd, Scheduler):** Управляется и масштабируется облачным провайдером (в Managed-решениях) или администратором платформы.
-2.  **Data Plane (Worker Nodes):** Масштабируется автоматически компонентами вроде **Cluster Autoscaler** или **[Karpenter](./Karpenter/overview.md)**.
-
-### Механизм масштабирования вверх (Scale-Up)
-
-Триггером для CA является **только** наличие подов в состоянии `Pending` с причиной `Unschedulable` (невозможность планирования из-за нехватки ресурсов или несовпадения `nodeSelector`/`affinity`).
-
-1.  **Сканирование:** CA опрашивает API-сервер (по умолчанию каждые 10 секунд).
-2.  **Симуляция:** CA прогоняет логику `kube-scheduler` (включая DRA и топологию), чтобы понять, поможет ли добавление узла конкретного типа разместить `Pending` поды.
-3.  **Запрос к Cloud API:** Если симуляция успешна, CA увеличивает `DesiredCapacity` в целевой Node Group.
-4.  **Ожидание:** Узел запускается, проходит процесс `bootstrap` (cloud-init), регистрируется в кластере и переходит в статус `Ready`. Весь процесс занимает **от 3 до 10 минут**.
-
-### Механизм масштабирования вниз (Scale-Down)
-
-CA анализирует узлы на предмет простоя. Узел считается кандидатом на удаление, если:
-1.  Утилизация узла (сумма `requests` всех подов / емкость узла) ниже порога `--scale-down-utilization-threshold` (по умолчанию 50%).
-2.  **Все** поды на узле (кроме DaemonSet) могут быть безопасно перемещены (Evicted) на другие узлы.
-3.  Узел находится в таком состоянии дольше `--scale-down-unneeded-time` (по умолчанию 10 минут).
-
-**Что блокирует выселение (и удаление узла):**
--   Наличие подов с аннотацией `"cluster-autoscaler.kubernetes.io/safe-to-evict": "false"`.
--   Наличие подов, использующих `emptyDir` или `hostPath` (если не задан флаг `--skip-nodes-with-local-storage=false`).
--   Блокировка со стороны [Pod Disruption Budget (PDB)](./pod_disruption_budget.md).
--   Системные поды `kube-system`, у которых нет PDB.
--   Узлы с аннотацией `cluster-autoscaler.kubernetes.io/scale-down-disabled: "true"`.
--   Поды, которые не могут быть перемещены из-за нарушения `PodAntiAffinity` или `TopologySpreadConstraints` на других узлах.
-
-### Важные флаги запуска CA
-
-| Флаг | По умолчанию | Описание |
+| Флаг | Значение по умолчанию | Описание и влияние на эксплуатацию |
 | :--- | :--- | :--- |
-| `--scan-interval` | 10s | Частота опроса API-сервера на наличие `Pending` подов |
-| `--scale-down-utilization-threshold` | 0.5 | Порог утилизации узла, ниже которого он считается кандидатом на удаление |
-| `--scale-down-gpu-utilization-threshold` | 0.5 | Отдельный порог утилизации GPU (если на узле есть GPU-ресурсы) |
-| `--scale-down-unneeded-time` | 10m | Время, в течение которого узел должен быть не нужен, прежде чем будет удален |
-| `--scale-down-delay-after-add` | 10m | Задержка перед началом scale-down после scale-up (предотвращает флаппинг) |
-| `--scale-down-delay-after-delete` | 0s | Задержка после удаления узла перед следующим scale-down в этой группе |
-| `--scale-down-non-empty-candidates-count` | 30 | Максимум непустых кандидатов, которые CA рассматривает за один цикл |
-| `--scale-down-enabled` | true | Полностью отключает логику scale-down (например, для тестовых сред) |
-| `--max-node-provision-time` | 15m | Максимальное время ожидания появления узла; после — ошибка |
-| `--max-graceful-termination-sec` | 600 (10m) | Максимальное время ожидания корректного завершения подов при drain |
-| `--max-nodes-total` | 0 (без лимита) | Глобальный лимит на количество узлов во всех группах |
-| `--min-node-count` | 0 | Минимальное суммарное количество узлов, которое CA поддерживает (ниже не опускается) |
-| `--max-nodes-per-nodegroup` | 0 | Лимит на размер отдельной Node Group |
-| `--expander` | random | Стратегия выбора группы узлов (см. раздел Expanders) |
-| `--balance-similar-node-groups` | false | Автоматический поиск похожих групп и балансировка |
-| `--balancing-ignore-label` | (пусто) | Метка, вариация которой по узлам не учитывается при балансировке |
-| `--balancing-max-violation-preference` | -1 | Допустимое «нарушение» баланса при выборе группы |
-| `--skip-nodes-with-system-pods` | true | Не удалять узлы с системными подами без PDB |
-| `--skip-nodes-with-local-storage` | true | Не удалять узлы с подами, использующими local storage |
-| `--expendable-pods-priority-cutoff` | -10 | Поды с приоритетом ≤ cutoff считаются «жертвуемыми» при scale-down (можно выселять без PDB) |
-| `--node-labels` | (пусто) | Список меток `key=value`, автоматически добавляемых на все созданные узлы |
-| `--node-taints` | (пусто) | Список taints, автоматически добавляемых на все созданные узлы (`key=value:NoSchedule`) |
-| `--node-template-configmap-path` | (пусто) | Путь к ConfigMap со сложным шаблоном меток/taints (альтернатива CLI-флагам) |
-| `--leader-elect` | true (при `--namespace`) | Использовать leader election (только один активный CA в `kube-system`) |
-| `--namespace` | default | Ограничить область наблюдения конкретным namespace (только при `--watched-namespace-label`) |
-| `--watched-namespace-label` | (пусто) | Наблюдать только за namespaces с данной меткой |
-| `--cloud-provider` | (auto) | Имя провайдера облака (`aws`, `gce`, `azure`, `clusterapi`, `kubemark`, и т.д.) |
-| `--cluster-name` | (пусто) | Имя кластера для провайдеров, где оно обязательно (AWS EKS, GKE) |
-| `--cluster-autoscaler-status-config-map` | (пусто) | Имя ConfigMap для публикации статуса CA (см. сценарий мониторинга) |
+| `--cloud-provider` | `clusterapi` | Инфраструктурный драйвер. Для On-Premise используется `clusterapi` (или `kubemark` для стендовых нагрузочных тестов). |
+| `--node-group-auto-discovery` | (пусто) | Формат автоматического обнаружения групп: `clusterapi:machinedeployments.cluster.x-k8s.io/asg-pool-` или по меткам. |
+| `--scan-interval` | `10s` | Частота опроса API-сервера и цикла симуляции планировщика. |
+| `--scale-down-enabled` | `true` | Глобальный переключатель механизма сжатия кластера. При авариях переводится в `false`. |
+| `--scale-down-utilization-threshold` | `0.5` | Порог относительной утилизации ресурсов узла (сумма `requests` / Allocatable). Ниже порога — кандидат на удаление. |
+| `--scale-down-unneeded-time` | `10m` | Время непрерывной недогрузки узла перед началом процедуры drain. |
+| `--scale-down-delay-after-add` | `10m` | Защитный период после добавления любого узла, в течение которого scale-down заморожен. |
+| `--scale-down-delay-after-delete` | `0s` | Пауза после удаления узла перед следующим удалением в той же группе. |
+| `--scale-down-delay-after-failure` | `3m` | Защитная пауза после сбоя попытки удаления узла. |
+| `--scale-down-non-empty-candidates-count` | `30` | Лимит непустых узлов, анализируемых на удаление за один цикл (снижает CPU overhead CA). |
+| `--max-node-provision-time` | `15m` | Максимальное время ожидания регистрации нового узла в кластере до фиксации ошибки. Для bare-metal рекомендуется увеличивать до `25m–30m`. |
+| `--max-graceful-termination-sec` | `600` | Максимальное время ожидания корректного завершения подов при drain перед принудительным выселением. |
+| `--max-nodes-total` | `0` (безлимитно) | Жесткий лимит на максимальное суммарное число рабочих узлов во всем кластере. |
+| `--min-node-count` | `0` | Минимальное число узлов, поддерживаемое CA. |
+| `--expander` | `random` | Стратегия выбора группы узлов при Scale-Up (`random`, `most-pods`, `least-waste`, `priority`). |
+| `--balance-similar-node-groups` | `false` | Автоматическая балансировка числа узлов между похожими группами (критично для распределения по стойкам/ЦОД). |
+| `--skip-nodes-with-system-pods` | `true` | Запрет удаления узлов, на которых запущены поды из `kube-system` без настроенного PDB. |
+| `--skip-nodes-with-local-storage` | `true` | Запрет удаления узлов с подами, монтирующими `emptyDir` или `hostPath`. В современных CSI рекомендуется выставлять в `false`. |
+| `--expendable-pods-priority-cutoff` | `-10` | Поды с приоритетом ниже или равным cutoff выселяются принудительно без соблюдения PDB. |
+| `--leader-elect` | `true` | Включение механизма Leader Election для обеспечения High Availability нескольких реплик CA. |
+| `--leader-elect-lease-duration` | `15s` | Длительность удержания лидерского Lease-объекта в `coordination.k8s.io`. |
+| `--leader-elect-renew-deadline` | `10s` | Максимальный интервал продления аренды лидером перед передачей роли. |
+| `--leader-elect-retry-period` | `2s` | Интервал повторных попыток перехвата лидерства резервными репликами. |
+| `--cluster-autoscaler-status-config-map` | `cluster-autoscaler-status` | Имя ConfigMap в namespace `kube-system` для записи сводного диагностического отчета. |
 
----
+### Развёртывание в On-Premise через Kustomize
 
-## Алгоритмы выбора группы узлов (Expanders)
+Промышленный манифест развертывания CA в HA-режиме (две реплики с Leader Election, строгий non-root SecurityContext, мониторинг через порт 8085).
 
-Если `Pending` под может быть размещен в нескольких разных Node Groups, CA использует `Expander` для выбора оптимальной:
-
-| Стратегия | Логика выбора | Сценарий применения |
-| :--- | :--- | :--- |
-| **`random`** | Выбирает случайную группу. (По умолчанию). | Однородные кластеры, где все группы равны. |
-| **`most-pods`** | Группа, на которую влезет максимум текущих `Pending` подов. | Массовые развертывания микросервисов. |
-| **`least-waste`** | Группа, после заполнения которой останется минимум свободного CPU/RAM. | Строгая экономия ресурсов. |
-| **`priority`** | На основе весов в ConfigMap. | Приоритетное использование Spot/Preemptible инстансов. |
-| **`price`** | Минимальная стоимость (поддерживается AWS и GCP). | Динамическая оптимизация биллинга. |
-
----
-
-## Практические сценарии
-
-### Сценарий 1: Настройка избыточного резервирования (Over-provisioning)
-
-Для обхода задержки в 3–10 минут при старте узлов используется паттерн «Pause Pods». Это позволяет иметь "горячий резерв" мощностей.
-
-1. Создаем PriorityClass с низким приоритетом:
 ```yaml
-apiVersion: scheduling.k8s.io/v1
-kind: PriorityClass
-metadata:
-  name: overprovisioning
-value: -10
-globalDefault: false
-description: "Priority class for overprovisioning pause pods."
-```
-
-2. Разворачиваем "пустые" поды:
-```yaml
+# deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: overprovisioning
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: cluster-autoscaler
 spec:
   replicas: 2
-  selector:
-    matchLabels:
-      app: overprovisioning
-  template:
-    metadata:
-      labels:
-        app: overprovisioning
-    spec:
-      priorityClassName: overprovisioning
-      containers:
-        - name: pause
-          image: registry.k8s.io/pause:3.9
-          resources:
-            requests:
-              cpu: "1"
-              memory: "2Gi"
-```
-*Механика:* Pause-поды занимают узел. Когда приходит реальный под, он вытесняет (preempt) pause-под. Pause-под уходит в `Pending`, триггеря CA на создание нового узла в фоновом режиме, пока реальный под уже работает.
-
-### Сценарий 2: Приоритетный выбор Spot-инстансов (Priority Expander)
-
-Требует запуска CA с флагом `--expander=priority`.
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: cluster-autoscaler-priority-expander
-  namespace: kube-system
-data:
-  priorities: |-
-    100:
-      - .*spot-group.*    # Наивысший приоритет
-    50:
-      - .*on-demand-group.* # Запасной вариант, если Spot недоступны
-```
-
-### Сценарий 3: Защита критических узлов от Scale-Down
-
-```yaml
-apiVersion: v1
-kind: Node
-metadata:
-  name: db-node-01
-  annotations:
-    # Узел никогда не будет удален, даже если утилизация упадет до 0%
-    cluster-autoscaler.kubernetes.io/scale-down-disabled: "true"
-```
-
-### Сценарий 4: Корректное завершение работы при Scale-Down (Graceful Shutdown)
-
-Для обеспечения корректного завершения приложений при удалении узлов необходимо настроить Graceful Shutdown и PDB.
-
-1. Настройте `terminationGracePeriodSeconds` в спецификации пода:
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: worker-app
-spec:
-  template:
-    spec:
-      terminationGracePeriodSeconds: 60  # Время на завершение работы
-      containers:
-        - name: worker
-          image: my-worker:latest
-          lifecycle:
-            preStop:
-              exec:
-                command: ["/bin/sh", "-c", "sleep 10"]  # Задержка перед завершением
-```
-
-2. Настройте приложение для обработки `SIGTERM`:
-```go
-// Пример на Go
-sigChan := make(chan os.Signal, 1)
-signal.Notify(sigChan, syscall.SIGTERM)
-go func() {
-    <-sigChan
-    log.Println("Received SIGTERM, finishing current work...")
-    // Завершение текущих задач, закрытие соединений
-    time.Sleep(5 * time.Second)
-    os.Exit(0)
-}()
-```
-
-3. Используйте PDB для гарантии доступности:
-```yaml
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: worker-app-pdb
-spec:
-  minAvailable: 1  # Минимум 1 реплика всегда доступна
-  selector:
-    matchLabels:
-      app: worker-app
-```
-
-4. Проверьте настройку:
-```bash
-# Симуляция drain (безопасное выселение)
-kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data --dry-run=client
-
-# Проверка, что поды корректно завершают работу
-kubectl logs -f <pod-name> | grep -i "sigterm\|graceful\|shutdown"
-```
-
-### Сценарий 5: Развёртывание через Kustomize (без Helm)
-
-В средах, где Helm запрещён политикой безопасности (например, требуется reproducible build через GitOps на Argo CD/Flux), CA разворачивается чистыми манифестами. Преимущества: каждая ревизия — это `git`-дифф, нет `tiller`, минимизируется TCB.
-
-```bash
-# Структура репозитория
-mkdir -p overlays/production/base/cluster-autoscaler
-```
-
-```yaml
-# base/cluster-autoscaler/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: cluster-autoscaler
-  namespace: kube-system
-  labels:
-    app.kubernetes.io/name: cluster-autoscaler
-```
-
-```yaml
-# base/cluster-autoscaler/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: cluster-autoscaler
-  namespace: kube-system
-  labels:
-    app.kubernetes.io/name: cluster-autoscaler
-spec:
-  replicas: 1
-  revisionHistoryLimit: 2
+  revisionHistoryLimit: 3
   selector:
     matchLabels:
       app.kubernetes.io/name: cluster-autoscaler
   strategy:
+    type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
       maxUnavailable: 0
@@ -427,12 +279,18 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: cluster-autoscaler
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8085"
+        prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: cluster-autoscaler
       priorityClassName: system-cluster-critical
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -444,17 +302,21 @@ spec:
             - --v=4
             - --stderrthreshold=info
             - --cloud-provider=clusterapi
-            - --cluster-name=prod-eu-1
-            - --node-group-auto-discovery=clusterapi:machinedeployments.cluster.x-k8s.io/asg-
-            - --balance-similar-node-groups=true
+            - --node-group-auto-discovery=clusterapi:machinedeployments.cluster.x-k8s.io/pool-
             - --expander=least-waste
+            - --balance-similar-node-groups=true
             - --skip-nodes-with-local-storage=false
+            - --scale-down-utilization-threshold=0.5
+            - --scale-down-unneeded-time=10m
+            - --scale-down-delay-after-add=10m
+            - --max-node-provision-time=20m
             - --leader-elect=true
             - --leader-elect-lease-duration=15s
             - --leader-elect-renew-deadline=10s
-            - --leader-elect-retry-period=5s
-            - --scale-down-delay-after-add=10m
-            - --scale-down-unneeded-time=10m
+            - --leader-elect-retry-period=2s
+            - --cluster-autoscaler-status-config-map=cluster-autoscaler-status
+            - --address=0.0.0.0
+            - --port=8085
           resources:
             requests:
               cpu: 100m
@@ -467,8 +329,8 @@ spec:
               path: /health-check
               port: 8085
             initialDelaySeconds: 30
-            periodSeconds: 30
-            timeoutSeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             httpGet:
@@ -476,6 +338,8 @@ spec:
               port: 8085
             initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 2
           ports:
             - name: metrics
               containerPort: 8085
@@ -487,801 +351,524 @@ spec:
               drop: ["ALL"]
 ```
 
+---
+
+## Практические сценарии
+
+### Сценарий 1: Избыточное резервирование (Over-provisioning) через Pause Pods
+
+В локальных дата-центрах запуск физических или виртуальных узлов занимает от нескольких минут до получаса. Для обеспечения мгновенного выделения ресурсов критическим сервисам применяется паттерн с поглощающими подами (`Pause Pods`) и отрицательным приоритетом.
+
+1. **Создание низкоприоритетного класса планирования:**
 ```yaml
-# base/cluster-autoscaler/service.yaml
-apiVersion: v1
-kind: Service
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
 metadata:
-  name: cluster-autoscaler
-  namespace: kube-system
-  labels:
-    app.kubernetes.io/name: cluster-autoscaler
-spec:
-  type: ClusterIP
-  clusterIP: None
-  selector:
-    app.kubernetes.io/name: cluster-autoscaler
-  ports:
-    - name: metrics
-      port: 8085
-      targetPort: 8085
+  name: overprovisioning-reserve
+value: -10
+globalDefault: false
+description: "Приоритет резервных pause-подов для горячего запаса узлов"
 ```
 
+2. **Развертывание резервирующего Deployment:**
 ```yaml
-# base/cluster-autoscaler/servicemonitor.yaml
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: cluster-autoscaler
+  name: cluster-overprovisioning
   namespace: kube-system
-  labels:
-    app.kubernetes.io/name: cluster-autoscaler
 spec:
+  replicas: 4
   selector:
     matchLabels:
-      app.kubernetes.io/name: cluster-autoscaler
-  endpoints:
-    - port: metrics
-      path: /metrics
-      interval: 30s
-      scrapeTimeout: 10s
+      app: cluster-overprovisioning
+  template:
+    metadata:
+      labels:
+        app: cluster-overprovisioning
+    spec:
+      priorityClassName: overprovisioning-reserve
+      terminationGracePeriodSeconds: 0
+      containers:
+        - name: reserve
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: "2"
+              memory: "8Gi"
+            limits:
+              cpu: "2"
+              memory: "8Gi"
 ```
 
-```yaml
-# base/cluster-autoscaler/kustomization.yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - serviceaccount.yaml
-  - clusterrole.yaml
-  - clusterrolebinding.yaml
-  - deployment.yaml
-  - service.yaml
-  - servicemonitor.yaml
-images:
-  - name: registry.k8s.io/autoscaling/cluster-autoscaler
-    newTag: v1.33.0
-commonLabels:
-  app.kubernetes.io/name: cluster-autoscaler
-```
+*Механика работы:* Резервные поды суммарно занимают 8 CPU и 32Gi RAM на рабочих узлах. Когда в кластер поступает рабочий под с нормальным приоритетом (по умолчанию 0 или выше), `kube-scheduler` выполняет вытеснение (Preemption) pause-пода. Рабочий под запускается **мгновенно** на освободившемся месте, а вытесненный pause-под переходит в статус `Pending`, запуская фоновый Scale-Up нового узла через CA.
 
-```yaml
-# overlays/production/kustomization.yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-namespace: kube-system
-resources:
-  - ../../base/cluster-autoscaler
-patches:
-  - target:
-      kind: Deployment
-      name: cluster-autoscaler
-    patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/requests/cpu
-        value: "200m"
-```
+### Сценарий 2: Приоритетный выбор пулов серверов (Priority Expander)
 
-> **Совет:** рекомпилируйте манифесты через `kustomize build overlays/production | kubectl diff -f -` перед `kubectl apply`, чтобы отследить drift и непреднамеренные изменения от rolling-updates.
+При наличии разных пулов инфраструктуры (например, высокопроизводительные физические серверы с быстрыми CPU, стандартные виртуальные машины и холодный резервный кластер гипервизоров) CA запускается с флагом `--expander=priority`.
 
-### Сценарий 6: ProvisioningRequest — запрос емкости до появления подов (Batch/ML)
-
-ProvisioningRequest (CRD, группа `autoscaling.x-k8s.io`) позволяет декларативно попросить CA заранее подготовить пул узлов под пакетное задание. Это решает классическую проблему: batch-job не может стартовать, пока CA не увидит `Pending` поды, но создание узлов занимает минуты, что для DAG-планировщиков (Airflow, Argo Workflows) недопустимо.
-
-```yaml
-apiVersion: autoscaling.x-k8s.io/v1
-kind: ProvisioningRequest
-metadata:
-  name: batch-2026-08-31-nightly
-  namespace: ml-team
-spec:
-  # Владелец, на котором CA будет основывать решения о scale-down
-  # (если владелец удалён, PR очищается)
-  provisioningClassName: "best-effort-atomic-scale-up.autoscaling.x-k8s.io"
-  # Время жизни — если за это время поды не созданы, ресурс уходит
-  validUntilSeconds: 1800
-  podSets:
-    - name: trainer
-      # Целевое количество реплик
-      count: 4
-      # Контейнеры, описывающие ресурсы и политики (без запуска)
-      podTemplateRef:
-        apiVersion: v1
-        kind: PodTemplate
-        name: trainer-template
-      # Если потребуются дополнительные ресурсы — запас
-      resources:
-        requests:
-          cpu: "64"
-          memory: "256Gi"
-          nvidia.com/gpu: "1"
-```
-
+1. **Конфигурация ConfigMap с весами пулов:**
 ```yaml
 apiVersion: v1
-kind: PodTemplate
+kind: ConfigMap
 metadata:
-  name: trainer-template
-  namespace: ml-team
-template:
-  spec:
-    priorityClassName: batch-train
-    nodeSelector:
-      workload: ml-training
-    tolerations:
-      - key: nvidia.com/gpu
-        operator: Exists
-        effect: NoSchedule
-    containers:
-      - name: trainer
-        image: my-registry/trainer:1.4
-        resources:
-          requests:
-            cpu: "16"
-            memory: "64Gi"
-            nvidia.com/gpu: "1"
-          limits:
-            nvidia.com/gpu: "1"
-        # Настоящий entrypoint не запускается, PR не создаёт поды
-        command: ["sleep", "infinity"]
-    restartPolicy: Never
+  name: cluster-autoscaler-priority-expander
+  namespace: kube-system
+data:
+  priorities: |-
+    100:
+      - .*pool-highperf-baremetal.*   # Высший приоритет: первичное заполнение
+    50:
+      - .*pool-standard-vms.*         # Средний приоритет: стандартная виртуализация
+    10:
+      - .*pool-cold-standby.*         # Резервный пул при исчерпании основных
 ```
 
-**Проверка состояния:**
-
+2. **Проверка компиляции регулярных выражений:**
 ```bash
-# CA константно обновляет status PR
-kubectl get provisioningrequest -n ml-team batch-2026-08-31-nightly -o yaml
-# → status.conditions[].type=Provisioned|CapacityAvailable
-# → status.conditions[].status=True/False
-# → status.conditions[].reason содержит подробности
-
-# Пример успешного состояния:
-# conditions:
-#   - type: Provisioned
-#     status: "True"
-#     reason: "ScaleUpSucceeded"
-#   - type: CapacityAvailable
-#     status: "True"
+kubectl get configmap cluster-autoscaler-priority-expander -n kube-system -o jsonpath='{.data.priorities}'
+# → 100:
+# →   - .*pool-highperf-baremetal.*
+# → 50:
+# →   - .*pool-standard-vms.*
+# → 10:
+# →   - .*pool-cold-standby.*
 ```
 
-**Классы ProvisioningRequest (`provisioningClassName`):**
+### Сценарий 3: Защита критических узлов и подов от Scale-Down
 
-| Класс | Семантика | Когда использовать |
-| :--- | :--- | :--- |
-| `best-effort-atomic-scale-up.autoscaling.x-k8s.io` | Атомарный (все или ничего) best-effort. Если не удалось — частично созданные узлы удаляются, через `ValidUntilSeconds` повторяется попытка. | ML-обучение, пакетные отчёты, где критично стартовать одновременно |
-| `check-capacity.autoscaling.x-k8s.io` | Только проверяет наличие емкости, не создаёт узлы. | Планировщики (Airflow), желающие «забронировать» ресурс заранее |
+Для узлов с базами данных, брокерами сообщений или узлов с долгими сессиями необходимо гарантировать защиту от выселения при сжатии кластера.
 
-> **Edge case:** узлы, созданные по `best-effort-atomic-scale-up`, подчиняются обычной scale-down-логике. Если поды не были созданы в течение `--scale-down-unneeded-time`, узлы уйдут. Поэтому `validUntilSeconds` подбирается исходя из реальной длительности подготовки воркеров.
+1. **Защита конкретного узла через аннотацию:**
+```bash
+kubectl annotate node worker-db-01.infra.local \
+  cluster-autoscaler.kubernetes.io/scale-down-disabled="true" --overwrite
+# → node/worker-db-01.infra.local annotated
+```
 
-### Сценарий 7: StatefulSet + `WaitForFirstConsumer` + CA
+2. **Защита пода от выселения в манифесте приложения:**
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse-keeper
+  namespace: infra-storage
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: clickhouse-keeper
+  template:
+    metadata:
+      labels:
+        app: clickhouse-keeper
+      annotations:
+        # CA откажется перемещать данный под при поиске кандидатов на scale-down
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+    spec:
+      containers:
+        - name: keeper
+          image: clickhouse/clickhouse-keeper:24.3
+          resources:
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+```
 
-`StorageClass` с `volumeBindingMode: WaitForFirstConsumer` откладывает создание PersistentVolume до момента, когда планировщик выберет узел. Это критично для динамических провижионеров (Ceph RBD, Cinder, iSCSI). Ошибка новичков: `StorageClass` с immediate binding даёт PV в «неправильной» зоне, и под зависает в `Pending`.
+### Сценарий 4: Корректное завершение работы (Graceful Shutdown) и PDB при дренаже
 
+При Scale-Down CA инициирует выселение подов. Приложения должны корректно завершать активные транзакции, а PDB обязан гарантировать непрерывность кворума.
+
+1. **Настройка PodDisruptionBudget:**
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: order-service-pdb
+  namespace: production
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: order-service
+```
+
+2. **Настройка жизненного цикла пода в Deployment:**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: production
+spec:
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: app
+          image: internal-registry.local/apps/order-service:v2.1
+          lifecycle:
+            preStop:
+              exec:
+                # Пауза для исключения endpoint из балансировщика Ingress до снятия приложения
+                command: ["/bin/sh", "-c", "sleep 10"]
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+```
+
+3. **Проверка эмуляции безопасного выселения перед регламентными работами:**
+```bash
+kubectl drain worker-04.infra.local --ignore-daemonsets --delete-emptydir-data --dry-run=client
+# → Evacuating node worker-04.infra.local (dry-run)
+# → evicting pod production/order-service-789bf-qwert
+# → node/worker-04.infra.local drained (dry-run)
+```
+
+### Сценарий 5: StatefulSet с `volumeBindingMode: WaitForFirstConsumer` и Ceph RBD / CSI
+
+При использовании локального распределенного блочного хранилища (Ceph RBD / Rook) связывание тома PV должно откладываться до выбора узла планировщиком, иначе под окажется привязан к топологической зоне, где нет свободных вычислительных узлов.
+
+1. **StorageClass с отложенным связыванием:**
 ```yaml
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: ceph-rbd-wffc
 provisioner: rbd.csi.ceph.com
-parameters:
-  clusterID: <ceph-cluster-id>
-  pool: kubernetes
-  csi.storage.k8s.io/provisioner-secret-name: ceph-secret
-  csi.storage.k8s.io/provisioner-secret-namespace: kube-system
-  csi.storage.k8s.io/node-publish-secret-name: ceph-secret
-  csi.storage.k8s.io/node-publish-secret-namespace: kube-system
+volumeBindingMode: WaitForFirstConsumer
 reclaimPolicy: Delete
-volumeBindingMode: WaitForFirstConsumer   # ← ключ
 allowVolumeExpansion: true
+parameters:
+  clusterID: 4a259c0e-cfa1-4be6-976d-123456789abc
+  pool: kubernetes-pool
+  imageFeatures: layering
+  csi.storage.k8s.io/provisioner-secret-name: csi-rbd-secret
+  csi.storage.k8s.io/provisioner-secret-namespace: ceph-system
+  csi.storage.k8s.io/node-publish-secret-name: csi-rbd-secret
+  csi.storage.k8s.io/node-publish-secret-namespace: ceph-system
 ```
 
+2. **Взаимодействие CA и StatefulSet:**
+- При масштабировании StatefulSet под #3 переходит в `Pending`.
+- Благодаря `volumeBindingMode: WaitForFirstConsumer` PVC не привязывается к случайному узлу.
+- CA в цикле симуляции видит требование тома, симулирует создание узла в подходящей стойке/пуле оборудования, добавляет узел через `MachineDeployment`.
+- После регистрации узла `kube-scheduler` назначает под на новый сервер, и CSI-драйвер монтирует том непосредственно к нему.
+
+### Сценарий 6: ProvisioningRequest для пакетных вычислений и ETL-задач
+
+Для тяжелых распределенных задач обработки данных (ETL, пакетная обработка очередей) недопустим старт вычислений по частям. `ProvisioningRequest` позволяет подготовить группу узлов атомарно до фактического запуска контейнеров.
+
 ```yaml
-apiVersion: apps/v1
-kind: StatefulSet
+apiVersion: autoscaling.x-k8s.io/v1
+kind: ProvisioningRequest
 metadata:
-  name: postgres
+  name: nightly-etl-processing
+  namespace: data-platform
 spec:
-  serviceName: postgres
-  replicas: 3
-  selector:
-    matchLabels:
-      app: postgres
-  template:
-    metadata:
-      labels:
-        app: postgres
-    spec:
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchLabels:
-                  app: postgres
-              topologyKey: kubernetes.io/hostname
-      containers:
-        - name: postgres
-          image: postgres:16
-          resources:
-            requests:
-              cpu: "2"
-              memory: "8Gi"
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/postgresql/data
-  volumeClaimTemplates:
-    - metadata:
-        name: data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        storageClassName: ceph-rbd-wffc
+  provisioningClassName: "best-effort-atomic-scale-up.autoscaling.x-k8s.io"
+  validUntilSeconds: 1800
+  podSets:
+    - name: workers
+      count: 8
+      podTemplateRef:
+        apiVersion: v1
+        kind: PodTemplate
+        name: etl-worker-template
+      resources:
+        requests:
+          cpu: "8"
+          memory: "32Gi"
+---
+apiVersion: v1
+kind: PodTemplate
+metadata:
+  name: etl-worker-template
+  namespace: data-platform
+template:
+  spec:
+    nodeSelector:
+      hardware-tier: high-memory
+    containers:
+      - name: etl-runner
+        image: internal-registry.local/data/etl-runner:v3.0
         resources:
           requests:
-            storage: 100Gi
+            cpu: "8"
+            memory: "32Gi"
+        command: ["/bin/sh", "-c", "sleep infinity"]
+    restartPolicy: Never
 ```
 
-**Как CA взаимодействует с этим сценарием:**
+**Проверка статуса готовности пула узлов:**
+```bash
+kubectl get provisioningrequest nightly-etl-processing -n data-platform -o yaml
+# → status:
+# →   conditions:
+# →   - type: Provisioned
+# →     status: "True"
+# →     reason: "ScaleUpSucceeded"
+# →   - type: CapacityAvailable
+# →     status: "True"
+```
 
-1. Scheduler выбирает узел для первого пода StatefulSet (например, существующий).
-2. PV создаётся на этой зоне (WaitForFirstConsumer срабатывает).
-3. Когда под реплики #2 не помещается на существующих узлах, он уходит в `Pending`.
-4. CA добавляет новый узел **в ту же зону**, что существующие поды, чтобы удовлетворить `topologySpreadConstraints` и `podAntiAffinity`.
-5. PV для второго пода создаётся на новом узле, но всё ещё в той же зоне.
+### Сценарий 7: Шардинг Cluster Autoscaler в крупных On-Premise кластерах
 
-> **Важно для администратора:** проверьте, что все зоны доступности покрыты `MachineDeployment`/`ASG` с достаточным `maxSize`. CA балансирует между зонами только при `--balance-similar-node-groups=true` (см. таблицу флагов).
-
-### Сценарий 8: Горизонтальное масштабирование самого CA (Sharding)
-
-В больших кластерах (>1000 узлов) CA становится узким местом: он сериализует обработку `Pending`-подов и scale-down операций. Решение — запуск нескольких экземпляров CA, каждый из которых «отвечает» за свой шард.
-
-**Стратегия шардинга через метки нод:**
+В кластерах масштаба >500–1000 рабочих узлов единый инстанс CA испытывает задержки из-за сериализации симуляций планировщика. Решением является разделение (шардинг) инстансов CA по доменам отказа (стойкам, серверам дата-центра) или по namespace.
 
 ```yaml
-# Deployment cluster-autoscaler-east
-spec:
-  replicas: 1
-  template:
-    spec:
-      containers:
-        - name: cluster-autoscaler
-          args:
-            - --cloud-provider=aws
-            - --cluster-name=prod
-            # Только узлы в зонах us-east-*
-            - --node-labels=shard=east
-            - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled
-```
-
-```yaml
-# Deployment cluster-autoscaler-west (отдельный Deployment)
-spec:
-  replicas: 1
-  template:
-    spec:
-      containers:
-        - name: cluster-autoscaler
-          args:
-            - --cloud-provider=aws
-            - --cluster-name=prod
-            - --node-labels=shard=west
-            - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled
-```
-
-**Стратегия через `--watched-namespace-label` (multi-tenant):**
-
-```yaml
-# Отдельный CA на команду platform-team
-spec:
-  template:
-    spec:
-      containers:
-        - args:
-            - --watched-namespace-label=team=platform
-```
-
-> **Подробнее о стратегиях шардинга на уровне кластеров и самих узлов:** см. [Sharding](./sharding.md). В контексте CA шардинг решает проблему задержек на больших флотках (10k+ подов), но требует `leader-elect=false` (каждый инстанс независим) и тщательного разделения групп узлов.
-
-### Сценарий 9: Миграция с Cluster Autoscaler на Karpenter
-
-Karpenter обеспечивает существенно более быстрый JIT-скейлинг и лучший bin-packing, но миграция — это не просто «выключить CA, включить Karpenter». Ниже — проверенный план.
-
-**Фаза 1: Подготовка (0–2 недели)**
-
-1. Установите Karpenter (см. [Karpenter Installation](./Karpenter/installation.md)).
-2. Подготовьте `NodePool`/`EC2NodeClass`/`AKSNodeClass` со всеми метками и taints, которые раньше задавались в `Node Group` через `--node-labels`/`--node-taints`.
-3. Синхронизируйте subnet/security group/AMI параметры.
-4. **Не отключайте CA** на этом этапе.
-
-**Фаза 2: Двойное управление (2–4 недели)**
-
-1. В Karpenter `NodePool` задайте `weight: 10`, в существующих `MachineDeployment` — высокую «стоимость» через instance type (CA выберет их последними).
-2. Новые поды будут создаваться Karpenter-узлами. Старые — продолжать работать на CA-узлах.
-3. Проверьте `kubectl get nodes -L karpenter.sh/registered,cluster-autoscaler=true` — оба набора должны сосуществовать.
-4. Проверьте PDB: Karpenter учитывает PDB автоматически, но требует, чтобы все поды имели корректный `pdb`.
-
-**Фаза 3: Перевод существующих нагрузок**
-
-```bash
-# Переведите StatefulSet на Karpenter через cordon
-kubectl cordon -l cluster-autoscaler=true
-# Дождитесь, пока Karpenter создаст замену
-kubectl drain -l cluster-autoscaler=true --ignore-daemonsets --delete-emptydir-data
-# Проверьте, что все ноды переехали
-kubectl get nodes -l cluster-autoscaler=true
-# → пустой список
-```
-
-**Фаза 4: Демонтаж CA**
-
-```bash
-helm uninstall cluster-autoscaler -n kube-system
-kubectl delete clusterrolebinding,clusterrole,serviceaccount -l app.kubernetes.io/name=cluster-autoscaler -n kube-system
-```
-
-> **Подводный камень:** ProvisioningRequest (`autoscaling.x-k8s.io/v1`) обрабатываются и CA, и Karpenter одновременно. На этапе двойного управления Karpenter может «перехватить» PR. Рекомендуется временно исключить Karpenter из PR-обработки через аннотации ресурса или флаг `consolidationPolicy`.
-
----
-
-## Особенности эксплуатации и On-Premise
-
-### Развёртывание на Bare-metal (On-Premise)
-
-В локальных дата-центрах CA сталкивается с фундаментальной проблемой: отсутствием безлимитного пула машин и стандартизированного API. 
-
-*   **Интеграция:** Требует обвязки в виде **Metal3** (Bare Metal Operator), **MAAS** или кластерного API (Cluster API) для vSphere.
-*   **Скорость:** Процесс PXE-загрузки, настройки BIOS и регистрации физического узла может занимать от 15 до 40 минут.
-*   **Смысл применения:** В On-Premise "железо" уже куплено. Scale-down не экономит деньги напрямую (только электричество). CA здесь используется скорее для перераспределения серверов между разными кластерами, а не для классической эластичности.
-
-### Специфика провайдеров (Out-of-Tree)
-
-С версии Kubernetes 1.30 все облачные провайдеры (AWS, Azure, GCP) работают через механизм **Cloud Controller Manager (CCM)** (out-of-tree). CA должен запускаться с соответствующим провайдером облака и иметь права (IAM Roles) на изменение групп узлов.
-
-### Типичные ошибки и их решения
-
-#### Ошибка 1: Поды в `Pending`, CA не добавляет узлы
-
-**Причины:**
-- Лимит `max-nodes-total` достигнут
-- Нет подходящей Node Group (не совпадают `nodeSelector`, `affinity`, `taints`)
-- Недостаточно IAM-прав для изменения Node Group
-- Узлы добавляются, но не успевают запуститься (превышен `--max-node-provision-time`)
-
-**Диагностика:**
-```bash
-# Проверка логов CA
-kubectl logs -n kube-system -l app=cluster-autoscaler | grep -i "noExpansion\|maxNodes\|limit"
-
-# Проверка статуса узлов
-kubectl get nodes --field-selector=status!=Ready
-
-# Проверка Pending подов и причин
-kubectl get pods --all-namespaces --field-selector=status.phase=Pending -o wide
-kubectl describe pod <pod-name> | grep -A 10 "Events:"
-```
-
-**Решение:**
-```bash
-# Увеличение лимита (для Helm-установки)
-helm upgrade cluster-autoscaler cluster-autoscaler/cluster-autoscaler \
-  --set "autoDiscovery.clusterName=<cluster-name>" \
-  --set "extraArgs.max-nodes-total=100"
-
-# Или создание новой Node Group с подходящими метками
-kubectl label node <node-name> node-type=high-memory
-```
-
-#### Ошибка 2: Узлы не удаляются при низкой утилизации
-
-**Причины:**
-- PDB блокирует выселение подов
-- Поды с `safe-to-evict: "false"`
-- Узел находится в cooldown-периоде (`--scale-down-delay-after-add`)
-- Системные поды без PDB на узле
-
-**Диагностика:**
-```bash
-# Проверка unremovable-узлов в логах
-kubectl logs -n kube-system -l app=cluster-autoscaler | grep -i "unremovable"
-
-# Проверка PDB, блокирующих выселение
-kubectl get pdb --all-namespaces -o yaml | grep -A 5 "allowedDisruptions: 0"
-
-# Проверка аннотаций узлов
-kubectl get nodes -o json | jq '.items[] | {name: .metadata.name, disabled: .metadata.annotations["cluster-autoscaler.kubernetes.io/scale-down-disabled"]}'
-```
-
-**Решение:**
-```bash
-# Настройка PDB с разрешением на 1 disruption
-apiVersion: policy/v1
-kind: PodDisruptionBudget
+# Шард 1: Контролирует пул узлов в стойках первой серверной группы
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: my-app-pdb
+  name: cluster-autoscaler-rack-a
+  namespace: kube-system
 spec:
-  minAvailable: 90%
-  # или maxUnavailable: 1
-  selector:
-    matchLabels:
-      app: my-app
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: cluster-autoscaler
+          image: registry.k8s.io/autoscaling/cluster-autoscaler:v1.33.0
+          command:
+            - ./cluster-autoscaler
+            - --cloud-provider=clusterapi
+            - --node-group-auto-discovery=clusterapi:machinedeployments.cluster.x-k8s.io/rack-a-
+            - --leader-elect=false
+            - --port=8085
 ```
-
-#### Ошибка 3: Флаппинг (цикличное добавление/удаление узлов)
-
-**Причины:**
-- Слишком маленький `--scale-down-delay-after-add`
-- Короткий `--scale-down-unneeded-time`
-- Высокая вариативность утилизации (HPA и CA работают несинхронно)
-
-**Решение:**
-```bash
-# Увеличение задержек для стабильности
---scale-down-delay-after-add=15m
---scale-down-unneeded-time=15m
-
-# Использование stabilizationWindowSeconds в HPA для синхронизации
-```
-
-### Edge Cases и известные ограничения
-
-1. **DaemonSet и Scale-Down:** CA не удаляет узлы, если на них есть DaemonSet-поды, которые нельзя переместить (хотя формально DaemonSet исключается из расчета, некоторые конфигурации могут блокировать удаление).
-
-2. **Pod Priority и Preemption:** При включенном `PodPriority` CA может удалять узлы с низкоприоритетными подами, если есть `Pending` поды с высоким приоритетом и настроен `preemptionPolicy: PreemptLowerPriority`.
-
-3. **Topology Manager и DRA:** С Kubernetes 1.30+ CA учитывает `TopologyManagerPolicy` при симуляции. Неправильная настройка может привести к тому, что CA будет создавать узлы, которые не смогут удовлетворить `restricted` или `single-numa-node` политику.
-
-4. **ProvisioningRequest и `WaitForFirstConsumer`:** Если в кластере действует `StorageClass` с `volumeBindingMode: WaitForFirstConsumer`, CA не создаст новый узел заранее по `ProvisioningRequest` в режиме `best-effort-atomic-scale-up`, пока планировщик не назначит первый под. Это вынуждает согласовывать топологию узлов с зональными ограничениями StorageClass (см. [Сценарий 7](#сценарий-7-statefulset--waitforfirstconsumer--ca)).
-
-5. **SchedulingGates:** Поды с заданными `spec.schedulingGates` остаются в `Pending` без возможности планирования. CA **не учитывает** их как триггеры для scale-up, поэтому гейты должны сниматься либо человеком, либо сторонним контроллером до того, как потребуется емкость.
-
-5. **Multi-Zone:** CA автоматически балансирует узлы по зонам, если настроен `--balance-similar-node-groups`. Без этого флага может возникнуть ситуация, когда узлы добавляются только в одну зону.
-
-6. **Windows Nodes:** CA поддерживает Windows-узлы, но требует отдельной Node Group и корректной настройки `--node-group-auto-discovery` для смешанных кластеров.
-
----
-
-## Мониторинг и диагностика
-
-CA экспортирует метрики в формате Prometheus. Их мониторинг критичен для понимания причин, по которым узлы не добавляются или не удаляются.
-
-| Метрика | Описание | Траблшутинг |
-| :--- | :--- | :--- |
-| `cluster_autoscaler_nodes_count` | Текущее количество узлов в разрезе групп. | Контроль достижения `max-nodes-total`. |
-| `cluster_autoscaler_unschedulable_pods_count` | Поды, которые CA **не может** разместить. | Если > 0, значит CA уперся в лимиты, не нашел подходящей группы или нет прав IAM. |
-| `cluster_autoscaler_scale_down_in_cooldown` | Находится ли группа в "заморозке" (cooldown) после масштабирования. | Объясняет, почему узлы не удаляются сразу. |
-| `cluster_autoscaler_evicted_pods_total` | Количество подов, убитых при scale-down. | Анализ влияния на доступность приложения. |
-| `cluster_autoscaler_scaled_up_nodes_total` | Счетчик успешных scale-up операций. | Мониторинг частоты масштабирования. |
-| `cluster_autoscaler_failed_scale_ups_total` | Неудачные попытки scale-up. | Критический индикатор проблем с лимитами или правами. |
-| `cluster_autoscaler_unremovable_nodes_count` | Узлы, которые CA не может удалить. | Выявление блокировок PDB или аннотациями. |
-| `cluster_autoscaler_last_activity` | Unix-timestamp последнего полезного действия (scale-up или scale-down). | Детектор «зависшего» CA. |
-| `cluster_autoscaler_provisioning_requests_count` | Количество активных `ProvisioningRequest` в кластере. | Контроль очереди batch/ML задач. |
-| `cluster_autoscaler_cluster_simulation_scheduling_step_duration_seconds` | Гистограмма времени симуляции планировщика. | SLA при большом количестве узлов (>500). |
-
-**Health-эндпоинт:** помимо метрик, CA экспонирует `GET /health-check` на порту `8085` (`--port`). Поддерживается как liveness-, так и readiness-probe (см. манифест Deployment в Сценарии 5). Endpoint возвращает 200 при успешной синхронизации с `kube-apiserver` и `cloud-provider`, 503 — при потере связи с любым из них.
-
-### Prometheus-алерты
 
 ```yaml
-# Алерт при неудачном масштабировании
-- alert: ClusterAutoscalerFailedScaleUp
-  expr: increase(cluster_autoscaler_failed_scale_ups_total[10m]) > 0
-  for: 5m
-  labels:
-    severity: warning
-  annotations:
-    summary: "Cluster Autoscaler не может добавить узел"
-    description: "Обнаружены неудачные попытки scale-up за последние 10 минут. Проверьте лимиты, IAM-права и наличие подходящих Node Groups."
-
-# Алерт при наличии длительных Pending подов
-- alert: ClusterAutoscalerUnschedulablePods
-  expr: cluster_autoscaler_unschedulable_pods_count > 0
-  for: 15m
-  labels:
-    severity: warning
-  annotations:
-    summary: "Unschedulable поды обнаружены более 15 минут"
-    description: "{{ $value }} подов не могут быть запланированы. CA может быть не справляется или отсутствуют подходящие Node Groups."
-
-# Алерт при невозможности scale-down
-- alert: ClusterAutoscalerNodesNotScaledDown
-  expr: cluster_autoscaler_unremovable_nodes_count > 5
-  for: 30m
-  labels:
-    severity: info
-  annotations:
-    summary: "Более 5 узлов не могут быть удалены"
-    description: "Возможна блокировка PDB или аннотациями safe-to-evict."
+# Шард 2: Контролирует пул узлов во второй группе стоек
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler-rack-b
+  namespace: kube-system
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: cluster-autoscaler
+          image: registry.k8s.io/autoscaling/cluster-autoscaler:v1.33.0
+          command:
+            - ./cluster-autoscaler
+            - --cloud-provider=clusterapi
+            - --node-group-auto-discovery=clusterapi:machinedeployments.cluster.x-k8s.io/rack-b-
+            - --leader-elect=false
+            - --port=8086
 ```
 
-### Команды для диагностики
+> **Правило:** При шардинге по группам узлов флаг `--leader-elect` устанавливается в `false`, так как каждый инстанс управляет непересекающимся набором `MachineDeployment`.
 
-```bash
-# Просмотр текущего состояния CA (events)
-kubectl get events --field-selector source=cluster-autoscaler --sort-by='.lastTimestamp'
+### Сценарий 8: Координация с ResourceQuota и LimitRange
 
-# Проверка текущих узлов в группах
-kubectl get nodes -o custom-columns=NAME:.metadata.name,GROUP:.metadata.labels['karpenter.sh/provisioner-name'],STATUS:.status.conditions[-1].type
+Если в Namespace настроены жесткие квоты, при росте нагрузки поды могут оставаться в статусе `Pending` не из-за нехватки физических узлов, а из-за отказа API-сервера создавать поды (`exceeded quota`). CA в этом случае не может помочь, а кластер рискует зависнуть в дедлоке.
 
-# Проверка утилизации узлов (для ручного анализа)
-kubectl top nodes
+1. **Расчет безопасной квоты с учетом масштабирования:**
+   `ResourceQuota.requests.cpu >= (maxReplicas HPA × requests.cpu) × 1.25`
 
-# Просмотр логов CA с фильтром по scale-down
-kubectl logs -n kube-system -l app=cluster-autoscaler --tail=100 | grep -i "scaleDown\|remov\|evict"
-
-# Просмотр логов CA с фильтром по scale-up
-kubectl logs -n kube-system -l app=cluster-autoscaler --tail=100 | grep -i "scaleUp\|expand\|provision"
-```
-
-### Диагностика через ConfigMap статуса
-
-Для длинных логов (когда CA пишет события на каждой итерации) полезна публикация агрегированного статуса в ConfigMap через флаг `--cluster-autoscaler-status-config-map=cluster-autoscaler-status`. CA обновляет её при каждом цикле планирования.
-
-```bash
-# Проверка «последнего сканирования» и активных групп
-kubectl get cm -n kube-system cluster-autoscaler-status -o yaml
-
-# → data.status содержит JSON с:
-#   - health: "Healthy"/"Unhealthy"
-#   - lastUpdated: "2026-08-31T..."
-#   - nodeGroups: [{name, minSize, maxSize, desiredCapacity, ...}]
-#   - pendingPods: {<count>: <reason>}
-```
-
-> **Edge case:** ConfigMap пересоздаётся при каждом restart под CA. Чтобы избежать ложных алертов, не алертите на её отсутствие — алертите только на возраст `lastUpdated` (например, `> 5m` означает, что CA «застрял»).
-
-### Эксплуатационные процедуры (Runbook)
-
-#### Аварийное отключение scale-down
-
-```bash
-# Через ConfigMap (если используется Helm value extraArgs.scale-down-enabled=false → правка релиза)
-helm upgrade cluster-autoscaler autoscaler/cluster-autoscaler \
-  --reuse-values \
-  --set extraArgs.scale-down-enabled=false
-
-# Или через аннотацию конкретных узлов
-kubectl annotate nodes -l workload=critical \
-  cluster-autoscaler.kubernetes.io/scale-down-disabled=true --overwrite
-```
-
-#### Ротация логов CA
-
-CA пишет в stderr (`--stderrthreshold=info`). При активной нагрузке лог может расти на десятки MB/час. Рекомендуется внешний log shipper (Fluent Bit, Vector) либо следующий обходной подход:
-
-```yaml
-# Volume для буфера логов (если используется не-prometheus-сборка)
-volumeMounts:
-  - name: log-buffer
-    mountPath: /var/log/cluster-autoscaler
-volumes:
-  - name: log-buffer
-    emptyDir:
-      sizeLimit: 256Mi
-```
-
-```bash
-# Однократная очистка при переполнении
-kubectl exec -n kube-system deploy/cluster-autoscaler -- \
-  sh -c 'find /var/log -name "*.log" -size +50M -delete'
-```
-
-#### Обновление CA без простоя
-
-CA поддерживает `RollingUpdate` с `maxUnavailable: 0` (см. манифест в Сценарии 5). Однако фактического «простоя» не бывает: leader-election выполняется на каждой реплике, и при рестарте лидера lease автоматически переходит к другому реплике за 5–10 секунд. Без `replicas>1` будет кратковременный gap — задавайте `replicas: 2` для продакшна.
-
-#### Проверка конфигурации перед применением
-
-```bash
-# Локальная проверка аргументов
-./cluster-autoscaler \
-  --cloud-provider=clusterapi \
-  --node-group-auto-discovery=clusterapi:machinedeployments.cluster.x-k8s.io/asg- \
-  --dry-run   # доступен с v1.31+ для большинства операций
-```
-
-```bash
-# Валидация ConfigMap Priority Expander (regexp на имена групп)
-kubectl get cm cluster-autoscaler-priority-expander -n kube-system -o jsonpath='{.data.priorities}' | \
-  python3 -c "import sys, yaml, json; data = yaml.safe_load(sys.stdin); print(json.dumps(data, indent=2))"
-# → {100: ['.*spot-group.*'], 50: ['.*on-demand-group.*']}
-# Регулярные выражения компилируются Go regexp/syntax; ошибки появятся в логах CA.
-```
-
----
-
-## Влияние ResourceQuota и LimitRange на autoscaling
-
-ResourceQuota и LimitRange в Namespace могут блокировать масштабирование, если не настроены с учётом autoscaling.
-
-### Проблема: ResourceQuota блокирует HPA
-
-HPA масштабирует Deployment, но поды не могут быть созданы из-за превышения квоты Namespace:
-
-```bash
-# Проверка квот
-kubectl describe quota -n my-namespace
-# → ResourceQuota: requests.cpu=10, limits.cpu=20
-# → Текущее потребление: requests.cpu=9.5 (95%)
-
-# HPA масштабирует до 5 подов (250m каждый):
-# → 5 × 250m = 1250m > остаток 500m → поды в Pending
-```
-
-**Решение 1:** Увеличьте ResourceQuota с учётом maxReplicas HPA:
-
-```
-ResourceQuota (CPU) >= maxReplicas × requests.cpu + запас
-```
-
-**Решение 2:** Используйте `resourcequotas` с扩大的 quota для критичных Namespace:
-
+2. **Пример согласованного манифеста ResourceQuota:**
 ```yaml
 apiVersion: v1
 kind: ResourceQuota
 metadata:
-  name: autoscaling-quota
+  name: backend-quota
   namespace: production
 spec:
   hard:
-    requests.cpu: "20"       # >= maxReplicas HPA × requests
-    requests.memory: 40Gi
-    limits.cpu: "40"
-    limits.memory: 80Gi
+    requests.cpu: "32"
+    requests.memory: 64Gi
+    limits.cpu: "64"
+    limits.memory: 128Gi
     pods: "50"
 ```
 
-### Проблема: LimitRange ограничивает масштабирование
-
-LimitRange может установить min/max для CPU/memory, что конфликтует с requests Deployment:
-
-```yaml
-apiVersion: v1
-kind: LimitRange
-metadata:
-  name: default-limits
-  namespace: production
-spec:
-  limits:
-    - type: Container
-      default:
-        cpu: "1"
-        memory: 1Gi
-      defaultRequest:
-        cpu: 200m
-        memory: 256Mi
-      max:
-        cpu: "4"       # HPA не может создать под с requests > 4 CPU
-        memory: 8Gi
-      min:
-        cpu: 50m
-        memory: 64Mi
+3. **Диагностика конфликтов квоты:**
+```bash
+kubectl get events -n production --field-selector reason=FailedCreate --sort-by='.lastTimestamp'
+# → Warning  FailedCreate  replicaset/api-backend-6789  Error creating: pods "api-backend-6789-abc" is forbidden: exceeded quota: backend-quota, requested: requests.cpu=2, used: requests.cpu=31, limited: requests.cpu=32
 ```
 
-**Проблема:** Если HPA настроен на масштабирование по CPU с `requests.cpu = 500m`, но LimitRange.max = 4 CPU, то limits не могут быть увеличены для горячих подов.
-
-**Решение:** Убедитесь, что `max` в LimitRange >= HPA limits для контейнеров.
-
-### Сценарий: CA + ResourceQuota + HPA
-
-```yaml
-# ResourceQuota для Namespace
-apiVersion: v1
-kind: ResourceQuota
-metadata:
-  name: production-quota
-  namespace: production
-spec:
-  hard:
-    requests.cpu: "30"
-    requests.memory: 60Gi
-    pods: "30"
 ---
-# HPA с maxReplicas = 15
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: api-hpa
-  namespace: production
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: api
-  minReplicas: 3
-  maxReplicas: 15
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70
----
-# Deployment: requests.cpu = 1000m
-# maxReplicas × requests = 15 × 1000m = 15000m = 15 CPU
-# ResourceQuota.requests.cpu = 30 CPU (достаточно для 30 × 1000m)
-```
 
-**Расчёт:** ResourceQuota.requests.cpu >= maxReplicas × requests.cpu + запас 20%.
+## Операции и команды
 
-### Диагностика
+Сводный перечень команд для повседневного администрирования, мониторинга и регламентных процедур SRE/DevOps.
+
+### Проверка состояния и диагностических событий CA
 
 ```bash
-# Проверка ResourceQuota
-kubectl describe quota -n production
-# → requests.cpu: 15/30 (50% используется)
+# 1. Просмотр системных событий, сгенерированных Cluster Autoscaler
+kubectl get events -A --field-selector source=cluster-autoscaler --sort-by='.lastTimestamp'
+# → kube-system  10m  Normal  ScaledUpGroup  pod/api-worker-1  Scale-up: group pool-vms-01 size set to 8
 
-# Проверка LimitRange
-kubectl describe limitrange -n production
-# → Container Limits: max=4 CPU, min=50m
+# 2. Проверка статуса лидера (Leader Election Lease)
+kubectl get lease cluster-autoscaler -n kube-system
+# → NAME                 HOLDER                                                AGE
+# → cluster-autoscaler   cluster-autoscaler-58f79fbc94-w2r6d_8ab12e34-5678     45d
 
-# Проверка Pending-подов из-за квоты
-kubectl get events -n production --field-selector reason=FailedCreate | grep quota
-# → Warning  FailedCreate  pods "api-xxxxx" is forbidden: exceeded quota
-
-# Проверка CA логов
-kubectl logs -n kube-system -l app=cluster-autoscaler | grep -i "quota\|limit"
-# → W0115 10:35:00.123456 1 autoscaler.go:456] Failed to increase group size: quota exceeded
+# 3. Чтение агрегированного отчета статуса CA из ConfigMap
+kubectl get cm cluster-autoscaler-status -n kube-system -o yaml
+# → data:
+# →   status: |
+# →     Cluster-autoscaler status at 2026-10-12 18:00:00:
+# →     Cluster-wide:
+# →       Health:      Healthy (ready=24 unready=0 kernelMounterReady=24)
+# →       ScaleUp:     NoActivity
+# →       ScaleDown:   NoCandidates
 ```
 
-### Best Practices
+### Анализ подов и причин блокировки масштабирования
 
-1. **Квота с запасом:** `ResourceQuota.requests.cpu >= maxReplicas × requests.cpu × 1.2`
-2. **LimitRange.max >= HPA.limits:** Убедитесь, что max в LimitRange позволяет HPA создавать поды с нужными limits
-3. **Мониторинг:** Алерты на приближение к лимитам ResourceQuota
-4. **Auto-scaling квот:** Рассмотрите использование чарта `resourcequota-controller` для автоматического масштабирования квот
-5. **PriorityClass + Quota:** Используйте `PriorityClass` для выделения критичных Namespace с бо́льшими квотами
+```bash
+# 4. Поиск Unschedulable подов в кластере
+kubectl get pods -A --field-selector status.phase=Pending -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,NODE:.spec.nodeName,REASON:.status.conditions[?(@.reason=="Unschedulable")].message
+# → production  batch-worker-5  <none>  0/24 nodes are available: 24 Insufficient cpu.
+
+# 5. Выявление невыселяемых узлов в логах активного пода CA
+kubectl logs -n kube-system -l app.kubernetes.io/name=cluster-autoscaler --tail=200 | grep -E "unremovable|ScaleDown|NotTriggeredScaleUp"
+# → I1012 18:02:15.123456 1 static_autoscaler.go:420] Fast evaluation: node worker-03 unremovable: pod production/db-0 has safe-to-evict=false
+
+# 6. Проверка PDB, блокирующих выселение (allowedDisruptions == 0)
+kubectl get pdb -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,ALLOWED:.status.disruptionsAllowed,EXPECTED:.status.expectedPods
+# → default     redis-cluster   0       3
+```
+
+### Регламентные процедуры управления узлами
+
+```bash
+# 7. Аварийная заморозка Scale-Down на конкретном узле
+kubectl annotate node worker-compute-05.infra.local cluster-autoscaler.kubernetes.io/scale-down-disabled="true" --overwrite
+# → node/worker-compute-05.infra.local annotated
+
+# 8. Снятие блокировки Scale-Down
+kubectl annotate node worker-compute-05.infra.local cluster-autoscaler.kubernetes.io/scale-down-disabled-
+# → node/worker-compute-05.infra.local annotation removed
+
+# 9. Проверка доступности метрик на порту 8085
+kubectl exec -n kube-system deploy/cluster-autoscaler -- wget -qO- http://127.0.0.1:8085/metrics | grep cluster_autoscaler_unschedulable_pods_count
+# → # HELP cluster_autoscaler_unschedulable_pods_count Number of unschedulable pods.
+# → # TYPE cluster_autoscaler_unschedulable_pods_count gauge
+# → cluster_autoscaler_unschedulable_pods_count 0
+```
 
 ---
 
-## Лучшие практики 2026 года
+## Диагностика и устранение неполадок
 
-1.  **Синхронизация с HPA/VPA:** Убедитесь, что лимиты `requests` настроены корректно (желательно с помощью [VPA в режиме Off](./vpa_detailed.md)). CA масштабирует кластер опираясь на `requests`. Если они завышены, кластер будет раздут (over-provisioning), если занижены — узлов будет не хватать.
-2.  **Разделение групп узлов:** Создавайте отдельные Node Groups для разных типов нагрузок (CPU-intensive, GPU, Stateful) и используйте Taints/Tolerations.
-3.  **Использование PDB:** Всегда настраивайте `PodDisruptionBudget`. Это единственная гарантия того, что CA не выселит все реплики вашего сервиса одновременно при Scale-Down.
-4.  **Karpenter как альтернатива:** Для кластеров в AWS и Azure рассмотрите переход на **[Karpenter](./Karpenter/overview.md)**. Он работает без абстракции Node Groups (JIT-provisioning), быстрее реагирует на нагрузку и обеспечивает лучший бинпакинг. Подробный план миграции — см. [Сценарий 9](#сценарий-9-миграция-с-cluster-autoscaler-на-karpenter).
-5.  **Мониторинг и алертинг:** Настройте Prometheus-алерты на `cluster_autoscaler_failed_scale_ups_total` и `cluster_autoscaler_unschedulable_pods_count`. Это позволит оперативно реагировать на проблемы с масштабированием.
-6.  **Over-provisioning для критичных сервисов:** Используйте Pause Pods с низким приоритетом для обеспечения «горячего резерва» мощностей (см. Сценарий 1).
-7.  **Балансировка по зонам:** Включите `--balance-similar-node-groups` для автоматического распределения узлов между зонами доступности.
-8.  **Graceful Shutdown:** Убедитесь, что приложения корректно обрабатывают `SIGTERM` и завершают работу в течение `terminationGracePeriodSeconds`. Это критично для безопасного scale-down.
+### Матрица типовых проблем
+
+| Симптом | Первопричина | Метод диагностики | Способ устранения |
+| :--- | :--- | :--- | :--- |
+| **Поды зависают в `Pending`, узлы не добавляются** | Достигнут лимит `--max-nodes-total` или квота `maxSize` группы. | `kubectl logs deploy/cluster-autoscaler -n kube-system \| grep maxNodes` | Увеличить лимит `--max-nodes-total` или `.spec.replicas` в `MachineDeployment`. |
+| **Поды `Pending`, CA пишет `no matching node group`** | Поды требуют taints/labels/селекторы, которых нет в шаблоне `MachineDeployment`. | `kubectl describe pod <name>` и сопоставление с метками групп. | Добавить tolerations в поды или создать группу узлов с требуемыми метками. |
+| **Узлы не удаляются при утилизации < 50%** | PDB блокирует выселение (`allowedDisruptions: 0`) или есть поды с local storage. | `kubectl get pdb -A` и поиск в логах по фразе `pod blocks scale-down`. | Настроить PDB; выставить флаг `--skip-nodes-with-local-storage=false`. |
+| **Постоянный флаппинг (узлы добавляются и удаляются)** | Слишком короткий `--scale-down-unneeded-time` или рассинхронизация с HPA. | Сравнение метрик `scaled_up_nodes_total` и `evicted_pods_total`. | Увеличить `--scale-down-delay-after-add=15m` и настроить stabilization window в HPA. |
+| **CA перестает реагировать на Pending-поды** | Потерян кворум лидера (Lease deadlock) или сетевая изоляция API-сервера. | `kubectl get lease cluster-autoscaler -n kube-system` | Проверить сетевую связность между узлами; перезапустить под CA. |
+| **Bare-metal хосты не переходят в `Ready`** | Сбой PXE-загрузки, DHCP или IPMI контроллера Metal3. | `kubectl get baremetalhost -n metal3-system` | Проверить состояние BMC/IPMI хоста и логи Ironic. |
+
+### Prometheus-метрики
+
+| Метрика | Тип | Назначение для SRE-мониторинга |
+| :--- | :--- | :--- |
+| `cluster_autoscaler_nodes_count` | Gauge | Текущее количество узлов в кластере с разбивкой по статусам (`ready`, `unready`, `notStarted`). |
+| `cluster_autoscaler_unschedulable_pods_count` | Gauge | Число подов в очереди, которые CA не может разместить. Значение > 0 дольше 5 минут сигнализирует об аварии. |
+| `cluster_autoscaler_scale_down_in_cooldown` | Gauge | Флаг блокировки сжатия кластера (период cooldown после добавления узла). |
+| `cluster_autoscaler_evicted_pods_total` | Counter | Суммарное количество подов, выселенных CA в рамках Scale-Down. |
+| `cluster_autoscaler_scaled_up_nodes_total` | Counter | Счетчик успешно добавленных узлов. |
+| `cluster_autoscaler_failed_scale_ups_total` | Counter | Количество сбоев при попытке масштабирования вверх (ошибки CAPI, таймауты boot). |
+| `cluster_autoscaler_unremovable_nodes_count` | Gauge | Количество узлов, признанных недогруженными, но заблокированных от удаления (PDB, local storage). |
+| `cluster_autoscaler_last_activity` | Gauge | Unix-время последнего успешного действия CA. Детектор зависания процесса. |
+| `cluster_autoscaler_cluster_simulation_scheduling_step_duration_seconds` | Histogram | Длительность выполнения одного шага симуляции планировщика. |
+
+### Prometheus-алерты (PrometheusRule)
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cluster-autoscaler-alerts
+  namespace: kube-system
+  labels:
+    role: alert-rules
+spec:
+  groups:
+    - name: cluster-autoscaler.rules
+      rules:
+        # Критический алерт: Сбои добавления узлов в инфраструктуре
+        - alert: ClusterAutoscalerScaleUpFailed
+          expr: increase(cluster_autoscaler_failed_scale_ups_total[10m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Сбой добавления узлов Cluster Autoscaler"
+            description: "CA не смог добавить узел за последние 10 минут. Проверьте емкость гипервизора/пула bare-metal и логи MachineDeployment."
+
+        # Предупреждение: Зависание подов в очереди планирования
+        - alert: ClusterAutoscalerUnschedulablePodsStuck
+          expr: cluster_autoscaler_unschedulable_pods_count > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Поды ожидают масштабирования более 15 минут"
+            description: "{{ $value }} подов находятся в статусе Unschedulable. Возможно исчерпание лимита max-nodes-total или несовпадение меток."
+
+        # Информационный алерт: Высокое количество заблокированных узлов
+        - alert: ClusterAutoscalerHighUnremovableNodes
+          expr: cluster_autoscaler_unremovable_nodes_count > 5
+          for: 30m
+          labels:
+            severity: info
+          annotations:
+            summary: "Более 5 недогруженных узлов заблокированы от удаления"
+            description: "Узлы не могут быть удалены из-за жестких PDB (allowedDisruptions=0) или подов с local-storage/safe-to-evict."
+```
+
+---
+
+## Лучшие практики
+
+1. **Честное задание `requests`:** CA оперирует исключительно значениями `requests`. Если разработчики завышают `requests`, кластер будет необоснованно раздуваться. Если `requests` занижены — возникнет переподписка (overcommit) и деградация производительности по CPU/OOMKills. Рекомендуется калибровать значения через VPA в режиме Recommendation.
+2. **Обязательная настройка PDB для всех продакшн-сервисов:** Без PDB выселение при Scale-Down может снять все реплики сервиса одновременно. Всегда указывайте `minAvailable: 1` или `maxUnavailable: 1`.
+3. **Отключение блокировки по Local Storage:** Современные сервисы часто используют временные каталоги `emptyDir` для кэшей. Устанавливайте флаг `--skip-nodes-with-local-storage=false`, иначе поды с `emptyDir` заблокируют удаление узлов.
+4. **Синхронизация окон стабилизации:** При одновременном использовании HPA и CA настраивайте задержку `stabilizationWindowSeconds` в HPA на 5–10 минут, а `--scale-down-unneeded-time` в CA — минимум на 10–15 минут во избежание взаимных резонансных колебаний.
+5. **Разделение отказоустойчивых доменов:** Включайте флаг `--balance-similar-node-groups=true`, чтобы узлы добавлялись равномерно по серверным стойкам и сегментам ЦОД.
+6. **Высокая доступность CA:** Всегда развертывайте `replicas: 2` с включенным Leader Election (`--leader-elect=true`) и классом приоритета `system-cluster-critical`.
+7. **Graceful Termination:** Убедитесь, что приложения корректно ловят сигнал `SIGTERM` и имеют достаточный `terminationGracePeriodSeconds` (30–60 секунд).
 
 ---
 
 ## Дополнительная информация
 
-### Сравнение Cluster Autoscaler и Karpenter
+### Архитектурные взаимосвязи
 
-| Характеристика | Cluster Autoscaler | Karpenter |
-| :--- | :--- | :--- |
-| **Архитектура** | Управление Node Groups | JIT-provisioning без групп |
-| **Скорость scale-up** | 3-10 минут | 45-90 секунд |
-| **Поддержка on-prem** | Да (через Cluster API, Metal3) | Нет (только облако) |
-| **Бинпакинг** | Ограничен Node Groups | Оптимальный (под конкретный под) |
-| **Сложность конфигурации** | Высокая (Node Groups, Expanders) | Низкая (NodePool) |
-| **Поддержка DRA** | Да (с 1.32 — structured parameters) | Да |
-| **Поддержка ProvisioningRequest** | Да (с 1.30) | Частичная (создаёт узлы, но не все классы) |
-| **Лидер-элект / HA** | Встроенный (Lease), `replicas>1` | Несколько реплик через webhooks, лидер не выбирается |
-| **Рекомендация 2026** | On-premise, bare-metal, mixed, multi-cluster | EKS, AKS (где есть Karpenter) |
+- **Cluster API (CAPI):** Стандартный механизм декларативного управления инфраструктурой серверов для CA в On-Premise средах через ресурсы `MachineDeployment` и `MachineSet`.
+- **Metal3 / Ironic:** Обеспечивает интеграцию с «голым железом» (Bare-Metal) через протоколы IPMI/Redfish и PXE-загрузку.
+- **Descheduler:** Дополняет Cluster Autoscaler, принудительно выселяя поды со слабо загруженных узлов для ускорения консолидации и срабатывания Scale-Down.
+- **VPA (Vertical Pod Autoscaler):** Оптимизирует `requests` контейнеров, обеспечивая корректные входные данные для алгоритма симуляции CA.
 
-### Эволюция: от CA к ProvisioningRequest и далее
+### Первоисточники и документация
 
-Классический CA (2016–2024) использовал абстракцию Node Groups и ждал `Pending` подов. Это создавало две проблемы:
-
-1. **Задержка для batch-сценариев** — планировщики (Airflow, Volcano) не могут создать `Pending` под заранее, узлы не подготавливаются до момента реального планирования.
-2. **Слабая координация со специализированным стеком** — Volcano, Spark on K8s, Argo Workflows вынуждены были сами вызывать API провайдера.
-
-`ProvisioningRequest` (CRD `autoscaling.x-k8s.io/v1`, Beta с 1.30, GA планируется в 1.34/1.35) — это попытка вынести «заказ емкости» из логики CA на отдельный уровень. Любой контроллер (планировщик, Volcano, Argo Workflows) может создать `ProvisioningRequest` без фактического создания подов, и CA начнёт готовить узлы заранее. В перспективе это даёт единый декларативный API для запроса емкости, независимый от того, какой автоскейлер установлен в кластере (CA/Karpenter/Volcano).
-
-### Источники и первоисточники
-
-* [Cluster Autoscaler — README](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/README.md) — актуальная матрица совместимости и список флагов.
-* [ProvisioningRequest — design proposal](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/proposals/provisioning-request.md) — спецификация CRD.
-* [Kubernetes docs — Node Autoscaling](https://kubernetes.io/docs/concepts/cluster-administration/node-autoscaling/) — официальная страница Kubernetes о концепции.
+- [Kubernetes Autoscaler Upstream Repository](https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler) — официальный исходный код и документация параметров запуска.
+- [Cluster Autoscaler FAQ](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md) — авторитетный сборник edge cases и ответов разработчиков.
+- [KEP-4381: Dynamic Resource Allocation Structured Parameters](https://github.com/kubernetes/enhancements/tree/master/keps/sig-node/4381-dra-structured-parameters) — спецификация параметров аппаратных ресурсов в планировщике и CA.
+- [ProvisioningRequest Design Specification](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/proposals/provisioning-request.md) — архитектура декларативного заказа вычислительной емкости.
 
 ### См. также
-* **[Pod Disruption Budget (PDB)](./pod_disruption_budget.md)** — критически важная интеграция при scale-down.
-* **[Karpenter: отличия от Cluster Autoscaler](./Karpenter/overview.md#отличия-от-cluster-autoscaler)** — современная JIT-альтернатива для облачных провайдеров.
-* **[Cluster Autoscaler vs Karpenter](./cluster_autoscaler_vs_karpenter.md)** — подробный сравнительный анализ.
-* **[Descheduler](./descheduler.md)** — дефрагментация кластера после scale-down.
-* **[Autoscaling в On-Premise](./on_premise_autoscaling.md)** — масштабирование в bare-metal средах.
-* **[Алертинг и мониторинг](./alerting_monitoring.md)** — Prometheus-алерты для CA.
-* **[Горизонтальное масштабирование кластеров (sharding)](./sharding.md)** — мульти-CA стратегии для крупных инсталляций.
+
+- [Pod Disruption Budget (PDB)](./pod_disruption_budget.md) — детальная настройка политик доступности при добровольном выселении подов.
+- [Autoscaling в On-Premise / Bare-Metal средах](./on_premise_autoscaling.md) — обзор архитектур автомасштабирования на собственном оборудовании.
+- [Vertical Pod Autoscaler (VPA)](./vpa_detailed.md) — вертикальное профилирование requests для корректного расчета емкости CA.
+- [Descheduler](./descheduler.md) — дефрагментация кластера и балансировка нагрузки после масштабирования.
+- [Мониторинг и алертинг автомасштабирования](./alerting_monitoring.md) — метрики и дашборды для мониторинга autoscaling-компонентов.
+- [Горизонтальное масштабирование и шардинг](./sharding.md) — стратегии деления больших кластеров и шардинга контроллеров.
+- [Изменение ресурсов подов без перезапуска (In-Place Pod Resize)](./in_place_pod_resize.md) — механизм вертикального масштабирования в K8s 1.33+.

@@ -1,347 +1,154 @@
 # HPA: Практические сценарии
 
-В данном документе представлены типовые конфигурации (YAML-манифесты) горизонтального масштабирования подов (Horizontal Pod Autoscaler, HPA) для различных типов нагрузки в Kubernetes, а также пошаговые инструкции по их внедрению и валидации.
+**Актуально для:** Kubernetes 1.28–1.35 (API autoscaling/v2)
 
-Для получения вводной информации см. основной раздел **[HPA: Главная](./index.md)**. Теоретические основы (алгоритм, типы метрик, архитектура) описаны в **[HPA: Основные концепции](./hpa_concepts.md)**. Продвинутая настройка и тонкая диагностика — в **[HPA: Продвинутые темы](./hpa_advanced.md)**.
+В данном документе представлены проверенные типовые конфигурации (YAML-манифесты) горизонтального масштабирования подов (Horizontal Pod Autoscaler, HPA) для различных архитектурных профилей нагрузки в Kubernetes, а также пошаговые инструкции по их внедрению, валидации, эксплуатации и диагностике.
+
+Материал ориентирован на инженеров DevOps, SRE и системных администраторов инфраструктуры Kubernetes на выделенных серверах (Bare-Metal и On-Premise) без использования проприетарных облачных сервисов и надстроек.
+
+Для получения теоретических основ см. **[HPA: Основные концепции](./hpa_concepts.md)**. Тонкая настройка ядра Linux, cgroups и поведение при сетевом дребезге — в **[HPA: Продвинутые темы](./hpa_advanced.md)**. Настройка экспорта кастомных метрик — в **[Prometheus Adapter: настройка и интеграция](./prometheus_adapter_setup.md)**. Вводный обзор раздела — в **[HPA: Главная](./index.md)**.
+
+---
 
 ## Определения
 
-**HPA v2 API (`autoscaling/v2`)** — текущая стабильная версия интерфейса (GA с Kubernetes 1.23), поддерживающая кастомные и внешние метрики, несколько метрик в одном HPA, а также тонкую настройку поведения (`behavior`). Версии `v2beta1` и `v2beta2` удалены начиная с Kubernetes 1.26. Версия `v1` поддерживает только масштабирование по CPU и считается ограниченной.
+**Horizontal Pod Autoscaler (HPA v2)** — контроллер в составе `kube-controller-manager`, непрерывно сопоставляющий фактические показатели нагрузки с целевыми значениями и изменяющий поле `spec.replicas` целевого контроллера через подресурс `/scale`. Интерфейс `autoscaling/v2` является стабильным стандартом (GA с Kubernetes 1.23; устаревшие версии `v2beta1` и `v2beta2` удалены в 1.26).
 
-**Metrics-driven Scaling** — подход к масштабированию, при котором количество реплик определяется внешними или внутренними показателями производительности, а не только статичным расчетом ресурсов. HPA реализует этот подход через петлю управления (Control Loop), опрашивающую API метрик каждые 15 секунд.
+**ScaleTargetRef** — блок спецификации HPA (`spec.scaleTargetRef`), определяющий целевой управляемый ресурс (`apiVersion`, `kind`, `name`). Должен указывать строго на объект верхнего уровня (`Deployment` или `StatefulSet`). Указание на дочерний `ReplicaSet` недопустимо, так как нарушает процесс обновления (Rollout) и приводит к масштабированию неактивного набора подов.
 
-**ScaleTargetRef** — ссылка на объектDeployment, ReplicaSet или StatefulSet — который управляет масштабированием. HPA изменяет поле `replicas` через `/scale` подресурс этого объекта. При использовании Deployment необходимо ссылаться на Deployment, а не на ReplicaSet, иначе при Rollout HPA может масштабировать старый (неактивный) ReplicaSet.
+**Подресурс `/scale` (Scale Subresource)** — REST-эндпоинт Kubernetes API (`/apis/apps/v1/namespaces/{ns}/{resource}/{name}/scale`), абстрагирующий управление числом реплик (`spec.replicas` и `status.replicas`). Позволяет HPA изменять количество экземпляров без перезаписи остальной спецификации пода.
 
-**Resource Requests** — гарантированный объем ресурсов (CPU, памяти), зарезервированных для контейнера. HPA использует `requests` как базовую линию для расчета процента утилизации: `(текущее_потребление / requests) × 100%`. Без `requests` расчет невозможен, статус HPA будет `<unknown>`.
+**Resource Requests** — гарантированный объем процессорного времени (`cpu`) и оперативной памяти (`memory`), зарезервированный планировщиком (kube-scheduler) для каждого контейнера. Служит базовой величиной (100%) для расчета процента утилизации: `(фактическое_потребление / requests) × 100%`. Без указания `requests` расчет процента невозможен, и HPA переходит в статус `<unknown>`.
 
-**Behavior** — секция в спецификации HPA v2, позволяющая тонко настраивать политики и скорость масштабирования вверх (`scaleUp`) и вниз (`scaleDown`), включая управление окнами стабилизации и приоритетами политик.
+**Working Set Memory** — используемый Kubelet и cgroups показатель оперативной памяти контейнера, равный общему потреблению за вычетом неактивного файлового кэша (`container_memory_working_set_bytes = usage - inactive_file`). Именно эта метрика передается через Metrics Server и используется HPA для оценки утилизации памяти.
 
-## Предварительные требования
+**Секция `behavior`** — блок спецификации HPA v2 (`spec.behavior`), обеспечивающий раздельное управление скоростью и динамикой масштабирования вверх (`scaleUp`) и вниз (`scaleDown`), включая длительность окон стабилизации (`stabilizationWindowSeconds`) и выбор между конкурирующими правилами (`selectPolicy`).
 
-Для успешного применения любого из сценариев ниже необходимо выполнение следующих условий:
+**Окно стабилизации (Stabilization Window)** — временной интервал в прошлом, за который контроллер анализирует сгенерированные рекомендации по масштабированию. Для `scaleDown` алгоритм выбирает наибольшее число реплик за окно, предотвращая преждевременное удаление подов при кратковременных спадах трафика.
 
-1. **Metrics Server:** должен быть развернут в кластере для сбора данных о потреблении ресурсов (CPU/память). Проверка:
+**ContainerResource** — тип метрики в API `autoscaling/v2`, позволяющий вычислять утилизацию ресурсов конкретного именованного контейнера в поде, изолируя метрики основного приложения от влияния ресурсоемких вспомогательных контейнеров (sidecars: Envoy, Fluent-bit, лог-агенты).
+
+**Pod Disruption Budget (PDB)** — объект политики Kubernetes (`policy/v1`), ограничивающий количество одновременно недоступных подов при добровольных вытеснениях (дрейн узла, обновление, масштабирование вниз).
+
+**Порог толерантности (Tolerance)** — алгоритмический диапазон нечувствительности HPA (по умолчанию 10% или `0.1`), в пределах которого изменение метрики не вызывает изменения числа реплик, предотвращая паразитные колебания.
+
+---
+
+## Архитектура и механизмы работы сценариев
+
+### Конвейер передачи метрик на On-Premise инфраструктуре
+
+В On-Premise и Bare-Metal кластерах горизонтальное масштабирование функционирует через трехуровневый конвейер:
+
+```
+[Контейнеры / cgroups v2] 
+       │ (сбор каждые 10-15с)
+       ▼
+   [cAdvisor / Kubelet] 
+       │ 
+       ▼
+[Metrics Server] ──► [Aggregator API: metrics.k8s.io] ──► [HPA Controller]
+                                                                │
+[Prometheus] ────► [Prometheus Adapter / KEDA]                  │ (запись в /scale)
+       │                 │                                      ▼
+       └──────────► [custom.metrics.k8s.io] ────────────► [Deployment / StatefulSet]
+                    [external.metrics.k8s.io]                   │
+                                                                ▼
+                                                        [kube-scheduler]
+                                                                │
+                                                        [Bare-Metal Nodes]
+```
+
+1. **Ресурсные метрики (`Resource`, `ContainerResource`):** Kubelet на каждом узле собирает данные о потреблении CPU и Working Set памяти через cAdvisor. `Metrics Server` опрашивает Kubelet узлов, агрегирует данные в оперативной памяти и публикует их через API `metrics.k8s.io`.
+2. **Пользовательские метрики подов и объектов (`Pods`, `Object`):** Приложения или контроллеры (например, Ingress-NGINX) экспортируют метрики в Prometheus. `Prometheus Adapter` преобразует PromQL-запросы в API `custom.metrics.k8s.io`.
+3. **Внешние метрики (`External`):** Показатели брокеров сообщений (RabbitMQ, Kafka, Redis), находящихся внутри кластера или на внешних серверах, регистрируются через `external.metrics.k8s.io` с помощью Prometheus Adapter или KEDA.
+
+### Алгоритм вычисления целевого числа реплик
+
+Контроллер HPA выполняет расчет по формуле:
+
+$$\text{desiredReplicas} = \left\lceil \text{currentReplicas} \times \left( \frac{\text{currentMetricValue}}{\text{desiredMetricValue}} \right) \right\rceil$$
+
+Если отношение $\frac{\text{currentMetricValue}}{\text{desiredMetricValue}}$ находится в интервале от $0.9$ до $1.1$ (порог толерантности $10\%$), контроллер признает текущее состояние сбалансированным и не выполняет изменений.
+
+### Особенности масштабирования в On-Premise окружении
+
+В отличие от облачных платформ, где дефицит ресурсов узлов компенсируется автоматическим заказом виртуальных машин через Cloud Cluster Autoscaler, инфраструктура Bare-Metal обладает фиксированным пулом вычислительных мощностей:
+
+- **Лимит аллокации (Allocatable):** Параметр `maxReplicas` в HPA должен быть строго согласован с суммарным объемом `cpu.allocatable` и `memory.allocatable` рабочих узлов кластера.
+- **ResourceQuota:** Если HPA вычисляет масштабирование вверх, превышающее лимиты пространства имен (`ResourceQuota`), планирование новых подов блокируется со статусом `FailedCreate`, а в HPA фиксируется условие `ScalingLimited: True`.
+- **Влияние на дисковую и сетевую подсистему:** При интенсивном масштабировании на Bare-Metal узлах возрастает нагрузка на сетевые интерфейсы (CRI / CNI) и дисковые хранилища при загрузке слоев контейнеров, поэтому поды должны использовать минимальные легковесные базовые образы.
+
+---
+
+## Практические сценарии и конфигурация
+
+### Предварительные требования
+
+Перед развертыванием любого сценария убедитесь в готовности инфраструктурных компонентов:
+
+1. **Работоспособность Metrics Server:**
    ```bash
-   kubectl get deployment metrics-server -n kube-system
+   kubectl get apiservice v1beta1.metrics.k8s.io
+   # → NAME                     SERVICE                      AVAILABLE   AGE
+   # → v1beta1.metrics.k8s.io   kube-system/metrics-server   True        45d
+
    kubectl top nodes
+   # → NAME       CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%
+   # → worker-01  420m         10%    8192Mi          25%
+   # → worker-02  510m         12%    9420Mi          29%
    ```
 
-2. **Resource Requests:** HPA использует `requests` в спецификации контейнера как базовую линию для расчета процента утилизации. Без них статус HPA будет `<unknown>`. Пример:
+2. **Заданные `resources.requests`:**
+   Каждый контейнер пода должен иметь явные значения `requests`. Пример рабочего блока:
    ```yaml
    resources:
      requests:
-       cpu: "200m"
+       cpu: "250m"
        memory: "256Mi"
+     limits:
+       cpu: "1000m"
+       memory: "512Mi"
    ```
 
-3. **Готовые поды (Ready Pods):** HPA учитывает только поды в состоянии `Ready`. Если поды долго стартуют или падают (CrashLoop), расчеты будут неточными. Убедитесь, что `readinessProbe` настроен корректно.
+3. **Корректные пробы готовности (`readinessProbe`):**
+   HPA включает в формулу расчета только поды в состоянии `Ready`. Если приложение стартует медленно или не имеет probes, метрики не прогретых подов исказят результат расчета.
 
-4. **Адаптер метрик (для кастомных/внешних метрик):** Для масштабирования по RPS, длине очереди или другим нетривиальным метрикам необходим Prometheus Adapter или **[KEDA](../keda/keda_concepts.md)**.
+4. **Адаптер метрик для нестандартных сценариев:**
+   Для метрик RPS, очередей и времени отклика должен быть установлен и зарегистрирован `Prometheus Adapter` или `KEDA` с валидным статусом APIService (`v1beta1.custom.metrics.k8s.io` / `v1beta1.external.metrics.k8s.io`).
 
-## Алгоритм внедрения
+---
 
-Пошаговый чек-лист для внедрения HPA в production:
+### Алгоритм внедрения HPA в Production
 
-1. **Определите метрики и цели:**
-   - Какой показатель лучше всего отражает нагрузку на приложение? (CPU, RPS, длина очереди, задержка)
-   - Какой процент утилизации является целевым? (обычно 50-70% для CPU)
+Чек-лист для SRE и инженеров сопровождения:
 
-2. **Создайте Deployment с `requests`:**
-   - Убедитесь, что все контейнеры (включая sidecar) имеют заданные `resources.requests`
+1. **Профилирование сервиса под нагрузкой:** Определение критического ресурса (CPU-bound, I/O-bound, память).
+2. **Фиксация базовой линии:** Настройка `resources.requests` на уровне 75–80-го перцентиля реального потребления в спокойном состоянии.
+3. **Выбор целевой утилизации:** Установка целевого порога на уровне 60–70% для CPU, чтобы оставить запас (Headroom) для обработки всплесков во время разгона новых подов.
+4. **Конфигурация PDB:** Развертывание `PodDisruptionBudget` для защиты минимального кворума доступности при сжатии пула.
+5. **Настройка политик стабилизации:** Увеличение `scaleDown.stabilizationWindowSeconds` до 300–600 секунд для исключения дребезга.
+6. **Интеграция с GitOps:** Добавление исключения `ignoreDifferences` для `.spec.replicas` в ArgoCD или Flux.
 
-3. **Примените HPA и наблюдайте:**
-   - После деплоя отслеживайте реакцию HPA в реальном времени через `kubectl get hpa -w`
-   - Проверяйте, что TARGETS отображает процент (а не `<unknown>`)
-
-4. **Настройте `behavior` для production:**
-   - Агрессивный рост при пиках (`scaleUp` = мгновенно)
-   - Медленное сжатие для стабильности (`scaleDown` = окно стабилизации 300-600с)
-
-5. **Добавьте PDB:**
-   - Обязательно создайте **Pod Disruption Budget** для защить доступность при масштабировании вниз
-
-6. **Изучите кастомные метрики:**
-   - Если стандартных ресурсов недостаточно, настройте интеграцию с KEDA
-
-## Практические сценарии
+---
 
 ### Сценарий 1: Базовый HPA по процессору (CPU)
 
-Используется для большинства веб-приложений (Stateless), где нагрузка напрямую коррелирует с использованием процессора.
+Предназначен для классических веб-приложений и API без сохранения состояния (Stateless), где нагрузка линейно транслируется в загрузку процессорных ядер.
 
 ```yaml
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: my-app-hpa
+  name: web-api-cpu-hpa
+  namespace: production
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: my-app
+    name: web-api
   minReplicas: 3
   maxReplicas: 20
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 60
-```
-
-**Параметры:**
-- `averageUtilization: 60` — HPA стремится поддерживать среднее потребление CPU на уровне 60% от `requests.cpu`. При превышении этого порога (с учетом толерантности ±10%) происходит масштабирование вверх.
-- `minReplicas: 3` — минимальное количество реплик. HPA никогда не опустится ниже этого значения, даже если нагрузка упала до нуля.
-- `maxReplicas: 20` — максимальное количество реплик. Защищает от бесконечного роста при аномальных метриках.
-
-### Сценарий 2: Мультиметрика (CPU и Память)
-
-HPA вычисляет необходимое количество реплик для каждой метрики отдельно и выбирает **наибольшее** значение из полученных результатов. Это гарантирует, что ни одна из метрик не будет проигнорирована.
-
-```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: multi-metric-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: memory-heavy-app
-  minReplicas: 2
-  maxReplicas: 10
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 50
-    - type: Resource
-      resource:
-        name: memory
-        target:
-          type: Utilization
-          averageUtilization: 80
-```
-
-**Логика расчета (пример):**
-```
-Метрика 1 (CPU): 2 реплики × (70% / 50%) = ceil(2.8) = 3 реплики
-Метрика 2 (Memory): 2 реплики × (60% / 80%) = ceil(1.5) = 2 реплики
-
-HPA выберет 3 реплики (наибольшее значение)
-```
-
-**Важно:** Память как метрика масштабирования имеет особенность — многие среды (JVM, Go) не возвращают память ОС мгновенно после GC. Метрика `working_set_bytes` остается высокой, и HPA может «застревать» на максимальных репликах. Используйте память как ограничение безопасности, а не основную метрику.
-
-### Сценарий 3: Масштабирование по длине очереди (Внешние метрики)
-
-Для использования внешних метрик требуется специальный адаптер, например **KEDA**. Подробнее об архитектуре работы с очередями см. в разделе **[Паттерн Workers + Queue](../workers_queue_pattern.md)**.
-
-```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: queue-based-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: worker
-  minReplicas: 1
-  maxReplicas: 50
-  metrics:
-    - type: External
-      external:
-        metric:
-          name: queue_messages_ready
-        target:
-          type: AverageValue
-          averageValue: "200"
-```
-
-**Параметры:**
-- `type: External` — метрика находится за пределами кластера (очередь RabbitMQ, Kafka, база данных).
-- `averageValue: "200"` — целевое среднее значение метрики на один под. Если очередь содержит 1000 сообщений, HPA запросит `ceil(1000 / 200) = 5` реплик.
-- Адаптер (KEDA, Prometheus Adapter) предоставляет метрику через External Metrics API (`external.metrics.k8s.io`).
-
-### Сценарий 4: Масштабирование по нагрузке на инстанс (Pods метрики)
-
-Используется, когда метрика привязана к конкретному поду (RPS на инстанс, размер локального кэша, количество активных соединений).
-
-```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: rps-based-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: api-gateway
-  minReplicas: 2
-  maxReplicas: 20
-  metrics:
-    - type: Pods
-      pods:
-        metric:
-          name: http_requests_per_second
-        target:
-          type: AverageValue
-          averageValue: "500"
-```
-
-**Параметры:**
-- `type: Pods` — метрика является индивидуальной для каждого пода. HPA делит общее значение метрики на количество готовых подов.
-- `averageValue: "500"` — целевое количество запросов в секунду на один под. Если общая нагрузка 5000 RPS, HPA запросит `ceil(5000 / 500) = 10` реплик.
-- Требует адаптера метрик (Prometheus Adapter), настроенного на сбор метрики `http_requests_per_second` из Prometheus.
-
-### Сценарий 5: Масштабирование по метрике объекта (Object метрики)
-
-Используется, когда метрика является общей для всех подов (общая нагрузка на Ingress, количество активных Job, размер очереди в MongoDB).
-
-```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: ingress-based-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: backend
-  minReplicas: 2
-  maxReplicas: 15
-  metrics:
-    - type: Object
-      object:
-        describedObject:
-          apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          name: main-ingress
-        metric:
-          name: requests_per_second
-        target:
-          type: Value
-          value: "1000"
-```
-
-**Параметры:**
-- `type: Object` — метрика привязана к другому объекту Kubernetes (Ingress, Job, Service).
-- `target.type: Value` — абсолютное значение для всего объекта. HPA сравнивает общее значение метрики с целевым напрямую (без деления на количество подов).
-- Если Ingress обрабатывает 3000 RPS, а цель — 1000 RPS, HPA запросит `ceil(3000 / 1000) = 3` реплики.
-
-### Сценарий 6: Тонкая настройка поведения (Behavior)
-
-Данный сценарий позволяет настроить «агрессивность» масштабирования. Например, быстро расти при пиках и медленно сокращаться для обеспечения стабильности (предотвращение дребезга).
-
-```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: behavior-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: critical-api
-  minReplicas: 3
-  maxReplicas: 15
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 0 # Мгновенная реакция на рост
-      policies:
-        - type: Percent
-          value: 100 # Рост на 100% за раз
-          periodSeconds: 15
-    scaleDown:
-      stabilizationWindowSeconds: 300 # Ожидание 5 минут перед сжатием
-      policies:
-        - type: Percent
-          value: 10 # Уменьшение только на 10%
-          periodSeconds: 60
-```
-
-**Параметры `behavior`:**
-
-| Поле | Описание | Рекомендации |
-|:---|:---|:---|
-| `stabilizationWindowSeconds` | Период анализа исторических метрик. Для `scaleDown` HPA выбирает **наибольшее** (наиболее безопасное) количество реплик за окно. | `scaleUp`: 0 (мгновенно), `scaleDown`: 300-600 (5-10 минут). |
-| `policies.type` | Тип политики: `Percent` (процент от текущих реплик) или `Pods` (абсолютное количество). | `Percent` для масштабных приложений, `Pods` для малых deployments. |
-| `policies.value` | Максимальное изменение за один шаг. Для `Percent: 100` — удвоение за раз. | `scaleUp`: 100-200 (быстрый рост), `scaleDown`: 10-25 (осторожное сжатие). |
-| `policies.periodSeconds` | Интервал между шагами масштабирования. | `scaleUp`: 15-60, `scaleDown`: 60-120. |
-
-**Дополнительные параметры `behavior`:**
-
-- `selectPolicy: Max` (по умолчанию) — выбирает политику, дающую **наибольшее** количество реплик. Для `scaleUp` — агрессивный рост, для `scaleDown` — консервативное сжатие.
-- `selectPolicy: Min` — выбирает политику, дающую **наименьшее** количество реплик. Для `scaleUp` — консервативный рост, для `scaleDown` — агрессивное сжатие.
-- `selectPolicy: Disabled` — полностью отключает масштабирование в данном направлении.
-
-Подробнее о поведении см. **[HPA: Продвинутые темы — Behavior](./hpa_advanced.md#tonkaya-nastroyka-behavior)**.
-
-### Сценарий 7: Масштабирование по ресурсу конкретного контейнера (ContainerResource)
-
-Позволяет масштабировать по ресурсам конкретного контейнера в поде, игнорируя потребление sidecar-контейнеров (Envoy, fluent-bit, telegraf), которые могут искажать общую картину утилизации.
-
-```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: container-resource-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: my-app
-  minReplicas: 2
-  maxReplicas: 10
-  metrics:
-    - type: ContainerResource
-      containerResource:
-        container: main-app
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70
-```
-
-**Параметры:**
-- `container: main-app` — имя контейнера, по ресурсам которого происходит масштабирование. Sidecar-контейнеры (Envoy, fluent-bit) игнорируются.
-- `name: cpu` — ресурс для мониторинга. Также поддерживается `memory`.
-- Контейнер `main-app` должен иметь `resources.requests.cpu`, иначе расчет утилизации невозможен.
-
-**Когда использовать:**
-- В поде есть sidecar, потребляющий значительную долю ресурсов (Envoy proxy — до 100m CPU).
-- Sidecar «съедает» часть лимита и искажает общую утилизацию пода.
-- Стандартный `Resource` метрик показывает высокое потребление, хотя приложение нагружено минимально.
-
-Подробнее см. **[HPA: Продвинутые темы — ContainerResource](./hpa_advanced.md#containerresource-masshtabirovanie-po-resursu-konkretnogo-konteynera)**.
-
-### Сценарий 8: HPA для StatefulSet
-
-HPA поддерживает StatefulSets, но с ограничениями. StatefulSets не пересоздают поды при обновлении — HPA изменяет количество реплик через `/scale` подресурс.
-
-```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: statefulset-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: StatefulSet
-    name: kafka-consumer
-  minReplicas: 2
-  maxReplicas: 10
   metrics:
     - type: Resource
       resource:
@@ -349,46 +156,31 @@ spec:
         target:
           type: Utilization
           averageUtilization: 65
-  behavior:
-    scaleDown:
-      stabilizationWindowSeconds: 600  # 10 минут для StatefulSet
-      policies:
-        - type: Pods
-          value: 1  # Удаляем по одному поду
-          periodSeconds: 120
 ```
 
-**Особенности:**
-- StatefulSet имеет стабильные сетевые идентификаторы и постоянные тома. Масштабирование вниз удаляет поды с наименьшим индексом.
-- Используйте `policies.type: Pods` с `value: 1` для масштабирования вниз — это гарантирует последовательное удаление подов и минимальное влияние на состояние.
-- Увеличенное `stabilizationWindowSeconds` (600с) для scaleDown защищает от случайного удаления подов с данными.
+**Разбор параметров:**
+- `scaleTargetRef`: указывает строго на `Deployment/web-api`.
+- `averageUtilization: 65`: контроллер стремится удерживать среднее потребление процессорного времени на уровне 65% от `spec.template.spec.containers[*].resources.requests.cpu`.
+- `minReplicas: 3`: гарантия высокой доступности (HA) на случай планового перезапуска узла или падения процесса.
+- `maxReplicas: 20`: жесткий верхний предел масштабирования, защищающий кластер от исчерпания ресурсов узлов при аномальных нагрузках.
 
-### Сценарий 9: HPA + PDB (связка для production)
+---
 
-Pod Disruption Budget (PDB) защищает доступность сервиса при масштабировании вниз. HPA учитывает PDB, но при агрессивном `scaleDown` масштабирование может «застревать».
+### Сценарий 2: Мультиметрика (CPU и Память) с защитой от OOM
+
+Используется для приложений, чувствительных к утечкам памяти и пиковым нагрузкам по CPU. HPA вычисляет необходимое число реплик для каждого правила независимо и выбирает **максимальное (наиболее безопасное)** значение.
 
 ```yaml
-# PDB: минимум 2 пода всегда доступны
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: my-app-pdb
-spec:
-  minAvailable: 2
-  selector:
-    matchLabels:
-      app: my-app
----
-# HPA: осторожное масштабирование вниз
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: my-app-hpa
+  name: backend-multimetric-hpa
+  namespace: production
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: my-app
+    name: order-backend
   minReplicas: 3
   maxReplicas: 15
   metrics:
@@ -398,48 +190,162 @@ spec:
         target:
           type: Utilization
           averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
   behavior:
     scaleDown:
-      stabilizationWindowSeconds: 300
+      stabilizationWindowSeconds: 600
       policies:
-        - type: Pods
-          value: 1  # Удаляем по одному поду
+        - type: Percent
+          value: 10
           periodSeconds: 60
 ```
 
-**Проверка PDB:**
-```bash
-# Просмотр PDB для сервиса
-kubectl get pdb my-app-pdb
+**Математика вычисления мультиметрики:**
+```
+Исходное состояние: 4 реплики.
+Метрика CPU: текущая утилизация 85%, цель 60%  ──► ceil(4 × (85 / 60)) = ceil(5.66) = 6 реплик
+Метрика Memory: текущая утилизация 68%, цель 75% ──► ceil(4 × (68 / 75)) = ceil(3.62) = 4 реплики
 
-# Проверка, разрешит ли PDB удаление подов
-kubectl get pdb my-app-pdb -o jsonpath='{.status.currentHealthy}' # → 3
-kubectl get pdb my-app-pdb -o jsonpath='{.status.disruptionsAllowed}' # → 1
+Решение HPA: Max(6, 4) = 6 реплик.
 ```
 
-**Взаимодействие:**
-- PDB с `minAvailable: 2` при 3 репликах разрешает удаление только 1 пода за раз.
-- HPA с `policies.type: Pods, value: 1` удаляет по одному поду — PDB не блокирует операцию.
-- Если HPA попытается удалить 2 пода одновременно, PDB заблокирует второе удаление.
+**Эксплуатационное предупреждение (SRE Gotcha):**
+Многие управляемые среды исполнения (JVM, Golang, Node.js) не возвращают немедленно освобожденную память операционной системе ядра Linux после срабатывания сборщика мусора (GC). Показатель `working_set_bytes` удерживается на высоком уровне длительное время. Использование памяти в качестве единственной метрики HPA может приводить к «залипанию» пула на значении `maxReplicas`. Память в HPA рекомендуется использовать только как вторичный предохранитель с консервативным `scaleDown`.
 
-Подробнее: **[Pod Disruption Budget](../pod_disruption_budget.md)**.
+---
 
-### Сценарий 10: Комбинированные политики Behavior
+### Сценарий 3: Масштабирование по длине очереди через External Metrics
 
-Несколько политик в одном блоке `behavior` с `selectPolicy` для управления приоритетом.
+Применяется для асинхронных фоновых обработчиков (Background Workers), читающих сообщения из очередей RabbitMQ, Kafka или Redis, развернутых в On-Premise инфраструктуре.
 
 ```yaml
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: combined-behavior-hpa
+  name: rabbitmq-consumer-hpa
+  namespace: processing
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: payment-service
+    name: email-notification-worker
+  minReplicas: 2
+  maxReplicas: 40
+  metrics:
+    - type: External
+      external:
+        metric:
+          name: rabbitmq_queue_messages_ready
+          selector:
+            matchLabels:
+              queue: emails-high-priority
+        target:
+          type: AverageValue
+          averageValue: "150"
+```
+
+**Разбор параметров:**
+- `type: External`: источник метрики находится за пределами стандартного конвейера Kubelet.
+- `metric.selector`: фильтрация конкретной очереди через селектор меток в адаптере.
+- `averageValue: "150"`: целевая нагрузка на один под-обработчик. Если в очереди скопилось 3000 сообщений, HPA рассчитает: $\lceil 3000 / 150 \rceil = 20$ реплик.
+- Подробнее о паттернах работы с брокерами см. **[Паттерн Workers + Queue](../workers_queue_pattern.md)**.
+
+---
+
+### Сценарий 4: Масштабирование по нагрузке на инстанс (Pods Metrics)
+
+Используется для сервисов, где ключевой метрикой выступает количество входящих HTTP-запросов в секунду (RPS) на конкретный под приложения. Значение агрегируется Prometheus Adapter и делится контроллером HPA на количество готовых подов.
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway-rps-hpa
+  namespace: gateway
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway
+  minReplicas: 4
+  maxReplicas: 25
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: http_requests_per_second
+        target:
+          type: AverageValue
+          averageValue: "400"
+```
+
+**Особенности работы:**
+- Prometheus Adapter суммирует `rate(http_requests_total[2m])` по всем подам с меткой `app=api-gateway`.
+- HPA получает суммарное значение из API `custom.metrics.k8s.io` и делит его на текущее количество реплик, сравнивая результат с порогом `averageValue: 400`.
+- При резком наплыве трафика (например, 4800 RPS суммарно) целевое число подов составит: $\lceil 4800 / 400 \rceil = 12$ реплик.
+
+---
+
+### Сценарий 5: Масштабирование по метрике внешнего объекта (Object Metrics)
+
+Используется в случаях, когда метрика привязана к самостоятельному объекту Kubernetes (например, суммарный RPS или счетчик активных соединений на объекте `Ingress`).
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: frontend-ingress-hpa
+  namespace: frontend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web-frontend
   minReplicas: 3
   maxReplicas: 30
+  metrics:
+    - type: Object
+      object:
+        describedObject:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          name: web-main-ingress
+        metric:
+          name: requests_per_second
+        target:
+          type: Value
+          value: "3000"
+```
+
+**Разбор параметров:**
+- `type: Object`: метрика считывается со связанного ресурса (`describedObject`), указанного в том же пространстве имен.
+- `target.type: Value`: прямое абсолютное значение метрики всего объекта.
+- Формула расчета: $\lceil \text{currentReplicas} \times (\text{currentValue} / 3000) \rceil$.
+
+---
+
+### Сценарий 6: Тонкая настройка динамики масштабирования (Behavior)
+
+Настройка профиля масштабирования для критических production-сервисов с мгновенной реакцией на всплески (Burst/Spike traffic) и консервативным, ступенчатым сжатием пула для исключения дребезга (Anti-Flapping).
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: payment-service-behavior-hpa
+  namespace: billing
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: payment-processor
+  minReplicas: 4
+  maxReplicas: 32
   metrics:
     - type: Resource
       resource:
@@ -452,12 +358,205 @@ spec:
       stabilizationWindowSeconds: 0
       policies:
         - type: Percent
-          value: 100  # Удвоение за раз
+          value: 100
           periodSeconds: 15
         - type: Pods
-          value: 4   # Или 4 пода за раз
+          value: 4
           periodSeconds: 15
-      selectPolicy: Max  # Выбирает более агрессивную политику
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+      selectPolicy: Min
+```
+
+**Сводка параметров секции `behavior`:**
+
+| Параметр | Направление | Назначение | Рекомендация для On-Premise Production |
+|:---|:---|:---|:---|
+| `stabilizationWindowSeconds` | `scaleUp` | Фильтрация ложных пиков перед ростом | `0` (мгновенное расширение при всплеске) |
+| `stabilizationWindowSeconds` | `scaleDown` | Анализ максимального числа реплик за окно | `300` – `600` секунд (5–10 минут ожидания) |
+| `policies.type: Percent` | `scaleUp` | Шаг расширения в процентах от текущего пула | `100%` (удвоение за 15 секунд) |
+| `policies.type: Pods` | `scaleUp` | Абсолютный шаг расширения | `4` пода (гарантированный прирост для малых пулов) |
+| `policies.type: Percent` | `scaleDown` | Шаг сужения пула в процентах | `10%` за 60 секунд (плавный вывод) |
+| `policies.type: Pods` | `scaleDown` | Абсолютный шаг сужения | `1`–`2` пода за период |
+| `selectPolicy: Max` | `scaleUp` | Выбор между конкурирующими политиками | Выбирает наибольший шаг (агрессивный рост) |
+| `selectPolicy: Min` | `scaleDown` | Выбор между конкурирующими политиками | Выбирает наименьший шаг (осторожный спуск) |
+
+Детальный анализ параметров см. в **[HPA: Продвинутые темы](./hpa_advanced.md)**.
+
+---
+
+### Сценарий 7: Масштабирование по ресурсу конкретного контейнера (ContainerResource)
+
+Используется для подов с ресурсоемкими вспомогательными контейнерами (sidecars: Envoy/Istio-proxy, Fluent-bit, лог-коллекторы). Стандартный тип `Resource` суммирует потребление всех контейнеров в поде, что может приводить к ложному масштабированию из-за активности sidecar.
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: app-container-resource-hpa
+  namespace: core
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: order-service
+  minReplicas: 3
+  maxReplicas: 18
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        container: order-api
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+**Особенности применения:**
+- Поле `container: order-api` указывает имя контейнера из `spec.template.spec.containers[*].name`.
+- Потребление CPU контейнеров `istio-proxy` или `filebeat` полностью игнорируется алгоритмом HPA.
+- Контейнер `order-api` обязан иметь заданный `resources.requests.cpu`.
+
+---
+
+### Сценарий 8: HPA для StatefulSet
+
+Масштабирование распределенных воркеров или шардированных очередей, оформленных в виде StatefulSet.
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: stream-worker-statefulset-hpa
+  namespace: analytics
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: stream-worker
+  minReplicas: 2
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+      selectPolicy: Min
+```
+
+**Критические архитектурные правила для StatefulSet:**
+1. **Порядок удаления подов:** Kubernetes StatefulSet удаляет поды строго в обратном порядке — начиная с **наибольшего индекса (ordinal)** к наименьшему (например, при 4 репликах сначала удаляется `stream-worker-3`, затем `stream-worker-2`).
+2. **Персистентные тома (PVC):** При масштабировании StatefulSet вниз ассоциированные PersistentVolumeClaims **не удаляются автоматически**. Они остаются привязанными в кластере, сохраняя данные. При повторном масштабировании вверх под с тем же индексом подключится к своему старому PVC.
+3. **Безопасный шаг scaleDown:** Политика `policies.type: Pods, value: 1` с интервалом `120s` гарантирует последовательное завершение работы подов с завершением локальной обработки данных.
+4. Дополнительные детали архитектуры см. в **[Масштабирование StatefulSet](../statefulset_autoscaling.md)**.
+
+---
+
+### Сценарий 9: Связка HPA + Pod Disruption Budget (PDB) в Production
+
+Гарантия непрерывной доступности при плановом обслуживании узлов (дрейн) и одновременном масштабировании вниз.
+
+```yaml
+# 1. PodDisruptionBudget: защита минимального кворума
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: user-auth-pdb
+  namespace: identity
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: user-auth
+---
+# 2. HorizontalPodAutoscaler: согласованное масштабирование
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: user-auth-hpa
+  namespace: identity
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: user-auth
+  minReplicas: 3
+  maxReplicas: 16
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 45
+```
+
+**Координация HPA и PDB:**
+- Если в кластере 3 реплики, а PDB требует `minAvailable: 2`, одновременно может быть вытеснен ровно 1 под.
+- Пошаговое удаление (`policies.type: Pods, value: 1`) гарантирует, что HPA не попытается запросить падение сразу на 2 пода, что вызвало бы конфликт с PDB.
+- См. подробнее **[Pod Disruption Budget](../pod_disruption_budget.md)**.
+
+---
+
+### Сценарий 10: Комбинированные политики Behavior с селекторами SelectPolicy
+
+Сценарий обеспечивает адаптивное поведение: на малых масштабах наращивание происходит фиксированными порциями, а при достижении больших объемов начинает доминировать процентная ставка.
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: adaptive-workload-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: dynamic-api
+  minReplicas: 2
+  maxReplicas: 50
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      selectPolicy: Max
     scaleDown:
       stabilizationWindowSeconds: 600
       policies:
@@ -467,147 +566,102 @@ spec:
         - type: Pods
           value: 1
           periodSeconds: 60
-      selectPolicy: Min  # Выбирает более консервативную политику
+      selectPolicy: Min
 ```
 
-**Логика `selectPolicy`:**
-- `scaleUp` + `selectPolicy: Max`: Если политика Percent дает 6 подов, а Pods — 4 пода, HPA выберет 6 (более агрессивный рост).
-- `scaleDown` + `selectPolicy: Min`: Если политика Percent дает уменьшение на 3 пода, а Pods — на 1 под, HPA выберет 1 (более консервативное сжатие).
+**Поведение `selectPolicy: Max` при `scaleUp`:**
+- При текущих 2 репликах: `Percent: 100%` дает $+2$ пода (итого 4), `Pods: 4` дает $+4$ пода (итого 6). HPA выбирает `Max` $\rightarrow 6$ подов.
+- При текущих 20 репликах: `Percent: 100%` дает $+20$ подов (итого 40), `Pods: 4` дает $+4$ пода (итого 24). HPA выбирает `Max` $\rightarrow 40$ подов.
 
-## Валидация
+---
 
-После применения HPA необходимо убедиться, что он работает корректно:
+### Сценарий 11: HPA + Ingress-NGINX на Bare-Metal (RPS и Latency P99)
 
-```bash
-# 1. Проверка текущего состояния HPA
-kubectl get hpa my-app-hpa
-# → NAME           REFERENCE          TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
-# → my-app-hpa     Deployment/my-app  35%/60%   3         20        3          5m
-```
+Экспорт метрик контроллером Ingress-NGINX через внутренний эндпоинт Prometheus и масштабирование нижележащего бэкенда.
 
-**Ожидаемый результат:** В колонке `TARGETS` отображается процент утилизации (например, `35%/60%`), а не `<unknown>`.
-
-```bash
-# 2. Детальная информация (условия и события)
-kubectl describe hpa my-app-hpa
-
-# 3. Проверка конкретного условия ScalingActive
-kubectl get hpa my-app-hpa -o jsonpath='{.status.conditions[?(@.type=="ScalingActive")].status}'
-# → True (метрики собираются) или False (проблема)
-
-# 4. Просмотр текущего потребления ресурсов
-kubectl top pods -l app=my-app
-# → NAME                     CPU(cores)   MEMORY(bytes)
-# → my-app-6d4f5b5c7-x2j9k  120m         180Mi
-
-# 5. Мониторинг в реальном времени (ожидание масштабирования)
-kubectl get hpa my-app-hpa -w
-```
-
-**Если TARGETS = `<unknown>`:**
-1. Проверьте наличие `resources.requests` у всех контейнеров: `kubectl get pod <pod> -o jsonpath='{.spec.containers[*].resources.requests}'`
-2. Проверьте доступность Metrics Server: `kubectl top nodes`
-3. Проверьте условия HPA: `kubectl describe hpa my-app-hpa` (раздел Conditions)
-
-Детальная диагностика: [Устранение неполадок HPA](../../Troubleshooting/Common_Errors/hpa_troubleshooting.md).
-
-## Типовые ошибки
-
-| Ошибка | Причина | Решение |
-|:---|:---|:---|
-| `TARGETS` показывает `<unknown>` | Отсутствуют `requests` у контейнеров или Metrics Server недоступен. | Добавить `resources.requests` всем контейнерам, установить Metrics Server. |
-| HPA не масштабирует вниз | Метрики не падают ниже порога толерантности или достигнут `minReplicas`. | Проверить фактическое потребление: `kubectl top pods`. Уменьшить `minReplicas`. |
-| HPA не масштабирует вверх | Метрики стабильны в пределах толерантности (±10% от целевого значения). | Проверить, что нагрузка действительно растет. Увеличить `maxReplicas`. |
-| Дребезг (flapping) | Частое переключение между масштабированием вверх и вниз. | Настроить `behavior` с окном стабилизации для `scaleDown`. Увеличить `maxReplicas`. |
-| Конфликт с ручным `kubectl scale` | HPA перезаписывает вручную заданные `replicas`. | Управлять масштабированием только через HPA. Не использовать `kubectl scale`. |
-| `<unknown>` при работающем Metrics Server | У sidecar-контейнера отсутствуют `requests`. HPA требует `requests` для **всех** контейнеров. | Добавить `requests` sidecar или использовать тип метрики `ContainerResource`. |
-| PDB блокирует scale-down | PDB требует `minAvailable`, превышающее количество реплик после масштабирования. | Ослабить PDB или настроить `behavior.scaleDown` с policies.type: Pods, value: 1. |
-
-## Граничные случаи (Edge Cases)
-
-1. **Масштабирование при обновлении Deployment:** При Rollout Deployment создается новый ReplicaSet. HPA начинает масштабировать новый ReplicaSet только после того, как поды из него становятся `Ready`. Если `scaleTargetRef` указывает на ReplicaSet (а не на Deployment), HPA может масштабировать неактивный ReplicaSet.
-
-2. **HPA и DaemonSet:** HPA **не поддерживается** для DaemonSet, так как DaemonSet гарантирует ровно один под на каждом узле. Масштабирование регулируется количеством узлов в кластере.
-
-3. **HPA и Job/CronJob:** HPA обычно **не применяется** к Job и CronJob, так как эти объекты имеют конечный жизненный цикл. Для масштабирования воркеров в очередях используйте KEDA.
-
-4. **Множественные HPA на один объект:** Kubernetes **не запрещает** создание нескольких HPA на один Deployment, но это приводит к непредсказуемому поведению — каждый HPA независимо рассчитывает целевое количество реплик и конфликтует за право записи в `/scale`. Рекомендация: **один HPA на объект**.
-
-5. **Отсутствие метрик при масштабировании вниз:** Если Metrics Server временно недоступен, HPA **не уменьшает** количество реплик — он сохраняет текущее состояние до восстановления доступа к метрикам. Это защитный механизм.
-
-6. **Очень маленький `maxReplicas`:** Диапазон `min=1, max=2` лишает HPA математического смысла — формула `ceil(1 × (метрика / цель))` практически всегда даст 1 или 2, и HPA будет постоянно «застревать» на лимитах. Рекомендуется `maxReplicas >= 5`.
-
-7. **Нулевое потребление метрик:** Если все поды потребляют 0% ресурсов (приложение простаивает), HPA рассчитает `ceil(3 × (0 / 50)) = 0`. Однако `minReplicas` не позволит опуститься ниже заданного минимума. Для масштабирования до нуля используйте KEDA.
-
-8. **Два типа `value` для одной метрики:** Нельзя задавать одновременно `averageUtilization` и `averageValue` для одной метрики в одном HPA. Используйте либо `Utilization` (процент от requests), либо `AverageValue` (абсолютное значение).
-
-## Лучшие практики
-
-1. **Начинайте с CPU:** Для stateless-приложений CPU является наиболее надежным и предсказуемым показателем нагрузки.
-2. **Настраивайте `behavior`:** Для продакшена всегда определяйте политики scaleUp/scaleDown. Агрессивный рост при пиках и медленное сжатие — типичный паттерн.
-3. **Используйте PDB:** Обязательно создавайте **Pod Disruption Budget** вместе с HPA. Это гарантирует, что при масштабировании в_DOWN или удалении узлов не будет нарушена доступность сервиса.
-4. **Настраивайте Readiness Probes:** HPA учитывает только «готовые» поды. Без настроенных `readinessProbe` HPA может начать масштабирование на основе данных от еще не прогретых подов.
-5. **Избегайте узких диапазонов `maxReplicas`:** Слишком маленький диапазон (например, 1-2 реплики) лишает HPA математического смысла и делает его излишне чувствительным к колебаниям.
-6. **Не задавайте `replicas` в манифесте:** Если HPA управляет масштабированием — удалите поле `replicas` из Deployment-манителста. Иначе повторный `kubectl apply` перезапишет значение, выставленное HPA.
-7. **Память как второстепенная метрика:** Многие среды (JVM, Go) не возвращают память ОС мгновенно после GC, что ведет к «застреванию» HPA на максимальных репликах. Используйте память как ограничение безопасности, а не основную метрику.
-8. **Тестируйте в staging:** Перед применением в production протестируйте HPA в staging-среде с реальной нагрузкой. Убедитесь, что масштабирование происходит в ожидаемые сроки и без дребезга.
-
-## Cleanup/Revert
-
-Для отката изменений и очистки ресурсов:
-
-```bash
-# Удаление HPA (масштабирование прекращается, количество реплик остается последним)
-kubectl delete hpa my-app-hpa
-
-# Удаление PDB
-kubectl delete pdb my-app-pdb
-
-# Ручное восстановление количества реплик (если необходимо)
-kubectl scale deployment my-app --replicas=3
-
-# Проверка, что HPA удален
-kubectl get hpa
-# → No resources found
-```
-
-**Важно:** При удалении HPA количество реплик **не возвращается** к исходному значению. Оно остается на уровне последнего расчета HPA. Если необходимо вернуть конкретное значение — используйте `kubectl scale`.
-
-### Сценарий 11: HPA + NGINX Ingress Controller (масштабирование по метрикам Ingress)
-
-NGINX Ingress Controller экспортирует метрики Prometheus (через порт 10254 или 9113). Эти метрики можно использовать для масштабирования бэкенд-сервисов.
-
-**Предварительные требования:**
-- NGINX Ingress Controller с включенным Prometheus exporter
-- Prometheus Adapter или KEDA для предоставления метрик через Custom Metrics API
-
-**Вариант A: HPA по RPS через Prometheus Adapter**
+#### Вариант А: Конфигурация Prometheus Adapter и HPA по RPS
 
 ```yaml
-# Prometheus Adapter config.yaml (правило для RPS)
-config.yaml: |
-  rules:
-    - seriesQuery: 'nginx_ingress_controller_requests{namespace!="",ingress!=""}'
-      resources:
-        overrides:
-          namespace: {resource: "namespace"}
-          ingress: {resource: "ingress", group: "networking.k8s.io", version: "v1"}
-      name:
-        matches: "^(.*)_requests$"
-        as: "requests_per_second"
-      metricsQuery: 'sum(rate(<<.Series>>{<<.LabelMatchers>>}[2m])) by (<<.GroupBy>>)'
+# Фрагмент ConfigMap prometheus-adapter для RPS
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-adapter-config
+  namespace: monitoring
+data:
+  config.yaml: |
+    rules:
+      - seriesQuery: 'nginx_ingress_controller_requests{namespace!="",ingress!=""}'
+        resources:
+          overrides:
+            namespace: {resource: "namespace"}
+            ingress: {resource: "ingress", group: "networking.k8s.io", version: "v1"}
+        name:
+          matches: "^(.*)_requests$"
+          as: "ingress_requests_per_second"
+        metricsQuery: 'sum(rate(<<.Series>>{<<.LabelMatchers>>}[2m])) by (<<.GroupBy>>)'
 ---
-# HPA: масштабирование по RPS на Ingress
+# HPA: масштабирование сервиса по общему объему входящего RPS на Ingress
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: my-app-ingress-rps-hpa
+  name: backend-ingress-rps-hpa
+  namespace: apps
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: my-app
-  minReplicas: 2
+    name: catalog-service
+  minReplicas: 3
+  maxReplicas: 30
+  metrics:
+    - type: Object
+      object:
+        describedObject:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          name: catalog-ingress
+        metric:
+          name: ingress_requests_per_second
+        target:
+          type: Value
+          value: "1500"
+```
+
+#### Вариант Б: Масштабирование по Latency P99 (Prometheus Adapter)
+
+```yaml
+# Фрагмент правила Prometheus Adapter для квантиля P99
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-adapter-p99-config
+  namespace: monitoring
+data:
+  config.yaml: |
+    rules:
+      - seriesQuery: 'nginx_ingress_controller_request_duration_seconds_bucket{namespace!="",ingress!=""}'
+        resources:
+          overrides:
+            namespace: {resource: "namespace"}
+            ingress: {resource: "ingress", group: "networking.k8s.io", version: "v1"}
+        name:
+          matches: "^(.*)_bucket$"
+          as: "nginx_request_duration_p99"
+        metricsQuery: 'histogram_quantile(0.99, sum(rate(<<.Series>>{<<.LabelMatchers>>}[5m])) by (le, <<.GroupBy>>))'
+---
+# HPA: масштабирование бэкенда при превышении времени ответа P99 > 250 мс
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: catalog-latency-hpa
+  namespace: apps
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: catalog-service
+  minReplicas: 4
   maxReplicas: 20
   metrics:
     - type: Object
@@ -615,149 +669,388 @@ spec:
         describedObject:
           apiVersion: networking.k8s.io/v1
           kind: Ingress
-          name: my-app-ingress
+          name: catalog-ingress
         metric:
-          name: requests_per_second
+          name: nginx_request_duration_p99
         target:
           type: Value
-          value: "1000"  # Общая нагрузка на Ingress
-```
-
-**Вариант B: HPA по Latency P99 через Prometheus Adapter**
-
-```yaml
-# Prometheus Adapter config.yaml (правило для P99 latency)
-config.yaml: |
-  rules:
-    - seriesQuery: 'nginx_ingress_controller_request_duration_seconds_bucket{namespace!="",ingress!=""}'
-      resources:
-        overrides:
-          namespace: {resource: "namespace"}
-          ingress: {resource: "ingress", group: "networking.k8s.io", version: "v1"}
-      name:
-        matches: "^(.*)_bucket$"
-        as: "${1}_p99"
-      metricsQuery: 'histogram_quantile(0.99, sum(rate(<<.Series>>{<<.LabelMatchers>>}[5m])) by (le, <<.GroupBy>>))'
----
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: my-app-latency-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: my-app
-  minReplicas: 2
-  maxReplicas: 15
-  metrics:
-    - type: Object
-      object:
-        describedObject:
-          apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          name: my-app-ingress
-        metric:
-          name: nginx_ingress_controller_request_duration_seconds_p99
-        target:
-          type: Value
-          value: "500m"  # P99 < 500ms
+          value: "250m"  # 250 миллисекунд (0.25 сек)
   behavior:
     scaleDown:
-      stabilizationWindowSeconds: 300
+      stabilizationWindowSeconds: 600
       policies:
         - type: Pods
           value: 1
           periodSeconds: 60
 ```
 
-**Вариант C: HPA по RPS через KEDA (рекомендуемый)**
+---
+
+### Сценарий 12: HPA + Traefik Ingress на On-Premise
+
+Масштабирование сервиса по данным встроенного Prometheus exporter маршрутизатора Traefik.
 
 ```yaml
-apiVersion: keda.sh/v1alpha1
-kind: ScaledObject
-metadata:
-  name: my-app-keda-scaler
-spec:
-  scaleTargetRef:
-    name: my-app
-  minReplicaCount: 2
-  maxReplicaCount: 20
-  triggers:
-    - type: prometheus
-      metadata:
-        serverAddress: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
-        metricName: nginx_requests_per_second
-        threshold: "1000"
-        query: |
-          sum(rate(nginx_ingress_controller_requests{
-            ingress="my-app-ingress"
-          }[2m]))
-```
-
-**Проверка метрик NGINX Ingress:**
-```bash
-# Prometheus метрики NGINX Ingress
-kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 10254:10254
-curl http://localhost:10254/metrics | grep nginx_ingress_controller_requests
-
-# Или через Prometheus
-kubectl port-forward -n monitoring svc/prometheus 9090:9090
-# В Prometheus UI: sum(rate(nginx_ingress_controller_requests[2m])) by (ingress)
-```
-
-**Популярные метрики NGINX Ingress для HPA:**
-
-| Метрика | Тип | Применение |
-|:---|:---|:---|
-| `nginx_ingress_controller_requests` | Counter | RPS, количество запросов по кодам ответа |
-| `nginx_ingress_controller_request_duration_seconds` | Histogram | Latency (p50, p95, p99) |
-| `nginx_ingress_controller_nginx_process_connections_active` | Gauge | Активные соединения к бэкенду |
-| `nginx_ingress_controller_nginx_process_connections_reading` | Gauge | Соединения в состоянии чтения |
-
-### Сценарий 12: HPA + Traefik (масштабирование по метрикам Traefik)
-
-```yaml
-# Traefik экспортирует метрики на порту 8080/metrics
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: my-app-traefik-hpa
+  name: traefik-service-hpa
+  namespace: production
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: my-app
-  minReplicas: 2
-  maxReplicas: 15
+    name: search-service
+  minReplicas: 3
+  maxReplicas: 25
   metrics:
     - type: Object
       object:
         describedObject:
           apiVersion: networking.k8s.io/v1
           kind: Ingress
-          name: my-app-ingress
+          name: search-ingress
         metric:
-          name: traefik_service_requests_total
+          name: traefik_service_requests_total_rate
         target:
           type: Value
-          value: "500"
+          value: "800"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 15
+          periodSeconds: 60
 ```
 
-**Популярные метрики Traefik для HPA:**
+---
 
-| Метрика | Описание |
-|:---|:---|
-| `traefik_service_requests_total` | Количество запросов к сервису |
-| `traefik_service_request_duration_seconds` | Латентность запросов |
-| `traefik_service_open_connections` | Активные соединения |
+### Сценарий 13: HPA и Graceful Shutdown / Connection Draining при Scale-Down
+
+В On-Premise инфраструктуре при масштабировании вниз резкое завершение подов приводит к сбросу активных соединений (HTTP 502 / TCP RST) на аппаратных балансировщиках и Ingress-контроллерах, так как распространение обновлений `EndpointSlice` по узлам через `kube-proxy` занимает от 1 до 3 секунд.
+
+Для предотвращения деградации Deployment должен содержать перехватчик `preStop`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: graceful-api
+  namespace: production
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: graceful-api
+  template:
+    metadata:
+      labels:
+        app: graceful-api
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: app
+          image: internal-registry.local/apps/graceful-api:v1.4.2
+          lifecycle:
+            preStop:
+              exec:
+                # Пауза для удаления пода из EndpointSlices до отправки SIGTERM
+                command: ["/bin/sh", "-c", "sleep 15"]
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "300m"
+              memory: "512Mi"
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: graceful-api-hpa
+  namespace: production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: graceful-api
+  minReplicas: 3
+  maxReplicas: 15
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 30
+```
+
+**Механика работы:**
+1. HPA инициирует уменьшение реплик.
+2. Pod переходит в статус `Terminating`.
+3. Контроллер эндпоинтов исключает IP-адрес пода из `EndpointSlice`, а Ingress-контроллер перестает направлять на него новые запросы.
+4. Выполняется `preStop: sleep 15`, давая время завершиться уже принятым TCP-сессиям.
+5. Приложению отправляется сигнал `SIGTERM`.
+
+---
+
+### Сценарий 14: HPA в условиях жестких ResourceQuota на On-Premise
+
+В многопользовательских кластерах пространства имен часто ограничены квотами (`ResourceQuota`). Если HPA рассчитывает увеличение подов, превышающее лимит квоты пространства имен, новые поды блокируются admission-контроллером.
+
+```yaml
+# Квота пространства имен
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: team-compute-quota
+  namespace: team-crm
+spec:
+  hard:
+    requests.cpu: "10"       # Максимум 10 CPU
+    requests.memory: "20Gi"  # Максимум 20 GiB памяти
+    pods: "30"               # Максимум 30 подов
+---
+# HPA с жестким ограничением maxReplicas для предотвращения насыщения квоты
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: crm-worker-hpa
+  namespace: team-crm
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: crm-worker
+  # requests.cpu = 500m. 16 подов = 8 CPU, оставляя 2 CPU на системные сервисы пространства имен
+  minReplicas: 2
+  maxReplicas: 16
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+**Диагностика условия `ScalingLimited` при исчерпании квоты:**
+При достижении потолка квоты `kube-controller-manager` регистрирует в HPA статус:
+```bash
+kubectl describe hpa crm-worker-hpa -n team-crm
+# → Conditions:
+# →   Type            Status  Reason              Message
+# →   ----            ------  ------              -------
+# →   AbleToScale     True    SucceededGetScale   the HPA controller was able to get the target's current scale
+# →   ScalingActive   True    ValidMetricFound    the HPA was able to successfully calculate a replica count
+# →   ScalingLimited  True    TooManyReplicas     the desired replica count is more than the maximum replica count
+```
+
+---
+
+## Операции и команды
+
+Сводка команд системного администратора и инженера SRE для управления, валидации и мониторинга HPA:
+
+### 1. Создание HPA (декларативно и императивно)
+
+```bash
+# Императивное создание базового HPA (быстрый запуск для тестирования)
+kubectl autoscale deployment web-api --cpu-percent=70 --min=3 --max=15 -n production
+# → horizontalpodautoscaler.autoscaling/web-api autoscaled
+
+# Декларативное применение production-манифеста
+kubectl apply -f hpa-manifest.yaml
+# → horizontalpodautoscaler.autoscaling/web-api-cpu-hpa created
+```
+
+### 2. Мониторинг текущего состояния
+
+```bash
+# Просмотр сводки HPA в пространстве имен
+kubectl get hpa -n production
+# → NAME              REFERENCE          TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+# → web-api-cpu-hpa   Deployment/web-api 42%/65%   3         20        3          12m
+
+# Непрерывный мониторинг в реальном времени при нагрузочном тестировании
+kubectl get hpa web-api-cpu-hpa -n production -w
+# → NAME              REFERENCE          TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+# → web-api-cpu-hpa   Deployment/web-api 42%/65%   3         20        3          12m
+# → web-api-cpu-hpa   Deployment/web-api 78%/65%   3         20        3          13m
+# → web-api-cpu-hpa   Deployment/web-api 82%/65%   3         20        5          13m
+```
+
+### 3. Глубокая инспекция и события контроллера
+
+```bash
+# Просмотр детального описания, текущих метрик и условий (Conditions)
+kubectl describe hpa web-api-cpu-hpa -n production
+# → Name:                                                  web-api-cpu-hpa
+# → Namespace:                                             production
+# → Reference:                                             Deployment/web-api
+# → Metrics:                                               ( current / target )
+# →   resource cpu on pods  (as a percentage of request):  42% (105m) / 65%
+# → Min replicas:                                          3
+# → Max replicas:                                          20
+# → Deployment pods:                                       3 current / 3 desired
+# → Conditions:
+# →   Type            Status  Reason               Message
+# →   ----            ------  ------               -------
+# →   AbleToScale     True    ReadyForNewScale     recommended size matches current size
+# →   ScalingActive   True    ValidMetricFound     the HPA was able to successfully calculate a replica count
+# →   ScalingLimited  False   DesiredWithinRange   the desired count is within the acceptable range
+# → Events:
+# →   Type    Reason             Age   From                       Message
+# →   ----    ------             ----  ----                       -------
+# →   Normal  SuccessfulRescale  2m    horizontal-pod-autoscaler  New size: 5; reason: cpu resource utilization (percentage of request) above target
+```
+
+### 4. Проверка условий через JSONPath
+
+```bash
+# Проверка условия ScalingActive (True = метрики поступают штатно)
+kubectl get hpa web-api-cpu-hpa -n production -o jsonpath='{.status.conditions[?(@.type=="ScalingActive")].status}'
+# → True
+
+# Получение расчетного желаемого числа реплик
+kubectl get hpa web-api-cpu-hpa -n production -o jsonpath='{.status.desiredReplicas}'
+# → 5
+```
+
+### 5. Прямой опрос API метрик (Диагностика Aggregated API)
+
+```bash
+# Проверка доступности сырых метрик Kubelet через Metrics Server
+kubectl get --raw "/apis/metrics.k8s.io/v1beta1/namespaces/production/pods" | jq -r '.items[] | {name: .metadata.name, cpu: .containers[].usage.cpu}'
+# → { "name": "web-api-5c689d8-8x2jk", "cpu": "125m" }
+# → { "name": "web-api-5c689d8-9l4nm", "cpu": "110m" }
+
+# Проверка регистрации Custom Metrics API
+kubectl get --raw "/apis/custom.metrics.k8s.io/v1beta1" | jq -r '.resources[].name'
+# → pods/http_requests_per_second
+# → ingress.networking.k8s.io/ingress_requests_per_second
+```
+
+### 6. Процедура безопасного отключения и отката (Rollback / Maintenance)
+
+При возникновении инцидентов или проведении экстренных регламентных работ масштабирование необходимо зафиксировать:
+
+```bash
+# Вариант А: Временная фиксация реплик без удаления HPA (через behavior)
+kubectl patch hpa web-api-cpu-hpa -n production --type='merge' -p '{"spec":{"behavior":{"scaleUp":{"selectPolicy":"Disabled"},"scaleDown":{"selectPolicy":"Disabled"}}}}'
+# → horizontalpodautoscaler.autoscaling/web-api-cpu-hpa patched
+
+# Вариант Б: Полное удаление HPA
+kubectl delete hpa web-api-cpu-hpa -n production
+# → horizontalpodautoscaler.autoscaling "web-api-cpu-hpa" deleted
+
+# Ручная установка фиксированного количества реплик
+kubectl scale deployment web-api --replicas=5 -n production
+# → deployment.apps/web-api scaled
+
+# Проверка статуса
+kubectl get deployment web-api -n production
+# → NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+# → web-api   5/5     5            5           30d
+```
+
+> **Важно:** При простом удалении HPA контроллер оставляет число реплик на уровне **последнего выполненного расчета**. Оно не возвращается автоматически к исходному значению до создания HPA.
+
+---
+
+## Диагностика и устранение неполадок
+
+### Сводная таблица типовых ошибок
+
+| Ошибка / Симптом | Первопричина | Метод локализации | Решение |
+|:---|:---|:---|:---|
+| `TARGETS: <unknown>/65%` | У подов отсутствуют `resources.requests`, либо упал `metrics-server` | `kubectl describe hpa`, `kubectl top nodes` | Добавить `requests.cpu/memory` контейнерам. Проверить поды `metrics-server` в `kube-system`. |
+| `TARGETS: <unknown>` только для кастомных метрик | Недоступен Prometheus Adapter, ошибка PromQL, или объект не найден | `kubectl get apiservice v1beta1.custom.metrics.k8s.io` | Проверить логи `prometheus-adapter` и доступность Prometheus в кластере. |
+| Постоянный дребезг (Flapping / Thrashing) | Отсутствует окно стабилизации на `scaleDown`; малый порог толерантности | `kubectl get events --field-selector involvedObject.kind=HorizontalPodAutoscaler` | Настроить `behavior.scaleDown.stabilizationWindowSeconds: 300` и `policies.type: Percent`. |
+| HPA не масштабирует вверх при 100% нагрузке | Достигнут `maxReplicas`, либо квота пространства имен исчерпана | `kubectl describe hpa` (условие `ScalingLimited: True`) | Увеличить `maxReplicas` или расширить `ResourceQuota` в `spec.hard`. |
+| `FailedGetResourceMetric: missing request for container` | Sidecar-контейнер (Envoy, Fluent-bit) не имеет заданных `requests` | `kubectl get pod <pod> -o yaml` | Задать `requests` для ВСЕХ контейнеров пода или перейти на метрику `ContainerResource`. |
+| ScaleDown заблокирован и поды не удаляются | Слишком жесткий `PodDisruptionBudget` блокирует удаление подов | `kubectl get pdb`, поля `DisruptionsAllowed: 0` | Скорректировать `minAvailable` / `maxUnavailable` в PDB или увеличить число реплик. |
+| Изменение реплик перезаписывается каждые 2 минуты | Конфликт GitOps-агента (ArgoCD / Flux) с подресурсом `/scale` | Логи ArgoCD (`OutOfSync` по полю `spec.replicas`) | Добавить `ignoreDifferences` для `/spec/replicas` в манифест `Application`. |
+
+---
+
+### Алгоритм расследования инцидентов (SRE Troubleshooting Checklist)
+
+```
+[TARGETS: <unknown>]
+       │
+       ├─► 1. Проверить Metrics Server:
+       │      $ kubectl get pods -n kube-system -l k8s-app=metrics-server
+       │      $ kubectl top nodes
+       │      Если ошибка сертификатов ──► добавить --kubelet-insecure-tls в deployment.
+       │
+       ├─► 2. Проверить requests у контейнеров:
+       │      $ kubectl get deployment <name> -o jsonpath='{.spec.template.spec.containers[*].resources.requests}'
+       │      Если пусто ──► добавить requests.
+       │
+       └─► 3. Проверить статус подов:
+              $ kubectl get pods -l app=<name>
+              Если поды в CrashLoopBackOff или ReadinessProbe Failed ──► HPA игнорирует не готовые поды.
+```
+
+---
+
+### Граничные случаи (Edge Cases)
+
+1. **Масштабирование во время Rolling Update:**
+   При развертывании новой версии Deployment существуют два ReplicaSet. HPA опрашивает суммарные метрики всех готовых подов обоих ReplicaSet и передает команду на изменение размера в Deployment. Deployment масштабирует новый ReplicaSet согласно параметрам `maxSurge` и `maxUnavailable`.
+2. **HPA и DaemonSet:**
+   HPA категорически не поддерживает `DaemonSet`, так как размер пула жестко определяется планировщиком по количеству подходящих узлов кластера.
+3. **Множественные HPA на один ресурс:**
+   Kubernetes API допускает создание двух разных HPA для одного Deployment. Это приводит к катастрофическому конфликту: каждый контроллер перезаписывает `/scale`, вызывая хаотическое переключение реплик. Допустим только **один HPA на один объект**.
+4. **Масштабирование до 0 реплик:**
+   Стандартный HPA в Kubernetes API `autoscaling/v2` **не поддерживает** `minReplicas: 0`. Минимальное допустимое значение — `1`. Для масштабирования неактивных воркеров до 0 на On-Premise инфраструктуре применяется **[KEDA](../keda/keda_concepts.md)**.
+5. **Отказ Prometheus или Metrics Server:**
+   При недоступности API метрик контроллер HPA не удаляет поды. Он сохраняет текущее значение `replicas` и переходит в аварийный режим, защищая инфраструктуру от каскадного коллапса (Safety Lock).
+
+---
+
+## Лучшие практики
+
+1. **Базовый выбор метрик:** Для подавляющего большинства сервисов начинайте с `Resource: cpu` с целевым значением 60–70%. Это оставляет достаточный запас вычислительной мощности (Headroom) для обработки пиков во время запуска и прогрева новых реплик.
+2. **Обязательное наличие Readiness Probes:** Без корректных проверок готовности новый под попадает в балансировку трафика не прогретым, получает всплеск нагрузки, транслирует высокое время ответа и может инициировать ложный повторный цикл `scaleUp`.
+3. **Никогда не задавайте `spec.replicas` в манифесте Deployment при использовании HPA:** Поле `replicas` должно быть удалено из YAML Deployment. В противном случае каждый повторный `kubectl apply` или синхронизация CI/CD будет принудительно сбрасывать количество реплик к статическому числу, конфликтуя с HPA.
+4. **Конфигурация GitOps (ArgoCD / Flux):** Настройте игнорирование расхождений в манифесте приложения:
+   ```yaml
+   spec:
+     ignoreDifferences:
+       - group: apps
+         kind: Deployment
+         jsonPointers:
+           - /spec/replicas
+   ```
+   Подробнее см. **[GitOps для Autoscaling](../gitops_autoscaling.md)**.
+5. **Асимметричный Behavior:** Всегда настраивайте агрессивный `scaleUp` (`stabilizationWindowSeconds: 0`) и консервативный `scaleDown` (`stabilizationWindowSeconds: 300–600`). Это исключает эффект дребезга (flapping).
+6. **Обязательная связка с PDB:** Каждый масштабируемый сервис обязан иметь `PodDisruptionBudget`. Минимальный размер пула `minReplicas` должен быть строго больше `minAvailable` в PDB.
+7. **Capacity Planning на On-Premise:** Сумма всех `maxReplicas * requests.cpu` не должна превышать суммарный объем доступных ядер рабочих узлов кластера с учетом резерва операционной системы и демонов `kubelet`.
+
+---
 
 ## Дополнительная информация
 
-Для диагностики и решения проблем со сценариями (например, ошибка `FailedGetResourceMetric`, `<unknown>` таргеты) см. **[Устранение неполадок HPA](../../Troubleshooting/Common_Errors/hpa_troubleshooting.md)**.
+Смежные разделы базы знаний по горизонтальному и смешанному масштабированию в On-Premise инфраструктуре:
 
-### См. также
-
-- **[HPA: Основные концепции](./hpa_concepts.md)** — алгоритм, типы метрик, архитектура.
-- **[HPA: Продвинутые темы](./hpa_advanced.md)** — диагностика проблем и детальный разбор Behavior.
-- **[KEDA: Основные концепции](../keda/keda_concepts.md)** — событийное автомасштабирование по внешним метрикам (до нуля).
+- **[HPA: Главная](./index.md)** — архитектурный обзор горизонтального автомасштабирования.
+- **[HPA: Основные концепции](./hpa_concepts.md)** — алгоритмы, типы метрик, работа контроллера.
+- **[HPA: Продвинутые темы](./hpa_advanced.md)** — глубокая настройка `behavior`, cgroups, сетевые аспекты.
+- **[Prometheus Adapter: настройка и интеграция](./prometheus_adapter_setup.md)** — развертывание кастомных метрик в кластере.
+- **[HPA: Cost и Right-sizing](./hpa_cost_rightsizing.md)** — оптимизация аппаратных затрат и подбор requests.
+- **[Каскадное масштабирование](./cascading_scaling.md)** — предотвращение лавинообразных перегрузок зависимых сервисов.
+- **[Масштабирование StatefulSet](../statefulset_autoscaling.md)** — специфика автомасштабирования stateful-нагрузок.
+- **[Pod Disruption Budget](../pod_disruption_budget.md)** — обеспечение кворума доступности при сжатии пулов.
+- **[GitOps для Autoscaling](../gitops_autoscaling.md)** — устранение конфликтов ArgoCD и Flux с autoscalers.
+- **[Устранение неполадок HPA](../../Troubleshooting/Common_Errors/hpa_troubleshooting.md)** — справочник кодов ошибок и пошаговой диагностики.
