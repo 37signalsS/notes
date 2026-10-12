@@ -1,112 +1,190 @@
 # Argo CD: Методы отслеживания ресурсов (Resource Tracking)
 
-> **Актуальность (2026):** Argo CD v3.x поддерживает три метода отслеживания ресурсов: `label` (метки), `annotation` (аннотации) и `annotation+label` (комбинированный). Метод выбирается параметром `resourceTrackingMethod` в ConfigMap `argocd-cm`. По умолчанию используется `annotation`. Метод отслеживания определяет, как Argo CD идентифицирует ресурсы, управляемые конкретным приложением, и влияет на orphaning, cleanup и multi-cluster миграции.
+**Актуально для:** Argo CD v3.5+ (покрывает v3.4.x, v3.5.x, v3.6.x; методы: annotation, annotation+label, label; bare-metal / on-premise)
 
 ## Предварительные требования
 
-1. **Argo CD установлен** (см. [Установка и настройка](./argocd_installation_and_setup.md)).
-2. **kubectl** с доступом к кластеру.
-3. **Понимание синхронизации** (см. [Synchronization](./synchronization.md)).
-4. **Понимание AppProject** (см. [AppProject](./argocd_appproject_deep.md)).
+1. **Развернутый кластер Kubernetes** (v1.28–v1.32+) под управлением kubelet/containerd на bare-metal или виртуальных машинах.
+2. **Установленный Argo CD** (см. [Установка и настройка](./argocd_installation_and_setup.md)).
+3. **Утилиты управления:** `kubectl` с правами администратора кластера (`cluster-admin`), `argocd` CLI и `jq`.
+4. **Базовое понимание GitOps-механизмов:** [Synchronization](./synchronization.md), [AppProject](./argocd_appproject_deep.md), [Удаление и очистка ресурсов](./argocd_deletion_and_cleanup.md).
 
 ## Определения
 
-**Resource Tracking (Отслеживание ресурсов)** — механизм, с помощью которого Argo CD определяет, какие Kubernetes-ресурсы принадлежат конкретному приложению. Используется для контроля orphaning (осиротевших ресурсов), cleanup (очистки) и каскадного удаления.
+**Resource Tracking (Отслеживание ресурсов)** — системный механизм контроллера `argocd-application-controller`, с помощью которого Argo CD идентифицирует принадлежность объектов в Kubernetes конкретному манифесту `Application`. Механизм управляет обнаружением расхождений (diff), автоматическим удалением устаревших объектов (prune), каскадным удалением и изоляцией управления.
 
-**Label (Метка)** — Kubernetes-метка `app.kubernetes.io/instance: <app-name>`, добавляемая ко всем управляемым ресурсам. Метод `label` ищет ресурсы по этой метке.
+**Tracking ID (`argocd.argoproj.io/tracking-id`)** — структурированная строка идентификатора в Kubernetes-аннотации ресурса, фиксирующая метаданные владельца в формате:
+`<app-name>:<group>/<kind>:<namespace>/<name>`.
 
-**Annotation (Аннотация)** — Kubernetes-аннотация `argocd.argoproj.io/instance: <app-name>`, добавляемая ко всем управляемым ресурсам. Метод `annotation` ищет ресурсы по этой аннотации.
+**Instance Label (`app.kubernetes.io/instance`)** — стандартная Kubernetes-метка, внедряемая в управляемые ресурсы при использовании методов `label` или `annotation+label`. Имя ключа может быть переопределено параметром `application.instanceLabelKey` в `argocd-cm`.
 
-**Annotation+Label (Комбинированный)** — метод, который одновременно проверяет наличие аннотации `argocd.argoproj.io/instance` И метки `app.kubernetes.io/instance`. Оба должны совпадать для идентификации ресурса.
+**Installation ID (`installationID`)** — уникальный идентификатор конкретного экземпляра Argo CD, проставляемый в аннотацию `argocd.argoproj.io/installation-id`. Позволяет запускать несколько независимых контроллеров Argo CD в одном физическом кластере без конфликтов владения ресурсами.
 
-**Orphaning (Осиротение)** — ситуация, когда ресурс был управляемым приложением, но приложение было удалено (или переназначено), а ресурс остался в кластере без владельца.
+**Self-Referencing Annotation (Самоссылающаяся аннотация)** — проверка соответствия, при которой контроллер сверяет группу, вид, пространство имен и имя текущего объекта с данными, зашитыми в значении аннотации `argocd.argoproj.io/tracking-id`. Если свойства объекта не совпадают со значением аннотации (например, объект скопирован внешним оператором в другой namespace), аннотация признается non-self-referencing.
 
-**Tracking ID (Идентификатор отслеживания)** — уникальная строка, формируемая из имени приложения, проекта и (опционально) кластера. Записывается в label/annotation для идентификации.
+**Orphaning (Осиротение ресурсов)** — состояние, при котором объект Kubernetes сохраняется в кластере после удаления управляющего им `Application` (при флаге `--cascade=false`) либо теряет привязку к манифестам в Git и не удаляется сборщиком мусора из-за отключенного флага `prune`.
 
-## Базовые концепции
+## Архитектура и принцип работы
 
-### Механизм работы Resource Tracking
+### Внутренний жизненный цикл отслеживания
 
 ```text
-Приложение: my-app (проект: production)
-    │
-    ▼
-Argo CD добавляет к каждому ресурсу:
-    │
-    ├─ Метод "label":
-    │   labels:
-    │     app.kubernetes.io/instance: my-app
-    │
-    ├─ Метод "annotation":
-    │   annotations:
-    │     argocd.argoproj.io/instance: my-app
-    │
-    └─ Метод "annotation+label":
-        labels:
-          app.kubernetes.io/instance: my-app
-        annotations:
-          argocd.argoproj.io/instance: my-app
-    │
-    ▼
-При синхронизации Argo CD ищет ресурсы:
-    │
-    ├─ label:         ищет по app.kubernetes.io/instance
-    ├─ annotation:    ищет по argocd.argoproj.io/instance
-    └─ annotation+label: ищет по обоим
+┌────────────────────────────────────────────────────────────────────────┐
+│                        GitOps Reconciliation Loop                      │
+└────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+ ┌──────────────────────┐                     ┌────────────────────────┐
+ │   argocd-repo-server │                     │  Kubernetes API Server │
+ │  (Target Manifests)  │                     │   (Live State Cache)   │
+ └──────────────────────┘                     └────────────────────────┘
+            │                                              │
+            │ Desired State                                │ Live Objects
+            │                                              │ (Informer Cache)
+            ▼                                              ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                     argocd-application-controller                      │
+│                                                                        │
+│ 1. Фильтрация объектов по Tracking Metadata                            │
+│    ├─ annotation       → argocd.argoproj.io/tracking-id                │
+│    ├─ annotation+label → argocd.argoproj.io/tracking-id + instance     │
+│    └─ label            → app.kubernetes.io/instance                    │
+│                                                                        │
+│ 2. Проверка валидности (Self-Referencing Check)                        │
+│    Совпадает ли <group>/<kind>:<namespace>/<name> с реальным объектом? │
+│    ├─ Да  → Объект принадлежит Application, участвует в Diff/Sync      │
+│    └─ Нет → Non-self-referencing: игнорируется, не удаляется в Prune   │
+│                                                                        │
+│ 3. Сравнение (Diff Engine)                                             │
+│    ├─ Объект есть в Git и в Live State     → Проверка OutOfSync / Diff │
+│    ├─ Объект есть в Git, нет в Live State   → Создание (Sync)           │
+│    └─ Объект есть в Live State, нет в Git   → Пометка RequiresPruning   │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Три метода отслеживания
+Контроллер Argo CD не выполняет медленный последовательный опрос каждого ресурса через прямые HTTP-запросы. Вместо этого он поддерживает локальный in-memory кэш состояния кластера через Kubernetes SharedInformers. При обработке `Application` контроллер сопоставляет кэшированные объекты с манифестами, сгенерированными `argocd-repo-server`.
 
-| Метод | Ключ идентификации | Где искать | Особенности |
+### Сравнение методов отслеживания
+
+В Argo CD метод отслеживания задается глобально в ConfigMap `argocd-cm` параметром `application.resourceTrackingMethod`:
+
+| Параметр | Метод `annotation` (Default) | Метод `annotation+label` | Метод `label` (Legacy) |
 | :--- | :--- | :--- | :--- |
-| `label` | `app.kubernetes.io/instance` | labels | Быстрый поиск (index), но конфликтует с другими инструментами |
-| `annotation` | `argocd.argoproj.io/instance` | annotations | Нет конфликтов с label, но поиск медленнее (scan) |
-| `annotation+label` | Оба ключа | labels + annotations | Максимальная надежность, двойная проверка |
+| **Ключ идентификации** | `argocd.argoproj.io/tracking-id` | `argocd.argoproj.io/tracking-id` | `app.kubernetes.io/instance` (или `application.instanceLabelKey`) |
+| **Формат значения** | `<app>:<group>/<kind>:<ns>/<name>` | `<app>:<group>/<kind>:<ns>/<name>` (в аннотации) + `<app>` (в метке) | `<app>` (обрезается до 63 символов по RFC 1123) |
+| **Роль метки `instance`** | Не устанавливается | Только информационная (для внешних инструментов) | Основной идентификатор владения |
+| **Лимит длины** | 256 КБ (лимит аннотаций K8s) | Аннотация 256 КБ; метка усекается до 63 символов | Жесткий лимит 63 символа |
+| **Конфликты с Helm** | Исключены | Исключены (метка не используется для reconciler) | **Высокий риск**: Helm чарты перезаписывают `app.kubernetes.io/instance` |
+| **Защита от копирования (Self-referencing)** | Встроена (проверяется точный GVK/NS/Name) | Встроена | Отсутствует (любой скопированный объект с меткой считается своим) |
+| **Совместимость с kube-state-metrics** | Требует парсинга аннотаций или custom metrics | Полная (доступны стандартные метки `app.kubernetes.io/instance`) | Полная |
+| **Рекомендация для SRE** | **Стандарт для Production** | **Стандарт при интеграции с Prometheus / Grafana** | Не рекомендуется (только для устаревших систем) |
 
-### Настройка метода
+### Детали формата Tracking ID
 
+Значение аннотации формируется детерминированно:
+
+```text
+<application-name>:<api-group>/<Kind>:<namespace>/<resource-name>
+```
+
+Правила формирования компонентов:
+- **Core API Group (`""`):** Для базовых ресурсов ядра Kubernetes (таких как `ConfigMap`, `Secret`, `Service`, `PersistentVolumeClaim`) имя группы пустое:
+  `my-app:/ConfigMap:production/app-config`
+  `my-app:/Service:production/web-service`
+- **Именованные группы:** Для ресурсов с явной API Group:
+  `my-app:apps/Deployment:production/web-server`
+  `my-app:networking.k8s.io/Ingress:production/main-ingress`
+- **Cluster-scoped ресурсы:** Для ресурсов без пространства имен (`ClusterRole`, `ClusterRoleBinding`, `Namespace`, `StorageClass`, `CustomResourceDefinition`) поле `<namespace>` остается пустым:
+  `my-app:rbac.authorization.k8s.io/ClusterRole:/cluster-viewer`
+  `my-app:/Namespace:/production`
+
+### Механизм Non-Self-Referencing Annotations
+
+В инфраструктурах с высокой степенью автоматизации сторонние утилиты (например, Hierarchical Namespace Controller — HNC, контроллеры синхронизации секретов, операторы репликации ConfigMap или системы резервного копирования) часто дублируют объекты из одного пространства имен в другое вместе со всеми метаданными.
+
+1. **В режиме `label`:** Если HNC скопировал `Secret` с меткой `app.kubernetes.io/instance: my-app` из пространства имен `team-a` в `team-b`, контроллер Argo CD обнаружит в `team-b` объект с меткой приложения. Так как в Git-манифестах приложения `my-app` секрета для `team-b` нет, Argo CD сочтет его устаревшим и удалит (`prune`), сломав работу потребителя в целевом неймспейсе.
+2. **В режимах `annotation` и `annotation+label`:** Контроллер считывает `argocd.argoproj.io/tracking-id`. Значение содержит исходный namespace: `my-app:/Secret:team-a/app-secret`. Контроллер проверяет фактическое размещение объекта (`team-b`). Несоответствие (`team-a != team-b`) классифицирует аннотацию как non-self-referencing:
+   - Объект полностью игнорируется в циклах diff.
+   - Объект не отображается в дереве синхронизации приложения.
+   - Объект **не подвергается автоматическому удалению (`prune`)**.
+
+### Изоляция нескольких инстансов через Installation ID
+
+Когда в одном кластере развернуто несколько независимых инсталляций Argo CD (например, системный Argo CD для Core-компонентов и отдельные клиентские инсталляции для продуктовых команд), совпадение имен приложений приведет к конфликту управления ресурсами.
+
+Параметр `installationID` в ConfigMap `argocd-cm`:
 ```yaml
-# argocd-cm ConfigMap
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: argocd-cm
   namespace: argocd
 data:
-  # Доступные значения: label, annotation, annotation+label
-  resourceTrackingMethod: "annotation"
+  installationID: "cluster-infra-prod"
 ```
 
-### Tracking ID и multi-cluster
+При его активации Argo CD добавляет ко всем управляемым ресурсам аннотацию:
+`argocd.argoproj.io/installation-id: cluster-infra-prod`
 
-В multi-cluster сценариях tracking ID расширяется:
+В процессе reconciliation контроллер фильтрует ресурсы кластера, принимая во внимание только те объекты, чья аннотация `installation-id` в точности соответствует собственному идентификатору экземпляра. Объекты с другим `installation-id` не затрагиваются, предотвращая коллизии владения и случайный взаимный prune.
 
-```text
-Простой случай (один кластер):
-  trackingID = "my-app"
+## Практические сценарии и конфигурация
 
-Multi-cluster:
-  trackingID = "my-app | https://cluster1.example.com"
-  (имя приложения + URL кластера через разделитель "|")
+### Сценарий 1: Базовая настройка режима `annotation` (Default)
+
+Рекомендуемый стандарт для подавляющего большинства on-premise сред Kubernetes. Полностью устраняет конфликты с чартами Helm.
+
+**1. Конфигурация `argocd-cm`:**
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  application.resourceTrackingMethod: "annotation"
 ```
 
-Это позволяет Argo CD различать ресурсы с одинаковыми именами в разных кластерах.
+Применение конфигурации:
+```bash
+kubectl apply -n argocd -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  application.resourceTrackingMethod: "annotation"
+EOF
+# → configmap/argocd-cm configured
+```
 
-### Влияние на поведение
+**2. Перезапуск или hot-reload контроллера:**
+`argocd-application-controller` отслеживает изменения `argocd-cm` через informer и применяет новый метод динамически без перезапуска подов.
 
-| Аспект | label | annotation | annotation+label |
-| :--- | :--- | :--- | :--- |
-| **Скорость поиска** | Быстрая (indexed) | Медленная (scan) | Медленная (scan) |
-| **Конфликты с Helm** | Возможны (Helm также ставит labels) | Нет | Нет |
-| **Конфликты с Kustomize** | Возможны | Нет | Нет |
-| **Multi-cluster** | Ограничено | Поддерживается | Поддерживается |
-| **Orphaning** | Работает | Работает | Работает |
+**3. Проверка метаданных на ресурсе кластера:**
 
-## Практические сценарии
+```bash
+# Проверка наличия tracking-id аннотации на Deployment
+kubectl get deployment backend-api -n production -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/tracking-id}'
+# → backend-api:apps/Deployment:production/backend-api
 
-### Сценарий 1: Базовая настройка — annotation (по умолчанию)
+# Проверка отсутствия управляющей метки instance
+kubectl get deployment backend-api -n production -o jsonpath='{.metadata.labels.app\.kubernetes\.io/instance}'
+# → (пусто или содержит имя релиза Helm без вмешательства Argo CD)
+```
 
-Рекомендуемый метод для большинства случаев.
+---
+
+### Сценарий 2: Режим `annotation+label` для мониторинга в Prometheus
+
+Сценарий необходим, если в инфраструктуре используются дашборды Grafana или алерты Alertmanager, опирающиеся на сквозную метку `app.kubernetes.io/instance` из метрик `kube-state-metrics` (`kube_pod_labels`, `kube_deployment_labels`).
+
+**1. Настройка ConfigMap:**
 
 ```yaml
 apiVersion: v1
@@ -115,205 +193,373 @@ metadata:
   name: argocd-cm
   namespace: argocd
 data:
-  resourceTrackingMethod: "annotation"
+  application.resourceTrackingMethod: "annotation+label"
+  # Опционально: переопределение ключа метки при конфликтах
+  # application.instanceLabelKey: "argocd.argoproj.io/instance"
 ```
 
-**Проверка:**
+**2. Применение и синхронизация приложения:**
+
 ```bash
-# Просмотр аннотаций ресурса
-kubectl get deployment my-app -o jsonpath='{.metadata.annotations}'
-# → {"argocd.argoproj.io/instance": "my-app"}
-
-# Просмотр меток
-kubectl get deployment my-app -o jsonpath='{.metadata.labels}'
-# → {"app.kubernetes.io/name": "my-app", ...}  (метки от Helm/Kustomize)
-```
-
-### Сценарий 2: Конфликт меток с Helm
-
-Helm автоматически ставит `app.kubernetes.io/instance` при установке чарта. Если Argo CD использует метод `label` — возникает конфликт.
-
-**Проблема:**
-```bash
-# Helm ставит:
-app.kubernetes.io/instance: RELEASE-NAME
-
-# Argo CD ожидает:
-app.kubernetes.io/instance: my-app
-
-# Результат: Argo CD не находит ресурс, считает его orphan
-```
-
-**Решение:** Переключиться на `annotation`:
-```yaml
+kubectl apply -n argocd -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
 data:
-  resourceTrackingMethod: "annotation"
+  application.resourceTrackingMethod: "annotation+label"
+EOF
+# → configmap/argocd-cm configured
+
+# Инициирование жесткого обновления и синхронизации
+argocd app get payment-service --hard-refresh
+# → Application payment-service refreshed successfully
+
+argocd app sync payment-service
+# → TIMESTAMP GROUP KIND STATUS HEALTH NAME
+# → 2026-10-12T15:10:00Z apps Deployment Synced Healthy payment-service
 ```
 
-### Сценарий 3: Миграция между методами
+**3. Валидация одновременного наличия аннотации и метки:**
 
-Смена метода отслеживания требует обновления всех существующих ресурсов.
+```bash
+kubectl get deployment payment-service -n production -o jsonpath='{range .metadata}{"Annotation: "}{.annotations.argocd\.argoproj\.io/tracking-id}{"\nLabel: "}{.labels.app\.kubernetes\.io/instance}{"\n"}{end}'
+# → Annotation: payment-service:apps/Deployment:production/payment-service
+# → Label: payment-service
+```
 
-**1. Настройка нового метода:**
+В этом режиме контроллер Argo CD принимает решения о diff и prune исключительно по аннотации `tracking-id`. Метка `payment-service` экспортируется в `kube-state-metrics`, позволяя выполнять PromQL-запросы вида:
+
+```promql
+sum by (app_kubernetes_io_instance) (
+  rate(container_cpu_usage_seconds_total{namespace="production"}[5m])
+  * on (namespace, pod) group_left(app_kubernetes_io_instance)
+  kube_pod_labels{app_kubernetes_io_instance="payment-service"}
+)
+```
+
+---
+
+### Сценарий 3: Разрешение конфликтов с Helm чартами
+
+Большинство официальных чартов Helm (Bitnami, Prometheus Community, Ingress-NGINX) генерируют стандартные селекторы Pod:
+
 ```yaml
-data:
-  resourceTrackingMethod: "annotation+label"
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "common.names.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
 ```
 
-**2. Принудительное обновление приложений:**
-```bash
-# Для каждого приложения
-argocd app get <app-name> --refresh
+**Проблема в режиме `label`:**
+1. Если имя `Application` в Argo CD (`my-redis-app`) не совпадает с `releaseName` в манифесте Helm (`redis-prod`), Argo CD перезаписывает метку `app.kubernetes.io/instance` на `my-redis-app`.
+2. Так как селекторы в `spec.selector.matchLabels` у объекта `Deployment` являются неизменяемыми (immutable), Kubernetes API возвращает ошибку `Invalid: spec.template.metadata.labels: Invalid value: field is immutable`.
+3. Приложение входит в вечный статус `SyncFailed` / `OutOfSync`.
 
-# Или через API для массового обновления
-for app in $(argocd app list -o name); do
-  argocd app get "$app" --refresh
-done
-```
-
-**3. Проверка:**
-```bash
-# Убедитесь, что ресурсы имеют оба ключа
-kubectl get deployment my-app -o jsonpath='{.metadata.labels.app.kubernetes.io/instance}'
-kubectl get deployment my-app -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/instance}'
-```
-
-### Сценарий 4: Orphaned ресурсы и cleanup
-
-При удалении приложения Argo CD может удалить или "осиротить" управляемые ресурсы.
-
-**Удаление с orphaning (по умолчанию):**
-```bash
-argocd app delete my-app --cascade
-# → Ресурсы УДАЛЯЮТСЯ (каскадно)
-```
-
-**Удаление с сохранением ресурсов (orphan):**
-```bash
-argocd app delete my-app --no-cascade
-# → Ресурсы ОСТАЮТСЯ в кластере без владельца
-```
-
-**Обнаружение orphaned ресурсов:**
-```bash
-# Ресурсы без привязки к приложению
-kubectl get deployments -A -o json | jq '.items[] | select(.metadata.annotations["argocd.argoproj.io/instance"] == null) | .metadata.name'
-```
-
-### Сценарий 5: Multi-cluster отслеживание
-
-В multi-cluster среде tracking ID включает URL кластера.
+**Решение:**
+Переход на `application.resourceTrackingMethod: annotation` полностью освобождает метку `app.kubernetes.io/instance` от вмешательства Argo CD:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: my-app-east
+  name: my-redis-app
   namespace: argocd
 spec:
   project: default
   source:
-    repoURL: https://github.com/myorg/apps
-    path: my-app
-    targetRevision: main
+    repoURL: https://charts.bitnami.com/bitnami
+    chart: redis
+    targetRevision: 19.x.x
+    helm:
+      releaseName: redis-prod
   destination:
-    server: https://cluster-east.example.com  # URL кластера
-    namespace: my-app
+    server: https://kubernetes.default.svc
+    namespace: database
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
 ```
 
-**Tracking ID:** `my-app-east | https://cluster-east.example.com`
+Argo CD запишет:
+- `annotations["argocd.argoproj.io/tracking-id"] = "my-redis-app:/Service:database/redis-prod-master"`
+- `labels["app.kubernetes.io/instance"] = "redis-prod"` (оставлено Helm без искажения).
 
-**Проверка в multi-cluster:**
+---
+
+### Сценарий 4: Безопасная поэтапная миграция методов в Production
+
+Смена глобального метода отслеживания на работающем production-кластере несет риск непреднамеренного удаления ресурсов при включенном `automated.prune: true`. Ниже приведена проверенная SRE-процедура миграции с `label` на `annotation` без даунтайма.
+
+```text
+┌────────────────────────────────────────────────────────────────────────┐
+│                        План миграции (SRE Checklist)                   │
+├────────────────────────────────────────────────────────────────────────┤
+│ 1. Временное отключение automated.prune на критичных приложениях       │
+│ 2. Обновление параметра в ConfigMap argocd-cm                          │
+│ 3. Пакетный Hard-Refresh всех Application                              │
+│ 4. Контролируемая синхронизация (наложение новых аннотаций)            │
+│ 5. Валидация live-состояния ресурсов                                  │
+│ 6. Повторное включение automated.prune                                 │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+**Шаг 1: Скрипт временной блокировки auto-prune:**
+
 ```bash
-# На central cluster
-argocd app get my-app-east -o json | jq '.status.sync.revision'
+# Получение списка приложений с активным auto-prune
+APPS_WITH_PRUNE=$(kubectl get applications.argoproj.io -n argocd -o json | jq -r '.items[] | select(.spec.syncPolicy.automated.prune == true) | .metadata.name')
 
-# На target cluster
-kubectl get deployment my-app -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/instance}'
-# → my-app-east | https://cluster-east.example.com
+# Временное отключение prune
+for app in $APPS_WITH_PRUNE; do
+  kubectl patch application "$app" -n argocd --type=merge -p '{"spec":{"syncPolicy":{"automated":{"prune":false}}}}'
+done
+# → application.argoproj.io/backend-api patched
+# → application.argoproj.io/frontend-web patched
 ```
 
-### Сценарий 6: Ignoring differences с Resource Tracking
+**Шаг 2: Переключение метода в `argocd-cm`:**
 
-При конфликтах отслеживания с HPA или operator-ами используйте `ignoreDifferences` (см. [Ignore Differences](./synchronization/ignore_differences.md)).
+```bash
+kubectl patch configmap argocd-cm -n argocd --type=merge -p '{"data":{"application.resourceTrackingMethod":"annotation"}}'
+# → configmap/argocd-cm patched
+```
+
+**Шаг 3: Массовый refresh приложений:**
+
+```bash
+for app in $(kubectl get applications.argoproj.io -n argocd -o jsonpath='{.items[*].metadata.name}'); do
+  argocd app get "$app" --hard-refresh > /dev/null 2>&1
+done
+```
+
+**Шаг 4: Массовая синхронизация для внедрения аннотаций:**
+
+```bash
+for app in $(kubectl get applications.argoproj.io -n argocd -o jsonpath='{.items[*].metadata.name}'); do
+  argocd app sync "$app" --prune=false > /dev/null 2>&1
+done
+```
+
+**Шаг 5: Проверка успешного наложения аннотаций:**
+
+```bash
+# Проверка процента объектов с аннотацией tracking-id
+TOTAL_DEPLOYMENTS=$(kubectl get deployments -A --no-headers | wc -l)
+TRACKED_DEPLOYMENTS=$(kubectl get deployments -A -o json | jq '[.items[] | select(.metadata.annotations["argocd.argoproj.io/tracking-id"] != null)] | length')
+
+echo "Deployments: $TRACKED_DEPLOYMENTS из $TOTAL_DEPLOYMENTS содержат tracking-id"
+# → Deployments: 42 из 42 содержат tracking-id
+```
+
+**Шаг 6: Возврат automated prune:**
+
+```bash
+for app in $APPS_WITH_PRUNE; do
+  kubectl patch application "$app" -n argocd --type=merge -p '{"spec":{"syncPolicy":{"automated":{"prune":true}}}}'
+done
+# → application.argoproj.io/backend-api patched
+# → application.argoproj.io/frontend-web patched
+```
+
+---
+
+### Сценарий 5: Изоляция инстансов в Shared Cluster через Installation ID
+
+В multi-tenant on-premise кластерах, где развернуто несколько контроллеров Argo CD (например, `argocd-system` и `argocd-tenants`), настройка `installationID` предотвращает перехват чужих ресурсов.
+
+**1. Конфигурация первого контроллера (`namespace: argocd-system`):**
 
 ```yaml
-spec:
-  ignoreDifferences:
-    - group: apps
-      kind: Deployment
-      jqPathExpressions:
-        - .spec.replicas  # HPA управляет этим полем
-  syncOptions:
-    - RespectIgnoreDifferences=true
-    - CreateNamespace=true
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd-system
+data:
+  application.resourceTrackingMethod: "annotation"
+  installationID: "infra-system-ctrl"
 ```
 
-## Диагностика
+**2. Конфигурация второго контроллера (`namespace: argocd-tenants`):**
 
-### Базовые команды
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd-tenants
+data:
+  application.resourceTrackingMethod: "annotation"
+  installationID: "tenant-apps-ctrl"
+```
+
+**3. Результат в метаданных ресурса:**
+Если оба инстанса имеют приложение с одинаковым именем `ingress-controller`:
+- Ресурсы системного контроллера:
+  ```yaml
+  metadata:
+    annotations:
+      argocd.argoproj.io/tracking-id: ingress-controller:apps/Deployment:system/ingress-ctrl
+      argocd.argoproj.io/installation-id: infra-system-ctrl
+  ```
+- Ресурсы пользовательского контроллера:
+  ```yaml
+  metadata:
+    annotations:
+      argocd.argoproj.io/tracking-id: ingress-controller:apps/Deployment:tenant-a/ingress-ctrl
+      argocd.argoproj.io/installation-id: tenant-apps-ctrl
+  ```
+
+Контроллер `infra-system-ctrl` при проверке кэша видит объекты с `installation-id: tenant-apps-ctrl` и игнорирует их, предотвращая взаимное удаление.
+
+---
+
+### Сценарий 6: Контроль Orphaned ресурсов через AppProject
+
+В Argo CD встроен механизм обнаружения ресурсов, находящихся в целевом неймспейсе приложения, но не управляемых GitOps. Это предотвращает ручное создание объектов администраторами в обход Git.
+
+**1. Конфигурация `AppProject`:**
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: production-project
+  namespace: argocd
+spec:
+  description: "Production Project с аудитом брошенных объектов"
+  sourceRepos:
+    - "https://git.internal.domain/infra/production.git"
+  destinations:
+    - namespace: "production"
+      server: "https://kubernetes.default.svc"
+  orphanedResources:
+    warn: true
+    ignore:
+      # Исключение системных объектов и ConfigMap от kubelet
+      - group: ""
+        kind: ConfigMap
+        name: kube-root-ca.crt
+      - group: ""
+        kind: Secret
+        name: default-token-*
+```
+
+**2. Отображение в UI и CLI:**
+При появлении ресурса без аннотации `tracking-id` в пространстве имен `production` Argo CD выставляет предупреждение:
+```bash
+argocd app get production-stack
+# → Warning: Project 'production-project' has orphaned resources: [apps/Deployment/production/manual-debug-pod]
+```
+
+## Диагностика и устранение неполадок
+
+### Базовые команды диагностики
 
 ```bash
-# Текущий метод отслеживания
-kubectl get configmap argocd-cm -n argocd -o jsonpath='{.data.resourceTrackingMethod}'
+# 1. Проверка текущего метода отслеживания в ConfigMap
+kubectl get configmap argocd-cm -n argocd -o jsonpath='{.data.application\.resourceTrackingMethod}'
 # → annotation
 
-# Просмотр tracking ID на ресурсе
-kubectl get deployment <name> -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/instance}'
+# 2. Проверка установленного installationID
+kubectl get configmap argocd-cm -n argocd -o jsonpath='{.data.installationID}'
+# → infra-system-ctrl
 
-# Просмотр tracking ID на приложении
-argocd app get <app-name> -o json | jq '.status.sync.revision'
+# 3. Инспекция полного набора tracking-метаданных на Deployment
+kubectl get deployment backend-api -n production -o json | jq '{
+  labels: {
+    instance: .metadata.labels["app.kubernetes.io/instance"]
+  },
+  annotations: {
+    tracking_id: .metadata.annotations["argocd.argoproj.io/tracking-id"],
+    installation_id: .metadata.annotations["argocd.argoproj.io/installation-id"]
+  }
+}'
+# → {
+# →   "labels": { "instance": null },
+# →   "annotations": {
+# →     "tracking_id": "backend-api:apps/Deployment:production/backend-api",
+# →     "installation_id": "infra-system-ctrl"
+# →   }
+# → }
 
-# Поиск orphaned ресурсов
-kubectl get deployments -A -o json | jq '.items[] | select(.metadata.annotations["argocd.argoproj.io/instance"] == null) | {name: .metadata.name, namespace: .metadata.namespace}'
+# 4. Поиск всех объектов в пространстве имен, не имеющих tracking-id аннотации (ручные объекты)
+kubectl get all -n production -o json | jq -r '.items[] | select(.metadata.annotations["argocd.argoproj.io/tracking-id"] == null) | "\(.kind)/\(.metadata.name)"'
+# → Service/manual-test-nodeport
+# → Pod/debug-toolbox
 ```
 
-### Типичные ошибки
+### Типичные ошибки и способы решения
 
-| Ошибка | Причина | Решение |
-| :--- | :--- | :--- |
-| `resource not found` | Метод `label` конфликтует с Helm | Переключитесь на `annotation` |
-| `orphaned resource detected` | Ресурс потерял tracking ID | Проверьте annotations/labels |
-| `multi-cluster conflict` | Одинаковые tracking ID в разных кластерах | Убедитесь, что имена приложений уникальны |
+| Ошибка / Симптом | Первопричина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| `field is immutable: spec.template.metadata.labels` при деплое Helm-чарта | Использование метода `label`. Argo CD пытается переписать метку `app.kubernetes.io/instance`, входящую в неизменяемый selector Pod. | `argocd app get <app>` возвращает `SyncFailed`. В логах `controller` сообщение об ошибке мутации `matchLabels`. | Установить `application.resourceTrackingMethod: annotation` в `argocd-cm`. Выполнить `argocd app sync <app> --force`. |
+| Ресурсы внезапно помечаются `RequiresPruning` после смены метода | Метод изменен в `argocd-cm`, но приложение еще не было синхронизировано, либо аннотации отсутствуют в Live State. | Проверить расхождение: `argocd app diff <app>`. Обратить внимание на блок `metadata.annotations`. | Отключить auto-prune, выполнить `argocd app sync <app>` для наложения аннотаций, затем вернуть auto-prune. |
+| Коллизия имен: одно приложение управляет чужими ресурсами | В одном кластере запущены два инстанса Argo CD, либо имя приложения превышает 63 символа в режиме `label` (произошло усечение). | Выполнить `kubectl get <res> -o yaml` и проверить значение `argocd.argoproj.io/installation-id` и `tracking-id`. | 1. Настроить уникальный `installationID` в каждом `argocd-cm`.<br>2. Переключиться на метод `annotation`. |
+| Объект, скопированный внешним оператором (HNC, Kyverno), удаляется Argo CD | Метод `label` не проверяет GVK/Namespace объекта. Скопированный объект имеет старую метку и считается устаревшим. | Проверить логи `argocd-application-controller` по ключевому слову `pruned resource`. | Переключиться на `annotation`. Механизм non-self-referencing предотвратит удаление скопированного объекта. |
+| Приложение зависает в статусе `OutOfSync` из-за постоянного различия аннотаций | Admission-вебхук кластера (Kyverno, Gatekeeper) удаляет или модифицирует аннотацию `argocd.argoproj.io/tracking-id`. | `kubectl get events -n <ns>` — поиск предупреждений о мутациях admission webhook. | Добавить исключение в правила Kyverno/Gatekeeper для аннотаций пространства имен `argocd.argoproj.io/*`. |
+
+### Мониторинг и метрики Prometheus
+
+Метрики экспортируются сервисом `argocd-application-controller-metrics:8082`:
+
+```promql
+# 1. Частота циклов сверки состояния ресурсов
+rate(argocd_app_reconcile_count[5m])
+
+# 2. Количество ресурсов в кэше контроллера (по видам объектов)
+argocd_cluster_api_resource_objects{server="https://kubernetes.default.svc"}
+
+# 3. Ошибки синхронизации приложений из-за конфликтов метаданных
+increase(argocd_app_sync_total{phase="Failed"}[15m])
+```
 
 ## Лучшие практики
 
-- **Используйте `annotation`:** Рекомендуемый метод для большинства случаев — нет конфликтов с Helm/Kustomize.
-- **Для multi-cluster используйте `annotation+label`:** Максимальная надежность идентификации.
-- **Избегайте смены метода в production:** Миграция требует обновления всех ресурсов.
-- **Мониторьте orphaned ресурсы:** Регулярно проверяйте наличие ресурсов без tracking ID.
-- **Не используйте `label` с Helm:** Возможны конфликты меток.
+1. **Стандартизируйте метод `annotation`:**
+   Всегда используйте `application.resourceTrackingMethod: annotation` как настройку по умолчанию для всех on-premise сред. Это исключает 100% проблем совместимости с Helm и устраняет лимит длины в 63 символа.
+2. **Используйте `annotation+label` осознанно:**
+   Включайте комбинированный метод только в том случае, если существующий стек мониторинга (Prometheus, VictoriaMetrics) критически зависит от метки `app.kubernetes.io/instance` для сопоставления метрик подов через `kube-state-metrics`.
+3. **Всегда задавайте `installationID`:**
+   Даже если в кластере сейчас работает один экземпляр Argo CD, добавление `installationID` предотвратит катастрофические последствия в будущем при развертывании тестового контроллера или изолированного экземпляра для отдельной команды.
+4. **Безопасная миграция:**
+   Никогда не переключайте `application.resourceTrackingMethod` "на лету" без предварительного снятия флага `prune: true` с критических продуктовых сервисов.
+5. **Защищайте tracking-метаданные в Admission Webhooks:**
+   При написании кластерных политик безопасности (Kyverno, OPA Gatekeeper) настраивайте правила исключений, запрещающие удаление или мутацию аннотаций `argocd.argoproj.io/*` сторонними пользователями или служебными учетными записями.
 
-## Ограничения и edge cases
+## Ограничения и граничные случаи
 
 ### Ограничения
+- **CRD с жесткой валидацией метаданных:** Некоторые устаревшие или специализированные CRD содержат схемы OpenAPI v3 с `additionalProperties: false` на уровне `metadata.annotations`. Попытка Argo CD внедрить `tracking-id` завершится ошибкой валидации API Server. В таких изолированных случаях требуется использовать `ignoreDifferences` или корректировать CRD.
+- **Длина аннотаций:** Хотя аннотации не имеют лимита в 63 символа, лимит всего объекта Kubernetes (etcd) составляет 1.5 МБ. Формат `tracking-id` занимает не более 200–300 байт, поэтому риск исчерпания памяти отсутствует.
+- **Необратимость автоматического Prune:** Если метод отслеживания переключен, а старые объекты потеряли связь до синхронизации, контроллер воспримет их как чужие/осиротевшие. При ручном удалении приложения без флага `--no-cascade` они могут остаться в кластере.
 
-- **Поиск по annotation медленнее:** Арго CD должен сканировать все ресурсы вместо использования индекса.
-- **Миграция болезненна:** Смена метода требует обновления каждого ресурса.
-- **Multi-cluster tracking ограничен:** URL кластера в tracking ID может быть длинным.
-
-### Edge Cases
-
-- **Удаление tracking ID:** Если ручным образом удалить аннотацию/метку, Argo CD потеряет ресурс.
-- **Два Argo CD кластера:** При работе двух независимых кластеров Argo CD tracking ID могут конфликтовать.
-- **CRD без support annotations:** Некоторые CRD не поддерживают аннотации — используйте `label`.
-- **Ресурс создан вручную:** Ресурс, созданный не через Argo CD, не имеет tracking ID и не будет обнаружен.
+### Граничные случаи
+- **Ресурсы ядра без API Group:** Ресурсы ядра (`v1`) формируют идентификатор с пустым полем группы (`/ConfigMap:ns/name`). Это штатное поведение, парсер контроллера ожидает ведущий слэш.
+- **Ресурсы без Namespace:** Кластерные объекты (`ClusterRole`, `Namespace`) содержат двоеточие и слэш без указания namespace (`:/name`). При написании парсеров или скриптов автоматизации на `bash` / `jq` необходимо учитывать регулярное выражение:
+  `^([^:]+):([^/]*)/([^:]+):([^/]*)/(.+)$`
+- **Ручное переименование Application:** Если имя `Application` изменено в YAML-манифесте без переноса состояния, Argo CD создаст новый `tracking-id`. Все старые ресурсы в кластере со старым `tracking-id` будут восприняты как осиротевшие и удалены при включенном `prune`. Для переименования необходимо либо сначала отключить `prune`, либо использовать процедуру миграции с обновлением аннотаций.
 
 ## Дополнительная информация
 
 ### См. также
 
-- [Synchronization](./synchronization.md)
-- [Ignore Differences](./synchronization/ignore_differences.md)
-- [Deletion and Cleanup](./argocd_deletion_and_cleanup.md)
-- [Установка и настройка](./argocd_installation_and_setup.md)
-- [RBAC — модель доступа](./argocd_rbac_deep.md) — Модель доступа, policy.csv, встроенные роли, JWT-токены, диагностика.
-- [Disaster Recovery](./argocd_disaster_recovery.md) — Бэкап, восстановление, etcd snapshot, HA, geo-recovery.
-- [Безопасность](./argocd_security_hardening.md) — GPG, NetworkPolicies, mTLS, SecurityContext, proxy, audit logging.
-- [Мультитенантность](./argocd_multi_tenancy.md) — Паттерны мультитенантности, tenant isolation, project-per-team.
+- [Синхронизация ресурсов в Argo CD](./synchronization.md) — Жизненный цикл синхронизации, фазы, стратегии diff, Sync Waves и Hooks.
+- [Удаление и очистка ресурсов](./argocd_deletion_and_cleanup.md) — Механика Prune, финализаторы, каскадное удаление и защита от случайного уничтожения.
+- [Игнорирование различий (Ignore Differences)](./synchronization/ignore_differences.md) — Тонкая настройка diff через jqPathExpressions и managedFields.
+- [Интеграция с Helm](./helm_integration.md) — Особенности совместной работы с Helm-чартами, releaseName и управление параметрами.
+- [Обзор архитектуры Argo CD](./argocd_overview.md) — Компоненты ядра: API Server, Application Controller, Repo Server, Dex.
+- [Установка и базовая настройка](./argocd_installation_and_setup.md) — Первоначальное развертывание, конфигурация ConfigMap `argocd-cm` и параметры контроллера.
+- [Мультитенантность в Argo CD](./argocd_multi_tenancy.md) — Изоляция команд, AppProject, multi-instance архитектуры и разграничение прав.
+- [Глубокое погружение в AppProject](./argocd_appproject_deep.md) — Ограничение источников, целевых пространств имен и аудит брошенных ресурсов (`orphanedResources`).
 
 ### Ссылки
 
-- [Resource Tracking Methods](https://argo-cd.readthedocs.io/en/stable/user-guide/resource_tracking/)
-- [Tracking ID Format](https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#resource-tracking-method)
-- [Orphaned Resources](https://argo-cd.readthedocs.io/en/stable/user-guide/orphaned-resources/)
+- [Argo CD Official Docs — Resource Tracking](https://argo-cd.readthedocs.io/en/stable/user-guide/resource_tracking/)
+- [Argo CD Official Docs — Declarative Setup & ConfigMap Reference](https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/)
+- [Argo CD Official Docs — Orphaned Resources Monitoring](https://argo-cd.readthedocs.io/en/stable/user-guide/orphaned-resources/)
+- [Kubernetes Documentation — Well-Known Labels, Annotations and Taints](https://kubernetes.io/docs/reference/labels-annotations-taints/)

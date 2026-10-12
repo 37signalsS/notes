@@ -1,405 +1,684 @@
 # Argo CD: Disaster Recovery — бэкап, восстановление и отказоустойчивость
 
-> **Актуальность (2026):** Argo CD v3.x поддерживает экспорт/импорт состояния через `argocd admin export/import`, бэкап etcd с восстановлением контроллера, HA-режим с шардированием контроллера и multi-cluster failover. Ключевые компоненты для DR: Redis (кэш), etcd (состояние K8s), ConfigMaps/Secrets (конфигурация Argo CD), Applications/AppProjects (GitOps-состояние).
+**Актуально для:** Argo CD v3.6.x / v2.14
+
+> **Контекст применения (DevOps / SRE / Sysadmin):** Руководство ориентировано на эксплуатацию Argo CD в корпоративных контурах, локальных дата-центрах (on-premise) и на bare-metal инфраструктуре Kubernetes (kubeadm, RKE2, Talos). Исключены зависимости от проприетарных облачных сервисов; в качестве объектных хранилищ используются S3-совместимые решения локального развертывания (MinIO, Ceph Object Gateway).
 
 ## Предварительные требования
 
-1. **Argo CD установлен** (см. [Установка и настройка](./argocd_installation_and_setup.md)).
-2. **kubectl** с доступом к кластеру.
-3. **etcdctl** для работы с etcd (для полного бэкапа).
-4. **argocd CLI** настроен.
-5. **Доступ к Git-репозиториям** для верификации состояния.
+1. **Kubernetes кластер:** v1.26+ (kubeadm, RKE2, k3s или bare-metal инсталляция).
+2. **Установленный Argo CD:** версии v2.14+ или v3.x (см. [Установка и настройка](./argocd_installation_and_setup.md)).
+3. **Утилиты управления:**
+   - `kubectl` с правами `cluster-admin` для управления ресурсами кластера.
+   - `argocd` CLI соответствующей версии сервера.
+   - `etcdctl` / `etcdutl` v3.5+ (для прямого создания и восстановления снапшотов etcd на control-plane нодах).
+   - `mc` (MinIO Client) для работы с локальным S3-хранилищем резервных копий.
+4. **Хранилище резервных копий:** Доступ к локальному S3-совместимому хранилищу (MinIO / Ceph RGW) или выделенному NFS/iSCSI разделу с гарантированной изоляцией от основного кластера.
+5. **Git-репозитории:** Доступ по SSH/HTTPS к корпоративному Git-серверу (GitLab, Gitea) с манифестами инфраструктуры и приложений.
 
 ## Определения
 
-**Disaster Recovery (Восстановление после сбоев)** — процесс восстановления Argo CD после потери данных, сбоев инфраструктуры или катастрофических событий. Включает бэкап состояния, восстановление контроллера и проверку целостности.
+**Disaster Recovery (DR, Аварийное восстановление)** — комплекс регламентов, архитектурных решений и автоматизированных процедур, обеспечивающих восстановление работоспособности управляющего контура GitOps и целевых кластеров после катастрофических аппаратных сбоев, повреждения баз данных, сетевых разделений ЦОД или компрометации окружения.
 
-**State Export (Экспорт состояния)** — команды `argocd admin export` и ручной экспорт ConfigMaps/Secrets/Applications для сохранения текущего состояния Argo CD.
+**Recovery Point Objective (RPO)** — максимально допустимый объем потенциально потерянных данных управляющего контура, выраженный во времени (например, дельта между созданием снапшота и моментом аварии). Для GitOps-состояния RPO стремится к нулю, так как истинное состояние зафиксировано в Git-коммитах.
 
-**State Import (Импорт состояния)** — команды `argocd admin import` и ручной импорт сохраненных ресурсов для восстановления Argo CD.
+**Recovery Time Objective (RTO)** — целевое время, необходимое для полного восстановления управляющего контура Argo CD, синхронизации статусов приложений и возобновления автоматической доставки манифестов.
 
-**etcd Backup (Бэкап etcd)** —.snapshot базы данных Kubernetes etcd, содержащей все объекты кластера (включая Argo CD Resources).
+**State Export (`argocd admin export`)** — процедура выгрузки декларативного состояния всех сущностей Argo CD (Applications, AppProjects, ApplicationSets, ConfigMaps, Secrets, сертификаты и репозитории) из etcd в единый сериализованный YAML-поток.
 
-**HA (High Availability)** — режим работы Argo CD с реплицированными компонентами: multiple replicas controller, repo-server, Redis Sentinel/Cluster.
+**State Import (`argocd admin import`)** — процедура инъекции ранее экспортированного декларативного состояния в чистый или восстанавливаемый кластер с опциональной очисткой отсутствующих сущностей (`--prune`) и подавлением конфликтов отслеживания ресурсов.
 
-**Geo-Recovery (Географическое восстановление)** — восстановление Argo CD на кластере в другом географическом регионе.
+**Decoupled Runtime (Развязка управляющего и исполнительного контуров)** — фундаментальное свойство архитектуры GitOps: при полном отказе подов и баз данных Argo CD все рабочие нагрузки (Deployments, StatefulSets, Pods), запущенные в целевых кластерах, продолжают непрерывно функционировать без деградации. DR затрагивает исключительно плоскость управления доставкой (Control Plane).
 
-## Базовые концепции
+**Split-Brain в GitOps** — катастрофическое состояние при наличии двух одновременно активных контроллеров Argo CD в разных дата-центрах (Active-Active), пытающихся синхронизировать одну и ту же целевую инфраструктуру с расходящимися параметрами, что приводит к циклическому взаимному удалению и пересозданию ресурсов.
 
-### Что хранит Argo CD
+**Sync Windows** — механизм временных окон в `AppProject`, блокирующий автоматическую или ручную синхронизацию приложений. В сценариях DR используется для перевода резервного кластера в режим заморозки (Safe Standby) без риска несанкционированного внесения изменений.
+
+**Finalizer Cascade Trap** — ситуация, при которой удаление ресурсов `Application` или `ApplicationSet` с установленным финализатором `resources-finalizer.argocd.argoproj.io` в процессе аварийной миграции приводит к физическому уничтожению всей полезной нагрузки в целевом кластере.
+
+## Базовые концепции и архитектура
+
+### Что и где хранит Argo CD
+
+Для построения надежного плана DR необходимо разделять компоненты системы по степени критичности данных и источникам истины:
 
 ```text
-Состояние Argo CD (в Kubernetes):
-├── Applications          ← GitOps-определения приложений
-├── AppProjects           ← Проекты и ограничения
-├── ConfigMaps            ← argocd-cm, argocd-rbac-cm, argocd-params-cm
-├── Secrets               ← argocd-secret, cluster secrets, repo secrets
-├── CronJobs             ← Кэширование, health checks
-└── ServiceAccounts      ← Токены и учетные данные
-
-Вне Kubernetes (вне etcd):
-├── Git-репозитории       ← Источник манифестов (备份 не требуется)
-├── Helm-репозитории      ← Чарты
-└── Docker-образы         ← Контейнеры
+┌────────────────────────────────────────────────────────────────────────┐
+│                          ГДЕ ХРАНИТСЯ СОСТОЯНИЕ                        │
+├──────────────────────────┬─────────────────────────────────────────────┤
+│ 1. Git / OCI Реестры     │ • Исходные манифесты, Helm-чарты, Kustomize │
+│ (Single Source of Truth) │ • Конфигурация кластеров (App-of-Apps)      │
+│                          │ • RPO = 0 (гарантируется распределенным Git)│
+├──────────────────────────┼─────────────────────────────────────────────┤
+│ 2. Kubernetes etcd       │ • CRD: Application, AppProject, AppSet      │
+│ (Кластерное состояние)   │ • Секреты: cluster credentials, repo creds  │
+│                          │ • Конфигурации: argocd-cm, argocd-rbac-cm   │
+│                          │ • Пользовательские токены и ключи шифрования│
+├──────────────────────────┼─────────────────────────────────────────────┤
+│ 3. Redis / Redis-HA      │ • Кэш манифестов Git-репозиториев           │
+│ (Эфемерный кэш)          │ • Кэш версий объектов API Kubernetes        │
+│                          │ • Сессионные токены веб-интерфейса          │
+│                          │ • НЕ ТРЕБУЕТ БЭКАПА (пересобирается на лету)│
+└──────────────────────────┴─────────────────────────────────────────────┘
 ```
 
-### Стратегии бэкапа
+> **Важно для SRE:** Redis является исключительно кэширующим слоем. При полной потере или перезапуске Redis контроллер `argocd-application-controller` и `argocd-repo-server` просто выполнят повторное клонирование Git-репозиториев и повторный опрос API Kubernetes. Бэкапить Redis не требуется.
 
-| Стратегия | Что бэкапится | RPO* | RTO** | Сложность |
-| :--- | :--- | :--- | :--- | :--- |
-| **Export ConfigMaps** | argocd-cm, rbac-cm | ~0 | ~5 мин | Низкая |
-| **Export Applications** | Все Application объекты | ~0 | ~5 мин | Низкая |
-| **Export All** | ConfigMaps + Secrets + Apps + Projects | ~0 | ~10 мин | Средняя |
-| **etcd Snapshot** | Все объекты K8s | ~1 мин | ~30 мин | Высокая |
-| **HA + Geo** | Полная репликация | ~0 | ~0 | Очень высокая |
+### Стратегии Disaster Recovery
 
-*RPO = Recovery Point Objective (потерянные данные)
-**RTO = Recovery Time Objective (время восстановления)
+| Стратегия | Реализация | RPO | RTO | Сложность | Область применения |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **1. GitOps Re-bootstrap** | Развертывание чистого Argo CD из Helm/Kustomize + запуск корневого App-of-Apps | ~0 (Git) | 15–30 мин | Низкая | Полный снос кластера; секреты хранятся в HashiCorp Vault или SOPS |
+| **2. `argocd admin export`** | Периодический экспорт всех CRD и секретов в S3 (MinIO) | Интервал бэкапа (15–60 мин) | 5–10 мин | Средняя | Стандартный корпоративный регламент для локальных инсталляций |
+| **3. Velero (On-Premise)** | Бэкап пространства имен `argocd` и CRD через Velero в MinIO | Интервал бэкапа (1–4 ч) | 5–15 мин | Средняя | Комплексный бэкап инфраструктурных неймспейсов кластера |
+| **4. etcd Snapshot** | Снапшот BoltDB на уровне bare-metal нод control plane | Интервал снапшота (1–6 ч) | 20–40 мин | Высокая | Катастрофический сбой кластера управления Kubernetes целиком |
+| **5. Warm Standby (Multi-DC)** | Резервный инстанс Argo CD во втором ЦОД с замороженным циклом синхронизации | ~0 | 1–3 мин | Высокая | Критичные контуры 24/7 с жесткими SLA по доступности доставки |
 
-### Архитектура DR
+### Архитектура резервного копирования и восстановления (On-Premise)
 
 ```text
-Нормальный режим:
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  argocd     │────▶│  repo-      │────▶│  controller │
-│  -server    │     │  server     │     │  (shard N)  │
-└─────────────┘     └─────────────┘     └─────────────┘
-       │                                      │
-       ▼                                      ▼
-┌─────────────┐                       ┌─────────────┐
-│  Redis      │                       │  etcd       │
-│  (cache)    │                       │  (state)    │
-└─────────────┘                       └─────────────┘
-
-Backup (каждые 15 минут):
-┌─────────────┐     ┌─────────────┐
-│  argocd     │────▶│  S3/MinIO   │
-│  admin      │     │  (backup)   │
-│  export     │     └─────────────┘
-└─────────────┘
-
-Disaster Recovery:
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  Restore    │────▶│  argocd     │────▶│  Verify     │
-│  from S3    │     │  admin      │     │  apps       │
-│             │     │  import     │     │  healthy    │
-└─────────────┘     └─────────────┘     └─────────────┘
+[ ОСНОВНОЙ ЦОД (DC-1) ]                                [ ХРАНИЛИЩЕ БЭКАПОВ (S3 / MinIO) ]
+┌───────────────────────────────────────┐              ┌─────────────────────────────────┐
+│ Kubernetes Control Plane              │              │ Локальный отказоустойчивый пул  │
+│  ┌──────────────┐   ┌──────────────┐  │              │ MinIO / Ceph Object Gateway     │
+│  │ argocd-server│   │ repo-server  │  │              │                                 │
+│  └──────┬───────┘   └──────┬───────┘  │              │  s3://k8s-backups/argocd/       │
+│         │                  │          │              │  ├── 2026-10-12-0000.yaml.enc   │
+│  ┌──────┴──────────────────┴───────┐  │              │  ├── 2026-10-12-0100.yaml.enc   │
+│  │ argocd-application-controller   │  │   CronJob    │  └── latest.yaml.enc            │
+│  └─────────────────┬───────────────┘  │   Export     │                                 │
+│                    │                  │─────────────▶│                                 │
+│  ┌─────────────────▼───────────────┐  │              └────────────────┬────────────────┘
+│  │ etcd (CRDs, Secrets, ConfigMaps)│  │                               │
+│  └─────────────────────────────────┘  │                               │
+└───────────────────────────────────────┘                               │
+                                                                        │ Failover /
+                                                                        │ Import
+[ РЕЗЕРВНЫЙ ЦОД (DC-2) — АВАРИЙНОЕ ВОССТАНОВЛЕНИЕ ]                     │
+┌──────────────────────────────────────────────────────────────────┐    │
+│ Чистый кластер Kubernetes / Standby контур                       │    │
+│  ┌────────────────────────────────────────────────────────────┐  │    │
+│  │ 1. Установка базового Argo CD (Helm / manifests)           │  │    │
+│  │ 2. argocd admin import < latest.yaml                       │◀─┼────┘
+│  │ 3. Валидация подключений к кластерам и Git                 │  │
+│  │ 4. Снятие блокировок Sync Windows и включение reconciler   │  │
+│  └────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ## Практические сценарии
 
-### Сценарий 1: Бэкап через argocd admin export
+### Сценарий 1: Декларативный бэкап через argocd admin export
 
-Экспорт всех Argo CD ресурсов в YAML-файлы.
+Утилита `argocd admin export` извлекает все связанные сущности Argo CD напрямую через API Kubernetes (требуются права доступа к API, запущенный сервер Argo CD не обязателен).
 
-**1. Экспорт Applications:**
+#### 1. Полный экспорт всех данных в единый файл
 ```bash
-argocd admin export applications > argocd-apps-backup.yaml
-# → Файл содержит все Application объекты
+# Экспорт ресурсов пространства имен argocd
+argocd admin export -n argocd -o /var/backups/argocd/argocd-backup-$(date +%F_%H%M%S).yaml
+# → Exporting all Argo CD data to /var/backups/argocd/argocd-backup-2026-10-12_133000.yaml
 ```
 
-**2. Экспорт AppProjects:**
+Если приложения распределены по нескольким пространствам имен (Applications in any namespace):
 ```bash
-argocd admin export appprojects > argocd-projects-backup.yaml
+argocd admin export -n argocd \
+  --application-namespaces "team-*,prod-*,stage-*" \
+  --applicationset-namespaces "team-*,prod-*" \
+  -o /var/backups/argocd/argocd-backup-full.yaml
+# → Successfully exported Argo CD data from control-plane and matched namespaces
 ```
 
-**3. Экспорт ConfigMaps:**
+#### 2. Запуск экспорта через изолированный контейнер без установки локального CLI
+Если на хосте администратора не установлен бинарник `argocd`, экспорт выполняется через официальный образ контейнера:
 ```bash
-kubectl get configmap argocd-cm -n argocd -o yaml > argocd-cm-backup.yaml
-kubectl get configmap argocd-rbac-cm -n argocd -o yaml > argocd-rbac-cm-backup.yaml
+docker run --rm \
+  -v "${HOME}/.kube/config:/home/argocd/.kube/config:ro" \
+  quay.io/argoproj/argocd:v3.6.0 \
+  argocd admin export -n argocd > /var/backups/argocd/argocd-export-standalone.yaml
+# → Файл содержит манифесты ConfigMaps, Secrets, Applications, AppProjects
 ```
 
-**4. Экспорт Secrets:**
+#### 3. Гранулярный экспорт отдельных сущностей через kubectl
+Если требуется сделать выборочный бэкап конкретных типов ресурсов для последующего избирательного наката:
 ```bash
-kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type -o yaml > argocd-secrets-backup.yaml
+BACKUP_DIR="/var/backups/argocd/granular_$(date +%F)"
+mkdir -p "${BACKUP_DIR}"
+
+# Экспорт проектов
+kubectl get appprojects.argoproj.io -n argocd -o yaml > "${BACKUP_DIR}/01-appprojects.yaml"
+
+# Экспорт приложений
+kubectl get applications.argoproj.io -n argocd -o yaml > "${BACKUP_DIR}/02-applications.yaml"
+
+# Экспорт генераторов ApplicationSet
+kubectl get applicationsets.argoproj.io -n argocd -o yaml > "${BACKUP_DIR}/03-applicationsets.yaml"
+
+# Экспорт учетных записей репозиториев и кластеров
+kubectl get secrets -n argocd -l "argocd.argoproj.io/secret-type" -o yaml > "${BACKUP_DIR}/04-argocd-secrets.yaml"
+
+# Экспорт настроек и RBAC
+kubectl get configmap argocd-cm argocd-rbac-cm argocd-cmd-params-cm -n argocd -o yaml > "${BACKUP_DIR}/05-argocd-cms.yaml"
+
+# Проверка сформированных файлов
+ls -lh "${BACKUP_DIR}"
+# → -rw-r--r-- 1 root root  45K Oct 12 13:35 01-appprojects.yaml
+# → -rw-r--r-- 1 root root 320K Oct 12 13:35 02-applications.yaml
+# → -rw-r--r-- 1 root root  28K Oct 12 13:35 03-applicationsets.yaml
+# → -rw-r--r-- 1 root root  14K Oct 12 13:35 04-argocd-secrets.yaml
+# → -rw-r--r-- 1 root root 8.2K Oct 12 13:35 05-argocd-cms.yaml
 ```
 
-**5. Полный бэкап (одна команда):**
+---
+
+### Сценарий 2: Восстановление через argocd admin import
+
+Операция импорта принимает ранее сформированный файл бэкапа и атомарно применяет манифесты к целевому пространству имен.
+
+#### 1. Предварительная валидация (Dry-Run)
+Перед выполнением боевого импорта обязательно проверяется синтаксис и отсутствие блокирующих коллизий:
 ```bash
-#!/bin/bash
-BACKUP_DIR="/backup/argocd/$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$BACKUP_DIR"
-
-argocd admin export applications > "$BACKUP_DIR/applications.yaml"
-argocd admin export appprojects > "$BACKUP_DIR/appprojects.yaml"
-kubectl get configmap argocd-cm -n argocd -o yaml > "$BACKUP_DIR/configmap-cm.yaml"
-kubectl get configmap argocd-rbac-cm -n argocd -o yaml > "$BACKUP_DIR/configmap-rbac.yaml"
-kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type -o yaml > "$BACKUP_DIR/secrets.yaml"
-
-echo "Backup saved to $BACKUP_DIR"
-# Проверка целостности
-wc -l "$BACKUP_DIR"/*.yaml
+argocd admin import -n argocd --dry-run /var/backups/argocd/argocd-backup-full.yaml
+# → [DRY-RUN] Verification completed. 142 resources parsed, 0 errors detected.
 ```
 
-### Сценарий 2: Восстановление из argocd admin import
-
-Импорт сохраненных ресурсов в Argo CD.
-
-**1. Восстановление ConfigMaps:**
+#### 2. Боевой импорт данных
 ```bash
-kubectl apply -f argocd-cm-backup.yaml
-kubectl apply -f argocd-rbac-cm-backup.yaml
-# Restart controller для применения
+# Импорт с перезаписью при возникновении конфликтов
+argocd admin import -n argocd --override-on-conflict /var/backups/argocd/argocd-backup-full.yaml
+# → Successfully imported 12 projects, 85 applications, 6 secrets, 3 configmaps
+```
+
+> **Предупреждение по флагу `--prune`:** Использование `argocd admin import --prune` приведет к немедленному физическому удалению из кластера всех объектов `Application`, `AppProject` и секретов, отсутствующих в файле бэкапа. Применяйте `--prune` исключительно при восстановлении кластера в идентичное прошлое состояние при ликвидации последствий несанкционированного изменения.
+
+#### 3. Перезапуск компонентов для сброса кэша и инициализации
+После наката секретов и конфигураций перезапустите контроллеры для применения новых параметров и прогрева внутреннего кэша:
+```bash
+kubectl rollout restart deployment argocd-server -n argocd
+# → deployment.apps/argocd-server restarted
+
+kubectl rollout restart statefulset argocd-application-controller -n argocd || \
 kubectl rollout restart deployment argocd-application-controller -n argocd
+# → statefulset.apps/argocd-application-controller restarted
+
+# Ожидание готовности подов
+kubectl rollout status statefulset argocd-application-controller -n argocd --timeout=120s
+# → statefulset rolling update complete 2 pods at revision ...
 ```
 
-**2. Восстановление Secrets:**
+#### 4. Пост-проверка контура восстановления
 ```bash
-kubectl apply -f argocd-secrets-backup.yaml
-```
-
-**3. Восстановление AppProjects (до Applications):**
-```bash
-argocd admin import argocd-projects-backup.yaml
-# Или через kubectl
-kubectl apply -f argocd-projects-backup.yaml
-```
-
-**4. Восстановление Applications:**
-```bash
-argocd admin import argocd-apps-backup.yaml
-# Или через kubectl
-kubectl apply -f argocd-apps-backup.yaml
-```
-
-**5. Валидация:**
-```bash
-# Проверка всех приложений
-argocd app list
-
-# Проверка здоровья
-argocd app list -o json | jq '.items[] | {name: .metadata.name, health: .status.health.status, sync: .status.sync.status}'
-
-# Проверка проектов
-argocd proj list
-```
-
-### Сценарий 3: Бэкап etcd (полное кластерное восстановление)
-
-Для полного восстановления Kubernetes кластера.
-
-**1. Бэкап etcd:**
-```bash
-ETCDCTL_API=3 etcdctl snapshot save /backup/etcd-snapshot-$(date +%Y%m%d).db \
-  --endpoints=https://127.0.0.1:2379 \
-  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-  --cert=/etc/kubernetes/pki/etcd/server.crt \
-  --key=/etc/kubernetes/pki/etcd/server.key
-
-# Проверка
-ETCDCTL_API=3 etcdctl snapshot status /backup/etcd-snapshot-$(date +%Y%m%d).db --write-out=table
-```
-
-**2. Восстановление etcd:**
-```bash
-# Остановка etcd
-systemctl stop etcd
-
-# Восстановление
-ETCDCTL_API=3 etcdctl snapshot restore /backup/etcd-snapshot.db \
-  --data-dir=/var/lib/etcd-restored \
-  --name=<etcd-member-name> \
-  --initial-cluster=<etcd-cluster> \
-  --initial-advertise-peer-urls=<peer-urls>
-
-# Запуск с новым data-dir
-# Обновите systemd unit: --data-dir=/var/lib/etcd-restored
-systemctl start etcd
-```
-
-### Сценарий 4: HA-режим и отказоустойчивость
-
-Настройка High Availability для Argo CD.
-
-**1. HA через Helm (рекомендуется):**
-```yaml
-# values.yaml
-controller:
-  replicas: 2
-  env:
-    - name: ARGOCD_CONTROLLER_SHARDING_ENABLED
-      value: "true"
-
-server:
-  replicas: 2
-
-redis:
-  exporter:
-    enabled: true
-  # Или внешний Redis
- -ha:
-    enabled: true
-
-repoServer:
-  replicas: 2
-```
-
-**2. Шардирование контроллера:**
-```yaml
-# argocd-cm
-data:
-  controller.sharding.algorithm: "round-robin"
-```
-
-**3. Внешний Redis (для HA):**
-```bash
-# Установка Redis Sentinel
-helm install redis-sentinel bitnami/redis-sentinel \
-  --set sentinel.enabled=true \
-  --set architecture=replication
-```
-
-### Сценарий 5: Geo-Recovery (восстановление в другом регионе)
-
-Восстановление Argo CD на кластере в другом регионе.
-
-**1. Подготовка:**
-```bash
-# На основном кластере — экспорт
-argocd admin export applications > apps-backup.yaml
-argocd admin export appprojects > projects-backup.yaml
-
-# Копирование в S3/MinIO
-aws s3 cp apps-backup.yaml s3://dr-backup/argocd/
-aws s3 cp projects-backup.yaml s3://dr-backup/argocd/
-```
-
-**2. Восстановление на DR-кластере:**
-```bash
-# Установка Argo CD на DR-кластере
-helm install argocd argo/argo-cd -n argocd --create-namespace
-
-# Ожидание готовности
-kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argocd-application-controller -n argocd --timeout=300s
-
-# Скачивание бэкапа
-aws s3 cp s3://dr-backup/argocd/apps-backup.yaml .
-aws s3 cp s3://dr-backup/argocd/projects-backup.yaml .
-
-# Импорт
-argocd admin import projects-backup.yaml
-argocd admin import apps-backup.yaml
-```
-
-**3. Валидация:**
-```bash
-# Проверка connectivity к кластерам
+# Проверка доступности подключенных кластеров
 argocd cluster list
+# → SERVER                          NAME        STATUS      MESSAGE
+# → https://kubernetes.default.svc  in-cluster  Successful  
+# → https://192.168.10.50:6443      k8s-prod-1  Successful  
 
-# Проверка здоровья приложений
-argocd app list -o json | jq '.[] | select(.status.health.status != "Healthy") | .metadata.name'
+# Проверка общего статуса синхронизации и здоровья
+argocd app list
+# → NAME         CLUSTER     STATUS    HEALTH   AUTO-SYNC
+# → ingress-ctl  k8s-prod-1  Synced    Healthy  Manual
+# → payment-api  k8s-prod-1  Synced    Healthy  Auto
 ```
 
-### Сценарий 6: Автоматический бэкап через CronJob
+---
 
-Автоматический бэкап каждые 15 минут.
+### Сценарий 3: Автоматический CronJob с выгрузкой в MinIO и шифрованием
+
+Для продуктивных сред создается изолированный Kubernetes CronJob, выполняющий экспорт, шифрование симметричным ключом (GnuPG) и выгрузку в локальный MinIO S3-бакет с ротацией.
 
 ```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argocd-backup-sa
+  namespace: argocd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argocd-backup-role
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications", "appprojects", "applicationsets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argocd-backup-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argocd-backup-role
+subjects:
+  - kind: ServiceAccount
+    name: argocd-backup-sa
+    namespace: argocd
+---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: argocd-backup
+  name: argocd-s3-backup
   namespace: argocd
 spec:
-  schedule: "*/15 * * * *"
+  schedule: "0 */2 * * *" # Каждые 2 часа
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
   jobTemplate:
     spec:
       template:
         spec:
-          serviceAccountName: argocd-backup
+          serviceAccountName: argocd-backup-sa
+          restartPolicy: OnFailure
           containers:
-            - name: backup
-              image: bitnami/kubectl:latest
+            - name: backup-worker
+              image: minio/mc:RELEASE.2025-01-17T23-25-50Z
+              env:
+                - name: MINIO_ENDPOINT
+                  value: "http://minio.storage.local:9000"
+                - name: MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: argocd-backup-credentials
+                      key: access-key
+                - name: MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: argocd-backup-credentials
+                      key: secret-key
+                - name: BACKUP_ENCRYPTION_PASSPHRASE
+                  valueFrom:
+                    secretKeyRef:
+                      name: argocd-backup-credentials
+                      key: passphrase
               command:
-                - /bin/bash
+                - /bin/sh
                 - -c
                 - |
-                  BACKUP_DIR="/backup/$(date +%Y%m%d-%H%M%S)"
-                  mkdir -p "$BACKUP_DIR"
-                  argocd admin export applications > "$BACKUP_DIR/apps.yaml"
-                  argocd admin export appprojects > "$BACKUP_DIR/projects.yaml"
-                  kubectl get configmap argocd-cm argocd-rbac-cm -n argocd -o yaml > "$BACKUP_DIR/configmaps.yaml"
-                  kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type -o yaml > "$BACKUP_DIR/secrets.yaml"
-                  
-                  # Удаление бэкапов старше 7 дней
-                  find /backup -maxdepth 1 -type d -mtime +7 -exec rm -rf {} \;
-              volumeMounts:
-                - name: backup
-                  mountPath: /backup
-          volumes:
-            - name: backup
-              persistentVolumeClaim:
-                claimName: argocd-backup-pvc
-          restartPolicy: OnFailure
+                  set -eo pipefail
+                  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                  BACKUP_FILE="/tmp/argocd-backup-${TIMESTAMP}.yaml"
+                  ENC_FILE="${BACKUP_FILE}.enc"
+
+                  echo "=== Установка kubectl и argocd CLI ==="
+                  curl -fsSL -o /usr/local/bin/kubectl https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl
+                  chmod +x /usr/local/bin/kubectl
+
+                  curl -fsSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/download/v3.6.0/argocd-linux-amd64
+                  chmod +x /usr/local/bin/argocd
+
+                  echo "=== Экспорт данных Argo CD ==="
+                  /usr/local/bin/argocd admin export -n argocd -o "${BACKUP_FILE}"
+
+                  echo "=== Шифрование резервной копии ==="
+                  gpg --batch --yes --passphrase "${BACKUP_ENCRYPTION_PASSPHRASE}" \
+                      --symmetric --cipher-algo AES256 -o "${ENC_FILE}" "${BACKUP_FILE}"
+
+                  echo "=== Отправка в MinIO ==="
+                  mc alias set onprem-minio "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+                  mc cp "${ENC_FILE}" onprem-minio/argocd-backups/daily/
+
+                  echo "=== Ротация: удаление бэкапов старше 14 дней ==="
+                  mc rm --recursive --force --older-than 14d onprem-minio/argocd-backups/daily/
+
+                  echo "=== Резервное копирование успешно завершено ==="
 ```
 
-## Диагностика
+---
 
-### Базовые команды
+### Сценарий 4: Disaster Recovery через Velero (On-Premises / MinIO)
+
+Velero обеспечивает консистентный бэкап ресурсов Kubernetes и связанных PVC на уровне API без привязки к внешним облакам.
+
+#### 1. Конфигурация BackupStorageLocation для локального MinIO
+```yaml
+apiVersion: velero.io/v1
+kind: BackupStorageLocation
+metadata:
+  name: minio-bsp
+  namespace: velero
+spec:
+  provider: aws # Используется стандартный S3 API-совместимый драйвер
+  objectStorage:
+    bucket: velero-k8s-backups
+    prefix: argocd
+  config:
+    region: minio
+    s3ForcePathStyle: "true"
+    s3Url: http://minio.storage.local:9000
+```
+
+#### 2. Создание резервной копии пространства имен Argo CD
+```bash
+# Создание бэкапа неймспейса и всех связанных CRD
+velero backup create argocd-manual-backup \
+  --include-namespaces argocd \
+  --include-cluster-resources=true \
+  --storage-location minio-bsp \
+  --wait
+# → Backup completed with status: Completed. (0 errors, 0 warnings)
+```
+
+#### 3. Аварийное восстановление из бэкапа Velero
+```bash
+# Запуск восстановления в восстанавливаемом кластере
+velero restore create --from-backup argocd-manual-backup \
+  --restore-volumes=true \
+  --wait
+# → Restore completed with status: Completed.
+
+# Проверка статуса подов в пространстве имен argocd
+kubectl get pods -n argocd -o wide
+# → All pods transitioned to Running state
+```
+
+---
+
+### Сценарий 5: Снапшот и восстановление etcd на Bare-Metal кластере
+
+При аппаратной гибели всех master-нод кластера или нарушении целостности BoltDB восстановление выполняется на уровне системных демонов etcd.
+
+#### 1. Создание снапшота на рабочей control-plane ноде
+```bash
+# Создание моментального снимка etcd через локальный сокет/IP
+sudo ETCDCTL_API=3 etcdctl snapshot save /var/backups/etcd/etcd-snapshot-$(date +%F).db \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key
+# → Snapshot saved at /var/backups/etcd/etcd-snapshot-2026-10-12.db
+
+# Верификация целостности контрольной суммы снапшота
+sudo ETCDCTL_API=3 etcdutl snapshot status /var/backups/etcd/etcd-snapshot-$(date +%F).db --write-out=table
+# → +----------+----------+------------+------------+
+# → |   HASH   | REVISION | TOTAL KEYS | TOTAL SIZE |
+# → +----------+----------+------------+------------+
+# → | d41d8cd9 | 18542019 |      35120 |      48 MB |
+# → +----------+----------+------------+------------+
+```
+
+#### 2. Процедура восстановления etcd на резервном хосте
+```bash
+# 1. Остановка статических подов kube-apiserver и etcd
+sudo mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/
+sudo mv /etc/kubernetes/manifests/etcd.yaml /tmp/
+
+# 2. Остановка службы etcd (если развернута как systemd-сервис)
+sudo systemctl stop etcd || true
+
+# 3. Архивирование поврежденного каталога данных
+sudo mv /var/lib/etcd /var/lib/etcd.bak.$(date +%s)
+
+# 4. Инициализация нового каталога данных из снапшота
+sudo ETCDCTL_API=3 etcdutl snapshot restore /var/backups/etcd/etcd-snapshot-2026-10-12.db \
+  --data-dir=/var/lib/etcd \
+  --name=master-01 \
+  --initial-cluster=master-01=https://192.168.10.11:2380 \
+  --initial-cluster-token=etcd-cluster-restore \
+  --initial-advertise-peer-urls=https://192.168.10.11:2380
+
+# 5. Коррекция прав доступа к файлам БД
+sudo chown -R etcd:etcd /var/lib/etcd || sudo chown -R root:root /var/lib/etcd
+
+# 6. Возврат манифестов control plane
+sudo mv /tmp/etcd.yaml /etc/kubernetes/manifests/
+sudo mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/
+
+# 7. Проверка готовности etcd и API-сервера
+sudo ETCDCTL_API=3 etcdctl endpoint health \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key
+# → https://127.0.0.1:2379 is healthy: successfully committed proposal: took = 2.14ms
+```
+
+---
+
+### Сценарий 6: Multi-Cluster Failover (Active-Passive) между ЦОД без Split-Brain
+
+Организация катастрофоустойчивости между двумя независимыми ЦОД (DC-1 и DC-2) по схеме Active-Passive.
+
+#### Архитектурные требования:
+1. **SSoT:** Единственным источником конфигурации является Git-репозиторий.
+2. **Исключение Split-Brain:** В режиме ожидания инстанс Argo CD в DC-2 не должен выполнять запись в общие кластеры или бороться за владение ресурсами с контроллером DC-1.
+3. **Защита ресурсов:** Резервный инстанс замораживается с помощью глобальных `Sync Windows` в `AppProject`.
+
+```text
+[ DC-1 (Активный ЦОД) ]                     [ DC-2 (Резервный ЦОД) ]
+┌─────────────────────────┐                 ┌─────────────────────────┐
+│ Argo CD (Active)        │                 │ Argo CD (Standby)       │
+│ Replicas = 2            │                 │ Replicas = 2            │
+│ Sync Windows: ALLOW     │                 │ Sync Windows: BLOCK ALL │
+│ Auto-Sync: ENABLED      │                 │ Auto-Sync: SUSPENDED    │
+└────────────┬────────────┘                 └────────────┬────────────┘
+             │                                           │
+             ▼                                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                   Целевые кластеры инфраструктуры                   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### 1. Конфигурация Safe Standby на инстансе DC-2 через Sync Windows
+В резервном кластере накладывается блокировка автоматической и ручной синхронизации на уровне проекта `default` (или кастомных `AppProject`):
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: default
+  namespace: argocd
+spec:
+  description: Default project with DR lock enabled
+  syncWindows:
+    - kind: block
+      schedule: "* * * * *" # Заблокировано всегда
+      duration: 24h
+      applications:
+        - "*"
+      clusters:
+        - "*"
+      namespaces:
+        - "*"
+      manualSync: false # Запрет даже ручной синхронизации операторами
+```
+
+#### 2. Регламент переключения (Failover Playbook при аварии DC-1)
+
+**Шаг 1: Изоляция (Fencing) упавшего ЦОД DC-1**
+Если DC-1 частично доступен или испытывает сетевой flapping, принудительно останавливается его контроллер для исключения гонки:
+```bash
+# Остановка контроллера в DC-1 (при наличии доступа)
+kubectl scale statefulset argocd-application-controller -n argocd --replicas=0 --context=ctx-dc1 || true
+```
+
+**Шаг 2: Снятие блокировки синхронизации в DC-2**
+```bash
+# Удаление блокирующего окна Sync Windows в DC-2
+kubectl patch appproject default -n argocd --type=json \
+  -p='[{"op": "remove", "path": "/spec/syncWindows"}]' --context=ctx-dc2
+# → appproject.argoproj.io/default patched
+```
+
+**Шаг 3: Переключение внешнего трафика и DNS**
+Сетевые балансировщики (BGP Anycast, Keepalived или внешний DNS) переводят домен `argocd.company.local` на виртуальный IP-адрес Ingress в DC-2.
+
+**Шаг 4: Принудительный Reconcile ключевых сервисов**
+```bash
+argocd app sync -l "tier=critical" --context=ctx-dc2
+# → Initiated sync for 15 critical applications
+```
+
+---
+
+### Сценарий 7: Чистое пересоздание из Git (Pure GitOps Bootstrap)
+
+Если etcd и бэкапы уничтожены безвозвратно, GitOps позволяет поднять управляющий контур "с чистого листа" за считанные минуты.
+
+#### 1. Развертывание базового манифеста Argo CD
+```bash
+kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -n argocd --server-side --force-conflicts \
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.0/manifests/ha/install.yaml
+# → namespace/argocd created
+# → customresourcedefinition.apiextensions.k8s.io/... configured
+```
+
+#### 2. Восстановление учетных данных (Secret Management)
+Секреты репозиториев восстанавливаются из внешнего корпоративного хранилища HashiCorp Vault (через External Secrets Operator или прямой скрипт инициализации):
+```bash
+# Инъекция мастер-ключа репозитория Git
+kubectl create secret generic gitlab-repo-creds -n argocd \
+  --from-literal=type=git \
+  --from-literal=url=git@gitlab.company.local:infra/k8s-apps.git \
+  --from-file=sshPrivateKey=/etc/ssl/certs/argo_deploy_key
+kubectl label secret gitlab-repo-creds -n argocd "argocd.argoproj.io/secret-type=repository"
+# → secret/gitlab-repo-creds created
+# → secret/gitlab-repo-creds labeled
+```
+
+#### 3. Накат корневого приложения App-of-Apps
+```bash
+kubectl apply -f - <<EOF
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-bootstrap
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: 'git@gitlab.company.local:infra/k8s-apps.git'
+    targetRevision: HEAD
+    path: bootstrap/root
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: false # ВАЖНО: на первой фазе DR prune отключен!
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+EOF
+# → application.argoproj.io/root-bootstrap created
+```
+
+#### 4. Подхват существующих ресурсов (Resource Adoption)
+Благодаря механизму Server-Side Apply (SSA) и tracking method `annotation` контроллер Argo CD обнаружит уже работающие в кластере объекты (Deployments, Services, Ingress), верифицирует соответствие манифестам из Git и возьмет их под управление **без перезапуска работающих подов**.
+
+## Операции и команды
+
+Сводная таблица команд администратора при выполнении регламентов DR:
+
+| Операция | Команда | Назначение | Ожидаемый вывод |
+| :--- | :--- | :--- | :--- |
+| **Экспорт всех сущностей** | `argocd admin export -n argocd -o backup.yaml` | Полная выгрузка данных в файл | `# → Successfully exported data` |
+| **Экспорт с учетом неймспейсов** | `argocd admin export -n argocd --application-namespaces "*"` | Выгрузка с дочерними неймспейсами | `# → Exported apps from matched namespaces` |
+| **Валидация бэкапа (Dry-Run)** | `argocd admin import -n argocd --dry-run backup.yaml` | Проверка целостности манифестов | `# → [DRY-RUN] Verification completed: 0 errors` |
+| **Импорт данных с перезаписью** | `argocd admin import -n argocd --override-on-conflict backup.yaml` | Накат бэкапа с разрешением коллизий | `# → Successfully imported resources` |
+| **Снапшот etcd** | `ETCDCTL_API=3 etcdctl snapshot save snap.db [tls-flags]` | Создание бинарного снимка BoltDB | `# → Snapshot saved at snap.db` |
+| **Проверка статуса снапшота** | `ETCDCTL_API=3 etcdutl snapshot status snap.db -w table` | Проверка хэша и ревизии BoltDB | `# → Table with HASH, REVISION, TOTAL KEYS` |
+| **Проверка здоровья кластеров** | `argocd cluster list` | Проверка связи с целевыми K8s API | `# → STATUS: Successful` |
+| **Массовая проверка приложений** | `argocd app list -o wide` | Проверка статуса синхронизации и здоровья | `# → Synced / Healthy` |
+| **Экстренное снятие финализатора** | `kubectl patch app <name> -n argocd -p '{"metadata":{"finalizers":null}}' --type=merge` | Предотвращение каскадного сноса ресурсов | `# → application.argoproj.io/<name> patched` |
+
+## Диагностика и устранение неполадок
+
+### Базовые команды диагностики при аварии
 
 ```bash
-# Проверка версии Argo CD
-argocd version
+# 1. Проверка доступности API-сервера и etcd
+kubectl get nodes
+kubectl get cs || kubectl get --raw='/readyz'
+# → ok
 
-# Просмотр состояния компонентов
-kubectl get pods -n argocd
+# 2. Проверка состояния подов управляющего контура Argo CD
+kubectl get pods -n argocd -o wide
+# → NAME                                             READY   STATUS    RESTARTS   AGE
+# → argocd-application-controller-0                  1/1     Running   0          5m
+# → argocd-repo-server-5d8f6b7c4d-x9z2q              1/1     Running   0          5m
+# → argocd-server-7964bbf6bb-f8m4s                   1/1     Running   0          5m
 
-# Проверка etcd (на control plane нодах)
-ETCDCTL_API=3 etcdctl endpoint health --endpoints=https://127.0.0.1:2379
+# 3. Анализ логов контроллера на предмет ошибок reconciler
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller --tail=100 | grep -E "level=error|ComparisonError"
 
-# Просмотр log'ов controller
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller --tail=50
-
-# Проверка Redis
-kubectl exec -it -n argocd deployment/argocd-redis -- redis-cli ping
+# 4. Проверка состояния Redis
+kubectl exec -n argocd deployment/argocd-redis -- redis-cli ping || \
+kubectl exec -n argocd statefulset/argocd-redis-ha-server-0 -c redis -- redis-cli ping
+# → PONG
 ```
 
-### Типичные ошибки
+### Типичные ошибки DR и алгоритмы устранения
 
-| Ошибка | Причина | Решение |
+| Симптом / Ошибка | Причина возникновения | Алгоритм решения |
 | :--- | :--- | :--- |
-| `applications not restored` | Applications не были экспортированы | Проверьте бэкап перед удалением |
-| `project not found` | AppProject не импортирован перед Application | Импортируйте проекты сначала |
-| `cluster secret missing` | Secret кластера не восстановлен | Восстановите все Secrets |
-| `RBAC denied` | argocd-rbac-cm не восстановлен | Восстановите RBAC конфигурацию |
+| **Приложения зависают в `Terminating` при удалении/миграции** | Установлен `resources-finalizer.argocd.argoproj.io`, но целевой кластер недоступен или контроллер остановлен. | Снять финализатор вручную через patch:<br>`kubectl patch app <name> -n argocd -p '{"metadata":{"finalizers":null}}' --type=merge`. См. [Удаление и очистка ресурсов](./argocd_deletion_and_cleanup.md). |
+| **`ComparisonError: repository not found / authentication failed`** | Секреты с учетными данными Git (`argocd.argoproj.io/secret-type: repository`) не восстановились из бэкапа. | Проверить наличие секрета: `kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=repository`. При необходимости пересоздать Secret со связкой SSH/Token. |
+| **`cluster "https://..." not found`** | Секреты подключения к целевым кластерам (`secret-type: cluster`) отсутствуют или повреждены сертификаты. | Восстановить cluster secrets из бэкапа или выполнить команду повторного добавления: `argocd cluster add <kube-context> --name <cluster-name>`. |
+| **OOMKilled у `argocd-application-controller`** | При массовом старте 500+ приложений одновременно возникает лавина запросов к API и переполнение памяти (Thundering Herd). | 1. Увеличить `limits.memory` до 4–8 GiB.<br>2. Ограничить параллелизм: задать переменную `ARGOCD_CONTROLLER_STATUS_PROCESSORS=20` и `ARGOCD_CONTROLLER_OPERATION_PROCESSORS=10`. |
+| **Случайное удаление ресурсов из-за флага `--prune`** | При вызове `argocd admin import --prune` файл бэкапа был неполным (не содержал всех неймспейсов). | Немедленно восстановить отсутствующие манифесты из GitOps-репозитория; остановить контроллер на время расследования. |
+| **Split-Brain: ресурсы непрерывно пересоздаются и мигают** | Два активных контроллера (в DC-1 и DC-2) конкурируют за кластер с разными версиями манифестов. | Принудительно заглушить контроллер в резервном ЦОД (`replicas=0`) до полной стабилизации основного контура. |
+| **Stale Cache в Redis после отката etcd** | etcd откатился на старую ревизию, а Redis хранит закэшированные данные более новых манифестов. | Сбросить кэш Redis: `kubectl exec -n argocd deployment/argocd-redis -- redis-cli FLUSHALL` и перезапустить поды контроллера. |
 
-## Лучшие практики
+## Рекомендации и лучшие практики
 
-- **Автоматический бэкап:** Настройте CronJob для бэкапа каждые 15 минут.
-- **Хранение бэкапов:** Используйте S3/MinIO с versioning и lifecycle policies.
-- **Тестирование восстановления:** Регулярно проверяйте восстановление на test-кластере.
-- **AppProjects перед Applications:** Всегда импортируйте проекты до приложений.
-- **Версионирование Git:** Храните argocd-cm, argocd-rbac-cm в Git (Dogfooding).
-- **Мониторинг etcd:** Отслеживайте размер etcd и производите compaction.
+### 1. Принцип "Git is SSoT, Backups are Fast-Forward"
+Основным источником истины для 100% манифестов является Git. Резервные копии `argocd admin export` и снапшоты etcd служат исключительно средством ускорения RTO (быстрого восстановления состояния учетных записей, истории синхронизации и локальных метаданных). Проектируйте инфраструктуру так, чтобы кластер мог быть пересоздан с нуля без наличия бэкапов.
 
-## Ограничения и edge cases
+### 2. Защита от каскадного удаления в процессе аварии
+На критических фазах восстановления (особенно при подключении новых кластеров или смене control plane):
+- Отключайте авто-синхронизацию: `automated: null`.
+- Запрещайте удаление ресурсов при расхождении: `prune: false`.
+- Включайте `prune` только после того, как все приложения перешли в статус `Healthy` и подтверждено совпадение версий.
 
-### Ограничения
+### 3. Регламент регулярных учений (Disaster Recovery GameDay)
+Раз в квартал проводите контролируемые учения по восстановлению:
+1. Развертывание тестового bare-metal или staging-кластера.
+2. Скачивание зашифрованного бэкапа из локального MinIO.
+3. Восстановление состояния через `argocd admin import`.
+4. Верификация корректности статусов 100% приложений.
 
-- **argocd admin export не экспортирует Secrets по умолчанию:** Используйте kubectl для Secrets.
-- **etcd snapshot требует доступа к control plane:** Не доступен в managed Kubernetes (EKS, GKE, AKS).
-- **Нет встроенного incremental backup:** Каждый бэкап полный.
+### 4. Безопасность и хранение секретов в On-Premise контурах
+- Бэкапы, формируемые `argocd admin export`, содержат открытые секреты (токены доступа к K8s и приватные ключи SSH).
+- Обязательно шифруйте артефакты бэкапов перед выгрузкой в MinIO с использованием GPG или `age`.
+- Настраивайте MinIO Object Lock (WORM / Compliance Mode) с версионированием, чтобы защитить бэкапы от программ-вымогателей (ransomware) и случайного удаления.
 
-### Edge Cases
-
-- **Восстановление после удаления namespace:** Если namespace `argocd` удален — восстановите через etcd или переустановите.
-- **Версионная несовместимость:** Не импортируйте бэкапы из более новой версии Argo CD.
-- **HA + Sharding:** При шардировании контроллера каждый shard бэкапируется отдельно.
-- **Внешний Redis:** При потере Redis — Argo CD восстанавливает кэш из Git (занимает время).
+### 5. Тюнинг производительности контроллера при восстановлении
+При одновременном подъеме сотен приложений избегайте перегрузки Git-сервера и K8s API:
+- Настройте задержки ретраев и таймауты в `argocd-cmd-params-cm`:
+  ```yaml
+  data:
+    controller.repo.server.timeout.seconds: "90"
+    controller.status.processors: "30"
+    controller.operation.processors: "15"
+  ```
+- Используйте HA-режим контроллера с шардированием по кластерам (см. [Установка и настройка](./argocd_installation_and_setup.md#сценарий-7-шардирование-контроллера)).
 
 ## Дополнительная информация
 
-### См. также
+### См. также (внутренняя база знаний)
 
-- [Установка и настройка HA](./argocd_installation_and_setup.md#сценарий-7-шардирование-контроллера)
-- [RBAC](./argocd_rbac_deep.md)
-- [AppProject](./argocd_appproject_deep.md)
-- [Безопасность](./argocd_security_hardening.md) — GPG, NetworkPolicies, mTLS, SecurityContext, proxy, audit logging.
-- [Мультитенантность](./argocd_multi_tenancy.md) — Паттерны мультитенантности, tenant isolation, project-per-team.
-- [Multiple Sources и sourceHydrator](./argocd_multi_source_apps.md) — Multiple Sources, sourceHydrator, Helm+Git, CI-рендеринг vs Multi-Source.
+- [Argo CD: Обзор архитектуры и возможностей](./argocd_overview.md) — базовые концепции GitOps, жизненный цикл приложения.
+- [Argo CD: Установка и настройка](./argocd_installation_and_setup.md) — развертывание HA-режима, шардирование контроллера.
+- [Argo CD: Удаление и очистка ресурсов](./argocd_deletion_and_cleanup.md) — механизмы финализаторов, безопасный демонтаж и предупреждение каскадного сноса.
+- [Argo CD: Диагностика и мониторинг](./argocd_troubleshooting_and_monitoring.md) — метрики Prometheus, алерты и анализ логов контроллера.
+- [Argo CD: Безопасность и харденинг](./argocd_security_hardening.md) — сетевые политики, mTLS и защита секретов.
+- [Argo CD: Ролевой доступ (RBAC)](./argocd_rbac_deep.md) — разграничение прав операторов и интеграций.
+- [Резервное копирование и DR в Kubernetes](../../Kubernetes/Operations/backup-strategies.md) — пятиуровневая модель бэкапа, CSI снапшоты, Velero.
+- [Практические операции с etcd](../../Kubernetes/Concepts/etcd_operations.md) — обслуживание, компакция, снапшоты etcd.
+- [Паттерны Disaster Recovery](../../Concepts/disaster_recovery.md) — общая методология Cold/Warm/Hot Standby, расчет RPO/RTO.
 
-### Ссылки
+### Ссылки на официальную документацию
 
-- [Disaster Recovery Guide](https://argo-cd.readthedocs.io/en/stable/operator-manual/disaster_recovery/)
-- [Backup and Restore](https://argo-cd.readthedocs.io/en/stable/operator-manual/backup-restore/)
-- [HA Architecture](https://argo-cd.readthedocs.io/en/stable/operator-manual/ha/)
+- [Argo CD Disaster Recovery Guide](https://argo-cd.readthedocs.io/en/stable/operator-manual/disaster_recovery/)
+- [Argo CD Backup and Restore (CLI Reference)](https://argo-cd.readthedocs.io/en/stable/user-guide/commands/argocd_admin_export/)
+- [Argo CD High Availability Architecture](https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/)
+- [Velero On-Premises Object Store (MinIO) Documentation](https://velero.io/docs/v1.14/contributions/minio/)
+- [etcd Disaster Recovery & Snapshotting](https://etcd.io/docs/v3.5/op-guide/recovery/)

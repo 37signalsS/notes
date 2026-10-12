@@ -1,154 +1,267 @@
-# Argo CD: RBAC — модель доступа, policy.csv и практические сценарии
+# Argo CD: RBAC — модель доступа Casbin, policy.csv и проектные роли
 
-**Актуально для:** Argo CD v3.4+ (покрывает v3.4.x, v3.5.x, v3.6.x; отличаются `applicationsets` ресурс, `scopes` поведение, JWT token lifetime defaults)
+**Актуально для:** Argo CD v3.5+ (покрывает v3.4.x, v3.5.x, v3.6.x; Kubernetes 1.28–1.32+; bare-metal / on-premise; Casbin-модель, granular sub-resource actions, AppProject scoped roles, policy.matchMode glob/regex)
 
 ## Предварительные требования
 
-Перед работой с RBAC Argo CD убедитесь в выполнении следующих условий:
+Перед развертыванием и конфигурированием ролевой модели доступа (RBAC) в Argo CD убедитесь в соблюдении следующих условий:
 
-1. **Кластер Kubernetes:** версия v1.26+ (рекомендуется v1.28+ для полной поддержки RBAC-интеграции с OIDC).
-2. **Argo CD установлен и доступен:** проверьте статус подов:
+1. **Кластер Kubernetes:** версия v1.28–v1.32+ (on-premise, bare-metal или виртуализированный кластер под управлением kubeadm/talos/rke2).
+2. **Работоспособный инстанс Argo CD:** версии v3.5.x (проверено на v3.5.0–v3.5.4+):
    ```bash
-   kubectl get pods -n argocd
-   # → все поды в статусе Running, READY 1/1 или 2/2
+   kubectl get pods -n argocd -l app.kubernetes.io/part-of=argocd
+   # → argocd-application-controller-0   1/1     Running   0          42d
+   # → argocd-repo-server-xxx           1/1     Running   0          42d
+   # → argocd-server-xxx                1/1     Running   0          42d
    ```
-3. **kubectl** с доступом к namespace `argocd` (права на чтение/запись ConfigMap).
-4. **argocd CLI** установлен (версия, совместимая с сервером) и настроен вход:
-   ```bash
-   argocd version
-   argocd login <ARGOCD_SERVER> --username admin --password <password>
-   ```
-5. **Git-репозиторий:** доступен для Argo CD (настроены credentials в `argocd-repo-server` или публичный доступ).
-6. **RBAC:** права администратора кластера для первоначальной настройки `argocd-rbac-cm`. Для операций управления приложениями достаточно соответствующих ролей в AppProject.
-7. **SSO настроен** (опционально, для интеграции с группами) — см. [SSO с GitLab](./argocd_sso_gitlab.md).
-8. **Понимание AppProject** — RBAC тесно связан с проектами (см. [AppProject](./argocd_appproject_deep.md)).
-9. **Работающая базовая авторизация:** приложение успешно синхронизировалось хотя бы один раз вручную перед настройкой кастомных политик.
+3. **Административный доступ к кластеру:** права `ClusterRoleBinding` с `cluster-admin` или полные права на чтение/запись ресурсов `ConfigMap` и `AppProject` в пространстве имен `argocd`.
+4. **Утилиты командной строки (CLI):**
+   - `kubectl` v1.28+ с настроенным `KUBECONFIG`.
+   - `argocd` CLI v3.5+, авторизованный под учетной записью администратора:
+     ```bash
+     argocd version --short
+     # → argocd: v3.5.4+2b47f48
+     # → argocd-server: v3.5.4+2b47f48
+     ```
+   - Утилиты для работы с данными: `jq`, `base64`, `openssl`, `yq`.
+5. **Корпоративный IdP / SSO (опционально, но рекомендуется для production):** настроенный поставщик OIDC/LDAP (Keycloak, GitLab, FreeIPA, Dex) с передачей клейма групп `groups` (см. [SSO с GitLab](./argocd_sso_gitlab.md)).
+6. **Базовое понимание сущностей:** архитектура проектов [AppProject](./argocd_appproject_deep.md) и стратегия разграничения сред [Мультитенантность](./argocd_multi_tenancy.md).
+
+---
 
 ## Определения
 
-**RBAC Argo CD (Role-Based Access Control)** — модель управления доступом, определяющая, какие действия (`get`, `create`, `sync`, `delete`, `override` и др.) пользователи и группы могут выполнять с ресурсами Argo CD: приложениями (`applications`), кластерами (`clusters`), репозиториями (`repositories`), логами (`logs`), терминалом (`exec`), проектами (`projects`) и ApplicationSet (`applicationsets`).
+| Термин | Определение |
+| :--- | :--- |
+| **RBAC (Role-Based Access Control)** | Механизм разграничения прав доступа субъектов (пользователей, сервисных учетных записей, групп SSO) к ресурсам и операциям API/UI Argo CD. |
+| **Casbin Engine** | Встроенный в Argo CD открытый движок авторизации (`github.com/casbin/casbin/v2`), исполняющий оценку правил на базе модели PERM (Policy, Effect, Request, Matchers). |
+| **argocd-rbac-cm** | Системный `ConfigMap` в namespace `argocd`, хранящий глобальную конфигурацию RBAC: файл правил `policy.csv`, дефолтную роль `policy.default`, режим сопоставления `policy.matchMode` и перечень OIDC scopes `scopes`. |
+| **policy.csv** | Многострочный CSV-текст с определениями политик (`p`) и связей субъектов с ролями (`g`), загружаемый и парсируемый Casbin-энфорсером. |
+| **policy.default** | Имя роли, которая автоматически назначается любому аутентифицированному пользователю (а также анонимным сессиям, если они включены). По стандарту безопасности устанавливается в `role:readonly`. |
+| **policy.matchMode** | Режим работы функции сопоставления объектов и действий в Casbin: `glob` (по умолчанию, подстановка `*`) либо `regex` (регулярные выражения синтаксиса Go). |
+| **Role (`role:<name>`)** | Именованный контейнер привилегий. Имена глобальных ролей всегда начинаются с префикса `role:` (например, `role:readonly`, `role:developer`, `role:sre`). |
+| **Subject (`sub`)** | Субъект авторизации — имя локального пользователя, уникальный ID пользователя OIDC или название внешней группы из SSO-токена. |
+| **AppProject Scoped Role** | Локальная роль, определенная внутри CRD `AppProject` в массиве `.spec.roles[]`. Пространство имен роли в Casbin автоматически формируется как `proj:<project-name>:<role-name>`. |
+| **Fine-grained Sub-resource Action** | Гранулярное действие над дочерними Kubernetes-ресурсами приложения в формате `<action>/<group>/<kind>/<namespace>/<name>` (например, `action/apps/Deployment/restart`, `delete/*/Pod/*/*`). |
+| **Scopes (`scopes`)** | Список OIDC-клеймов, извлекаемых из токена IdP для наполнения списка групп пользователя (по умолчанию `[groups]`). |
+| **JWT Token** | Подписанный JSON Web Token, удостоверяющий личность пользователя или сервисного аккаунта при обращении к REST/gRPC API. Содержит метаданные `sub`, `iss`, `iat`, `exp` и `id`. |
 
-**Policy (Политика)** — правило в формате CSV, определяющее разрешение или запрет конкретного действия для роли или пользователя. Записывается в ConfigMap `argocd-rbac-cm` в поле `policy.csv`.
+---
 
-**Role (Роль)** — именованный набор разрешений. Имя роли всегда начинается с префикса `role:` (например, `role:readonly`, `role:admin`, `role:dev-team`). Роли назначаются пользователям через маппинги `g,` (group) в policy.csv.
+## Архитектура и принципы работы Casbin
 
-**Subject (Субъект)** — пользователь, группа или сервисный аккаунт, которому назначается роль. В Argo CD субъекты привязываются к ролям через записи `g,` в policy.csv. Формат: `g, <subject>, <role>`.
+### Конвейер авторизации (Defense-in-Depth)
 
-**JWT (JSON Web Token)** — токен авторизации, генерируемый Argo CD для CLI/API-доступа. Содержит claim `sub` (имя пользователя/аккаунта) и опционально `groups`. Истекает через время, заданное в `users.session.duration` в `argocd-cm` (по умолчанию 24 часа).
-
-**Scopes (Области)** — параметр `scopes` в `argocd-rbac-cm`, определяющий, какие claims из OIDC-токена используются для определения групп пользователя (по умолчанию `[groups]`).
-
-**AppProject Restrictions** — дополнительный слой авторизации, проверяемый после RBAC: namespaceResourceWhitelist/Blacklist, destinations, source repositories. См. [AppProject](./argocd_appproject_deep.md).
-
-## Основные концепции
-
-### Архитектура RBAC в Argo CD
+При любом обращении к API Argo CD (через веб-интерфейс, утилиту `argocd` или автоматизированный REST/gRPC-клиент) запрос проходит трехступенчатый конвейер проверки:
 
 ```text
-Запрос (CLI/API/UI)
-    │
-    ▼
-┌─────────────────────────┐
-│  Аутентификация         │  ← SSO (OIDC/LDAP), локальный пользователь,
-│  (Who are you?)         │     JWT-токен (account:token)
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│  Авторизация (RBAC)     │  ← policy.csv + встроенные роли
-│  (What can you do?)     │     Оценка: p/rules → g/mappings → policy.default
-└────────────┬────────────┘
-             │
-             ▼
-┌─────────────────────────┐
-│  AppProject Restrictions│  ← namespaceResourceWhitelist/Blacklist,
-│  (Where can you apply?) │     destinations, source repos, sync windows
-└─────────────────────────┘
+Входящий запрос (UI / CLI / REST / gRPC API)
+   │
+   ▼
+[Уровень 1: Аутентификация (Authentication)]
+   │ • Проверка валидности сессионной cookie или заголовка Authorization: Bearer <JWT>
+   │ • Верификация подписи токена (локальный secretkey или OIDC IdP JWKS)
+   │ • Извлечение идентификатора субъекта (sub) и списка групп (groups)
+   ▼
+[Уровень 2: Глобальный и проектный RBAC (Casbin Enforcer)]
+   │ • Оценка запроса по модели Casbin: r = (sub, res, act, obj)
+   │ • Поиск связок в g (группы пользователя -> роли)
+   │ • Применение политик p (argocd-rbac-cm + AppProject spec.roles)
+   │ • Проверка policy.default
+   │ • Вычисление эффекта: allow && !deny
+   ▼
+[Уровень 3: Границы безопасности AppProject (Security Boundaries)]
+   │ • Проверка допустимости репозитория манифестов (spec.sourceRepos)
+   │ • Проверка целевого кластера и пространства имен (spec.destinations)
+   │ • Проверка разрешенных типов манифестов (whitelists / blacklists)
+   │ • Проверка активных регламентных окон синхронизации (spec.syncWindows)
+   ▼
+Исполнение операции (argocd-server / argocd-application-controller)
 ```
 
-**Порядок проверки (Defense-in-Depth):**
-1. **Аутентификация** — проверка личности (SSO, local account, JWT)
-2. **RBAC** — проверка действия на ресурсе (`p, role:X, applications, sync, proj/*, allow`)
-3. **AppProject** — проверка границ (может ли пользователь вообще видеть этот проект/кластер/репозиторий)
+### Спецификация Casbin-модели Argo CD
 
-### Структура policy.csv
+Ядро авторизации Argo CD инициализируется встроенным файлом конфигурации модели (`assets/model.conf`):
 
-Файл `policy.csv` в ConfigMap `argocd-rbac-cm` содержит записи двух типов:
+```text
+[request_definition]
+r = sub, res, act, obj
 
-**1. Правила разрешений (p):**
+[policy_definition]
+p = sub, res, act, obj, eft
+
+[role_definition]
+g = _, _
+
+[policy_effect]
+e = some(where (p.eft == allow)) && !some(where (p.eft == deny))
+
+[matchers]
+m = g(r.sub, p.sub) && globOrRegexMatch(r.res, p.res) && globOrRegexMatch(r.act, p.act) && globOrRegexMatch(r.obj, p.obj)
+```
+
+#### Математический принцип вычисления прав (Policy Effect)
+
+Формула эффекта:
+$$\text{Effect} = \exists (p.\text{eft} == \text{allow}) \land \neg \exists (p.\text{eft} == \text{deny})$$
+
+Из формулы следуют критические правила для системного администратора:
+1. **Безусловный приоритет запрета (Deny-Override):** Если для запрошенного действия совпало хотя бы одно правило со значением `deny`, запрос **немедленно отклоняется**, даже если на него распространяются десять разрешающих правил `allow`.
+2. **Независимость от порядка строк в CSV:** В отличие от сетевых брандмауэров (где действует правило «first match wins»), в Casbin **порядок строк в `policy.csv` не имеет значения**. Размещение `allow` выше строки с `deny` не способно обойти запрещающее правило.
+3. **Модель закрытого мира (Default Deny):** Если для субъекта не найдено ни одного правила `allow` (ни в назначенных ролях, ни в `policy.default`), запрос отклоняется с ошибкой `permission denied`.
+4. **Неблокируемость дефолтной роли:** Правила, выданные через `policy.default` (например, `role:readonly`), применяются ко всем аутентифицированным пользователям. Попытка заблокировать дефолтное право через `deny` для кастомной роли заблокирует только саму эту роль, но если пользователь сохраняет членство в `policy.default`, базовое разрешение может сохраняться.
+
+### Синтаксис policy.csv
+
+Файл конфигурации содержит строки двух типов (комментарии начинаются с `#` и игнорируются парсером):
+
+#### 1. Правило политики (`p`):
 ```csv
-p, <role>, <resource>, <action>, <object>, <allow|deny>
+p, <subject/role>, <resource>, <action>, <object>, <allow|deny>
 ```
+- `<subject/role>`: Роль (например, `role:dev-team`, `proj:payment:developer`) или прямой идентификатор пользователя/группы.
+- `<resource>`: Тип системного ресурса Argo CD.
+- `<action>`: Допустимая операция над ресурсом (включая составные подресурсы).
+- `<object>`: Идентификатор объекта (маска или точный путь).
+- `<allow|deny>`: Эффект правила (`allow` — разрешить, `deny` — явно запретить).
 
-| Поле | Описание | Примеры |
-| :--- | :--- | :--- |
-| `p` | Тип записи (policy) | `p` |
-| `<role>` | Имя роли (обязательно с префиксом `role:`) | `role:readonly`, `role:dev-team`, `role:ci-bot` |
-| `<resource>` | Тип ресурса | `applications`, `clusters`, `repositories`, `logs`, `exec`, `projects`, `applicationsets` |
-| `<action>` | Действие | `get`, `create`, `sync`, `delete`, `override` |
-| `<object>` | Объект (маска) | `*/*` (все), `proj1/*` (проект), `app1` (конкретное приложение) |
-| `<allow\|deny>` | Результат | `allow` или `deny` |
-
-**2. Маппинги групп (g):**
+#### 2. Маппинг групп и пользователей (`g`):
 ```csv
 g, <subject>, <role>
 ```
+- `<subject>`: Имя пользователя (локального или SSO) либо группа, полученная из OIDC-клейма.
+- `<role>`: Назначенная роль с префиксом `role:` (для глобальных ролей) или `proj:<project>:<role>` (для проектных ролей).
 
-| Поле | Описание | Примеры |
-| :--- | :--- | :--- |
-| `g` | Тип записи (group) | `g` |
-| `<subject>` | Пользователь или группа (как приходят из OIDC/SSO) | `admin`, `team-dev`, `infra/k8s-admins`, `ci-bot` |
-| `<role>` | Имя роли (с префиксом `role:`) | `role:readonly`, `role:admin`, `role:dev-team` |
+### Полная матрица ресурсов и действий
 
-### Встроенные роли
+Argo CD v3.5+ поддерживает 12 типов системных ресурсов и 9 базовых действий:
 
-| Роль | Описание |
-| :--- | :--- |
-| `role:readonly` | Только чтение (`get`) для всех ресурсов. Используется как `policy.default` по умолчанию. |
-| `role:admin` | Полный доступ ко всем ресурсам и действиям (включая `override`, `clusters`, `repositories`). |
+| Ресурс (`resource`) | Допустимые действия (`action`) | Область объекта (`object`) | Назначение и контекст |
+| :--- | :--- | :--- | :--- |
+| `applications` | `get`, `create`, `update`, `delete`, `sync`, `rollback`, `action`, `override` | `<project>/<app>` или `<project>/<app-ns>/<app>` | Жизненный цикл приложений, синхронизация манифестов, откат ревизий. |
+| `applicationsets` | `get`, `create`, `update`, `delete` | `<project>/<appset>` | Управление генераторами приложений ApplicationSet (v3.5+). |
+| `clusters` | `get`, `create`, `update`, `delete` | `<server-url>` или `<name>` | Подключение и управление целевыми Kubernetes-кластерами. |
+| `projects` | `get`, `create`, `update`, `delete` | `<project-name>` | Управление объектами `AppProject` и границами безопасности. |
+| `repositories` | `get`, `create`, `update`, `delete` | `<repo-url>` | Управление учетными данными Git-репозиториев и Helm OCI-реестров (read-only доступ). |
+| `write-repositories`| `get`, `create`, `update`, `delete` | `<repo-url>` | Управление репозиториями с правом записи (для Image Updater, commit-back). |
+| `accounts` | `get`, `update` | `<account-name>` | Просмотр аккаунтов, смена паролей, генерация и отзыв API-токенов. |
+| `certificates` | `get`, `create`, `delete` | `<server-name>` | Управление доверенными TLS/SSH-сертификатами хостов. |
+| `gpgkeys` | `get`, `create`, `delete` | `<key-id>` | Управление публичными GPG-ключами для верификации подписей коммитов Git. |
+| `logs` | `get` | `<project>/<app>` | Потоковое чтение логов контейнеров через API Argo CD. |
+| `exec` | `create` | `<project>/<app>` | Открытие интерактивной терминальной сессии (web-shell / pod exec). |
+| `extensions` | `invoke` | `<extension-name>` | Вызов расширений UI/бэкенда (Argo CD Extensions). |
 
-### Порядок оценки политик
+#### Специфика действия `override`
+Действие `override` на ресурсе `applications` наделяет пользователя правом принудительной синхронизации в обход ограничений:
+- Использование флагов `--force` и `--replace` (удаление и пересоздание конфликтующих ресурсов).
+- Отключение автоматической подчистки манифестов (`--prune=false`).
+- Применение Server-Side Apply при наличии конфликтов владения полями (`managedFieldsManagers`).
+По умолчанию `override` доступен **только** роли `role:admin`.
 
-```text
-1. Точное совпадение (конкретный пользователь через g, + ресурс + действие)
-   │
-2. Совпадение по роли (role:dev-team + ресурс + действие) — правила p, сверху вниз
-   │
-3. policy.default (если ни одно правило не совпало)
-   │
-4. Запрет по умолчанию (если policy.default не задан)
+### Гранулярные действия подресурсов (Fine-grained Permissions)
+
+Для ресурса `applications` действие может быть уточнено до конкретного Kubernetes-манифеста внутри целевого кластера:
+
+```csv
+p, <role>, applications, <action>/<group>/<kind>/<namespace>/<name>, <project>/<app>, allow
 ```
 
-**Важно:** политики `p,` оцениваются **сверху вниз**. Первое совпадающее правило определяет результат. Если есть `deny` и `allow` на одном уровне специфичности — `deny` имеет приоритет.
+- **Вызов действий контроллера (Resource Actions):**
+  `p, role:developer, applications, action/apps/Deployment/restart, team-backend/*, allow` — разрешает только операцию перезапуска деплойментов (`Restart`).
+- **Удаление конкретных сущностей:**
+  `p, role:developer, applications, delete/*/Pod/*/*, team-backend/*, allow` — разрешает удаление подов (для отладки/перезапуска), но запрещает удаление сервисов, ingress и самого приложения `Application`.
+- **Обновление дочерних ресурсов:**
+  `p, role:developer, applications, update/*, team-backend/*, allow` — разрешает прямое редактирование манифестов подов/деплойментов через UI, но запрещает редактировать спецификацию самого `Application` (например, подменять Git-репозиторий).
 
-### Поддерживаемые ресурсы и действия
+### Маски объектов и режим сопоставления (`policy.matchMode`)
 
-| Ресурс | Действия | Описание |
-| :--- | :--- | :--- |
-| `applications` | `get`, `create`, `sync`, `delete`, `override` | Управление приложениями (sync, rollback, patch) |
-| `clusters` | `get`, `create`, `delete` | Управление подключенными кластерами |
-| `repositories` | `get`, `create`, `delete` | Управление Git/Helm репозиториями |
-| `logs` | `get` | Просмотр логов подов приложений |
-| `exec` | `create` | Выполнение команд в подах (terminal/webshell) |
-| `projects` | `get`, `create`, `delete` | Управление AppProject |
-| `applicationsets` | `get`, `create`, `delete`, `sync` | Управление ApplicationSet (v3.5+) |
+Конфигурация `policy.matchMode` в `argocd-rbac-cm` определяет функцию сопоставления строк:
 
-### Маски объектов (Object Masks)
+#### 1. Режим `glob` (по умолчанию)
+Использует функцию сопоставления glob-паттернов.
+> [!WARNING]
+> Встроенная функция сопоставления glob в Casbin **не рассматривает символ слэша (`/`) как специальный разделитель директорий**. Маска `delete/*/kind/*` совпадет как с `delete/<group>/kind/<namespace>/<name>`, так и с `delete/<group>/<kind>/kind/<name>`. Для однозначного разделения групп всегда используйте паттерны с 4 слэшами: `delete/<group>/<kind>/<namespace>/<name>`.
 
-| Маска | Описание | Пример |
-| :--- | :--- | :--- |
-| `*/*` | Все проекты, все приложения | `p, role:readonly, applications, get, */*, allow` |
-| `project1/*` | Все приложения в проекте `project1` | `p, role:dev, applications, get, project1/*, allow` |
-| `project1/app1` | Конкретное приложение | `p, role:dev, applications, sync, project1/app1, allow` |
-| `*/app1` | Приложение `app1` во всех проектах | `p, role:dev, applications, get, */app1, allow` |
+- `*/*` — все проекты, все приложения.
+- `payment-proj/*` — любые приложения внутри проекта `payment-proj`.
+- `payment-proj/billing-*` — приложения проекта, чьи имена начинаются с `billing-`.
+- `*/app-payment` — приложение с именем `app-payment` в любом проекте.
+- `payment-proj/team-ns/*` — все приложения в неймспейсе `team-ns` (при включенном режиме *Applications in any namespace*).
 
-**Синтаксис масок:** `project` может быть `*` (любой), `name` (конкретный). `application` может быть `*` (все в проекте) или `name` (конкретное). Для ресурсов без проекта (clusters, repositories) используется просто `*`.
+#### 2. Режим `regex`
+Включается параметром `policy.matchMode: regex` в `argocd-rbac-cm`. Все объекты, ресурсы и субъекты сопоставляются по правилам регулярных выражений языка Go:
+```yaml
+data:
+  policy.matchMode: regex
+  policy.csv: |
+    # Разрешить чтение только для проектов, начинающихся с prod-
+    p, role:auditor, applications, get, ^prod-.*/.*$, allow
+```
 
-## Практические сценарии
+---
 
-### Сценарий 1: Базовая настройка RBAC —readonly для всех
+## Практические сценарии конфигурации
 
-Все пользователи по умолчанию видят приложения, но не могут их синхронизировать или удалять.
+### Сценарий 1: Базовый Hardening — Least Privilege и отключение Anonymous
+
+В корпоративной среде доступ по умолчанию должен предоставлять минимальные права только на чтение, а анонимный доступ должен быть гарантированно отключен.
+
+#### 1. Конфигурация `argocd-cm` (отключение анонимного доступа)
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  # Запрет неавторизованного доступа
+  users.anonymous.enabled: "false"
+  # Стандартное время жизни сессионного токена (8 часов для рабочего дня)
+  users.session.duration: "8h"
+```
+
+#### 2. Конфигурация `argocd-rbac-cm`
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
+data:
+  # Дефолтная роль для всех аутентифицированных пользователей
+  policy.default: role:readonly
+  policy.matchMode: glob
+  scopes: "[groups]"
+  policy.csv: |
+    # Явное закрепление прав встроенной роли readonly
+    p, role:readonly, applications, get, */*, allow
+    p, role:readonly, certificates, get, *, allow
+    p, role:readonly, clusters, get, *, allow
+    p, role:readonly, repositories, get, *, allow
+    p, role:readonly, projects, get, *, allow
+    p, role:readonly, accounts, get, *, allow
+```
+
+#### 3. Валидация применения
+```bash
+# Проверка синтаксической корректности политик
+argocd admin settings rbac validate
+# → RBAC configuration is valid
+
+# Тестирование дефолтных прав на чтение
+argocd admin settings rbac can role:readonly get applications 'default/core-service'
+# → Yes
+
+# Проверка запрета деструктивных операций
+argocd admin settings rbac can role:readonly delete applications 'default/core-service'
+# → No
+```
+
+---
+
+### Сценарий 2: Многопользовательское разделение команд (Developers vs SRE vs Security)
+
+Разграничение обязанностей для классической структуры IT-департамента без использования облачных IAM.
 
 ```yaml
 apiVersion: v1
@@ -158,446 +271,717 @@ metadata:
   namespace: argocd
 data:
   policy.default: role:readonly
+  policy.csv: |
+    # =========================================================================
+    # РОЛЬ: role:developer (Разработчики сервисов)
+    # Полный доступ к dev/stage, чтение и синхронизация в prod (без удаления)
+    # =========================================================================
+    p, role:developer, applications, get, staging-*/*, allow
+    p, role:developer, applications, create, staging-*/*, allow
+    p, role:developer, applications, update, staging-*/*, allow
+    p, role:developer, applications, sync, staging-*/*, allow
+    p, role:developer, applications, delete, staging-*/*, allow
+    p, role:developer, applications, rollback, staging-*/*, allow
+    p, role:developer, logs, get, staging-*/*, allow
+    p, role:developer, exec, create, staging-*/*, allow
+
+    # Production: просмотр, запуск синхронизации и просмотр логов
+    p, role:developer, applications, get, production-*/*, allow
+    p, role:developer, applications, sync, production-*/*, allow
+    p, role:developer, logs, get, production-*/*, allow
+    # Запрет терминала и удаления в production
+    p, role:developer, exec, create, production-*/*, deny
+    p, role:developer, applications, delete, production-*/*, deny
+
+    # =========================================================================
+    # РОЛЬ: role:sre (Дежурные инженеры эксплуатации)
+    # Полный доступ к приложениям, логам и терминалам, управление кластерами
+    # =========================================================================
+    p, role:sre, applications, *, */*, allow
+    p, role:sre, logs, get, */*, allow
+    p, role:sre, exec, create, */*, allow
+    p, role:sre, clusters, get, *, allow
+    p, role:sre, repositories, *, *, allow
+    p, role:sre, certificates, *, *, allow
+
+    # =========================================================================
+    # РОЛЬ: role:sec-auditor (Аудит информационной безопасности)
+    # Только чтение логов, манифестов и ключей верификации
+    # =========================================================================
+    p, role:sec-auditor, applications, get, */*, allow
+    p, role:sec-auditor, logs, get, */*, allow
+    p, role:sec-auditor, gpgkeys, get, *, allow
+    p, role:sec-auditor, certificates, get, *, allow
+
+    # =========================================================================
+    # МАППИНГ ЛОКАЛЬНЫХ ПОЛЬЗОВАТЕЛЕЙ И ГРУПП
+    # =========================================================================
+    g, lead-developer, role:developer
+    g, oncall-sre, role:sre
+    g, audit-officer, role:sec-auditor
 ```
 
-**Валидация:**
+#### Валидация прав
 ```bash
-# Проверка текущей политики
-kubectl get configmap argocd-rbac-cm -n argocd -o yaml | grep -A5 "policy.default"
+# Проверка прав разработчика в staging
+argocd admin settings rbac can role:developer delete applications 'staging-shop/frontend'
+# → Yes
 
-# Тестирование доступа (от имени пользователя без кастомных ролей)
-argocd admin settings rbac can role:readonly get applications '*/app1'
-# → yes
+# Проверка запрета разработчика на удаление в production
+argocd admin settings rbac can role:developer delete applications 'production-shop/frontend'
+# → No
 
-argocd admin settings rbac can role:readonly sync applications '*/app1'
-# → no
+# Проверка запрета запуска exec в production
+argocd admin settings rbac can role:developer create exec 'production-shop/frontend'
+# → No
 ```
 
-### Сценарий 2: Команда разработки — полный доступ к проекту
+---
 
-Команда `dev-team` имеет полный доступ ко всем приложениям в проекте `development`, но только чтение в `production`.
+### Сценарий 3: Fine-grained права на подресурсы Kubernetes
+
+Предоставление разработчикам возможности перезапускать поды и деплойменты в production без права редактировать спецификации или удалять манифесты.
 
 ```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
 data:
   policy.default: role:readonly
   policy.csv: |
-    # Роль для dev-team
-    p, role:dev-team, applications, get, development/*, allow
-    p, role:dev-team, applications, create, development/*, allow
-    p, role:dev-team, applications, sync, development/*, allow
-    p, role:dev-team, applications, delete, development/*, allow
-
-    # Роль для production — только sync и get
-    p, role:prod-viewer, applications, get, production/*, allow
-    p, role:prod-viewer, applications, sync, production/*, allow
-
-    # Маппинг групп
-    g, dev-team, role:dev-team
-    g, dev-team, role:prod-viewer
+    # Базовое чтение приложений
+    p, role:prod-operator, applications, get, production/*, allow
+    
+    # Разрешить вызов restart для Deployment
+    p, role:prod-operator, applications, action/apps/Deployment/restart, production/*, allow
+    
+    # Разрешить удаление конкретных Pods для аварийного перезапуска
+    p, role:prod-operator, applications, delete/*/Pod/*/*, production/*, allow
+    
+    # Запретить любые другие деструктивные операции над приложением и ресурсами
+    p, role:prod-operator, applications, delete, production/*, deny
+    p, role:prod-operator, applications, update, production/*, deny
+    
+    g, "prod-support-group", role:prod-operator
 ```
 
-**Валидация:**
+#### Валидация команды в CLI
 ```bash
-argocd admin settings rbac can role:dev-team sync applications 'development/my-app'
-# → yes
+# Проверка права на restart деплоймента
+argocd admin settings rbac can role:prod-operator action/apps/Deployment/restart applications 'production/billing'
+# → Yes
 
-argocd admin settings rbac can role:dev-team delete applications 'production/my-app'
-# → no
+# Проверка права на удаление Pod
+argocd admin settings rbac can role:prod-operator delete/*/Pod/*/* applications 'production/billing'
+# → Yes
 
-argocd admin settings rbac can role:prod-viewer sync applications 'production/my-app'
-# → yes
+# Проверка запрета удаления самого приложения
+argocd admin settings rbac can role:prod-operator delete applications 'production/billing'
+# → No
 ```
 
-### Сценарий 3: CI/CD бот с ограниченными правами
+---
 
-GitHub Actions или GitLab CI нужен доступ только для синхронизации конкретных приложений.
+### Сценарий 4: Делегирование прав через AppProject-роли (Production Pattern)
 
+В крупных инсталляциях редактирование единого `argocd-rbac-cm` приводит к конфликтам в GitOps-репозиториях платформы. Рекомендуемый шаблон — описание ролей внутри самого CRD `AppProject`.
+
+#### Манифест `AppProject` с локальными ролями
 ```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: team-billing
+  namespace: argocd
+spec:
+  description: "Проект микросервисов биллинга и платежей"
+  sourceRepos:
+    - "https://git.internal.corp/billing/*"
+  destinations:
+    - namespace: "billing-prod"
+      server: "https://kubernetes.default.svc"
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: "apps"
+      kind: "Deployment"
+    - group: ""
+      kind: "Service"
+    - group: ""
+      kind: "ConfigMap"
+  # Локальные роли проекта
+  roles:
+    # 1. Роль для CI/CD автоматизации с scoped JWT-токеном
+    - name: cicd-deployer
+      description: "Пайплайн деплоя биллинга (GitLab CI runner)"
+      policies:
+        - p, proj:team-billing:cicd-deployer, applications, get, team-billing/*, allow
+        - p, proj:team-billing:cicd-deployer, applications, sync, team-billing/*, allow
+        - p, proj:team-billing:cicd-deployer, applications, override, team-billing/*, allow
+      jwtTokens: []
+
+    # 2. Роль для разработчиков, привязанная к группе OIDC
+    - name: developer
+      description: "Команда разработки биллинга"
+      policies:
+        - p, proj:team-billing:developer, applications, get, team-billing/*, allow
+        - p, proj:team-billing:developer, applications, sync, team-billing/*, allow
+        - p, proj:team-billing:developer, logs, get, team-billing/*, allow
+        - p, proj:team-billing:developer, applications, action/apps/Deployment/restart, team-billing/*, allow
+      groups:
+        - "internal-gitlab/billing/developers"
+```
+
+#### Генерация scoped JWT-токена для роли проекта через CLI
+```bash
+# Выпуск токена с временем жизни 90 дней (2160 часов)
+argocd proj role create-token team-billing cicd-deployer --expires-in 2160h
+# → eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjE3MzU2ODk2MDAiLCJpc3MiOiJhcmdvY2QiLCJuYmYiOjE3MzU2ODk2MDAsInN1YiI6InByb2o6dGVhbS1iaWxsaW5nOmNpY2QtZGVwbG95ZXIifQ...
+
+# Просмотр активных токенов роли проекта
+argocd proj role list-tokens team-billing cicd-deployer
+# → ID           ISSUED AT              EXPIRES AT
+# → 1735689600   2026-10-12T14:40:00Z   2027-01-10T14:40:00Z
+
+# Тестирование прав токена
+argocd admin settings rbac can proj:team-billing:cicd-deployer sync applications 'team-billing/billing-api'
+# → Yes
+
+argocd admin settings rbac can proj:team-billing:cicd-deployer sync applications 'other-team/payment-api'
+# → No
+```
+
+---
+
+### Сценарий 5: Сервисные аккаунты автоматизации в `argocd-cm`
+
+Создание статических системных учетных записей для bash-скриптов, мониторинга и интеграций.
+
+#### 1. Декларация аккаунта в `argocd-cm`
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  # Создание аккаунта prometheus-scraper с возможностью генерации API-ключей
+  accounts.prometheus-scraper: apiKey
+  accounts.gitlab-ci-bot: apiKey,login
+```
+
+#### 2. Назначение прав в `argocd-rbac-cm`
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
 data:
   policy.csv: |
-    # Роль для CI-бота
-    p, role:ci-bot, applications, get, */*, allow
-    p, role:ci-bot, applications, sync, */*, allow
-    p, role:ci-bot, applications, create, */*, allow
-    # Запрет на удаление
-    p, role:ci-bot, applications, delete, */*, deny
+    # Прометею нужно только читать статус приложений
+    p, role:metrics-reader, applications, get, */*, allow
+    g, prometheus-scraper, role:metrics-reader
 
-    # Назначение токена
-    g, ci-bot, role:ci-bot
+    # CI-боту нужны права на синхронизацию
+    p, role:global-ci, applications, get, */*, allow
+    p, role:global-ci, applications, sync, */*, allow
+    g, gitlab-ci-bot, role:global-ci
 ```
 
-**Генерация JWT-токена:**
+#### 3. Генерация токена аккаунта и проверка
 ```bash
-argocd account generate-token --account ci-bot
+# Генерация API-токена для prometheus-scraper на 1 год
+argocd account generate-token --account prometheus-scraper --expires-in 8760h
 # → eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
-# Использование токена в CI/CD
-argocd app sync my-app --server argocd.example.com --auth-token eyJhbGci...
+# Запрос статуса через REST API от имени сервисного аккаунта
+curl -s -k -H "Authorization: Bearer <TOKEN>" \
+  https://argocd.internal.corp/api/v1/applications | jq '.items[].metadata.name'
+# → "billing-service"
+# → "payment-service"
 ```
 
-**Настройка срока действия токена:**
-```yaml
-# argocd-cm ConfigMap
-data:
-  # Токен по умолчанию истекает через 24 часа
-  # Для CI/CD рекомендуется увеличить:
-  users.session.duration: "720h"  # 30 дней
-```
+---
 
-### Сценарий 4: Отдельная роль для чтения логов
+### Сценарий 6: Интеграция корпоративного OIDC/LDAP (Keycloak / GitLab)
 
-SRE-команда может просматривать логи и терминал в подах, но не может синхронизировать.
+Сопоставление групп из корпоративного каталога на локальные роли Argo CD с учетом вложенности и путей.
 
 ```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
 data:
+  policy.default: role:readonly
+  # Указываем claim из токена IdP (Keycloak или GitLab Dex)
+  scopes: "[groups, email]"
   policy.csv: |
-    p, role:sre, applications, get, */*, allow
-    p, role:sre, logs, get, */*, allow
-    p, role:sre, exec, create, */*, allow
+    # =========================================================================
+    # МАППИНГ КОРПОРАТИВНЫХ ГРУПП (Keycloak / FreeIPA / GitLab)
+    # Внимание: чувствительно к регистру и полным путям групп!
+    # =========================================================================
+    g, "infra-admins", role:admin
+    g, "sec-ops/audit", role:sec-auditor
+    g, "development/frontend-team", role:frontend-dev
+    g, "development/backend-team", role:backend-dev
 
-    g, sre-team, role:sre
+    # Политики для проектных групп
+    p, role:frontend-dev, applications, *, frontend-apps/*, allow
+    p, role:frontend-dev, logs, get, frontend-apps/*, allow
+    p, role:backend-dev, applications, *, backend-apps/*, allow
+    p, role:backend-dev, logs, get, backend-apps/*, allow
 ```
 
-### Сценарий 5: Запрет удаления для конкретного проекта
-
-Ни один пользователь (кроме admin) не может удалять приложения в проекте `critical-apps`.
-
-```yaml
-data:
-  policy.csv: |
-    # Явный запрет для всех ролей
-    p, role:readonly, applications, delete, critical-apps/*, deny
-    p, role:dev-team, applications, delete, critical-apps/*, deny
-    p, role:sre, applications, delete, critical-apps/*, deny
-
-    # Только admin может удалять (встроенный role:admin)
-```
-
-### Сценарий 6: LDAP/OIDC группы в RBAC
-
-При SSO-аутентификации Argo CD получает claims из OIDC-токена и сопоставляет их с группами.
-
-```yaml
-data:
-  policy.csv: |
-    # Группы из GitLab/OIDC
-    g, "infra/k8s-admins", role:admin
-    g, "dev/backend-team", role:dev-backend
-    g, "dev/frontend-team", role:dev-frontend
-    g, "sre/on-call", role:sre
-
-    # Роли
-    p, role:dev-backend, applications, get, backend/*, allow
-    p, role:dev-backend, applications, sync, backend/*, allow
-    p, role:dev-frontend, applications, get, frontend/*, allow
-    p, role:dev-frontend, applications, sync, frontend/*, allow
-    p, role:sre, applications, get, */*, allow
-    p, role:sre, logs, get, */*, allow
-
-  # Области для OIDC claims
-  scopes: "[groups]"
-```
-
-**Просмотр текущих групп пользователя:**
+#### Проверка групп после авторизации через UI/CLI
 ```bash
+# Проверка пользователя, вошедшего через OIDC
 argocd account get-user-info
-# → Name: john.doe
-# → Groups: [infra/k8s-admins]
+# → Logged In: true
+# → Name: ivan.ivanov
+# → Groups: [development/backend-team, internal-users]
+# → Iss: https://keycloak.internal.corp/realms/production
 
-# Или через API
-argocd account get --account john.doe
+# Проверка доступности операции для текущего вошедшего пользователя
+argocd account can-i sync applications 'backend-apps/api-gateway'
+# → Yes
+
+argocd account can-i sync applications 'frontend-apps/web-portal'
+# → No
 ```
 
-### Сценарий 7: JWT-токены для автоматизации (API)
+---
 
-Для автоматизации API без SSO используются静态ные JWT-токены.
+### Сценарий 7: RBAC для ApplicationSet и Applications in any namespace
 
-**Создание сервисного аккаунта:**
-```bash
-# Создание пользователя
-argocd account update-password --account automation-bot --new-password <secure-password>
+В кластерах с мультитенантной структурой ApplicationSet может порождать приложения во внешних пространствах имен. Создание ApplicationSet дает возможность массового изменения инфраструктуры, поэтому доступ к ресурсу `applicationsets` строго ограничивается.
 
-# Генерация токена
-argocd account generate-token --account automation-bot
-```
-
-**Настройка жизни токена:**
 ```yaml
-# argocd-cm
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
 data:
-  # Максимальное время жизни токена
-  users.session.duration: "8760h"  # 1 год (для bot-аккаунтов)
+  policy.csv: |
+    # Разрешить платформенным инженерам полный цикл управления генераторами
+    p, role:platform-admin, applicationsets, *, */*, allow
+    
+    # Разработчикам разрешить только просмотр генераторов своего проекта
+    p, role:developer, applicationsets, get, team-billing/*, allow
+    p, role:developer, applicationsets, create, team-billing/*, deny
+    p, role:developer, applicationsets, delete, team-billing/*, deny
+
+    # Правило для Applications in any namespace: <project>/<app-namespace>/<app-name>
+    p, role:developer, applications, sync, team-billing/billing-apps/*, allow
 ```
 
-**Использование в скриптах:**
+#### Валидация прав
 ```bash
-#!/bin/bash
-ARGOCD_SERVER="argocd.example.com"
-ARGOCD_TOKEN="eyJhbGciOiJIUzI1NiIs..."
+# Проверка запрета создания генератора для разработчика
+argocd admin settings rbac can role:developer create applicationsets 'team-billing/customer-appset'
+# → No
 
-# Синхронизация
-argocd app sync my-app \
-  --server "$ARGOCD_SERVER" \
-  --auth-token "$ARGOCD_TOKEN" \
-  --insecure
-
-# Проверка статуса
-argocd app get my-app \
-  --server "$ARGOCD_SERVER" \
-  --auth-token "$ARGOCD_TOKEN" \
-  --insecure
+# Проверка права платформенного инженера
+argocd admin settings rbac can role:platform-admin create applicationsets '*/*'
+# → Yes
 ```
 
-### Сценарий 8: Диагностика доступа
+---
 
-Пошаговая процедура при ошибке `permission denied`.
+### Сценарий 8: Pre-commit валидация и CI/CD тестирование политик (Оффлайн-режим)
 
-**1. Проверка текущего пользователя:**
-```bash
-argocd account get-user-info
-# → Name: <username>
-# → Groups: [<group1>, <group2>]
+Для предотвращения деградации доступа перед мерджем изменений в Git-репозиторий платформы политики Casbin должны тестироваться в изолированном CI runner без прямого доступа к API Kubernetes.
+
+#### Файл локального тестирования `policy-test.csv`
+```csv
+p, role:test-role, applications, sync, test-proj/my-app, allow
+p, role:test-role, applications, delete, test-proj/my-app, deny
+g, test-user, role:test-role
 ```
 
-**2. Проверка конкретного разрешения:**
+#### Команды оффлайн-валидации в скрипте пайплайна
 ```bash
-# Синтаксис: argocd admin settings rbac can <role> <action> <resource> <object>
-argocd admin settings rbac can role:dev-team sync applications 'development/my-app'
-# → yes или no
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Проверка для конкретного пользователя
-argocd admin settings rbac can role:readonly get applications '*/my-app'
+# 1. Синтаксическая валидация локального файла политик
+argocd admin settings rbac validate --policy-file=./policy-test.csv
+# → RBAC configuration is valid
+
+# 2. Оффлайн-проверка разрешения sync
+RES_SYNC=$(argocd admin settings rbac can role:test-role sync applications 'test-proj/my-app' --policy-file=./policy-test.csv)
+if [ "$RES_SYNC" != "Yes" ]; then
+  echo "ERROR: Expected sync to be allowed" && exit 1
+fi
+
+# 3. Оффлайн-проверка запрета delete
+RES_DEL=$(argocd admin settings rbac can role:test-role delete applications 'test-proj/my-app' --policy-file=./policy-test.csv)
+if [ "$RES_DEL" != "No" ]; then
+  echo "ERROR: Expected delete to be denied" && exit 1
+fi
+
+echo "All RBAC pre-commit assertions passed successfully."
+# → All RBAC pre-commit assertions passed successfully.
 ```
 
-**3. Просмотр всех политик:**
-```bash
-kubectl get configmap argocd-rbac-cm -n argocd -o yaml | grep -A50 "policy.csv"
+---
+
+## Операции и команды управления (CLI Cheatsheet)
+
+Сводная таблица команд администратора и оператора для управления доступом:
+
+| Команда | Описание операции | Пример использования | Ожидаемый результат |
+| :--- | :--- | :--- | :--- |
+| `argocd admin settings rbac validate` | Проверка синтаксиса `argocd-rbac-cm` в кластере | `argocd admin settings rbac validate` | `RBAC configuration is valid` |
+| `argocd admin settings rbac validate --policy-file` | Оффлайн-проверка синтаксиса локального CSV | `argocd admin settings rbac validate --policy-file=./policy.csv` | `RBAC configuration is valid` |
+| `argocd admin settings rbac can` | Симуляция разрешения для роли/субъекта | `argocd admin settings rbac can role:dev sync applications 'dev/*'` | `Yes` или `No` |
+| `argocd account can-i` | Проверка прав текущего вошедшего пользователя | `argocd account can-i sync applications 'billing/api'` | `Yes` или `No` |
+| `argocd account get-user-info` | Вывод сведений о текущей сессии и группах | `argocd account get-user-info` | Таблица с `Name`, `Groups`, `Issuer` |
+| `argocd account list` | Список локальных учетных записей | `argocd account list` | Имя, статус (enabled), capabilities |
+| `argocd account generate-token` | Выпуск JWT для сервисного аккаунта | `argocd account generate-token --account ci-bot --expires-in 720h` | Строка JWT-токена |
+| `argocd account revoke-token` | Отзыв JWT-токена по ID | `argocd account revoke-token --account ci-bot --token-id 1735689600` | `Token revoked` |
+| `argocd proj role list` | Список ролей внутри AppProject | `argocd proj role list team-billing` | Список локальных ролей проекта |
+| `argocd proj role create-token` | Выпуск JWT для проектной роли | `argocd proj role create-token team-billing deployer -e 720h` | Строка JWT-токена |
+| `argocd proj role delete-token` | Удаление JWT-токена роли проекта | `argocd proj role delete-token team-billing deployer 1735689600` | `Token deleted` |
+| `argocd proj role add-policy` | Добавление правила `p` в роль проекта | `argocd proj role add-policy team-billing deployer -a sync -o 'team-billing/*'` | `Role policy added` |
+
+---
+
+## Мониторинг, логирование и аудит RBAC (SRE)
+
+### Включение расширенного аудита решений
+
+По умолчанию `argocd-server` не регистрирует успешные проверки RBAC в стандартный вывод подов во избежание чрезмерного объема логов. Для compliance-аудита и расследования инцидентов безопасности включите детальное логирование в `argocd-cmd-params-cm`:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  # Активация логирования каждого решения Casbin Enforcer
+  server.rbac.log.enforce.enable: "true"
 ```
 
-**4. Проверка групп в OIDC:**
+Применение конфигурации требует перезапуска `argocd-server`:
 ```bash
-# Если SSO — проверьте claims в токене
-argocd account get-user-info --account <username>
-
-# Или через API
-curl -s -H "Authorization: Bearer $TOKEN" \
-  https://argocd.example.com/api/v1/account | jq '.groups'
+kubectl rollout restart deployment argocd-server -n argocd
+# → deployment.apps/argocd-server restarted
 ```
 
-**5. Типичные ошибки:**
+### Формат логов в argocd-server
 
-| Ошибка | Причина | Решение |
-| :--- | :--- | :--- |
-| `permission denied` | Нет политики для роли | Добавьте `p, role:X, applications, action, proj/*, allow` |
-| `permission denied` (sync) | `deny` имеет приоритет | Проверьте порядок правил в policy.csv |
-| `groups is empty` | OIDC не передаёт groups | Проверьте `scopes` в `argocd-rbac-cm` |
-| `role not found` | Некорректное имя роли | Имя должно начинаться с `role:` |
+Каждая авторизационная проверка формирует JSON/Logrus-запись:
+```json
+{
+  "level": "info",
+  "ts": "2026-10-12T14:42:15.123Z",
+  "msg": "RBAC decision",
+  "sub": "proj:team-billing:cicd-deployer",
+  "res": "applications",
+  "act": "sync",
+  "obj": "team-billing/billing-api",
+  "result": "allow"
+}
+```
 
-## Валидация
+При отклонении операции:
+```json
+{
+  "level": "warning",
+  "ts": "2026-10-12T14:42:19.456Z",
+  "msg": "RBAC decision",
+  "sub": "petr.sidorov",
+  "res": "applications",
+  "act": "delete",
+  "obj": "production/payment-gw",
+  "result": "deny"
+}
+```
 
-### 1. Проверка RBAC-политики на валидность
+### Prometheus-метрики Casbin
+
+Компонент `argocd-server` экспортирует встроенные метрики для Prometheus:
+
+- `argocd_rbac_requests_total{result="allow|deny"}` — суммарный счетчик обращений к RBAC с разделением по исходу проверки.
+
+#### Пример PromQL-запроса для SRE-дашборда
+```promql
+# Доля отклоненных запросов (Deny Rate) за 5 минут:
+sum(rate(argocd_rbac_requests_total{result="deny"}[5m])) 
+/ 
+sum(rate(argocd_rbac_requests_total[5m])) * 100
+```
+
+#### SRE AlertRule: Аномальный всплеск ошибок 403 Forbidden
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: argocd-rbac-alerts
+  namespace: argocd
+spec:
+  groups:
+    - name: argocd-rbac.rules
+      rules:
+        - alert: ArgoCDHighRBACDenialRate
+          expr: sum(rate(argocd_rbac_requests_total{result="deny"}[5m])) > 5
+          for: 2m
+          labels:
+            severity: warning
+            team: platform-security
+          annotations:
+            summary: "High RBAC authorization failure rate in Argo CD"
+            description: "More than 5 RBAC requests per second are being denied. Potential misconfiguration or brute-force access attempt."
+```
+
+---
+
+## Валидация и тестирование политик
+
+### 1. Комплексная проверка синтаксиса
 ```bash
-argocd admin settings rbac validate
+kubectl get configmap argocd-rbac-cm -n argocd -o yaml | argocd admin settings rbac validate
 # → RBAC configuration is valid
 ```
 
-### 2. Проверка конкретного разрешения для роли
+### 2. Тестирование разрешений роли
 ```bash
 # Синтаксис: argocd admin settings rbac can <role> <action> <resource> <object>
-argocd admin settings rbac can role:dev-team sync applications 'development/my-app'
-# → yes
+argocd admin settings rbac can role:developer sync applications 'development/core'
+# → Yes
 
-argocd admin settings rbac can role:readonly sync applications '*/my-app'
-# → no
+argocd admin settings rbac can role:developer delete applications 'production/core'
+# → No
 ```
 
-### 3. Проверка разрешений конкретного пользователя
+### 3. Тестирование прав роли проекта
 ```bash
-# Через account (показывает эффективные группы и политики)
-argocd account get-user-info
-# → Name: john.doe
-# → Groups: [infra/k8s-admins]
-
-argocd admin settings rbac can role:readonly get applications '*/my-app'
-# → yes
+argocd admin settings rbac can proj:team-billing:cicd-deployer sync applications 'team-billing/billing-api'
+# → Yes
 ```
 
-### 4. Проверка политики для ApplicationSet (v3.5+)
+### 4. Тестирование прав текущего пользователя (онлайн)
 ```bash
-argocd admin settings rbac can role:admin create applicationsets '*/*, allow'
-# → yes
+argocd account can-i sync applications 'team-billing/billing-api'
+# → Yes
 
-argocd admin settings rbac can role:dev-team create applicationsets 'production/*, allow'
-# → no
+argocd account can-i create clusters '*'
+# → No
 ```
 
-### 5. Проверка срока действия токена
+### 5. Инспекция claims и времени жизни JWT-токена
 ```bash
-# Расшифровка JWT (без проверки подписи)
-argocd account generate-token --account test-user | cut -d. -f2 | base64 -d | jq '.exp'
-# → 1735689600  (Unix timestamp)
-
-# Сравнение с текущим временем
-date +%s
-# → 1735603200
+# Извлечение payload токена и форматирование даты истечения
+TOKEN="<JWT_TOKEN_STRING>"
+echo "$TOKEN" | cut -d. -f2 | base64 -d 2>/dev/null | jq '{sub: .sub, iss: .iss, exp: (.exp | todate)}'
+# → {
+# →   "sub": "proj:team-billing:cicd-deployer",
+# →   "iss": "argocd",
+# →   "exp": "2027-01-10T14:40:00Z"
+# → }
 ```
 
-### 6. Полная проверка конфигурации RBAC
+### 6. Проверка параметров ConfigMap
 ```bash
-# Экспорт полной конфигурации
-kubectl get configmap argocd-rbac-cm -n argocd -o yaml
-
-# Проверка policy.default
+# Проверка дефолтной роли
 kubectl get configmap argocd-rbac-cm -n argocd -o jsonpath='{.data.policy\.default}'
 # → role:readonly
 
-# Проверка scopes
+# Проверка режима сопоставления
+kubectl get configmap argocd-rbac-cm -n argocd -o jsonpath='{.data.policy\.matchMode}'
+# → glob
+
+# Проверка OIDC scopes
 kubectl get configmap argocd-rbac-cm -n argocd -o jsonpath='{.data.scopes}'
 # → [groups]
 ```
 
-### 7. Проверка через API
-```bash
-# Список всех аккаунтов
-curl -s -H "Authorization: Bearer $TOKEN" \
-  https://argocd.example.com/api/v1/accounts | jq '.[] | {name, capabilities}'
+---
 
-# Группы конкретного пользователя
-curl -s -H "Authorization: Bearer $TOKEN" \
-  https://argocd.example.com/api/v1/account | jq '.groups'
+## Диагностика и устранение неисправностей (Troubleshooting)
+
+### Пошаговый SRE-алгоритм локализации `Permission Denied`
+
+```text
+Ошибка: Permission denied (в UI, CLI или пайплайне)
+   │
+   ▼
+1. Проверка субъекта: кто выполняет запрос?
+   │ Выполнить: argocd account get-user-info
+   ├── Имя пустое / 401 Unauthorized?
+   │   └── Причина: Проблема аутентификации (токен истёк, SSO-cookie невалидна)
+   └── Пользователь определен (например sub: alexey.petrov, groups: [devs])
+       │
+       ▼
+2. Симуляция через админский CLI:
+   │ Выполнить: argocd admin settings rbac can <role/group> <act> <res> <obj>
+   ├── Результат "No"?
+   │   ├── Проверить argocd-rbac-cm: есть ли p, правило со значением allow?
+   │   ├── Проверить: нет ли перекрывающего правила deny? (Помните: Deny-Override)
+   │   ├── Проверить: точен ли регистр группы в g, маппинге?
+   │   └── Проверить AppProject: определена ли роль в spec.roles проекта?
+   │
+   └── Результат "Yes" (RBAC разрешает, но запрос всё равно блокируется)?
+       │
+       ▼
+3. Проверка ограничений AppProject (Уровень 3):
+   │ Выполнить: kubectl get appproject <project-name> -o yaml
+   ├── sourceRepos: разрешен ли Git-репозиторий манифестов?
+   ├── destinations: разрешен ли целевой cluster/namespace?
+   ├── namespaceResourceBlacklist / clusterResourceWhitelist блокируют ресурс?
+   └── syncWindows: не заблокирована ли синхронизация активным окном deny?
 ```
 
-## Рекомендации и лучшие практики
+### Расширенная матрица ошибок
 
-### Безопасность
+| Ошибка / Симптом | Первопричина | Метод диагностики | Способ устранения |
+| :--- | :--- | :--- | :--- |
+| `permission denied: applications, sync, proj/app` | Отсутствует разрешающее правило `p` или действует явный `deny`. | `argocd admin settings rbac can <role> sync applications 'proj/app'` | Добавить `p, <role>, applications, sync, proj/app, allow` либо устранить перекрывающее правило `deny`. |
+| `permission denied` (sync) при наличии `allow` | Сработало общее правило `deny` (например, `p, role:X, applications, delete, *, deny`). Внимание: в Casbin `deny` перекрывает `allow` по всей маске! | Проанализировать все правила с `deny` в `argocd-rbac-cm` и `AppProject`. | Сузить маску `deny` (например, с `*/*` до конкретного приложения) или разделить роли. |
+| `groups: []` в выводе `get-user-info` | Поставщик OIDC (Keycloak/GitLab) передает группы в нестандартном claim либо параметр `scopes` не запрашивает группы. | Проверить сырой ID Token через `jwt.io` и ключ `scopes` в `argocd-rbac-cm`. | Указать `scopes: "[groups]"` в `argocd-rbac-cm` и настроить Client Scope / Mappers в IdP. |
+| Группы есть, но права роли не применяются | Несоответствие строк в маппинге `g,`: пробелы, слэши, расхождение регистра (`Devs` vs `devs`). | Сравнить точный вывод `argocd account get-user-info` со строками `g,` в `policy.csv`. | Использовать точное строковое совпадение с кавычками: `g, "gitlab/group/subgroup", role:dev`. |
+| `permission denied` для подресурса (Restart Deployment) | Не задано правило для granular action (`action/apps/Deployment/restart`). | `argocd admin settings rbac can <role> action/apps/Deployment/restart applications 'proj/app'` | Добавить правило `p, <role>, applications, action/apps/Deployment/restart, proj/*, allow`. |
+| `token has expired` (401) | Истек срок действия JWT-токена сессии или сервисного аккаунта. | `echo $TOKEN \| cut -d. -f2 \| base64 -d \| jq .exp` | Сгенерировать новый токен `argocd account generate-token` или перелогиниться. |
+| Изменения в `policy.csv` не вступили в силу | Задержка инвалидации внутреннего кэша Casbin в памяти `argocd-server`. | Проверить логи `argocd-server` на наличие ошибок парсинга ConfigMap. | Выполнить рестарт пода: `kubectl rollout restart deployment argocd-server -n argocd`. |
+| `ApplicationSet: permission denied` | Отсутствует разрешение на ресурс `applicationsets`. | `argocd admin settings rbac can <role> create applicationsets 'proj/*'` | Добавить `p, <role>, applicationsets, create, proj/*, allow` в глобальный `policy.csv`. |
 
-- **Принцип наименьших привилегий:** Каждая роль должна иметь минимально необходимые разрешения.
-- **Запрет по умолчанию:** Используйте `policy.default: role:readonly` и явно разрешайте только необходимое.
-- **Раздельные роли для CI/CD:** Не используйте `role:admin` для автоматизации — создайте отдельную роль `role:ci-bot`.
-- **Регулярный аудит:** Проверяйте policy.csv на предмет устаревших или избыточных правил.
-- **Изоляция production:** Явно запрещайте `delete` для production-проектов.
+### Отладка кэша Casbin и форсированная инвалидация
+
+Внутренний энфорсер Argo CD кэширует скомпилированные правила в памяти (`defaultRBACSyncPeriod = 10m`). При редактировании `argocd-rbac-cm` контроллер ConfigMap Informer обновляет политики автоматически, однако при возникновении рассинхронизации:
+
+```bash
+# 1. Просмотр ошибок парсера RBAC в логах сервера
+kubectl logs -n argocd deployment/argocd-server --tail=200 | grep -E "rbac|casbin"
+# → time="2026-10-12T14:43:01Z" level=info msg="RBAC ConfigMap 'argocd-rbac-cm' updated"
+
+# 2. Форсированная очистка in-memory кэша через мягкий перезапуск
+kubectl rollout restart deployment argocd-server -n argocd
+kubectl rollout status deployment argocd-server -n argocd --timeout=60s
+# → deployment "argocd-server" successfully rolled out
+```
+
+---
+
+## Лучшие практики и регламент очистки (Best Practices & Cleanup)
+
+### Архитектура и безопасность
+
+1. **Принцип минимальных привилегий (Least Privilege):** Никогда не устанавливайте `policy.default: role:admin`. Единственно безопасное значение — `role:readonly` (или пустая строка для полного закрытия доступа).
+2. **Делегирование через AppProject вместо глобального файла:** Держите глобальный `argocd-rbac-cm` компактным (только общесистемные роли: админы, аудиторы, дежурные). Права конкретных команд разработки описывайте в `.spec.roles[]` соответствующих `AppProject`. Это устраняет риск повреждения глобальной авторизации одной синтаксической ошибкой.
+3. **Раздельные токены для каждого CI/CD пайплайна:** Не используйте один общий JWT-токен на всю компанию. Выпускайте отдельные токены через `argocd proj role create-token` с ограниченным TTL (например, 90 дней) и фиксированным описанием.
+4. **Контроль действия `override`:** Исключите выдачу права `applications, override` рядовым разработчикам. Право позволяет обходить хуки безопасности и перезаписывать конфликты ресурсов без контроля.
+5. **Предотвращение разрастания regex:** Режим `policy.matchMode: regex` существенно увеличивает время оценки правил при тысячах приложений. Используйте `glob` везде, где это возможно.
 
 ### Производительность
 
-- **Минимальное количество правил:** Чем меньше записей в policy.csv, тем быстрее оценка.
-- **Группировка:** Используйте группы вместо индивидуальных ролей для каждого пользователя.
-- **Кэширование:** Argo CD кэширует результаты RBAC-оценки — избегайте частых изменений policy.csv.
+- Ограничивайте размер `policy.csv`: ConfigMap в etcd имеет жесткий лимит 1 МБ, а большое число правил замедляет рендеринг UI-страниц с сотнями объектов.
+- Группируйте пользователей через OIDC-группы в `g,`, избегая сотен индивидуальных записей на конкретных сотрудников.
 
-### Надежность
+---
 
-- **Тестирование перед деплоем:** Используйте `argocd admin settings rbac can` для проверки политик.
-- **Версионирование:** Храните argocd-rbac-cm в Git и применяйте через Argo CD (Dogfooding).
-- **Бэкап:** Экспортируйте argocd-rbac-cm перед изменениями.
+### Пошаговый регламент отката и очистки (Reversion & Cleanup)
 
-## Диагностика и устранение неисправностей
+При ошибочной конфигурации RBAC, компрометации сервисного аккаунта или завершении тестирования выполните регламентные шаги:
 
-### Пошаговый алгоритм диагностики при ошибке `permission denied`
-
-```text
-1. argocd account get-user-info
-   ├── Нет? → Проблема аутентификации (SSO, токен, локальный аккаунт)
-   └── Есть? → Перейдите к шагу 2
-
-2. argocd admin settings rbac can <role> <action> <resource> <object>
-   ├── yes → Доступ должен быть, проверьте AppProject restrictions
-   └── no → Перейдите к шагу 3
-
-3. kubectl get configmap argocd-rbac-cm -n argocd -o yaml
-   ├── policy.default задан? → Нет? Добавьте role:readonly
-   ├── policy.csv содержит нужные p, правила? → Нет? Добавьте
-   ├── g, маппинги корректны? → Нет? Исправьте названия групп
-   └── scopes настроен? → Нет? Добавьте scopes: "[groups]"
-
-4. Проверьте AppProject:
-   kubectl get appproject <project> -o yaml
-   ├── namespaceResourceWhitelist/Blacklist блокирует?
-   ├── destinations разрешен?
-   └── sourceRepositories разрешен?
-```
-
-### Расширенная таблица ошибок
-
-| Ошибка / Симптом | Причина | Диагностика | Решение |
-| :--- | :--- | :--- | :--- |
-| `permission denied` (get applications) | Нет `p, role:X, applications, get, ..., allow` | `argocd admin settings rbac can role:X get applications 'proj/*'` | Добавьте правило `p, role:X, applications, get, proj/*, allow` |
-| `permission denied` (sync) | `deny` перекрывает `allow` | Проверьте порядок в policy.csv: `deny` выше `allow` | Переместите `allow` выше `deny` или удалите `deny` |
-| `permission denied` (create ApplicationSet) | Нет ресурса `applicationsets` в policy | `argocd admin settings rbac can role:X create applicationsets '*/*'` | Добавьте `p, role:admin, applicationsets, create, */*, allow` (v3.5+) |
-| `groups is empty` / `groups: []` | OIDC не передаёт `groups` claim | `argocd account get-user-info` → Groups: [] | Настройте `scopes: "[groups]"` в argocd-rbac-cm; проверьте OIDC provider |
-| `role not found` | Имя роли без префикса `role:` | Ошибка в policy.csv или g, маппинге | Все роли должны начинаться с `role:` |
-| `token expired` / `401 Unauthorized` | JWT истёк (`exp` claim < now) | `argocd account generate-token ... \| cut -d. -f2 \| base64 -d \| jq '.exp'` | Сгенерируйте новый токен; увеличьте `users.session.duration` в argocd-cm |
-| `SSO login successful but no permissions` | Группы из OIDC не совпадают с g, | `argocd account get-user-info` → Groups: ["exact/path"] | Точное совпадение строки в g, (case-sensitive, полные пути) |
-| `argocd admin settings rbac validate` fails | Синтаксическая ошибка в policy.csv | `argocd admin settings rbac validate` | Исправьте CSV: правильное количество полей, нет лишних пробелов |
-| `exec: permission denied` | Нет `p, role:X, exec, create, *, allow` | `argocd admin settings rbac can role:X create exec '*'` | Добавьте правило для ресурса `exec` |
-| `logs: permission denied` | Нет `p, role:X, logs, get, *, allow` | `argocd admin settings rbac can role:X get logs '*'` | Добавьте правило для ресурса `logs` |
-| `clusters: permission denied` | Нет прав на кластер | `argocd admin settings rbac can role:X get clusters '*'` | Добавьте правила для ресурса `clusters` |
-| `repositories: permission denied` | Нет прав на репозиторий | `argocd admin settings rbac can role:X get repositories '*'` | Добавьте правила для ресурса `repositories` |
-| `projects: permission denied` | Нет прав на AppProject | `argocd admin settings rbac can role:X get projects '*'` | Добавьте правила для ресурса `projects` |
-
-### Команды для глубокой диагностики
-
+#### 1. Отзыв скомпрометированного JWT-токена сервисного аккаунта
 ```bash
-# 1. Полный дамп RBAC конфигурации
-kubectl get configmap argocd-rbac-cm -n argocd -o yaml
+# Просмотр ID выпущенных токенов аккаунта
+argocd account get --account gitlab-ci-bot
+# → Tokens:
+# →   ID: 1735689600, IssuedAt: 2026-10-12, ExpiresAt: 2027-10-12
 
-# 2. Проверка кэша RBAC (перезапуск argocd-server очищает кэш)
-kubectl rollout restart deployment argocd-server -n argocd
-
-# 3. Логи argocd-server для RBAC-решений
-kubectl logs -n argocd deployment/argocd-server | grep -i rbac
-
-# 4. Тест маски объекта
-argocd admin settings rbac can role:dev-team get applications 'proj/app'
-# → yes/no
-
-# 5. Проверка эффективных групп после SSO
-argocd account get-user-info --account <username>
-
-# 6. Проверка argocd-cm для token duration
-kubectl get configmap argocd-cm -n argocd -o jsonpath='{.data.users\.session\.duration}'
-# → 24h (default) или настроенное значение
+# Немедленный отзыв токена
+argocd account revoke-token --account gitlab-ci-bot --token-id 1735689600
+# → Token '1735689600' revoked successfully
 ```
 
-## Ограничения и edge cases
+#### 2. Отзыв токена роли проекта `AppProject`
+```bash
+# Удаление токена проектной роли
+argocd proj role delete-token team-billing cicd-deployer 1735689600
+# → Token '1735689600' deleted successfully
+```
 
-### Ограничения
+#### 3. Экстренная глобальная инвалидация всех JWT-токенов
+Если скомпрометирован ключ подписи или произошла утечка мастер-доступа:
+```bash
+# Ротация серверного ключа подписи токенов в secret argocd-secret
+# (приведет к инвалидации всех сессий пользователей и токенов API)
+NEW_KEY=$(openssl rand -base64 32)
+kubectl patch secret argocd-secret -n argocd -p "{\"stringData\": {\"server.secretkey\": \"$NEW_KEY\"}}"
+# → secret/argocd-secret patched
 
-- **Нет вложенности ролей:** Роли не наследуют друг друга. Каждая роль — независимый набор правил.
-- **Нет условий (conditions):** Политики не поддерживают условную логику (например, "только в рабочие часы"). Для этого используйте [Sync Windows](./synchronization/scenarios/sync_windows.md).
-- **Одна policy.csv:** Все правила хранятся в одном ConfigMap. Нет возможности разделить политики по namespace.
-- **Делегирование через AppProject:** Argo CD не поддерживает делегирование управления RBAC — все политики глобальны.
+# Перезапуск argocd-server для загрузки нового ключа
+kubectl rollout restart deployment argocd-server -n argocd
+# → deployment.apps/argocd-server restarted
+```
 
-### Edge Cases
+#### 4. Откат изменений `argocd-rbac-cm` до эталонного состояния
+```bash
+# Создание аварийного бэкапа перед правками
+kubectl get configmap argocd-rbac-cm -n argocd -o yaml > /tmp/argocd-rbac-cm-backup.yaml
 
-- **Отрицание vs разрешение:** Если `deny` и `allow` совпадают на одном уровне специфичности, `deny` имеет приоритет. Порядок правил `p,` в policy.csv важен: первое совпадение побеждает.
-- **Удаление policy.csv:** При удалении всех правил `p,` пользователи теряют доступ (остаётся только `policy.default`). Если `policy.default` не задан — полный запрет.
-- **SSO группы меняются:** При обновлении групп в OIDC-провайдере Argo CD не обновляет кэш групп до истечения сессии пользователя (по умолчанию 24 часа, настраивается `users.session.duration`). Требуется релогин или перезапуск argocd-server.
-- **Токен истёк:** При использовании JWT-токена с истёкшим сроком действия (`exp` claim) — Argo CD возвращает 401. Обновите токен через `argocd account generate-token` или увеличьте `users.session.duration` в `argocd-cm`.
-- **Case-sensitivity групп:** Маппинг `g, "Infra/Admins", role:admin` не сработает для группы `infra/admins` из OIDC — точное совпадение строки (включая регистр и слеши).
-- **policy.default не применяется к админам:** Встроенный `role:admin` игнорирует `policy.default` и имеет неявный `allow` на все ресурсы. Нельзя ограничить админа через policy.csv.
-- **ApplicationSet RBAC отделен от applications:** Право `applications: sync` не даёт `applicationsets: create`. Нужен отдельный ресурс `applicationsets` (v3.5+).
-- **AppProject не заменяет RBAC:** Даже с правильным RBAC, если AppProject не разрешает destination/repo — доступ будет заблокирован на уровне проекта (Defense-in-Depth).
-- **Нет wildcard для действий:** Нельзя написать `p, role:X, applications, *, proj/*, allow` — каждое действие (`get`, `create`, `sync`, `delete`, `override`) требует отдельного правила.
-- **override действие:** `override` позволяет форсировать синхронизацию с `--force`/`--replace` флагами. Требует явного `allow` даже если есть `sync`.
-- **Кэш RBAC:** Argo CD кэширует результаты оценки RBAC. После изменения policy.csv изменения вступают в силу не мгновенно — до истечения TTL кэша или перезапуска argocd-server.
-- **Локальные пользователи vs SSO:** Локальные пользователи (созданные через `argocd account update-password`) не имеют групп. Им нужно назначать роли напрямую через `g, username, role:X`.
-- **scopes влияет только на OIDC:** Параметр `scopes: "[groups]"` в argocd-rbac-cm влияет только на группы из OIDC-токена. Локальные пользователи и JWT-токены не используют scopes.
-- **Максимальная длина policy.csv:** ConfigMap ограничен 1 MB (Kubernetes limit). При очень большом количестве правил — выносите в отдельные ConfigMap невозможно (одна policy.csv), придётся оптимизировать правила.
-- **Deny по умолчанию:** Если `policy.default` не задан — неявный `deny` для всех. Всегда задавайте `policy.default: role:readonly` как базу.
+# Восстановление эталонной базовой конфигурации при сбое
+cat << 'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
+data:
+  policy.default: role:readonly
+  policy.matchMode: glob
+  scopes: "[groups]"
+  policy.csv: |
+    p, role:readonly, applications, get, */*, allow
+    p, role:readonly, clusters, get, *, allow
+    p, role:readonly, repositories, get, *, allow
+    p, role:readonly, projects, get, *, allow
+EOF
+# → configmap/argocd-rbac-cm configured
+
+# Перезапуск сервера для немедленного вступления в силу
+kubectl rollout restart deployment argocd-server -n argocd
+```
+
+---
+
+## Ограничения и Edge Cases
+
+1. **Deny-Override эффект:** В Casbin невозможно разрешить действие правилом `allow`, если для субъекта совпадает более широкое правило `deny`. Решение: не используйте глобальные отрицания (`p, role:X, applications, *, */*, deny`), а стройте роли по модели позитивных разрешений (Whitelist-only).
+2. **Невозможность переопределения `policy.default` через `deny`:** Если `policy.default: role:readonly` выдает `applications, get, */*`, добавление `p, role:custom, applications, get, secret-proj/*, deny` заблокирует доступ только субъектам, привязанным исключительно к `role:custom`. Если сессия пользователя считается валидной для `policy.default`, отсечение может оказаться неэффективным. Для изоляции секретных проектов удалите `get` на `*/*` из дефолтной роли и выдавайте доступ адресно.
+3. **Globbing без разделителя слэша:** Маска `*` в glob-режиме Casbin совпадает с символом `/`. Запись `prod-*` в поле объекта совпадет со строкой `prod-project/app-name`. Для разграничения проекта и приложения всегда используйте явный слэш: `prod-*/*`.
+4. **Отсутствие наследования между ролями (Role Hierarchy):** Роли в Argo CD плоские: роль `role:senior-dev` не может автоматически наследовать все правила роли `role:junior-dev`. Маппинг `g, role:senior-dev, role:junior-dev` в Casbin не поддерживается по умолчанию. Пользователю необходимо назначать обе роли либо дублировать правила.
+5. **Отсутствие условной логики времени (Time Conditions):** RBAC не поддерживает ограничение доступа по расписанию (например, «запретить deploy после 18:00»). Для временных ограничений деплоя используйте [Sync Windows](./synchronization/scenarios/sync_windows.md) в `AppProject`.
+6. **Ограничение ConfigMap 1 МБ:** При разрастании компании `policy.csv` может упереться в лимит размера объекта Kubernetes. Решение — перенос ролей в `AppProject`.
+7. **Кэширование групп OIDC:** При изменении состава групп пользователя в корпоративном IdP Argo CD не узнает об этом до истечения сессии JWT (по умолчанию 8–24 часа). Пользователь обязан выполнить Logout/Login или администратор должен уменьшить `users.session.duration` в `argocd-cm`.
+8. **Изоляция проектных ролей:** Роли, созданные в `AppProject`, имеют префикс `proj:<project>:<role>` и по умолчанию не могут получить доступ к ресурсам за пределами своего проекта (например, к кластерам `clusters` или репозиториям `repositories`), если соответствующие правила не добавлены в глобальный `argocd-rbac-cm`.
+
+---
 
 ## Дополнительная информация
 
-### См. также
+### Связанные документы в базе знаний
 
-- [Установка и настройка RBAC](./argocd_installation_and_setup.md#сценарий-6-настройка-rbac-и-локальных-пользователей)
-- [SSO с GitLab (OIDC)](./argocd_sso_gitlab.md)
-- [AppProject — ограничения](./argocd_appproject_deep.md)
-- [API автоматизация](./argocd_api_automation.md)
-- [Мультитенантность](./argocd_multi_tenancy.md) — Паттерны мультитенантности, tenant isolation, project-per-team.
-- [Безопасность](./argocd_security_hardening.md) — GPG, NetworkPolicies, mTLS, SecurityContext, proxy, audit logging.
-- [Disaster Recovery](./argocd_disaster_recovery.md) — Бэкап, восстановление, etcd snapshot, HA, geo-recovery.
+- [Установка и базовая настройка Argo CD](./argocd_installation_and_setup.md) — Первоначальное конфигурирование `argocd-cm` и `argocd-rbac-cm`.
+- [SSO с GitLab (OIDC / Dex)](./argocd_sso_gitlab.md) — Интеграция корпоративного каталога пользователей и маппинг групп.
+- [AppProject — границы безопасности и мультитенантность](./argocd_appproject_deep.md) — Детальное описание изоляции проектов, whitelists и проектных ролей.
+- [Мультитенантность в Argo CD](./argocd_multi_tenancy.md) — Архитектурные паттерны soft и hard мультитенантности на bare-metal кластерах.
+- [API автоматизация и сервисные аккаунты](./argocd_api_automation.md) — Использование REST/gRPC API, программная генерация токенов.
+- [Регламентные окна синхронизации (Sync Windows)](./synchronization/scenarios/sync_windows.md) — Управление временными окнами деплоя на уровне проектов.
+- [Мониторинг и траблшутинг Argo CD](./argocd_troubleshooting_and_monitoring.md) — Диагностика контроллеров, метрики Prometheus и алертинг.
+- [Управление генераторами ApplicationSet](./argocd_applicationsets.md) — Безопасное использование генераторов приложений в мультитенантной среде.
+- [Безопасность и Hardening инсталляции](./argocd_security_hardening.md) — Сетевые политики, mTLS, GPG-подписи и защита кластера.
+- [Disaster Recovery и резервное копирование](./argocd_disaster_recovery.md) — Регламент бэкапа и восстановления конфигурации `argocd-rbac-cm`.
 
-### Ссылки
+### Официальные спецификации
 
-- [Argo CD RBAC Configuration](https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/)
-- [Argo CD Admin CLI](https://argo-cd.readthedocs.io/en/stable/cli_installation/)
-- [JWT Tokens in Argo CD](https://argo-cd.readthedocs.io/en/stable/operator-manual/security/)
+- [Argo CD RBAC Documentation](https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/) — Официальное руководство оператора по настройке RBAC.
+- [Casbin Model & Syntax](https://casbin.org/docs/supported-models) — Документация движка Casbin и синтаксис конфигурации моделей.
+- [Argo CD AppProject Roles Guide](https://argo-cd.readthedocs.io/en/stable/user-guide/projects/#project-roles) — Руководство пользователя по управлению проектными ролями.

@@ -1,26 +1,34 @@
 # High Availability и Disaster Recovery для Jaeger
 
-> **Важно:** Документация описывает **Jaeger v2** (текущая версия).
+**Актуально для:** Jaeger v2.x
 
-**High Availability (HA)** и **Disaster Recovery (DR)** для Jaeger — это набор архитектурных решений, обеспечивающих непрерывную работу системы трассировки при отказах компонентов, сетевых разрывах или катастрофах. В production-средах Jaeger является частью экосистемы наблюдаемости, и его недоступность приводит к слепоте при диагностике инцидентов. Поэтому проектирование HA/DR для Jaeger — не опция, а требование.
+**High Availability (HA)** и **Disaster Recovery (DR)** для Jaeger — комплекс архитектурных и эксплуатационных решений, обеспечивающих непрерывный сбор, буферизацию, сохранение и анализ данных распределенной трассировки при отказах оборудования, сетевых сбоях и масштабных авариях дата-центров. В корпоративной инфраструктуре система распределенной трассировки является критически важным компонентом контура наблюдаемости (Observability). Ее недоступность в момент инцидента приводит к информационной изоляции SRE-инженеров и кратному росту MTTR (Mean Time to Recovery).
 
-Общий обзор системы: **[Обзор Jaeger](./jaeger_overview.md)**.
-Архитектура: **[Архитектура Jaeger](./jaeger_architecture.md)**.
-Развертывание: **[Варианты развертывания Jaeger](./jaeger_deployment_options.md)**.
+Данный документ является единым источником правды (SSoT) по проектированию и эксплуатации отказоустойчивых и катастрофоустойчивых инсталляций Jaeger v2 в локальных (on-premise / bare-metal / частное облако) инфраструктурах без привязки к проприетарным облачным сервисам.
+
+Общий обзор компонентов: **[Обзор Jaeger](./jaeger_overview.md)**.  
+Архитектура конвейеров v2: **[Архитектура Jaeger](./jaeger_architecture.md)**.  
+Базовые сценарии развертывания: **[Варианты развертывания Jaeger](./jaeger_deployment_options.md)**.  
+Внутреннее устройство хранилищ: **[Storage Deep Dive для Jaeger](./jaeger_storage_deep_dive.md)**.  
+Расчет сайзинга и очередей: **[Capacity Planning для Jaeger](./jaeger_capacity_planning.md)**.
 
 ---
 
-## Опредеitions
+## Определения
 
 | Термин | Описание |
 | :--- | :--- |
-| **High Availability (HA)** | Архитектурный подход, обеспечивающий непрерывную работу при отказе отдельных компонентов (нод, процессов, дисков) |
-| **Disaster Recovery (DR)** | Процесс восстановления после масштабных катастроф (потеря дата-центра, повреждение кластера БД) |
-| **RTO (Recovery Time Objective)** | Максимальное допустимое время простоя системы |
-| **RPO (Recovery Point Objective)** | Максимально допустимый объем потери данных (например, 5 минут трейсов) |
-| **Failover** | Автоматическое переключение на резервный компонент при отказе основного |
-| **Load Balancer (LB)** | Устройство/сервис для распределения трафика между репликами Query/Collector |
-| **Circuit Breaker** | Паттерн, прекращающий отправку запросов в неработающее хранилище для предотвращения каскадных сбоев |
+| **High Availability (HA)** | Архитектурный подход, обеспечивающий сохранение работоспособности системы при локальных отказах отдельных компонентов (падение процесса, выход из строя сервера, сетевого интерфейса или накопителя) |
+| **Disaster Recovery (DR)** | Комплекс мер и процедур по восстановлению работоспособности системы при катастрофических событиях (полная недоступность дата-центра, отказ сетевой магистрали, потеря центрального кластера СУБД) |
+| **RTO (Recovery Time Objective)** | Целевое максимальное допустимое время простоя сервиса трассировки до восстановления приема и поиска данных |
+| **RPO (Recovery Point Objective)** | Целевой максимально допустимый объем безвозвратно утраченных данных трассировки (например, не более 30 секунд спанов из буфера) |
+| **Failover** | Процедура автоматического или ручного переключения входящего трафика и обработки данных на резервные узлы или резервную площадку |
+| **Split-Brain** | Состояние распределенной системы, при котором сетевая изоляция разделяет кластер на изолированные сегменты, каждый из которых считает себя лидером, что ведет к повреждению данных |
+| **Quorum** | Минимально необходимое число согласованных узлов в распределенном консенсусе (например, в ClickHouse Keeper: `(N/2) + 1`), требуемое для подтверждения операций |
+| **In-Sync Replicas (ISR)** | Множество реплик партиции Kafka, полностью синхронизированных с лидером на текущий момент времени |
+| **PodDisruptionBudget (PDB)** | Политика Kubernetes, гарантирующая минимальное количество доступных реплик пода при плановом обслуживании узлов (drain, kernel upgrade) |
+| **gRPC Load Balancing** | Балансировка мультиплексированных HTTP/2-соединений на прикладном уровне L7 для предотвращения привязки всех запросов одного клиента к единственному Collector |
+| **Circuit Breaker** | Защитный механизм, временно прерывающий отправку данных в перегруженный или деградировавший бэкенд для предотвращения исчерпания памяти и каскадного падения сервиса |
 
 ---
 
@@ -28,53 +36,207 @@
 
 ### Уровни отказоустойчивости
 
-| Уровень | Описание | Компоненты | RTO | RPO |
-| :--- | :--- | :--- | :--- | :--- |
-| **Basic** | Один инстанс каждого компонента | Collector 1, Query 1, ClickHouse 1 | Часы | Часы |
-| **HA (High Availability)** | Множество реплик stateless-компонентов, HA Storage | Collector 3+, Query 2+, ClickHouse RF=2 | Минуты | Минуты |
-| **DR (Disaster Recovery)** | Географическое распределение, бэкапы, резервный кластер | Collector + Query + Kafka + ClickHouse в двух ЦОД | Десятки минут | Десятки минут |
+| Уровень | Топология | Резервирование компонентов | Целевой RTO | Целевой RPO | Применимость |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Basic (Standalone)** | 1 ЦОД / 1 стойка | Collector: 1, Query: 1, ClickHouse: Standalone (MergeTree) | Часы | Часы | Тестовые стенды, dev-окружения |
+| **High Availability (HA)** | 1 ЦОД / Несколько стоек | Collector: 3+, Query: 2+, Kafka: 3 брокера (RF=3), ClickHouse: 2+ реплики (ReplicatedMergeTree) | < 1 минуты (автоматически) | < 5 секунд | Production средней и высокой нагрузки |
+| **Disaster Recovery (DR)** | 2+ независимых ЦОД | Геораспределенный Kafka MirrorMaker 2, репликация хранилища, холодный/горячий резерв Query | 5–15 минут | 10–60 секунд | Enterprise-контуры с жесткими SLA |
 
-### Компоненты и их отказоустойчивость
+### Компоненты и механизмы отказоустойчивости
 
-| Компонент | HA механизм | DR механизм |
-| :--- | :--- | :--- |
-| **Collector** | Deployment с 3+ репликами, HPA, PodDisruptionBudget | Географическое распределение, multi-cluster Kafka |
-| **Query** | Stateless, горизонтальное масштабирование за LB | Кеширующий reverse proxy (Varnish), multi-region deployment |
-| **Storage (ClickHouse)** | Replicated MergeTree, ZooKeeper/ClickHouse Keeper для координации | Бэкапы в S3, кросс-региональная репликация |
-| **Storage (Elasticsearch)** | Мастер-ноды 3+, реплики шардов | Снимки (snapshots) в S3, CCR (Cross-Cluster Replication) |
-| **Kafka** | Replication Factor 3, ISR (In-Sync Replicas) | MirrorMaker 2 для репликации между кластерами |
-
-### Что происходит при сбоях
-
-| Сбой | Влияние | Автоматическое восстановление | Действия |
+| Компонент | Тип нагрузки | Механизм HA (локальный контур) | Механизм DR (межЦОД контур) |
 | :--- | :--- | :--- | :--- |
-| **Падение одного Collector** | Потеря части входящего потока (если нет LB health check) | Kubernetes перезапускает под, LB отключает unhealthy instance | Проверить `otelcol_receiver_refused_spans_total` |
-| **Падение ClickHouse шарда** | Поиск работает частично, запись может замедлиться | ClickHouse reroutes запросы на реплики | Проверить `jaeger_span_store_write_errors_total` |
-| **Потеря Kafka брокера** | Задержка потребления сообщений Ingester | Автоматический failover на ISR-реплику | Проверить `consumer_lag` |
-| **Падение всего ЦОД** | Полная недоступность Jaeger | Переключение на резервный кластер | Восстановление из бэкапа, RTO зависит от DR стратегии |
+| **Collector (Jaeger v2)** | Stateless | Горизонтальное масштабирование (Deployment, 3+ реплики), PodDisruptionBudget, L7-балансировка gRPC, процессор `memory_limiter` | Резервные инстансы во втором ЦОД за глобальным DNS/BGP Anycast |
+| **Query / UI (Jaeger v2)** | Stateless | 2+ реплики за обратным прокси (NGINX/HAProxy/Envoy), health-check маршрутизация, чтение с read-only реплик СУБД | Параллельный запуск UI в резервном ЦОД с переключением через GeoDNS |
+| **Буфер сообщений (Kafka)** | Stateful | Кластер из 3+ брокеров, топики с `replication.factor=3`, `min.insync.replicas=2`, `acks=all` | Асинхронная межкластерная репликация через Kafka MirrorMaker 2 |
+| **Ingester (Jaeger v2)** | Stateless Worker | Масштабирование внутри Consumer Group, автоматический партиционный rebalance при сбое | Резервная Consumer Group в DR-ЦОД в остановленном состоянии (Cold Standby) |
+| **Хранилище (ClickHouse)** | Stateful | `ReplicatedMergeTree`, кворум ClickHouse Keeper (3 узла), Distributed-таблицы для маршрутизации | Автоматические регулярные бэкапы в локальное S3-хранилище (MinIO/Ceph RGW), репликация |
+
+### Архитектура высокой доступности
+
+В высоконагруженной и отказоустойчивой архитектуре компоненты Jaeger разделяются на уровни:
+
+```
+[ Приложения / SDK / OTel Agent ]
+               │
+               │ (gRPC / OTLP порт 4317 через L7 Envoy / Headless Service)
+               ▼
+┌────────────────────────────────────────────────────────┐
+│             Jaeger Collector Pool (Stateless)          │
+│   [Collector 1]       [Collector 2]       [Collector 3] │
+│   (memory_limiter)    (memory_limiter)    (memory_limiter)│
+└───────────────────────┬────────────────────────────────┘
+                        │
+                        │ (Kafka Producer acks=all)
+                        ▼
+┌────────────────────────────────────────────────────────┐
+│               Apache Kafka Cluster (Buffer)             │
+│   [Broker 1 (Leader)]   [Broker 2 (ISR)]  [Broker 3 (ISR)]│
+│   Топик: jaeger-spans (Partitions: 12, RF: 3)          │
+└───────────────────────┬────────────────────────────────┘
+                        │
+                        │ (Kafka Consumer Group: jaeger-ingester)
+                        ▼
+┌────────────────────────────────────────────────────────┐
+│              Jaeger Ingester Pool (Stateless)          │
+│    [Ingester 1]        [Ingester 2]        [Ingester 3] │
+└───────────────────────┬────────────────────────────────┘
+                        │
+                        │ (Native TCP порт 9000)
+                        ▼
+┌────────────────────────────────────────────────────────┐
+│         ClickHouse Cluster (ReplicatedMergeTree)       │
+│   ┌───────────────────────┐   ┌───────────────────────┐│
+│   │ Node 1 (Replica 1)    │   │ Node 2 (Replica 2)    ││
+│   └───────────┬───────────┘   └───────────┬───────────┘│
+│               │                           │            │
+│               └─────► [ Keeper Quorum ] ◄─┘            │
+│                       (3 узла Raft)                    │
+└───────────────────────────────────▲────────────────────┘
+                                    │ (Чтение)
+┌───────────────────────────────────┴────────────────────┐
+│              Jaeger Query / UI Pool (Stateless)        │
+│          [Query 1]                 [Query 2]           │
+│                       ▲                                │
+│                       │ (HTTP порт 16686)              │
+│               [ Ingress / HAProxy ]                    │
+└────────────────────────────────────────────────────────┘
+```
+
+#### 1. Уровень приема (Collector)
+- **Проблема длительных gRPC-соединений:** OTel SDK и агентские процессы используют постоянные HTTP/2 TCP-соединения. Стандартные L4-балансировщики распределяют только факт открытия TCP-сокета, из-за чего при старте клиентов один инстанс Collector может получить 90% нагрузки.
+- **Решение:** Использование L7-проксирования (Envoy, NGINX с `grpc_pass`) с периодическим сбросом соединений (`max_connection_age: 5m`) либо использование Kubernetes Headless Service с клиентской балансировкой Round-Robin в SDK.
+- **Предотвращение OOM:** Каждый Collector обязан содержать процессор `memory_limiter` в начале конвейера перед `batch`. При приближении к лимиту памяти Collector возвращает код `ResourceExhausted` (gRPC) или `429 Too Many Requests` (HTTP), защищая процесс от аварийного завершения ядром ОС (OOMKilled).
+
+#### 2. Буферный уровень (Kafka)
+- Разделяет контур приема спанов и контур записи в постоянное хранилище. При временной деградации или плановом обслуживании ClickHouse входящие спаны накапливаются в брокере Kafka, гарантируя нулевой RPO.
+- Гарантия сохранения: параметр топика `min.insync.replicas=2` в связке с `acks=all` у продюсера гарантирует, что сообщение считается записанным только после фиксации на дисках минимум двух брокеров.
+
+#### 3. Уровень консьюмеров (Ingester)
+- Экземпляры Ingester объединяются в единую Consumer Group (`jaeger-ingester`).
+- Количество партиций топика задает верхний предел параллелизма вычитки. Рекомендуется выделять не менее 12–24 партиций.
+- Offset фиксируется консьюмером только после успешного завершения транзакции сброса пакета спанов в ClickHouse.
+
+#### 4. Уровень хранения (ClickHouse + Keeper)
+- Использование движка `ReplicatedMergeTree` гарантирует репликацию данных между узлами на уровне блоков без участия сторонних утилит.
+- Метаданные репликации и блокировки координируются через ClickHouse Keeper по протоколу Raft. Кворум из 3 узлов переносит потерю 1 узла без остановки записи.
+- Для запросов поиска используется Distributed-таблица, которая выполняет веерную рассылку запроса по шардам и агрегацию результатов.
+
+### Стратегии катастрофоустойчивости (DR)
+
+В локальных средах без использования публичных облаков применяются две основные DR-модели:
+
+1. **Active-Passive (Холодный / Теплый резерв):**
+   - **ЦОД-1 (Primary):** Принимает 100% трафика, производит обработку и запись.
+   - **МежЦОД канал:** Выделенный L3 VPN / Dark Fiber. Асинхронная передача спанов из кластера Kafka в ЦОД-1 в кластер Kafka в ЦОД-2 через сервис MirrorMaker 2 с политикой `IdentityReplicationPolicy`.
+   - **ЦОД-2 (Standby):** Ingester находится в режиме ожидания либо вычитывает реплицированный топик с минимальным числом реплик. ClickHouse в ЦОД-2 синхронизируется через резервные копии либо асинхронную репликацию.
+   - **Процедура переключения:** При падении ЦОД-1 выполняется переключение клиентских точек входа (DNS failover / BGP Anycast), запуск Ingester в ЦОД-2 на полную мощность.
+
+2. **Active-Active (Двойной прием):**
+   - Клиентские сервисы в каждом ЦОД отправляют трафик в локальный пул Jaeger Collector.
+   - Каждый ЦОД изолированно накапливает данные в своем локальном ClickHouse.
+   - Jaeger Query настраивается с доступом к обоим кластерам через Distributed-таблицы либо федеративный запрос, объединяя результаты поиска в едином UI.
+
+### Матрица сбоев и реакция системы
+
+| Сценарий отказа | Влияние на систему | Автоматическая реакция | Действия дежурного инженера (SRE) |
+| :--- | :--- | :--- | :--- |
+| **Падение 1 реплики Collector** | Кратковременный рост задержки на клиентах | Kubernetes перезапускает под; L7 LB исключает узел из пула | Проверить причину падения (`kubectl describe pod`, OOMKilled/Panic) |
+| **Плановое обновление узла K8s (drain)** | Нагрузка перераспределяется на оставшиеся реплики | PodDisruptionBudget блокирует одновременное удаление более 1 пода | Контролировать процесс: `kubectl get pdb -A` |
+| **Отказ 1 брокера Kafka** | Партиции брокера теряют одну реплику | Лидерство партиций передается оставшимся брокерам из ISR | Заменить вышедший из строя брокер, проверить ребалансировку |
+| **Отказ 1 узла ClickHouse** | Снижение емкости пула чтения | Трафик чтения переводится на выжившую реплику; запись продолжается | Восстановить узел; Keeper автоматически передаст недостающие парты |
+| **Потеря кворума Keeper (2 из 3 узлов)** | Полная блокировка записи в `ReplicatedMergeTree` | Таблицы переходят в режим `is_readonly = 1`, Collector/Ingester накапливают очередь | Аварийный перезапуск Keeper, ручное восстановление кворума через `force_recovery` |
+| **Разрыв межЦОД канала** | Остановка репликации MirrorMaker 2 | Буфер Kafka в ЦОД-1 накапливает спаны в рамках retention (48ч) | Восстановить связность; MirrorMaker автоматически догонит лаг |
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Настройка HA для Collector и Query в Kubernetes
+### Сценарий 1: Отказоустойчивое развертывание Collector и Query в Kubernetes
 
-**Ситуация:** Необходимо обеспечить отказоустойчивость Collector и Query в Kubernetes.
+**Ситуация:** Развертывание пула Jaeger v2 Collector и Query на платформе Kubernetes с защитой от одновременного падения при обслуживании узлов, правильной балансировкой gRPC и мониторингом состояния.
+
+**Предварительные требования:**
+- Кластер Kubernetes версии 1.26+ с минимум 3 рабочими нодами.
+- Установленный `kubectl` с правами администратора в неймспейсе `observability`.
+- Наличие работающего бэкенда (ClickHouse или Kafka).
+
+**Пошаговые инструкции:**
+
+1. Создание манифеста конфигурации Jaeger v2 (`collector-config.yaml`):
 
 ```yaml
-# collector-deployment.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jaeger-collector-config
+  namespace: observability
+data:
+  config.yaml: |
+    service:
+      extensions: [healthcheckv2]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [jaeger_storage_exporter]
+      telemetry:
+        metrics:
+          address: "0.0.0.0:8888"
+
+    extensions:
+      healthcheckv2:
+        use_v2: true
+        http:
+          endpoint: "0.0.0.0:13133"
+      jaeger_storage:
+        backends:
+          ch_backend:
+            type: clickhouse
+            clickhouse:
+              endpoint: "tcp://clickhouse.observability.svc.cluster.local:9000"
+              database: "jaeger_v2"
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: "0.0.0.0:4317"
+            max_concurrent_streams: 1024
+          http:
+            endpoint: "0.0.0.0:4318"
+
+    processors:
+      memory_limiter:
+        check_interval: 250ms
+        limit_percentage: 80
+        spike_limit_percentage: 20
+      batch:
+        send_batch_size: 8192
+        timeout: 500ms
+
+    exporters:
+      jaeger_storage_exporter:
+        trace_storage: ch_backend
+```
+
+2. Создание манифеста Deployment, Service и PodDisruptionBudget для Collector (`collector-ha.yaml`):
+
+```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: jaeger-collector
   namespace: observability
+  labels:
+    app.kubernetes.io/name: jaeger-collector
 spec:
   replicas: 3
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 1
       maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: jaeger-collector
@@ -83,7 +245,6 @@ spec:
       labels:
         app.kubernetes.io/name: jaeger-collector
     spec:
-      serviceAccountName: jaeger-collector
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -93,32 +254,57 @@ spec:
                   matchLabels:
                     app.kubernetes.io/name: jaeger-collector
                 topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: jaeger-collector
       containers:
         - name: collector
-          image: jaegertracing/jaeger:2.0.0
+          image: jaegertracing/jaeger:2.3.0
+          args: ["--config", "/etc/jaeger/config.yaml"]
           ports:
-            - containerPort: 4317
-            - containerPort: 4318
-            - containerPort: 8888
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: otlp-http
+              containerPort: 4318
+            - name: health
+              containerPort: 13133
+            - name: metrics
+              containerPort: 8888
           livenessProbe:
             httpGet:
               path: /
-              port: 8888
-            initialDelaySeconds: 15
-            periodSeconds: 20
+              port: 13133
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /
-              port: 8888
+              port: 13133
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
           resources:
             requests:
               cpu: 500m
-              memory: 512Mi
+              memory: 1Gi
             limits:
               cpu: 2000m
               memory: 2Gi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/jaeger
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: jaeger-collector-config
 ---
 apiVersion: v1
 kind: Service
@@ -126,6 +312,7 @@ metadata:
   name: jaeger-collector
   namespace: observability
 spec:
+  type: ClusterIP
   selector:
     app.kubernetes.io/name: jaeger-collector
   ports:
@@ -135,7 +322,23 @@ spec:
     - name: otlp-http
       port: 4318
       targetPort: 4318
-  type: ClusterIP
+    - name: metrics
+      port: 8888
+      targetPort: 8888
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-collector-headless
+  namespace: observability
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: jaeger-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -143,49 +346,233 @@ metadata:
   name: jaeger-collector-pdb
   namespace: observability
 spec:
-  minAvailable: 2
+  maxUnavailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: jaeger-collector
 ```
 
+3. Развертывание пула интерфейса Jaeger Query (`query-ha.yaml`):
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger-query
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: jaeger-query
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jaeger-query
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jaeger-query
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: jaeger-query
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: query
+          image: jaegertracing/jaeger:2.3.0
+          args: ["--config", "/etc/jaeger/query-config.yaml"]
+          ports:
+            - name: query-http
+              containerPort: 16686
+            - name: health
+              containerPort: 13133
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/jaeger
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: jaeger-collector-config
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: jaeger-query-pdb
+  namespace: observability
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jaeger-query
+```
+
 **Валидация:**
 
-1. Применить манифесты: `kubectl apply -f collector-ha.yaml`.
-2. Проверить реплики: `kubectl get pods -n observability -l app.kubernetes.io/name=jaeger-collector`.
-3. Убедиться, что PodDisruptionBudget активен: `kubectl get pdb -n observability jaeger-collector-pdb`.
-4. Проверить, что Service балансирует трафик: `kubectl describe svc jaeger-collector -n observability`.
-
-### Сценарий 2: Настройка HA для ClickHouse
-
-**Ситуация:** Необходимо обеспечить отказоустойчивость ClickHouse кластера с репликацией.
-
+1. Применить конфигурацию и проверить статус подов:
 ```bash
-# 1. Конфигурация первого узла (clickhouse-01)
-# /etc/clickhouse-server/config.xml
+kubectl apply -f collector-config.yaml
+# → configmap/jaeger-collector-config created
+kubectl apply -f collector-ha.yaml
+# → deployment.apps/jaeger-collector created
+# → service/jaeger-collector created
+# → service/jaeger-collector-headless created
+# → poddisruptionbudget.policy/jaeger-collector-pdb created
+kubectl apply -f query-ha.yaml
+# → deployment.apps/jaeger-query created
+# → poddisruptionbudget.policy/jaeger-query-pdb created
+
+kubectl get pods -n observability -l app.kubernetes.io/name=jaeger-collector -o wide
+# → NAME                                READY   STATUS    RESTARTS   AGE   IP             NODE
+# → jaeger-collector-7d8b5c98-1a2b3     1/1     Running   0          45s   10.244.1.15    worker-node-01
+# → jaeger-collector-7d8b5c98-4c5d6     1/1     Running   0          45s   10.244.2.22    worker-node-02
+# → jaeger-collector-7d8b5c98-7e8f9     1/1     Running   0          45s   10.244.3.18    worker-node-03
+```
+
+2. Проверить состояние политик PodDisruptionBudget:
+```bash
+kubectl get pdb -n observability
+# → NAME                   MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+# → jaeger-collector-pdb   N/A             1                 1                     1m
+# → jaeger-query-pdb       N/A             1                 1                     1m
+```
+
+3. Проверить ответ встроенного healthcheckv2 расширения:
+```bash
+kubectl exec -n observability deploy/jaeger-collector -- curl -s -i http://127.0.0.1:13133/
+# → HTTP/1.1 200 OK
+# → Content-Type: application/json
+# → Date: Mon, 12 Oct 2026 14:15:00 GMT
+# → Content-Length: 0
+```
+
+---
+
+### Сценарий 2: Настройка отказоустойчивого кластера ClickHouse с ReplicatedMergeTree и ClickHouse Keeper
+
+**Ситуация:** Развертывание 2-узлового кластера ClickHouse с репликацией таблиц Jaeger v2 и кворумной координацией через ClickHouse Keeper для обеспечения безотказной записи при потере одного сервера.
+
+**Предварительные требования:**
+- Два сервера Linux (CentOS Stream / Debian / Ubuntu) с установленным `clickhouse-server` (версия 24.x или 26.x).
+- Hostnames: `ch-node-01` (192.168.10.21), `ch-node-02` (192.168.10.22).
+- Сетевая связность по портам 9000 (Native), 8123 (HTTP), 9234 (Raft), 2181 (Keeper TCP).
+
+**Пошаговые инструкции:**
+
+1. Настройка ClickHouse Keeper на обоих узлах (`/etc/clickhouse-server/config.d/keeper.xml`).  
+*На узле ch-node-01 (`server_id: 1`):*
+
+```xml
 <clickhouse>
-  <listen_host>0.0.0.0</listen_host>
-  <remote_servers>
-    <jaeger_cluster>
-      <shard>
-        <replica>
-          <host>clickhouse-01</host>
-          <port>9000</port>
-        </replica>
-        <replica>
-          <host>clickhouse-02</host>
-          <port>9000</port>
-        </replica>
-      </shard>
-    </jaeger_cluster>
-  </remote_servers>
+    <keeper_server>
+        <tcp_port>2181</tcp_port>
+        <server_id>1</server_id>
+        <log_storage_path>/var/lib/clickhouse/keeper/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse/keeper/snapshots</snapshot_storage_path>
+        <coordination_settings>
+            <operation_timeout_ms>10000</operation_timeout_ms>
+            <session_timeout_ms>30000</session_timeout_ms>
+            <raft_logs_level>information</raft_logs_level>
+        </coordination_settings>
+        <raft_configuration>
+            <server>
+                <id>1</id>
+                <host>192.168.10.21</host>
+                <port>9234</port>
+            </server>
+            <server>
+                <id>2</id>
+                <host>192.168.10.22</host>
+                <port>9234</port>
+            </server>
+        </raft_configuration>
+    </keeper_server>
+
+    <zookeeper>
+        <node>
+            <host>192.168.10.21</host>
+            <port>2181</port>
+        </node>
+        <node>
+            <host>192.168.10.22</host>
+            <port>2181</port>
+        </node>
+    </zookeeper>
 </clickhouse>
+```
+*(На узле `ch-node-02` в секции `<keeper_server>` значение `<server_id>` устанавливается равным `2`).*
 
-# 2. Создание базы с движком ReplicatedMergeTree
-clickhouse-client --query "
-CREATE DATABASE IF NOT EXISTS jaeger_v2;
+2. Описание топологии кластера и макросов (`/etc/clickhouse-server/config.d/cluster.xml`):
 
-CREATE TABLE IF NOT EXISTS jaeger_v2.spans
+```xml
+<clickhouse>
+    <remote_servers>
+        <jaeger_cluster>
+            <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                    <host>192.168.10.21</host>
+                    <port>9000</port>
+                </replica>
+                <replica>
+                    <host>192.168.10.22</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </jaeger_cluster>
+    </remote_servers>
+
+    <macros>
+        <cluster>jaeger_cluster</cluster>
+        <shard>01</shard>
+        <!-- На ch-node-01: ch-node-01; на ch-node-02: ch-node-02 -->
+        <replica>ch-node-01</replica>
+    </macros>
+</clickhouse>
+```
+
+3. Перезапуск службы ClickHouse на серверах:
+```bash
+sudo systemctl restart clickhouse-server
+# → [OK] clickhouse-server restarted
+```
+
+4. Создание схемы базы данных и реплицируемой таблицы на кластере:
+
+```sql
+-- 1. Создание базы данных на всех узлах кластера
+CREATE DATABASE IF NOT EXISTS jaeger_v2 ON CLUSTER '{cluster}';
+
+-- 2. Создание локальной реплицируемой таблицы
+CREATE TABLE IF NOT EXISTS jaeger_v2.spans_local ON CLUSTER '{cluster}'
 (
     trace_id String,
     span_id String,
@@ -200,104 +587,319 @@ CREATE TABLE IF NOT EXISTS jaeger_v2.spans
     flags UInt32,
     PRIMARY KEY (trace_id, span_id)
 )
-ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/jaeger_v2.spans', '{replica}')
+ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/jaeger_v2/spans', '{replica}')
 PARTITION BY toDate(fromUnixTimestamp64Nano(start_time_ns))
 ORDER BY (service_name, operation_name, start_time_ns)
-TTL start_time_ns + INTERVAL 7 DAY;
+TTL toDateTime(start_time_ns / 1000000000) + INTERVAL 7 DAY
+SETTINGS index_granularity = 8192;
+
+-- 3. Создание распределенной таблицы для запросов поиска
+CREATE TABLE IF NOT EXISTS jaeger_v2.spans ON CLUSTER '{cluster}' AS jaeger_v2.spans_local
+ENGINE = Distributed('{cluster}', jaeger_v2, spans_local, rand());
+```
+
+**Валидация:**
+
+1. Проверить состояние кворума Keeper:
+```bash
+echo mntr | nc 192.168.10.21 2181 | grep -E "zk_version|zk_server_state|zk_synced_followers"
+# → zk_version       v26.8.2.1-testing-deadbeef
+# → zk_server_state  leader
+# → zk_synced_followers      1
+```
+
+2. Проверить статус репликации в таблице `system.replicas`:
+```bash
+clickhouse-client --query "SELECT database, table, is_leader, is_readonly, absolute_delay FROM system.replicas WHERE database='jaeger_v2'"
+# → jaeger_v2   spans_local     1       0       0
+```
+
+3. Тестирование сбоя узла (Failover):
+```bash
+# Имитация аварии первого узла
+sudo systemctl stop clickhouse-server # на ch-node-01
+
+# Проверка статуса со второго узла
+clickhouse-client --host 192.168.10.22 --query "
+INSERT INTO jaeger_v2.spans_local (trace_id, span_id, operation_name, start_time_ns, service_name)
+VALUES ('trace-failover-test-01', 'span-01', 'GET /checkout', 1700000000000000000, 'billing-service');
+SELECT count() FROM jaeger_v2.spans_local;
 "
+# → 1
 
-# 3. Проверка репликации
-clickhouse-client --query "SELECT count() FROM jaeger_v2.spans" --host clickhouse-01
-clickhouse-client --query "SELECT count() FROM jaeger_v2.spans" --host clickhouse-02
+# Запуск первого узла обратно
+sudo systemctl start clickhouse-server # на ch-node-01
+
+# Проверка автоматической синхронизации данных
+clickhouse-client --host 192.168.10.21 --query "SELECT count() FROM jaeger_v2.spans_local WHERE trace_id='trace-failover-test-01'"
+# → 1
+```
+
+---
+
+### Сценарий 3: Резервное копирование и восстановление ClickHouse в локальное S3-хранилище (MinIO / Ceph RGW)
+
+**Ситуация:** Организация регулярного создания резервных копий таблицы трейсов в корпоративное локальное S3-хранилище (MinIO / Ceph Object Gateway) и проведение планового учения по восстановлению (DR drill).
+
+**Предварительные требования:**
+- Доступность S3-совместимого хранилища (MinIO): `http://minio.storage.internal:9000`.
+- Созданный бакет: `jaeger-backups`.
+- Учетные данные с правами на запись и чтение: `access_key` / `secret_key`.
+
+**Пошаговые инструкции:**
+
+1. Создание резервной копии таблицы спанов в MinIO:
+
+```bash
+# Запуск создания снапшота таблицы с отметкой даты
+BACKUP_TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+clickhouse-client --query "
+BACKUP TABLE jaeger_v2.spans_local
+TO S3('http://minio.storage.internal:9000/jaeger-backups/${BACKUP_TIMESTAMP}/', 'minio_admin', 'Secr3t_MinIO_P@ss')
+SETTINGS compression_method = 'zstd';
+"
+# → Backup jaeger_v2.spans_local completed: 1 table(s), 42 parts backed up.
+```
+
+2. Моделирование катастрофы (случайное удаление данных или повреждение диска):
+
+```bash
+clickhouse-client --query "DROP TABLE jaeger_v2.spans_local NO DELAY;"
+# → Table jaeger_v2.spans_local dropped.
+```
+
+3. Восстановление таблицы из резервной копии:
+
+```bash
+clickhouse-client --query "
+RESTORE TABLE jaeger_v2.spans_local
+FROM S3('http://minio.storage.internal:9000/jaeger-backups/${BACKUP_TIMESTAMP}/', 'minio_admin', 'Secr3t_MinIO_P@ss');
+"
+# → Restore jaeger_v2.spans_local completed: 1 table(s), 42 parts restored.
 ```
 
 **Валидация:**
 
-1. Остановить один узел: `docker stop clickhouse-02`.
-2. Отправить тестовый спан и убедиться, что запись проходит через `clickhouse-01`.
-3. Запустить узел и убедиться, что данные синхронизировались.
-
-### Сценарий 3: Бэкап и восстановление ClickHouse
-
-**Ситуация:** Необходимо настроить регулярные бэкапы и проверить процесс восстановления.
-
+1. Проверить наличие и целостность восстановленных данных:
 ```bash
-# 1. Создание бэкапа
-clickhouse-client --query "BACKUP TABLE jaeger_v2.spans TO 's3://backups/jaeger/$(date +%Y%m%d_%H%M%S)'"
-
-# 2. Восстановление из бэкапа
-clickhouse-client --query "RESTORE TABLE jaeger_v2.spans FROM 's3://backups/jaeger/20260824_120000'"
-
-# 3. Проверка
-clickhouse-client --query "SELECT count() FROM jaeger_v2.spans"
+clickhouse-client --query "
+SELECT count(), min(toDate(fromUnixTimestamp64Nano(start_time_ns))), max(toDate(fromUnixTimestamp64Nano(start_time_ns)))
+FROM jaeger_v2.spans_local;
+"
+# → 48291054    2026-10-05      2026-10-12
 ```
 
-### Сценарий 4: Кластерный DR с использованием Kafka MirrorMaker 2
-
-**Ситуация:** Необходимо настроить асинхронную репликацию топика `jaeger-spans` между primary и DR кластерами Kafka.
-
+2. Проверить доступность таблицы через распределенный интерфейс:
 ```bash
-# 1. Создание топика в DR кластере
-kafka-topics.sh --create \
-  --topic jaeger-spans-dr \
-  --bootstrap-server kafka-dr:9092 \
+clickhouse-client --query "SELECT count() FROM jaeger_v2.spans;"
+# → 48291054
+```
+
+---
+
+### Сценарий 4: МежЦОД репликация буфера трейсов через Kafka MirrorMaker 2 (Active-Passive DR)
+
+**Ситуация:** Организация непрерывной асинхронной передачи спанов из основного дата-центра (DC-1) в резервный дата-центр (DC-2) с сохранением исходных имен топиков и смещений групп консьюмеров.
+
+**Предварительные требования:**
+- Кластер Apache Kafka в DC-1 (`dc1-broker-01:9092,dc1-broker-02:9092,dc1-broker-03:9092`).
+- Кластер Apache Kafka в DC-2 (`dc2-broker-01:9092,dc2-broker-02:9092,dc2-broker-03:9092`).
+- Выделенный сервер или виртуальная машина под процесс MirrorMaker 2 в DC-2.
+
+**Пошаговые инструкции:**
+
+1. Создание топика `jaeger-spans` в основном и резервном кластерах:
+```bash
+# Выполняется на брокерах в DC-1 и DC-2
+kafka-topics.sh --bootstrap-server localhost:9092 --create \
+  --topic jaeger-spans \
   --partitions 12 \
-  --replication-factor 3
+  --replication-factor 3 \
+  --config min.insync.replicas=2 \
+  --config retention.hours=48 \
+  --config compression.type=lz4
+# → Created topic jaeger-spans.
+```
 
-# 2. Запуск MirrorMaker 2
-/opt/kafka/bin/kafka-mirror-maker.sh \
-  --consumer.config /opt/kafka/config/consumer-primary.properties \
-  --producer.config /opt/kafka/config/producer-dr.properties \
-  --whitelist "jaeger-spans" \
-  --num.streams 4
+2. Создание файла конфигурации MirrorMaker 2 (`/etc/kafka/mm2-jaeger.properties`):
+
+```properties
+# Алиасы кластеров
+clusters = dc1, dc2
+
+# Точки подключения брокеров
+dc1.bootstrap.servers = 10.10.10.11:9092,10.10.10.12:9092,10.10.10.13:9092
+dc2.bootstrap.servers = 10.20.10.11:9092,10.20.10.12:9092,10.20.10.13:9092
+
+# Направление передачи: только dc1 -> dc2
+dc1->dc2.enabled = true
+dc2->dc1.enabled = false
+
+# Фильтрация топиков: только топики трассировки
+dc1->dc2.topics = jaeger-spans.*
+dc1->dc2.topics.exclude = .*[\-\.]internal, .*[\-\.]checkpoint, .*[\-\.]heartbeat
+
+# Сохранение исходного имени топика в DC-2 без добавления префикса "dc1."
+replication.policy.class = org.apache.kafka.connect.mirror.IdentityReplicationPolicy
+
+# Синхронизация смещений групп консьюмеров (Offset Sync)
+dc1->dc2.sync.group.offsets.enabled = true
+dc1->dc2.sync.group.offsets.interval.seconds = 5
+dc1->dc2.emit.checkpoints.interval.seconds = 5
+dc1->dc2.groups = jaeger-ingester.*
+
+# Факторы репликации служебных топиков в DC-2
+replication.factor = 3
+checkpoints.topic.replication.factor = 3
+heartbeats.topic.replication.factor = 3
+offset-syncs.topic.replication.factor = 3
+
+# Тюнинг пропускной способности продюсера MM2
+dc1->dc2.producer.compression.type = zstd
+dc1->dc2.producer.batch.size = 131072
+dc1->dc2.producer.linger.ms = 25
+dc1->dc2.producer.max.in.flight.requests.per.connection = 5
+```
+
+3. Запуск MirrorMaker 2 в фоновом режиме через systemd (`/etc/systemd/system/kafka-mm2.service`):
+
+```ini
+[Unit]
+Description=Apache Kafka MirrorMaker 2 (Jaeger Tracing DR)
+After=network.target
+
+[Service]
+Type=simple
+User=kafka
+ExecStart=/opt/kafka/bin/connect-mirror-maker.sh /etc/kafka/mm2-jaeger.properties
+Restart=on-failure
+RestartSec=10s
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now kafka-mm2
+# → Created symlink /etc/systemd/system/multi-user.target.wants/kafka-mm2.service
 ```
 
 **Валидация:**
 
-1. Отправить тестовое сообщение в primary топик.
-2. Убедиться, что оно появилось в DR топике.
-3. Проверить `consumer_lag` в DR кластере.
+1. Проверить статус службы MirrorMaker 2:
+```bash
+sudo systemctl status kafka-mm2 --no-pager
+# → ● kafka-mm2.service - Apache Kafka MirrorMaker 2 (Jaeger Tracing DR)
+# →    Loaded: loaded (/etc/systemd/system/kafka-mm2.service; enabled; vendor preset: disabled)
+# →    Active: active (running) since Mon 2026-10-12 14:20:10 MSK; 1min ago
+# →  Main PID: 18452 (java)
+```
+
+2. Отправить тестовый спан в кластер DC-1 и проверить появление сообщения в топике DC-2:
+```bash
+# Отправка тестового сообщения в DC-1
+echo "test-span-payload-dr-verification" | /opt/kafka/bin/kafka-console-producer.sh \
+  --bootstrap-server 10.10.10.11:9092 \
+  --topic jaeger-spans
+
+# Чтение из топика в DC-2
+/opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server 10.20.10.11:9092 \
+  --topic jaeger-spans \
+  --from-beginning \
+  --max-messages 1
+# → test-span-payload-dr-verification
+```
+
+3. Проверить состояние трансляции офсетов для Ingester в DC-2:
+```bash
+/opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server 10.20.10.11:9092 \
+  --describe \
+  --group jaeger-ingester
+# → GROUP           TOPIC           PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG             CONSUMER-ID     HOST            CLIENT-ID
+# → jaeger-ingester jaeger-spans    0          1045820         1045822         2               -               -               -
+```
+
+---
+
+## Операции и команды
+
+Сводная таблица регламентных и аварийных команд при эксплуатации отказоустойчивого контура:
+
+| Операция | Команда | Назначение |
+| :--- | :--- | :--- |
+| **Проверка готовности Collector** | `curl -s -o /dev/null -w "%{http_code}\n" http://<collector-ip>:13133/` | Проверка `healthcheckv2` расширения (`# → 200`) |
+| **Проверка очереди отправки** | `curl -s http://<collector-ip>:8888/metrics \| grep otelcol_exporter_queue_size` | Контроль переполнения очередей отправки спанов в бэкенд |
+| **Безопасный вывод узла K8s (drain)** | `kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data` | Эвакуация подов с соблюдением `PodDisruptionBudget` |
+| **Проверка кворума Keeper** | `echo mntr \| nc <keeper-ip> 2181 \| grep zk_server_state` | Определение роли узла Keeper (`leader` или `follower`) |
+| **Контроль задержки репликации CH** | `clickhouse-client --query "SELECT database, table, is_readonly, absolute_delay FROM system.replicas"` | Выявление отстающих реплик (`absolute_delay > 0`) |
+| **Проверка лага Ingester** | `kafka-consumer-groups.sh --bootstrap-server <broker>:9092 --describe --group jaeger-ingester` | Контроль накопления невычитанных спанов в партициях |
+| **Принудительный сброс соединений L7** | `kubectl rollout restart deployment/jaeger-collector -n observability` | Перебалансировка gRPC потоков при неравномерной нагрузке |
+
+---
+
+## Диагностика и устранение неисправностей
+
+| Проблема / Симптом | Вероятная причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| **Сильный перекос нагрузки между подами Collector (1 под загружен на 100%, остальные на 5%)** | L4-балансировщик привязал мультиплексированные gRPC HTTP/2 потоки одного крупного сервиса к одному проду | Метрика `otelcol_receiver_accepted_spans` различается в 10+ раз между подами (`curl http://pod-ip:8888/metrics`) | 1. Настроить L7 Ingress (Envoy/Traefik) с директивой балансировки стримов.<br>2. Настроить Kubernetes Headless Service и включить `round_robin` DNS load balancing в OTel SDK клиента. |
+| **ClickHouse реплика перешла в режим read-only (`is_readonly = 1`)** | Потеряна связь с узлами ClickHouse Keeper или нарушен кворум Raft | Запрос: `SELECT is_readonly FROM system.replicas WHERE database='jaeger_v2';`<br>Лог: `/var/log/clickhouse-server/clickhouse-server.err.log` содержит `Coordination::Exception` | 1. Проверить доступность портов Keeper: `echo ruok \| nc 127.0.0.1 2181`.<br>2. Восстановить сетевую связность между узлами Keeper.<br>3. При фатальной потере узлов выполнить восстановление кворума через `<force_recovery>`. |
+| **Лавинообразный рост Consumer Lag у Ingester** | ClickHouse не успевает принимать спаны (дисковый bottleneck) либо число инстансов Ingester меньше числа партиций | `kafka-consumer-groups.sh --describe` показывает рост `LAG`; логи Ingester: `Exporting failed: timeout` | 1. Увеличить число реплик Ingester до числа партиций топика.<br>2. Увеличить `send_batch_size` до 16384 в `batch` процессоре Ingester.<br>3. Проверить IOPS дисков ClickHouse (`iostat -xz 1`). |
+| **Collector падает с кодом OOMKilled (Exit Code 137)** | Всплеск спанов переполнил очередь батчера при отсутствии или заниженном лимите `memory_limiter` | `kubectl describe pod` показывает `Last State: Terminated, Reason: OOMKilled`; метрика `otelcol_processor_dropped_spans = 0` | 1. Убедиться, что процессор `memory_limiter` стоит первым в `processors: [memory_limiter, batch]`.<br>2. Выставить `limit_percentage: 80`, `spike_limit_percentage: 20`.<br>3. Увеличить RAM limit пода до значения, согласованного с Capacity Planning. |
+| **`kubectl drain` зависает с ошибкой `Cannot evict pod: PDB blocks eviction`** | Спецификация PDB задана как `minAvailable: 2`, при этом один из трех подов находится в состоянии CrashLoopBackOff | `kubectl get pdb -n observability` показывает `ALLOWED DISRUPTIONS: 0` | 1. Использовать `maxUnavailable: 1` вместо жесткого `minAvailable`.<br>2. Устранить сбой в упавшем поде либо временно масштабировать Deployment: `kubectl scale deploy/jaeger-collector --replicas=4`. |
 
 ---
 
 ## Лучшие практики
 
-1.  **Минимум 3 реплики Collector:** Одна может упасть, вторая обновляться, третья обрабатывает трафик.
-2.  **PodDisruptionBudget:** Защищает от одновременного удаления всех реплик при drain узла.
-3.  **ClickHouse ReplicatedMergeTree:** Используйте ReplicatedMergeTree вместо MergeTree для HA.
-4.  **Kafka Replication Factor 3:** Минимум 3 реплики для durability.
-5.  **Регулярные бэкапы:** Автоматические бэкапы ClickHouse в S3 с retention 30 дней.
-6.  **Мониторинг lag и disk:** Настройте алерты на `consumer_lag` и `disk_usage` до наступления проблем.
-7.  **Тестируйте failover:** Регулярно проверяйте переключение на резервные компоненты (Chaos Engineering).
+1. **Правило N+2 для stateless компонентов:** В production-среде развертывайте не менее 3 реплик Collector и Ingester. Это гарантирует сохранение запаса емкости при одновременном падении одного пода и плановом обновлении (Rolling Update) второго.
+2. **Использование `maxUnavailable: 1` в PDB:** Для пулов с динамическим масштабированием (HPA) всегда используйте процентное соотношение или `maxUnavailable: 1` вместо `minAvailable`. Это предотвращает тупиковые блокировки при выводе нод в drain.
+3. **Разделение дисковых пулов для СУБД:** Храните журнал предзаписи (WAL/log) ClickHouse Keeper на выделенном быстром SSD/NVMe отдельно от директории данных `data_path` ClickHouse. Высокая дисковая задержка на запись спанов не должна замедлять отклики консенсуса Raft.
+4. **Конфигурация `acks=all` и `min.insync.replicas=2`:** Всегда комбинируйте эти параметры в Kafka для защиты от потери спанов при внезапной перезагрузке брокера-лидера.
+5. **Circuit Breaker и контролируемый сброс:** При катастрофической перегрузке хранилища Jaeger должен сбрасывать входящие спаны через `memory_limiter`, а не пытаться бесконечно буферизировать их в ОЗУ. Падение системы трассировки не должно вызывать деградацию бизнес-приложений.
+6. **Регулярные учения по аварийному переключению (GameDays):** Раз в квартал имитируйте внезапное отключение одного сервера ClickHouse и сетевую изоляцию одной зоны Kubernetes для подтверждения автоматического восстановления сервиса.
 
 ---
 
 ## Очистка окружения
 
+Команды удаления тестовых и лабораторных ресурсов:
+
 ```bash
-# Остановка Docker Compose
-docker compose down -v
+# 1. Удаление ресурсов Kubernetes
+kubectl delete namespace observability
+# → namespace "observability" deleted
 
-# Удаление данных ClickHouse
-docker volume rm jaeger_clickhouse_data
+# 2. Остановка службы репликации MirrorMaker 2
+sudo systemctl stop kafka-mm2
+# → [OK] kafka-mm2.service stopped
 
-# Удаление тестовых ресурсов Kubernetes
-kubectl delete namespace jaeger-test
+# 3. Удаление тестовой базы данных в ClickHouse
+clickhouse-client --query "DROP DATABASE IF EXISTS jaeger_v2 ON CLUSTER '{cluster}';"
+# → Dropped database jaeger_v2.
+
+# 4. Удаление топиков в Kafka
+kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic jaeger-spans
+# → Topic jaeger-spans marked for deletion.
 ```
 
 ---
 
 ## Дополнительная информация
 
-**Смежные темы:**
+**Смежные материалы в базе знаний:**
+- Общие архитектурные концепции отказоустойчивости: **[Высокая доступность: Обзор](../Concepts/High_Availability/ha_overview.md)**
+- Корпоративные стратегии межЦОД аварийного восстановления: **[Стратегии аварийного восстановления](../Concepts/disaster_recovery.md)**
+- Кластеризация и настройка ClickHouse Keeper: **[Кластеризация ClickHouse](../Databases/ClickHouse/clickhouse-cluster.md)**
+- Disaster Recovery и сайзинг очередей Kafka: **[Планирование емкости и DR для Kafka](../Kafka/kafka_capacity_dr.md)**
+- Детальный разбор хранилищ Jaeger v2: **[Storage Deep Dive для Jaeger](./jaeger_storage_deep_dive.md)**
+- Интеграция с оркестрацией Kubernetes: **[Интеграция Jaeger с Kubernetes](./jaeger_kubernetes_integration.md)**
 
-* Обзор HA/DR паттернов: **[Высокая доступность: Обзор](../Concepts/High_Availability/ha_overview.md)**
-* Стратегии DR: **[Аварийное восстановление](../Concepts/disaster_recovery.md)**
-* Storage и бэкенды: **[Обзор Jaeger](./jaeger_overview.md)**
-* Kafka replication: **[Apache Kafka: Обзор](../Kafka/kafka_overview.md)**
-* ClickHouse replication: **[ClickHouse: Обзор](../Databases/ClickHouse/clickhouse.md)**
-
-### См. также
-
-* [Jaeger Production Deployment Guide](https://www.jaegertracing.io/docs/latest/deployment/)
-* [ClickHouse High Availability](https://clickhouse.com/docs/en/guides/sre/configuring-availability)
+**Официальная документация:**
+- [Jaeger Tracing v2 Documentation](https://www.jaegertracing.io/docs/)
+- [ClickHouse Keeper Configuration Guide](https://clickhouse.com/docs/en/operations/clickhouse-keeper)
+- [Apache Kafka MirrorMaker 2 Architecture](https://kafka.apache.org/documentation/#georeplication)

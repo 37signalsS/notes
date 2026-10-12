@@ -79,7 +79,7 @@ ArgoCD Application Controller работает по событийной мод�
     - `argocd-repo-server` извлекает манифесты из Git (клонирует/обновляет репозиторий).
     - Выполняется рендеринг (Helm `template`, Kustomize `build` или **[кастомные плагины](./argocd_custom_tooling.md)**).
     - Результат кешируется в `repo-server` для повторного использования.
-    - Контроллер приложений (`argocd-application-controller`) запрашивает текущее состояние ресурсов из Kubernetes API-сервера (live state) по tracking ID (метка `app.kubernetes.io/instance` или аннотация `argocd.argoproj.io/instance` — см. **[Методы отслеживания ресурсов](./argocd_resource_tracking.md)**).
+    - Контроллер приложений (`argocd-application-controller`) запрашивает текущее состояние ресурсов из Kubernetes API-сервера (live state) по tracking ID (метка `app.kubernetes.io/instance` или аннотация `argocd.argoproj.io/tracking-id` — см. **[Методы отслеживания ресурсов](./argocd_resource_tracking.md)**).
 
 2.  **Фаза Diff (Сравнение):**
     - Выполняется попарное сравнение желаемого состояния (rendered manifests) и фактического (live state).
@@ -105,7 +105,7 @@ ArgoCD Application Controller работает по событийной мод�
 
 ### Методы отслеживания ресурсов (Resource Tracking)
 
-Для того чтобы ArgoCD знал, какими ресурсами он управляет, используется механизм отслеживания. В v3.x поддерживаются три метода (настраиваются в `argocd-cm` параметром `resourceTrackingMethod`):
+Для того чтобы ArgoCD знал, какими ресурсами он управляет, используется механизм отслеживания. В v3.x поддерживаются три метода (настраиваются в `argocd-cm` параметром `application.resourceTrackingMethod`):
 
 | Метод | Механизм | Рекомендация |
 | :--- | :--- | :--- |

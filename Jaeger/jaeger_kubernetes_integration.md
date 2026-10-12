@@ -1,8 +1,10 @@
 # Интеграция Jaeger с Kubernetes
 
-> **Важно:** Документация описывает **Jaeger v2** (текущая версия). Jaeger v1 достиг **EOL (End of Life)**.
+**Актуально для:** Jaeger v2.x / OpenTelemetry Operator v0.118+ / Kubernetes 1.28–1.32
 
-Развертывание Jaeger v2 в Kubernetes базируется на использовании **OpenTelemetry Operator**. Поскольку вторая версия Jaeger построена на базе OpenTelemetry Collector, она нативно управляется через стандартные ресурсы OpenTelemetry. Это позволяет автоматизировать не только развертывание самого Jaeger, но и процесс инструментирования приложений, а также обеспечивать глубокую интеграцию с сетевой инфраструктурой кластера.
+> **Статус:** Документация описывает **Jaeger v2** на базе кодовой базы OpenTelemetry Collector. Jaeger v1 достиг **EOL (End of Life)**; классический `jaegertracing/jaeger-operator` переведён в статус устаревшего (deprecated) в пользу OpenTelemetry Operator. Все практические примеры и сценарии ориентированы на bare-metal и on-premise инфраструктуру без облачных вендорных зависимостей.
+
+Развертывание Jaeger v2 в Kubernetes базируется на использовании **OpenTelemetry Operator**. Поскольку вторая версия Jaeger построена на базе OpenTelemetry Collector, она нативно управляется через стандартные ресурсы OpenTelemetry (`OpenTelemetryCollector` и `Instrumentation`). Это позволяет автоматизировать развертывание компонентов трассировки, инъекцию агентов автоинструментации в поды приложений через Mutating Admission Webhooks, динамическое масштабирование и изоляцию сетевых потоков телеметрии в кластере.
 
 ---
 
@@ -10,421 +12,669 @@
 
 | Термин | Описание |
 | :--- | :--- |
-| **OpenTelemetry Operator** | Kubernetes-контроллер, автоматизирующий жизненный цикл компонентов телеметрии: установку, настройку, инъекцию агентов и управление сертификатами |
-| **OpenTelemetryCollector (CR)** | Кастомный ресурс (Custom Resource), описывающий конфигурацию Jaeger v2 (пайплайны OTLP, процессоры, экспортеры в хранилище) |
-| **Instrumentation (CR)** | Ресурс для настройки автоматической инструментации приложений (Java, Python, NodeJS, Go) без изменения их исходного кода |
-| **Sidecar Injection** | Механизм автоматического внедрения контейнера Collector в под приложения через Mutating Admission Webhook |
-| **Downward API** | Механизм Kubernetes для передачи метаданных пода (IP узла, имя пода, неймспейс) внутрь контейнера через переменные окружения или файлы |
-| **Service Mesh (Istio/Linkerd)** | Инфраструктурный слой кластера, который может генерировать собственные спаны и требует согласованности заголовков трассировки с приложением |
-| **OpenTelemetryCollector modes** | Режимы развертывания CR: `deployment` (централизованный), `daemonset` (на каждый узел), `statefulset` (с персистентным хранилищем) |
-| **k8sattributes processor** | Процессор OTel Collector, обогащающий спаны метаданными Kubernetes (имя пода, неймспейс, узел, метки) |
-| **Jaeger Operator** | Альтернативный оператор (от jaegertracing), упрощающий развертывание через CRD `Jaeger`. В 2026 году предпочтительнее OpenTelemetry Operator для новых проектов |
-| **Auto-instrumentation** | Внедрение OTel SDK в приложение без изменения исходного кода (через Javaagent, Python wrapper, eBPF) |
-| **Manual Instrumentaton** | Явное добавление телеметрии в код через OTel API для бизнес-логики |
-| **NetworkPolicy** | Kubernetes-ресурс для контроля сетевого трафика между подами и неймспейсами |
-| **ServiceAccount** | Идентификатор сервиса в Kubernetes, используемый для RBAC-авторизации подов |
-| **PodDisruptionBudget** | Ресурс, ограничивающий количество одновременно недоступных подов при плановых работах (обновление узлов, drain) |
+| **OpenTelemetry Operator** | Kubernetes-контроллер, автоматизирующий жизненный цикл компонентов телеметрии: развертывание коллекторов, инъекцию sidecar/init-контейнеров автоинструментации и валидацию манифестов |
+| **OpenTelemetryCollector (CR)** | Custom Resource, определяющий режим развертывания (`deployment`, `daemonset`, `sidecar`), ресурсы и YAML-конфигурацию пайплайнов Jaeger v2 (receivers, processors, exporters, extensions) |
+| **Instrumentation (CR)** | Custom Resource для декларативной настройки автоматического инструментирования приложений (Java, Python, NodeJS, Go, .NET) без модификации исходного кода |
+| **Mutating Admission Webhook** | Механизм Kubernetes API-сервера, перехватывающий запросы создания подов для автоматической инъекции переменных окружения OTel SDK, агентов или sidecar-коллекторов |
+| **k8sattributes processor** | Процессор OpenTelemetry Collector, обогащающий проходящие спаны контекстом метаданных Kubernetes (имя пода, неймспейс, узел, uid, метки, аннотации) по IP-адресу источника |
+| **memory_limiter processor** | Критический SRE-процессор коллектора, отслеживающий потребление RAM и принудительно сбрасывающий или отклоняющий новые данные при приближении к cgroup-лимиту во избежание OOMKilled |
+| **Target Allocator** | Механизм оператора для шардирования и распределения динамических целей сбора метрик и телеметрии между инстансами коллектора без дублирования нагрузки |
+| **Downward API** | Механизм Kubernetes для проброса метаданных пода (IP узла `status.hostIP`, IP пода `status.podIP`, имя пода) внутрь контейнера через переменные окружения или volume mounts |
+| **PodDisruptionBudget (PDB)** | Ресурс Kubernetes, гарантирующий минимально допустимое количество активных реплик Jaeger Collector во время регламентных процедур (drain узлов, обновление кластера) |
+| **ServiceMonitor** | Custom Resource Prometheus Operator для декларативного включения сбора метрик с эндпоинтов Jaeger v2 (`:8888/metrics`) в мониторинг |
+| **W3C Trace Context** | Общепринятый стандарт IETF/W3C для сквозной передачи идентификаторов трассировки (`traceparent`, `tracestate`) через сетевые вызовы |
+| **Headless Service** | Kubernetes Service без кластерного IP (`clusterIP: None`), возвращающий A/AAAA-записи всех подов для реализации client-side балансировки gRPC соединений |
 
 ---
 
 ## Базовые концепции
 
-### Архитектура OpenTelemetry Operator
+### Архитектура OpenTelemetry Operator и Jaeger v2
 
-OpenTelemetry Operator состоит из нескольких контроллеров, которые управляют разными аспектами жизненного цикла телеметрии:
+В архитектуре Jaeger v2 исполняемый бинарный файл представляет собой дистрибутив OpenTelemetry Collector со встроенными компонентами Jaeger (`jaeger_storage` extension, `jaeger_query` extension, OTLP receivers и storage exporters).
 
-| Компонент | Назначение |
-| :--- | :--- |
-| **OpenTelemetryCollector Controller** | Управляет развертыванием и конфигурацией коллекторов на основе CR `OpenTelemetryCollector` |
-| **Instrumentation Controller** | Управляет автоматической инструментацией приложений на основе CR `Instrumentation` |
-| **Target Allocator** | Распределяет цели сбора (endpoints) между инстансами коллектора в режиме `sharding` для горизонтального масштабирования |
-| **Cert-Manager Integration** | Автоматически выдает и ротирует TLS-сертификаты для Collector и вебхуков |
+```
+                      Kubernetes API Server
+                                │
+               Mutating Admission Webhook (TLS via cert-manager)
+                                │
+          ┌─────────────────────┴─────────────────────┐
+          ▼                                           ▼
+   Pod приложения                             OpenTelemetry Operator
+┌─────────────────────────┐                ┌─────────────────────────┐
+│ App Container           │                │ Controllers:            │
+│ (OTel Auto-Agent)       │                │ - OpenTelemetryCollector│
+│  │ OTLP gRPC (:4317)    │                │ - Instrumentation       │
+└──┼──────────────────────┘                │ - Target Allocator      │
+   ▼                                       └─────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│ Jaeger v2 Collector Pod (OpenTelemetryCollector CR)               │
+│                                                                    │
+│  ┌───────────┐    ┌────────────────┐    ┌───────────────────────┐  │
+│  │ Receivers │───▶│ Processors     │───▶│ Storage Exporters     │  │
+│  │ - OTLP    │    │ - memory_limiter│   │ - jaeger_storage_     │  │
+│  │   gRPC/HTTP│   │ - k8sattributes│   │   exporter            │  │
+│  └───────────┘    │ - batch        │    └───────────┬───────────┘  │
+│                   └────────────────┘                │              │
+│  Extensions:                                        │              │
+│  - healthcheckv2 (:13133)                           │              │
+│  - jaeger_storage (ClickHouse Connection Pool)      │              │
+│  - jaeger_query (Query API & UI :16686)             │              │
+└─────────────────────────────────────────────────────┼──────────────┘
+                                                      │ TCP/Native (:9000)
+                                                      ▼
+                                       ┌─────────────────────────────┐
+                                       │ On-Premise Storage Backend  │
+                                       │ ClickHouse Cluster (Bare-Metal)│
+                                       └─────────────────────────────┘
+```
 
-**Поток данных в Kubernetes:**
+**Компоненты OpenTelemetry Operator:**
+1. **OpenTelemetryCollector Controller:** Следит за созданием и модификацией CR `OpenTelemetryCollector`. Транслирует спеку CR в нативные ресурсы Kubernetes: Deployment/DaemonSet/StatefulSet, Service, ServiceAccount, ConfigMap с конфигурацией пайплайнов и RBAC-привязки.
+2. **Instrumentation Controller:** Управляет внедрением библиотек автоматического инструментирования. Перехватывает создание подов с аннотациями `instrumentation.opentelemetry.io/inject-*`, монтирует init-контейнер с SDK и настраивает переменные среды (`OTEL_EXPORTER_OTLP_ENDPOINT`, `JAVA_TOOL_OPTIONS` и др.).
+3. **Webhook Server:** Обслуживает Mutating Admission Webhook для инъекции sidecar-контейнеров и агентов, а также Validating Webhook для синтаксической проверки конфигурации коллектора до ее применения.
+4. **Target Allocator:** Опциональный контроллер для шардирования Prometheus ServiceMonitors и распределения нагрузки скрапинга между несколькими подами Collector без дубликатов.
 
-1. Приложение с автоматической инструментацией (или ручным OTLP-экспортером) отправляет спаны на Collector.
-2. Collector (развернутый как Deployment, DaemonSet или Sidecar) обрабатывает спаны через пайплайн OTLP.
-3. Экспортер записывает данные в хранилище (ClickHouse, Elasticsearch) или Kafka.
-4. Query/UI предоставляет доступ к данным через Service и Ingress.
+### Топологии развертывания коллектора
 
-### Паттерны развертывания коллектора
+Выбор архитектурного паттерна определяет устойчивость к отказам, потребление вычислительных ресурсов узлов и сетевую сложность.
 
-В Jaeger v2 выбор паттерна развертывания коллектора-агента определяет баланс между потреблением ресурсов и сетевой сложностью.
+| Паттерн | Описание | Достоинства | Недостатки | Рекомендация для SRE |
+| :--- | :--- | :--- | :--- | :--- |
+| **Sidecar** | Collector запускается в каждом поде приложения через аннотацию оператора | Минимальная сетевая задержка (localhost), индивидуальные фильтры для сервиса | Огромный суммарный оверхед по RAM/CPU при масштабировании приложений (сотни реплик) | Только для единичных критичных сервисов с нестандартной обработкой спанов |
+| **DaemonSet (Node Agent)** | По одному экземпляру Collector на каждом рабочем узле кластера | Сбор локальных системных метрик (`hostmetrics`), оптимальное использование ресурсов узла | Требует проброса `hostPort` или `status.hostIP` через Downward API | Подходит для сбора логов/метрик узла и первичной агрегации трасс |
+| **Deployment (Gateway Cluster)** | Централизованный горизонтально масштабируемый пул коллекторов за балансировщиком Service | Простота масштабирования через HPA, централизованное хвостовое сэмплирование (tail sampling), единая точка записи в ClickHouse | Дополнительный сетевой переход (network hop), необходимость балансировки gRPC | Стандарт для централизованной обработки телеметрии в микросервисах |
+| **Двухуровневая архитектура (Multi-tier)** | Приложения пишут в локальный DaemonSet на узле, который обогащает спаны метаданными и отправляет их в Deployment Gateway | Оптимальный компромисс: минимальный сетевой буфер на узле, надежное k8sattributes-обогащение и централизованный batching в ClickHouse | Усложнение конфигурации двух типов коллекторов | **Рекомендуемый эталон (Best Practice) для крупных Bare-Metal кластеров** |
 
-| Паттерн | Описание | Плюсы | Минусы |
+### Сетевое взаимодействие, балансировка gRPC и порты
+
+Jaeger v2 использует стандартные порты OpenTelemetry и компоненты ядра:
+
+| Порт | Протокол | Компонент | Назначение |
 | :--- | :--- | :--- | :--- |
-| **Sidecar** | Collector запускается как второй контейнер в каждом поде приложения | Прямая связь по localhost. Индивидуальная настройка для каждого сервиса | Оверхед по ресурсам на каждый инстанс приложения |
-| **DaemonSet** | Один экземпляр Collector на каждом узле кластера | Оптимальное использование ресурсов узла. Удобно для сбора системных метрик | Требует настройки `hostPort` и корректной передачи IP узла из приложений |
-| **Deployment** | Централизованный кластер коллекторов за Service | Удобство масштабирования (HPA). Централизованное управление политиками сэмплирования | Дополнительный сетевой переход (Extra Hop), требующий учета задержек |
+| **4317** | TCP / gRPC | OTLP Receiver | Прием трассировок, метрик и логов по стандартному бинарному протоколу OTLP gRPC |
+| **4318** | TCP / HTTP | OTLP Receiver | Прием OTLP данных в формате JSON/Protobuf по HTTP |
+| **14250** | TCP / gRPC | Jaeger Receiver (Legacy) | Прием спанов от устаревших агентов и библиотек Jaeger v1 |
+| **14268** | TCP / HTTP | Jaeger Receiver (Legacy) | Прием спанов от клиентов Jaeger v1 через HTTP POST `/api/traces` |
+| **9411** | TCP / HTTP | Zipkin Receiver | Прием спанов в формате Zipkin v1/v2 (JSON, Thrift, Protobuf) |
+| **8888** | TCP / HTTP | Collector Metrics | Экспорт внутренних метрик OpenTelemetry Collector в формате Prometheus |
+| **13133** | TCP / HTTP | healthcheckv2 extension | Эндпоинт проверки жизнеспособности (liveness/readiness probes) |
+| **16686** | TCP / HTTP | jaeger_query extension | Веб-интерфейс Jaeger UI и REST/gRPC Query API |
 
-**Рекомендации по выбору паттерна (2026):**
-- **Sidecar:** Используйте для микросервисов с высокой cardinality атрибутов или требующих индивидуальной конфигурации пайплайна.
-- **DaemonSet:** Используйте для сбора телеметрии с уровня узла (системные метрики, eBPF-данные) или при высокой нагрузке, где overhead sidecar'ов критичен.
-- **Deployment:** Используйте для стандартных микросервисных архитектур с возможностью централизованного управления.
+**Проблема балансировки gRPC в Kubernetes:**
+gRPC работает поверх постоянных HTTP/2 соединений (multiplexing). Стандартный Kubernetes Service типа `ClusterIP` (через kube-proxy iptables/IPVS) работает на уровне L4 и распределяет TCP-сессии, а не отдельные RPC-запросы. В результате длительное соединение приложения "прилипает" к одному моду Collector, вызывая неравномерную нагрузку.
+**Решения для SRE:**
+1. Использование **Headless Service** (`clusterIP: None`) в сочетании с round-robin балансировкой на стороне OTel SDK (`dns:///jaeger-collector-headless.observability.svc:4317`).
+2. Использование Service Mesh (Istio / Envoy) или ingress-контроллеров с поддержкой gRPC L7 proxying.
+3. Ограничение времени жизни соединения (`max_connection_age` / `max_connection_age_grace`) в конфигурации OTLP-ресивера коллектора для принудительного переподключения клиентов.
 
-### RBAC и безопасность
+### Безопасность и RBAC в On-Premise кластере
 
-Для корректной работы Jaeger v2 (особенно в режиме DaemonSet или при использовании процессоров типа `k8sattributes`) требуются специфичные права доступа:
+Для работы процессора `k8sattributes` коллектор опрашивает API-сервер Kubernetes для сопоставления входящих IP-адресов соединений с конкретными подами кластера. 
 
-1. **Ресурс `pods`, `nodes`, `namespaces`:** Права на `get`, `watch`, `list` для обогащения спанов метаданными Kubernetes.
-2. **Ресурс `events`:** Для сбора событий кластера.
-3. **Security Context:** Рекомендуется запускать коллектор от не-привилегированного пользователя, если не требуется доступ к `hostPath` (например, для чтения логов).
+**Принцип наименьших привилегий (Least Privilege):**
+- Доступ должен ограничиваться операциями чтения (`get`, `watch`, `list`) ресурсов `pods`, `nodes`, `namespaces`.
+- Права на просмотр `secrets` или `configmaps` категорически запрещены.
+- Если коллектор работает в режиме DaemonSet, он может извлекать метаданные только для подов своего узла с помощью фильтра `filter.node_from_env_var: K8S_NODE_NAME`.
 
-**Пример ServiceAccount и RBAC:**
+**Pod Security Standards (PSS):**
+В современных версиях Kubernetes (1.28+) поды коллектора обязаны соответствовать профилю `Restricted`:
+- Запуск от не-root пользователя (`runAsNonRoot: true`, `runAsUser: 10001`).
+- Запрет повышения привилегий (`allowPrivilegeEscalation: false`).
+- Доступ только на чтение к корневой файловой системе (`readOnlyRootFilesystem: true`) с монтированием `emptyDir` в `/tmp`.
+- Полный сброс Linux capabilities (`drop: ["ALL"]`).
+- Включение профиля seccomp по умолчанию (`seccompProfile.type: RuntimeDefault`).
+
+### Персистентное хранилище на Bare-Metal
+
+Для On-Premise инфраструктур использование сетевых файловых систем общего назначения (NFS) под базы данных трассировки (ClickHouse, Elasticsearch) недопустимо из-за высоких требований к IOPS и блокировкам файлов.
+
+**Требования к StorageClass для бэкендов хранения:**
+- **Локальные NVMe диски:** Использование Local Storage Operator, `local-path-provisioner` или TopoLVM (LVM-CSI) обеспечивает максимальную скорость записи при десятках тысяч спанов в секунду.
+- **Распределенное блочное хранилище:** Применение Rook-Ceph RBD (`rook-ceph-block`) обеспечивает репликацию на уровне дисковой подсистемы и динамический provisoning PVC.
+- **Топологическое связывание:** Обязательная директива `volumeBindingMode: WaitForFirstConsumer` в StorageClass предотвращает создание PV на узле до того, как Kubernetes Scheduler определит узел с достаточными ресурсами CPU/RAM для пода базы данных.
+
+---
+
+## Практические сценарии
+
+### Сценарий 1: Развертывание оператора и Jaeger v2 через OpenTelemetryCollector CR (Production Deployment)
+
+Развертывание отказоустойчивого кластера Jaeger v2 (в режиме Deployment) с хранилищем ClickHouse в bare-metal окружении.
+
+#### Предварительные требования
+- Кластер Kubernetes 1.28+ (on-premise / bare-metal).
+- Установленный `cert-manager` (для вебхуков валидации и мутации):
+  ```bash
+  kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
+  # → customresourcedefinition.apiextensions.k8s.io/certificates.cert-manager.io created
+  ```
+- Установленный OpenTelemetry Operator:
+  ```bash
+  kubectl apply -f https://github.com/open-telemetry/opentelemetry-operator/releases/download/v0.118.0/opentelemetry-operator.yaml
+  # → deployment.apps/opentelemetry-operator-controller-manager created
+  ```
+- Развернутый в кластере кластер ClickHouse (`clickhouse.observability.svc.cluster.local:9000`).
+
+#### 1. Создание ServiceAccount и RBAC для обогащения метаданными
 
 ```yaml
-# service-account.yaml
+# jaeger-rbac.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: jaeger-collector
   namespace: observability
-
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: jaeger-collector
+  name: jaeger-collector-k8sattributes
 rules:
   - apiGroups: [""]
-    resources: ["pods", "nodes", "namespaces", "events"]
+    resources: ["pods", "nodes", "namespaces"]
     verbs: ["get", "watch", "list"]
-
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: jaeger-collector
+  name: jaeger-collector-k8sattributes
 subjects:
   - kind: ServiceAccount
     name: jaeger-collector
     namespace: observability
 roleRef:
   kind: ClusterRole
-  name: jaeger-collector
+  name: jaeger-collector-k8sattributes
   apiGroup: rbac.authorization.k8s.io
 ```
 
-### Взаимодействие с Service Mesh
+#### 2. Создание манифеста OpenTelemetryCollector CR
 
-При использовании Istio или Linkerd необходимо обеспечить корректную передачу заголовков:
-*   **W3C Trace Context (`traceparent`):** Стандарт по умолчанию для Jaeger v2 и OTel.
-*   **B3 Propagation:** Часто используется в Istio. Jaeger v2 может принимать B3 и конвертировать его в W3C для внутреннего хранения.
-
-**Конфигурация Istio для трассировки:**
+> [!IMPORTANT]
+> В пайплайнах обработки OpenTelemetry процессор `memory_limiter` **всегда обязан стоять первым** в списке `processors`. Это предотвращает выделение памяти под парсинг и метаданные при угрозе OOMKilled.
 
 ```yaml
-apiVersion: telemetry.istio.io/v1alpha1
-kind: Telemetry
-metadata:
-  name: mesh-default
-  namespace: istio-system
-spec:
-  tracing:
-    - providers:
-        - name: otel
-      randomSamplingPercentage: 10
-```
-
-### Ресурсные требования в Kubernetes
-
-| Роль | CPU (Request/Limit) | RAM (Request/Limit) | Хранилище | Примечание |
-| :--- | :--- | :--- | :--- | :--- |
-| **Collector (Deployment)** | 500m / 2000m | 512Mi / 2Gi | Не требуется | Зависит от количества OTLP-соединений |
-| **Collector (DaemonSet)** | 200m / 1000m | 256Mi / 1Gi | Не требуется | На каждый узел; меньше overhead |
-| **Query** | 250m / 1000m | 256Mi / 1Gi | Не требуется | Зависит от числа пользователей UI |
-| **ClickHouse** | 2 / 4 | 4Gi / 8Gi | PVC 100Gi+ | Минимум 3 узла для HA |
-| **Elasticsearch** | 2 / 4 | 4Gi / 8Gi | PVC 100Gi+ | Минимум 3 узла для HA |
-
-### PersistentVolume и хранилище
-
-Для production-развертываний с ClickHouse или Elasticsearch требуется настройка персистентного хранилища:
-
-```yaml
-# storage-class.yaml (пример для ClickHouse)
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: fast-ssd
-provisioner: kubernetes.io/aws-ebs
-parameters:
-  type: gp3
-  iops: "10000"
-  throughput: "500"
-volumeBindingMode: WaitForFirstConsumer
-allowVolumeExpansion: true
-
----
-# persistent-volume-claim.yaml
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: jaeger-clickhouse-data
-  namespace: observability
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: fast-ssd
-  resources:
-    requests:
-      storage: 200Gi
-```
-
-### HorizontalPodAutoscaler для Collector
-
-При изменяющейся нагрузке настройте HPA для автоматического масштабирования коллектора:
-
-```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: jaeger-collector
-  namespace: observability
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: jaeger-collector
-  minReplicas: 3
-  maxReplicas: 10
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70
-    - type: Pods
-      pods:
-        metric:
-          name: otelcol_receiver_accepted_spans
-        target:
-          type: AverageValue
-          averageValue: "5000"
-```
-
-### NetworkPolicy для изоляции трафика
-
-Рекомендуется ограничить сетевой доступ к компонентам Jaeger:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: jaeger-allow-ingress
-  namespace: observability
-spec:
-  podSelector:
-    matchLabels:
-      app: jaeger
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: default
-      ports:
-        - protocol: TCP
-          port: 4317
-        - protocol: TCP
-          port: 4318
-        - protocol: TCP
-          port: 16686
-  egress:
-    - to:
-        - namespaceSelector: {}
-      ports:
-        - protocol: TCP
-          port: 4317
-        - protocol: TCP
-          port: 9000  # ClickHouse
-        - protocol: TCP
-          port: 9092  # Kafka
-```
-
----
-
-## Практические сценарии
-
-### Сценарий 1: Развертывание Jaeger v2 через OpenTelemetry Operator
-
-В Jaeger v2 рекомендуется использовать `kind: OpenTelemetryCollector` с образом Jaeger.
-
-#### Предварительные требования
-
-- Kubernetes кластер версии 1.24+
-- Helm 3.10+ или kubectl с поддержкой CRD
-- 4 CPU и 8GB RAM на узле для production-компонентов
-
-#### Полная конфигурация Production-ready Collector (Deployment mode)
-
-```yaml
+# jaeger-v2-collector.yaml
 apiVersion: opentelemetry.io/v1beta1
 kind: OpenTelemetryCollector
 metadata:
-  name: jaeger-collector
+  name: jaeger
   namespace: observability
 spec:
   mode: deployment
   replicas: 3
-  image: jaegertracing/jaeger:2.0.0
+  image: jaegertracing/jaeger:2.3.0
   serviceAccount: jaeger-collector
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
   resources:
     requests:
       cpu: 500m
-      memory: 512Mi
+      memory: 1Gi
     limits:
       cpu: 2000m
       memory: 2Gi
+  env:
+    - name: GOMEMLIMIT
+      value: "1800MiB"
+    - name: GOMAXPROCS
+      value: "2"
+  config: |
+    extensions:
+      healthcheckv2:
+        use_v2: true
+        http:
+          endpoint: 0.0.0.0:13133
+      jaeger_storage:
+        backends:
+          ch_store:
+            type: clickhouse
+            clickhouse:
+              endpoint: "tcp://clickhouse.observability.svc.cluster.local:9000"
+              database: "jaeger_v2"
+              connection_timeout: 5s
+      jaeger_query:
+        storage:
+          traces: ch_store
+        http:
+          endpoint: 0.0.0.0:16686
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+            max_concurrent_streams: 1024
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      memory_limiter:
+        check_interval: 250ms
+        limit_percentage: 80
+        spike_limit_percentage: 20
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata:
+            - k8s.pod.name
+            - k8s.pod.uid
+            - k8s.namespace.name
+            - k8s.node.name
+            - k8s.deployment.name
+          labels:
+            - tag_name: app.label.version
+              key: version
+      batch:
+        send_batch_size: 8192
+        timeout: 500ms
+        send_batch_max_size: 16384
+
+    exporters:
+      jaeger_storage_exporter:
+        trace_storage: ch_store
+
+    service:
+      extensions: [healthcheckv2, jaeger_storage, jaeger_query]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, batch]
+          exporters: [jaeger_storage_exporter]
+      telemetry:
+        metrics:
+          address: 0.0.0.0:8888
+```
+
+#### Валидация
+```bash
+# Применение конфигурации
+kubectl apply -f jaeger-rbac.yaml
+# → serviceaccount/jaeger-collector created
+# → clusterrole.rbac.authorization.k8s.io/jaeger-collector-k8sattributes created
+# → clusterrolebinding.rbac.authorization.k8s.io/jaeger-collector-k8sattributes created
+
+kubectl apply -f jaeger-v2-collector.yaml
+# → opentelemetrycollector.opentelemetry.io/jaeger created
+
+# Проверка создания подов
+kubectl get pods -n observability -l app.kubernetes.io/name=jaeger-collector
+# → NAME                               READY   STATUS    RESTARTS   AGE
+# → jaeger-collector-7d8b5c46b-2k4l9   1/1     Running   0          45s
+# → jaeger-collector-7d8b5c46b-8f3x2   1/1     Running   0          45s
+# → jaeger-collector-7d8b5c46b-p9q1w   1/1     Running   0          45s
+
+# Проверка доступности Health check
+kubectl exec -n observability deploy/jaeger-collector -- curl -s http://127.0.0.1:13133/
+# → {"status":"Server available"}
+
+# Проверка готовности к приему спанов через OTLP
+curl -i http://127.0.0.1:16686/api/services
+# → HTTP/1.1 200 OK
+# → {"data":["jaeger-query"],"total":1,"limit":0,"offset":0,"errors":null}
+```
+
+---
+
+### Сценарий 2: Двухуровневая архитектура (DaemonSet Node Agent + Deployment Gateway)
+
+Для масштабных кластеров (50+ рабочих узлов) рекомендуется разделение сбора:
+1. **DaemonSet Agent:** Запускается на каждом узле, слушает `hostPort: 4317` или локальный IP пода, обогащает спаны метаданными `k8sattributes` узла без лишней нагрузки на API-сервер и отправляет трафик дальше.
+2. **Deployment Gateway:** Централизованный кластер, который собирает данные от агентов, выполняет тяжелое пакетирование и сохраняет данные в ClickHouse.
+
+```yaml
+# jaeger-agent-daemonset.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: jaeger-node-agent
+  namespace: observability
+spec:
+  mode: daemonset
+  image: jaegertracing/jaeger:2.3.0
+  serviceAccount: jaeger-collector
+  hostNetwork: false
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      hostPort: 4317
+    - name: otlp-http
+      port: 4318
+      hostPort: 4318
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    - name: K8S_NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
   config: |
     receivers:
       otlp:
         protocols:
           grpc:
+            endpoint: 0.0.0.0:4317
           http:
+            endpoint: 0.0.0.0:4318
+
     processors:
-      k8sattributes:
-        extract:
-          metadata: [k8s.pod.name, k8s.namespace.name, k8s.node.name]
-      batch:
       memory_limiter:
-        check_interval: 1s
-        limit_mib: 1536
-        spike_limit_mib: 512
+        check_interval: 200ms
+        limit_percentage: 75
+        spike_limit_percentage: 20
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        filter:
+          node_from_env_var: K8S_NODE_NAME
+        extract:
+          metadata:
+            - k8s.pod.name
+            - k8s.namespace.name
+            - k8s.node.name
+      batch:
+        send_batch_size: 2048
+        timeout: 200ms
+
     exporters:
-      jaeger_storage_exporter:
-        trace_storage:
-          type: clickhouse
-          options:
-            clickhouse:
-              endpoint: "tcp://clickhouse-server.observability.svc:9000"
-              database: jaeger_v2
+      otlp:
+        endpoint: "jaeger-collector.observability.svc.cluster.local:4317"
+        tls:
+          insecure: true
+
     service:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [k8sattributes, memory_limiter, batch]
-          exporters: [jaeger_storage_exporter]
+          processors: [memory_limiter, k8sattributes, batch]
+          exporters: [otlp]
 ```
 
-**Валидация:**
+#### Валидация
+```bash
+kubectl apply -f jaeger-agent-daemonset.yaml
+# → opentelemetrycollector.opentelemetry.io/jaeger-node-agent created
 
-1. Применить конфигурацию: `kubectl apply -f otel-collector.yaml`.
-2. Проверить статус подов: `kubectl get pods -n observability -l app.kubernetes.io/name=jaeger-collector`.
-3. Проверить логи: `kubectl logs -n observability -l app.kubernetes.io/name=jaeger-collector --tail=50`.
-4. Отправить тестовый спан и убедиться, что он появился в UI через `http://localhost:16686`.
-5. Проверить метрики: `curl http://jaeger-collector.observability.svc:8888/metrics | grep otelcol_receiver_accepted_spans` — количество отправленных спанов должно расти.
+# Проверка запуска агентов на всех узлах
+kubectl get daemonset -n observability jaeger-node-agent-collector
+# → NAME                         DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   AGE
+# → jaeger-node-agent-collector  8         8         8       8            8           30s
 
-### Сценарий 2: Автоматическая инструментация (Instrumentation CR)
+# Проверка порта на узле
+kubectl get pods -n observability -l app.kubernetes.io/name=jaeger-node-agent-collector -o wide
+# → jaeger-node-agent-collector-5k2j   1/1   Running   0   node-worker-01
+```
 
-OpenTelemetry Operator позволяет автоматически внедрять SDK в приложения.
+---
+
+### Сценарий 3: Автоматическая инструментация приложений (Instrumentation CR)
+
+OpenTelemetry Operator автоматически инжектирует агенты трассировки в пользовательские контейнеры при помощи аннотаций.
 
 ```yaml
+# otel-instrumentation.yaml
 apiVersion: opentelemetry.io/v1alpha1
 kind: Instrumentation
 metadata:
-  name: java-instrumentation
-  namespace: my-app
+  name: cluster-instrumentation
+  namespace: default
 spec:
   exporter:
-    endpoint: http://jaeger-collector.observability.svc:4317
+    endpoint: http://jaeger-collector.observability.svc.cluster.local:4317
   propagators:
     - tracecontext
     - baggage
   sampler:
     type: parentbased_traceidratio
-    argument: "0.1" # 10% сэмплирования
+    argument: "0.2" # 20% сэмплирования для экономии дискового пространства
   java:
-    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:latest
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:2.11.0
+  python:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:0.50b0
+  nodejs:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs:0.56.0
+  go:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-go:v0.19.0-alpha
 ```
 
-Для активации добавьте аннотацию в под приложения:
-`instrumentation.opentelemetry.io/inject-java: "true"`
-
-**Валидация:**
-
-1. Применить Instrumentation: `kubectl apply -f instrumentation.yaml`.
-2. Добавить аннотацию в Deployment приложения.
-3. Перезапустить под: `kubectl rollout restart deployment/my-app -n my-app`.
-4. Проверить, что в поде появился init-контейнер: `kubectl describe pod -n my-app -l app=my-app`.
-5. Отправить тестовый запрос: `curl http://my-app.my-app.svc:8080/api`.
-6. Проверить метрики Collector: `curl http://jaeger-collector.observability.svc:8888/metrics | grep otelcol_receiver_accepted_spans`.
-
-### Сценарий 3: DaemonSet режим для сбора телеметрии с узлов
-
-Для сбора данных с каждого узла кластера (системные метрики, eBPF-данные) разверните Collector как DaemonSet:
+#### Манифест приложения с включенной инъекцией:
 
 ```yaml
-apiVersion: opentelemetry.io/v1beta1
-kind: OpenTelemetryCollector
+# demo-app.yaml
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: jaeger-agent
+  name: order-service
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "default/cluster-instrumentation"
+    spec:
+      containers:
+        - name: app
+          image: eclipse-temurin:21-jre-alpine
+          command: ["sh", "-c", "sleep 3600"]
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+```
+
+#### Валидация
+```bash
+kubectl apply -f otel-instrumentation.yaml
+# → instrumentation.opentelemetry.io/cluster-instrumentation created
+
+kubectl apply -f demo-app.yaml
+# → deployment.apps/order-service created
+
+# Проверка добавления init-контейнера в созданный под
+kubectl describe pod -n default -l app=order-service | grep -A 5 "Init Containers:"
+# → Init Containers:
+# →   opentelemetry-auto-instrumentation-java:
+# →     Container ID:  containerd://...
+# →     Image:         ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:2.11.0
+
+# Проверка инжектированных переменных окружения
+kubectl get pod -n default -l app=order-service -o jsonpath='{.items[0].spec.containers[0].env[?(@.name=="JAVA_TOOL_OPTIONS")].value}'
+# →  -javaagent:/otel-auto-instrumentation-java/javaagent.jar
+```
+
+---
+
+### Сценарий 4: Hardened SecurityContext и изоляция прав (Pod Security Standards)
+
+Развертывание модулей Jaeger v2 в строгом соответствии с профилем `Restricted` PSS (Pod Security Standards) для исключения рисков эскалации привилегий.
+
+```yaml
+# jaeger-hardened-pod.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger-query-standalone
   namespace: observability
 spec:
-  mode: daemonset
-  image: jaegertracing/jaeger:2.0.0
-  serviceAccount: jaeger-collector
-  hostPID: true  # Требуется для eBPF и чтения системных процессов
-  resources:
-    requests:
-      cpu: 200m
-      memory: 256Mi
-    limits:
-      cpu: 1000m
-      memory: 1Gi
-  config: |
-    receivers:
-      hostmetrics:
-        collection_interval: 10s
-      otlp:
-        protocols:
-          grpc:
-          http:
-    processors:
-      k8sattributes:
-        auth_type: serviceAccount
-        passthrough: false
-        extract:
-          metadata: [k8s.pod.name, k8s.namespace.name, k8s.node.name]
-      batch:
-    exporters:
-      jaeger_storage_exporter:
-        trace_storage:
-          type: clickhouse
-          options:
-            clickhouse:
-              endpoint: "tcp://clickhouse-server.observability.svc:9000"
-              database: jaeger_v2
-    service:
-      pipelines:
-        traces:
-          receivers: [otlp]
-          processors: [k8sattributes, batch]
-          exporters: [jaeger_storage_exporter]
-        metrics:
-          receivers: [hostmetrics]
-          processors: [batch]
-          exporters: [jaeger_storage_exporter]
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jaeger-query
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jaeger-query
+    spec:
+      serviceAccountName: jaeger-collector
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: query
+          image: jaegertracing/jaeger:2.3.0
+          args: ["--config=/etc/jaeger/config.yaml"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: config
+              mountPath: /etc/jaeger
+              readOnly: true
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: jaeger-config
 ```
 
-**Валидация:**
+#### Валидация
+```bash
+kubectl apply -f jaeger-hardened-pod.yaml
+# → deployment.apps/jaeger-query-standalone created
 
-1. Применить DaemonSet: `kubectl apply -f daemonset.yaml`.
-2. Проверить, что поды запущены на всех узлах: `kubectl get pods -n observability -l app.kubernetes.io/name=jaeger-agent -o wide`.
-3. Проверить права: `kubectl auth can-i get pods --as=system:serviceaccount:observability:jaeger-collector`.
-4. Проверить метрики узла: `curl http://<node-ip>:8888/metrics | grep hostmetrics_cpu`.
+# Проверка применения seccomp и security context
+kubectl get pod -n observability -l app.kubernetes.io/name=jaeger-query -o jsonpath='{.items[0].spec.securityContext}'
+# → {"fsGroup":10001,"runAsGroup":10001,"runAsNonRoot":true,"runAsUser":10001,"seccompProfile":{"type":"RuntimeDefault"}}
 
-### Сценарий 4: Настройка HPA для горизонтального масштабирования Collector
+# Проверка невозможности записи в корень ФС
+kubectl exec -n observability -c query deploy/jaeger-query-standalone -- touch /root/test 2>&1
+# → touch: /root/test: Read-only file system
+```
 
-При изменяющейся нагрузке HPA автоматически регулирует количество реплик коллектора:
+---
+
+### Сценарий 5: Сетевая изоляция с NetworkPolicy в On-Premise кластере
+
+Защита пространства имен `observability`: разрешение входящих OTLP-соединений от приложений и UI-трафика, строгий запрет неавторизованного исходящего сетевого доступа.
 
 ```yaml
+# jaeger-network-policy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jaeger-collector-netpol
+  namespace: observability
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: jaeger-collector
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Разрешаем прием OTLP gRPC и HTTP трафика от всех подов кластера
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
+    # Разрешаем скрапинг метрик только Prometheus-модулям
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8888
+  egress:
+    # Разрешаем подключение к ClickHouse кластеру
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: clickhouse
+      ports:
+        - protocol: TCP
+          port: 9000
+    # Разрешаем обращения к Kubernetes API-серверу (для k8sattributes)
+    - to:
+        - ipBlock:
+            cidr: 10.96.0.1/32
+      ports:
+        - protocol: TCP
+          port: 443
+    # Разрешаем DNS запросы к CoreDNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+```
+
+#### Валидация
+```bash
+kubectl apply -f jaeger-network-policy.yaml
+# → networkpolicy.networking.k8s.io/jaeger-collector-netpol created
+
+# Проверка прохождения разрешенного gRPC трафика
+kubectl run test-grpc --rm -it --image=fullstorydev/grpcurl -n default -- \
+  -plaintext jaeger-collector.observability.svc.cluster.local:4317 list
+# → grpc.health.v1.Health
+# → opentelemetry.proto.collector.trace.v1.TraceService
+
+# Проверка блокировки запрещенного порта (например, попытка обращения наружу)
+kubectl exec -n observability deploy/jaeger-collector -- nc -z -w 2 8.8.8.8 53
+# → (таймаут соединения: Connection timed out)
+```
+
+---
+
+### Сценарий 6: Горизонтальное автомасштабирование (HPA) и PodDisruptionBudget
+
+Настройка отказоустойчивости во время пиковых нагрузок и регламентного обслуживания физических нод.
+
+```yaml
+# jaeger-hpa-pdb.yaml
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: jaeger-collector
+  name: jaeger-collector-hpa
   namespace: observability
 spec:
   scaleTargetRef:
@@ -432,7 +682,7 @@ spec:
     kind: Deployment
     name: jaeger-collector
   minReplicas: 3
-  maxReplicas: 10
+  maxReplicas: 12
   metrics:
     - type: Resource
       resource:
@@ -440,348 +690,301 @@ spec:
         target:
           type: Utilization
           averageUtilization: 70
-    - type: Pods
-      pods:
-        metric:
-          name: otelcol_receiver_accepted_spans
+    - type: Resource
+      resource:
+        name: memory
         target:
-          type: AverageValue
-          averageValue: "5000"
+          type: Utilization
+          averageUtilization: 80
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: 60
+      stabilizationWindowSeconds: 30
       policies:
         - type: Percent
-          value: 50
-          periodSeconds: 60
+          value: 100
+          periodSeconds: 30
     scaleDown:
       stabilizationWindowSeconds: 300
       policies:
         - type: Percent
           value: 10
           periodSeconds: 60
-```
-
-**Валидация:**
-
-1. Применить HPA: `kubectl apply -f hpa.yaml`.
-2. Отправить нагрузку: `ab -n 10000 -c 100 -p spans.json -T application/json http://jaeger-collector.observability.svc:4318/v1/traces`.
-3. Проверить реакцию HPA: `kubectl get hpa -n observability jaeger-collector -w`.
-4. Убедиться, что реплики увеличились: `kubectl get pods -n observability -l app.kubernetes.io/name=jaeger-collector`.
-5. После завершения нагрузки убедиться, что реплики уменьшились до минимума.
-
-### Сценарий 5: RBAC и Security Context для Collector
-
-Для безопасного развертывания Collector в Kubernetes требуется минимальный набор прав и hardened Security Context:
-
-```yaml
-# service-account.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: jaeger-collector
-  namespace: observability
-
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+apiVersion: policy/v1
+kind: PodDisruptionBudget
 metadata:
-  name: jaeger-collector
-rules:
-  - apiGroups: [""]
-    resources: ["pods", "nodes", "namespaces", "events"]
-    verbs: ["get", "watch", "list"]
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: jaeger-collector
-subjects:
-  - kind: ServiceAccount
-    name: jaeger-collector
-    namespace: observability
-roleRef:
-  kind: ClusterRole
-  name: jaeger-collector
-  apiGroup: rbac.authorization.k8s.io
-
----
-# pod-security-policy.yaml (через Pod Security Standards)
-apiVersion: v1
-kind: Pod
-metadata:
-  name: jaeger-collector
+  name: jaeger-collector-pdb
   namespace: observability
 spec:
-  serviceAccountName: jaeger-collector
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    fsGroup: 1000
-    seccompProfile:
-      type: RuntimeDefault
-  containers:
-    - name: collector
-      image: jaegertracing/jaeger:2.0.0
-      securityContext:
-        allowPrivilegeEscalation: false
-        readOnlyRootFilesystem: true
-        capabilities:
-          drop:
-            - ALL
-      volumeMounts:
-        - name: tmp
-          mountPath: /tmp
-        - name: var-run
-          mountPath: /var/run
-      resources:
-        requests:
-          cpu: 500m
-          memory: 512Mi
-        limits:
-          cpu: 2000m
-          memory: 2Gi
-  volumes:
-    - name: tmp
-      emptyDir: {}
-    - name: var-run
-      emptyDir: {}
-```
-
-**Валидация:**
-
-1. Применить RBAC: `kubectl apply -f service-account.yaml`.
-2. Применить Pod: `kubectl apply -f pod-security-policy.yaml`.
-3. Проверить, что под запустился: `kubectl get pods -n observability`.
-4. Проверить Security Context: `kubectl get pod -n observability -o jsonpath='{.spec.securityContext}'`.
-5. Проверить права: `kubectl auth can-i get pods --as=system:serviceaccount:observability:jaeger-collector`.
-
-### Сценарий 6: NetworkPolicy для изоляции трафика
-
-Рекомендуется ограничить сетевой доступ к компонентам Jaeger:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: jaeger-allow-ingress
-  namespace: observability
-spec:
-  podSelector:
+  minAvailable: 2
+  selector:
     matchLabels:
-      app: jaeger
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: default
-      ports:
-        - protocol: TCP
-          port: 4317
-        - protocol: TCP
-          port: 4318
-        - protocol: TCP
-          port: 16686
-  egress:
-    - to:
-        - namespaceSelector: {}
-      ports:
-        - protocol: TCP
-          port: 4317
-        - protocol: TCP
-          port: 9000  # ClickHouse
-        - protocol: TCP
-          port: 9092  # Kafka
+      app.kubernetes.io/name: jaeger-collector
 ```
 
-**Валидация:**
-
-1. Применить NetworkPolicy: `kubectl apply -f network-policy.yaml`.
-2. Проверить политику: `kubectl describe networkpolicy -n observability jaeger-allow-ingress`.
-3. Проверить, что трафик из разрешенного неймспейса проходит: `curl http://jaeger-collector.observability.svc:4317/health`.
-4. Проверить, что трафик из запрещенного неймспейса блокируется: `kubectl exec -it <pod-in-other-ns> -- curl --connect-timeout 2 http://jaeger-collector.observability.svc:4317/health` (должен вернуть ошибку timeout).
-
-### Сценарий 7: Развертывание через Helm (Kubernetes)
-
-Для Kubernetes рекомендуется использовать официальные Helm-чарты или OpenTelemetry Operator. Пример установки через Helm:
-
+#### Валидация
 ```bash
-helm repo add jaegertracing https://jaegertracing.github.io/helm-charts
-helm repo update
+kubectl apply -f jaeger-hpa-pdb.yaml
+# → horizontalpodautoscaler.autoscaling/jaeger-collector-hpa created
+# → poddisruptionbudget.policy/jaeger-collector-pdb created
 
-# Установка в режиме Production
-helm install jaeger jaegertracing/jaeger \
-  --namespace observability --create-namespace \
-  --set collector.replicas=3 \
-  --set query.replicas=2 \
-  --set storage.type=clickhouse \
-  --set storage.clickhouse.endpoint=http://clickhouse:8123
+kubectl get hpa -n observability jaeger-collector-hpa
+# → NAME                   REFERENCE                     TARGETS           MINPODS   MAXPODS   REPLICAS   AGE
+# → jaeger-collector-hpa   Deployment/jaeger-collector   42%/70%, 55%/80%  3         12        3          1m
+
+# Проверка PDB
+kubectl get pdb -n observability jaeger-collector-pdb
+# → NAME                   MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+# → jaeger-collector-pdb   2               N/A               1                     1m
 ```
 
-**Валидация:**
+---
 
-1. Проверить поды: `kubectl get pods -n observability -l app.kubernetes.io/name=jaeger`.
-2. Открыть порт-forward: `kubectl port-forward -n observability svc/jaeger-query 16686:16686`.
-3. Перейти в UI и убедиться, что сервисы регистрируются.
+### Сценарий 7: Сквозная трассировка через Ingress-NGINX (Bare-Metal Ingress)
 
-### Сценарий 8: Сквозная трассировка через Ingress-NGINX
+Настройка генерации спанов на точке входа в кластер с автоматической передачей W3C `traceparent` в бэкенд-сервисы.
 
-Интеграция позволяет видеть путь запроса от момента входа в кластер.
-
-**Настройка в ConfigMap контроллера:**
-
-| Параметр | Значение |
-| :--- | :--- |
-| `enable-opentelemetry` | `"true"` |
-| `otlp-collector-host` | `jaeger-collector.observability.svc` |
-| `otlp-collector-port` | `"4317"` |
-| `otel-propagation-policy` | `"w3c"` |
+#### 1. Модификация ConfigMap ingress-nginx
 
 ```bash
-# Применение конфигурации
-kubectl edit configmap nginx-configuration -n ingress-nginx
+kubectl -n ingress-nginx patch configmap ingress-nginx-controller --type merge -p '{
+  "data": {
+    "enable-opentelemetry": "true",
+    "otlp-collector-host": "jaeger-collector.observability.svc.cluster.local",
+    "otlp-collector-port": "4317",
+    "otel-service-name": "ingress-nginx",
+    "otel-propagation-policy": "w3c",
+    "otel-sampler": "ratio",
+    "otel-sampler-ratio": "1.0"
+  }
+}'
+# → configmap/ingress-nginx-controller patched
+```
 
-# Перезапуск Ingress Controller
+#### 2. Перезапуск Ingress-контроллера
+```bash
 kubectl rollout restart deployment/ingress-nginx-controller -n ingress-nginx
+# → deployment.apps/ingress-nginx-controller restarted
+kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx
+# → deployment "ingress-nginx-controller" successfully rolled out
 ```
 
-**Валидация:**
+#### Валидация
+```bash
+# Выполняем тестовый HTTP-запрос к приложению через Ingress
+curl -i -H "Host: app.local" http://192.168.1.100/api/order
+# → HTTP/1.1 200 OK
 
-1. Отправить запрос через Ingress: `curl -X GET http://my-app.example.com/api`.
-2. Проверить, что в Jaeger UI появилась трасса с атрибутом `ingress.nginx` или `http.host`.
-3. Убедиться, что заголовок `traceparent` корректно передается от Ingress к приложению.
+# Проверяем наличие заголовка traceparent в логах ingress-nginx
+kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx --tail=5 | grep "traceparent"
+# → "POST /api/order HTTP/1.1" 200 128 "-" "curl/8.5.0" ... traceparent=00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+```
 
-### Сценарий 9: Создание Java TrustStore для безопасного подключения
+---
 
-При использовании внешних хранилищ (OpenSearch/Elasticsearch) с TLS требуется проброс сертификатов.
+### Сценарий 8: Хранилище ClickHouse на On-Premise с Rook-Ceph / Local PV
 
-1. **Создание TrustStore:**
-    ```bash
-    kubectl run jdk-helper --image=openjdk:11 --restart=Never -- sleep 3600
-    kubectl cp ca.pem jdk-helper:/tmp/ca.pem
-    kubectl exec jdk-helper -- keytool -import -alias os-ca -file /tmp/ca.pem -keystore /tmp/truststore.jks -storepass changeit -noprompt
-    kubectl cp jdk-helper:/tmp/truststore.jks ./truststore.jks
-    kubectl create secret generic jaeger-truststore --from-file=truststore.jks=./truststore.jks
-    ```
+Конфигурация StorageClass и PVC для хранения сотен гигабайт спанов на локальных или распределенных блочных устройствах Ceph RBD.
 
-2. **Использование в подах:**
-    Монтируйте секрет и передавайте переменные: `JAVA_OPTS="-Djavax.net.ssl.trustStore=/etc/trust/truststore.jks -Djavax.net.ssl.trustStorePassword=changeit"`.
+```yaml
+# clickhouse-onprem-storage.yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: baremetal-fast-ssd
+provisioner: rook-ceph.rbd.csi.ceph.com
+parameters:
+  clusterID: rook-ceph
+  pool: replicapool-nvme
+  imageFormat: "2"
+  imageFeatures: layering
+  csi.storage.k8s.io/fstype: ext4
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clickhouse-data-pvc
+  namespace: observability
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: baremetal-fast-ssd
+  resources:
+    requests:
+      storage: 500Gi
+```
+
+#### Валидация
+```bash
+kubectl apply -f clickhouse-onprem-storage.yaml
+# → storageclass.storage.k8s.io/baremetal-fast-ssd created
+# → persistentvolumeclaim/clickhouse-data-pvc created
+
+kubectl get sc baremetal-fast-ssd
+# → NAME                 PROVISIONER                  RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION
+# → baremetal-fast-ssd   rook-ceph.rbd.csi.ceph.com   Retain          WaitForFirstConsumer   true
+
+kubectl get pvc -n observability clickhouse-data-pvc
+# → NAME                  STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS         AGE
+# → clickhouse-data-pvc   Pending                                      baremetal-fast-ssd   10s
+# (Статус Pending до первого подключения подом ClickHouse из-за WaitForFirstConsumer)
+```
+
+---
+
+### Сценарий 9: Мониторинг Collector через Prometheus Operator (ServiceMonitor)
+
+Сбор телеметрии с самого коллектора Jaeger v2 для контроля стабильности пайплайнов обработки.
+
+```yaml
+# jaeger-servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: jaeger-collector-monitor
+  namespace: observability
+  labels:
+    release: prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jaeger-collector
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: "otelcol_.*"
+          action: keep
+```
+
+#### Валидация
+```bash
+kubectl apply -f jaeger-servicemonitor.yaml
+# → servicemonitor.monitoring.coreos.com/jaeger-collector-monitor created
+
+# Проверка ответа метрик напрямую с пода
+kubectl exec -n observability deploy/jaeger-collector -- curl -s http://127.0.0.1:8888/metrics | grep "otelcol_receiver_accepted_spans"
+# → # HELP otelcol_receiver_accepted_spans Number of spans successfully pushed into the pipeline.
+# → # TYPE otelcol_receiver_accepted_spans counter
+# → otelcol_receiver_accepted_spans{receiver="otlp",transport="grpc"} 15420
+```
+
+---
+
+## Операции и команды
+
+Сводная таблица регламентных команд системного администратора и SRE для диагностики и управления Jaeger v2 в кластере:
+
+| Операция | Команда | Ожидаемый результат / Цель (`# →`) |
+| :--- | :--- | :--- |
+| **Проверка статуса CR** | `kubectl get opentelemetrycollector -n observability` | `# → NAME READY STATUS AGE; jaeger 3/3 Running 2d` |
+| **Проверка статуса Instrumentation** | `kubectl get instrumentation -A` | `# → NAMESPACE NAME AGE; default cluster-instrumentation 5d` |
+| **Генерация тестовых спанов** | `kubectl run telemetrygen --rm -it --image=ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest -- traces --otlp-endpoint=jaeger-collector.observability.svc:4317 --otlp-insecure=true --duration=5s --rate=100` | `# → Generating spans... Generated 500 spans. Exiting.` |
+| **Проверка gRPC Health** | `kubectl run grpcurl --rm -it --image=fullstorydev/grpcurl -n observability -- -plaintext jaeger-collector:4317 grpc.health.v1.Health/Check` | `# → {"status":"SERVING"}` |
+| **Скрапинг отказанных спанов (OOM-риск)** | `kubectl exec -n observability deploy/jaeger-collector -- curl -s http://127.0.0.1:8888/metrics \| grep -E "(refused|dropped)"` | `# → otelcol_processor_memory_limiter_refused_spans 0` |
+| **Анализ потребления памяти cgroups** | `kubectl top pod -n observability -l app.kubernetes.io/name=jaeger-collector` | `# → NAME CPU(cores) MEMORY(bytes); jaeger-collector-... 250m 1120Mi` |
+| **Проверка кэша k8sattributes** | `kubectl exec -n observability deploy/jaeger-collector -- curl -s http://127.0.0.1:8888/metrics \| grep "k8s_namespaces"` | `# → otelcol_processor_k8sattributes_active_pods 148` |
+| **Перезапуск пула коллекторов** | `kubectl rollout restart deployment/jaeger-collector -n observability` | `# → deployment.apps/jaeger-collector restarted` |
 
 ---
 
 ## Типичные проблемы и устранение неполадок
 
-| Проблема | Причина | Диагностика | Решение |
+| Проблема | Первопричина | Диагностика | Решение |
 | :--- | :--- | :--- | :--- |
-| **Поды Collector не запускаются** | Отсутствуют права RBAC или неверный ServiceAccount | `kubectl describe pod -n observability -l app=jaeger-collector` — ошибка `Forbidden` или `Unauthorized` | Создать ServiceAccount, ClusterRole и ClusterRoleBinding. Проверить `kubectl auth can-i` |
-| **Instrumentation не работает** | Отсутствует аннотация или версия CRD несовместима | `kubectl get instrumentation`, `kubectl describe pod` — нет init-контейнера | Проверить версию CRD (`kubectl get crd instrumentations.opentelemetry.io`), добавить аннотацию `instrumentation.opentelemetry.io/inject-java: "true"` |
-| **Спаны не поступают в Collector** | NetworkPolicy блокирует трафик или неверный endpoint OTLP | `kubectl exec -it <app-pod> -- curl -v http://jaeger-collector:4317/health` | Открыть порт 4317/4318 в NetworkPolicy, проверить переменную `OTEL_EXPORTER_OTLP_ENDPOINT` |
-| **Collector падает с OOM** | Отсутствует `memory_limiter` processor или недостаточно лимитов в pod | `kubectl top pods -n observability`, `kubectl logs -n observability <collector-pod>` | Добавить `memory_limiter` в конфигурацию, увеличить `limits.memory` в Deployment |
-| **k8sattributes не обогащает спаны** | ServiceAccount не имеет прав на ресурсы pods/nodes | Метрики `otelcol_processor_k8sattributes_errors_total` растут | Добавить права `get`, `watch`, `list` на `pods`, `nodes`, `namespaces` в ClusterRole |
-| **Clock Skew искажает Timeline** | Рассинхронизация NTP между серверами | Спаны отображаются в будущем или с отрицательной длительностью | Настроить `chrony` или `systemd-timesyncd` на всех узлах, проверить `clock_skew` в Jaeger UI |
-| **HPA не масштабирует Collector** | Отсутствуют метрики или неверный `metric` в HPA | `kubectl describe hpa -n observability jaeger-collector` — `unknown metric` | Убедиться, что Collector экспортирует метрики на порт 8888, добавить `external.metrics.k8s.io` API (через Metrics Server или Prometheus Adapter) |
-| **Ингресс теряет заголовки трассировки** | NGINX не настроен на пропуск `traceparent`/`tracestate` | В Jaeger UI трассы не связаны между собой | Установить `enable-opentelemetry: "true"` и `otel-propagation-policy: "w3c"` в ConfigMap ingress-nginx |
-| **Downward API не передает метаданные** | Неверный `fieldRef` или `resourceFieldRef` | Переменные окружения пустые или содержат `none` | Проверить `fieldPath: metadata.name`, `fieldPath: metadata.namespace` в конфигурации пода |
-| **TrustStore не подгружается** | Неверный путь к секрету или права на чтение | Приложение падает с `SSLHandshakeException` | Проверить `volumeMounts` и `volumes` в Deployment, убедиться что секрет существует в том же неймспейсе |
+| **Поды приложения падают при запуске (CrashLoopBackOff)** | Mutating Webhook оператора недоступен или истек TLS-сертификат вебхука | `kubectl get events -n default \| grep FailedCreate`<br>`# → Internal error occurred: failed calling webhook` | Проверить статус cert-manager (`kubectl get pods -n cert-manager`). Убедиться, что поды `opentelemetry-operator-controller-manager` в статусе Running |
+| **Спаны не поступают в Collector** | Неверный endpoint, протокол или блокировка NetworkPolicy | `kubectl exec -it <app-pod> -- nc -zvw3 jaeger-collector 4317`<br>`# → Connection timed out` | Открыть порт 4317 в Ingress правилах NetworkPolicy. Проверить значение `OTEL_EXPORTER_OTLP_ENDPOINT` (для gRPC префикс `http://` в некоторых SDK опускается) |
+| **Падение Collector с OOMKilled (Exit Code 137)** | Отсутствует `memory_limiter` или `limit_percentage` превышает cgroup лимит контейнера | `kubectl describe pod -n observability <collector-pod> \| grep -i oom`<br>`# → Last State: Terminated, Reason: OOMKilled` | Поместить `memory_limiter` **первым** в цепочке процессоров. Установить `limit_percentage: 80` и передать переменную `GOMEMLIMIT: "1800MiB"` |
+| **В спанах отсутствуют k8s.* атрибуты** | ServiceAccount коллектора не имеет прав на чтение API или трафик идет через SNAT прокси | Метрика `otelcol_processor_k8sattributes_errors_total` растет в `/metrics` | Проверить права: `kubectl auth can-i list pods --as=system:serviceaccount:observability:jaeger-collector`. Проверить, что IP клиента не подменяется kube-proxy |
+| **UI не показывает трейсы после записи** | Отсутствует соединение между `jaeger_storage_exporter` и ClickHouse | В логах коллектора: `dial tcp: lookup clickhouse: no such host` или `connection refused` | Проверить FQDN адрес ClickHouse (`clickhouse.observability.svc.cluster.local:9000`), сетевой доступ и создание таблиц БД `jaeger_v2` |
+| **Init-контейнер не внедряется в под** | Несовпадение namespace в аннотации или опечатка в имени CR Instrumentation | `kubectl describe pod <app-pod> \| grep -i annotations` | Указать полный путь к ресурсу в аннотации: `instrumentation.opentelemetry.io/inject-java: "default/cluster-instrumentation"` |
+| **Рассинхронизация времени в трейсах (Clock Skew)** | Рассинхронизация часов между физическими узлами bare-metal кластера | В Jaeger UI спаны имеют отрицательную длительность или начинаются раньше родительских | Настроить службу синхронизации времени `chrony` на всех хостах кластера: `chronyc tracking` |
+| **Неравномерное распределение нагрузки по репликам** | Long-lived gRPC соединения мультиплексируются в одну TCP сессию | В `kubectl top pods` одна реплика утилизирует 100% CPU, остальные простаивают | Настроить `Headless Service` для client-side балансировки или добавить директивы `max_connection_age: 120s` в блок `receivers.otlp.protocols.grpc` |
 
 ---
 
 ## Лучшие практики
 
-1.  **Используйте OpenTelemetry Operator:** Для новых проектов предпочитайте OpenTelemetry Operator вместо устаревшего Jaeger Operator. Он обеспечивает единый стандарт управления телеметрией в кластере.
-2.  **RBAC по принципу наименьших привилегий:** Выдавайте Collector только права на чтение метаданных pods/nodes/namespaces. Не используйте `cluster-admin`.
-3.  **Resource Requests и Limits:** Всегда задавайте `requests` и `limits` для CPU и памяти. Collector в Kubernetes чувствителен к OOM — без `memory_limiter` processor всплеск трафика убьет под.
-4.  **PodDisruptionBudget:** Для production-компонентов Collector и Query настройте PDB, чтобы плановые работы (drain узлов) не выводили все реплики одновременно:
-    ```yaml
-    apiVersion: policy/v1
-    kind: PodDisruptionBudget
-    metadata:
-      name: jaeger-collector-pdb
-      namespace: observability
-    spec:
-      minAvailable: 2
-      selector:
-        matchLabels:
-          app.kubernetes.io/name: jaeger-collector
-    ```
-5.  **NetworkPolicy:** Изолируйте неймспейс observability. Разрешете только необходимые порты (4317, 4318, 16686) и запретите исходящий трафик в неизвестные неймспейсы.
-6.  **Security Context:** Запускайте поды от не-привилегированного пользователя (`runAsNonRoot: true`, `runAsUser: 1000`), отключайте `allowPrivilegeEscalation` и сбрасывайте все capabilities (`drop: ALL`).
-7.  **Семантические конвенции OpenTelemetry:** Используйте стандартные атрибуты (`http.method`, `db.system`, `exception.type`). Это обеспечивает совместимость UI, автоматические дашборды и корреляцию с Tempo/Grafana.
-8.  **Мониторинг самого Jaeger:** Настройте алерты на метрики Collector'а: `otelcol_receiver_refused_spans_total` (прием данных отклоняется), `otelcol_exporter_send_failed_spans_total` (ошибки записи), `otelcol_processor_memory_limiter_refused_spans_total` (OOM риск). Отсутствие спанов в хранилище чаще всего является результатом падения экспортера, а не проблем в инструментации приложений.
-9.  **StorageClass и TTL:** Выбирайте StorageClass с высокой IOPS (gp3, io2) для ClickHouse. Настройте TTL на уровне таблицы для автоматического удаления старых трейсов.
-10. **Версионирование:** Фиксируйте версии образов Jaeger и Operator в манифестах. Избегайте тегов `latest` в production.
+1. **Единый стандарт через OpenTelemetry Operator:** Не используйте устаревший Jaeger Operator v1 для новых кластеров. OpenTelemetry Operator — единый стандарт CNCF для управления жизненным циклом компонентов трассировки.
+2. **Строгий порядок процессоров:** В пайплайне Collector всегда ставьте `memory_limiter` первым процессором, а `batch` — последним. Это гарантирует, что избыточный трафик будет отклонен до расходования ресурсов памяти на обогащение атрибутами.
+3. **Согласование GOMEMLIMIT и cgroup:** Задавайте переменную окружения `GOMEMLIMIT` на уровне 85-90% от лимита памяти контейнера (например, `GOMEMLIMIT=1800MiB` при `limits.memory: 2Gi`). Это заставляет рантайм Go запускать Garbage Collection до срабатывания механизма OOMKilled ядра Linux.
+4. **Безопасность по умолчанию:** Развертывайте поды Jaeger в соответствии с политикой `Pod Security Standards: Restricted` (`runAsNonRoot: true`, `readOnlyRootFilesystem: true`, сброс всех capabilities).
+5. **Headless Service для gRPC:** Создавайте парный Headless Service (`clusterIP: None`) для порта 4317, чтобы SDK приложений с поддержкой DNS round-robin могли балансировать gRPC вызовы по всем доступным репликам.
+6. **Высокая доступность и PDB:** В production-среде развертывайте минимум 3 реплики коллектора, распределенные по разным узлам через `topologySpreadConstraints` (или `podAntiAffinity`), защищенные `PodDisruptionBudget` (`minAvailable: 2`).
+7. **Локальные NVMe для ClickHouse:** Избегайте использования сетевых файловых систем общего назначения (NFS) для баз данных трейсов. Используйте локальные быстрые диски (TopoLVM, Local PV) или проверенный отказоустойчивый пул Ceph RBD (`rook-ceph-block`).
+8. **Разумные политики сэмплирования:** Внедряйте адаптивное или вероятностное сэмплирование (`sampler.argument: "0.1"`) на уровне `Instrumentation` CR, чтобы исключить деградацию производительности приложений и переполнение хранилища при десятках тысяч запросов в секунду.
+9. **Контроль метрик самого коллектора:** Настройте алерты на рост показателей `otelcol_processor_memory_limiter_refused_spans` (перегрузка по памяти) и `otelcol_exporter_enqueue_failed_spans` (сбои записи в базу данных).
 
 ---
 
 ## Очистка окружения
 
+Команды последовательного удаления компонентов и освобождения ресурсов кластера:
+
 ```bash
-# Удаление OpenTelemetryCollector и Instrumentation ресурсов
-kubectl delete opentelemetrycollectors -n observability --all
-kubectl delete instrumentations -n observability --all
+# 1. Удаление тестовых приложений и Instrumentation CR
+kubectl delete deployment order-service -n default --ignore-not-found=true
+# → deployment.apps "order-service" deleted
+kubectl delete instrumentation cluster-instrumentation -n default --ignore-not-found=true
+# → instrumentation.opentelemetry.io "cluster-instrumentation" deleted
 
-# Удаление RBAC ресурсов
-kubectl delete serviceaccount,clusterrole,clusterrolebinding -n observability -l app=jaeger
+# 2. Удаление коллекторов Jaeger v2 (Deployment и DaemonSet)
+kubectl delete opentelemetrycollector jaeger -n observability --ignore-not-found=true
+# → opentelemetrycollector.opentelemetry.io "jaeger" deleted
+kubectl delete opentelemetrycollector jaeger-node-agent -n observability --ignore-not-found=true
+# → opentelemetrycollector.opentelemetry.io "jaeger-node-agent" deleted
 
-# Удаление HPA
-kubectl delete hpa -n observability jaeger-collector
+# 3. Удаление HPA и PodDisruptionBudget
+kubectl delete hpa jaeger-collector-hpa -n observability --ignore-not-found=true
+# → horizontalpodautoscaler.autoscaling "jaeger-collector-hpa" deleted
+kubectl delete pdb jaeger-collector-pdb -n observability --ignore-not-found=true
+# → poddisruptionbudget.policy "jaeger-collector-pdb" deleted
 
-# Удаление DaemonSet/Deployment
-kubectl delete deployment -n observability jaeger-collector
-kubectl delete daemonset -n observability jaeger-agent
+# 4. Удаление сетевых политик и мониторинга
+kubectl delete networkpolicy jaeger-collector-netpol -n observability --ignore-not-found=true
+# → networkpolicy.networking.k8s.io "jaeger-collector-netpol" deleted
+kubectl delete servicemonitor jaeger-collector-monitor -n observability --ignore-not-found=true
+# → servicemonitor.monitoring.coreos.com "jaeger-collector-monitor" deleted
 
-# Удаление Service и Ingress
-kubectl delete service,ingress -n observability -l app=jaeger
+# 5. Удаление RBAC
+kubectl delete clusterrolebinding jaeger-collector-k8sattributes --ignore-not-found=true
+# → clusterrolebinding.rbac.authorization.k8s.io "jaeger-collector-k8sattributes" deleted
+kubectl delete clusterrole jaeger-collector-k8sattributes --ignore-not-found=true
+# → clusterrole.rbac.authorization.k8s.io "jaeger-collector-k8sattributes" deleted
+kubectl delete serviceaccount jaeger-collector -n observability --ignore-not-found=true
+# → serviceaccount "jaeger-collector" deleted
 
-# Удаление PersistentVolumeClaim (ВНИМАНИЕ: удалит данные!)
-kubectl delete pvc -n observability --all
-
-# Удаление NetworkPolicy
-kubectl delete networkpolicy -n observability -l app=jaeger
-
-# Удаление ConfigMap и Secret
-kubectl delete configmap,secret -n observability -l app=jaeger
-
-# Удаление Helm-релиза (если использовался Helm)
-helm uninstall jaeger -n observability
-
-# Удаление неймспейса (полная очистка)
-kubectl delete namespace observability
-
-# Проверка отсутствия "подвисших" ресурсов
-kubectl get all -n observability
-kubectl get pvc -n observability
-kubectl get networkpolicy -n observability
+# 6. Проверка отсутствия зависших подов
+kubectl get pods -n observability -l app.kubernetes.io/name=jaeger-collector
+# → No resources found in observability namespace.
 ```
 
 ---
 
 ## Дополнительная информация
 
-**Смежные темы:**
+**Смежные материалы базы знаний:**
 
-* Детальное описание компонентов и потоков данных: **[Архитектура Jaeger](./jaeger_architecture.md)**
-* Методы локального и production запуска: **[Варианты развертывания](./jaeger_deployment_options.md)**
-* Глубокая диагностика и Query API: **[Анализ производительности с Jaeger](./jaeger_performance_analysis.md)**
-* Общий обзор системы: **[Обзор Jaeger](./jaeger_overview.md)**
-* Query API Reference: **[Query API Jaeger](./jaeger_query_api.md)**
-* Миграция с v1 на v2: **[Миграция Jaeger v1 → v2](./jaeger_migration_v1_to_v2.md)**
-* Capacity Planning: **[Capacity Planning для Jaeger](./jaeger_capacity_planning.md)**
-* Хранилища и бэкенды: **[Storage Deep Dive](./jaeger_storage_deep_dive.md)**
-* HA и Disaster Recovery: **[High Availability и DR](./jaeger_high_availability.md)**
-* Интеграция с Grafana: **[Интеграция Jaeger с Grafana](./jaeger_grafana_integration.md)**
-* Service Mesh Integration: **[Интеграция Jaeger с Service Mesh](./jaeger_service_mesh_integration.md)**
-* OTLP Configuration: **[OTLP Configuration для Jaeger](./jaeger_otlp_configuration.md)**
-* eBPF и Auto-instrumentation: **[eBPF и автоматическая инструментация](./jaeger_ebpf_auto_instrumentation.md)**
-* Multi-tenancy: **[Multi-tenancy и изоляция](./jaeger_multi_tenancy.md)**
-* Security Hardening: **[Security Hardening для Jaeger](./jaeger_security_hardening.md)**
-* Стандарт OTLP: **[Протокол OTLP](../OpenTelemetry/otlp_protocol.md)**
+* Компоненты ядра и внутренние механизмы: **[Архитектура Jaeger](./jaeger_architecture.md)**
+* Базовые сценарии локального и production запуска: **[Варианты развертывания](./jaeger_deployment_options.md)**
+* Высокая доступность и резервирование: **[High Availability и DR](./jaeger_high_availability.md)**
+* Детальная настройка бэкендов хранения (ClickHouse, Elasticsearch): **[Storage Deep Dive](./jaeger_storage_deep_dive.md)**
+* Интеграция с Istio и Linkerd: **[Интеграция Jaeger с Service Mesh](./jaeger_service_mesh_integration.md)**
+* Настройка безопасности, TLS и mTLS: **[Security Hardening для Jaeger](./jaeger_security_hardening.md)**
+* Трассировка без модификации кода на уровне ядра Linux: **[eBPF и автоматическая инструментация](./jaeger_ebpf_auto_instrumentation.md)**
+* Визуализация и корреляция трейсов: **[Интеграция Jaeger с Grafana](./jaeger_grafana_integration.md)**
+* Спецификация и формат передачи телеметрии: **[Протокол OTLP](../OpenTelemetry/otlp_protocol.md)**
+* Переход с архитектуры Jaeger v1: **[Миграция Jaeger v1 → v2](./jaeger_migration_v1_to_v2.md)**
+* Расчет вычислительных ресурсов: **[Capacity Planning для Jaeger](./jaeger_capacity_planning.md)**
 
 ### См. также
 
-* [Official Jaeger Kubernetes Guide](https://www.jaegertracing.io/docs/latest/deployment/kubernetes/)
-* [OpenTelemetry Operator Documentation](https://opentelemetry.io/docs/kubernetes/operator/)
+* [Официальная документация Jaeger v2](https://www.jaegertracing.io/docs/latest/)
+* [Руководство по OpenTelemetry Operator для Kubernetes](https://opentelemetry.io/docs/kubernetes/operator/)
+* [Спецификация процессора k8sattributes](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/k8sattributesprocessor)

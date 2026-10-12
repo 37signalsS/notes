@@ -1,518 +1,770 @@
-# ArgoCD — расширение функционала через Custom Tooling
+# Argo CD: расширение функционала через Custom Tooling (Config Management Plugins v2)
 
-**ArgoCD** обладает встроенной поддержкой популярных инструментов (Helm, Kustomize, Jsonnet), однако для специфических задач (использование QBEC, Helmwave, Helmfile) или кастомной генерации манифестов предусмотрен механизм **Custom Tooling** на базе **Config Management Plugins (CMP)**.
+**Актуально для:** Argo CD v3.5+ (CMP v2 sidecar-архитектура; покрывает Argo CD v2.8+ / v3.4–v3.6.x; CMP v1 удален в v2.8)
 
-> **Актуальность (2026):** CMP v2 — рекомендуемый архитектурный подход для расширения ArgoCD. CMP v1 (legacy) полностью deprecated начиная с v2.8. Sidecar-модель обеспечивает изоляцию зависимостей и безопасность. Проект активно развивается, плагины доступны для большинства инструментов экосистемы.
+**Argo CD** обладает встроенной поддержкой стандартных инструментов шаблонизации (Helm, Kustomize, Jsonnet). Однако для расширенных практик GitOps (генерация через Helmfile, Helmwave, QBEC, расшифровка зашифрованных секретов на лету через `helm-secrets`/SOPS, кодогенерация манифестов на Python/Go) предусмотрен декларативный механизм **Custom Tooling** на базе **Config Management Plugins (CMP) v2**.
+
+CMP v2 изолирует исполняемые бинарные файлы и их системные зависимости внутри отдельных sidecar-контейнеров пода `argocd-repo-server`. Взаимодействие между основным процессом `repo-server` и плагинами осуществляется по протоколу gRPC через локальные UNIX domain sockets.
 
 ## Предварительные требования
 
-1. **ArgoCD v2.4+:** CMP v2 поддерживается начиная с v2.4. Рекомендуется v2.8+ для полной функциональности.
-2. **Доступ к `argocd-repo-server`:** Нужны права на модификацию Deployment (kubectl edit/deploy).
-3. **Container Registry:** Для хранения собственных образов sidecar (BYOI).
-4. **Понимание RBAC:** Настройка прав для CMP sidecar и init-контейнеров.
+1. **Версия Argo CD:** v2.8+ (для полнофункционального механизма CMP v2 с поддержкой параметров `spec.parameters` и исключений tar stream рекомендуется v3.4–v3.6.x). CMP v1 (конфигурация через глобальный ConfigMap `argocd-cm`) полностью удален в v2.8.
+2. **Права доступа в кластере Kubernetes:** Права администратора на модификацию рабочей нагрузки `argocd-repo-server` (Deployment) или управление значениями `values.yaml` официального Helm-чарта `argo-cd` в namespace установки (`argocd`).
+3. **Хранилище образов (Container Registry):** Локальный или корпоративный реестр образов (Harbor, Nexus, GitLab Container Registry) при использовании подхода BYOI (Build Your Own Image) для sidecar-контейнеров.
+4. **Понимание безопасности Linux и Kubernetes:** Настройка `SecurityContext` (UID 999 `argocd`, `runAsNonRoot: true`), изоляция томов `/tmp` и настройка NetworkPolicy для sidecar-контейнеров.
 
 ## Определения
 
-**Config Management Plugin (CMP) v2** — современная архитектура плагинов в ArgoCD (v2.4+), работающая в изолированных **sidecar-контейнерах** пода `argocd-repo-server`. Это обеспечивает безопасность и независимость зависимостей.
+**Config Management Plugin (CMP) v2** — плагин генерации манифестов Argo CD, функционирующий как автономный сервис внутри sidecar-контейнера в составе пода `argocd-repo-server`.
 
-**Discovery (Обнаружение)** — механизм автоматического определения подходящего плагина для конкретной директории в Git на основе наличия файлов или аннотаций.
+**argocd-cmp-server** — встроенный легковесный gRPC-сервер Argo CD, запускаемый в качестве точки входа (entrypoint) sidecar-контейнера плагина. Он прослушивает UNIX-сокет, принимает tar-поток с исходным кодом репозитория, управляет жизненным циклом плагина и возвращает готовые манифесты.
 
-**Фаза инициализации (Init Phase)** — этап подготовки окружения (скачивание сабчартов, расшифровка секретов, запуск `npm install`).
+**Discovery (Обнаружение плагина)** — механизм сопоставления директории в Git-репозитории с подходящим CMP на основе имени файла (`fileName`), расширенной маски поиска (`find.glob`) или shell-команды (`find.command`).
 
-**Фаза генерации (Generate Phase)** — выполнение команды, результатом которой должен быть поток (stream) валидных YAML-манифестов Kubernetes.
+**Tar Stream (Поток архива)** — сжатый поток данных директории приложения, передаваемый по gRPC из файловой системы основного контейнера `repo-server` в sidecar-контейнер CMP через UNIX-сокет без использования общих дисковых разделов репозитория.
 
-**Фаза валидации (Validate Phase)** — проверка корректности манифестов перед применением.
+**Init Phase (Фаза инициализации)** — этап подготовки локального окружения плагина перед генерацией манифестов (загрузка зависимостей, подмодулей, расшифровка ключей).
 
-**Health Check** — проверка состояния ресурса после синхронизации (выполняется Lua-скриптами ArgoCD).
+**Generate Phase (Фаза генерации)** — выполнение основной команды плагина, поток стандартного вывода (stdout) которой должен содержать строго валидные YAML или JSON манифесты Kubernetes.
 
-**QBEC** — инструмент на базе Jsonnet для описания объектов Kubernetes для нескольких окружений.
+**Parameter Announcements** — декларативное описание параметров (статических и динамических), передаваемое плагином в UI и CLI Argo CD для возможности кастомизации генерации через `Application.spec.source.plugin.parameters`.
 
-**git-crypt** — утилита для прозрачного шифрования файлов в Git.
+**ASKPASS (Git Credentials Passthrough)** — механизм безопасной передачи учетных данных Git из хранилища `repo-server` в контейнер плагина по запросу через выделенный UNIX-сокет без предварительного экспорта токенов в переменные окружения.
 
-**Helmfile** — декларативный оркестратор для управления несколькими Helm-чартами.
-
-**Helmwave** — современный оркестратор для Helm с поддержкой зависимостей между чартами.
-
-## Основные концепции
+## Архитектура и принцип работы
 
 ### Архитектура CMP v2
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│          CMP v2: Архитектура sidecar-плагинов                       │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │  argocd-repo-server Pod                                      │  │
-│  │  ┌──────────────────┐  ┌──────────────────┐                │  │
-│  │  │  repo-server     │  │  CMP Sidecar     │                │  │
-│  │  │  (main container)│◀▶│  (plugin)        │                │  │
-│  │  │  - git clone      │  │  - argocd-cmp-   │                │  │
-│  │  │  - helm template  │  │    server         │                │  │
-│  │  │  - kustomize      │  │  - my-tool        │                │  │
-│  │  └──────────────────┘  └──────────────────┘                │  │
-│  │         │                       │                            │  │
-│  │         ▼                       ▼                            │  │
-│  │  ┌──────────────────────────────────────┐                  │  │
-│  │  │  /var/run/argocd (shared volume)     │                  │  │
-│  │  │  - UNIX socket for communication     │                  │  │
-│  │  │  - Generated manifests (YAML)        │                  │  │
-│  │  └──────────────────────────────────────┘                  │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+В CMP v2 плагины отделены от основного контейнера `repo-server`. Это предотвращает конфликт библиотек (например, разных версий Helm или Python), исключает загрязнение файловой системы и минимизирует риски компрометации ядра Argo CD.
 
-В современных версиях ArgoCD плагины больше не настраиваются через глобальный ConfigMap. Вместо этого используется модель Sidecar:
-
-1.  **Repo Server**: Основной контейнер клонирует репозиторий.
-2.  **CMP Sidecar**: Контейнер с бинарным файлом `argocd-cmp-server` и инструментами (helm, sops, qbec).
-3.  **Взаимодействие**: Контейнеры общаются через UNIX-сокет в разделяемом томе `/var/run/argocd`.
-
-### Методы доставки инструментов
-
-- **Custom Image (BYOI)**: Сборка собственного образа sidecar со всеми предустановленными утилитами. Рекомендуется для Production.
-- **Init-containers**: Копирование бинарных файлов в `emptyDir` том, который монтируется в sidecar. Позволяет быстро менять версии инструментов без пересборки образов.
-
-### Переменные окружения
-
-ArgoCD передает в процесс плагина стандартные переменные:
-- `ARGOCD_APP_NAME`: Имя приложения.
-- `ARGOCD_APP_NAMESPACE`: Целевой namespace.
-- `ARGOCD_APP_REVISION`: Хеш коммита или тег.
-- `KUBE_VERSION` / `KUBE_API_VERSIONS`: Параметры целевого кластера.
-- Кастомные переменные из секции `spec.source.plugin.env`.
-
-### Жизненный цикл CMP
-
-```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│  Discovery  │───▶│    Init     │───▶│  Generate   │───▶│  Validate   │
-│  (поиск     │    │  (подготовка│    │  (генерация │    │  (проверка  │
-│   плагина)  │    │   окружения)│    │  манифестов)│    │  YAML)      │
-└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 Pod: argocd-repo-server                                │
+│                                                                                        │
+│  ┌─────────────────────────┐                            ┌───────────────────────────┐  │
+│  │   Container: main       │                            │   Container: cmp-sidecar  │  │
+│  │   (argocd-repo-server)  │                            │   (my-custom-plugin)      │  │
+│  │                         │   gRPC over UNIX Socket    │                           │  │
+│  │  1. Git clone / fetch   │   /var/run/argocd/*.sock   │  4. argocd-cmp-server     │  │
+│  │  2. MatchRepository()   │◄──────────────────────────►│     - Читает plugin.yaml  │  │
+│  │  3. Передача Tar-stream │                            │     - Распаковывает в /tmp│  │
+│  │     директории в сокет  │                            │  5. Выполняет init.command│  │
+│  │                         │                            │  6. Выполняет generate    │  │
+│  │  7. Прием YAML-потока   │                            │  7. YAML/JSON stdout      │  │
+│  │     stdout от плагина   │                            │     отправляется в сокет  │  │
+│  └───────────┬─────────────┘                            └─────────────┬─────────────┘  │
+│              │                                                        │                │
+│              ▼                                                        ▼                │
+│    ┌──────────────────────────────────────────────────────────────────────────┐        │
+│    │  Volume (emptyDir): var-files                                            │        │
+│    │  MountPath: /var/run/argocd                                              │        │
+│    │  - argocd-cmp-server (бинарный файл, скопированный init-контейнером)    │        │
+│    │  - *.sock (gRPC сокеты каждого sidecar-плагина)                          │        │
+│    └──────────────────────────────────────────────────────────────────────────┘        │
+│                                                                                        │
+│    ┌───────────────────────────┐                        ┌───────────────────────────┐  │
+│    │  Volume (emptyDir): tmp   │                        │  Volume (emptyDir):       │  │
+│    │  MountPath: /tmp (main)   │                        │  cmp-tmp (изолированный!) │  │
+│    │  (Кэш Git-репозиториев)   │                        │  MountPath: /tmp (sidecar)│  │
+│    └───────────────────────────┘                        └───────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Discovery:** ArgoCD сканирует файлы в директории приложения. Если найден `plugin.yaml` или файл из `discover.fileName`, активируется плагин.
-2. **Init:** Выполняется `init`-команда плагина (например, `npm install`, `helm dependency build`).
-3. **Generate:** Выполняется `generate`-команда. Результат — YAML-манифесты на stdout.
-4. **Validate:** Опционально выполняется `validate`-команда для проверки манифестов.
+### Поток данных и жизненный цикл обработки
 
-### Безопасность CMP
+1. **Клонирование и сопоставление:**
+   - Основной контейнер `argocd-repo-server` выполняет `git fetch`/`clone` целевой ревизии во временную директорию.
+   - `repo-server` опрашивает все активные UNIX-сокеты в директории `/var/run/argocd/` gRPC-вызовом `MatchRepository`.
+   - Если в `Application.spec.source.plugin.name` явно указано имя, `repo-server` направляет запрос целевому сокету. Если имя не указано, активируется механизм автоматического обнаружения (Discovery).
+2. **Передача данных (Tar Stream):**
+   - `repo-server` архивирует директорию приложения (указанную в `Application.spec.source.path`) в потоковый tar-архив и передает его через сокет.
+   - **Важно:** Общий дисковый том для исходных текстов между контейнерами **не требуется**. Это исключает гонки файлов (race conditions) при параллельной сборке нескольких ревизий.
+3. **Распаковка и инициализация (Init Phase):**
+   - Внутри sidecar-контейнера процесс `argocd-cmp-server` распаковывает полученный tar-поток в изолированный рабочий каталог внутри своего тома `/tmp`.
+   - Выполняется команда `spec.init.command` в корне распакованного каталога. Ненулевой код возврата прерывает генерацию.
+4. **Генерация манифестов (Generate Phase):**
+   - Выполняется `spec.generate.command`.
+   - Процесс обязан передать валидный поток YAML/JSON в `stdout`.
+   - Все отладочные сообщения и логирование обязаны направляться в `stderr` (они отображаются в логах sidecar и передаются в UI при ошибках).
+   - Вывод потока манифестов возвращается в `repo-server`, который выполняет парсинг и передает объекты в контроллер приложения.
+5. **Очистка:**
+   - Временная директория в `/tmp` внутри sidecar удаляется сразу после завершения gRPC-вызова.
 
-| Аспект | Рекомендация |
-| :--- | :--- |
-| **SecurityContext** | Запуск от непривилегированного пользователя (runAsNonRoot: true) |
-| **RBAC** | Минимальные права для sidecar (read-only filesystem) |
-| **Network** | Ограничение сетевого доступа (NetworkPolicy) |
-| **Image** | Использование Distroless или Alpine образов |
-| **Secrets** | Не хранить секреты в образах; использовать Vault/Secrets |
+### Спецификация конфигурационного файла `plugin.yaml`
 
-## Практические сценарии
-
-### Сценарий 1: Интеграция QBEC (CMP v2)
-
-QBEC позволяет эффективно управлять Helm-чартами через Jsonnet.
-
-**1. Настройка Sidecar в Deployment `argocd-repo-server`:**
-
-```yaml
-containers:
-- name: qbec-plugin
-  image: splunk/qbec:v0.15.2
-  command: [/var/run/argocd/argocd-cmp-server]
-  volumeMounts:
-    - name: var-files
-      mountPath: /var/run/argocd
-    - name: plugins
-      mountPath: /home/argocd/cmp-server/config
-```
-
-**2. Конфигурация `plugin.yaml`:**
-Этот файл монтируется в `/home/argocd/cmp-server/config/plugin.yaml`.
+Конфигурация плагина описывается документом вида `ConfigManagementPlugin` (не является CustomResourceDefinition в Kubernetes API, а представляет собой внутреннюю структуру Argo CD):
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: ConfigManagementPlugin
 metadata:
-  name: qbec
+  name: my-custom-plugin
 spec:
-  discover:
-    fileName: "qbec.yaml"
+  # Версия плагина (опционально). При наличии версии имя в Application задается как <name>-<version>
+  version: v1.0
+
+  # Фаза инициализации (выполняется перед generate)
+  init:
+    command: [sh, -c]
+    args: ["echo 'Preparing environment...' && helm repo update"]
+
+  # Фаза генерации манифестов (вывод строго в stdout)
   generate:
-    command: ["qbec"]
-    args: ["show", "$ENVIRONMENT", "--force:k8s-namespace", "$ARGOCD_APP_NAMESPACE"]
-```
+    command: [sh, -c]
+    args:
+      - |
+        set -eo pipefail
+        helmfile -e $ARGOCD_ENV_ENVIRONMENT template
 
-### Сценарий 2: Использование git-crypt для секретов
-
-`git-crypt` требует расшифровки репозитория на этапе клонирования. Для этого используется скрипт-обертка над `git` в основном контейнере `repo-server`.
-
-**1. Скрипт-обертка `git-wrapper.sh`:**
-```bash
-#!/bin/sh
-$(dirname $0)/git.bin "$@"
-ec=$?
-# Выполняем unlock только при fetch, если есть .git-crypt
-[ "$1" = fetch ] && [ -d .git-crypt ] || exit $ec
-GNUPGHOME=/app/config/gpg/keys git-crypt unlock 2>/dev/null
-exit $ec
-```
-
-**2. Настройка GPG ключей:**
-Ключи импортируются через Kubernetes Secret и пробрасываются в поды:
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: argocd-gpg-keys-secret
-stringData:
-  8CB8B24F50B4797D: |-
-    -----BEGIN PGP PRIVATE KEY BLOCK-----
-    ...
-```
-
-### Сценарий 3: Интеграция helm-secrets и SOPS
-
-Позволяет использовать зашифрованные `secrets.yaml` в Helm-чартах.
-
-**plugin.yaml для sidecar:**
-```yaml
-spec:
+  # Правила автоматического обнаружения (оцениваются в порядке: fileName, find.glob, find.command)
   discover:
-    fileName: "secrets.yaml"
-  generate:
-    command: ["sh", "-c"]
-    args: ["helm secrets template $ARGOCD_APP_NAME . -f values.yaml -f secrets.yaml"]
+    # 1. Поиск по имени/маске в корне директории приложения
+    fileName: "helmfile.yaml"
+    find:
+      # 2. Поиск с поддержкой рекурсивных масок (double-star)
+      glob: "**/helmfile.yaml"
+      # 3. Выполнение команды в корне репозитория (успех, если exit code 0 и stdout не пуст)
+      command: [sh, -c, "test -f helmfile.yaml && grep -q 'environments:' helmfile.yaml"]
+
+  # Декларация параметров для интерфейса (UI) и CLI
+  parameters:
+    static:
+      - name: release-name
+        title: "Release Name"
+        tooltip: "Override target Helm release name"
+        required: false
+        itemType: string
+        collectionType: string
+        string: "default-app"
+      - name: additional-values
+        title: "Values Files"
+        collectionType: array
+        array: ["values-default.yaml"]
+    dynamic:
+      # Команда возвращает JSON со списком параметров в stdout
+      command: [sh, -c, "helmfile list-values-as-json"]
+
+  # Сохранять оригинальные права доступа Unix-файлов (false по умолчанию для безопасности)
+  preserveFileMode: false
+
+  # Разрешить плагину запрашивать Git-токены через ASKPASS сокет
+  provideGitCreds: false
 ```
 
-### Сценарий 4: Интеграция Helmfile и Helmwave (CMP v2)
+### Переменные окружения плагина
 
-Для этих инструментов требуется настройка RBAC, так как они могут обращаться к API Kubernetes для проверки состояния ресурсов.
+В процесс выполнения команд CMP передаются четыре категории переменных окружения:
 
-**Пример настройки Sidecar (values.yaml для ArgoCD Chart):**
+1. **Системные переменные контейнера:** все переменные, объявленные в секции `env` sidecar-контейнера.
+2. **Стандартный контекст сборки Argo CD:**
+   - `ARGOCD_APP_NAME` — имя приложения (санитизировано).
+   - `ARGOCD_APP_NAMESPACE` — целевой namespace в управляемом кластере.
+   - `ARGOCD_APP_REVISION` — целевой хэш коммита или тег.
+   - `ARGOCD_APP_SOURCE_PATH` — относительный путь к директории приложения в Git.
+   - `ARGOCD_APP_SOURCE_REPO_URL` — URL Git/Helm репозитория.
+   - `ARGOCD_APP_SOURCE_TARGET_REVISION` — ветка, тег или ревизия из `Application.spec.source.targetRevision`.
+   - `KUBE_VERSION` — версия Kubernetes целевого кластера (например, `1.30`).
+   - `KUBE_API_VERSIONS` — список поддерживаемых API групп и версий кластера (разделенный запятыми).
+3. **Пользовательские переменные из Application (`spec.source.plugin.env`):**
+   - Все переданные пользователем переменные **принудительно получают префикс `ARGOCD_ENV_`**.
+   - Пример: определение `- name: CLUSTER_ENV, value: prod` доступно в скрипте как `$ARGOCD_ENV_CLUSTER_ENV`. Это предотвращает перезапись системных переменных среды процесса (`PATH`, `HOME`, `KUBECONFIG`).
+4. **Параметры из `spec.source.plugin.parameters`:**
+   - Полный JSON со списком параметров доступен в переменной `ARGOCD_APP_PARAMETERS`.
+   - Отдельные переменные транслируются по шаблону:
+     - Строки: `PARAM_<UPPERCASE_NAME>=<value>` (например, `PARAM_RELEASE_NAME=prod-app`).
+     - Массивы: `PARAM_<UPPERCASE_NAME>_<INDEX>=<value>` (например, `PARAM_ADDITIONAL_VALUES_0=values.yaml`).
+     - Словари: `PARAM_<UPPERCASE_NAME>_<KEY>=<value>` (например, `PARAM_HELM_SET_IMAGE_TAG=v1.2.3`).
+
+### Кэширование, таймауты и управление процессами
+
+- **Redis-кэширование ошибок:** `argocd-repo-server` кэширует сгенерированные манифесты и ошибки генерации в Redis (по умолчанию на 3 минуты или до нового коммита). Если плагин завершился ошибкой из-за временного сетевого сбоя или опечатки в скрипте, перезапуск пода `repo-server` **не сбрасывает кэш ошибки**. Для принудительной повторной генерации требуется выполнить `Hard Refresh` приложения в UI или CLI (`argocd app get <app> --hard-refresh`).
+- **Таймауты выполнения:**
+  - `server.repo.server.timeout.seconds` и `controller.repo.server.timeout.seconds` в ConfigMap `argocd-cmd-params-cm` (по умолчанию 60 секунд). Определяют максимальное время ожидания ответа от `repo-server`.
+  - `ARGOCD_EXEC_TIMEOUT` — переменная среды sidecar-контейнера CMP (по умолчанию 90 секунд). Если генерация комплексных чартов (например, Helmfile с 15 релизами) занимает больше времени, необходимо увеличить оба значения.
+  - `ARGOCD_EXEC_FATAL_TIMEOUT` — дополнительный таймаут перед принудительным завершением процесса через SIGKILL, если graceful shutdown по истечении `ARGOCD_EXEC_TIMEOUT` не завершился.
+
+---
+
+## Настройка и конфигурация
+
+### Механизм поставки бинарного файла `argocd-cmp-server`
+
+Так как sidecar-контейнеры запускаются из произвольных образов (Alpine, Ubuntu, образы с Helmfile/QBEC), в них изначально отсутствует бинарный файл `argocd-cmp-server`.
+
+Существует два стандартных подхода:
+
+#### Способ 1: Использование `initContainer: copyutil` (Рекомендуемый для гибкости)
+Официальный образ Argo CD монтирует общий том `emptyDir: var-files` и копирует бинарный файл `argocd` (который выступает в роли `argocd-cmp-server`) в `/var/run/argocd/argocd-cmp-server`.
+
 ```yaml
+initContainers:
+  - name: copyutil
+    image: quay.io/argoproj/argocd:v3.5.4
+    command: [cp, -n, /usr/local/bin/argocd, /var/run/argocd/argocd-cmp-server]
+    volumeMounts:
+      - mountPath: /var/run/argocd
+        name: var-files
+```
+
+#### Способ 2: Собственный образ контейнера (BYOI)
+При сборке собственного образа бинарник копируется напрямую из официального образа на этапе мультистейдж сборки:
+
+```dockerfile
+FROM quay.io/argoproj/argocd:v3.5.4 AS argocd-source
+FROM alpine:3.20
+COPY --from=argocd-source /usr/local/bin/argocd /usr/local/bin/argocd-cmp-server
+```
+
+---
+
+## Практические сценарии
+
+### Сценарий 1: Установка CMP через официальный Helm-чарт Argo CD
+
+Для продакшн-установок настройка выполняется через `values.yaml` чарта `argo-cd`.
+
+Создадим плагин для работы с **Helmfile v0.169.2**:
+
+```yaml
+# values.yaml для argo-cd Helm Chart
 repoServer:
-  extraContainers:
-    - name: helmfile-cmp
-      command: [/var/run/argocd/argocd-cmp-server]
-      image: ghcr.io/helmfile/helmfile:v0.150.0
+  # 1. Добавляем initContainer для копирования бинарника CMP-сервера
+  initContainers:
+    - name: copyutil
+      image: quay.io/argoproj/argocd:v3.5.4
+      command: [cp, -n, /usr/local/bin/argocd, /var/run/argocd/argocd-cmp-server]
       volumeMounts:
-        - name: var-files
-          mountPath: /var/run/argocd
-        - name: plugins
-          mountPath: /home/argocd/cmp-server/config
-        - name: helm-bin
-          mountPath: /usr/local/bin
+        - mountPath: /var/run/argocd
+          name: var-files
+
+  # 2. Подключаем ConfigMap с описанием плагина
+  extraContainers:
+    - name: helmfile-plugin
+      image: ghcr.io/helmfile/helmfile:v0.169.2
+      command: [/var/run/argocd/argocd-cmp-server]
+      env:
+        - name: ARGOCD_EXEC_TIMEOUT
+          value: "180s"
+        - name: HELM_CACHE_HOME
+          value: /tmp/helm/cache
+        - name: HELM_CONFIG_HOME
+          value: /tmp/helm/config
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - mountPath: /var/run/argocd
+          name: var-files
+        - mountPath: /home/argocd/cmp-server/plugins
+          name: plugins
+        - mountPath: /home/argocd/cmp-server/config/plugin.yaml
+          subPath: plugin.yaml
+          name: helmfile-cmp-config
+        - mountPath: /tmp
+          name: cmp-tmp
+
+  # 3. Объявляем изолированные тома
   volumes:
-    - name: helm-bin
+    - name: helmfile-cmp-config
+      configMap:
+        name: helmfile-cmp-config
+    - name: cmp-tmp
       emptyDir: {}
 ```
 
-**Важный нюанс Helmwave:** Инструмент чувствителен к контексту кластера. Убедитесь, что плагину доступны `KUBECONFIG` или `ServiceAccount` с правами на чтение ресурсов в целевых Namespaces.
+Манифест ConfigMap с конфигурацией плагина:
 
-### Сценарий 5: Интеграция ArgoCD Vault Plugin (AVP) (CMP v2)
-
-АргоД Vault Plugin (AVP) позволяет подставлять секреты из HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager в манифесты.
-
-**1. Создание ConfigMap с описанием плагина:**
 ```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: avp-cmp-config
+  name: helmfile-cmp-config
   namespace: argocd
 data:
   plugin.yaml: |
     apiVersion: argoproj.io/v1alpha1
     kind: ConfigManagementPlugin
     metadata:
-      name: argocd-vault-plugin
+      name: helmfile
     spec:
+      version: v1.0
       discover:
-        fileName: ".*\\.yaml$"
-        annotation: "avp.kubernetes.io/path"
+        fileName: "helmfile.yaml"
+      init:
+        command: [sh, -c]
+        args: ["helmfile deps"]
       generate:
-        command: ["argocd-vault-plugin"]
-        args: ["generate", "-s", "avp-config"]
-```
-
-**2. Обновление Deployment `argocd-repo-server`:**
-```yaml
-spec:
-  template:
-    spec:
-      containers:
-      - name: avp
-        command: [/var/run/argocd/argocd-cmp-server]
-        image: argoproj/argocd:v2.10.0
-        securityContext:
-          runAsNonRoot: true
-          runAsUser: 999
-        volumeMounts:
-        - name: var-run-argocd
-          mountPath: /var/run/argocd
-        - name: plugins
-          mountPath: /home/argocd/cmp-server/plugins
-        - name: custom-tools
-          mountPath: /usr/local/bin/argocd-vault-plugin
-          subPath: argocd-vault-plugin
-      
-      initContainers:
-      - name: download-tools
-        image: alpine:latest
         command: [sh, -c]
         args:
-          - wget -O /custom-tools/argocd-vault-plugin https://github.com/argoproj-labs/argocd-vault-plugin/releases/download/v1.18.1/argocd-vault-plugin_linux_amd64 && chmod +x /custom-tools/argocd-vault-plugin
-        volumeMounts:
-        - name: custom-tools
-          mountPath: /custom-tools
-      
-      volumes:
-      - name: custom-tools
-        emptyDir: {}
+          - |
+            set -eo pipefail
+            ENV_ARG=""
+            if [ -n "$ARGOCD_ENV_ENVIRONMENT" ]; then
+              ENV_ARG="-e $ARGOCD_ENV_ENVIRONMENT"
+            fi
+            helmfile $ENV_ARG template --include-crds
 ```
 
-**3. Использование в манифестах:**
+### Сценарий 2: Расшифровка секретов на лету через helm-secrets и SOPS
+
+При использовании SOPS для шифрования `secrets.yaml` в Git манифесты расшифровываются непосредственно во время фазы генерации, не сохраняя открытые секреты на диске `repo-server`.
+
+> Архитектурное примечание: Для шифрования секретов см. подробнее [Управление секретами (SOPS)](../../Security/Tools/sops_overview.md). Для интеграции с HashiCorp Vault см. [Интеграция с Vault](./argocd_vault_integration.md).
+
+**Конфигурация `plugin.yaml` для SOPS / helm-secrets:**
+
 ```yaml
 apiVersion: v1
-kind: Secret
+kind: ConfigMap
 metadata:
-  name: my-app-secret
-  annotations:
-    avp.kubernetes.io/path: "secret/data/myapp/config"
-type: Opaque
-stringData:
-  username: <user>
-  password: <password>
+  name: helm-secrets-cmp-config
+  namespace: argocd
+data:
+  plugin.yaml: |
+    apiVersion: argoproj.io/v1alpha1
+    kind: ConfigManagementPlugin
+    metadata:
+      name: helm-secrets
+    spec:
+      discover:
+        find:
+          glob: "**/secrets.yaml"
+      init:
+        command: [sh, -c]
+        args: ["helm dependency build"]
+      generate:
+        command: [sh, -c]
+        args:
+          - |
+            set -eo pipefail
+            VALUES_ARGS=""
+            if [ -f "values.yaml" ]; then
+              VALUES_ARGS="-f values.yaml"
+            fi
+            if [ -f "secrets.yaml" ]; then
+              VALUES_ARGS="$VALUES_ARGS -f secrets.yaml"
+            fi
+            helm secrets template "$ARGOCD_APP_NAME" . \
+              --namespace "$ARGOCD_APP_NAMESPACE" \
+              --kube-version "$KUBE_VERSION" \
+              $VALUES_ARGS
 ```
 
-**4. Активация плагина в Application:**
+Подключение GPG/Age ключей для расшифровки:
+Ключи монтируются в sidecar-контейнер через секрет:
+
 ```yaml
+volumeMounts:
+  - mountPath: /home/argocd/.gnupg
+    name: gpg-keyring
+    readOnly: true
+volumes:
+  - name: gpg-keyring
+    secret:
+      secretName: argocd-gpg-keys
+      defaultMode: 0400
+```
+
+### Сценарий 3: Плагин с передачей параметров (Parameters UI & CLI)
+
+Создадим плагин шаблонизации `kustomize-envsubst`, который принимает параметры из `Application.spec.source.plugin.parameters` и отображает их в интерфейсе Argo CD.
+
+**1. ConfigMap с объявлением параметров:**
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envsubst-cmp-config
+  namespace: argocd
+data:
+  plugin.yaml: |
+    apiVersion: argoproj.io/v1alpha1
+    kind: ConfigManagementPlugin
+    metadata:
+      name: kustomize-envsubst
+    spec:
+      version: v1.0
+      discover:
+        fileName: "kustomization.yaml"
+      parameters:
+        static:
+          - name: cluster-domain
+            title: "Internal Cluster Domain"
+            tooltip: "Root DNS domain for service ingress"
+            required: true
+            itemType: string
+            collectionType: string
+            string: "cluster.local"
+          - name: replica-count
+            title: "Default Replica Count"
+            collectionType: string
+            string: "2"
+      generate:
+        command: [sh, -c]
+        args:
+          - |
+            set -eo pipefail
+            export CLUSTER_DOMAIN="${PARAM_CLUSTER_DOMAIN:-cluster.local}"
+            export REPLICA_COUNT="${PARAM_REPLICA_COUNT:-2}"
+            kustomize build . | envsubst '${CLUSTER_DOMAIN} ${REPLICA_COUNT}'
+```
+
+**2. Декларация приложения `Application`:**
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo-service
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://git.internal.corp/infra/apps.git
+    targetRevision: main
+    path: overlays/production
+    plugin:
+      name: kustomize-envsubst-v1.0
+      parameters:
+        - name: cluster-domain
+          string: "corp.example.internal"
+        - name: replica-count
+          string: "5"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+```
+
+### Сценарий 4: Сборка собственного образа (Production BYOI Dockerfile)
+
+Для обеспечения неизменяемости инфраструктуры (immutability) и исключения сетевых загрузок во время старта пода рекомендуется собирать единый образ с бинарниками плагинов и запеченным `plugin.yaml`.
+
+```dockerfile
+# Multi-stage сборка для получения argocd-cmp-server
+FROM quay.io/argoproj/argocd:v3.5.4 AS argocd-base
+
+FROM alpine:3.20 AS builder
+RUN apk add --no-cache curl tar gzip
+
+# Загрузка проверенной версии Helmfile
+ARG HELMFILE_VERSION=0.169.2
+RUN curl -fsSL -o /tmp/helmfile.tar.gz \
+    https://github.com/helmfile/helmfile/releases/download/v${HELMFILE_VERSION}/helmfile_${HELMFILE_VERSION}_linux_amd64.tar.gz && \
+    tar -xzf /tmp/helmfile.tar.gz -C /usr/local/bin helmfile && \
+    chmod 755 /usr/local/bin/helmfile
+
+# Загрузка Helm v3.16.2
+ARG HELM_VERSION=v3.16.2
+RUN curl -fsSL -o /tmp/helm.tar.gz \
+    https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz && \
+    tar -xzf /tmp/helm.tar.gz -C /tmp && \
+    mv /tmp/linux-amd64/helm /usr/local/bin/helm && \
+    chmod 755 /usr/local/bin/helm
+
+# Финальный легковесный образ
+FROM alpine:3.20
+RUN apk add --no-cache git bash jq gettext-envsubst
+
+# Создаем системного пользователя argocd с UID 999
+RUN addgroup -g 999 argocd && \
+    adduser -u 999 -G argocd -D -s /bin/bash argocd
+
+# Копируем бинарные файлы
+COPY --from=argocd-base /usr/local/bin/argocd /var/run/argocd/argocd-cmp-server
+COPY --from=builder /usr/local/bin/helmfile /usr/local/bin/helmfile
+COPY --from=builder /usr/local/bin/helm /usr/local/bin/helm
+
+# Подготавливаем директорию конфигурации CMP
+WORKDIR /home/argocd/cmp-server/config
+COPY plugin.yaml ./plugin.yaml
+
+# Назначаем права доступа
+RUN chown -R argocd:argocd /home/argocd && \
+    mkdir -p /home/argocd/cmp-server/plugins && \
+    chown -R argocd:argocd /home/argocd/cmp-server
+
+USER 999
+ENTRYPOINT ["/var/run/argocd/argocd-cmp-server"]
+```
+
+Сборка и доставка в локальный реестр:
+
+```bash
+docker build -t harbor.internal.corp/argocd/cmp-helmfile:v1.0.0 .
+# → [+] Building ... FINISHED
+
+docker push harbor.internal.corp/argocd/cmp-helmfile:v1.0.0
+# → The push refers to repository [harbor.internal.corp/argocd/cmp-helmfile]
+# → v1.0.0: digest: sha256:7b1e4c... size: 1420
+```
+
+### Сценарий 5: Оптимизация монорепозиториев (Tar Stream Exclusions и Paths)
+
+В монорепозиториях передача всего архива репозитория в sidecar на каждое изменение коммита создает значительную нагрузку на CPU и диск `repo-server`.
+
+#### 1. Исключение тяжелых директорий (.git, node_modules)
+Настройте исключения для генератора tar-потока в ConfigMap `argocd-cmd-params-cm`:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  # Перечисление масок исключений через точку с запятой
+  reposerver.plugin.tar.exclusions: ".git/*;.github/*;node_modules/*;docs/*;tests/*"
+```
+
+Либо через переменную окружения `argocd-repo-server`:
+`ARGOCD_REPO_SERVER_PLUGIN_TAR_EXCLUSIONS: ".git/*;node_modules/*"`
+
+#### 2. Ограничение генерации путями манифестов (`manifest-generate-paths`)
+Включите поддержку избирательной генерации:
+
+```yaml
+# argocd-cmd-params-cm
+data:
+  reposerver.plugin.use.manifest.generate.paths: "true"
+```
+
+В манифесте `Application` укажите аннотацию, определяющую файлы, изменение которых действительно требует перезапуска генерации:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: payment-service
+  annotations:
+    argocd.argoproj.io/manifest-generate-paths: "services/payment;shared/helm/base"
 spec:
   source:
-    path: manifests
+    path: services/payment
     plugin:
-      name: argocd-vault-plugin
-      env:
-        - name: AVP_KV_VERSION
-          value: "2"
-        - name: VAULT_ADDR
-          value: "https://vault.example.com"
+      name: helmfile
 ```
 
-### Сценарий 6: Сборка собственного образа (BYOI)
+### Сценарий 6: Мульти-плагинная конфигурация и предотвращение конфликтов обнаружения
 
-Для Production рекомендуется собирать собственный образ sidecar со всеми необходимыми инструментами.
+Когда в кластере одновременно развернуто несколько CMP-плагинов (например, один для Helmfile, другой для QBEC, третий для Jsonnet), критически важно исключить пересечение правил `spec.discover`.
 
-**Dockerfile:**
-```dockerfile
-FROM alpine:3.19
+**Принцип работы селектора Discovery:**
+Если каталог репозитория удовлетворяет правилам нескольких плагинов, Argo CD выбирает **первый ответивший плагин** (порядок сокетов в файловой системе не гарантирован). Это приводит к плавающим ошибкам генерации (flapping errors).
 
-RUN apk add --no-cache \
-    git \
-    curl \
-    jq \
-    yq \
-    helm \
-    kustomize \
-    && wget -O /usr/local/bin/qbec https://github.com/splunk/qbec/releases/download/v0.15.2/qbec_linux_amd64 \
-    && chmod +x /usr/local/bin/qbec
+**Правила предотвращения конфликтов:**
+1. **Детализируйте `discover.fileName` и `find.command`:** Избегайте общих масок вида `*.yaml`. Используйте сигнатурные файлы (`helmfile.yaml`, `qbec.yaml`).
+2. **Используйте инспекцию содержимого:**
+   ```yaml
+   discover:
+     find:
+       command: [sh, -c, "grep -q 'apiVersion: qbec.io' qbec.yaml 2>/dev/null"]
+   ```
+3. **Явная привязка по имени:** В критических окружениях не полагайтесь на автоматический Discovery, а явно фиксируйте имя плагина в манифесте `Application`:
+   ```yaml
+   spec:
+     source:
+       plugin:
+         name: helmfile-v1.0
+   ```
 
-COPY plugin.yaml /home/argocd/cmp-server/config/plugin.yaml
-COPY argocd-cmp-server /usr/local/bin/argocd-cmp-server
+### Сценарий 7: Доступ к приватным Git-зависимостям (Git Credentials Passthrough via ASKPASS)
 
-CMD ["/usr/local/bin/argocd-cmp-server"]
-```
+Если плагину во время `init` необходимо загрузить сабмодули или приватные чарты из другого Git-репозитория, доступного в Argo CD, используется механизм безопасного проброса кредов:
 
-**Сборка и пуш:**
-```bash
-docker build -t my-registry/argocd-cmp-custom:v1.0 .
-docker push my-registry/argocd-cmp-custom:v1.0
-```
-
-### Сценарий 7: Настройка нескольких плагинов
-
-ArgoCD поддерживает несколько плагинов одновременно. Каждый плагин — отдельный sidecar.
-
-**values.yaml для ArgoCD Helm Chart:**
+**1. Включение в `plugin.yaml`:**
 ```yaml
-repoServer:
-  extraContainers:
-    - name: qbec-plugin
-      image: splunk/qbec:v0.15.2
-      command: [/var/run/argocd/argocd-cmp-server]
-      volumeMounts:
-        - name: var-files
-          mountPath: /var/run/argocd
-        - name: plugins
-          mountPath: /home/argocd/cmp-server/config
-    - name: helmfile-cmp
-      image: ghcr.io/helmfile/helmfile:v0.150.0
-      command: [/var/run/argocd/argocd-cmp-server]
-      volumeMounts:
-        - name: var-files
-          mountPath: /var/run/argocd
-        - name: helmfile-plugins
-          mountPath: /home/argocd/cmp-server/config
-  volumes:
-    - name: var-files
-      emptyDir: {}
-    - name: plugins
-      emptyDir: {}
-    - name: helmfile-plugins
-      emptyDir: {}
+spec:
+  provideGitCreds: true
 ```
 
-### Сценарий 8: Кастомные Health Checks для CMP-ресурсов
-
-Для проверки здоровья ресурсов, создаваемых CMP, используйте Lua-скрипты в `argocd-cm`:
-
+**2. Настройка общего сокета ASKPASS в Deployment `argocd-repo-server`:**
 ```yaml
-data:
-  resource.customizations.health.argoproj.io_Application: |
-    hs = {}
-    hs.status = "Progressing"
-    hs.message = "Waiting for application"
-    if obj.status ~= nil then
-      if obj.status.health ~= nil then
-        hs.status = obj.status.health.status
-        if obj.status.health.message ~= nil then
-          hs.message = obj.status.health.message
-        end
-      end
-    end
-    return hs
+containers:
+  - name: argocd-repo-server
+    env:
+      - name: ARGOCD_ASK_PASS_SOCK
+        value: /shared/askpass/askpass.sock
+    volumeMounts:
+      - name: askpass-socket
+        mountPath: /shared/askpass
+
+  - name: my-cmp-plugin
+    env:
+      - name: ARGOCD_ASK_PASS_SOCK
+        value: /shared/askpass/askpass.sock
+    volumeMounts:
+      - name: askpass-socket
+        mountPath: /shared/askpass
+volumes:
+  - name: askpass-socket
+    emptyDir: {}
 ```
 
-### Сценарий 9: Мониторинг производительности CMP
+Когда плагин выполняет `git clone https://git.internal.corp/shared-modules.git`, Git обращается к скрипту `askpass`, который через сокет `/shared/askpass/askpass.sock` запрашивает временные учетные данные у `repo-server`.
 
-**Prometheus метрики для CMP:**
-```yaml
-# argocd-cm ConfigMap
-data:
-  metrics.enabled: "true"
-```
-
-**Ключевые метрики:**
-- `argocd_app_reconcile` — гистограмма длительности сверки, секунды
-- `argocd_app_sync_total` — количество синхронизаций
-- `argocd_app_info` — статус здоровья и синхронизации (labels `health_status`, `sync_status`)
+---
 
 ## Сравнение CMP v1 и CMP v2
 
-| Характеристика | CMP v1 (Legacy) | CMP v2 (Modern) |
+| Характеристика | CMP v1 (Legacy, удален в v2.8) | CMP v2 (Современный стандарт) |
 | :--- | :--- | :--- |
-| **Изоляция** | Отсутствует (общие зависимости). | Полная (sidecar-контейнеры). |
-| **Место конфигурации** | ConfigMap `argocd-cm`. | Файл `plugin.yaml` в sidecar. |
-| **Масштабируемость** | Низкая. | Высокая (независимые плагины). |
-| **Безопасность** | Общие права Repo Server. | Уникальные SecurityContext и RBAC. |
-| **Управление версиями** | Версия = версия ArgoCD. | Независимые версии плагинов. |
-| **Debugging** | Логи в общем потоке. | Изолированные логи sidecar. |
+| **Архитектура** | Процессы запускались внутри основного контейнера `repo-server`. | Изолированные sidecar-контейнеры для каждого плагина. |
+| **Место конфигурации** | Глобальный ConfigMap `argocd-cm` (`configManagementPlugins`). | Отдельный файл `plugin.yaml` в ConfigMap или запеченный в образ. |
+| **Изоляция зависимостей** | Отсутствовала. Все утилиты (helm, yq, helmfile) боролись за одну файловую систему и библиотеки. | Полная. Каждый контейнер имеет свой базовый образ, бинарники и runtime. |
+| **Безопасность** | Общие привилегии с `repo-server`. Доступ к корневым секретам репозиториев. | Индивидуальный `SecurityContext`, непривилегированный пользователь (UID 999), изолированный `/tmp`. |
+| **Обновление конфигурации** | Изменение `argocd-cm` приводило к перезапуску всего `repo-server`. | Перезапуск только соответствующего sidecar при обновлении ConfigMap. |
+| **Передача репозитория** | Прямой доступ к склонированной папке на диске `repo-server`. | Потоковая передача через gRPC Tar Stream по UNIX-сокету. |
+| **Параметры в UI** | Не поддерживались. | Поддерживаются через `spec.parameters` (статические и динамические). |
+
+---
+
+## Операции и диагностика
+
+### Проверка состояния компонентов
+
+```bash
+# Проверка готовности pod repo-server (должно быть 2/2 или более контейнеров в статусе Running)
+kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-repo-server
+# → NAME                                  READY   STATUS    RESTARTS   AGE
+# → argocd-repo-server-5757d54b8d-2k8l9   2/2     Running   0          45m
+
+# Список контейнеров в поде repo-server
+kubectl get pod -n argocd -l app.kubernetes.io/name=argocd-repo-server \
+  -o jsonpath='{.items[0].spec.containers[*].name}'
+# → argocd-repo-server helmfile-plugin
+
+# Проверка наличия активных UNIX domain сокетов плагинов
+kubectl exec -n argocd deployment/argocd-repo-server -c helmfile-plugin -- ls -la /var/run/argocd/
+# → total 8
+# → drwxrwxrwx 2 argocd argocd 4096 Oct 11 18:20 .
+# → -rwxr-xr-x 1 argocd argocd 54200112 Oct 11 18:15 argocd-cmp-server
+# → srwxr-xr-x 1 argocd argocd        0 Oct 11 18:20 helmfile.sock
+```
+
+### Просмотр логов sidecar-плагина
+
+```bash
+# Логирование процесса обнаружения и генерации плагина в реальном времени
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server -c helmfile-plugin -f
+# → time="2026-10-11T18:25:01Z" level=info msg="Generating manifests for repo https://git.internal.corp/infra/apps.git"
+# → time="2026-10-11T18:25:02Z" level=info msg="Executing: helmfile -e production template"
+# → time="2026-10-11T18:25:05Z" level=info msg="Manifest generation completed successfully"
+```
+
+### Принудительный сброс Redis-кэша ошибок (Hard Refresh)
+
+Если плагин был исправлен, но Argo CD продолжает выдавать предыдущую ошибку генерации:
+
+```bash
+# Принудительная очистка кэша генератора для конкретного приложения
+argocd app get payment-service --hard-refresh
+# → Name:               argocd/payment-service
+# → Project:            default
+# → Server:             https://kubernetes.default.svc
+# → Namespace:          production
+# → URL:                https://argocd.corp/applications/payment-service
+# → Repo:               https://git.internal.corp/infra/apps.git
+# → Target:             main
+# → Path:               services/payment
+# → Sync Status:        Synced
+# → Health Status:      Healthy
+
+# Альтернатива через kubectl (установка аннотации обновления)
+kubectl annotate application payment-service -n argocd argocd.argoproj.io/refresh=hard --overwrite
+# → application.argoproj.io/payment-service annotated
+```
+
+### Перезапуск пода после изменения ConfigMap плагина
+
+Если `plugin.yaml` смонтирован из ConfigMap, изменения не подхватываются процессом `argocd-cmp-server` на лету:
+
+```bash
+kubectl rollout restart deployment/argocd-repo-server -n argocd
+# → deployment.apps/argocd-repo-server restarted
+
+kubectl rollout status deployment/argocd-repo-server -n argocd
+# → deployment "argocd-repo-server" successfully rolled out
+```
+
+---
+
+## Диагностика и устранение неполадок
+
+### Типовые проблемы и их решения
+
+| Ошибка / Симптом | Вероятная причина | Решение |
+| :--- | :--- | :--- |
+| **Пустой вывод манифестов удаляет ресурсы в кластере** (`Pruned all resources`) | Команда `generate` завершилась с ошибкой внутри конвейера (pipe), но вернула exit code 0; `prune: true` удалил все ресурсы. | **Критично:** всегда указывайте `set -eo pipefail` в начале shell-скрипта генерации. Проверяйте вывод: `generate: command: [sh, -c, "set -eo pipefail; helm template . \| grep -v '^\s*#'"]`. |
+| `exec: "/var/run/argocd/argocd-cmp-server": no such file or directory` | В sidecar-контейнере отсутствует бинарный файл CMP-сервера. | Добавьте `initContainers: copyutil` в под или соберите собственный образ (BYOI), скопировав `/usr/local/bin/argocd` из официального образа `argoproj/argocd`. |
+| `no matches for kind "ConfigManagementPlugin" in version "argoproj.io/v1alpha1"` | Попытка применить `plugin.yaml` напрямую в кластер через `kubectl apply -f plugin.yaml`. | `ConfigManagementPlugin` — внутренняя структура Argo CD, а не CRD в etcd. Она должна храниться в ConfigMap под ключом `plugin.yaml` или в образе контейнера. |
+| `rpc error: code = DeadlineExceeded desc = context deadline exceeded` | Выполнение фаз `init` или `generate` превысило установленный таймаут (по умолчанию 60–90 с). | Увеличьте `ARGOCD_EXEC_TIMEOUT: "300s"` в контейнере плагина и параметры `server.repo.server.timeout.seconds: "300"` в `argocd-cmd-params-cm`. |
+| `Permission denied` при записи во временные файлы | Контейнер плагина запущен с `readOnlyRootFilesystem: true`, но `/tmp` не смонтирован как `emptyDir`. | Добавьте volumeMount для `/tmp` с томом `emptyDir: {}` специально для контейнера плагина. Не монтируйте общий `/tmp` с `repo-server`! |
+| Старая ошибка не исчезает после коммита в Git | `repo-server` закэшировал результат ошибки в Redis. | Выполните `argocd app get <app> --hard-refresh` или перезапустите под Redis: `kubectl rollout restart statefulset/argocd-redis-ha-server -n argocd`. |
+| `Application uses plugin X, but X is not registered` | Имя плагина в Application не совпадает с `metadata.name` или `metadata.name-spec.version` в `plugin.yaml`. | Проверьте регистрацию сокета в `/var/run/argocd/*.sock` и соответствие поля `spec.source.plugin.name`. Если версия указана, формат имени: `<name>-<version>`. |
+| Пересечение правил (Non-deterministic plugin selection) | Два разных CMP-плагина используют перекрывающиеся маски `fileName` (например, `*.yaml`). | Сделайте правила обнаружения максимально узкими (проверяйте конкретные файлы шаблонизаторов) либо жестко фиксируйте `plugin.name` в манифесте `Application`. |
+
+---
 
 ## Рекомендации и лучшие практики
 
-### Безопасность
-- **Minimal Privileges:** Запускайте sidecar от непривилегированного пользователя (runAsNonRoot, runAsUser > 1000).
-- **Read-Only Filesystem:** Монтируйте Tomls как read-only где возможно.
-- **Network Policies:** Ограничьте сетевой доступ CMP sidecar через NetworkPolicy.
-- **Image Scanning:** Сканируйте образы sidecar на уязвимости (Trivy, Snyk).
-- **Secrets Management:** Не храните секреты в образах; используйте Vault, SOPS, External Secrets.
+### Безопасность (Hardening)
 
-### Производительность
-- **Кеширование**: Используйте локальное кеширование в sidecar для инструментов, требующих скачивания тяжелых зависимостей.
-- **Размер образов**: Держите образы плагинов минимальными (на базе Distroless или Alpine) для ускорения автоскейлинга `repo-server`.
-- **Resource Limits:** Устанавливайте CPU/memory limits для sidecar контейнеров.
-- **Lazy Init:** Используйте init-контейнеры для тяжелых зависимостей, а не для каждого запуска.
+- **Непривилегированный пользователь:** Запускайте sidecar строго под пользователем с UID 999 (`argocd`):
+  ```yaml
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  ```
+- **Изоляция томов `/tmp`:** Начиная с версии v2.4, **запрещено монтировать один и тот же том `/tmp`** между основным контейнером `repo-server` и sidecar-контейнерами CMP. Совместное использование разделов `/tmp` открывает вектор атак обхода директорий (Path Traversal) и неконтролируемого перетирания кэша Git.
+- **Предотвращение инъекций параметров:** Пользовательские параметры передаются через переменные окружения `$PARAM_*`. Никогда не подставляйте параметры напрямую в shell через конкатенацию `eval`. Используйте экранирование:
+  ```bash
+  # Правильно:
+  helm template . --set "replicaCount=${PARAM_REPLICA_COUNT}"
+  # Неправильно:
+  eval "helm template . $PARAM_ARGS"
+  ```
+- **Защита от утечки секретов в UI:** Поток стандартного вывода ошибок `stderr` из команды `generate` передается в веб-интерфейс Argo CD при сбое сборки. Следите за тем, чтобы команды плагина не выводили расшифрованные секреты, токены и приватные ключи в `stderr`.
+- **Контроль `preserveFileMode`:** Оставляйте параметр `preserveFileMode: false` (по умолчанию), если плагину не требуется запуск исполняемых скриптов, хранящихся внутри пользовательских репозиториев.
 
-### Надежность
-- **Health Checks:** Добавляйте liveness/readiness probes для CMP sidecar.
-- **Graceful Shutdown:** Корректно обрабатывайте SIGTERM для завершения текущих операций.
-- **Retry Logic:** Реализуйте повторные попытки при временных ошибках (registry unavailable, network timeout).
+### Производительность и SRE
 
-### Устранение проблем
-- **Логирование:** Включите debug-логирование для отладки discovery/generate фаз.
-- **Мониторинг:** Добавьте алерты на ошибки CMP (rate > 5%).
-- **Инструменты:** Используйте `argocd admin` для диагностики серверных проблем.
+- **Минимизация образов (Distroless / Alpine):** Храните образы CMP минималистичными. Большие образы (более 500 МБ) замедляют горизонтальное масштабирование `repo-server` (HPA) при пиковых нагрузках на синхронизацию.
+- **Исключения Tar-потока в монорепозиториях:** Обязательно активируйте `reposerver.plugin.tar.exclusions` для исключения директорий `.git`, `node_modules`, тестовых файлов и бинарных артефактов.
+- **Мониторинг метрик Prometheus:**
+  - `argocd_repo_server_exec_duration_seconds` — гистограмма длительности выполнения внешних команд плагинов (позволяет выявлять деградацию генерации манифестов).
+  - `argocd_repo_server_exec_total` — общее количество вызовов утилит с разбивкой по кодам возврата.
+  - `argocd_app_reconcile` — время полной сверки приложений (включая работу CMP).
 
-## Ограничения и edge cases
-
-### Ограничения
-
-1. **Overhead:** Каждый sidecar добавляет потребление ресурсов (CPU/memory) в под repo-server.
-2. **Сложность отладки:** Мультиконтейнерные поды сложнее отлаживать.
-3. **Зависимость от ArgoCD:** Версия CMP v2 привязана к версии ArgoCD.
-4. **Сетевой трафик:** UNIX-сокеты работают только внутри пода; нельзя вынести CMP наружу.
-
-### Edge Cases
-
-1. **Конфликт плагинов:** Если два плагина подходят для одной директории, используется первый найденный.
-2. **Большие репозитории:** При большом количестве файлов discovery может работать медленно.
-3. **Секреты в init-контейнерах:** Init-контейнеры не имеют доступа к Kubernetes Secrets.
-4. **Мультикаст:** При использовании несколько CMP sidecar могут конфликтовать за ресурсы.
-5. **Образы с тегами:** Используйте immutable теги для reproducibility.
-6. **Helm dependencies:** CMP не кеширует зависимости; нужно кешировать самостоятельно.
-7. **Версии инструментов:** Разные плагины могут требовать разные версии одного инструмента.
-
-## Диагностика
-
-### Базовые команды
-
-```bash
-# Проверка pod repo-server
-kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-repo-server
-
-# Логи CMP sidecar
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server -c <cmp-name>
-
-# Проверка plugin.yaml
-kubectl exec -it -n argocd deployment/argocd-repo-server -c <cmp-name> -- cat /home/argocd/cmp-server/config/plugin.yaml
-
-# Ручное тестирование generate
-kubectl exec -it -n argocd deployment/argocd-repo-server -c <cmp-name> -- /usr/local/bin/my-tool generate
-
-# Просмотр переменных окружения
-argocd app get <app-name> --plugin-env
-
-# Проверка registration плагина
-argocd admin settings repo-server list-plugins
-```
-
-### Отладка CMP
-
-```bash
-# Включить debug логирование
-kubectl set env deployment/argocd-repo-server -n argocd ARGOCD_DEBUG=true
-
-# Проверить discovery rules
-kubectl exec -it -n argocd deployment/argocd-repo-server -c <cmp-name> -- \
-  /usr/local/bin/argocd-cmp-server --discovery
-
-# Просмотреть все зарегистрированные плагины
-argocd admin settings repo-server list-plugins --namespace argocd
-```
-
-### См. также
-
-- [RBAC — модель доступа](./argocd_rbac_deep.md) — Модель доступа, policy.csv, встроенные роли, JWT-токены, диагностика.
-- [Безопасность](./argocd_security_hardening.md) — GPG, NetworkPolicies, mTLS, SecurityContext, proxy, audit logging.
-- [Disaster Recovery](./argocd_disaster_recovery.md) — Бэкап, восстановление, etcd snapshot, HA, geo-recovery.
+---
 
 ## Дополнительная информация
 
 ### Связанные документы
 
-- [Обзор ArgoCD](./argocd_overview.md) — общая архитектура ArgoCD.
-- [Интеграция с Vault (AVP)](./argocd_vault_integration.md) — пример CMP v2 для секретов.
-- [Интеграция с Helm](./helm_integration.md) — стандартная поддержка Helm.
-- [Синхронизация и политики](./synchronization.md) — Sync Waves и хуки.
-- [Управление секретами (SOPS)](../../Security/Tools/sops_overview.md) — шифрование секретов.
-- [Helmwave Overview](../../Kubernetes/ToolsUtilities/Helm/helmwave_overview.md) — документация Helmwave.
+- [Обзор архитектуры Argo CD](./argocd_overview.md) — базовые компоненты, контроллеры и принципы работы.
+- [Интеграция с Vault (AVP)](./argocd_vault_integration.md) — детальная архитектура подстановки секретов из HashiCorp Vault.
+- [Интеграция с Helm](./helm_integration.md) — встроенная работа с Helm-чартами и сравнение с CMP.
+- [Синхронизация и политики](./synchronization.md) — фазы синхронизации, Sync Waves и хуки жизненного цикла.
+- [RBAC в Argo CD](./argocd_rbac_deep.md) — разграничение прав доступа к приложениям и репозиториям.
+- [Hardening и безопасность](./argocd_security_hardening.md) — изоляция сети, SecurityContext и аудит.
+- [Disaster Recovery](./argocd_disaster_recovery.md) — резервное копирование и восстановление состояния.
+- [Управление секретами (SOPS)](../../Security/Tools/sops_overview.md) — работа с зашифрованными секретами в Git.
+- [Helmfile Overview](../../Kubernetes/ToolsUtilities/Helm/helmfile_overview.md) — декларативное управление несколькими Helm-чартами.
+- [Helmwave Overview](../../Kubernetes/ToolsUtilities/Helm/helmwave_overview.md) — оркестрация релизов Helm с зависимостями.
 
-### Официальные ресурсы
+### Официальная документация
 
-- [ArgoCD Documentation: Config Management Plugins](https://argo-cd.readthedocs.io/en/stable/operator-manual/config-management-plugins/)
-- [QBEC Documentation](https://qbec.io/)
+- [Argo CD Documentation: Config Management Plugins](https://argo-cd.readthedocs.io/en/stable/operator-manual/config-management-plugins/)
+- [Argo CD Example Plugins Repository](https://github.com/argoproj/argo-cd/tree/master/examples/plugins)
 - [Helmfile Documentation](https://helmfile.readthedocs.io/)
 - [Helmwave Documentation](https://helmwave.github.io/)
-- [ArgoCD Vault Plugin](https://github.com/argoproj-labs/argocd-vault-plugin)
+- [QBEC Documentation](https://qbec.io/)

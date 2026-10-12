@@ -1,677 +1,882 @@
 # CLI-инструменты для работы с Apache Kafka
 
-Для взаимодействия с Apache Kafka из командной строки используются стандартные утилиты, входящие в дистрибутив, а также сторонние решения, такие как `kcat`, `rpk` и `kafkactl`. Они позволяют управлять топиками, читать и отправлять сообщения, диагностировать состояние кластера, перераспределять партиции и проводить нагрузочные тесты. Теоретические основы описанных операций — [Обзор Apache Kafka](./kafka_overview.md).
+**Актуально для:** Apache Kafka 3.8.x / 3.9.x / 4.0.x (KRaft)
+
+Для взаимодействия с Apache Kafka из командной строки используются стандартные утилиты, входящие в дистрибутив, а также специализированные высокопроизводительные сторонние решения: `kcat`, `rpk` и `kafkactl`. Они обеспечивают администрирование топиков, потоковое чтение и отправку сообщений, диагностику отставания потребителей (Consumer Lag), динамическое конфигурирование параметров без перезагрузки брокеров, перераспределение партиций, инспекцию дисковых сегментов и нагрузочное тестирование. Теоретические основы архитектуры и протокола — [Обзор Apache Kafka](./kafka_overview.md).
+
+---
 
 ## Определения
 
-- **Kafka CLI (Standard)**: Набор shell-скриптов (оберток над Java-приложениями), поставляемых в составе дистрибутива Apache Kafka в каталоге `bin/`. Требуют наличия JVM; начиная с Kafka 4.0 — JVM версии 17 или выше (KIP-750, KIP-1013). Для Windows существуют аналоги с расширением `.bat`. Основные утилиты: `kafka-topics.sh`, `kafka-console-consumer.sh`, `kafka-consumer-groups.sh`, `kafka-configs.sh`.
-- **kcat (ранее kafkacat)**: Универсальный не-JVM инструмент (на базе `librdkafka`) для работы с Kafka, «netcat для Kafka». Идеален для отладки, чтения данных и интеграции в shell-пайплайны. Переименован из `kafkacat` в августе 2021 года по требованию Apache Software Foundation (торговая марка); функционально это тот же инструмент. Актуальная линейка версий — 1.7.x.
-- **rpk (Redpanda CLI)**: Современный, быстрый инструмент на Go, распространяется как статический бинарный файл без зависимостей. Несмотря на то, что это основной CLI для Redpanda, он совместим с Apache Kafka в части стандартных операций (топики, группы, ACL) и часто используется как более удобная альтернатива стандартным скриптам. Часть команд работает только с Redpanda (см. «Ограничения»).
-- **kafkactl**: Специализированный CLI от Device Insight с интерфейсом в стиле `kubectl` (`get`, `describe`, `alter`, `create`, `delete`), ориентированный на управление множеством кластеров через контексты. Активно развивается, поддерживает Avro, Protobuf, Schema Registry, работу с кластерами внутри Kubernetes и управление SCRAM-пользователями.
-- **Confluent CLI**: Фирменный инструмент для работы с Confluent Cloud и Confluent Platform. Управляет окружениями, кластерами и API-ключами Confluent Cloud; локальные данные при этом читаются теми же стандартными утилитами или `kcat`.
-- **librdkafka**: C-библиотека клиента Kafka, на которой построены `kcat` и клиенты многих языков (Python `confluent-kafka`, Go `franz-go`/`sarama` частично). Все её параметры конфигурации можно передать в `kcat` через флаг `-X`.
+- **Kafka Standard CLI**: Набор shell-скриптов (оберток над Java-классами `org.apache.kafka.tools.*`), поставляемых в каталоге `bin/` официального дистрибутива Apache Kafka. Требуют наличия JVM (начиная с Kafka 4.0 — строго Java 17+ согласно KIP-750/KIP-1013). Для Windows в комплекте поставляются bat-файлы в каталоге `bin/windows/`.
+- **kcat (ранее kafkacat)**: Универсальная не-JVM консольная утилита на базе C-библиотеки `librdkafka` («netcat для Kafka»). Отличается мгновенным запуском, минимальным потреблением ресурсов, поддержкой форматированного вывода и гибким позиционированием по офсетам и меткам времени. Идеальна для отладки данных и конвейеров shell.
+- **rpk (Redpanda CLI)**: Высокоскоростной CLI на Go, распространяемый как единый статический бинарный файл без внешних зависимостей. Поддерживает парадигму `noun + verb` (`rpk topic list`, `rpk group describe`), профили подключений и совместим со стандартным бинарным протоколом Apache Kafka для операций с топиками, группами потребителей и ACL.
+- **kafkactl**: Специализированный CLI на Go от Device Insight с декларативным синтаксисом в стиле `kubectl` (`get`, `describe`, `alter`, `create`, `delete`). Поддерживает многокластерные контексты, декодирование схем Avro/Protobuf через Schema Registry и прямое проксирование запросов к подам в Kubernetes.
+- **librdkafka**: C/C++ реализация клиентской библиотеки Kafka. Все её низкоуровневые параметры конфигурации могут передаваться напрямую в `kcat` через флаг `-X <property>=<value>`.
+- **AdminClient**: Программный интерфейс Java (`org.apache.kafka.clients.admin.AdminClient`), через который современные утилиты взаимодействуют с кластером поверх стандартных сетевых листенеров брокеров (`--bootstrap-server`).
+- **Consumer Lag**: Разница между последним записанным офсетом в партиции (`LOG-END-OFFSET`) и последним подтвержденным офсетом группы потребителей (`CURRENT-OFFSET`). Ключевой эксплуатационный показатель задержки обработки.
+- **Command Config (`--command-config`)**: Файл свойств клиента (`client.properties`), передаваемый административным утилитам для настройки протоколов безопасности (TLS, SASL, JAAS), таймаутов сетевых запросов и доверенных сертификатов.
+- **KRaft Quorum Metadata**: Журнал событий метаданных (`@metadata`), реплицируемый контроллерами кластера на базе алгоритма Raft, полностью заменивший ZooKeeper. Диагностируется утилитами `kafka-metadata-quorum.sh` и `kafka-features.sh`.
 
-## Основные концепции
+---
 
-### Сравнение инструментов
+## Архитектура и основные концепции
 
-| Критерий | Стандартные утилиты | kcat | rpk | kafkactl |
+### Сравнение инструментов командной строки
+
+| Критерий | Стандартные утилиты Kafka | kcat | rpk | kafkactl |
 | :--- | :--- | :--- | :--- | :--- |
-| **Язык / Зависимости** | Java (JVM 17+ для Kafka 4.x) | C (librdkafka) | Go (статический бинарный файл) | Go (статический бинарный файл) |
-| **Стиль команд** | Множество скриптов | Однобуквенные флаги (`-C`, `-P`, `-L`) | Глагол + Существительное (`rpk topic list`) | Интерфейс `kubectl` (`get topics`) |
-| **Управление кластерами** | Флаги в каждой команде | Флаги командной строки, файл конфигурации (`-F`) | Профили (`rpk profile`) | Контексты (YAML-конфигурация) |
-| **Администрирование** | Максимальное (ACL, квоты, ребалансировка, логи, метаданные KRaft) | Только данные и метаданные (`-L`) | Высокое (Topic, Group, ACL) | Среднее-высокое (Topic, Group, ACL, Users, Brokers) |
-| **Чтение/запись данных** | `kafka-console-producer/consumer.sh` | Лучший в классе (форматы, фильтры, пайплайны) | Хорошие (`rpk topic produce/consume`) | Хорошие (+ Avro/Protobuf) |
-| **Скорость старта** | Медленно (запуск JVM, секунды) | Мгновенно | Мгновенно | Мгновенно |
+| **Ядро / Зависимости** | Java (JVM 17+ для Kafka 4.x, JVM 11+ для 3.x) | C (`librdkafka`) | Go (статический бинарник) | Go (статический бинарник) |
+| **Стиль синтаксиса** | Разрозненные bash-скрипты | POSIX-флаги (`-C`, `-P`, `-L`, `-G`) | `noun + verb` (`rpk topic ...`) | `kubectl`-стиль (`get`, `describe`) |
+| **Управление профилями** | Флаги в командной строке / свойства | Флаг `-F`, `~/.config/kcat.conf` | Профили (`rpk profile`) | Контексты (`~/.config/kafkactl/config.yml`) |
+| **Администрирование кластера** | Полное (ACL, квоты, ребалансировка, KRaft, логи) | Только инспекция метаданных (`-L`) | Высокое (топики, группы, ACL) | Высокое (топики, группы, ACL, пользователи) |
+| **Потоковая работа с данными** | `kafka-console-producer/consumer.sh` | Превосходная (JSON, таймстампы, пайпы) | Высокая (`rpk topic produce/consume`) | Высокая (+ Avro, Protobuf) |
+| **Время инициализации** | Медленно (старт JVM 1.5–3.5 сек) | Мгновенно (< 20 мс) | Мгновенно (< 25 мс) | Мгновенно (< 25 мс) |
+| **Инспекция файлов на диске** | Да (`kafka-dump-log.sh`) | Нет | Нет | Нет |
 
-Вывод из таблицы: инструменты не конкурируют, а дополняют друг друга — типичный SRE использует `rpk`/`kafkactl` для повседневных операций, `kcat` для работы с данными и пайплайнами, а стандартные утилиты — для задач, недоступных другим инструментам (ребалансировка партиций, дамп логов, квоты на уровне брокеров).
+Инструменты дополняют друг друга в работе системного администратора и SRE:
+- `rpk` и `kafkactl` оптимальны для ежедневных оперативных задач, рутинного мониторинга лага и интеграции в скрипты автоматизации за счет мгновенного отклика.
+- `kcat` является непревзойденным инструментом для исследования потоков данных, фильтрации по времени, отладки сериализации и извлечения сообщений в shell-пайплайнах с `jq`.
+- Стандартные утилиты незаменимы для низкоуровневого обслуживания кластера: планового перемещения партиций, анализа кворума метаданных KRaft, инспекции индексных файлов на хостах брокеров и стресс-тестирования.
 
-### Подключение и аутентификация
+### Протоколы подключения и аутентификация
 
-Все стандартные утилиты подключаются к брокерам через флаг `--bootstrap-server host:port`. История аргументов важна для понимания легаси-скриптов:
+Все клиентские утилиты обращаются к кластеру через начальный список брокеров (Bootstrap Servers). Историческая справка и архитектурные различия:
 
-- До Kafka 2.2 административные утилиты принимали `--zookeeper zookeeper:2181` и читали метаданные напрямую из ZooKeeper, минуя механизмы безопасности Kafka.
-- С Kafka 2.2 аргумент `--zookeeper` объявлен устаревшим (KIP-377: утилиты переведены на AdminClient).
-- В современных версиях (линейки 3.x–4.x) аргумент `--zookeeper` и сам ZooKeeper полностью удалены: любая утилита работает **только** через `--bootstrap-server`. Скрипты со `--zookeeper` требуют переписывания.
+1. До Kafka 2.2 административные утилиты использовали прямое подключение к метаданным ZooKeeper через флаг `--zookeeper host:2181`. Это обходило сетевые политики брокеров и аутентификацию.
+2. В Kafka 2.x–3.x утилиты были переведены на работу через `AdminClient` с флагом `--bootstrap-server host:9092`, а флаг `--zookeeper` был объявлен устаревшим.
+3. Начиная с Kafka 4.0 поддержка ZooKeeper полностью удалена из исходного кода. Все утилиты работают **исключительно** через протокол Kafka RPC с флагом `--bootstrap-server` (или `--bootstrap-controller` для специализированных команд управления кворумом метаданных).
 
-Для кластера с включённой безопасностью (SASL/TLS) каждой утилите дополнительно передается файл конфигурации клиента через `--command-config`. Минимальный пример `client.properties` для SASL_SSL с механизмом SCRAM:
+При работе в защищенном контуре параметры соединения передаются через конфигурационные файлы.
+
+#### Разделение конфигурационных флагов стандартных утилит
+
+Частая ошибка при вызове стандартных утилит — передача неверного конфигурационного ключа:
+- Административные утилиты (`kafka-topics.sh`, `kafka-consumer-groups.sh`, `kafka-configs.sh`, `kafka-acls.sh`, `kafka-reassign-partitions.sh`, `kafka-features.sh`) принимают флаг `--command-config <path>`.
+- Консольный консьюмер (`kafka-console-consumer.sh`) принимает флаг `--consumer.config <path>`.
+- Консольный продюсер (`kafka-console-producer.sh`) принимает флаг `--producer.config <path>`.
+- Бенчмарк-утилиты (`kafka-consumer-perf-test.sh`, `kafka-producer-perf-test.sh`) принимают флаги `--consumer-property` и `--producer-props` соответственно.
+
+Пример эталонного файла конфигурации `client-sasl-ssl.properties`:
 
 ```properties
-# Протокол соединения: SASL поверх TLS
+# Протокол взаимодействия: SASL поверх защищенного TLS-канала
 security.protocol=SASL_SSL
-# Механизм аутентификации (SCRAM-SHA-512 — рекомендуемый; PLAIN допустим за TLS)
+
+# Механизм аутентификации (рекомендуемый стандарт: SCRAM-SHA-512)
 sasl.mechanism=SCRAM-SHA-512
-# JAAS-строка с учетными данными (логин/пароль пользователя)
+
+# Строка JAAS конфигурации с учетными данными
 sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required \
-    username="alice" \
-    password="alice-secret";
-# Доверенное хранилище для проверки сертификата брокера
-ssl.truststore.location=/etc/kafka/truststore.jks
-ssl.truststore.password=changeit
+    username="sre-admin" \
+    password="SecretPassword512!";
+
+# Доверенное хранилище корневых сертификатов CA
+ssl.truststore.location=/var/private/ssl/kafka.truststore.jks
+ssl.truststore.password=TruststorePassword123
+
+# Идентификация конечного узла (проверка hostname в SAN сертификата)
+ssl.endpoint.identification.algorithm=HTTPS
 ```
 
-```bash
-# Любая административная утилита принимает этот файл одинаково
-kafka-topics.sh --bootstrap-server broker1:9093 \
-    --command-config client.properties \
-    --list
-```
+Для инструментов на базе C/Go (`kcat`, `kafkactl`) параметры JKS-хранилища не поддерживаются: сертификаты предоставляются в открытом формате PEM (`ca.pem`, `client.crt`, `client.key`).
 
-Применение того же файла в `kcat` — через параметры librdkafka (эквиваленты тех же свойств):
+### Контексты и профили окружения
 
-```bash
-# Каждый параметр security.protocol/sasl.* передается через -X
-kcat -b broker1:9093 -t orders -C -e \
-    -X security.protocol=SASL_SSL \
-    -X sasl.mechanisms=SCRAM-SHA-512 \
-    -X sasl.username=alice \
-    -X sasl.password=alice-secret \
-    -X ssl.ca.location=/etc/kafka/ca.pem
-```
+В инфраструктуре с несколькими контурами (dev, stage, prod) ручной ввод адресов и путей к сертификатам увеличивает риск ошибки оператора. Использование профилей изолирует окружения.
 
-Чтобы не набирать длинные наборы `-X`, `kcat` поддерживает конфигурационные файлы: флаг `-F <file>`, переменная окружения `KCAT_CONFIG` либо файл по умолчанию `~/.config/kcat.conf`.
-
-### Контексты и профили
-
-Современные инструменты (`kafkactl`, `rpk`, `confluent-cli`) используют концепцию **контекстов** или **профилей**. Это позволяет переключаться между разными кластерами (например, `dev`, `staging`, `prod`) без ручного ввода адресов брокеров и путей к сертификатам.
-
-**Преимущества профилей:**
-
-1. **Безопасность**: Секреты хранятся в конфигурационных файлах с ограниченными правами или переменных окружения, а не в истории shell.
-2. **Скорость**: Отсутствие необходимости в длинных флагах `--bootstrap-server` и `--command-config`.
-3. **Единообразие**: Команды выглядят одинаково для любого окружения; снижается риск выполнить деструктивную операцию не на том кластере (текущий контекст всегда виден в промпте/выводе).
-
-Пример контекста `kafkactl` (файл `~/.config/kafkactl/config.yml`):
+Структура конфигурации `kafkactl` (`~/.config/kafkactl/config.yml`):
 
 ```yaml
 contexts:
-  dev:
+  local-dev:
     brokers:
-      - localhost:9092
-  prod:
+      - "127.0.0.1:9092"
+  prod-cluster:
     brokers:
-      - broker1.prod:9093
-      - broker2.prod:9093
+      - "kafka-broker-1.prod.internal:9093"
+      - "kafka-broker-2.prod.internal:9093"
+      - "kafka-broker-3.prod.internal:9093"
     tls:
       enabled: true
-      ca: ca.pem
-      cert: alice.crt
-      certKey: alice.key
+      ca: /etc/ssl/certs/internal-ca.pem
+      cert: /home/sre/.ssl/client.crt
+      certKey: /home/sre/.ssl/client.key
     sasl:
       enabled: true
       mechanism: scram-sha512
-      username: alice
-current-context: dev
+      username: sre-operator
+      password: "OperatorSecretPassword!"
+current-context: local-dev
+```
+
+Переключение контекста выполняется командой:
+
+```bash
+kafkactl config use-context prod-cluster
+# → Context 'prod-cluster' set
+
+kafkactl get brokers
+# → ID   HOST                            PORT    RACK
+# → 1    kafka-broker-1.prod.internal   9093    rack-a
+# → 2    kafka-broker-2.prod.internal   9093    rack-b
+# → 3    kafka-broker-3.prod.internal   9093    rack-c
+```
+
+---
+
+## Установка и базовая настройка
+
+### Системные требования
+
+- **Java Runtime Environment**: Для стандартных утилит Kafka 3.x требуется Java 11+, для Kafka 4.0+ — строго Java 17 или 21. Наличие JDK не требуется, достаточно headless JRE (`openjdk-17-jre-headless`).
+- **Оперативная память для CLI**: По умолчанию скрипт `kafka-run-class.sh` считывает переменную `KAFKA_HEAP_OPTS`. Если на хосте не задан лимит, утилита может запускаться с избыточным выделением памяти. Рекомендуется явно ограничивать память для терминальных сессий:
+  ```bash
+  export KAFKA_HEAP_OPTS="-Xmx512M -Xms128M"
+  ```
+
+### Установка стандартных утилит без запуска брокера
+
+Для администрирования не требуется развертывать полноценный сервис Kafka. На управляющий бастион или рабочий сервер распаковывается бинарный архив дистрибутива:
+
+```bash
+# Загрузка официального архива Apache Kafka 3.9.0 (Scala 2.13)
+curl -LO https://downloads.apache.org/kafka/3.9.0/kafka_2.13-3.9.0.tgz
+
+# Распаковка в системный каталог
+sudo tar -xzf kafka_2.13-3.9.0.tgz -C /opt/
+sudo ln -s /opt/kafka_2.13-3.9.0 /opt/kafka
+
+# Добавление утилит в системный PATH
+echo 'export PATH=$PATH:/opt/kafka/bin' >> ~/.bashrc
+source ~/.bashrc
+
+# Проверка работоспособности
+kafka-topics.sh --version
+# → 3.9.0
+```
+
+### Установка сторонних инструментов
+
+```bash
+# --- 1. kcat ---
+# Debian / Ubuntu (пакет сохраняет историческое название kafkacat)
+sudo apt-get update && sudo apt-get install -y kafkacat
+# Создание алиаса для обратной совместимости
+sudo ln -s /usr/bin/kafkacat /usr/local/bin/kcat 2>/dev/null || true
+
+# RHEL / Rocky Linux (через репозиторий EPEL)
+sudo dnf install -y epel-release && sudo dnf install -y kcat
+
+# Запуск в Docker без установки в хост-систему
+docker run --rm -it --network=host edenhill/kcat:1.7.1 -b 127.0.0.1:9092 -L
+
+# --- 2. rpk ---
+# Прямая загрузка статического бинарного файла для Linux x86_64
+curl -LO https://github.com/redpanda-data/redpanda/releases/latest/download/rpk-linux-amd64.zip
+unzip rpk-linux-amd64.zip -d /tmp/
+sudo install -m 755 /tmp/rpk /usr/local/bin/rpk
+rm -f rpk-linux-amd64.zip /tmp/rpk
+
+# --- 3. kafkactl ---
+# Прямая установка бинарного релиза Device Insight
+KAFKACTL_VER="v5.6.0"
+curl -LO "https://github.com/deviceinsight/kafkactl/releases/download/${KAFKACTL_VER}/kafkactl_${KAFKACTL_VER#v}_linux_amd64.tar.gz"
+tar -xzf "kafkactl_${KAFKACTL_VER#v}_linux_amd64.tar.gz" kafkactl
+sudo install -m 755 kafkactl /usr/local/bin/kafkactl
+rm -f "kafkactl_${KAFKACTL_VER#v}_linux_amd64.tar.gz" kafkactl
+```
+
+### Конфигурация kcat по умолчанию
+
+Для устранения необходимости передачи адресов и параметров аутентификации в каждом вызове создается конфигурационный файл `~/.config/kcat.conf`:
+
+```properties
+# Адреса брокеров
+metadata.broker.list=10.0.10.11:9093,10.0.10.12:9093,10.0.10.13:9093
+
+# Безопасность
+security.protocol=SASL_SSL
+sasl.mechanisms=SCRAM-SHA-512
+sasl.username=sre-operator
+sasl.password=OperatorSecretPassword!
+ssl.ca.location=/etc/ssl/certs/company-root-ca.pem
+
+# Таймауты сети
+socket.timeout.ms=10000
 ```
 
 ```bash
-# Переключение и проверка текущего контекста
-kafkactl config use-context prod
-# → Context 'prod' set
-
-kafkactl get topics
+chmod 600 ~/.config/kcat.conf
 ```
 
-Особенность `kafkactl`: контекст может указывать не напрямую на брокер, а на кластер внутри Kubernetes — инструмент сам выполнит `kubectl port-forward`/подключится через под, используя секреты Strimzi (`tlsSecret`, `saslSecret`). Это удобно для отладки прод-кластеров, доступных только изнутри кластера.
+---
 
-## Практические сценарии
+## Практические сценарии и типовые операции
 
-### Сценарий 1: Управление топиками и метаданными
+### Сценарий 1: Управление топиками и инспекция метаданных
 
-**Стандартные утилиты:**
+#### Стандартные утилиты
 
 ```bash
-# Список топиков
-kafka-topics.sh --bootstrap-server localhost:9092 --list
+# 1. Получение списка топиков
+kafka-topics.sh --bootstrap-server 10.0.10.11:9092 --list
 # → orders
-# → payments
-# → __consumer_offsets   (внутренний топик координатора групп)
+# → payments-v1
+# → __consumer_offsets
 
-# Детальное описание топика (лидеры партиций, ISR, конфиги)
-kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic orders
-# → Topic: orders	PartitionCount: 3	ReplicationFactor: 3	Configs: min.insync.replicas=2,cleanup.policy=delete
+# 2. Создание production-топика с явными параметрами надежности
+kafka-topics.sh --bootstrap-server 10.0.10.11:9092 --create \
+    --topic orders \
+    --partitions 12 \
+    --replication-factor 3 \
+    --config min.insync.replicas=2 \
+    --config retention.ms=604800000 \
+    --config compression.type=lz4
+# → Created topic orders.
+
+# 3. Детальный аудит партиций топика (лидеры, ISR, переопределенные конфиги)
+kafka-topics.sh --bootstrap-server 10.0.10.11:9092 --describe --topic orders
+# → Topic: orders	TopicId: 4L6g3nShT-eMCtK--X86sw	PartitionCount: 12	ReplicationFactor: 3	Configs: min.insync.replicas=2,retention.ms=604800000,compression.type=lz4
 # → 	Topic: orders	Partition: 0	Leader: 1	Replicas: 1,2,3	Isr: 1,2,3
 # → 	Topic: orders	Partition: 1	Leader: 2	Replicas: 2,3,1	Isr: 2,3,1
 # → 	Topic: orders	Partition: 2	Leader: 3	Replicas: 3,1,2	Isr: 3,1,2
 
-# Создание топика с параметрами (партиции, репликация, конфиги)
-kafka-topics.sh --bootstrap-server localhost:9092 --create \
-    --topic orders --partitions 12 --replication-factor 3 \
-    --config retention.ms=604800000 --config min.insync.replicas=2
+# 4. Поиск проблемных топиков (где список ISR меньше Replicas или рассинхронизирован)
+kafka-topics.sh --bootstrap-server 10.0.10.11:9092 --describe --under-replicated-partitions
+# → (пустой вывод означает, что все партиции полностью синхронизированы)
 
-# Изменение числа партиций (только увеличение; уменьшение невозможно и нарушит порядок по ключу)
-kafka-topics.sh --bootstrap-server localhost:9092 --alter --topic orders --partitions 24
+# 5. Поиск партиций, чей текущий лидер отличается от предпочтительного (Preferred Leader)
+kafka-topics.sh --bootstrap-server 10.0.10.11:9092 --describe --under-min-isr-partitions
 
-# Чтение сообщений из топика с самого начала (Интерактивно; выход Ctrl+C)
-kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic orders --from-beginning
-# → {"order_id": "a1", "amount": 100}
-# → {"order_id": "a2", "amount": 250}
+# 6. Увеличение количества партиций (уменьшение в Kafka технически невозможно!)
+kafka-topics.sh --bootstrap-server 10.0.10.11:9092 --alter --topic orders --partitions 24
+# → Updated partition count for topic orders.
 
-# Проверка версий API брокеров и их состояния (диагностика совместимости клиентов)
-kafka-broker-api-versions.sh --bootstrap-server localhost:9092
-# → localhost:9092 (id: 1 rack: null): Produce(0): 0 to 12 [usable: 12]
-# → localhost:9092 (id: 1 rack: null): Fetch(1): 0 to 17 [usable: 17]
-# → ...
+# 7. Проверка версий протокола API брокеров (совместимость клиентов)
+kafka-broker-api-versions.sh --bootstrap-server 10.0.10.11:9092 | head -n 5
+# → 10.0.10.11:9092 (id: 1 rack: rack-a): Produce(0): 0 to 12 [usable: 12]
+# → 10.0.10.11:9092 (id: 1 rack: rack-a): Fetch(1): 0 to 17 [usable: 17]
 
-# Идентификатор кластера (полезен при инвентаризации и в мониторинге)
-kafka-cluster.sh cluster-id --bootstrap-server localhost:9092
+# 8. Получение уникального Cluster ID
+kafka-cluster.sh cluster-id --bootstrap-server 10.0.10.11:9092
 # → Cluster ID: 5L6g3nShT-eMCtK--X86sw
 ```
 
-Трактовка вывода `--describe`: если какая-то реплика отсутствует в списке `Isr`, она отстала или недоступна; поле `Leader` показывает брокера, обслуживающего чтение/запись партиции. Все реплики должны совпадать с ISR у здорового кластера. Подробнее о механике репликации — [Обзор Apache Kafka](./kafka_overview.md).
+#### kcat
 
-**Работа в Docker:**
-Если Kafka запущена в контейнере, команды выполняются через `docker exec`:
+Быстрый аудит метаданных кластера без задержек JVM:
 
 ```bash
-docker exec -it <container_name> kafka-topics.sh --bootstrap-server localhost:9092 --list
+# Получение списка брокеров, топиков, партиций и ISR
+kcat -b 10.0.10.11:9092 -L
+# → Metadata for all topics (from broker 1: 10.0.10.11:9092/1):
+# →  3 brokers:
+# →   broker 1 at 10.0.10.11:9092 (controller)
+# →   broker 2 at 10.0.10.12:9092
+# →   broker 3 at 10.0.10.13:9092
+# →  1 topics:
+# →   topic "orders" with 12 partitions:
+# →     partition 0, leader 1, replicas: 1,2,3, isrs: 1,2,3
 ```
 
-В официальных образах (`apache/kafka`, `confluentinc/cp-kafka`) скрипты доступны в `PATH` контейнера, поэтому путь `bin/` указывать не нужно. Полный рабочий стек — [Развертывание Kafka в Docker](./kafka_docker_setup.md).
-
-**rpk:**
+#### rpk и kafkactl
 
 ```bash
-# Список топиков
-rpk topic list
-# NAME     PARTITIONS  REPLICAS
-# orders   3           3
+# Просмотр топиков через rpk
+rpk topic list --brokers 10.0.10.11:9092
+# → NAME     PARTITIONS  REPLICAS
+# → orders   12          3
 
-# Создание топика с настройками
-rpk topic create orders -p 12 -r 3 --topic-config retention.ms=604800000
-
-# Чтение сообщений (Interactive)
-rpk topic consume orders
-
-# Детальное описание партиций и конфигов
-rpk topic describe orders -p
-```
-
-**kafkactl:**
-
-```bash
-# Детальная информация
+# Детальное описание в kafkactl
 kafkactl describe topic orders
-# Per default печатаются только переопределенные конфиги; для всех значений:
-kafkactl describe topic orders --all-configs
-
-# Создание и удаление
-kafkactl create topic orders --partitions 12 --replication-factor 3
-kafkactl delete topic old-orders
+# → Name: orders
+# → Partitions: 12
+# → Replication Factor: 3
+# → Configuration:
+# →   min.insync.replicas: 2
+# →   retention.ms: 604800000
 ```
 
-### Сценарий 2: Чтение и отправка данных
+---
 
-**Стандартные утилиты:**
+### Сценарий 2: Потоковая отправка и чтение данных
+
+#### Стандартные утилиты
 
 ```bash
-# Отправка сообщения (интерактивно; каждая строка — сообщение, выход Ctrl+C/Ctrl+D)
-kafka-console-producer.sh --bootstrap-server localhost:9092 --topic orders
-# > order-a1
-# > order-a2
+# 1. Отправка сообщений с явными ключами через консольный продюсер
+kafka-console-producer.sh --bootstrap-server 10.0.10.11:9092 --topic orders \
+    --producer.config client.properties \
+    --property parse.key=true \
+    --property key.separator=:
+# > user-101:{"order_id": 5510, "amount": 1200}
+# > user-102:{"order_id": 5511, "amount": 450}
 
-# Отправка сообщений С КЛЮЧАМИ (ключ и значение разделяются разделителем;
-# без ключа партиционер распределит записи батчами, порядок по ключу не сохранится)
-kafka-console-producer.sh --bootstrap-server localhost:9092 --topic orders \
-    --property parse.key=true --property key.separator=:
-# > customer-42:{"order_id": "a1", "amount": 100}
-
-# Чтение с выводом ключа, таймстампа и разделителя
-kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic orders \
+# 2. Чтение данных с начала топика с выводом таймстампа, партиции и ключа
+kafka-console-consumer.sh --bootstrap-server 10.0.10.11:9092 --topic orders \
+    --consumer.config client.properties \
     --from-beginning \
-    --property print.key=true \
     --property print.timestamp=true \
+    --property print.partition=true \
+    --property print.key=true \
     --property key.separator=" | "
-# → CreateTime:1724508000000	customer-42	{"order_id": "a1", "amount": 100}
+# → CreateTime:1728561200000 | Partition:2 | user-101 | {"order_id": 5510, "amount": 1200}
+# → CreateTime:1728561205000 | Partition:5 | user-102 | {"order_id": 5511, "amount": 450}
 ```
 
-Нюанс версий: классы форматтеров сообщений исторически жили в пакете `kafka.tools.*`, в современных версиях они перенесены в `org.apache.kafka.tools.*` — при использовании нестандартного `--formatter` (например, для чтения внутренних топиков) указывайте актуальное имя пакета.
+#### Продвинутые пайплайны kcat
 
-**kcat:**
+`kcat` является стандартом де-факто для SRE при отладке содержимого:
 
 ```bash
-# Чтение в JSON формате с метаданными (partition, offset, timestamp, key, payload)
-kcat -b localhost:9092 -t orders -C -J
-# → {"topic":"orders","partition":0,"offset":15233,"tstype":"create","ts":1724508000123,
-#    "key":"customer-42","payload":"{\"order_id\": \"a1\"}"}
+# 1. Чтение последних 5 сообщений из партиции 0 и немедленный выход (-e)
+kcat -b 10.0.10.11:9092 -t orders -p 0 -C -o -5 -e
+# → {"order_id": 5510, "amount": 1200}
 
-# Потребление последних N сообщений и выход после них (-o -N — относительный офсет, -e — выход в конце)
-kcat -b localhost:9092 -t orders -C -o -10 -e
+# 2. Чтение в структурированном JSON-формате (-J) и фильтрация через jq
+kcat -b 10.0.10.11:9092 -t orders -C -J -e | jq -r '.payload | fromjson | select(.amount > 1000) | .order_id'
+# → 5510
 
-# Чтение диапазона по таймстампу (Unix time в миллисекундах)
-kcat -b localhost:9092 -t orders -C -o s@1724500000000 -o e@1724503600000 -e
+# 3. Чтение интервала по временным меткам (Unix timestamp в миллисекундах)
+# s@<start_ts> - начало, e@<end_ts> - конец
+kcat -b 10.0.10.11:9092 -t orders -C -o s@1728560000000 -o e@1728563600000 -e
 
-# Потребление сообщений с фильтрацией через jq
-kcat -b localhost:9092 -t orders -C -e | jq '.payload'
+# 4. Кастомный формат вывода (%t - topic, %p - partition, %o - offset, %k - key, %s - payload)
+kcat -b 10.0.10.11:9092 -t orders -C -f 'T:%t P:%p Off:%o Key:%k Val:%s\n' -e
 
-# Красивый формат вывода через строку формата (%t топик, %p партиция, %o офсет, %k ключ, %S размер, %s payload)
-kcat -b localhost:9092 -t syslog -f 'Topic %t[%p], offset: %o, key: %k, %S bytes: %s\n'
+# 5. Потоковая отправка лог-файла со сжатием LZ4 и разделителем ключа
+tail -n 1000 /var/log/app/audit.log | kcat -b 10.0.10.11:9092 -t audit-events -P -z lz4
 
-# Отправка: каждая строка stdin — отдельное сообщение
-echo '{"order_id": "a3"}' | kcat -b localhost:9092 -t orders -P -K:
-
-# Отправка ключ:значение из файла (разделитель после -K)
-cat events.txt | kcat -b localhost:9092 -t orders -P -K:
-
-# Отправка файла ЦЕЛИКОМ одним сообщением (для бинарных данных; -l разбивает по строкам, -T эхо ввода)
-kcat -b localhost:9092 -t blobs -P report.bin
-
-# Режим consumer group (-G) — как обычный консьюмер, офсеты коммитятся в группу
-kcat -b localhost:9092 -G my-debug-group orders
-
-# Продюсирование со сжатием
-tail -f app.log | kcat -b localhost:9092 -t syslog -P -z snappy
+# 6. Отправка бинарного файла целиком одним неделимым сообщением (-D <delim>)
+kcat -b 10.0.10.11:9092 -t firmware-updates -P -D "" /tmp/firmware.bin
 ```
 
-Без явного `-C`/`-P` режим выбирается автоматически: данные приходят **из** пайпа — потребитель, уходят **в** пайп — продюсер.
+---
 
-**rpk:**
+### Сценарий 3: Диагностика групп консьюмеров и Consumer Lag
+
+#### Стандартные утилиты
 
 ```bash
-# Чтение сообщений
-rpk topic consume orders
+# 1. Список зарегистрированных групп потребителей
+kafka-consumer-groups.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --list
+# → orders-worker-group
+# → billing-stream-processor
 
-# Чтение в JSON-обертке с метаданными
-rpk topic consume orders -f '%v\n'      # только значение
-rpk topic consume orders --print-keys   # ключ + значение
+# 2. Проверка лага и распределения партиций по инстансам группы
+kafka-consumer-groups.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties \
+    --describe --group orders-worker-group
+# → GROUP                TOPIC   PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG   CONSUMER-ID      HOST         CLIENT-ID
+# → orders-worker-group  orders  0          185200          185250          50    worker-1-a8f...  /10.0.10.51  worker-1
+# → orders-worker-group  orders  1          142100          142100          0     worker-2-b4c...  /10.0.10.52  worker-2
 
-# Ограничение чтения и позиционирование
-rpk topic consume orders -n 10          # первые 10 от текущего конца
-rpk topic consume orders --offset start # с начала журнала
+# 3. Проверка жизненного цикла группы (State: Stable, CompletingRebalance, PreparingRebalance, Empty, Dead)
+kafka-consumer-groups.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties \
+    --describe --group orders-worker-group --state
+# → GROUP                COORDINATOR (ID)       ASSIGNMENT-STRATEGY  STATE           #MEMBERS
+# → orders-worker-group  10.0.10.12:9092 (2)    range                Stable          2
 
-# Отправка сообщения из файла
-rpk topic produce orders < message.json
-
-# Отправка с ключами (формат "key\tvalue" по умолчанию)
-echo -e "customer-42\t{\"order_id\": \"a3\"}" | rpk topic produce orders -k "\t"
+# 4. Аудит активных участников группы (Members) и назначенных им партиций
+kafka-consumer-groups.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties \
+    --describe --group orders-worker-group --members --verbose
 ```
 
-**kafkactl:**
+#### Регламент сброса офсетов (Offset Reset)
+
+> [!WARNING]
+> Сброс офсетов допустим только тогда, когда группа потребителей находится в состоянии **Empty** (все инстансы сервиса остановлены). Если запустить команду при работающих потребителях, брокер вернет ошибку `GroupNotEmptyException`.
+
+Сброс офсетов выполняется строго в два шага:
 
 ```bash
-# Чтение с выводом ключа и метаданных
-kafkactl consume orders --print-key --offset-offsets earliest
-# → order-a1 (partition 0 @ 15233)
-
-# Отправка ключа и значения
-kafkactl produce orders --key customer-42 --value '{"order_id": "a3"}'
-```
-
-Отличительная возможность `kafkactl` — нативная работа со схемами: при настроенном Schema Registry в контексте он умеет читать и писать Avro (`schemaRegistry.url`), Protobuf (`--value-proto-type`, `--proto-file`), что избавляет от ручной сборки SerDes.
-
-### Сценарий 3: Группы потребителей и LAG
-
-Диагностика отставания консьюмеров (Consumer Lag) — самая частая операция при разборе инцидентов доставки. Что такое офсеты и группы — [Обзор Apache Kafka](./kafka_overview.md).
-
-**Стандартные утилиты:**
-
-```bash
-# Список групп
-kafka-consumer-groups.sh --bootstrap-server localhost:9092 --list
-# → my-service
-# → orders-processor
-
-# Проверка лага (самая частая операция)
-kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group my-service
-# → GROUP       TOPIC   PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG   CONSUMER-ID        HOST        CLIENT-ID
-# → my-service  orders  0          15234           15240           6     consumer-1-a3f...  /10.0.0.5   consumer-1
-# → my-service  orders  1          9811            9811            0     consumer-2-b7c...  /10.0.0.6   consumer-2
-
-# Состояние группы без деталей по партициям (Empty = нет активных членов)
-kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group my-service --state
-# → GROUP       COORDINATOR (ID)  ASSIGNMENT-STRATEGY  STATE           #MEMBERS
-# → my-service  broker1:9092 (1)  range                Stable          2
-
-# Состав группы и назначенные партиции
-kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group my-service --members --verbose
-
-# Диагностика всех групп сразу
-kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --all-groups --state
-```
-
-Трактовка колонок: `CURRENT-OFFSET` — закоммиченный офсет группы; `LOG-END-OFFSET` — офсет последней записи в журнале; `LAG = LOG-END-OFFSET − CURRENT-OFFSET`. Постоянно растущий лаг означает, что потребители не успевают (медленная обработка, недостаточно потребителей, стоп ребалансировок). Пустой `CONSUMER-ID` при непустом лаге — группа существует, но активных членов нет (приложение остановлено).
-
-**Сброс офсетов (reset-offsets)** — восстановление потребления после сбоя или перезачитывание данных:
-
-```bash
-# ШАГ 1: группа НЕ должна иметь активных членов, иначе будет ошибка
-# → Error: Assignment size of group my-service is smaller than ...
-# Остановите приложение или используйте другую группу.
-
-# ШАГ 2: сначала DRY-RUN (по умолчанию!) — команда покажет план, ничего не меняя
-kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
-    --group my-service --topic orders --reset-offsets --to-earliest
+# ШАГ 1: Dry-run — генерация плана сброса БЕЗ применения (по умолчанию)
+kafka-consumer-groups.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties \
+    --group orders-worker-group \
+    --topic orders \
+    --reset-offsets \
+    --to-earliest
 # → TOPIC   PARTITION  NEW-OFFSET
 # → orders  0          0
 # → orders  1          0
 
-# ШАГ 3: применение плана — обязательно добавить --execute
-kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
-    --group my-service --topic orders --reset-offsets --to-earliest --execute
-
-# Другие стратегии сброса:
-# --to-latest            на конец журнала (пропустить backlog)
-# --to-datetime 2026-01-01T00:00:00.000   на первый офсет после момента времени
-# --by-duration PT1H     на первый офсет час назад
-# --shift-by -100        сдвиг назад на 100 записей
-# --from-file offsets.csv план из CSV (topic,partition,offset)
-
-# Удаление пустой (без членов) группы
-kafka-consumer-groups.sh --bootstrap-server localhost:9092 --delete --group my-service
-# → Deletion of requested consumer groups ('my-service') was successful.
+# ШАГ 2: Применение сгенерированного плана с обязательным флагом --execute
+kafka-consumer-groups.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties \
+    --group orders-worker-group \
+    --topic orders \
+    --reset-offsets \
+    --to-earliest \
+    --execute
+# → TOPIC   PARTITION  NEW-OFFSET
+# → orders  0          0
+# → orders  1          0
 ```
 
-Критично: забытый `--execute` — самая частая ошибка этой утилиты; без него команда работает как dry-run и изменения не применяются.
+Альтернативные стратегии позиционирования:
+- `--to-latest`: Перемещение в конец журнала (пропуск очереди сообщений в инциденте).
+- `--to-datetime 2026-10-12T00:00:00.000`: Позиционирование на первое сообщение после указанного времени UTC.
+- `--by-duration PT2H`: Сдвиг назад на 2 часа относительно текущего времени.
+- `--shift-by -500`: Сдвиг назад ровно на 500 сообщений в каждой партиции.
+- `--from-file /tmp/offsets.csv`: Применение точечного плана из CSV-файла вида `topic,partition,offset`.
 
-**rpk:**
+#### Оперативная проверка лага через rpk
 
 ```bash
-# Просмотр состояния групп
-rpk group describe my-service
-
-# Только лагающие партиции (удобно для алертов и триажа)
-rpk group lag my-service
-# GROUP        TOPIC   PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
-# my-service   orders  0          15234           15240           6
-
-# Список всех групп
-rpk group list
+# Вывод только партиций с ненулевым лагом
+rpk group lag orders-worker-group --brokers 10.0.10.11:9092
+# → GROUP                TOPIC   PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
+# → orders-worker-group  orders  0          185200          185250          50
 ```
 
-**kafkactl:**
+---
+
+### Сценарий 4: Динамическое конфигурирование параметров и логирования
+
+Утилита `kafka-configs.sh` изменяет конфигурации брокеров и топиков без перезапуска JVM-процессов. Поддерживаемые сущности (`--entity-type`): `topics`, `brokers`, `broker-loggers`, `users`, `clients`, `ips`.
 
 ```bash
-# Описание группы; флаг --only-with-lag оставляет только проблемные партиции
-kafkactl describe consumer-group my-service --only-with-lag
-
-# Сброс офсета конкретной партиции
-kafkactl reset consumer-group-offset my-service --topic orders --partition 0 --offset earliest
-```
-
-**kcat:** режим `-G <group>` позволяет проверить потребление от имени реальной группы без написания приложения (см. Сценарий 2).
-
-### Сценарий 4: Динамическая конфигурация (kafka-configs.sh)
-
-Утилита `kafka-configs.sh` позволяет менять настройки брокеров и топиков «на лету» без перезагрузки. Типы сущностей (`--entity-type`): `topics`, `brokers`, `broker-loggers` (уровни логирования!), `users` и `clients` (квоты), `ips` (лимиты соединений). Приоритет конфигурации: переопределение топика перекрывает значение по умолчанию брокера.
-
-```bash
-# Ограничение скорости (квота) для пользователя: producer_byte_rate в байтах/сек
-kafka-configs.sh --bootstrap-server localhost:9092 --alter \
-    --entity-type users --entity-name user1 \
-    --add-config 'producer_byte_rate=1048576'
-# → Completed updating config for user: user1.
-
-# Включение сжатия для топика
-kafka-configs.sh --bootstrap-server localhost:9092 --alter \
+# 1. Изменение retention и политики очистки для топика
+kafka-configs.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --alter \
     --entity-type topics --entity-name orders \
-    --add-config compression.type=lz4
-# → Completed updating config for topic 'orders'.
+    --add-config retention.ms=86400000,max.message.bytes=2097152
+# → Completed updating config for topic orders.
 
-# Просмотр текущих переопределенных настроек брокера
-kafka-configs.sh --bootstrap-server localhost:9092 --describe \
-    --entity-type brokers --entity-name 1
+# 2. Установка квоты на скорость записи (Throttling) для конкретного пользователя (в байтах/сек)
+# 10485760 байт/сек = 10 МБ/сек
+kafka-configs.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --alter \
+    --entity-type users --entity-name analytics-client \
+    --add-config producer_byte_rate=10485760,consumer_byte_rate=20971520
+# → Completed updating config for user analytics-client.
 
-# Просмотр ВСЕХ настроек, включая унаследованные значения по умолчанию
-kafka-configs.sh --bootstrap-server localhost:9092 --describe \
-    --entity-type brokers --entity-name 1 --all
+# 3. Лимит на входящие TCP-соединения с подозрительной подсети/IP
+kafka-configs.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --alter \
+    --entity-type ips --entity-name 192.168.1.100 \
+    --add-config connection_creation_rate=5
+# → Completed updating config for ip 192.168.1.100.
 
-# Значения по умолчанию для ВСЕЙ категории (кластерный дефолт)
-kafka-configs.sh --bootstrap-server localhost:9092 --describe \
-    --entity-type brokers --entity-default
+# 4. Просмотр ВСЕХ действующих настроек брокера (включая статические defaults из server.properties)
+kafka-configs.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --describe \
+    --entity-type brokers --entity-name 1 --all | grep -E "log.cleaner|num.network.threads"
 
-# Снятие переопределения (возврат к значению по умолчанию)
-kafka-configs.sh --bootstrap-server localhost:9092 --alter \
-    --entity-type topics --entity-name orders --delete-config compression.type
-
-# Динамическое изменение уровня логирования на работающем брокере — без рестарта
-kafka-configs.sh --bootstrap-server localhost:9092 --alter \
+# 5. ДИНАМИЧЕСКОЕ ИЗМЕНЕНИЕ УРОВНЯ ЛОГИРОВАНИЯ БРОКЕРА В RUNTIME (без рестарта)
+# Включение подробного DEBUG-логирования для модуля репликации на брокере 1:
+kafka-configs.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --alter \
     --entity-type broker-loggers --entity-name 1 \
-    --add-config kafka.server.KafkaApis=DEBUG
-# → Completed updating config for broker-logger '1'.
-# Вернуть назад: --add-config kafka.server.KafkaApis=INFO
+    --add-config kafka.server.ReplicaManager=DEBUG
+# → Completed updating config for broker-logger 1.
+
+# Возврат уровня логирования обратно к INFO после локализации сбоя:
+kafka-configs.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --alter \
+    --entity-type broker-loggers --entity-name 1 \
+    --add-config kafka.server.ReplicaManager=INFO
+# → Completed updating config for broker-logger 1.
+
+# 6. Удаление динамического переопределения (возврат к значению по умолчанию кластера)
+kafka-configs.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --alter \
+    --entity-type topics --entity-name orders \
+    --delete-config max.message.bytes
+# → Completed updating config for topic orders.
 ```
 
-Последняя команда — незаменимый инструмент диагностики: можно временно включить DEBUG у конкретного класса на конкретном брокере и вернуть уровень обратно, не трогая `log4j.properties` и не перезапуская процесс.
-
-Эквивалент в `kafkactl`: `kafkactl alter topic orders --config compression.type=lz4`, просмотр — `kafkactl describe broker 1 --all-configs`.
+---
 
 ### Сценарий 5: Управление правами доступа (ACL)
 
-Используется для настройки безопасности в кластере. Принципы именуются `User:<principal>`; операции применяются к ресурсам (`--topic`, `--group`, `--cluster`). Для кластера с SASL/TLS добавьте `--command-config client.properties` к каждой команде. Подробнее о слоях безопасности — [Обзор Apache Kafka](./kafka_overview.md).
+Управление списками контроля доступа базируется на принципалах (`User:<name>`), ресурсах (`--topic`, `--group`, `--cluster`), типах операций и политиках (`--allow` / `--deny`).
 
 ```bash
-# Разрешить пользователю чтение из топика + чтение группы (оба ресурса нужны консьюмеру)
-kafka-acls.sh --bootstrap-server localhost:9092 --add \
-    --allow-principal User:alice --operation Read \
-    --topic orders --group my-group
+# 1. Выдача прав продюсеру на конкретный топик (Write, Describe, Create)
+kafka-acls.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --add \
+    --allow-principal User:svc-orders-backend \
+    --producer \
+    --topic orders
+# → Adding ACLs for resource `ResourcePattern(resourceType=TOPIC, name=orders, patternType=LITERAL)`:
+# → 	(principal=User:svc-orders-backend, host=*, operation=WRITE, permissionType=ALLOW)...
 
-# Список всех ACL
-kafka-acls.sh --bootstrap-server localhost:9092 --list
+# 2. Выдача прав консьюмеру (для чтения консьюмеру ТРЕБУЮТСЯ права на топик И группу)
+kafka-acls.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --add \
+    --allow-principal User:svc-billing-service \
+    --consumer \
+    --topic orders \
+    --group billing-worker-group
+
+# 3. Префиксные ACL для микросервисов с динамическими именами топиков
+kafka-acls.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --add \
+    --allow-principal User:svc-telemetry \
+    --operation Read \
+    --topic telemetry- \
+    --resource-pattern-type prefixed
+
+# 4. Явный запрет (Deny) — имеет абсолютный приоритет над любыми Allow
+kafka-acls.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --add \
+    --deny-principal User:contractor-temp \
+    --operation Read \
+    --topic financial-ledger
+
+# 5. Просмотр действующих ACL для ресурса
+kafka-acls.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --list --topic orders
 # → Current ACLs for resource `Topic:LITERAL:orders`:
-# →   (principal=User:alice, host=*, operation=READ, permissionType=ALLOW)
+# →   (principal=User:svc-orders-backend, host=*, operation=WRITE, permissionType=ALLOW)
 
-# Готовые наборы операций: --producer (Write, Describe, Create) и --consumer (Read, Describe)
-kafka-acls.sh --bootstrap-server localhost:9092 --add \
-    --allow-principal User:svc-orders --producer --consumer \
-    --topic orders --group orders-processor
-
-# Явный запрет перекрывает разрешение (deny имеет приоритет над allow)
-kafka-acls.sh --bootstrap-server localhost:9092 --add \
-    --deny-principal User:contractor --operation Read --topic payments
-
-# Шаблонные ресурсы: префиксные правила для серии топиков (orders-eu-*, orders-us-*...)
-kafka-acls.sh --bootstrap-server localhost:9092 --add \
-    --allow-principal User:analytics --operation Read \
-    --topic orders- --resource-pattern-type prefixed
-
-# Фильтрованный список
-kafka-acls.sh --bootstrap-server localhost:9092 --list --topic orders
-
-# Удаление конкретного правила
-kafka-acls.sh --bootstrap-server localhost:9092 --remove \
-    --allow-principal User:alice --operation Read --topic orders --group my-group
+# 6. Удаление правила
+kafka-acls.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --remove \
+    --allow-principal User:contractor-temp --operation Read --topic financial-ledger --force
 ```
 
-Краевой случай: принципалы, перечисленные в `super.users` конфигурации брокера, обходят все ACL-проверки — аудит таких учетных записей ведите отдельно.
+> [!NOTE]
+> Учетные записи, перечисленные в параметре брокера `super.users` (например, `super.users=User:admin;User:kafka`), обходят любые ограничения механизма авторизации и не требуют явных записей в ACL.
 
-### Сценарий 6: Обслуживание и диагностика кластера
+---
 
-Задачи этого сценария недоступны сторонним CLI — здесь нужны стандартные утилиты.
+### Сценарий 6: Обслуживание дисков, кворума KRaft и миграция партиций
 
-**Перераспределение партиций между брокерами** (балансировка дисков/нагрузки, вывод брокера из кластера) — строго трехшаговый процесс:
+#### Перераспределение партиций (Partition Reassignment)
+
+При добавлении нового брокера в кластер или выводе старого из эксплуатации партиции не перемещаются автоматически. Перемещение выполняется утилитой `kafka-reassign-partitions.sh` в три этапа:
 
 ```bash
-# ШАГ 1: сгенерировать план. В topics.json перечисляем темы; broker-ids — целевая раскладка
-cat > topics.json <<EOF
-{"topics": [{"topic": "orders"}, {"topic": "payments"}], "version": 1}
+# ШАГ 1: Подготовка списка перемещаемых топиков и генерация плана
+cat << 'EOF' > /tmp/topics-move.json
+{
+  "topics": [{"topic": "orders"}],
+  "version": 1
+}
 EOF
 
-kafka-reassign-partitions.sh --bootstrap-server localhost:9092 \
-    --topics-to-move-json-file topics.json \
-    --broker-list "1,2,3" --generate
-# → Current partition replica assignment
-# → {"version":1,"partitions":[...]}
-# → Proposed partition reassignment configuration
-# → {"version":1,"partitions":[{"topic":"orders","partition":0,"replicas":[2,3,1],...},...]}
+# Генерация плана миграции на брокеры 1, 2, 3, 4:
+kafka-reassign-partitions.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties \
+    --topics-to-move-json-file /tmp/topics-move.json \
+    --broker-list "1,2,3,4" \
+    --generate > /tmp/raw-plan.json
 
-# Сохраняем предложенный JSON в reassignment.json и запускаем ШАГ 2.
-# Текущая раскладка из блока "Current..." сохраните отдельно — это план отката!
+# Вывод содержит два блока:
+# 1) "Current partition replica assignment" — СОХРАНИТЕ ЕГО КАК ПЛАН ОТКАТА (rollback.json)!
+# 2) "Proposed partition reassignment configuration" — целевой план (plan.json).
+```
 
-# ШАГ 2: выполнить план с троттлингом (ограничить скорость миграции, чтобы не задушить кластер)
-kafka-reassign-partitions.sh --bootstrap-server localhost:9092 \
-    --reassignment-json-file reassignment.json --execute --throttle 50000000
+```bash
+# ШАГ 2: Запуск выполнения плана С ОБЯЗАТЕЛЬНЫМ ОГРАНИЧЕНИЕМ СКОРОСТИ (Throttle)
+# 50000000 байт/сек = 50 МБ/сек (защита сети и дисков от перегрузки)
+kafka-reassign-partitions.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties \
+    --reassignment-json-file /tmp/plan.json \
+    --execute \
+    --throttle 50000000
+# → Successfully started partition reassignment for orders-0, orders-1...
 
-# ШАГ 3: контролировать прогресс до завершения (повторять команду)
-kafka-reassign-partitions.sh --bootstrap-server localhost:9092 \
-    --reassignment-json-file reassignment.json --verify
+# ШАГ 3: Контроль завершения и СНЯТИЕ ТРОТТЛИНГА (критически важно!)
+kafka-reassign-partitions.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties \
+    --reassignment-json-file /tmp/plan.json \
+    --verify
 # → Status of partition reassignment:
-# → Reassignment of partition orders-0 is still in progress
-# → ... (в конце: Reassignment of partition X is completed.)
+# → Reassignment of partition orders-0 is completed.
+# → Reassignment of partition orders-1 is completed.
+# → Clearing broker-level throttles...
+# → Clearing topic-level throttles...
+# → Verification completed successfully.
 ```
 
-Во время миграции копируются целые сегменты журнала — на больших топиках это часы; троттлинг (байт/сек) обязателен для прод-кластеров.
+> [!IMPORTANT]
+> Если не запустить команду с ключом `--verify` после окончания переноса, установленный лимит пропускной способности репликации (`leader.replication.throttled.rate` / `follower.replication.throttled.rate`) останется активным на брокерах, замедляя штатную синхронизацию ISR!
 
-**Принудительные выборы лидера** (после восстановления брокера, чтобы вернуть preferred leader):
-
+В случае необходимости отмены зависшей миграции используется флаг `--cancel`:
 ```bash
-# Для всех партиций, где текущий лидер не является предпочтительным
-kafka-leader-election.sh --bootstrap-server localhost:9092 \
-    --election-type PREFERRED --all-topic-partitions
-# → Successfully started leader election for partitions orders-0, ...
-
-# Или для конкретного списка партиций (path-to-json-file с {"partitions":[{"topic":"orders","partition":0}]})
+kafka-reassign-partitions.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties \
+    --reassignment-json-file /tmp/plan.json \
+    --cancel
 ```
 
-**Дисковая занятость по партициям:**
+#### Принудительные выборы предпочтительных лидеров
+
+После перезапуска или сетевого сбоя лидерство партиций может распределиться неравномерно. Восстановление приоритетных лидеров:
 
 ```bash
-# Размеры журналов и лаг реплик по каждому каталогу данных
-kafka-log-dirs.sh --bootstrap-server localhost:9092 \
+kafka-leader-election.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties \
+    --election-type PREFERRED \
+    --all-topic-partitions
+# → Successfully started leader election for partitions orders-0, orders-1...
+```
+
+#### Инспекция дискового пространства и сегментов данных
+
+```bash
+# 1. Проверка размера данных по каталогам и партициям брокеров
+kafka-log-dirs.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties \
     --describe --broker-list 1,2,3 --topic-list orders | jq .
-# → {"version":1,"brokers":[{"broker":1,"logDirs":[
-#     {"logDir":"/var/lib/kafka/data","partitions":[
-#       {"partition":"orders-0","size":1073741824,"offsetLag":0,...}]}]}]}
-```
+# → { "brokers": [ { "broker": 1, "logDirs": [ { "logDir": "/var/lib/kafka/data", "partitions": [ { "partition": "orders-0", "size": 154210400 } ] } ] } ] }
 
-**Инспекция файлов журнала на диске** (выполняется НА хосте брокера, где лежат сегменты):
-
-```bash
-# Расшифровка содержимого сегмента: сообщения, ключи, контрольные суммы
+# 2. Низкоуровневая инспекция сегмента журнала (выполняется НА ХОСТЕ брокера)
 kafka-dump-log.sh --files /var/lib/kafka/data/orders-0/00000000000000000000.log \
-    --print-data-log
-# → Starting offset: 0
-# → baseOffset: 0 lastOffset: 99 baseTimestamp: 1724508000123 ... validBytes: 58210
-# → | offset: 0 CreateTime: 1724508000123 keySize: 11 valueSize: 27 ...
+    --print-data-log \
+    --deep-iteration | head -n 20
+# → baseOffset: 0 lastOffset: 12 baseTimestamp: 1728560000000 ...
+# → | offset: 0 CreateTime: 1728560000000 keySize: 8 valueSize: 45 payload: {"order_id": 5510}
 
-# Проверка индексов сегмента
+# 3. Проверка целостности индексных файлов
 kafka-dump-log.sh --files /var/lib/kafka/data/orders-0/00000000000000000000.index \
-    /var/lib/kafka/data/orders-0/00000000000000000000.timeindex
+    --verify-index-only
+# → /var/lib/kafka/data/orders-0/00000000000000000000.index is valid.
 
-# В KRaft-кластере так же читается журнал метаданных __cluster_metadata
+# 4. Чтение журнала метаданных KRaft (__cluster_metadata)
 kafka-dump-log.sh --files /var/lib/kafka/data/__cluster_metadata-0/00000000000000000000.log \
-    --cluster-metadata-decoder
+    --cluster-metadata-decoder | head -n 30
 ```
 
-**Здоровье кворума метаданных (KRaft)** — замена прежних проверок ZooKeeper:
+#### Диагностика кворума метаданных KRaft
 
 ```bash
-# Состояние кворума: лидер, избиратели, идентификатор кластера
-kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status
+# 1. Статус кворума контроллеров (лидер, эпоха, активные voters)
+kafka-metadata-quorum.sh --bootstrap-server 10.0.10.11:9092 describe --status
 # → ClusterId:              5L6g3nShT-eMCtK--X86sw
 # → LeaderId:               1
-# → QuorumState:            Leader
-# → ...
+# → LeaderEpoch:            4
+# → HighWatermark:          85230
+# → MaxFollowerLag:         0
+# → MaxFollowerLagTimeMs:   25
+# → CurrentVoters:          [{"id": 1, "directoryId": "...", "endpoints": ["..."]}, ...]
 
-# Детали репликации метаданных по контроллерам (lag каждого узла)
-kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --replication
+# 2. Детальный лаг репликации метаданных по контроллерам
+kafka-metadata-quorum.sh --bootstrap-server 10.0.10.11:9092 describe --replication
+
+# 3. Инспекция версии метаданных и доступных фичей (Metadata Version)
+kafka-features.sh --bootstrap-server 10.0.10.11:9092 describe
+# → Feature: metadata.version	SupportedMinVersion: 3.3-IV0	SupportedMaxVersion: 4.0-IV3	FinalizedVersionLevel: 3.9-IV0
+
+# 4. Повышение версии метаданных после завершения обновления всех брокеров
+kafka-features.sh --bootstrap-server 10.0.10.11:9092 upgrade --metadata 4.0
+# → Feature metadata.version was successfully upgraded to 4.0.
 ```
 
-**Управление feature-флагами и версией метаданных** (критично при апгрейдах 3.x → 4.x):
+#### Инициализация и форматирование хранилища KRaft
+
+При развертывании узла на bare-metal или виртуальной машине каталоги данных форматируются утилитой `kafka-storage.sh`:
 
 ```bash
-# Текущие флаги и metadata.version кластера
-kafka-features.sh --bootstrap-server localhost:9092 describe
-# → Feature: metadata.version   SupportedMinVersion: 3.0-IV1   MaxVersionLevel: 4.0-IV3  ...
+# 1. Генерация уникального Base64 Cluster ID (один на весь кластер)
+KAFKA_CLUSTER_ID="$(kafka-storage.sh random-uuid)"
+echo "Generated Cluster ID: $KAFKA_CLUSTER_ID"
+# → Generated Cluster ID: 5L6g3nShT-eMCtK--X86sw
 
-# Повышение после успешного обновления всех брокеров (необратимо даунгрейдится ограниченно!)
-kafka-features.sh --bootstrap-server localhost:9092 upgrade --metadata 4.0
+# 2. Форматирование каталогов данных первого узла
+kafka-storage.sh format \
+    --cluster-id "$KAFKA_CLUSTER_ID" \
+    --config /opt/kafka/config/kraft/server.properties \
+    --ignore-formatted
+# → Formatting /var/lib/kafka/data with metadata.version 3.9-IV0.
 
-# Доступны также: downgrade, disable, version-mapping, feature-dependencies
-# Утилита может работать и напрямую с контроллерами: --bootstrap-controller localhost:9094
+# 3. Проверка форматирования существующего каталога
+kafka-storage.sh info --config /opt/kafka/config/kraft/server.properties
+# → The log directory /var/lib/kafka/data is formatted with cluster ID 5L6g3nShT-eMCtK--X86sw
 ```
 
-**Зависшие транзакции** (после падения продюсера транзакционные записи могут блокировать чтение консьюмерам с `read_committed`):
+#### Поиск зависших транзакций
+
+В кластерах с транзакционными продюсерами незавершенная транзакция блокирует чтение консьюмерам в режиме `isolation.level=read_committed`:
 
 ```bash
-# Список открытых транзакций по всем партициям
-kafka-transactions.sh --bootstrap-server localhost:9092 list
-# → TRANSACTIONAL-ID  PRODUCER-ID  LAST-UPDATE  PARTITION  START-OFFSET
+# Поиск зависших транзакций на брокере
+kafka-transactions.sh --bootstrap-server 10.0.10.11:9092 find-hanging --broker 1
+# → TransactionalId: order-tx-processor-1, ProducerId: 1042, ProducerEpoch: 3, Coordinator: 1
 
-# Кто держит транзакцию: какие продюсеры писали в координатор
-kafka-transactions.sh --bootstrap-server localhost:9092 describe-producers --topic orders --partition 0
-
-# Поиск транзакций, которые не двигаются (кандидаты на прерывание)
-kafka-transactions.sh --bootstrap-server localhost:9092 find-hanging --broker 1
+# Принудительное прерывание зависшей транзакции (Abort)
+kafka-transactions.sh --bootstrap-server 10.0.10.11:9092 abort \
+    --topic orders --partition 0 \
+    --producer-id 1042 --producer-epoch 3 --coordinator-epoch 1
 ```
 
-**Проверка совместимости клиентов:** команда `kafka-broker-api-versions.sh` из Сценария 1 показывает максимальную версию каждого API на брокере — если клиент старше, часть функций недоступна.
+---
 
-### Сценарий 7: Нагрузочное тестирование
+### Сценарий 7: Бенчмаркинг и нагрузочное тестирование
 
-В дистрибутив входят готовые бенчмарки — базовая линия производительности кластера и сети без внешних инструментов.
+Встроенные утилиты дистрибутива позволяют оценить производительность дисковой подсистемы и сети перед вводом кластера в эксплуатацию.
 
 ```bash
-# Producer benchmark: 1 млн записей размером 1024 Б, целевой throughput 50k записей/сек
-kafka-producer-perf-test.sh --topic perf-test \
-    --num-records 1000000 --record-size 1024 --throughput -1 \
-    --producer-props bootstrap.servers=localhost:9092 acks=all linger.ms=10
-# → 1000000 records sent, records/sec: 187543.2, MB/sec: 183.15,
-# → avg latency: 41.20 ms, max latency: 812.35 ms,
-# → 50th percentile latency: 28 ms, 95th percentile: 96 ms, 99th: 210 ms, 99.9th: 540 ms
+# 1. Тестирование пропускной способности продюсера (1 000 000 записей по 1 КБ)
+# Флаг --throughput -1 отключает искусственное ограничение скорости для поиска максимального потолка
+kafka-producer-perf-test.sh --topic perf-test-topic \
+    --num-records 1000000 \
+    --record-size 1024 \
+    --throughput -1 \
+    --producer-props \
+        bootstrap.servers=10.0.10.11:9092 \
+        acks=all \
+        compression.type=lz4 \
+        linger.ms=20 \
+        batch.size=65536
+# → 1000000 records sent, 185240.2 records/sec (180.90 MB/sec), 24.12 ms avg latency, 412.00 ms max latency, 18 ms 50th, 55 ms 95th, 120 ms 99th, 280 ms 99.9th.
 
-# Consumer benchmark: чтение того же объема с начала топика
-kafka-consumer-perf-test.sh --bootstrap-server localhost:9092 \
-    --topic perf-test --messages 1000000 \
-    --consumer-property group.id=perf-consumer
-# → data.consumed.in.MB.MB.sec  nMsg.sec  fetch.MB.sec  nMsg.sec ...
-# → 976.56                      245098    183.15        224512
+# 2. Тестирование пропускной способности консьюмера
+kafka-consumer-perf-test.sh --bootstrap-server 10.0.10.11:9092 \
+    --topic perf-test-topic \
+    --messages 1000000 \
+    --threads 1 \
+    --consumer-property group.id=perf-eval-group
+# → start.time, end.time, data.consumed.in.MB, MB.sec, data.consumed.in.nMsg, nMsg.sec, rebalance.time.ms, fetch.time.ms
+# → 2026-10-12 14:00:00:000, 2026-10-12 14:00:05:420, 976.56, 180.18, 1000000, 184501.8, 120, 5300
 
-# Сквозная задержка end-to-end (отправка и немедленное чтение одного сообщения; интерактивно)
-bin/kafka-run-class.sh kafka.tools.EndToEndLatency localhost:9092 perf-test 100 1 1024
-# → Avg latency: 3.215 ms, Min: 2.101 ms, Max: 8.442 ms
+# 3. Измерение сквозной задержки End-to-End (отправка сообщения и замер времени возврата)
+kafka-run-class.sh kafka.tools.EndToEndLatency 10.0.10.11:9092 perf-test-topic 500 1 1024
+# → Avg latency: 2.45 ms, Min: 1.82 ms, Max: 7.15 ms
 ```
 
-Флаг `--throughput -1` отключает троттлинг (замер потолка); заданное число (например, `50000`) имитирует ограниченный поток. Тестируйте конфигурации из [Гарантии доставки](./delivery_guarantees.md): сравнение `acks=all` против `acks=1` наглядно показывает цену надежности.
+---
 
-## Работа в Docker и Kubernetes
+### Сценарий 8: Автоматизация и headless-скрипты SRE
 
-- Локальный стенд и выполнение команд через `docker exec` — [Развертывание Kafka в Docker](./kafka_docker_setup.md); healthcheck-команды там же используют `kafka-topics.sh --list`.
-- В Kubernetes-кластерах, развернутых оператором, клиентские сертификаты выдаются как секреты CR `KafkaUser` (Strimzi) — эти секреты подключаются в `client.properties` или контекст `kafkactl` (поддержка `tlsSecret` из коробки): [Strimzi Kafka Operator](./strimzi_kafka_operator.md).
-- Мониторинг-специфичные команды (лаг, квоты) в контексте наблюдаемости — [Мониторинг Kafka](./kafka_for_monitoring.md).
-
-## Установка сторонних инструментов
+При использовании утилит в сценариях мониторинга, bash-скриптах и CI/CD критичны: корректная обработка кодов возврата (`exit code`), подавление лишнего вывода и исключение зависаний по таймауту.
 
 ```bash
-# kcat
-brew install kcat                      # macOS
-apt-get install kafkacat               # Debian/Ubuntu (пакет сохраняет старое имя)
-docker run -it --network=host edenhill/kcat:1.7.1 -b broker:9092 -L   # без установки вообще
+#!/usr/bin/env bash
+set -euo pipefail
 
-# rpk
-brew install redpanda-data/tap/redpanda
-curl -LO https://github.com/redpanda-data/redpanda/releases/latest/download/rpk-linux-amd64.zip
+BOOTSTRAP="10.0.10.11:9092"
+CONFIG="/etc/kafka/client.properties"
+CRITICAL_LAG=5000
 
-# kafkactl
-brew install deviceinsight/tap/kafkactl
-snap install kafkactl
-go install github.com/deviceinsight/kafkactl/v5@latest
+# Пример: проверка суммарного лага группы без участия JVM с мгновенным возвратом через rpk
+TOTAL_LAG=$(rpk group lag orders-worker-group --brokers "$BOOTSTRAP" --format json \
+  | jq '[.[] | .lag] | add')
+
+if [ "$TOTAL_LAG" -gt "$CRITICAL_LAG" ]; then
+    echo "CRITICAL: Consumer lag for orders-worker-group is $TOTAL_LAG (exceeds $CRITICAL_LAG)" >&2
+    exit 2
+fi
+
+echo "OK: Consumer lag is normal ($TOTAL_LAG)"
+exit 0
 ```
+
+Проверка доступности брокеров в CI/CD конвейере через `kcat`:
+
+```bash
+# Проверка сетевого кворума с жестким таймаутом в 3 секунды
+if kcat -b 10.0.10.11:9092 -L -X socket.timeout.ms=3000 > /dev/null 2>&1; then
+    echo "Kafka cluster is ready"
+else
+    echo "Kafka cluster is unreachable" >&2
+    exit 1
+fi
+```
+
+---
+
+## Диагностика и устранение неполадок
+
+### Матрица типовых ошибок при вызове CLI
+
+| Симптом / Ошибка | Вероятная причина | Метод быстрой диагностики | Способ устранения |
+| :--- | :--- | :--- | :--- |
+| `TimeoutException: Timed out waiting for a node assignment` / `Connection to node -1 could not be established` | Недоступен порт брокера, закрыт сетевой экран (firewall) или в кластере неверно настроен `advertised.listeners` | `nc -zv <host> 9092`<br>`openssl s_client -connect <host>:9093` | Проверить сетевые маршруты; в `server.properties` брокеров убедиться, что `advertised.listeners` возвращает доступные клиенту IP/DNS |
+| `SaslAuthenticationException: Authentication failed` / `Invalid credentials` | Ошибка в учетных данных, несовпадение `sasl.mechanism` или синтаксическая ошибка в JAAS | Запуск `kcat` с явными флагами `-X sasl.username=... -X sasl.password=...` | Проверить точку с запятой `;` в конце `sasl.jaas.config`; убедиться, что пользователь зарегистрирован через `kafka-configs.sh` |
+| `TopicAuthorizationException` / `GroupAuthorizationException` | У клиента отсутствуют права доступа в ACL для запрошенного ресурса | `kafka-acls.sh --list --topic <topic>` | Добавить недостающие ACL через `kafka-acls.sh --add` (для консьюмера требуются права на Topic И Group!) |
+| `CommitFailedException` / `GroupNotEmptyException` при сбросе офсетов | Инстансы группы потребителей продолжают работать во время вызова `--reset-offsets` | `kafka-consumer-groups.sh --describe --group <group> --state` | Остановить все поды/процессы приложения-консьюмера; убедиться, что состояние группы перешло в `Empty` |
+| Сброс офсетов завершился без ошибок, но смещения не изменились | Команда выполнена в режиме Dry-run, пропущен обязательный флаг `--execute` | Проверка `CURRENT-OFFSET` через `--describe` | Повторить команду с обязательным флагом `--execute` в конце аргументов |
+| `java.lang.OutOfMemoryError: Java heap space` при запуске утилиты | Переменная `KAFKA_HEAP_OPTS` унаследована от серверного профиля или не задана в окружении с жестким лимитом cgroups | `echo $KAFKA_HEAP_OPTS` | Явно задать перед вызовом утилиты: `export KAFKA_HEAP_OPTS="-Xmx512M -Xms128M"` |
+| `UnrecognizedOptionException: command-config is not a recognized option` | Передан неверный конфигурационный флаг для типа утилиты | Проверка синтаксиса: `kafka-console-consumer.sh --help` | Для консольного консьюмера использовать `--consumer.config`, для продюсера — `--producer.config` |
+| Ребалансировка завершена, но репликация в кластере работает аномально медленно | Не сняты квоты троттлинга (`leader.replication.throttled.rate`), пропущен шаг `--verify` | `kafka-configs.sh --describe --entity-type brokers --entity-name 1` | Выполнить `kafka-reassign-partitions.sh --verify` с исходным JSON-файлом миграции |
+
+### Разбор диагностических кейсов
+
+#### Кейс 1: Синтаксическая ошибка в JAAS-конфигурации
+
+Симптом: Утилиты Java падают с ошибкой `IllegalArgumentException: Could not find a 'KafkaClient' entry in JAAS configuration` или `SecurityException`.
+
+Причина: В файле `client.properties` строка `sasl.jaas.config` должна быть строго валидной для Java JAAS-парсера:
+1. Имя класса: `org.apache.kafka.common.security.scram.ScramLoginModule` (или `PlainLoginModule`).
+2. Флаг: `required`.
+3. Обязательная точка с запятой `;` в самом конце строки после параметров.
+
+Корректный синтаксис:
+```properties
+sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="alice" password="password123";
+```
+
+#### Кейс 2: Зависшая миграция партиций
+
+Симптом: Повторный запуск миграции возвращает: `There is an existing reassignment in progress for partitions...`.
+
+Диагностика и решение:
+1. Проверить статус миграции:
+   ```bash
+   kafka-reassign-partitions.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties \
+       --reassignment-json-file /tmp/plan.json --verify
+   ```
+2. Если миграция зависла из-за недоступности целевого брокера или переполнения диска, прервать операцию:
+   ```bash
+   kafka-reassign-partitions.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties \
+       --reassignment-json-file /tmp/plan.json --cancel
+   ```
+3. Принудительно очистить динамические квоты троттлинга на топике:
+   ```bash
+   kafka-configs.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties --alter \
+       --entity-type topics --entity-name orders \
+       --delete-config leader.replication.throttled.replicas,follower.replication.throttled.replicas
+   ```
+
+---
+
+## Рекомендации и лучшие практики
+
+1. **Безопасное хранение учетных данных**:
+   - Никогда не передавать логины, пароли и токены параметрами командной строки (они сохраняются в `/root/.bash_history`, `/proc/<pid>/cmdline` и видны через `ps aux`).
+   - Использовать файлы конфигураций (`client.properties`, `~/.config/kcat.conf`, `~/.config/kafkactl/config.yml`) с обязательным ограничением прав: `chmod 600`.
+2. **Предпочтение легковесным CLI для мониторинга и CI/CD**:
+   - Избегать запуска стандартных скриптов `bin/kafka-*.sh` в периодических заданиях (cron, проверки здоровья раз в 5 секунд). Каждое обращение тратит 2–3 секунды на инициализацию JVM и считывание метаданных.
+   - Использовать `kcat` или `rpk` для автоматизации — они отрабатывают за десятки миллисекунд и не создают скачков потребления оперативной памяти.
+3. **Строгий двухэтапный регламент изменения смещений**:
+   - Любой сброс офсетов (`--reset-offsets`) начинать с фазы Dry-run. Всегда сверять планируемые смещения с реальными `LOG-END-OFFSET` перед передачей ключа `--execute`.
+4. **Обязательное ограничение пропускной способности миграций**:
+   - При перемещении партиций (`kafka-reassign-partitions.sh`) на работающем кластере всегда задавать параметр `--throttle <bytes_per_sec>`, рассчитывая лимит как не более 25–30% от свободной полосы диска или сетевого интерфейса брокера.
+   - Завершать процедуру вызовом `--verify` для очистки throttling-квот.
+5. **Контроль кворума KRaft перед регламентными работами**:
+   - Перед перезапуском или выводом узла в обслуживание обязательно проверить статус кворума метаданных через `kafka-metadata-quorum.sh describe --status`. Ни в коем случае не останавливать контроллер, если `MaxFollowerLag` отличен от нуля или кворум находится в состоянии репликационного отставания.
+6. **Автоматизация балансировки лидеров**:
+   - Регулярно запускать проверку `kafka-topics.sh --describe --under-min-isr-partitions` и восстанавливать баланс лидеров партиций командой `kafka-leader-election.sh --election-type PREFERRED --all-topic-partitions`.
+
+---
 
 ## Дополнительная информация
 
-### Выбор инструмента
+### Матрица выбора инструментов
 
-- **rpk**: Лучший выбор для повседневных операций (Topic, Group, ACL). Быстрый, современный и не требует Java.
-- **kcat**: Незаменим для сложных пайплайнов обработки данных в shell, точечного чтения по офсету/таймстампу и быстрого воспроизведения багов.
-- **Стандартные утилиты**: «Последняя миля» для специфических задач (перераспределение партиций, низкоуровневые конфиги, дамп логов, кворум KRaft, нагрузочное тестирование).
-- **kafkactl**: Удобен при работе с десятками разных кластеров (контексты), в Kubernetes-окружениях и при работе со схемами (Avro/Protobuf).
-- **Confluent CLI**: Обязателен при работе с Confluent Cloud (управление окружениями и API-ключами); для данных используется вместе с перечисленными выше.
+```
+                  ┌─────────────────────────────┐
+                  │    Какая задача решается?   │
+                  └──────────────┬──────────────┘
+                                 │
+         ┌───────────────────────┼────────────────────────┐
+         ▼                       ▼                        ▼
+┌──────────────────┐    ┌──────────────────┐     ┌──────────────────┐
+│ Чтение / отладка │    │   Повседневное   │     │  Низкоуровневое  │
+│  потоков данных  │    │ администрирование│     │   обслуживание   │
+└────────┬─────────┘    └────────┬─────────┘     └────────┬─────────┘
+         │                       │                        │
+         ▼                       ▼                        ▼
+      [ kcat ]             [ rpk / kafkactl ]      [ Standard CLI ]
+ (быстрый запуск,        (профили, быстрый lag,   (reassign, KRaft,
+  фильтры jq, таймстампы) топики, группы, ACL)     log dump, perf-test)
+```
+
+- **kcat**: Незаменим для разработчиков, SRE и data engineers при исследовании данных, проверке форматов сообщений и написании shell-пайплайнов.
+- **rpk**: Оптимальный выбор для повседневных системных операций (топики, группы, ACL). Мгновенный отклик, удобный синтаксис.
+- **kafkactl**: Лучший выбор для сред со множеством кластеров, при работе с Schema Registry (Avro/Protobuf) и в Kubernetes-кластерах.
+- **Стандартные утилиты**: Обязательный инструментарий системного администратора для глубоких задач: переноса партиций, работы с метаданными KRaft, форматирования дисков и прямого чтения файлов журнала.
 
 ### Ограничения и краевые случаи
 
-- **JVM-старт**: каждая команда стандартных утилит поднимает JVM (~1–3 сек). В цикле по сотням топиков используйте `rpk`/`kafkactl` или один вызов с `--all-groups`/`--all-topic-partitions`.
-- **Java 17+**: для утилит дистрибутива Kafka 4.x требуется современная JVM (поддержка Java 8/11 удалена, KIP-750/KIP-1013). На машинах со старым JDK команды падают с ошибками компиляции классов — проверьте `java -version`.
-- **Windows**: скрипты `.bat` работают, но экранирование кавычек в свойствах (`--property key.separator=...`) отличается от POSIX-shell — сложные команды надежнее выполнять в WSL/Linux-контейнере.
-- **rpk и Apache Kafka**: базовые команды (`topic`, `group`, `acl`, `produce`, `consume`) совместимы, но часть функциональности специфична для Redpanda (`rpk cluster config`, tiered storage, self-test) и на Apache Kafka вернет ошибку или пустой результат.
-- **kcat не администратор**: нет управления топиками/ACL; `-o end` означает «с конца журнала», а не «с закоммиченного офсета группы» — для проверки группы используйте `-G` или `kafka-consumer-groups.sh`.
-- **Dry-run по умолчанию у reset-offsets**: без `--execute` план только печатается (см. Сценарий 3).
-- **Reassignment небесплатен**: миграция копирует сегменты целиком; без `--throttle` может деградировать кластер. Прервать начатую миграцию корректнее всего выполнив обратную (сохраненную «Current») раскладку.
-- **dump-log требует доступа к диску брокера**: команда читает файлы сегментов локально — в контейнере монтируйте тот же volume или выполняйте `docker exec` на хост брокера.
-- **Автоформатирование KRaft**: начиная с Kafka 4.0 дистрибутив умеет автоматически форматировать пустые каталоги хранилища при первом старте брокера, поэтому явный вызов `kafka-storage.sh format` может быть не нужен. Однако повторный `format` с тем же ID кластера на живом кластере опасен (перезапись журнала метаданных) — на существующих узлах используйте `--ignore-formatted` или выполняйте форматирование только на чистых каталогах. Поведение зависит от способа запуска (systemd-юнит, официальный образ) — сверяйтесь с конфигурацией конкретного развертывания.
-- **Легаси `--zookeeper`**: любые скрипты/ранбуки с этим аргументом несовместимы с современными кластерами; при миграции замените на `--bootstrap-server` (+ `--command-config` для защищенных кластеров).
+- **JVM Startup Overhead**: Каждое выполнение стандартных утилит порождает новый процесс Java с оверхедом в 1.5–3.5 секунды. В циклах обработки по множеству топиков всегда используйте групповые аргументы (`--all-groups`, `--all-topic-partitions`) либо утилиты `rpk`/`kafkactl`.
+- **Строгие требования к Java 17+**: Дистрибутив Kafka 4.x не поддерживает Java 8 и 11 (KIP-750). Запуск утилит на устаревших JVM приведет к ошибке `UnsupportedClassVersionError`.
+- **Специфика bat-скриптов в Windows**: В командных сценариях Windows (`bin/windows/`) правила экранирования спецсимволов и кавычек в аргументах свойств (`--property parse.key=true`) отличаются от POSIX-оболочек. Сложные сценарии надежнее исполнять в WSL2 или контейнерах Linux.
+- **Ограничения rpk при работе с Apache Kafka**: Базовые команды (`topic`, `group`, `acl`) полностью совместимы со стандартным бинарным протоколом Kafka. Однако команды управления кластером (`rpk cluster config`, tiered storage) работают исключительно с Redpanda.
+- **Доступ к локальным дискам для dump-log**: Утилита `kafka-dump-log.sh` не использует сетевой протокол Kafka — она открывает файлы сегментов (`.log`, `.index`) напрямую с блочного устройства хоста.
+- **Защита метаданных KRaft при форматировании**: Повторный запуск команды `kafka-storage.sh format` с тем же или новым Cluster ID на работающем каталоге без флага `--ignore-formatted` приведет к ошибке, а при некорректной очистке каталога — к повреждению кворума метаданных кластера.
 
 ### См. также
 
-- **[Обзор Apache Kafka](./kafka_overview.md)** — архитектура и основные понятия.
-- **[Партиционирование и балансировка](./partitioning_and_balancing.md)** — детали работы с разделами.
-- **[Гарантии доставки](./delivery_guarantees.md)** — настройки надежности (acks, retries).
+- **[Обзор Apache Kafka](./kafka_overview.md)** — архитектура кластера, брокеры, контроллеры и протокол репликации.
+- **[Партиционирование и балансировка](./partitioning_and_balancing.md)** — математика распределения партиций, выбор ключей и балансировка.
+- **[Гарантии доставки](./delivery_guarantees.md)** — семантика доставки сообщений (at-least-once, exactly-once), настройки `acks` и `min.insync.replicas`.
+- **[Troubleshooting Playbook для Apache Kafka](./kafka_troubleshooting_playbook.md)** — пошаговые алгоритмы локализации инцидентов и деревья решений.
+- **[Развертывание Kafka в Docker](./kafka_docker_setup.md)** — контейнеризация Kafka в режиме KRaft и локальные стенды.
+- **[Мониторинг Kafka](./kafka_for_monitoring.md)** — ключевые метрики JMX, правила алертинга и экспортеры.
+- **[Тюнинг JVM и GC для Kafka](./kafka_jvm_gc_tuning.md)** — параметры сборщиков мусора (G1GC) и профилирование памяти.
+- **[Strimzi Kafka Operator](./strimzi_kafka_operator.md)** — эксплуатация Kafka в Kubernetes через оператор Strimzi.

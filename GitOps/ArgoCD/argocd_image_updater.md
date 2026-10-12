@@ -1,140 +1,187 @@
 # Argo CD Image Updater — автоматизация обновления образов
 
-**Argo CD Image Updater** — это контроллер для Argo CD, который отслеживает изменения в реестрах контейнеров (Container Registries) и автоматически обновляет версии образов в приложениях. Это позволяет реализовать цикл непрерывной доставки (CD), где публикация нового образа в реестре инициирует автоматический деплой без ручного редактирования Git-репозитория.
+**Актуально для:** Argo CD Image Updater v1.3.x (архитектура CRD `ImageUpdater`, модуль `registry-scanner` v1.x; совместимо с Argo CD v3.1–v3.5+; поддержка legacy-аннотаций v0.x)
 
-**Актуально для:** Argo CD Image Updater v1.3.x (покрывает v1.0.x–v1.3.x; v1.0.0 — breaking change: переход с аннотаций на CRD `ImageUpdater`; v1.2.x — `registry-scanner` v1.x, `argocd` v3.4+; v1.3.x — Argo CD v3.5+). Проект в Labs (argoproj-labs), не в core Argo CD — не входит в CNCF Graduation path. Для нативной интеграции без аннотаций — Flux Image Automation (CNCF Graduated).
+**Argo CD Image Updater** — специализированный контроллер для Argo CD (проект под эгидой `argoproj-labs`), отслеживающий появление новых версий образов в реестрах контейнеров и автоматически актуализирующий параметры приложений Argo CD. Инструмент реализует полностью автоматизированный цикл непрерывного развертывания (Continuous Deployment, CD) в парадигме GitOps: сборка и публикация нового контейнера в локальном или корпоративном реестре инициируют создание Git-коммита с обновленным тегом без ручного вмешательства инженера.
 
 ## Предварительные требования
 
 | # | Требование | Детали | Команда проверки | Ожидаемый результат |
 |---|------------|--------|------------------|---------------------|
-| 1 | **Kubernetes кластер** | v1.28+ (актуальные LTS: 1.28, 1.29, 1.30). Image Updater требует apiextensions.k8s.io/v1 для CRD. | `kubectl version --short` | `Server Version: v1.28.x` или выше |
-| 2 | **Argo CD установлен** | v2.8+ или v3.x. Image Updater v1.x совместим с Argo CD v2.8-v3.5+. Проверьте совместимость в Release Notes. | `kubectl get pods -n argocd -l app.kubernetes.io/part-of=argocd` | Все поды `Running`, `READY 1/1` |
-| 3 | **Argo CD Application CRD** | Должен быть установлен (входит в стандартную установку Argo CD). | `kubectl get crd applications.argoproj.io` | `NAME: applications.argoproj.io, ESTABLISHED: True` |
-| 4 | **Доступ к реестру образов** | Учетные данные для аутентификации в целевом реестре (Harbor, Docker Hub, ECR, GAR, ACR, Quay, Nexus). Поддерживаются: basic auth, bearer token, IAM (AWS ECR IRSA, Azure WI, GCP WI). | `crane auth login <registry> -u <user> -p <pass>` → `Login Succeeded` | Успешный логин, токен сохранен в `~/.docker/config.json` |
-| 5 | **Git-репозиторий (для Git write-back)** | Репозиторий с доступом на запись (push). Поддерживаются: GitHub, GitLab, Bitbucket, Gitea, Gogs, Azure DevOps. Аутентификация: SSH key, HTTPS token, GitHub App, GitLab Deploy Token. | `git ls-remote <repo-url>` | Список refs без ошибок аутентификации |
-| 6 | **Helm / Kustomize (опционально)** | Если приложения используют Helm или Kustomize. Image Updater работает с любым типом source. | `helm version --short` / `kustomize version` | Версии установлены |
-| 7 | **Сетевой доступ** | Исходящий трафик от пода `argocd-image-updater` к API реестров (порт 443 HTTPS) и к Git API (443/22). При необходимости — настройте NetworkPolicy / Egress. | `kubectl run -i --rm --restart=Never test --image=curlimages/curl -- curl -s https://harbor.example.com/api/v2.0/health` | `{"status":"healthy"}` |
-| 8 | **RBAC для Image Updater** | ServiceAccount с правами: `get/list/watch/update/patch` на `applications.argoproj.io`, `configmaps` (argocd-image-updater-config), `secrets` (pull secrets, git credentials). | `kubectl auth can-i patch applications.argoproj.io --as=system:serviceaccount:argocd:argocd-image-updater -n argocd` | `yes` |
-| 9 | **kubectl / argocd CLI** | Для управления и диагностики. argocd CLI v2.8+ для совместимости с Image Updater. | `argocd version --client` | `argocd: v2.8.x+...` |
+| 1 | **Kubernetes кластер** | v1.28+ (On-Premises bare-metal, kubeadm, k3s, Talos). Требуется поддержка `apiextensions.k8s.io/v1` для CRD. | `kubectl version -o json \| jq -r .serverVersion.gitVersion` | `v1.28.x` или выше |
+| 2 | **Argo CD** | v3.1–v3.5+ установлен в кластере. Image Updater взаимодействует с CRD `applications.argoproj.io`. | `kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server` | `argocd-server-... 1/1 Running` |
+| 3 | **Реестр образов (On-Premises)** | Доступ к корпоративному OCI/Docker v2 реестру (Harbor, GitLab Container Registry, Nexus OSS/Pro, Quay, Docker Registry v2). | `crane auth login harbor.corp.internal -u robot-ci -p "$ROBOT_TOKEN"` | `Login Succeeded` |
+| 4 | **Корпоративный корневой CA** | При использовании внутреннего TLS в Harbor/GitLab сертификат CA должен быть доступен для монтирования в под контроллера. | `openssl s_client -connect harbor.corp.internal:443 -servername harbor.corp.internal </dev/null 2>/dev/null \| grep 'Verify return code'` | `Verify return code: 0 (ok)` |
+| 5 | **Git-сервер (для Git write-back)** | Доступ на запись (push) в корпоративный Git (GitLab CE/EE, Gitea, Forgejo, Bitbucket Server). Аутентификация: SSH Deploy Key или HTTP Personal/Project Access Token. | `ssh -T -i /path/to/deploy_key git@gitlab.corp.internal` | `Welcome to GitLab, @deploy-bot!` |
+| 6 | **Helm / Kustomize** | Утилиты шаблонизации в составе приложений Argo CD (`values.yaml` для Helm или `kustomization.yaml` для Kustomize). | `helm version --short && kustomize version` | `v3.14.x` / `v5.3.x` |
+| 7 | **RBAC в кластере** | ServiceAccount контроллера с правами `get/list/watch/update/patch` на ресурсы `applications.argoproj.io`, `imageupdaters.argoproj.io`, `configmaps`, `secrets`. | `kubectl auth can-i patch applications.argoproj.io --as=system:serviceaccount:argocd:argocd-image-updater -n argocd` | `yes` |
+| 8 | **Сетевой доступ (Egress)** | Исходящий трафик от пода `argocd-image-updater` к реестрам контейнеров (TCP 443) и к Git-серверу (TCP 22 / 443). | `kubectl run test-egress --rm -i --restart=Never --image=curlimages/curl -- curl -kfsS -o /dev/null https://harbor.corp.internal/api/v2.0/ping` | `# → завершение с кодом 0` |
 
-> **Примечание:** Cloud IAM (AWS ECR IRSA, Azure Workload Identity, GCP Workload Identity) — это настройка идентичности пода, а не "облачная зависимость". Конфигурация выполняется через ServiceAccount annotations и IAM политики; логика Image Updater остается одинаковой.
+---
 
-## Определения
+## Термины и определения
 
 | Термин | Определение |
 |--------|-------------|
-| **Image Updater** | Вспомогательный контроллер Argo CD (проект argoproj-labs), опрашивающий API реестров образов (Harbor, Docker Hub, AWS ECR, GCP GAR, Azure ACR, Quay, Nexus, Generic OCI) на наличие новых тегов и автоматически обновляющий параметры приложений Argo CD. Не входит в core Argo CD. |
-| **ImageUpdater CR** | Custom Resource Definition (v1.0+), декларативная конфигурация обновления образов. Заменяет аннотационный подход (legacy). Содержит `applicationRefs` (селекторы приложений), `images` (образы для отслеживания), `writeBackConfig` (метод записи). |
-| **Write-back Method** | Механизм фиксации изменений версии образа:<br>• **Git (Declarative)** — запись обновленного тега обратно в Git-репозиторий в виде коммита (создает файл `.argocd-source-<app-name>.yaml` с переопределенными параметрами). Рекомендуется для GitOps (Production, Staging).<br>• **API / argocd (Imperative)** — временное переопределение параметров приложения в оперативной памяти Argo CD через его API. Для Dev/QA сред. |
-| **Update Strategy** | Алгоритм выбора «наилучшего» тега из списка доступных в реестре:<br>• **SemVer** — семантическое версионирование с поддержкой диапазонов (`^1.0`, `~1.2`, `>=1.0 <2.0`).<br>• **Latest** / **NewestBuild** — самый последний созданный образ по дате (timestamp).<br>• **Name** — алфавитный порядок тегов.<br>• **Digest** — использование SHA256 хеша (для неизменяемых тегов, максимальная детерминированность). |
-| **Pull Secret** | Секрет Kubernetes типа `kubernetes.io/dockerconfigjson`, используемый контроллером для аутентификации в приватных реестрах. Указывается в `commonUpdateSettings.pullSecret` или в `registries.conf`. |
-| **Registry Configuration** | Конфигурация реестра в ConfigMap `argocd-image-updater-config` (ключ `registries.conf`), определяющая: `name`, `prefix` (путь к образам), `api_url`, `credentials` (ссылка на Secret), `default`, `insecure`, `ping` (health check endpoint). |
-| **Webhook Receiver** | HTTP-эндпоинт Image Updater (порт 8080), принимающий уведомления от реестров (Harbor, Docker Hub, Quay, generic) о появлении новых образов для немедленной проверки без ожидания `check.interval`. Требует Ingress/Service. |
-| **Image List Annotation (Legacy)** | Основная аннотация `argocd-image-updater.argoproj.io/image-list`, перечисляющая образы для отслеживания в формате `<alias>=<image>[:<filter>]`. Пример: `app=my-registry/api:^1.0`. Может содержать несколько образов через запятую или YAML-список. **Устарело в v1.0+**. |
-| **Force Update** | Аннотация `argocd-image-updater.argoproj.io/force-update: "true"` — принудительно запускает проверку и обновление вне очереди интервала. Сбрасывается контроллером после выполнения. |
-| **Check Interval** | Параметр `check.interval` в ConfigMap (дефолт `2m`) — частота опроса реестров. Поддерживает Go duration синтаксис (`30s`, `5m`, `1h`). |
-| **Registries.conf** | YAML-конфигурация внутри ConfigMap `argocd-image-updater-config`, описывающая список реестров с их параметрами доступа. Структура: `registries: [{name, prefix, api_url, credentials, default, insecure, ping}]`. |
-| **Kustomize Image Override** | Механизм обновления образов в Kustomize через поле `images:` в `kustomization.yaml`. Требует `writeBackTarget: "kustomizeimage:./path"`. |
-| **Helm Parameter Override** | Механизм обновления Helm-параметров. Требует `writeBackTarget: "helmvalues:./values.yaml"` и соответствующие параметры в `values.yaml`. |
-| **SemVer Range** | Синтаксис фильтрации версий по семантическому версионированию: `^1.0.0` (>=1.0.0 <2.0.0), `~1.2.3` (>=1.2.3 <1.3.0), `>=1.0.0 <2.0.0`, `1.2.x`. Поддерживает pre-release (`1.0.0-rc.1`) при явном указании. |
-| **Digest Pinning** | Стратегия `digest` — фиксация образа по SHA256 дайджесту (`image@sha256:...`). Гарантирует иммутабельность; обновления применяются только при появлении нового дайджеста в реестре (при пересборке образа). |
+| **Image Updater** | Контроллер Kubernetes, опрашивающий API реестров контейнеров, вычисляющий целевой тег по заданной стратегии и инициирующий обновление манифестов приложения Argo CD. |
+| **ImageUpdater CR** | Пользовательский ресурс Kubernetes (`imageupdaters.argocd-image-updater.argoproj.io`), определяющий правила отслеживания образов, селекторы приложений и параметры записи изменений (стандарт в v1.x). |
+| **Write-back Method** | Механизм сохранения новой версии образа: **Git write-back** (декларативный, коммит в Git-репозиторий) или **API write-back** (императивный, оперативная память Argo CD). |
+| **Git Write-back Target** | Место записи изменений в репозитории: файл параметров Helm (`helmvalues:./path/values.yaml`) или оверлей Kustomize (`kustomizeimage:./path`). По умолчанию создает вспомогательный файл `.argocd-source-<app-name>.yaml`. |
+| **Update Strategy** | Алгоритм выбора целевого тега из реестра: `semver` (семантические диапазоны), `newest-build` (по метке времени создания образа), `name` (алфавитная сортировка), `digest` (SHA256 дайджест). |
+| **Digest Pinning** | Фиксация образа по неизменяемому криптографическому дайджесту манифеста (`@sha256:...`). Гарантирует побайтовую неизменность запущенного контейнера. |
+| **Registry Scanner** | Внутренний модуль Image Updater v1.x, отвечающий за взаимодействие с OCI Distribution Specification / Docker Registry HTTP API V2, получение списка тегов и манифестов. |
+| **Webhook Receiver** | Встроенный HTTP-сервер Image Updater (порт 8080), принимающий push-уведомления от реестров контейнеров (Harbor, GitLab) для немедленного обновления без ожидания таймера `check.interval`. |
+| **Legacy Annotations** | Устаревший механизм конфигурации v0.x через аннотации ресурса `Application` (`argocd-image-updater.argoproj.io/*`). Поддерживается в v1.x в режиме обратной совместимости. |
+| **Allow / Ignore Tags** | Фильтры регулярных выражений (RegEx) для включения или исключения определенных тегов реестра перед выполнением стратегии ранжирования. |
 
-## Базовые концепции
+---
 
-### Архитектура взаимодействия (v1.x CRD-based)
+## Базовые концепции и архитектура
+
+### Архитектура компонентов (v1.x)
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│         Argo CD Image Updater v1.x: Архитектура автоматизации       │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐          │
-│  │  Container   │    │ argocd-image │    │  argocd-     │          │
-│  │  Registry    │◀───│ -updater     │───▶│ application  │          │
-│  │  (Harbor,    │    │ (Контроллер) │    │ controller   │          │
-│  │   ECR, etc.) │    └──────────────┘    └──────────────┘          │
-│  └──────────────┘           │                   │                   │
-│         │                   ▼                   ▼                   │
-│         │         ┌──────────────┐    ┌──────────────┐             │
-│         │         │  ImageUpdater│    │  Application │             │
-│         │         │     CR       │    │  (Git/Helm/  │             │
-│         │         └──────────────┘    │   Kustomize) │             │
-│         │                              └──────────────┘             │
-│         ▼                                                           │
-│  ┌──────────────┐    ┌──────────────┐                              │
-│  │ Webhook      │    │  Git         │                              │
-│  │ Receiver     │    │  Repository  │                              │
-│  │ (Опционально)│    │  (Write-back)│                              │
-│  └──────────────┘    └──────────────┘                              │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                       Argo CD Image Updater: Архитектура v1.x                           │
+├─────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                         │
+│  ┌────────────────────────┐                         ┌────────────────────────────────┐  │
+│  │ Corporate Container    │                         │ Argo CD Control Plane          │  │
+│  │ Registry               │                         │                                │  │
+│  │ (Harbor / GitLab /     │                         │ ┌────────────────────────────┐ │  │
+│  │  Nexus / OCI Registry) │                         │ │ Application Controller     │ │  │
+│  └───────────┬────────────┘                         │ └──────────────▲─────────────┘ │  │
+│              │ OCI / Manifest API                                    │ Watches       │  │
+│              │ (Tags, Digests)                                       │ Applications  │  │
+│              ▼                                                       │               │  │
+│  ┌────────────────────────────────────────────────────────┐          │               │  │
+│  │  argocd-image-updater (Pod)                            │          │               │  │
+│  │                                                        │          │               │  │
+│  │  ┌──────────────────┐       ┌───────────────────────┐  │          │               │  │
+│  │  │ Webhook Receiver │       │ Controller Core       │  │          │               │  │
+│  │  │ (:8080/webhook)  │───┐   │ (Reconciliation Loop) │  │          │               │  │
+│  │  └──────────────────┘   │   └───────────┬───────────┘  │          │               │  │
+│  │                         │               │              │          │               │  │
+│  │  ┌──────────────────┐   │               ▼              │          │               │  │
+│  │  │ Registry Scanner │◀──┴─── ┌───────────────────────┐ │          │               │  │
+│  │  │ Engine           │        │ Git Client (go-git)   │ │          │               │  │
+│  │  └──────────────────┘        │ (SSH / HTTPS Tokens)  │ │          │               │  │
+│  └──────────────────────────────┴──────────┬────────────┴─┘          │               │  │
+│                                            │                         │               │  │
+│              ┌─────────────────────────────┘ Git Push                │               │  │
+│              │                               (Commit & Tag)          │ Sync          │  │
+│              ▼                                                       │ Loop          │  │
+│  ┌────────────────────────┐                                          │               │  │
+│  │ Corporate Git Server   │──────────────────────────────────────────┘               │  │
+│  │ (GitLab / Gitea /      │  (Polls Git / Webhook)                                   │  │
+│  │  Bitbucket Server)     │                                                          │  │
+│  └────────────────────────┘                                                          │  │
+│                                                                                         │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Механизм работы (v1.x)
+### Жизненный цикл сверки (Reconciliation Loop)
 
-1. **Обнаружение:** Контроллер читает ресурсы `ImageUpdater` в кластере.
-2. **Селекция приложений:** Для каждого `ImageUpdater` применяются `applicationRefs` (namePattern, labelSelector) для поиска целевых `Application` объектов.
-3. **Конфигурация образов:** Для каждого выбранного приложения берутся `images` из CR (alias, imageName, commonUpdateSettings).
-4. **Опрос реестра:** Для каждого образа выполняется запрос к API реестра. Контроллер учитывает настройки аутентификации из `argocd-image-updater-config` / `registries.conf`.
-5. **Сравнение:** Найденные теги фильтруются согласно стратегии (SemVer, Latest/NewestBuild, Name, Digest) и настройкам `allowTags`/`ignoreTags`.
-6. **Обновление:** Если найден тег новее текущего, инициируется запись изменений через `writeBackConfig` (git или argocd API).
+1. **Обнаружение объектов ImageUpdater:** Контроллер отслеживает CR `ImageUpdater` в пространстве имен Argo CD.
+2. **Селекция целевых приложений:** На основе полей `applicationRefs.namePattern` (glob) и `applicationRefs.labelSelector` выбираются активные `Application` Argo CD.
+3. **Получение текущего состояния образов:** Контроллер инспектирует манифесты приложения (`spec.source.helm.parameters`, `spec.source.kustomize.images` или файл `.argocd-source-<app-name>.yaml`).
+4. **Запрос к реестру через `registry-scanner`:**
+   - Выполняется аутентификация в реестре (используется Secret типа `kubernetes.io/dockerconfigjson` или учетные данные из `registries.conf`).
+   - Получается список всех доступных тегов репозитория.
+5. **Фильтрация и ранжирование:**
+   - Исключаются теги, подпадающие под `ignoreTags`.
+   - Проверяется соответствие паттерну `allowTags`.
+   - Применяется выбранная стратегия (`semver`, `newest-build`, `name`, `digest`).
+6. **Принятие решения об обновлении:**
+   - Если найденный тег идентичен текущему — операция завершается без действий.
+   - Если найден более свежий тег — запускается процедура Write-back.
+7. **Фиксация изменений (Write-back):**
+   - **Git write-back:** клонирование ветки через `go-git`, обновление целевого файла параметров, коммит (опционально с GPG/SSH подписью) и `git push`.
+   - **API write-back:** вызов gRPC/REST API Argo CD для обновления in-memory параметров в `Application.spec.source`.
+8. **Реакция Argo CD:** Argo CD фиксирует изменение в Git (или API) и выполняет автоматическую синхронизацию (Auto-Sync) в кластер.
 
-### Write-back методы: Git vs API
+---
 
-| Критерий | Git write-back | API write-back |
+### Сравнение методов фиксации: Git vs API
+
+| Критерий | Git write-back (Декларативный) | API write-back (Императивный) |
 | :--- | :--- | :--- |
-| **Согласованность** | Высокая (Git — SSoT) | Средняя (параметры в памяти) |
-| **Аудит** | Полная история коммитов | Только текущее состояние |
-| **Сложность настройки** | Высокая (SSH/HTTPS ключи) | Низкая (токен ArgoCD) |
-| **Конфликты** | Возможны при параллельных коммитах | Отсутствуют |
-| **Рекомендуемая среда** | Production, Staging | Dev, QA, Testing |
-| **Восстановление** | Через `git revert` | Через `argocd app rollback` |
+| **Соответствие GitOps** | **Полное (SSoT)**: Репозиторий всегда отражает реальность | **Частичное**: Параметры живут в Argo CD, Git отстает |
+| **История и аудит** | Полная история коммитов в Git с автором и временем | Только логи контроллера и Kubernetes Events |
+| **Устойчивость к сбоям** | Высокая: при переустановке Argo CD состояние сохраняется | Низкая: при сбросе кэша Argo CD теги возвращаются к исходным |
+| **Откат (Rollback)** | Нативный: стандартная команда `git revert` | Через интерфейс Argo CD (`argocd app rollback`) |
+| **Сетевые требования** | Нужен доступ на запись (push) в Git-репозиторий | Доступ только к Kubernetes API / Argo CD API |
+| **Риск конфликтов** | Возможен Non-fast-forward конфликт при параллельных коммитах | Отсутствует |
+| **Область применения** | **Production, Staging, Pre-prod** | **Dev, QA, эфемерные динамические стенды** |
 
-### Аутентификация в реестрах
+---
 
-Image Updater поддерживает несколько способов авторизации:
+### Механика Git Write-back и файл переопределений
 
-- **Секреты Kubernetes:** Указание в `commonUpdateSettings.pullSecret: "secret://<namespace>/<secret-name>"` или в `registries.conf`.
-- **Глобальная настройка:** Определение учетных данных в ConfigMap `argocd-image-updater-config`.
-- **Cloud IAM:** Использование ролей (например, IAM Roles for Service Accounts в AWS ECR).
-- **Azure Workload Identity:** Для Azure ACR.
-- **GCP Workload Identity:** Для GCP GAR.
+При использовании метода `git` контроллер не пытается напрямую парсить сложные шаблоны Jinja или нестандартные конструкции Helm. По умолчанию контроллер создает в целевом каталоге приложения файл переопределений:
 
-**Важно:** Secret должен содержать ключи `username` и `password` в формате `docker-registry`:
+```
+.argocd-source-<application-name>.yaml
+```
+
+**Пример содержимого для Helm:**
 ```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: harbor-pull-secret
-  namespace: argocd
-type: kubernetes.io/dockerconfigjson
-data:
-  .dockerconfigjson: <base64-encoded>
+helm:
+  parameters:
+  - name: image.tag
+    value: 1.4.2
+    forceString: true
 ```
 
-### Полный список полей ImageUpdater CR (v1.x)
+**Пример содержимого для Kustomize:**
+```yaml
+kustomize:
+  images:
+  - harbor.corp.internal/apps/backend:1.4.2
+```
 
-| Поле | Описание | Пример |
+Argo CD автоматически считывает файлы с префиксом `.argocd-source-` и накладывает их поверх базовой конфигурации манифестов перед рендерингом. При необходимости прямой модификации файлов репозитория используется параметр `writeBackTarget` (например, `helmvalues:./values.yaml`).
+
+---
+
+### Стратегии выбора версий (Update Strategies)
+
+| Стратегия | Принцип работы | Примеры входных данных | Назначение |
+| :--- | :--- | :--- | :--- |
+| `semver` | Парсинг тегов по спецификации SemVer 2.0. Поддерживает ограничения (`^`, `~`, `>`, `<=`). | `^1.2` → выберет `1.2.9`, но пропустит `1.3.0`<br>`~1.2.0` → только патчи `1.2.x` | Стабильные продуктовые среды с гарантией обратной совместимости API. |
+| `newest-build` | Сравнение даты создания манифеста образа (`created` timestamp из OCI/Docker config). | Сборки с хэшами Git: `feat-login-a1b2c3d`, `master-8f9e0d1` | Стенды разработки (Dev/QA), сборки из основной ветки. |
+| `name` | Сортировка по алфавиту (лексикографический порядок). | Теги формата дат: `2026.10.01`, `2026.10.02` | Системы с версионированием по CalVer или алфавитным индексам. |
+| `digest` | Отслеживание изменения SHA256 хэша манифеста при неизменном теге. | Мутабельный тег `:stable` или `:release-1.0` | Критические сервисы с неизменяемым дайджестом и защитой от подмены. |
+
+---
+
+### Спецификация CRD `ImageUpdater` (`v1alpha1`)
+
+| Поле спецификации | Тип | Описание |
 | :--- | :--- | :--- |
-| `spec.applicationRefs[].namePattern` | Glob-паттерн имени Application | `production-*`, `my-app` |
-| `spec.applicationRefs[].labelSelector` | Label selector для Application | `env=production` |
-| `spec.applicationRefs[].images[].alias` | Уникальный алиас образа | `nginx`, `backend` |
-| `spec.applicationRefs[].images[].imageName` | Полное имя образа с тегом/фильтром | `harbor.example.com/myapp:^1.0` |
-| `spec.applicationRefs[].images[].commonUpdateSettings.updateStrategy` | Стратегия | `semver`, `newest-build`, `name`, `digest` |
-| `spec.applicationRefs[].images[].commonUpdateSettings.allowTags` | Regex для разрешенных тегов | `^v?[0-9]+\.[0-9]+$` |
-| `spec.applicationRefs[].images[].commonUpdateSettings.ignoreTags` | Массив игнорируемых тегов | `["latest", "dev", "rc"]` |
-| `spec.applicationRefs[].images[].commonUpdateSettings.pullSecret` | Ссылка на pull secret | `secret://argocd/harbor-secret` |
-| `spec.writeBackConfig.method` | Метод записи | `git`, `argocd` |
-| `spec.writeBackConfig.gitConfig.repository` | Git репозиторий | `git@github.com:org/repo.git` |
-| `spec.writeBackConfig.gitConfig.branch` | Ветка | `main` |
-| `spec.writeBackConfig.gitConfig.writeBackTarget` | Цель: `helmvalues:./values.yaml`, `kustomizeimage:./kustomization.yaml` | `helmvalues:./values.yaml` |
+| `spec.writeBackConfig.method` | `string` | Метод сохранения: `git` или `argocd`. |
+| `spec.writeBackConfig.gitConfig.repository` | `string` | URL Git-репозитория (`git@gitlab.corp...` или `https://...`). |
+| `spec.writeBackConfig.gitConfig.branch` | `string` | Ветка репозитория для коммитов (например, `main`, `release/prod`). |
+| `spec.writeBackConfig.gitConfig.writeBackTarget` | `string` | Целевой файл: `helmvalues:./values.yaml`, `kustomizeimage:./overlay`. |
+| `spec.writeBackConfig.gitConfig.user` | `string` | Имя автора Git-коммита (дефолт: `argocd-image-updater`). |
+| `spec.writeBackConfig.gitConfig.email` | `string` | Email автора Git-коммита. |
+| `spec.applicationRefs[].namePattern` | `string` | Шаблон имен приложений Argo CD (поддерживает glob: `prod-*`, `backend`). |
+| `spec.applicationRefs[].labelSelector` | `string` | Селектор меток Kubernetes для фильтрации Application. |
+| `spec.applicationRefs[].images[].alias` | `string` | Уникальный псевдоним образа в рамках списка `images`. |
+| `spec.applicationRefs[].images[].imageName` | `string` | Полный путь к образу в реестре с возможным SemVer фильтром. |
+| `spec.applicationRefs[].images[].commonUpdateSettings.updateStrategy` | `string` | Стратегия обновления: `semver`, `newest-build`, `name`, `digest`. |
+| `spec.applicationRefs[].images[].commonUpdateSettings.allowTags` | `string` | Регулярное выражение (RegEx) допустимых тегов. |
+| `spec.applicationRefs[].images[].commonUpdateSettings.ignoreTags` | `[]string` | Список тегов или масок, исключаемых из поиска. |
+| `spec.applicationRefs[].images[].commonUpdateSettings.pullSecret` | `string` | Ссылка на Secret доступа (`secret://<namespace>/<name>`). |
+| `spec.applicationRefs[].images[].commonUpdateSettings.platforms` | `[]string` | Фильтрация архитектур: `["linux/amd64"]`, `["linux/arm64"]`. |
+
+---
 
 ## Настройка и конфигурация
 
-### Конфигурация контроллера (ConfigMap)
+### Конфигурация контроллера (`argocd-image-updater-config`)
 
-Основные настройки контроллера хранятся в `argocd-image-updater-config`:
+Файл конфигурации `registries.conf` внутри ConfigMap описывает реестры, правила аутентификации и системные таймауты:
 
 ```yaml
 apiVersion: v1
@@ -143,285 +190,307 @@ metadata:
   name: argocd-image-updater-config
   namespace: argocd
 data:
-  # Интервал опроса реестров (по умолчанию 2 минуты)
-  check.interval: "2m"
-  # Настройка логирования
+  # Интервал опроса реестров по умолчанию (Go duration syntax)
+  check.interval: "3m"
+  # Уровень детализации журналов: trace, debug, info, warn, error
   log.level: "info"
-  # Конфигурация реестров
+  # Таймаут запросов к реестрам
   registries.conf: |
     registries:
-    - name: Harbor
-      prefix: harbor.example.com
-      api_url: https://harbor.example.com/api/v2.0
-      credentials: secret://argocd/harbor-pull-secret
-    - name: DockerHub
+    - name: Enterprise Harbor
+      prefix: harbor.corp.internal
+      api_url: https://harbor.corp.internal/api/v2.0
+      credentials: secret://argocd/harbor-robot-secret
+      default: false
+      insecure: false
+      ping: true
+
+    - name: Internal GitLab Registry
+      prefix: registry.gitlab.corp.internal
+      api_url: https://registry.gitlab.corp.internal
+      credentials: secret://argocd/gitlab-registry-token
+      default: false
+      insecure: false
+
+    - name: Nexus Repository Manager
+      prefix: nexus.corp.internal:8082
+      api_url: https://nexus.corp.internal:8082
+      credentials: secret://argocd/nexus-docker-secret
+      default: false
+      insecure: false
+
+    - name: Docker Hub (Public Mirror / Upstream)
       prefix: docker.io
       api_url: https://registry.hub.docker.com
+      credentials: secret://argocd/dockerhub-pull-secret
       default: true
-    - name: AWS ECR
-      prefix: 123456789.dkr.ecr.us-east-1.amazonaws.com
-      api_url: https://123456789.dkr.ecr.us-east-1.amazonaws.com
-      credentials: secret://argocd/ecr-credentials
-      default: false
-    - name: GCP GAR
-      prefix: us-central1-docker.pkg.dev
-      api_url: https://us-central1-docker.pkg.dev
-      credentials: secret://argocd/gar-credentials
 ```
 
-**Параметры реестра:**
+---
 
-| Параметр | Описание | Обязательный |
-| :--- | :--- | :--- |
-| `name` | Уникальное имя реестра | Да |
-| `prefix` | Префикс пути к образам | Да |
-| `api_url` | URL API реестра | Да |
-| `credentials` | Ссылка на Secret | Да |
-| `default` | Реестр по умолчанию | Нет (false) |
-| `insecure` | Отключение TLS-проверки | Нет (false) |
+### Секреты аутентификации для реестров и Git
 
-### ImageUpdater CR (v1.x — основной способ)
-
-Деларативная конфигурация через Custom Resource:
+#### 1. Секрет для реестра контейнеров (Robot Account / Token)
 
 ```yaml
-apiVersion: argocd-image-updater.argoproj.io/v1alpha1
-kind: ImageUpdater
+apiVersion: v1
+kind: Secret
 metadata:
-  name: production-image-updater
-  namespace: argocd  # Должен совпадать с namespace Applications
-spec:
-  # Глобальная конфигурация write-back (переопределяется на уровне applicationRefs)
-  writeBackConfig:
-    method: "git"
-    gitConfig:
-      repository: "git@github.com:myorg/infra.git"
-      branch: "main"
-      writeBackTarget: "helmvalues:./apps/my-app/values.yaml"
-  
-  # Селекция приложений и настройка образов
-  applicationRefs:
-  - namePattern: "production-*"
-    labelSelector: "env=production"
-    images:
-    - alias: "frontend"
-      imageName: "harbor.example.com/myorg/frontend:^1.0"
-      commonUpdateSettings:
-        updateStrategy: "semver"
-        allowTags: "^v?[0-9]+\\.[0-9]+\\.[0-9]+$"
-        ignoreTags: ["latest", "dev", "rc", "alpha", "beta"]
-        pullSecret: "secret://argocd/harbor-pull-secret"
-    - alias: "backend"
-      imageName: "harbor.example.com/myorg/backend:~2.0"
-      commonUpdateSettings:
-        updateStrategy: "semver"
-        pullSecret: "secret://argocd/harbor-pull-secret"
-  
-  - namePattern: "staging-*"
-    writeBackConfig:
-      method: "git"
-      gitConfig:
-        branch: "develop"
-        writeBackTarget: "helmvalues:./apps/my-app/values.yaml"
-    images:
-    - alias: "frontend"
-      imageName: "harbor.example.com/myorg/frontend"
-      commonUpdateSettings:
-        updateStrategy: "newest-build"
-        pullSecret: "secret://argocd/harbor-pull-secret"
+  name: harbor-robot-secret
+  namespace: argocd
+type: kubernetes.io/dockerconfigjson
+data:
+  # Base64 кодированное содержимое auth config
+  .dockerconfigjson: eyJhdXRocyI6eyJoYXJib3IuY29ycC5pbnRlcm5hbCI6eyJ1c2VybmFtZSI6InJvYm90JGFyZ29jZC11cGRhdGVyIiwicGFzc3dvcmQiOiJTT01FX1NFQ1JFVF9UT0tFTiJ9fX0=
 ```
 
-### Стратегии обновления (v1.x)
+#### 2. Секрет с приватным SSH-ключом для Git Write-back
 
-| Стратегия | Описание | Пример | Когда использовать |
-| :--- | :--- | :--- | :--- |
-| **SemVer** | Выбор по семантическому версионированию. Поддерживает диапазоны. | `semver` + `imageName: "repo/app:^1.0"` | Стабильные релизы, Production |
-| **NewestBuild** / **Latest** | Выбор самого последнего созданного образа (по дате). | `newest-build` | Dev, Nightly builds |
-| **Name** | Алфавитный порядок тегов. | `name` | Нестандартная нумерация |
-| **Digest** | Использование SHA256 хеша (для неизменяемых тегов). | `digest` | Критические среды, Security |
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-writeback-ssh-creds
+  namespace: argocd
+type: Opaque
+stringData:
+  sshPrivateKey: |
+    -----BEGIN OPENSSH PRIVATE KEY-----
+    b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+    QyNTUxOQAAACBP2Z3jEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEAAAIEB
+    -----END OPENSSH PRIVATE KEY-----
+```
 
-**Примеры диапазонов SemVer (в поле `imageName`):**
-- `^1.0` — все версии 1.x.x
-- `~1.2` — все версии 1.2.x
-- `>=1.0 <2.0` — все версии от 1.0 до 2.0
-- `1.2.x` — конкретная минорная версия
+---
 
-### Аннотации (Legacy v0.x — для миграции)
+## Практические сценарии
 
-> **Внимание:** Аннотационный подход объявлен **legacy** в v1.0.0. Поддерживается ограниченно для обратной совместимости. Новые проекты должны использовать **ImageUpdater CR**.
+### Сценарий 1: Установка Image Updater v1.3.x с корпоративным Root CA
 
-| Аннотация | Описание | Пример |
-| :--- | :--- | :--- |
-| `argocd-image-updater.argoproj.io/image-list` | Список образов и фильтры | `app=my-registry/app:^1.0` |
-| `argocd-image-updater.argoproj.io/<name>.update-strategy` | Стратегия обновления | `semver`, `latest`, `name`, `digest` |
-| `argocd-image-updater.argoproj.io/write-back-method` | Метод записи | `git`, `argocd` |
-| `argocd-image-updater.argoproj.io/write-back-target` | Цель записи | `git:secret:argocd/git-creds` |
-| `argocd-image-updater.argoproj.io/<name>.kustomize.image-name` | Имя образа в Kustomize | `my-org/frontend` |
-| `argocd-image-updater.argoproj.io/<name>.helm.image-name` | Имя параметра Helm | `image.repository` |
-| `argocd-image-updater.argoproj.io/<name>.helm.image-tag` | Имя параметра тега | `image.tag` |
-| `argocd-image-updater.argoproj.io/<name>.pull-secret` | Ссылка на Secret | `secret://argocd/pull-secret` |
-| `argocd-image-updater.argoproj.io/<name>.registry` | Имя реестра из конфигурации | `harbor` |
-| `argocd-image-updater.argoproj.io/force-update` | Принудительное обновление | `true` |
-
-## Практические сценарии (v1.x CRD-based)
-
-### Сценарий 1: Установка Image Updater v1.x
+Развертывание через официальный Helm-чарт с монтированием корпоративного корневого сертификата для бесперебойной работы с внутренним Harbor/GitLab.
 
 ```bash
-# 1. Добавление Helm-чарта ArgoCD
+# 1. Добавление репозитория argo-helm
 helm repo add argo https://argoproj.github.io/argo-helm
 helm repo update
+# → "argo" has been added to your repositories
+# → Update Complete. ⎈Successfully got an update from the "argo" chart repository
 
-# 2. Установка Image Updater v1.x
-# Примечание: chart version ≠ app version. Chart 1.x.x устанавливает app v1.x.x
+# 2. Создание ConfigMap с корпоративным корневым CA сертификатом
+kubectl create configmap corporate-ca-certs \
+  --from-file=ca-certificates.crt=/etc/ssl/certs/corporate-root-ca.crt \
+  -n argocd
+# → configmap/corporate-ca-certs created
+
+# 3. Установка Helm-чарта с монтированием CA и сервисным аккаунтом
+cat << 'EOF' > /tmp/image-updater-values.yaml
+config:
+  logLevel: info
+  checkInterval: 2m
+extraVolumes:
+  - name: ca-bundle
+    configMap:
+      name: corporate-ca-certs
+extraVolumeMounts:
+  - name: ca-bundle
+    mountPath: /etc/ssl/certs/ca-certificates.crt
+    subPath: ca-certificates.crt
+    readOnly: true
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+securityContext:
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+EOF
+
 helm install argocd-image-updater argo/argocd-image-updater \
   --namespace argocd \
-  --version 1.3.1  # версия чарта, см. https://artifacthub.io/packages/helm/argo/argocd-image-updater
+  --version 1.3.1 \
+  -f /tmp/image-updater-values.yaml
+# → NAME: argocd-image-updater
+# → STATUS: deployed
+# → REVISION: 1
 
-# 3. Проверка статуса
+# 4. Проверка запуска пода и установки CRD
 kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-image-updater
+# → NAME                                    READY   STATUS    RESTARTS   AGE
+# → argocd-image-updater-7bb5df74bd-x8k9m   1/1     Running   0          25s
 
-# 4. Проверка CRD
 kubectl get crd imageupdaters.argocd-image-updater.argoproj.io
+# → NAME                                              CREATED AT
+# → imageupdaters.argocd-image-updater.argoproj.io   2026-10-12T10:00:00Z
 ```
 
-### Сценарий 2: Автоматизация через Git write-back (Helm) — Production
+---
 
-Рекомендуемый метод для соблюдения принципов GitOps. Контроллер создает файл `.argocd-source-<app-name>.yaml` в репозитории.
+### Сценарий 2: Production Git Write-back с Helm (SemVer)
+
+Конфигурация для продуктовой среды: обновление разрешено только в рамках мажорной версии `2.x.x` (`^2.0`), коммиты пишутся напрямую в репозиторий через SSH, параметры переопределяются в `values.yaml`.
 
 ```yaml
 apiVersion: argocd-image-updater.argoproj.io/v1alpha1
 kind: ImageUpdater
 metadata:
-  name: production-image-updater
+  name: billing-prod-updater
   namespace: argocd
 spec:
   writeBackConfig:
     method: "git"
     gitConfig:
-      repository: "git@github.com:myorg/infra.git"
+      repository: "git@gitlab.corp.internal:finance/billing-service-gitops.git"
       branch: "main"
-      # writeBackTarget указывает путь к values.yaml относительно корня репозитория
-      writeBackTarget: "helmvalues:./apps/my-app/values.yaml"
+      writeBackTarget: "helmvalues:./deploy/helm/values.yaml"
+      user: "ArgoCD Automation Bot"
+      email: "gitops-bot@corp.internal"
   applicationRefs:
-  - namePattern: "my-app-prod"
+  - namePattern: "billing-service-prod"
     images:
-    - alias: "app-image"
-      # Образ с SemVer фильтром: только минорные обновления v1.x
-      imageName: "harbor.example.com/myorg/my-app:^1.0"
+    - alias: "billing-api"
+      imageName: "harbor.corp.internal/finance/billing-api:^2.0"
       commonUpdateSettings:
         updateStrategy: "semver"
-        allowTags: "^v?[0-9]+\\.[0-9]+\\.[0-9]+$"
-        ignoreTags: ["latest", "dev", "rc"]
-        pullSecret: "secret://argocd/harbor-pull-secret"
+        allowTags: "^v?2\\.[0-9]+\\.[0-9]+$"
+        ignoreTags: ["*alpha*", "*beta*", "*rc*", "*dev*"]
+        pullSecret: "secret://argocd/harbor-robot-secret"
+        platforms:
+        - "linux/amd64"
 ```
 
-**Ожидаемый `values.yaml`:**
+**Ожидаемый результат коммита в `deploy/helm/values.yaml`:**
 ```yaml
 image:
-  repository: harbor.example.com/myorg/my-app
-  tag: "1.0.0"  # Будет обновляться Image Updater
+  repository: harbor.corp.internal/finance/billing-api
+  tag: "2.4.1" # Обновлено контроллером с версии 2.3.9
 ```
 
-### Сценарий 3: API write-back (Dev/QA)
+---
 
-Для Dev/QA сред, где не требуется история коммитов в Git:
+### Сценарий 3: Git Write-back с Kustomize (`kustomizeimage`)
+
+Для проектов, использующих нативный Kustomize, контроллер переопределяет секцию `images` в целевом `kustomization.yaml`.
 
 ```yaml
 apiVersion: argocd-image-updater.argoproj.io/v1alpha1
 kind: ImageUpdater
 metadata:
-  name: dev-image-updater
+  name: frontend-kustomize-updater
+  namespace: argocd
+spec:
+  writeBackConfig:
+    method: "git"
+    gitConfig:
+      repository: "git@gitlab.corp.internal:frontend/portal-gitops.git"
+      branch: "main"
+      writeBackTarget: "kustomizeimage:./environments/production"
+      user: "Image Updater Bot"
+      email: "updater@corp.internal"
+  applicationRefs:
+  - namePattern: "portal-prod"
+    images:
+    - alias: "web-ui"
+      imageName: "harbor.corp.internal/frontend/portal-ui:^1.12"
+      commonUpdateSettings:
+        updateStrategy: "semver"
+        pullSecret: "secret://argocd/harbor-robot-secret"
+```
+
+**Ожидаемый `environments/production/kustomization.yaml` после обновления:**
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../../base
+images:
+- name: harbor.corp.internal/frontend/portal-ui
+  newTag: "1.12.5"
+```
+
+---
+
+### Сценарий 4: Git Write-back с Argo CD Source Hydrator и Multiple Sources
+
+В Argo CD v3.5+ и Image Updater v1.3.1+ реализована поддержка объединения параметров для приложений со сложной структурой источников (SourceHydrator / Multi-Source).
+
+```yaml
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: hydrator-app-updater
+  namespace: argocd
+spec:
+  writeBackConfig:
+    method: "git"
+    gitConfig:
+      repository: "git@gitlab.corp.internal:infra/app-configs.git"
+      branch: "main"
+      # Указывается целевой путь внутри репозитория конфигураций
+      writeBackTarget: "helmvalues:./values-override.yaml"
+  applicationRefs:
+  - namePattern: "hydrated-order-processor"
+    images:
+    - alias: "processor"
+      imageName: "harbor.corp.internal/logistics/order-processor:~3.1.0"
+      commonUpdateSettings:
+        updateStrategy: "semver"
+        pullSecret: "secret://argocd/harbor-robot-secret"
+```
+
+Контроллер корректно фиксирует значения тегов в репозитории конфигурации без перезаписи манифестов родительских Helm-чартов, загружаемых из независимых репозиториев.
+
+---
+
+### Сценарий 5: API Write-back для Dev/QA сред (In-Memory Override)
+
+Для тестовых и динамических сред постоянная генерация Git-коммитов засоряет историю репозитория. Метод `argocd` сохраняет новые теги непосредственно в оперативной памяти Argo CD через его API.
+
+```yaml
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: dev-qa-fast-updater
   namespace: argocd
 spec:
   writeBackConfig:
     method: "argocd"
   applicationRefs:
-  - namePattern: "my-app-dev"
+  - namePattern: "*-dev"
+    labelSelector: "env=development"
     images:
-    - alias: "app"
-      imageName: "harbor.example.com/myorg/my-app"
+    - alias: "backend"
+      imageName: "harbor.corp.internal/dev/core-api"
       commonUpdateSettings:
         updateStrategy: "newest-build"
-        pullSecret: "secret://argocd/harbor-pull-secret"
+        pullSecret: "secret://argocd/harbor-robot-secret"
+        allowTags: "^feature-.*$"
 ```
 
-### Сценарий 4: Использование Kustomize
-
-Для Kustomize контроллер использует механизм переопределения образов (`images:` в `kustomization.yaml`):
-
-```yaml
-apiVersion: argocd-image-updater.argoproj.io/v1alpha1
-kind: ImageUpdater
-metadata:
-  name: kustomize-image-updater
-  namespace: argocd
-spec:
-  writeBackConfig:
-    method: "git"
-    gitConfig:
-      repository: "git@github.com:myorg/infra.git"
-      branch: "main"
-      # Для Kustomize используем kustomizeimage target
-      writeBackTarget: "kustomizeimage:./apps/my-app"
-  applicationRefs:
-  - namePattern: "my-app-*"
-    images:
-    - alias: "web"
-      imageName: "harbor.example.com/myorg/frontend:^1.0"
-      commonUpdateSettings:
-        updateStrategy: "semver"
-        pullSecret: "secret://argocd/harbor-pull-secret"
+**Проверка результата переопределения через CLI:**
+```bash
+argocd app get auth-service-dev -o json | jq .spec.source.helm.parameters
+# → [
+# →   {
+# →     "name": "image.tag",
+# →     "value": "feature-auth-refactor-98a72b",
+# →     "forceString": true
+# →   }
+# → ]
 ```
 
-**Ожидаемый `kustomization.yaml`:**
-```yaml
-images:
-- name: harbor.example.com/myorg/frontend
-  newTag: "1.0.0"  # Будет обновляться Image Updater
-```
+---
 
-### Сценарий 5: Несколько образов в одном приложении
+### Сценарий 6: On-Premises Harbor Push Webhook Receiver
 
-```yaml
-apiVersion: argocd-image-updater.argoproj.io/v1alpha1
-kind: ImageUpdater
-metadata:
-  name: multi-image-updater
-  namespace: argocd
-spec:
-  writeBackConfig:
-    method: "git"
-    gitConfig:
-      repository: "git@github.com:myorg/infra.git"
-      branch: "main"
-      writeBackTarget: "helmvalues:./apps/my-app/values.yaml"
-  applicationRefs:
-  - namePattern: "my-app-prod"
-    images:
-    - alias: "frontend"
-      imageName: "harbor.example.com/myorg/frontend:^1.0"
-      commonUpdateSettings:
-        updateStrategy: "semver"
-        pullSecret: "secret://argocd/harbor-pull-secret"
-    - alias: "backend"
-      imageName: "harbor.example.com/myorg/backend:^2.0"
-      commonUpdateSettings:
-        updateStrategy: "semver"
-        pullSecret: "secret://argocd/harbor-pull-secret"
-    - alias: "database"
-      imageName: "docker.io/library/postgres:16"
-      commonUpdateSettings:
-        updateStrategy: "semver"
-        allowTags: "^16\\.[0-9]+$"
-```
+При классическом опросе реестра по таймеру задержка деплоя составляет от 2 до 10 минут. Настройка Webhook Receiver обеспечивает немедленный отклик (до 5 секунд) после публикации артефакта в Harbor.
 
-### Сценарий 6: Webhook Receiver для немедленного обновления
-
-Для немедленного отклика на появление новых образов настройте webhook receiver:
+#### 1. Создание Service и Ingress для Webhook Receiver
 
 ```yaml
-# 1. Service для webhook receiver
 apiVersion: v1
 kind: Service
 metadata:
@@ -429,22 +498,24 @@ metadata:
   namespace: argocd
 spec:
   ports:
-  - port: 80
+  - name: webhook
+    port: 8080
     targetPort: 8080
   selector:
     app.kubernetes.io/name: argocd-image-updater
 ---
-# 2. Ingress для внешнего доступа
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: argocd-image-updater-webhook
   namespace: argocd
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "corp-ca-issuer"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
 spec:
+  ingressClassName: nginx
   rules:
-  - host: image-updater.example.com
+  - host: image-updater-hook.corp.internal
     http:
       paths:
       - path: /webhook
@@ -453,292 +524,470 @@ spec:
           service:
             name: argocd-image-updater-webhook
             port:
-              number: 80
+              number: 8080
+  tls:
+  - hosts:
+    - image-updater-hook.corp.internal
+    secretName: image-updater-webhook-tls
 ```
 
-**Настройка в Harbor (Project → Webhooks):**
-- URL: `https://image-updater.example.com/webhook`
-- Events: `PUSH_ARTIFACT`
-- Secret: (опционально, для валидации HMAC)
+#### 2. Настройка Webhook в Harbor
 
-### Сценарий 7: AWS ECR с IAM Roles (IRSA)
+В интерфейсе Harbor (`Administration` → `Projects` → `<project>` → `Webhooks`):
+- **Endpoint URL:** `https://image-updater-hook.corp.internal/webhook`
+- **Event Types:** отмечен флаг `Artifact pushed` (`PUSH_ARTIFACT`).
+- **Auth Header:** при необходимости передача секретного токена заголовка.
+
+При завершении команды `docker push` Harbor отправляет JSON-payload, контроллер немедленно инициирует проверку и обновление соответствующего `ImageUpdater` CR.
+
+---
+
+### Сценарий 7: Интеграция с GitLab Container Registry через Project Deploy Token
 
 ```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: argocd-image-updater-config
-  namespace: argocd
-data:
-  registries.conf: |
-    registries:
-    - name: AWS ECR
-      prefix: 123456789.dkr.ecr.us-east-1.amazonaws.com
-      api_url: https://123456789.dkr.ecr.us-east-1.amazonaws.com
-      credentials: secret://argocd/ecr-credentials
-      default: true
----
+# 1. Секрет с Deploy Token от проекта GitLab
 apiVersion: v1
 kind: Secret
 metadata:
-  name: ecr-credentials
+  name: gitlab-deploy-token-secret
   namespace: argocd
-type: Opaque
+type: kubernetes.io/dockerconfigjson
 stringData:
-  username: AWS
-  password: <ecr-token-from-aws-cli-get-login-password>
+  .dockerconfigjson: |
+    {
+      "auths": {
+        "registry.gitlab.corp.internal": {
+          "username": "gitlab-deploy-token-12948",
+          "password": "gldt-ABcdEFghIJklMNop12345"
+        }
+      }
+    }
 ---
-# ServiceAccount с IRSA annotation
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: argocd-image-updater
-  namespace: argocd
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::123456789:role/argocd-image-updater-ecr-read
-```
-
-### Сценарий 8: Digest Pinning для Production
-
-Максимальная детерминированность — обновление только при изменении дайджеста (пересборке образа):
-
-```yaml
+# 2. ImageUpdater ресурс
 apiVersion: argocd-image-updater.argoproj.io/v1alpha1
 kind: ImageUpdater
 metadata:
-  name: digest-pinning-updater
+  name: gitlab-services-updater
   namespace: argocd
 spec:
   writeBackConfig:
     method: "git"
     gitConfig:
-      repository: "git@github.com:myorg/infra.git"
+      repository: "git@gitlab.corp.internal:platform/k8s-manifests.git"
       branch: "main"
-      writeBackTarget: "helmvalues:./apps/my-app/values.yaml"
+      writeBackTarget: "helmvalues:./apps/orders/values.yaml"
   applicationRefs:
-  - namePattern: "my-app-prod"
+  - namePattern: "orders-staging"
     images:
-    - alias: "app"
-      imageName: "harbor.example.com/myorg/my-app"
-      commonUpdateSettings:
-        updateStrategy: "digest"
-        pullSecret: "secret://argocd/harbor-pull-secret"
-```
-
-**Результат в values.yaml:**
-```yaml
-image:
-  repository: harbor.example.com/myorg/my-app
-  tag: "sha256:abc123..."  # Полный дайджест
-```
-
-### Сценарий 9: Разные write-back для разных сред в одном CR
-
-```yaml
-apiVersion: argocd-image-updater.argoproj.io/v1alpha1
-kind: ImageUpdater
-metadata:
-  name: multi-env-updater
-  namespace: argocd
-spec:
-  # Глобальные настройки (для production)
-  writeBackConfig:
-    method: "git"
-    gitConfig:
-      repository: "git@github.com:myorg/infra.git"
-      branch: "main"
-      writeBackTarget: "helmvalues:./apps/my-app/values.yaml"
-  applicationRefs:
-  - namePattern: "my-app-prod"
-    images:
-    - alias: "app"
-      imageName: "harbor.example.com/myorg/my-app:^1.0"
+    - alias: "orders-app"
+      imageName: "registry.gitlab.corp.internal/platform/orders-service:^1.5"
       commonUpdateSettings:
         updateStrategy: "semver"
-        pullSecret: "secret://argocd/harbor-pull-secret"
-  
-  # Override для staging — API write-back, другая ветка
-  - namePattern: "my-app-staging"
-    writeBackConfig:
-      method: "argocd"
+        pullSecret: "secret://argocd/gitlab-deploy-token-secret"
+```
+
+---
+
+### Сценарий 8: Digest Pinning для критических сервисов
+
+При использовании стратегии `digest` гарантируется полная детерминированность: образ жестко привязывается к SHA256-хэшу манифеста. Обновление срабатывает только тогда, когда в реестре пересобирается образ и появляется новый дайджест.
+
+```yaml
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: core-banking-digest-updater
+  namespace: argocd
+spec:
+  writeBackConfig:
+    method: "git"
+    gitConfig:
+      repository: "git@gitlab.corp.internal:banking/core-deployments.git"
+      branch: "main"
+      writeBackTarget: "helmvalues:./services/ledger/values.yaml"
+  applicationRefs:
+  - namePattern: "banking-ledger-prod"
     images:
-    - alias: "app"
-      imageName: "harbor.example.com/myorg/my-app"
+    - alias: "ledger-engine"
+      imageName: "harbor.corp.internal/banking/ledger:stable"
       commonUpdateSettings:
-        updateStrategy: "newest-build"
-        pullSecret: "secret://argocd/harbor-pull-secret"
-  
-  # Override для dev — Git write-back в develop ветку
-  - namePattern: "my-app-dev"
+        updateStrategy: "digest"
+        pullSecret: "secret://argocd/harbor-robot-secret"
+```
+
+**Результат в `values.yaml`:**
+```yaml
+image:
+  repository: harbor.corp.internal/banking/ledger
+  tag: "stable@sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+```
+
+---
+
+### Сценарий 9: Пакетное управление несколькими средами в едином CR
+
+Объединение логики Prod, Staging и Dev в одном манифесте с переопределением веток и стратегий на уровне селекторов:
+
+```yaml
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: crm-multi-env-updater
+  namespace: argocd
+spec:
+  # Глобальные настройки Git write-back по умолчанию
+  writeBackConfig:
+    method: "git"
+    gitConfig:
+      repository: "git@gitlab.corp.internal:crm/gitops-deploy.git"
+      user: "CRM AutoUpdater"
+      email: "updater@corp.internal"
+  applicationRefs:
+  # 1. Production: коммиты в main, строгий SemVer
+  - namePattern: "crm-prod-*"
+    writeBackConfig:
+      method: "git"
+      gitConfig:
+        branch: "main"
+        writeBackTarget: "helmvalues:./env/prod/values.yaml"
+    images:
+    - alias: "crm-backend"
+      imageName: "harbor.corp.internal/crm/backend:^3.0"
+      commonUpdateSettings:
+        updateStrategy: "semver"
+        allowTags: "^v?3\\.[0-9]+\\.[0-9]+$"
+        pullSecret: "secret://argocd/harbor-robot-secret"
+
+  # 2. Staging: коммиты в ветку develop, NewestBuild
+  - namePattern: "crm-stage-*"
     writeBackConfig:
       method: "git"
       gitConfig:
         branch: "develop"
-        writeBackTarget: "helmvalues:./apps/my-app/values.yaml"
+        writeBackTarget: "helmvalues:./env/stage/values.yaml"
     images:
-    - alias: "app"
-      imageName: "harbor.example.com/myorg/my-app"
+    - alias: "crm-backend"
+      imageName: "harbor.corp.internal/crm/backend"
       commonUpdateSettings:
         updateStrategy: "newest-build"
-        pullSecret: "secret://argocd/harbor-pull-secret"
+        pullSecret: "secret://argocd/harbor-robot-secret"
+
+  # 3. Dev: API write-back (без коммитов в Git)
+  - namePattern: "crm-dev-*"
+    writeBackConfig:
+      method: "argocd"
+    images:
+    - alias: "crm-backend"
+      imageName: "harbor.corp.internal/crm/backend"
+      commonUpdateSettings:
+        updateStrategy: "newest-build"
+        pullSecret: "secret://argocd/harbor-robot-secret"
 ```
 
-## Сравнение с Flux Image Automation
+---
 
-| Характеристика | Argo CD Image Updater v1.x | Flux Image Automation |
+### Сценарий 10: Пошаговая миграция с legacy-аннотаций (v0.x) на CRD (v1.x)
+
+До версии v1.0.0 конфигурация Image Updater выполнялась исключительно через аннотации `Application`. В v1.x аннотации считаются устаревшими (legacy).
+
+#### Пример исходной конфигурации через аннотации (Legacy v0.x):
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: payment-service
+  namespace: argocd
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: "app=harbor.corp.internal/pay/service:^1.2"
+    argocd-image-updater.argoproj.io/app.update-strategy: "semver"
+    argocd-image-updater.argoproj.io/write-back-method: "git"
+    argocd-image-updater.argoproj.io/app.helm.image-name: "image.repository"
+    argocd-image-updater.argoproj.io/app.helm.image-tag: "image.tag"
+spec:
+  # ...
+```
+
+#### Пошаговый план миграции:
+
+1. **Создание эквивалентного ресурса `ImageUpdater`:**
+   ```yaml
+   apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+   kind: ImageUpdater
+   metadata:
+     name: payment-service-updater
+     namespace: argocd
+   spec:
+     writeBackConfig:
+       method: "git"
+       gitConfig:
+         branch: "main"
+         writeBackTarget: "helmvalues:./values.yaml"
+     applicationRefs:
+     - namePattern: "payment-service"
+       images:
+       - alias: "app"
+         imageName: "harbor.corp.internal/pay/service:^1.2"
+         commonUpdateSettings:
+           updateStrategy: "semver"
+           pullSecret: "secret://argocd/harbor-robot-secret"
+   ```
+2. **Применение CR в кластер:**
+   ```bash
+   kubectl apply -f payment-service-updater.yaml
+   # → imageupdater.argocd-image-updater.argoproj.io/payment-service-updater created
+   ```
+3. **Удаление legacy-аннотаций из `Application`:**
+   ```bash
+   kubectl annotate application payment-service -n argocd \
+     argocd-image-updater.argoproj.io/image-list- \
+     argocd-image-updater.argoproj.io/app.update-strategy- \
+     argocd-image-updater.argoproj.io/write-back-method- \
+     argocd-image-updater.argoproj.io/app.helm.image-name- \
+     argocd-image-updater.argoproj.io/app.helm.image-tag-
+   # → application.argoproj.io/payment-service annotated
+   ```
+4. **Проверка логов контроллера на отсутствие конфликтов:**
+   ```bash
+   kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater --tail=50 | grep "payment-service"
+   # → time="..." level=info msg="Processing application payment-service with CRD configuration"
+   ```
+
+---
+
+## Сравнение с альтернативами
+
+| Критерий | Argo CD Image Updater v1.x | Flux Image Automation Controller | Keel |
+| :--- | :--- | :--- | :--- |
+| **Архитектурная привязка** | Экосистема Argo CD (`argoproj-labs`) | Экосистема Flux v2 (CNCF Graduated) | Независимый контроллер K8s |
+| **Метод изменения манифестов** | Запись в `.argocd-source-*` или указанный target файл | Прямое редактирование YAML по меткам `# {"$imagepolicy": ...}` | Прямой патч Deployment в API K8s |
+| **Соответствие GitOps** | Высокое (Git write-back) или среднее (API) | Высокое (всегда коммит в Git) | Низкое (обходит Git, пишет в кластер) |
+| **Управление политиками** | Декларативное CRD `ImageUpdater` или аннотации | Три CRD: `ImageRepository`, `ImagePolicy`, `ImageUpdateAutomation` | Аннотации в Deployment / HelmRelease |
+| **Поддержка Webhook** | Встроенный HTTP Receiver (:8080) | Через Flux `Receiver` CRD | Встроенный Webhook Receiver |
+| **Подпись коммитов** | Поддерживается GPG / SSH | Поддерживается GPG / Cosign | Не поддерживается |
+| **Порог входа** | Низкий для пользователей Argo CD | Средний (требует связки трех CRD) | Минимальный |
+
+---
+
+## Эксплуатация и мониторинг
+
+### Операционные команды
+
+| Задача | Команда | Ожидаемый результат |
 | :--- | :--- | :--- |
-| **Интеграция** | Внешний аддон (Labs проект). | Встроено в ядро (Image Controller). CNCF Graduated. |
-| **Точность записи** | Создает отдельный YAML-файл (минимум конфликтов). | Изменяет оригинальный YAML (маркеры в комментариях). |
-| **Управление** | Через CRD `ImageUpdater` (v1.x) / аннотации (legacy v0.x). | Через Custom Resources (`ImagePolicy`, `ImageRepository`, `ImageUpdateAutomation`). |
-| **Масштабирование** | Один `ImageUpdater` CR управляет множеством Application через селекторы. | Независимые политики для всего кластера. |
-| **Управление тегами** | SemVer, NewestBuild, Name, Digest. | SemVer, Numerical, Alphabetical. |
-| **Multi-registry** | Да, через `registries.conf` в ConfigMap. | Да, через `ImageRepository` CRD. |
-| **Webhook** | Да, встроенный receiver (порт 8080). | Да, через `Receiver` CRD. |
-| **Аудит** | Через Git-коммиты (Git write-back) или API логи. | Через Git-коммиты. |
-| **Production readiness** | Да (используется в крупных компаниях). | Да (CNCF Graduated). |
-| **Кривая обучения** | Низкая (CRD декларативно). | Средняя (CRD). |
+| **Список всех CR ImageUpdater** | `kubectl get imageupdater -n argocd` | `NAME READY AGE`<br>`prod-updater True 4d` |
+| **Просмотр детального состояния CR** | `kubectl describe imageupdater prod-updater -n argocd` | Секции `Spec` и `Status` без ошибок валидации |
+| **Логирование процесса сканирования** | `kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater -f` | `level=info msg="Successfully evaluated image tag..."` |
+| **Проверка списка тегов в Harbor через crane** | `crane ls harbor.corp.internal/apps/backend` | Список тегов (`1.0.0`, `1.0.1`, `1.1.0`) |
+| **Проверка манифеста и дайджеста образа** | `crane manifest harbor.corp.internal/apps/backend:1.1.0 \| jq .config.digest` | `"sha256:4b227777d4da1fc...\"` |
+| **Принудительный запуск проверки (Force Check)** | `kubectl annotate application billing-service-prod -n argocd argocd-image-updater.argoproj.io/force-update=true --overwrite` | `application.argoproj.io/billing-service-prod annotated` |
+| **Ручная эмуляция вызова Webhook через curl** | `curl -s -X POST http://localhost:8080/webhook -H "Content-Type: application/json" -d '{"event_data":{"resources":[{"resource_url":"harbor.corp.internal/apps/backend:1.1.1"}]}}'` | `{"status":"success","message":"webhook received"}` |
 
-## Диагностика и отладка (v1.x)
+---
 
-### Типичные ошибки
+### Мониторинг и метрики Prometheus
 
-| Ошибка | Причина | Решение |
-| :--- | :--- | :--- |
-| **No image found** | Нет `ImageUpdater` CR или неверное `imageName` / `namePattern`. | Проверьте `kubectl get imageupdater -n argocd`. Убедитесь, что `applicationRefs.namePattern` матчит Application. |
-| **Rate limit exceeded** | Превышен лимит запросов к реестру. | Увеличьте `check.interval` в ConfigMap, добавьте аутентификацию, используйте приватный реестр. |
-| **Failed to login** | Неверные учетные данные в Secret или отсутствует pullSecret. | Проверьте Secret: `kubectl get secret -n argocd <secret-name> -o yaml`. Убедитесь, что `pullSecret` указан в CR. |
-| **No write-back method** | Не указан `writeBackConfig.method` в CR. | Добавьте `writeBackConfig.method: git` или `argocd` в ImageUpdater CR. |
-| **Image not in registry** | Образ или тег не найден / не проходит фильтр `allowTags`/`ignoreTags`. | Проверьте имя образа и доступные теги: `crane ls <image>`. Проверьте regex в `allowTags`. |
-| **Git write-back failed** | Ошибка доступа к Git-репозиторию / неверный `writeBackTarget`. | Проверьте Secret с credentials для Git. Проверьте `writeBackTarget` формат (`helmvalues:./path`). |
-| **Invalid semver range** | Неверный синтаксис диапазона в `imageName`. | Используйте стандартный синтаксис SemVer: `^1.0`, `~1.2`, `>=1.0 <2.0`. |
-| **spec.namespace validation error** | Используется удаленное поле `spec.namespace` в CR. | Удалите `spec.namespace` — контроллер использует `metadata.namespace`. |
-
-### Полезные команды для отладки (v1.x)
+Image Updater экспортирует метрики на эндпоинте `:8080/metrics`:
 
 ```bash
-# Просмотр логов контроллера
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater --tail=100
-
-# Просмотр конфигурации реестров
-kubectl get configmap argocd-image-updater-config -n argocd -o yaml
-
-# Просмотр ImageUpdater CR
-kubectl get imageupdater -n argocd
-kubectl get imageupdater -n argocd -o yaml
-kubectl describe imageupdater <name> -n argocd
-
-# Проверка приложений, управляемых ImageUpdater
-kubectl get applications -n argocd -o json | jq -r '.items[] | select(.metadata.name | test("my-app")) | .metadata.name'
-
-# Проверка доступных тегов в реестре
-crane ls harbor.example.com/my-app --limit 10
-
-# Принудительное обновление приложения
-kubectl annotate app my-app -n argocd argocd-image-updater.argoproj.io/force-update=true --overwrite
-
-# Проверка статуса Image Updater deployment
-kubectl get deployment argocd-image-updater -n argocd
-
-# Просмотр событий Image Updater
-kubectl get events -n argocd --field-selector involvedObject.name=argocd-image-updater
-
-# Проверка registry-scanner логов (отдельный контейнер в v1.2+)
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater -c registry-scanner --tail=50
+kubectl run curl-metrics --rm -i --restart=Never --image=curlimages/curl -- \
+  curl -s http://argocd-image-updater.argocd.svc.cluster.local:8080/metrics | grep argocd_image_updater
 ```
 
-### Валидация конфигурации
+#### Ключевые метрики Prometheus:
 
-```bash
-# Проверка доступности реестра
-curl -s https://harbor.example.com/api/v2.0/health | jq .
+| Метрика | Тип | Назначение |
+| :--- | :--- | :--- |
+| `argocd_image_updater_images_checked_total` | Counter | Количество выполненных проверок образов (лейблы: `application`, `image`). |
+| `argocd_image_updater_images_updated_total` | Counter | Количество успешно обновленных версий образов (лейблы: `application`, `image`, `method`). |
+| `argocd_image_updater_images_errors_total` | Counter | Количество ошибок сканирования или оценки тегов. |
+| `argocd_image_updater_git_commit_errors_total` | Counter | Количество сбоев при создании коммита или отправке `git push`. |
+| `argocd_image_updater_registry_requests_total` | Counter | Количество HTTP-запросов к API реестров контейнеров. |
 
-# Проверка credentials
-crane auth whoami https://harbor.example.com
+---
 
-# Просмотр информации об образе
-crane manifest harbor.example.com/my-app:latest
+### Правила алертинга PrometheusRule
 
-# Валидация ImageUpdater CR (dry-run)
-kubectl apply -f imageupdater.yaml --dry-run=server
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: argocd-image-updater-alerts
+  namespace: argocd
+  labels:
+    role: alert-rules
+spec:
+  groups:
+  - name: argocd-image-updater.rules
+    rules:
+    - alert: ImageUpdaterGitCommitFailed
+      expr: rate(argocd_image_updater_git_commit_errors_total[15m]) > 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Сбой Git Write-back в Argo CD Image Updater"
+        description: "Контроллер не может выполнить git push в репозиторий приложения {{ $labels.application }}. Проверьте SSH-ключи, права ветки и конфликты коммитов."
+
+    - alert: ImageUpdaterRegistryErrorRate
+      expr: rate(argocd_image_updater_images_errors_total[15m]) > 0.1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Высокий уровень ошибок при опросе реестра контейнеров"
+        description: "Ошибки связи с реестром образов для приложения {{ $labels.application }}. Возможен сбой аутентификации, истечение срока токена или сетевая недоступность."
+
+    - alert: ImageUpdaterDown
+      expr: absent(up{job="argocd-image-updater"} == 1)
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Под argocd-image-updater недоступен"
+        description: "Контроллер Image Updater не отвечает более 5 минут. Проверьте CrashLoopBackOff или исчерпание памяти (OOMKilled)."
 ```
 
-## Рекомендации и лучшие практики (v1.x)
+---
 
-### Безопасность
+## Диагностика и устранение неполадок
 
-- **Приватные реестры:** Всегда используйте аутентификацию для доступа к реестрам.
-- **Least Privilege:** Создавайте отдельные Service Account для Image Updater с минимальными правами (`get/list/watch/update/patch` на `applications.argoproj.io`, `configmaps`, `secrets`).
-- **Secrets:** Храните credentials в Kubernetes Secrets, не в ConfigMap. Используйте `pullSecret` в CR для указания секрета на уровне образа.
-- **Image Signing:** Используйте Cosign или Notary для подписи образов. Image Updater v1.x поддерживает проверку подписей через `commonUpdateSettings.verifySignatures` (экспериментально).
-- **Webhook Security:** Настройте webhook secret для проверки подлинности запросов от реестра.
+### Матрица типовых инцидентов
 
-### Производительность
+| Симптом / Ошибка | Первопричина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| `x509: certificate signed by unknown authority` | Контроллер не доверяет самоподписанному сертификату корпоративного Harbor/GitLab. | `kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater \| grep x509` | Смонтировать корневой CA в `/etc/ssl/certs/ca-certificates.crt` или указать `insecure: true` в `registries.conf` (для тестовых стендов). |
+| `push failed: [remote rejected] (non-fast-forward)` | Конфликт коммитов: ветка в удаленном репозитории изменилась быстрее, чем отработал пуш контроллера. | `kubectl logs ... \| grep "failed to push"` | Контроллер автоматически повторяет попытку с rebase. При регулярных сбоях вынести целевой файл в отдельную изолированную ветку деплоя. |
+| `could not find any matching image` | Имя образа в CR не совпадает с `imageName` в манифестах, либо теги не проходят regex-фильтр `allowTags`. | `kubectl describe imageupdater <name>`<br>`crane ls <image>` | Проверить точное совпадение префикса реестра и шаблона регулярного выражения в `allowTags`. |
+| `authentication required / unauthorized` | Истек срок действия Robot Token или отсутствует `pullSecret` в `commonUpdateSettings`. | `kubectl get secret <secret-name> -n argocd -o yaml` | Обновить учетные данные в Secret, убедиться в наличии прав на чтение (Pull) в проекте Harbor/GitLab. |
+| `invalid semver version format` | Теги в реестре содержат нестандартные префиксы или постфиксы (например, `build-2026.10-v1`), ломающие парсер SemVer. | `kubectl logs ... \| grep "SemVer"` | Задать строгий `allowTags: "^v?[0-9]+\\.[0-9]+\\.[0-9]+$"` или переключить стратегию на `name` / `newest-build`. |
+| `path not found in repository / writeBackTarget` | Указанный в `writeBackTarget` путь к `values.yaml` или `kustomization.yaml` не существует в репозитории. | Проверить структуру Git: `git ls-tree -r --name-only HEAD` | Скорректировать относительный путь в `spec.writeBackConfig.gitConfig.writeBackTarget`. |
 
-- **Интервал опроса:** Настройте `check.interval` в ConfigMap в зависимости от требуемой отзывчивости (по умолчанию `2m`). Для production рекомендуется `5m`-`10m` + webhook.
-- **Кеширование:** Image Updater кеширует результаты запросов к реестру. Registry-scanner (v1.2+) имеет отдельный кэш.
-- **Rate Limiting:** Для публичных реестров (Docker Hub) используйте аутентификацию для увеличения лимитов (200 req/6h vs 100 анонимно).
-- **Параллелизм:** Контроллер обрабатывает приложения параллельно, но реестры могут иметь ограничения. Настройте `concurrency` при необходимости.
+---
 
-### Надежность
+### Разбор инцидента: Ошибка проверки корпоративного TLS сертификата
 
-- **Health Checks:** Image Updater проверяет доступность реестра перед обновлением (`ping` endpoint в `registries.conf`).
-- **Retry Logic:** Автоматические повторные попытки при временных ошибках (exponential backoff).
-- **Graceful Degradation:** При недоступности реестра Image Updater продолжает работать с последней известной версией.
-- **Мониторинг:** Добавьте алерты на CrashLoopBackOff пода Image Updater. Экспортируются Prometheus метрики (`argocd_image_updater_*`).
+**Лог ошибки:**
+```text
+time="2026-10-12T10:14:22Z" level=error msg="failed to inspect image harbor.corp.internal/apps/backend: Get \"https://harbor.corp.internal/v2/\": tls: failed to verify certificate: x509: certificate signed by unknown authority" application=backend-prod
+```
 
-### GitOps Best Practices
+**План восстановления:**
+1. Извлечь действующий цепочечный CA сертификат корпоративного удостоверяющего центра:
+   ```bash
+   openssl s_client -showcerts -connect harbor.corp.internal:443 </dev/null 2>/dev/null | openssl x509 -outform PEM > /tmp/corp-ca.crt
+   ```
+2. Создать или обновить ConfigMap в пространстве имен `argocd`:
+   ```bash
+   kubectl create configmap custom-ca-bundle --from-file=ca-certificates.crt=/tmp/corp-ca.crt -n argocd --dry-run=client -o yaml | kubectl apply -f -
+   # → configmap/custom-ca-bundle configured
+   ```
+3. Подключить ConfigMap в Deployment `argocd-image-updater`:
+   ```yaml
+   spec:
+     template:
+       spec:
+         volumes:
+         - name: ca-volume
+           configMap:
+             name: custom-ca-bundle
+         containers:
+         - name: argocd-image-updater
+           volumeMounts:
+           - name: ca-volume
+             mountPath: /etc/ssl/certs/ca-certificates.crt
+             subPath: ca-certificates.crt
+             readOnly: true
+   ```
+4. Перезапустить под контроллера:
+   ```bash
+   kubectl rollout restart deployment argocd-image-updater -n argocd
+   # → deployment.apps/argocd-image-updater restarted
+   ```
 
-- **Отдельные CR на среду:** Используйте разные `ImageUpdater` CR для prod/staging/dev с разными `writeBackConfig` и стратегиями.
-- **SemVer ranges в imageName:** Задавайте фильтры прямо в `imageName` (`harbor.example.com/app:^1.0`), а не в отдельных полях.
-- **allowTags / ignoreTags:** Всегда указывайте `allowTags` regex для production, чтобы избежать случайного обновления на `latest` или pre-release.
-- **Digest pinning для critical:** Для критических сервисов используйте `updateStrategy: digest` — обновление только при изменении SHA256 дайджеста.
-- **Webhook вместо polling:** Настройте webhook receiver в Harbor/Quay/Docker Hub для немедленной реакции, уменьшите `check.interval` до `10m`-`30m`.
+---
 
-### Устранение проблем
+## Рекомендации и лучшие практики
 
-- **Логирование:** Включите `log.level: debug` в ConfigMap для отладки, затем верните `info`.
-- **Тестирование:** Используйте отдельный `ImageUpdater` CR с `method: argocd` для тестирования в Dev/QA среде.
-- **Откат:** При проблемах с обновлением используйте `argocd app rollback` (API write-back) или `git revert` (Git write-back).
+### Безопасность и ограничение привилегий (Security Hardening)
 
-## Ограничения и edge cases (v1.x)
+- **Контейнер без привилегий root:** Запуск пода от пользователя с UID `10001` (`runAsNonRoot: true`, `runAsUser: 10001`).
+- **Неизменяемая файловая система:** Флаг `readOnlyRootFilesystem: true`. Временные директории для клонирования Git (`/tmp`) монтируются как `emptyDir`.
+- **Сброс Linux Capabilities:** Удаление всех привилегий ядра: `capabilities.drop: ["ALL"]`.
+- **Сетевая изоляция (NetworkPolicy):** Запрет входящего трафика за исключением порта `8080` (Webhook Receiver) от авторизованных адресов Ingress-контроллера.
 
-### Ограничения
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: argocd-image-updater-netpol
+  namespace: argocd
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-image-updater
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # DNS
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: UDP
+      port: 53
+  # HTTPS к реестру и Git
+  - ports:
+    - protocol: TCP
+      port: 443
+  # SSH к Git
+  - ports:
+    - protocol: TCP
+      port: 22
+```
 
-1. **Только чтение образов:** Image Updater не может создавать или удалять образы в реестре.
-2. **Одновременная запись:** При использовании Git write-back возможны конфликты коммитов при параллельных обновлении нескольких ImageUpdater CR.
-3. **Rate Limits:** Публичные реестры (Docker Hub) имеют ограничения на количество запросов.
-4. **Docker Hub Rate Limiting:** Без аутентификации — 100 запросов в 6 часов для anonymous, 200 для authenticated.
-5. **OCI:** Поддержка OCI-реестров ограничена (не все API доступны, зависит от registry-scanner).
-6. **Multi-cluster:** В v1.x нет нативной поддержки multi-cluster (Application в другом кластере). Требует отдельный ImageUpdater в каждом кластере.
-7. **spec.namespace removed:** Поле `spec.namespace` удалено в v1.0 — CR должен быть в том же namespace, что и Application.
+---
 
-### Edge Cases
+### Архитектурные рекомендации SRE и системного администрирования
 
-1. **Несколько приложений:** Один `ImageUpdater` CR через `namePattern`/`labelSelector` может обновлять множество приложений одновременно.
-2. **Диапазоны SemVer:** При использовании `^1.0` обновляются только минорные/патч версии (1.x.x), мажорные (2.0.0) — нет.
-3. **Digest Pinning:** При фиксации по дайджесту (`digest`) обновления применяются только при появлении нового дайджеста в реестре (пересборка образа с тем же тегом).
-4. **Latest Tag:** Использование `newest-build` без `allowTags` не рекомендуется для Production (нарушает детерминизм, может подхватить broken build).
-5. **Временные ошибки реестра:** Image Updater повторяет попытки при временных ошибках с exponential backoff.
-6. **Конфликты Git:** При параллельных коммитах в Git возможны конфликты — использует `git merge` стратегию, при конфликте повторяет через интервал.
-7. **Аннотации (legacy):** Image Updater v1.x не валидирует legacy аннотации — ошибки в синтаксисе приводят к тихим сбоям. Мигрируйте на CRD.
-8. **Registry-scanner sidecar:** В v1.2+ registry-scanner вынесен в отдельный контейнер — проверяйте логи обоих контейнеров при проблемах с опросом реестра.
+- **Отказ от `latest` в Production:** Запретить тег `latest` на уровне политики реестра (Harbor Immutable Tag Rules). Для боевых сервисов использовать строгое версионирование по SemVer (`^1.2`) либо Digest Pinning.
+- **Использование Webhook вместо агрессивного поллинга:** Установка интервала `check.interval` на `15m`–`30m` в комбинации с Push Webhook. Это защищает корпоративный реестр от перегрузки миллионами холостых запросов к манифестам.
+- **Изоляция веток развертывания:** Для предотвращения гонок и конфликтов коммитов (Git Push Conflicts) при массовом обновлении сервисов настройте Git write-back в специализированные ветки среды (`deploy/prod`, `deploy/staging`), изменения из которых мерджатся в `main` через автоматизированные пайплайны.
+- **Ротация учетных записей:** Создавайте отдельные ограниченные Robot Accounts для каждого проекта в Harbor / GitLab. Никогда не используйте глобальные административные учетные записи.
+- **Подпись Git-коммитов:** Контроллер поддерживает GPG-подпись коммитов через монтирование секретного ключа GPG (`spec.writeBackConfig.gitConfig.signingKey`). Это обеспечивает прохождение политик Branch Protection («Require signed commits»).
+
+---
+
+## Ограничения и граничные случаи (Edge Cases)
+
+1. **Namespace Scoping в v1.x:** Поле `spec.namespace` удалено в v1.0.0. Ресурс `ImageUpdater` обязан находиться в том же пространстве имен, что и отслеживаемые им ресурсы `Application` (по умолчанию `argocd`).
+2. **Мультикластерность:** В версии v1.x отсутствует нативная поддержка централизованного управления внешними кластерами из единого центра без прямого доступа контроллера к Application CRD. Рекомендуется развертывать экземпляр Image Updater в каждом кластере управления Argo CD.
+3. **Параллельные коммиты в монорепозиториях:** Если один репозиторий содержит десятки микросервисов, одновременное срабатывание вебхуков может приводить к отклонению `git push` (`[remote rejected] non-fast-forward`). Контроллер реализует retry backoff, однако при высокой плотности релизов рекомендуется разделять репозитории конфигураций.
+4. **Конфликты с инструментами обновления зависимостей (Renovate / Dependabot):** Если в репозитории параллельно работают Renovate и Image Updater, они могут модифицировать один и тот же файл `values.yaml`. Рекомендуется разграничивать зоны ответственности: Image Updater управляет приложением в `.argocd-source-*` или в оверлеях среды, а Renovate обновляет базовые чарты.
+
+---
 
 ## Дополнительная информация
 
 ### См. также
 
-- [Multiple Sources и sourceHydrator](./argocd_multi_source_apps.md) — Multiple Sources, sourceHydrator, Helm+Git, CI-рендеринг vs Multi-Source.
-- [Безопасность](./argocd_security_hardening.md) — GPG, NetworkPolicies, mTLS, SecurityContext, proxy, audit logging.
-- [Удаление и очистка](./argocd_deletion_and_cleanup.md) — Prune, Cascading Deletion, Propagation Policy, Orphan, Finalizers.
-
-### Связанные документы
-
-- [Argo CD: Обзор системы](./argocd_overview.md)
-- [Синхронизация в Argo CD](./synchronization.md)
-- [Версионирование и тегирование образов](../../Docker/Docker_registries/image_versioning_and_tagging.md)
+- [Argo CD: Обзор системы](./argocd_overview.md) — общая архитектура, компоненты и жизненный цикл приложений.
+- [Multiple Sources и sourceHydrator](./argocd_multi_source_apps.md) — расширенная работа с несколькими источниками манифестов.
+- [Синхронизация в Argo CD](./synchronization.md) — механизмы сверки желаемого и фактического состояний.
+- [Безопасность Argo CD](./argocd_security_hardening.md) — рекомендации по харденингу контрольной плоскости.
+- [Версионирование и тегирование Docker-образов](../../Docker/Docker_registries/image_versioning_and_tagging.md) — стандарты семантического версионирования, иммутабельности и структуры тегов.
+- [Harbor: Работа с реестром](../../Docker/Docker_registries/Harbor/usage.md) — настройка Robot Accounts, репликации и Webhooks в корпоративном реестре.
 
 ### Официальные ресурсы
 
-- [Документация Argo CD Image Updater v1.x](https://argocd-image-updater.readthedocs.io/en/stable/)
-- [Argo CD Image Updater — GitHub](https://github.com/argoproj-labs/argocd-image-updater)
-- [Migration Guide: Annotations to CRD](https://argocd-image-updater.readthedocs.io/en/stable/configuration/migration/)
+- [Официальная документация Argo CD Image Updater](https://argocd-image-updater.readthedocs.io/en/stable/)
+- [Исходный код проекта (GitHub argoproj-labs)](https://github.com/argoproj-labs/argocd-image-updater)
+- [Argo Helm Charts — argocd-image-updater](https://artifacthub.io/packages/helm/argo/argocd-image-updater)
+- [Спецификация OCI Distribution Spec](https://github.com/opencontainers/distribution-spec)

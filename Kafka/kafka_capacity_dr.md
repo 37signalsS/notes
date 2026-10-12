@@ -1,291 +1,629 @@
 # Capacity Planning и Disaster Recovery для Apache Kafka
 
-**Capacity Planning** — это процесс определения необходимых ресурсов (CPU, RAM, диск, сеть) для обеспечения требуемой производительности и доступности Kafka-кластера. **Disaster Recovery (DR)** — это стратегия восстановления после катастрофических сбоев с минимальной потерей данных.
+**Актуально для:** Apache Kafka 3.8 / 3.9 / 4.0 (KRaft)
+
+**Capacity Planning (планирование ёмкости)** — инженерный процесс расчёта и выделения аппаратных ресурсов (вычислительные ядра CPU, оперативная память и системный Page Cache, пропускная способность сети, дисковые накопители и IOPS) для обеспечения гарантированной производительности, стабильных задержек (latency SLAs) и отказоустойчивости кластера Kafka под целевой и пиковой нагрузкой.
+
+**Disaster Recovery (DR, аварийное восстановление)** — комплекс архитектурных решений, регламентов и инструментов для поддержания непрерывности бизнеса (Business Continuity) и восстановления работоспособности кластера при катастрофических сбоях (выход из строя серверной стойки, пожар в машинном зале, авария дата-центра или обрыв магистральных каналов связи) с соблюдением целевых показателей RPO и RTO.
 
 ---
 
 ## Определения
 
-- **Throughput:** Объём данных, обрабатываемый кластером (MB/s или GB/s).
-- **Retention:** Период хранения данных в Kafka (время или размер).
-- **RPO (Recovery Point Objective):** Максимально допустимая потеря данных (время).
-- **RTO (Recovery Time Objective):** Максимально допустимое время простоя.
-- **Headroom:** Запас ресурсов для обработки пиковых нагрузок (обычно 30-50%).
-- **JBOD (Just a Bunch of Disks):** Конфигурация без RAID, где каждый диск используется отдельно.
-- **Tiered Storage:** Хранение старых данных на дешёвом хранилище (S3, GCS).
-- **MirrorMaker 2:** Инструмент для межкластерной репликации в Kafka.
-- **Backup:** Резервная копия данных и метаданных для восстановления.
+- **Throughput (Пропускная способность):** Объём полезных данных, передаваемых через кластер в единицу времени, измеряемый раздельно для входящего потока (Ingress/Write MB/s) и исходящего потока (Egress/Read MB/s).
+- **Retention (Срок хранения):** Политика хранения сегментов сообщений в партициях по времени (`log.retention.ms` / `log.retention.hours`) или по объёму диска (`log.retention.bytes`).
+- **RPO (Recovery Point Objective):** Максимально допустимый объём или временной интервал потери данных в случае катастрофической аварии. Для mission-critical очередей в Kafka целевой RPO равен нулю (RPO = 0).
+- **RTO (Recovery Time Objective):** Максимально допустимое время восстановления доступности сервиса обмена сообщениями для продюсеров и консьюмеров после аварии.
+- **Headroom (Эксплуатационный запас ресурсов):** Резерв мощности (обычно 30–50% по CPU, диску и сети), необходимый для компенсации пиковых всплесков нагрузки (traffic spikes), процедур ребалансировки партиций и ускоренной догоняющей репликации (catch-up replication) после сбоя узлов.
+- **JBOD (Just a Bunch of Disks):** Дисковая архитектура хранения, при которой каждый физический диск монтируется в отдельную точку файловой системы и передаётся в конфигурацию Kafka через параметр `log.dirs` без использования аппаратных или программных RAID-массивов.
+- **Page Cache (Системный файловый кэш Linux):** Область оперативной памяти ОС, используемая ядром для кэширования страниц дискового ввода-вывода. Kafka полагается на Page Cache для обслуживания чтения через системный вызов `sendfile` (Zero-Copy), минуя выделение памяти в JVM Heap.
+- **Hot Data Window (Окно горячих данных):** Объём последних записанных данных, к которым консьюмеры обращаются в режиме реального времени. Если размер этого окна укладывается в доступный Page Cache, чтения обслуживаются из ОЗУ без дискового I/O.
+- **KRaft Metadata Quorum:** Отказоустойчивый кворум контроллеров на базе протокола Raft (KIP-500), управляющий состоянием метаданных кластера (`__cluster_metadata`), исключающий зависимость от ZooKeeper.
+- **Rack Awareness:** Механизм распределения реплик партиций по физическим стойкам, серверным шкафам или дата-центрам на основе параметра `broker.rack`.
+- **MirrorMaker 2 (MM2):** Межкластерный сервис репликации данных и трансляции смещений консьюмеров, построенный на базе Kafka Connect framework.
+- **Tiered Storage (KIP-405):** Двухуровневая архитектура хранения данных (GA в Apache Kafka 3.9+), разделяющая локальное «горячее» хранилище на быстрых дисках NVMe/SSD и удалённое «холодное» объектное хранилище (локальные S3-совместимые инсталляции Ceph RGW или MinIO) для долговременного хранения архивных сегментов.
+- **Write Amplification (Коэффициент усиления записи):** Отношение суммарного объёма данных, фактически записываемых на диски и передаваемых по сети кластера, к объёму исходного полезного трафика продюсеров с учётом фактора репликации (RF).
 
 ---
 
 ## Основные концепции
 
-### Формулы планирования ёмкости
+### Математическая модель планирования ёмкости (Capacity Sizing)
 
-**1. Количество партиций на брокер:**
-```
-Partitions per broker ≤ 4000 (bare-metal) или ≤ 1000 (VM)
-```
+Проектирование инфраструктуры Kafka строится на анализе четырёх ключевых ресурсов: сетевая пропускная способность сетевых карт (NIC), дисковый объём и IOPS, оперативная память (JVM Heap vs Linux Page Cache) и вычислительные ресурсы CPU.
 
-**2. Общее количество партиций:**
 ```
-Total partitions = max(
-    target_throughput_mbps / throughput_per_partition_mbps,
-    number_of_consumers
-)
-```
-
-**3. Размер диска:**
-```
-Disk per broker = (daily_data_GB × replication_factor × retention_days × headroom) / number_of_brokers
-```
-
-**4. Пропускная способность сети:**
-```
-Network = write_throughput_mbps × (replication_factor - 1) + consumer_read_throughput_mbps
-```
-
-**5. RAM:**
-```
-RAM = heap_gb + page_cache_gb + overhead_gb
-page_cache_gb = (total_throughput_mbps × hot_data_window_seconds) / 1024
+                  ┌──────────────────────────────────────────────┐
+                  │          Продюсеры (Входящий поток)          │
+                  └──────────────────────┬───────────────────────┘
+                                         │ Ingress: Write_raw (MB/s)
+                                         ▼
+                 ┌────────────────────────────────────────────────┐
+                 │          Кластер Apache Kafka (N брокеров)     │
+                 │                                                │
+                 │  ┌───────────────┐        Межброкерная        │
+                 │  │ Брокер-Лидер  │────────репликация─────────►│
+                 │  └───────┬───────┘    (RF - 1) × Write_raw    │
+                 │          │                                     │
+                 │          │ Zero-Copy (Page Cache)              │
+                 │          ▼                                     │
+                 └──────────┼─────────────────────────────────────┘
+                            │ Egress: N_consumers × Write_raw
+                            ▼
+                  ┌──────────────────────────────────────────────┐
+                  │          Консьюмеры (Исходящий поток)         │
+                  └──────────────────────────────────────────────┘
 ```
 
-### Типичные параметры партиции
+#### 1. Сетевая пропускная способность (Network Bandwidth)
 
-| Параметр | Значение |
-|----------|----------|
-| Throughput на партицию | 10-50 MB/s (зависит от сообщений) |
-| Размер сегмента | 1 GB (по умолчанию) |
-| Количество сегментов | Зависит от retention |
-| Лимит размера сообщения | 1 MB (по умолчанию) |
+Каждый брокер обслуживает клиентский трафик и межброкерный репликационный трафик. Балансировка нагрузки распределяет лидерство и реплики равномерно по $N$ узлам.
 
-### Стратегии Disaster Recovery
+- **Входящий сетевой трафик (Ingress / RX) на один брокер:**
+  $$Network_{in} = \frac{Throughput_{write} \times RF}{N_{brokers}}$$
+  *Механизм:* Брокер принимает от продюсеров трафик лидеров партиций, а в роли фолловера вычитывает репликационный трафик других брокеров. Суммарный входящий сетевой поток в кластер равен исходной записи, умноженной на фактор репликации $RF$.
 
-| Стратегия | RPO | RTO | Сложность | Стоимость |
-|-----------|-----|-----|-----------|-----------|
-| **Multi-AZ** | 0 сек | 1-5 мин | Низкая | Средняя |
-| **Active-Passive** | 1-5 мин | 5-30 мин | Средняя | Средняя |
-| **Active-Active** | 0 сек | 1-5 мин | Высокая | Высокая |
-| **Backup & Restore** | 24 часа | 1-24 часа | Низкая | Низкая |
+- **Исходящий сетевой трафик (Egress / TX) на один брокер:**
+  $$Network_{out} = \frac{Throughput_{write} \times (RF - 1) + Throughput_{write} \times N_{consumers}}{N_{brokers}}$$
+  *Механизм:* Брокеры-лидеры передают данные $(RF - 1)$ фолловерам для поддержания синхронности ISR и одновременно отдают данные всем активным группам консьюмеров ($N_{consumers}$).
 
-**Multi-AZ (в пределах одного региона):**
-- Брокеры распределены по зонам доступности
-- Реплики партиций распределены по зонам (rack awareness)
-- Автоматическое переключение при выходе зоны
+- **Учёт сетевых накладных расходов (Network Protocol Overhead):**
+  К расчётному значению добавляется 20–25% на заголовки TCP/IP, оверхед TLS-шифрования и сериализацию протокола Kafka RPC.
+- **Инженерное правило запаса:** Утилизация физического сетевого интерфейса (10 GbE / 25 GbE) в штатном режиме не должна превышать 60–65%. Запас в 35–40% необходим для того, чтобы при отказе одного узла соседние брокеры могли выполнить репликационный catch-up без деградации времени доставки сообщений.
 
-**Active-Passive (между регионами):**
-- Два кластера: активный и пассивный
-- MirrorMaker 2 для репликации
-- Ручное или автоматическое переключение (failover)
+#### 2. Дисковая подсистема: объём, сжатие и IOPS
 
-**Active-Active (между регионами):**
-- Два кластера одновременно обрабатывают трафик
-- Двунаправленная репликация
-- Сложность разрешения конфликтов
+- **Суточный чистый объём данных с учётом сжатия:**
+  $$Storage_{daily\_net} = Throughput_{write} \times 86\,400 \times C_{comp}$$
+  Где $C_{comp}$ — средний коэффициент сжатия алгоритмом (LZ4 $\approx 0.45\text{--}0.55$, Zstandard $\approx 0.35\text{--}0.40$, без сжатия $= 1.0$).
 
-### Backup стратегии
+- **Полный объём дискового хранилища кластера:**
+  $$Storage_{total} = Storage_{daily\_net} \times RF \times Retention_{days} \times Overhead_{index} \times Headroom$$
+  *Коэффициенты:*
+  - $Overhead_{index} = 1.05\text{--}1.10$: накладные расходы на файлы смещений (`.index`), временных меток (`.timeindex`), контрольных точек транзакций и метаданных сегментов.
+  - $Headroom = 1.30\text{--}1.50$: обязательный эксплуатационный запас 30–50% свободного пространства. Предотвращает аварийную остановку брокера при срабатывании порога заполнения диска, обеспечивает место под компакцию топиков (Log Compaction) и временные всплески отставания консьюмеров.
 
-**Что бэкапить:**
-1. Данные топиков (сегменты логов)
-2. Метаданные (конфигурации топиков, ACL, схемы)
-3. Внутренние топики Kafka (`__consumer_offsets`, `__transaction_state`)
+- **Характер дискового ввода-вывода (Sequential vs Random I/O):**
+  - **Запись (Write):** Строго последовательная (Sequential Append). Записи поступают в системный Page Cache ядра Linux и асинхронно сбрасываются фоновыми потоками `pdflush`/`kswapd` на диск блоками сегментов (`log.segment.bytes = 1073741824`, 1 GB по умолчанию).
+  - **Чтение (Read):** Консьюмеры, работающие в реальном времени («Real-time consumers»), читают данные прямо из оперативной памяти Page Cache (нулевое чтение с физического диска).
+  - **Холодное чтение (Cold / Catch-up Reads):** Сильно отставшие консьюмеры, пакетные аналитические джобы или репликация MirrorMaker 2 запрашивают исторические сегменты, отсутствующие в Page Cache. Это вызывает физические случайные чтения (Random Reads) с диска, порождая конкуренцию за головки HDD или очереди команд SSD/NVMe.
 
-**Методы бэкапа:**
-- **Снапшоты файловой системы:** LVM, ZFS, EBS snapshots
-- **Kafka нативный:** MirrorMaker 2 в бэкап-кластер
-- **Экспорт данных:** `kafka-console-consumer` + `kafka-console-producer`
-- **В Kubernetes:** Velero, Velero + Restic
+#### 3. Расчёт оперативной памяти: JVM Heap vs Linux Page Cache
 
-**Метаданные `__cluster_metadata`:**
-```bash
-# Экспорт метаданных (топики, конфигурации)
-kafka-topics.sh --bootstrap-server kafka:9092 --list > topics.txt
-kafka-configs.sh --bootstrap-server kafka:9092 --describe --all > configs.txt
-kafka-acls.sh --bootstrap-server kafka:9092 --list > acls.txt
+Распространённая ошибка администрирования — выделение всей доступной памяти сервера под кучу Java (JVM Heap). Kafka спроектирована иначе:
+
 ```
+┌────────────────────────────────────────────────────────────────────────┐
+│                   Полная оперативная память сервера (RAM)              │
+├───────────────────┬──────────────────────────────────┬─────────────────┤
+│   JVM Heap (ОЗУ)  │     Linux OS Page Cache (ОЗУ)    │    OS / Kernel  │
+│      6–8 GB       │     (Окно горячих данных)        │      4–8 GB     │
+│  (G1GC / ZGC)     │          70–80% всей ОЗУ         │  (Буферы сокетов│
+│                   │                                  │   и стек TCP)   │
+└───────────────────┴──────────────────────────────────┴─────────────────┘
+```
+
+- **Размер JVM Heap:** Фиксируется на уровне **6–8 GB** (максимум 10–12 GB для кластеров с десятками тысяч партиций под управлением KRaft). Маленький Heap исключает длительные паузы сборщика мусора (Stop-The-World GC Pauses), критичные для heartbeat-таймаутов сессий.
+- **Расчёт необходимого объёма Page Cache:**
+  $$RAM_{page\_cache} = Throughput_{write} \times C_{comp} \times RF \times T_{hot\_window\_sec}$$
+  *Пример:* Если входящий сжатый поток с репликацией составляет 100 MB/s, а целевое окно нахождения в горячем кэше составляет 20 минут (1200 секунд), требуется:
+  $$100\text{ MB/s} \times 1200\text{ c} = 120\,000\text{ MB} \approx 117\text{ GB Page Cache}$$
+  Сервер со 128–256 GB RAM полностью удерживает этот объём в оперативной памяти, исключая физические дисковые чтения при нормальной работе.
+
+#### 4. Партиционирование, дескрипторы файлов и потоки
+
+- **Количество партиций на брокер:** В архитектуре KRaft (Kafka 3.8+) контроллеры справляются с миллионом партиций на кластер. Однако для одного брокера оптимальным является поддержание:
+  $$\text{Partitions per Broker} \le 4000\text{--}6000$$
+  Превышение 10 000 партиций на узел ведёт к разрастанию количества открытых файловых дескрипторов, увеличению времени восстановления индексов при нештатном перезапуске и фрагментации I/O при фоновом сбросе страниц.
+- **Файловые дескрипторы (File Descriptors):**
+  Каждый активный сегмент лога удерживает открытыми минимум 3 дескриптора (`.log`, `.index`, `.timeindex`). Дополнительно удерживаются сокеты клиентских соединений.
+  Для стабильной работы лимит `nofile` процесса `kafka` настраивается на уровне **1 000 000** (детали настройки — в **[Тюнинге ОС Linux](./kafka_os_tuning.md)**).
+
+#### 5. Сайзинг контроллеров KRaft Quorum
+
+Кворум KRaft хранит неизменяемый журнал событий `__cluster_metadata` и держит полное дерево состояния метаданных в оперативной памяти контроллера:
+- **Совмещённый режим (Colocated / Shared):** Брокеры совмещают роли контроллеров (`process.roles=broker,controller`). Допустим только для малых и средних сред (до 10–15 брокеров).
+- **Выделенный режим (Dedicated / Isolated):** 3 или 5 независимых серверов выполняют исключительно роль контроллеров (`process.roles=controller`). Рекомендуется для High-Load сред от 15+ брокеров или от 5 000 партиций.
+- **Аппаратные требования к контроллерам:** 4–8 vCPU, 16–32 GB RAM, низколатентные NVMe-диски под журнал `metadata.log.dir`. Контроллеры выполняют синхронный `fsync` каждой записи метаданных, поэтому задержка диска прямо определяет время создания топиков и выборов лидеров.
+
+---
+
+### Топологии Disaster Recovery в On-Premise инфраструктуре
+
+В закрытых корпоративных контурах (без облачных провайдеров) отказоустойчивость строится на уровне серверных стоек, залов и территориально распределённых центров обработки данных (ЦОД).
+
+| Критерий | Multi-Rack (В пределах одного ЦОД) | Stretch Cluster (Синхронный распределённый кластер) | Active-Passive (Асинхронная репликация MM2) | Active-Active (Двунаправленная репликация MM2) |
+|---|---|---|---|---|
+| **RPO** | 0 секунд | 0 секунд | 1–5 секунд (лаг репликации MM2) | 0–5 секунд (в рамках локального ЦОД) |
+| **RTO** | 0 секунд (автоматический failover) | < 30 секунд (перевыборы лидеров) | 5–15 минут (DNS/Балансировщик + смещения) | < 1 минуты (клиенты переключают маршрут) |
+| **Сетевые требования** | Локальная сеть стоек (10/25G, RTT < 0.2 мс) | Тёмная оптика (DWDM), RTT < 5–8 мс | L3 VPN / WAN, RTT 10–50+ мс | L3 VPN / WAN, RTT 10–50+ мс |
+| **Защита от Split-Brain** | Не требуется (общий сетевой периметр) | Обязателен 3-й сайт-свидетель (Witness Site) для KRaft | Изолированные независимые кворумы | Изолированные независимые кворумы |
+| **Сложность эксплуатации** | Минимальная | Высокая (критичность к latency jitter) | Средняя | Высокая (конфликты циклической репликации) |
+
+```
+Топология 1: Stretch Cluster (Синхронный, RTT < 5 мс)
+┌───────────────────────┐      Синхронная      ┌───────────────────────┐
+│     Дата-центр 1      │◄────репликация──────►│     Дата-центр 2      │
+│   Брокеры 1, 2, 3     │      (acks=all)      │   Брокеры 4, 5, 6     │
+│   Контроллеры 1, 2    │                      │    Контроллер 3       │
+└───────────┬───────────┘                      └───────────┬───────────┘
+            │                                              │
+            │           ┌──────────────────────┐           │
+            └──────────►│ Сайт 3 (Witness Site)│◄──────────┘
+                        │     Контроллер 4     │ (Кворум KRaft: 4 или 5 узлов)
+                        └──────────────────────┘
+
+Топология 2: Active-Passive межЦОД DR (Асинхронный через MirrorMaker 2)
+┌─────────────────────────────────┐           ┌─────────────────────────────────┐
+│      Основной ЦОД (DC-1)        │           │      Резервный ЦОД (DC-2)       │
+│  ┌───────────────────────────┐  │           │  ┌───────────────────────────┐  │
+│  │   Кластер Kafka (Prod)    │  │           │  │    Кластер Kafka (DR)     │  │
+│  │  3 контроллера + N брокеров │  │  WAN / L3 │  │  3 контроллера + N брокеров │  │
+│  └─────────────┬─────────────┘  │  RTT > 15 │  └─────────────▲─────────────┘  │
+│                │                │     мс    │                │                │
+│                ▼                │           │                │                │
+│  ┌───────────────────────────┐  │           │                │                │
+│  │   Кластер MirrorMaker 2   │──┼───────────┼────────────────┘                │
+│  │  (Source, Checkpoint, HB) │  │           │                                 │
+│  └───────────────────────────┘  │           │                                 │
+└─────────────────────────────────┘           └─────────────────────────────────┘
+```
+
+#### Архитектурные особенности топологий
+
+1. **Multi-Rack (Rack Awareness):**
+   - Брокеры конфигурируются с указанием `broker.rack` (номер серверной стойки, блока розеток PDU, луча питания или серверного зала).
+   - Алгоритм размещения реплик гарантирует, что реплики одной партиции не окажутся в одной стойке.
+   - Клиенты используют механизм Rack-Aware Fetching (KIP-392): консьюмер с параметром `client.rack` вычитывает данные у ближайшего локального фолловера в своей стойке, снижая межосевую нагрузку на коммутаторы ядра сети.
+
+2. **Stretch Cluster (Распределённый синхронный кластер):**
+   - Единый кластер Kafka разносится между двумя дата-центрами с прямыми оптическими каналами связи (Dark Fiber).
+   - **Проблема кворума контроллеров:** Нельзя делить контроллеры пополам (2 в DC-1 и 2 в DC-2), так как при падении межсайтового линка ни один ЦОД не наберёт строгого большинства ($N/2 + 1$). Обязательно выделяется третья независимая площадка (Witness Site или DC-3) для размещения контроллера-арбитра.
+   - **Задержка продюсеров:** При `acks=all` задержка подтверждения каждой записи возрастает на двойной RTT между дата-центрами. Если RTT превышает 8–10 мс, синхронный кластер не применяется.
+
+3. **Active-Passive межЦОД репликация (MirrorMaker 2):**
+   - В обоих ЦОД развёрнуты полностью автономные, изолированные кластеры Kafka со своими независимыми кворумами KRaft.
+   - Межкластерная передача выполняется асинхронно через MirrorMaker 2.
+   - Для сохранения идентичных имён топиков при DR-переключении используется `IdentityReplicationPolicy`. Без этой политики MM2 добавляет префикс источника (`DC1.my-topic`), что ломает жестко сконфигурированные потребители в аварийном режиме.
+   - Коннектор `MirrorCheckpointConnector` транслирует смещения групп потребителей, преобразуя source-офсеты в target-офсеты и периодически записывая их в резервный топик `__consumer_offsets`.
+
+---
+
+### Архитектура резервного копирования и восстановления (Backup & Recovery)
+
+В Kafka данные разбиваются на две категории, требующие принципиально разного подхода к бэкапу:
+
+1. **Метаданные кластера (Topic configs, Partitions, ACLs, Quotas, SCRAM):**
+   - Имеют компактный объём (единицы или десятки мегабайт).
+   - В KRaft хранятся в специальном топике `@metadata` (`__cluster_metadata-0`).
+   - Резервируются логическим экспортом определений через Admin API / CLI утилиты либо снятием снапшотов директории `metadata.log.dir`.
+2. **Сегменты журналов данных (`.log` files):**
+   - Имеют огромный объём (десятки и сотни терабайт).
+   - Прямое файловое копирование работающего брокера на лету без остановки приводит к повреждению файлов индексов (`CorruptRecordException`), если в процессе копирования происходит segment roll.
+   - Корректные методы физического бэкапа:
+     * **LVM Thin Snapshots / ZFS Snapshots:** Моментальный снимок дискового тома на уровне блочного устройства после сброса системного буфера (`sync`).
+     * **Tiered Storage (KIP-405):** Архивация закрытых сегментов лога на локальные S3-совместимые объектные хранилища (Ceph RGW, MinIO) на уровне самого движка Kafka.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Расчёт ёмкости для нового кластера
+### Сценарий 1: Инженерный расчёт сайзинга On-Premise кластера
 
-**Требования:**
-- Throughput: 100 MB/s write, 200 MB/s read
-- Retention: 7 дней
-- Replication factor: 3
-- Headroom: 50%
+**Входные технические требования от бизнеса:**
+- Нагрузка на запись от продюсеров: $Throughput_{write} = 250\text{ MB/s}$ (полезный трафик).
+- Нагрузка на чтение: 2 независимые аналитические группы консьюмеров ($N_{consumers} = 2$), суммарно $500\text{ MB/s}$.
+- Фактор репликации: $RF = 3$ (`min.insync.replicas = 2`, `acks = all`).
+- Алгоритм сжатия на продюсерах: Zstandard (`zstd`), средний коэффициент сжатия 2.5x ($C_{comp} = 0.40$).
+- Срок хранения (Retention): 10 суток.
+- Эксплуатационный запас (Headroom): 40% ($Headroom = 1.40$).
+- Целевое окно горячих данных в памяти: 30 минут ($T_{hot} = 1800\text{ с}$).
 
-**Расчёт:**
+**Пошаговый расчёт:**
+
 ```bash
-# 1. Дневной объём данных
-daily_data_GB = 100 MB/s × 86400 s = 8640 GB ≈ 8.6 TB
+# 1. Суточный объём входящих данных с учётом сжатия
+250 MB/s × 0.40 = 100 MB/s (чистый сжатый поток)
+100 MB/s × 86400 с = 8 640 000 MB ≈ 8.64 TB / сутки
 
-# 2. Общий объём с репликацией и retention
-total_storage_GB = 8.6 TB × 3 (RF) × 7 (days) × 1.5 (headroom) = 270 TB
+# 2. Суммарный объём дискового пространства кластера
+8.64 TB × 3 (RF) × 10 (дней) × 1.05 (индексы) × 1.40 (headroom) = 380.9 TB
 
-# 3. Количество брокеров (при 4 TB на брокер)
-number_of_brokers = 270 TB / 4 TB = 68 брокеров
+# 3. Сетевой трафик кластера
+Входящий (Ingress): 250 MB/s × 3 = 750 MB/s (≈ 6.0 Gbps)
+Исходящий (Egress): [250 MB/s × (3 - 1)] + 500 MB/s = 1000 MB/s (≈ 8.0 Gbps)
 
-# 4. Партиции
-throughput_per_partition = 20 MB/s
-number_of_partitions = 100 MB/s / 20 MB/s = 5 партиций на топик (минимально)
+# 4. Выбор архитектуры узлов (Bare Metal серверы)
+Выбираем 12 идентичных серверов (Worker Nodes).
+Каждый сервер оснащён:
+- Сетевой адаптер: 2 × 25 GbE (Bonding mode 4: LACP)
+- Диски: 4 × 8 TB NVMe SSD в режиме JBOD (32 TB сырого объёма на сервер)
+- Суммарная дисковая ёмкость кластера: 12 × 32 TB = 384 TB (требовалось 381 TB)
+- ОЗУ: 128 GB RAM
+- CPU: 32 vCPU / 16 ядер с гиперпоточностью
 
-# 5. Сеть
-network = 100 MB/s × 2 (репликация) + 200 MB/s (чтение) = 400 MB/s ≈ 3.2 Gbps
+# 5. Проверка нагрузки на один узел:
+Диск: 381 TB / 12 = 31.75 TB на сервер (занято 99% от 32 TB — впритык, 
+поэтому добавляем 2 брокера, итого 14 серверов, либо берем накопители по 10 TB).
+При 14 брокерах:
+- Занимаемый диск на узел: 381 TB / 14 ≈ 27.2 TB (утилизация 85%)
+- Входящая сеть на узел: 750 MB/s / 14 = 53.6 MB/s (428 Mbps)
+- Исходящая сеть на узел: 1000 MB/s / 14 = 71.4 MB/s (571 Mbps)
+- Утилизация 25 GbE адаптера: < 3% (огромный запас под аварийный catch-up)
+- Потребность в Page Cache на узел для окна 30 мин:
+  (100 MB/s сжатого потока × 3 RF × 1800 с) / 14 узлов ≈ 38.5 GB RAM
+- При 128 GB RAM на узел выделяем 8 GB под Heap JVM, 
+  а оставшиеся ~110 GB обеспечивают удержание горячих данных в кэше более 1 часа!
 ```
 
-### Сценарий 2: Настройка MirrorMaker 2 для DR
+---
 
-Файл `mirror-maker.properties`:
-```properties
-# Кластеры
-clusters=primary, backup
-primary.bootstrap.servers=primary-kafka:9092
-backup.bootstrap.servers=backup-kafka:9092
+### Сценарий 2: Развёртывание MirrorMaker 2 для Active-Passive DR
 
-# Репликация топиков
-primary->backup.enabled=true
-primary->backup.topics=.*
-primary->backup.topics.exclude=__.*,*-changelog
+Конфигурация MirrorMaker 2 для асинхронной репликации между основным ЦОД (`dc1`) и резервным ЦОД (`dc2`) на выделенных серверах.
 
-# Репликация групп консьюмеров
-sync.group.offsets.enabled=true
-emit.checkpoints.interval.seconds=60
-
-# Конфигурация безопасности
-primary.security.protocol=SASL_SSL
-primary.sasl.mechanism=PLAIN
-backup.security.protocol=SASL_SSL
-backup.sasl.mechanism=PLAIN
-```
-
-### Сценарий 3: Автоматический Backup метаданных
-
-Скрипт `/usr/local/bin/kafka-metadata-backup.sh`:
-```bash
-#!/bin/bash
-BACKUP_DIR="/backup/kafka-metadata/$(date +%Y%m%d_%H%M%S)"
-mkdir -p $BACKUP_DIR
-
-BOOTSTRAP="kafka:9092"
-
-# Экспорт топиков
-kafka-topics.sh --bootstrap-server $BOOTSTRAP --list > $BACKUP_DIR/topics.txt
-
-# Экспорт конфигураций
-kafka-configs.sh --bootstrap-server $BOOTSTRAP --describe --all > $BACKUP_DIR/configs.txt
-
-# Экспорт ACL
-kafka-acls.sh --bootstrap-server $BOOTSTRAP --list > $BACKUP_DIR/acls.txt
-
-# Экспорт групп консьюмеров
-kafka-consumer-groups.sh --bootstrap-server $BOOTSTRAP --list > $BACKUP_DIR/consumer-groups.txt
-
-# Сжатие и загрузка в S3
-tar -czf $BACKUP_DIR.tar.gz $BACKUP_DIR
-aws s3 cp $BACKUP_DIR.tar.gz s3://kafka-backups/metadata/
-```
-
-### Сценарий 4: Rack Awareness для Multi-ZA
+Файл конфигурации `/etc/kafka/mm2.properties`:
 
 ```properties
-# На каждом брокере server.properties
-broker.rack=us-east-1a  # или автоматически из метаданных облака
+# Определение псевдонимов кластеров
+clusters = dc1, dc2
+
+# Точки подключения bootstrap brokers
+dc1.bootstrap.servers = 10.10.10.11:9092,10.10.10.12:9092,10.10.10.13:9092
+dc2.bootstrap.servers = 10.20.10.11:9092,10.20.10.12:9092,10.20.10.13:9092
+
+# Направление репликации: только dc1 -> dc2 (Active-Passive)
+dc1->dc2.enabled = true
+dc2->dc1.enabled = false
+
+# Репликация топиков: все пользовательские топики, исключая внутренние
+dc1->dc2.topics = .*
+dc1->dc2.topics.exclude = .*[\-\.]internal, .*[\-\.]checkpoint, .*[\-\.]heartbeat, __.*
+
+# КРИТИЧЕСКИ ВАЖНО: сохранение оригинальных имен топиков без префикса "dc1."
+replication.policy.class = org.apache.kafka.connect.mirror.IdentityReplicationPolicy
+
+# Синхронизация смещений групп консьюмеров (Consumer Offset Sync)
+dc1->dc2.sync.group.offsets.enabled = true
+dc1->dc2.sync.group.offsets.interval.seconds = 5
+dc1->dc2.emit.checkpoints.interval.seconds = 5
+dc1->dc2.sync.topic.acls.enabled = false
+
+# Факторы репликации для служебных топиков MirrorMaker в резервном кластере
+replication.factor = 3
+checkpoints.topic.replication.factor = 3
+heartbeats.topic.replication.factor = 3
+offset-syncs.topic.replication.factor = 3
+offset.storage.replication.factor = 3
+status.storage.replication.factor = 3
+config.storage.replication.factor = 3
+
+# Тюнинг пропускной способности встроенного продюсера
+dc1->dc2.producer.compression.type = zstd
+dc1->dc2.producer.max.in.flight.requests.per.connection = 5
+dc1->dc2.producer.linger.ms = 20
+dc1->dc2.producer.batch.size = 131072
 ```
 
-**Проверка:**
+Создание systemd-юнита `/etc/systemd/system/kafka-mirror-maker.service`:
+
+```ini
+[Unit]
+Description=Apache Kafka MirrorMaker 2 Service
+Documentation=https://kafka.apache.org/documentation/
+After=network.target
+
+[Service]
+Type=simple
+User=kafka
+Group=kafka
+Environment="KAFKA_HEAP_OPTS=-Xms4G -Xmx4G"
+Environment="KAFKA_JVM_PERFORMANCE_OPTS=-server -XX:+UseG1GC -XX:MaxGCPauseMillis=20"
+ExecStart=/opt/kafka/bin/connect-mirror-maker.sh /etc/kafka/mm2.properties
+Restart=on-failure
+RestartSec=10s
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Запуск и проверка статуса службы:
+
 ```bash
-kafka-topics.sh --bootstrap-server kafka:9092 \
-  --topic my-topic --describe | grep -E "Replicas|Isr"
+sudo systemctl daemon-reload
+sudo systemctl enable --now kafka-mirror-maker.service
+sudo systemctl status kafka-mirror-maker.service
+# → Active: active (running) since Mon 2026-10-12 14:00:00 UTC; 5s ago
+# → Main PID: 28419 (java)
 ```
 
-**Результат:** Реплики распределены по зонам доступности.
+---
 
-### Сценарий 5: Восстановление после катастрофы
+### Сценарий 3: Настройка физического Rack Awareness на серверах
+
+На каждом брокере задаётся идентификатор физической стойки или машинного зала в `/etc/kafka/server.properties`:
+
+```properties
+# На сервере в стойке 1 серверного зала 1
+broker.id=1
+broker.rack=room1-rack01
+
+# Включение Rack-Aware маршрутизации для консьюмеров (KIP-392)
+replica.selector.class=org.apache.kafka.common.replica.RackAwareReplicaSelector
+```
+
+Создание топика с автоматическим учётом стоек и проверка распределения:
 
 ```bash
-# 1. Восстановление топиков из бэкапа
-while read topic; do
-  kafka-topics.sh --bootstrap-server new-kafka:9092 --create \
-    --topic $topic --partitions 6 --replication-factor 3
-done < topics.txt
+# Создание топика с 6 партициями и фактором репликации 3
+/opt/kafka/bin/kafka-topics.sh --bootstrap-server 10.10.10.11:9092 \
+    --create --topic critical.orders \
+    --partitions 6 \
+    --replication-factor 3
+# → Created topic critical.orders.
 
-# 2. Восстановление конфигураций
-kafka-configs.sh --bootstrap-server new-kafka:9092 \
-  --alter --all --from-file configs.txt
-
-# 3. Восстановление ACL
-kafka-acls.sh --bootstrap-server new-kafka:9092 \
-  --add --allow-principal --from-file acls.txt
-
-# 4. Восстановление данных (если есть снапшоты файловой системы)
-# Скопировать данные из backup в /kafka-data
-
-# 5. Переключение DNS/Load Balancer на новый кластер
+# Проверка физического распределения реплик по стойкам
+/opt/kafka/bin/kafka-topics.sh --bootstrap-server 10.10.10.11:9092 \
+    --describe --topic critical.orders
+# → Topic: critical.orders	TopicId: J1Z3...	PartitionCount: 6	ReplicationFactor: 3	Configs: min.insync.replicas=2
+# →   Topic: critical.orders	Partition: 0	Leader: 1	Replicas: 1,2,3	Isr: 1,2,3
+# →   Topic: critical.orders	Partition: 1	Leader: 2	Replicas: 2,3,4	Isr: 2,3,4
+# →   Topic: critical.orders	Partition: 2	Leader: 3	Replicas: 3,4,1	Isr: 3,4,1
 ```
 
-### Сценарий 6: Тестирование DR
+*Результат:* Брокеры 1, 2, 3 и 4 расположены в разных стойках (`room1-rack01`, `room1-rack02`, `room1-rack03`, `room1-rack04`). Ни одна партиция не имеет двух копий в одной физической стойке.
 
-**Chaos Engineering сежемся:**
+---
+
+### Сценарий 4: Резервное копирование и валидация метаданных KRaft
+
+В отличие от устаревшего ZooKeeper, метаданные KRaft хранятся в защищённом топике `@metadata`.
+
+#### 1. Мониторинг кворума контроллеров
+
 ```bash
-# Симуляция выхода брокера
-docker stop kafka-broker-1
-
-# Мониторинг
-# - UnderReplicatedPartitions должен вернуться к 0
-# - ActiveControllerCount должен быть 1
-# - Consumer lag не должен расти
-
-# Симуляция выхода зоны доступности
-# (остановить все брокеры в одной зоне)
+/opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server 10.10.10.11:9092 describe --status
+# → ClusterId:              kF7vX8ZqTg-2LmW3qR4s8A
+# → LeaderId:               1
+# → LeaderEpoch:            4
+# → HighWatermark:          125890
+# → MaxFollowerLag:         0
+# → MaxFollowerLagTimeMs:   12
+# → CurrentVoters:          [1, 2, 3]
+# → CurrentObservers:       []
 ```
+
+#### 2. Резервный логический экспорт метаданных кластера
+
+Скрипт создания логического снимка метаданных `/usr/local/bin/kafka-meta-backup.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+BACKUP_ROOT="/backup/kafka/metadata"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+TARGET_DIR="${BACKUP_ROOT}/${TIMESTAMP}"
+BOOTSTRAP="10.10.10.11:9092"
+
+mkdir -p "${TARGET_DIR}"
+
+echo "[INFO] Экспорт списка и конфигураций топиков..."
+/opt/kafka/bin/kafka-topics.sh --bootstrap-server "${BOOTSTRAP}" --describe > "${TARGET_DIR}/topics_describe.txt"
+
+echo "[INFO] Экспорт динамических конфигураций кластера..."
+/opt/kafka/bin/kafka-configs.sh --bootstrap-server "${BOOTSTRAP}" --entity-type topics --describe --all > "${TARGET_DIR}/topic_configs.txt"
+/opt/kafka/bin/kafka-configs.sh --bootstrap-server "${BOOTSTRAP}" --entity-type brokers --describe --all > "${TARGET_DIR}/broker_configs.txt"
+/opt/kafka/bin/kafka-configs.sh --bootstrap-server "${BOOTSTRAP}" --entity-type users --describe > "${TARGET_DIR}/user_quotas.txt"
+
+echo "[INFO] Экспорт списков контроля доступа (ACL)..."
+/opt/kafka/bin/kafka-acls.sh --bootstrap-server "${BOOTSTRAP}" --list > "${TARGET_DIR}/acls.txt"
+
+echo "[INFO] Экспорт активных групп потребителей..."
+/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server "${BOOTSTRAP}" --list > "${TARGET_DIR}/consumer_groups.txt"
+
+# Архивирование
+tar -czf "${TARGET_DIR}.tar.gz" -C "${BACKUP_ROOT}" "${TIMESTAMP}"
+rm -rf "${TARGET_DIR}"
+
+echo "[SUCCESS] Бэкап сохранен в ${TARGET_DIR}.tar.gz"
+```
+
+Запуск скрипта с проверкой результата:
+
+```bash
+sudo chmod +x /usr/local/bin/kafka-meta-backup.sh
+/usr/local/bin/kafka-meta-backup.sh
+# → [INFO] Экспорт списка и конфигураций топиков...
+# → [INFO] Экспорт динамических конфигураций кластера...
+# → [INFO] Экспорт списков контроля доступа (ACL)...
+# → [INFO] Экспорт активных групп потребителей...
+# → [SUCCESS] Бэкап сохранен в /backup/kafka/metadata/20261012_140500.tar.gz
+```
+
+#### 3. Инспекция файла снапшота KRaft при аварийном аудите
+
+```bash
+# Дамп записей журнала метаданных через встроенный декодер
+/opt/kafka/bin/kafka-dump-log.sh \
+    --files /var/lib/kafka/metadata/__cluster_metadata-0/00000000000000000000.log \
+    --cluster-metadata-decoder | head -n 25
+# → Starting log dump
+# → baseOffset: 0 lastOffset: 0 count: 1 baseSequence: -1 lastSequence: -1 producerId: -1 ...
+# → | offset: 0 CreateTime: 1776078000000 keysize: -1 valuesize: 32 sequence: -1 ...
+# → payload: {"type":"TOPIC_RECORD","version":0,"data":{"name":"critical.orders","topicId":"J1Z3..."}}
+```
+
+---
+
+### Сценарий 5: Runbook аварийного переключения (Failover & Failback)
+
+Регламент действий SRE команды при полной недоступности основного дата-центра DC-1.
+
+```
+                  ШТАТНЫЙ РЕЖИМ (DC-1 активен)
+         ┌──────────────────────────────────────────────┐
+         │ Продюсеры и Консьюмеры -> DNS: kafka.corp.net│
+         │                    │                         │
+         │                    ▼                         │
+         │          Кластер DC-1 (Primary)              │
+         │                    │                         │
+         │         MirrorMaker 2 (Репликация)           │
+         │                    ▼                         │
+         │          Кластер DC-2 (Standby)              │
+         └──────────────────────────────────────────────┘
+                              ▼
+            АВАРИЯ DC-1 И ПЕРЕКЛЮЧЕНИЕ (FAILOVER)
+         ┌──────────────────────────────────────────────┐
+         │ 1. Остановка MirrorMaker 2                   │
+         │ 2. Проверка трансляции смещений в DC-2       │
+         │ 3. Переключение DNS/HAProxy:                 │
+         │    kafka.corp.net -> IP адреса DC-2          │
+         │ 4. Клиенты переподключаются к DC-2           │
+         └──────────────────────────────────────────────┘
+```
+
+#### Фаза 1: Аварийный Failover на DC-2
+
+1. **Изоляция источника:** Немедленно остановить службу `kafka-mirror-maker` на резервных узлах, чтобы предотвратить конфликтные попытки дочитки повреждённого канала:
+   ```bash
+   sudo systemctl stop kafka-mirror-maker.service
+   ```
+2. **Проверка смещений групп потребителей в DC-2:**
+   Убедиться, что группы потребителей зарегистрированы в кластере DC-2 и их отставание минимально:
+   ```bash
+   /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server 10.20.10.11:9092 \
+       --describe --group order-processing-group
+   # → GROUP                  TOPIC           PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
+   # → order-processing-group critical.orders 0          104850          104852          2
+   # → order-processing-group critical.orders 1          98410           98410           0
+   ```
+3. **Переключение трафика приложений:**
+   Изменить запись DNS `kafka.corp.net` либо переключить апстримы внутреннего TCP-балансировщика (HAProxy/Keepalived) на IP-адреса брокеров DC-2:
+   ```bash
+   # Проверка разрешения доменного имени на брокеры DC-2
+   dig +short kafka.corp.net
+   # → 10.20.10.11
+   # → 10.20.10.12
+   # → 10.20.10.13
+   ```
+4. **Старт потребителей и продюсеров в DC-2:**
+   Приложения переподключаются к DC-2. Благодаря `IdentityReplicationPolicy` имена топиков совпадают, а смещения уже синхронизированы через `MirrorCheckpointConnector`.
+
+#### Фаза 2: Восстановление исходного состояния (Failback)
+
+После восстановления электропитания и каналов связи в DC-1:
+1. **Кластер DC-1 очищается от старых несогласованных данных** либо настраивается как временный target.
+2. **Инверсия направления MirrorMaker 2:** Разворачивается временная репликация в обратную сторону: `dc2 -> dc1`.
+3. Ожидается полное обнуление лага репликации между DC-2 и DC-1.
+4. В согласованное окно обслуживания продюсеры кратковременно останавливаются, DNS переводится обратно на DC-1, направление MM2 возвращается в штатное `dc1 -> dc2`.
+
+---
+
+### Сценарий 6: Проведение учений DR и Chaos Testing на уровне серверов
+
+Проверка устойчивости кластера к аппаратным сбоям без деградации доступности.
+
+```bash
+# 1. Фиксация исходного состояния: не должно быть Under-Replicated Partitions
+/opt/kafka/bin/kafka-topics.sh --bootstrap-server 10.10.10.11:9092 \
+    --describe --under-replicated-partitions
+# → (Вывод пустой: все партиции полностью синхронизированы)
+
+# 2. Имитация внезапного обесточивания узла брокера (Broker 2)
+ssh broker2.dc1.internal "sudo systemctl poweroff"
+
+# 3. Мониторинг автоматического перевыбора лидера
+/opt/kafka/bin/kafka-topics.sh --bootstrap-server 10.10.10.11:9092 \
+    --describe --topic critical.orders
+# → Partition 1: Leader переключился с Broker 2 на Broker 3
+# → Isr сократился с [2,3,4] до [3,4]
+
+# 4. Проверка непрерывности записи продюсерами (ошибок нет благодаря acks=all и min.insync.replicas=2)
+# В логах клиентов отсутствуют исключения NotEnoughReplicasException
+
+# 5. Возврат узла в строй
+ssh broker2.dc1.internal "sudo systemctl start kafka"
+
+# 6. Проверка возврата узла в ISR (ISR Expand)
+/opt/kafka/bin/kafka-topics.sh --bootstrap-server 10.10.10.11:9092 \
+    --describe --under-replicated-partitions
+# → (Через 15-30 секунд вывод снова пустой: брокер синхронизировался)
+```
+
+---
+
+## Операции и команды
+
+Справочник базовых команд администратора для сопровождения Capacity и DR.
+
+| Операция | Команда | Назначение / Ожидаемый результат |
+|---|---|---|
+| **Статус кворума KRaft** | `/opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server <host:port> describe --status` | Проверка кворума контроллеров, HighWatermark и лага репликации |
+| **Репликация кворума** | `/opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server <host:port> describe --replication` | Детальный просмотр LEO и задержек каждого контроллера |
+| **Поиск недореплицированных партиций** | `/opt/kafka/bin/kafka-topics.sh --bootstrap-server <host:port> --describe --under-replicated-partitions` | Вывод списка партиций с нарушенным ISR (`UnderReplicatedPartitions > 0`) |
+| **Поиск партиций без лидера** | `/opt/kafka/bin/kafka-topics.sh --bootstrap-server <host:port> --describe --unavailable-partitions` | Критический алерт: партиции, недоступные для чтения и записи |
+| **Генерация плана балансировки** | `/opt/kafka/bin/kafka-reassign-partitions.sh --bootstrap-server <host:port> --topics-to-move-json-file topics.json --broker-list "1,2,3,4" --generate` | Формирование JSON-плана миграции партиций при добавлении узлов |
+| **Применение плана балансировки** | `/opt/kafka/bin/kafka-reassign-partitions.sh --bootstrap-server <host:port> --reassignment-json-file plan.json --execute` | Запуск перемещения партиций с ограничением троттлинга |
+| **Проверка статуса балансировки** | `/opt/kafka/bin/kafka-reassign-partitions.sh --bootstrap-server <host:port> --reassignment-json-file plan.json --verify` | Проверка прогресса репликации (`Status: In Progress` / `Completed Successfully`) |
+| **Экстренное сжатие retention** | `/opt/kafka/bin/kafka-configs.sh --bootstrap-server <host:port> --entity-type topics --entity-name <topic> --alter --add-config retention.ms=14400000` | Сокращение времени хранения до 4 часов для экстренной очистки диска |
+
+---
+
+## Диагностика и устранение неисправностей
+
+| Симптом / Ошибка | Вероятная причина | Диагностика | Решение (Action Plan) |
+|---|---|---|---|
+| **Переполнение диска:** `No space left on device` / `KafkaStorageException` | Неверный расчёт retention, отказ компакции, всплеск продюсеров | `df -h`, поиск виновных топиков: `du -sh /var/lib/kafka/data/* \| sort -rh \| head -n 10` | 1. Временно сократить `retention.ms` проблемного топика.<br>2. Принудительно уменьшить размер сегмента `segment.bytes` для скорейшего удаления закрытых логов.<br>3. Переместить часть партиций на свободные диски JBOD через `kafka-reassign-partitions.sh`. |
+| **Рост лага MirrorMaker 2:** `record-age-ms` растёт, консьюмеры DC-2 отстают | Нехватка пропускной способности WAN, троттлинг записи в DC-2, узкий батчинг | `ss -ti` (drop/retransmit пакетов), мониторинг `MirrorSourceConnector` JMX метрик | 1. Увеличить параметры продюсера MM2: `linger.ms=50`, `batch.size=262144`.<br>2. Включить компрессию `zstd`.<br>3. Добавить дополнительные воркеры MM2 для параллелизации чтения партиций. |
+| **Потеря кворума KRaft:** `NotControllerException`, брокеры отклоняют метаданные | Сетевое разделение (Network Split), падение большинства контроллеров | `/opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server <host:port> describe --status` | 1. Проверить доступность порта 9093 между всеми узлами: `nc -zvw3 <ip> 9093`.<br>2. Проверить статус службы `systemctl status kafka` на всех контроллерах.<br>3. В случае физической гибели большинства узлов восстановить кворум из сохранённого лога метаданных. |
+| **Page Cache Thrashing / Высокий I/O Wait:** падение Throughput, рост latency | Холодные консьюмеры или MirrorMaker вымывают горячие данные из кэша ОЗУ | `vmstat 1`, `iostat -xz 1`, метрика JMX `BytesReadPerSec` с диска | 1. Изолировать исторические вычитки отдельными сетевыми квотами через `kafka-configs.sh --alter --entity-type clients ... --add-config consumer_byte_rate=52428800`.<br>2. Добавить оперативной памяти брокерам.<br>3. Включить Tiered Storage (KIP-405) для выгрузки архивных сегментов. |
+| **Рассинхронизация смещений после DR-переключения:** консьюмеры перечитывают старые данные | Не был включён `sync.group.offsets.enabled` в MM2 или сбой чекпоинтов | Анализ топика `__consumer_offsets` в DC-2 через `kafka-consumer-groups.sh` | 1. Настроить смещения вручную через `kafka-consumer-groups.sh --reset-offsets --to-latest` или `--to-datetime`.<br>2. В конфигурации MM2 убедиться в наличии параметров `emit.checkpoints.interval.seconds = 5` и `sync.group.offsets.enabled = true`. |
+
+---
+
+## Рекомендации и Best Practices
+
+### Инженерные правила сайзинга оборудования (SRE Architecture Guidelines)
+
+1. **Предпочитайте JBOD массивам RAID:**
+   - Для брокеров Kafka на Bare Metal серверах используйте отдельные точки монтирования NVMe/SSD накопителей (`/mnt/disk1`, `/mnt/disk2`, ...), перечисленные через запятую в `log.dirs`.
+   - При отказе одного накопителя брокер продолжает функционировать для партиций на исправных дисках (Kafka переводит в offline только повреждённый диск `log.dir`).
+   - Исключается оверхед аппаратного RAID-контроллера и деградация производительности при фоновом ребилде массивов RAID 5/6.
+2. **Не раздувайте JVM Heap:**
+   - Для брокеров Kafka оптимальный размер кучи составляет **6–8 GB** (максимум 10–12 GB).
+   - Вся остальная оперативная память хоста должна оставаться свободной для ядра Linux под системный **Page Cache**. Именно это обеспечивает феноменальную производительность чтения через Zero-Copy системный вызов `sendfile`.
+3. **Изолируйте диски журналов от системного диска:**
+   - Никогда не размещайте системный раздел ОС (`/var`, `/`) на тех же физических накопителях, где хранятся директории `log.dirs` или `metadata.log.dir`.
+4. **Конфигурируйте безопасные гарантии по умолчанию:**
+   - В продакшене всегда фиксируйте: `unclean.leader.election.enable = false` (категорический запрет выбора несинхронизированного лидера, исключающий потерю данных ценой кратковременной паузы доступности партиции).
+   - Топики по умолчанию должны создаваться с `replication.factor = 3` и `min.insync.replicas = 2`.
+
+---
+
+### Чек-лист готовности к авариям (Disaster Recovery Readiness Checklist)
+
+- [ ] **Целевые показатели:** RPO и RTO согласованы с бизнесом и зафиксированы в SLA регламенте.
+- [ ] **Распределение стоек:** Параметр `broker.rack` прописан на каждом сервере; проверено, что реплики партиций физически изолированы по стойкам.
+- [ ] **Сетевой запас:** Утилизация физических сетевых интерфейсов (NIC) в штатном режиме не превышает 60%.
+- [ ] **Дисковый порог:** Настроен алерт Prometheus на исчерпание свободного места на дисках брокеров при достижении 75% ёмкости.
+- [ ] **Резервный кластер:** Репликация через MirrorMaker 2 запущена с опцией `IdentityReplicationPolicy` и активной синхронизацией смещений `sync.group.offsets.enabled = true`.
+- [ ] **Регулярные учения:** Не реже одного раза в квартал проводятся учения по отключению одного узла (Chaos Testing) и полугодовые учения по переключению трафика на резервный ЦОД.
+- [ ] **Резервное копирование метаданных:** Автоматический cron-скрипт логического экспорта конфигураций топиков и ACL выполняется не реже одного раза в сутки с сохранением архивов на изолированный сервер резервного копирования.
 
 ---
 
 ## Дополнительная информация
 
-### Чек-лист Capacity Planning
+### Связь с другими материалами базы знаний
 
-- [ ] Определены требования к throughput (MB/s)
-- [ ] Определены требования к retention (дни/размер)
-- [ ] Рассчитано количество партиций
-- [ ] Рассчитан объём дисков с учётом репликации и headroom
-- [ ] Рассчитана пропускная способность сети
-- [ ] Определено количество брокеров
-- [ ] Запланирован rack awareness
-- [ ] Настроен мониторинг загрузки ресурсов
-
-### Чек-лист Disaster Recovery
-
-- [ ] Определены RPO и RTO
-- [ ] Выбрана стратегия DR (Multi-AZ, Active-Passive, Active-Active)
-- [ ] Настроена репликация (MirrorMaker 2)
-- [ ] Настроен backup метаданных
-- [ ] Проведены тесты DR (failover)
-- [ ] Документированы процедуры восстановления
-- [ ] Настроен мониторинг репликации
-
-### Мониторинг ресурсов
-
-| Метрика | Алерт |
-|---------|-------|
-| Disk usage > 80% | Увеличить retention или добавить диски |
-| Network > 70% | Добавить сетевые интерфейсы |
-| CPU > 70% | Добавить брокеры |
-| ISR shrink | Проблема с репликацией |
-| Consumer lag > порога | Проблема с консьюмерами |
-
-### Связь с другими настройками
-
-- **[Партиционирование](./partitioning_and_balancing.md)** — количество партиций влияет на capacity
-- **[ISR и репликация](./kafka_isr_replication.md)** — влияет на storage и DR
-- **[OS тюнинг](./kafka_os_tuning.md)** — настройки файловой системы для хранения
-- **[Мониторинг](./kafka_for_monitoring.md)** — метрики загрузки ресурсов
-
-### См. также
-- **[MirrorMaker 2](./strimzi_kafka_operator.md)** — межкластерная репликация
-- **[Развертывание в Kubernetes](./strimzi_kafka_operator.md)** — ресурсы для брокеров
-- **[Мониторинг Kafka](./kafka_for_monitoring.md)** — метрики загрузки
-- **[Партиционирование](./partitioning_and_balancing.md)** — балансировка нагрузки
+- **[Партиционирование и балансировка нагрузки](./partitioning_and_balancing.md)** — влияние количества партиций на производительность, стратегии партиционирования и автоматизация ребалансировки через Cruise Control.
+- **[ISR и механизмы репликации](./kafka_isr_replication.md)** — детальный разбор High Watermark, LEO, условий исключения реплик из ISR и гарантий сохранности данных.
+- **[Модель потоков брокера Kafka](./kafka_broker_thread_model.md)** — архитектура сетевых (`num.network.threads`) и дисковых (`num.io.threads`) потоков, очередей Purgatory и оптимизация обработки запросов.
+- **[Тюнинг операционной системы Linux](./kafka_os_tuning.md)** — низкоуровневая настройка параметров ядра (`dirty_ratio`, `swappiness`), планировщиков ввода-вывода и монтирования файловой системы XFS.
+- **[Гарантии доставки и семантика обработки](./delivery_guarantees.md)** — конфигурация идемпотентного продюсера, транзакций и уровней изоляции консьюмеров.
+- **[Развёртывание Apache Kafka через Ansible](./kafka_ansible_deployment.md)** — промышленный плейбук развёртывания KRaft-кластера на выделенных Bare Metal серверах с учётом JBOD и безопасности.
+- **[CLI-инструменты для работы с Kafka](./kafka_cli_tools.md)** — полное справочное руководство по администрированию топиков, квот и списков ACL через консольные утилиты.
+- **[Мониторинг Apache Kafka](./kafka_for_monitoring.md)** — метрики JMX, экспортеры Prometheus и правила алертинга для превентивного контроля ёмкости.
+- **[Troubleshooting Playbook](./kafka_troubleshooting_playbook.md)** — пошаговые алгоритмы локализации и устранения аварийных инцидентов в продакшене.

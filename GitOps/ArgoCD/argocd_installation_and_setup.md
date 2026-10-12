@@ -1,209 +1,319 @@
 # Argo CD: Практическое руководство по установке и настройке
 
-> **Актуальность (2026):** Argo CD версии v3.x является отраслевым стандартом. Основные изменения касаются обязательного использования **Server-Side Apply (SSA)** для установки CRD, интеграции контроллера **ApplicationSet** в ядро системы и поддержки **Gateway API** для публикации сервисов. Начиная с v3.5+ доступен **mTLS** между компонентами. Для продуктивных сред рекомендуется исключительно **HA-режим** (High Availability). SSH-доступ к Git-репозиториям (ed25519/rsa) поддерживается через `argocd-ssh-known-hosts-cm`.
+**Актуально для:** Argo CD v3.5+ (покрывает v3.4.x, v3.5.x, v3.6.x; Kubernetes 1.28–1.32+; bare-metal / on-premise)
 
-## Предварительные требования
-
-Перед началом установки Argo CD убедитесь в наличии:
-
-1. **Kubernetes кластер:** v1.26+ (рекомендуется v1.28+). Поддерживаются любые дистрибутивы (EKS, GKE, AKS, kubeadm, k3s, minikube).
-2. **`kubectl`:** Установлен и настроен для доступа к целевому кластеру. Проверка: `kubectl cluster-info`.
-3. **Helm:** v3.10+ (опционально, для установки через чарты). Проверка: `helm version`.
-4. **Сеть:** Доступ из кластера к Git-репозиторию и реестрам образов (Docker Hub, Harbor, GHCR).
-5. **RBAC:** Администратор кластера для первоначальной установки CRD и Namespace.
-6. **Ресурсы:** Минимум 2 CPU / 4 GB RAM для контрольной плоскости Argo CD (non-HA). Для HA — минимум 4 CPU / 8 GB RAM.
-7. **Ingress Controller или Gateway API:** Если планируется доступ через внешний URL (nginx, istio, traefik).
-8. **cert-manager:** Рекомендуется для автоматического выпуска TLS-сертификатов (Let's Encrypt).
+> **Контекст развертывания:** Argo CD v3.x является отраслевым стандартом GitOps для оркестрации инфраструктуры и приложений. В архитектуре v3.x обязательным требованием является использование **Server-Side Apply (SSA)** для установки и обновления ресурсоемких CRD, контроллер **ApplicationSet** интегрирован в состав дистрибутива, а для публикации сервисов поддерживается как классический Ingress (NGINX), так и **Gateway API** (Envoy, Cilium, Istio). Начиная с v3.5+ доступен **mTLS** между внутренними сервисами. Для продуктивных контуров регламентируется исключительно **HA-режим** (High Availability) с Redis Sentinel/HAProxy. Аутентификация к Git-серверам (GitLab, Gitea) обеспечивается по HTTPS и SSH (ed25519) с привязкой доверенных CA и `known_hosts`.
 
 ## Определения
 
-**Установка Argo CD** — процесс развёртывания компонентов системы GitOps в Kubernetes-кластере, включающий установку определений ресурсов (CRD), сервисов управления, механизмов контроля доступа и систем кеширования.
+**Установка Argo CD** — процесс развертывания компонентов управляющего контура GitOps в кластере Kubernetes, включающий регистрацию Custom Resource Definitions (CRD), запуск контроллеров синхронизации, API-сервера, кэширующего уровня Redis и первичную настройку сетевого доступа.
 
-**Высокая доступность (HA)** — конфигурация Argo CD, обеспечивающая отказоустойчивость через репликацию ключевых компонентов (API, Repo Server, Controller) и использование распределенного кеша Redis (Sentinel/Cluster).
+**Режим высокой доступности (HA)** — конфигурация Argo CD, исключающая единые точки отказа (SPOF) за счет репликации ключевых компонентов (`argocd-server`, `argocd-repo-server`, `argocd-application-controller`), распределения реплик по физическим узлам через PodAntiAffinity и запуска кэша Redis в кластере с координацией через Sentinel или HAProxy.
 
-**Server-Side Apply (SSA)** — нативный механизм Kubernetes для управления состоянием ресурсов на стороне сервера. В Argo CD v3.x является основным методом установки и синхронизации ресурсов, имеющих большой объем данных или управляемых несколькими контроллерами одновременно.
+**Server-Side Apply (SSA)** — нативный механизм Kubernetes API, переносящий расчет и слияние изменений (field management) с клиента `kubectl` на `kube-apiserver`. В Argo CD v3.x использование `--server-side` является обязательным при установке CRD, так как объем схем превышает лимит аннотации `kubectl.kubernetes.io/last-applied-configuration` (256 КБ).
 
-**ApplicationSet Controller** — компонент Argo CD, позволяющий массово создавать и обновлять объекты `Application` на основе шаблонов и генераторов (Git, List, Cluster, Matrix).
+**Шардирование контроллера (Controller Sharding)** — распределение нагрузки по обработке приложений (`Application`) между несколькими независимыми экземплярами `argocd-application-controller` на основе детерминированного алгоритма (round-robin или по хэшу целевого кластера).
 
-**AppProject** — логическая группировка приложений в Argo CD, определяющая допустимые источники (repos), назначения (destinations), функции (roles) и ограничения (sync windows).
+**Redis Sentinel / HAProxy** — архитектура высокой доступности кэша Argo CD, в которой пул экземпляров Redis управляется процессами Sentinel для автоматического failover при сбое мастера, а клиентские поды подключаются через балансировщик HAProxy.
 
-**Repository Credentials** — хранилище учетных данных для доступа к Git-репозиториям, поддерживает HTTPS (token/password) и SSH (ed25519/rsa). Управляется через Secret с лейблом `argocd.argoproj.io/secret-type: repository`.
+**ApplicationSet Controller** — встроенный контроллер автоматизации, генерирующий множество ресурсов `Application` по единым шаблонам с использованием генераторов (Git-директории, кластеры, списки, pull requests).
 
-**Cluster Secret** — объект Secret в namespace `argocd`, содержащий URL кластера и учетные данные для управления удаленным Kubernetes-кластером. Позволяет Argo CD работать в multi-cluster режиме.
+**Repository Credentials** — объект `Secret` с системной меткой `argocd.argoproj.io/secret-type: repository`, хранящий авторизационные данные (SSH-ключи, токены, пароли) для доступа к исходным репозиториям Git и Helm/OCI-реестрам.
 
-## Базовые концепции
+**Cluster Secret** — объект `Secret` с системной меткой `argocd.argoproj.io/secret-type: cluster`, содержащий адрес API-сервера, CA-сертификат и токен сервисного аккаунта целевого управляемого кластера Kubernetes.
+
+## Архитектура и базовые концепции
 
 ### Компоненты системы
 
-Архитектура Argo CD v3.x состоит из следующих сервисов:
+Архитектура Argo CD v3.x состоит из взаимодействующих микросервисов:
 
-| Компонент | Назначение | Реплики (HA) |
-| :--- | :--- | :--- |
-| `argocd-server` | API и веб-интерфейс. Управляет RBAC, аутентификацией и визуализацией состояния приложений. | 3 |
-| `argocd-repo-server` | Клонирование Git-репозиториев, работа с Helm-чартами и рендеринг манифестов (Kustomize, CMP). | 3 |
-| `argocd-application-controller` | Основной цикл управления: отслеживает состояние (diff) и выполняет синхронизацию (sync). | 1-2 (с шардированием) |
-| `argocd-applicationset-controller` | Оркестрация множества приложений (ApplicationSets). | 1-2 |
-| `argocd-dex-server` | Прокси для интеграции с внешними провайдерами личности (OIDC, SAML, LDAP). | 1 |
-| `argocd-redis` | Высокопроизводительный кеш для хранения состояния кластера и ускорения рендеринга. | 3 (Sentinel) |
-| `argocd-notifications-controller` | Обработка событий и отправка алертов (Slack, MSTeams, Telegram). | 1 |
+| Компонент | Назначение | Реплики (Non-HA) | Реплики (HA) | Сетевые порты |
+| :--- | :--- | :--- | :--- | :--- |
+| `argocd-server` | API-сервер (gRPC/REST) и пользовательский веб-интерфейс. Выполняет аутентификацию, RBAC-авторизацию и генерацию UI. | 1 | 3 | 8080 (HTTP), 8083 (gRPC) |
+| `argocd-repo-server` | Внутренний сервис клонирования Git-репозиториев, скачивания Helm-чартов и рендеринга манифестов (Kustomize, Helm, CMP v2). | 1 | 3-5 | 8081 (gRPC), 8084 (metrics) |
+| `argocd-application-controller` | Основной контроллер сверки (reconciliation loop). Сравнивает состояние Git с кластером, вычисляет diff и применяет изменения. | 1 | 2-3 (с шардированием) | 8082 (metrics) |
+| `argocd-applicationset-controller` | Оркестратор генерации множественных объектов `Application` на основе правил `ApplicationSet`. | 1 | 2 | 7000 (metrics), 8080 (webhook) |
+| `argocd-redis` / `redis-ha` | Высокопроизводительный кэш манифестов, сессий, токенов и состояния Kubernetes-ресурсов. | 1 (Standalone) | 3 (Sentinel) + 3 HAProxy | 6379 (Redis), 26379 (Sentinel) |
+| `argocd-dex-server` | Встроенный OIDC/OAuth2 прокси для интеграции с внешними корпоративными каталогами (GitLab, Keycloak, LDAP, Active Directory). | 1 | 1-2 | 5556 (HTTP), 5557 (gRPC) |
+| `argocd-notifications-controller` | Контроллер рассылки уведомлений о событиях синхронизации (Telegram, корпоративный вебхук, почта). | 1 | 1 | 9001 (metrics) |
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                  Архитектура высокой доступности Argo CD (HA)                │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│    Инженеры / CI-пайплайны                Управляемые кластеры (Bare-Metal) │
+│           │                                             ▲                    │
+│           │ HTTPS / gRPC                                │ K8s API (6443)     │
+│           ▼                                             │                    │
+│    ┌──────────────┐                             ┌────────────────┐           │
+│    │ Ingress /    │                             │ argocd-app-    │           │
+│    │ Gateway API  │                             │ controller     │           │
+│    └──────┬───────┘                             │ (Shard 0..N)   │           │
+│           │                                     └───────▲────────┘           │
+│           ▼                                             │                    │
+│    ┌──────────────┐         gRPC (mTLS)                 │                    │
+│    │ argocd-      │─────────────────────────────┐       │                    │
+│    │ server (x3)  │                             ▼       ▼                    │
+│    └──────┬───────┘ ┌────────────┐          ┌────────────────┐               │
+│           │         │ argocd-    │◀─────────│ argocd-repo-   │               │
+│           │         │ dex (OIDC) │          │ server (x3)    │               │
+│           ▼         └────────────┘          └───────┬────────┘               │
+│    ┌──────────────┐                                 │                        │
+│    │ HAProxy      │                                 │ Git / OCI / SSH        │
+│    │ (port 6379)  │                                 ▼                        │
+│    └──────┬───────┘                      ┌───────────────────────┐           │
+│           ▼                              │ Self-Hosted GitLab /  │           │
+│    ┌──────────────┐                      │ Harbor Registry /     │           │
+│    │ Redis HA     │                      │ Корпоративный Git     │           │
+│    │ (Sentinel x3)│                      └───────────────────────┘           │
+│    └──────────────┘                                                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
 ### Способы развертывания
 
-1. **Helm (Рекомендуемый для Production):** Обеспечивает гибкую параметризацию через `values.yaml` и простое управление жизненным циклом самого Argo CD. Поддерживает profile-based конфигурацию.
-2. **Kustomize / Manifests:** Прямое управление YAML-файлами. Подходит для простых инсталляций или когда Helm запрещен требованиями безопасности.
-3. **Argo CD Operator:** Автоматизирует установку и обновление Argo CD, но вносит дополнительный слой абстракции. Рекомендуется для OpenShift-сред.
+1. **Helm (Рекомендуемый для Production):** Официальный чарт `argo/argo-cd`. Позволяет централизованно управлять конфигурацией через `values.yaml`, параметризовать распределение ресурсов, настраивать PDB (PodDisruptionBudget), реплики и монтирование секретов.
+2. **Kustomize / Официальные манифесты:** Прямое применение апстрим-манифестов (`ha/install.yaml` или `install.yaml`). Используется при жестких требованиях GitOps-бутстрапа без пакетных менеджеров или в контурах с запретом Helm.
+3. **Argo CD Operator:** Развертывание через Kubernetes Operator. Вносит дополнительную абстракцию и зависимости, рекомендуется преимущественно при наличии регламентов на использование операторов.
 
-### Матрица выбора метода установки
+### Сравнительная матрица методов установки
 
-| Критерий | Helm | Kustomize / Manifests | Operator |
+| Критерий | Helm (argo-cd) | Kustomize / Vanilla YAML | Operator |
 | :--- | :--- | :--- | :--- |
-| **Простота настройки** | Высокая | Средняя | Высокая |
-| **Гибкость параметров** | Полная (values.yaml) | Ограниченная (patch'и) | Средняя |
-| **Управление обновлениями** | `helm upgrade` | Ручное / Argo CD | Автоматическое |
-| **Multi-tenancy** | Через namespace | Через namespace | Через CRD |
-| **Production рекомендация** | **Да** | Для простых сред | Для OpenShift |
-| **Air-gapped** | Да (OCI registry) | Да (локальные файлы) | Ограниченно |
-| **CRD management** | `--server-side` | `--server-side` | Автоматический |
+| **Сложность внедрения** | Низкая (декларативные `values.yaml`) | Средняя (необходимость оверлеев) | Средняя (зависимость от CRD оператора) |
+| **Управление HA-стеком** | Автоматическое развертывание Redis HA | Ручная правка манифестов | Декларативное через CRD `ArgoCD` |
+| **Обновление версий** | `helm upgrade` с валидацией чарта | `kubectl apply` поверх существующего | Автоматическое или полуавтоматическое |
+| **Установка больших CRD** | Обязательно `--server-side` | Обязательно `--server-side` | Выполняется контроллером оператора |
+| **Изоляция в On-Premise** | Полная поддержка Private OCI/Harbor | Локальные файлы / Git | Требует зеркалирования оператор-образов |
+| **Стандарт для Production** | **Основной выбор** | Для минималистичных стендов | Для специализированных платформ |
+
+### Топологии развертывания в On-Premise инфраструктуре
+
+1. **In-Cluster (Автономная):** Argo CD развернут в том же кластере, в который выполняет деплой. Подходит для средних инсталляций, тестовых контуров и одиночных кластеров.
+2. **Central Hub (Hub-and-Spoke):** Единый выделенный управляющий кластер (Management Cluster), на котором работает высокодоступный Argo CD. Управляющий кластер подключается по сети к целевым рабочим кластерам (Target Clusters) через их kube-apiserver и управляет сотнями рабочих узлов и неймспейсов без установки дополнительных агентов в целевые среды.
 
 ### Жизненный цикл установки
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  Жизненный цикл установки Argo CD                               │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  1. Planning          2. Install        3. Configure            │
-│  ┌──────────┐        ┌──────────┐      ┌──────────┐           │
-│  │ Выбор    │───────▶│ CRD +    │─────▶│ Access   │           │
-│  │ метода   │        │ Deploys  │      │ (RBAC)   │           │
-│  └──────────┘        └──────────┘      └──────────┘           │
-│                                               │                │
-│                                               ▼                │
-│  6. Upgrade           5. Monitor        4. Connect             │
-│  ┌──────────┐        ┌──────────┐      ┌──────────┐           │
-│  │ v2→v3    │◀───────│Alerts +  │◀─────│ Git +    │           │
-│  │ migrate  │        │ Grafana  │      │ Clusters │           │
-│  └──────────┘        └──────────┘      └──────────┘           │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+1. Планирование  ──▶ 2. Пререквизиты ──▶ 3. Установка CRD ──▶ 4. Развертывание HA ──▶ 5. Инициализация ──▶ 6. Валидация
+   Выбор топологии      Сеть, диски,        SSA apply            Helm / Manifests        Смена пароля,        Health checks,
+   (In-Cluster/Hub)     ресурсы, DNS        схем v3.x            Sentinel, контроллеры   Ingress, Git creds   тестовый sync
 ```
 
-## Практические сценарии
+## Практические сценарии установки и настройки
 
-### Сценарий 1: Установка Argo CD v3.x через Helm (HA-режим)
+### Предварительные требования к инфраструктуре
 
-Helm является стандартом для управления инфраструктурой в 2026 году.
+Перед началом установки убедитесь в выполнении следующих требований:
 
-**1. Добавление репозитория и подготовка `values.yaml`:**
+1. **Кластер Kubernetes:** Версия v1.28–v1.32+ на базе on-premise дистрибутивов (kubeadm, k3s, RKE2, Talos Linux, MicroK8s).
+2. **Утилиты управления:** Установленный `kubectl` с правами `cluster-admin` и `helm` v3.12+.
+   ```bash
+   kubectl version --client -o yaml
+   # → result: clientVersion: { major: "1", minor: "31", ... }
+   helm version --short
+   # → result: v3.16.1+g5a5449d
+   ```
+3. **Аппаратные ресурсы:**
+   - **Non-HA стенд:** минимум 2 vCPU, 4 ГБ RAM на узлах K8s.
+   - **Production HA:** минимум 3 рабочих узла (для размещения кворума реплик), суммарно не менее 6 vCPU и 12 ГБ RAM для компонентов Argo CD.
+4. **Сетевая связность (Firewall / Security):**
+   - Доступ от подов `argocd-repo-server` к внутреннему Git-серверу (GitLab/Gitea): порт 443 (HTTPS) или 22 (SSH).
+   - Доступ от подов `argocd-repo-server` к корпоративному OCI-реестру (Harbor): порт 443.
+   - Доступ от подов `argocd-application-controller` к API-серверам целевых кластеров: порт 6443.
+   - Корректно настроенный внутренний CoreDNS для разрешения локальных FQDN.
+5. **Хранилище (StorageClass):** Для Redis HA требуется StorageClass, поддерживающий `ReadWriteOnce` с минимальными задержками (Ceph RBD, Local PV, OpenEBS, NFS v4.1).
+
+---
+
+### Сценарий 1: Установка Argo CD через Helm в HA-режиме (Production)
+
+Официальный чарт `argo/argo-cd` является основным инструментом развертывания.
+
+**1. Добавление и обновление репозитория Helm:**
 ```bash
 helm repo add argo https://argoproj.github.io/argo-helm
-helm repo update
+helm repo update argo
+# → result: Successfully got an update from the "argo" chart repository
 ```
 
-**2. Конфигурация для HA (фрагмент `values.yaml`):**
+**2. Подготовка production-файла `values-ha.yaml`:**
 ```yaml
+# values-ha.yaml — Отказоустойчивая конфигурация для On-Premise инфраструктуры
 global:
+  domain: "argocd.corp.internal"
+  # Включение HA-режима: автоматически конфигурирует реплики и Redis HA
   ha:
-    enabled: true # Включает репликацию компонентов
+    enabled: true
     redis:
       proxy:
-        enabled: true # Использование Redis Sentinel для HA
+        enabled: true
 
+# API-сервер и пользовательский интерфейс
 server:
   replicas: 3
   autoscaling:
     enabled: true
     minReplicas: 3
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 80
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  certificate:
+    enabled: false # Терминация TLS выполняется на Ingress
+  extraArgs:
+    - --insecure # Отключение внутреннего TLS для корректной работы за Ingress
 
+# Сервер клонирования и рендеринга манифестов
 repoServer:
   replicas: 3
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 75
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  # Настройка максимального времени выполнения сборки манифестов (Helm/Kustomize)
+  env:
+    - name: ARGOCD_EXEC_TIMEOUT
+      value: "180s"
 
+# Контроллер синхронизации
 controller:
-  replicas: 2 # Требуется шардирование при большом кол-ве приложений
+  replicas: 2
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  env:
+    - name: ARGOCD_CONTROLLER_SHARDING_ALGORITHM
+      value: "round-robin"
 
+# Контроллер ApplicationSet
+applicationSet:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+# Конфигурация Redis HA (Sentinel)
+redis-ha:
+  enabled: true
+  redis:
+    masterGroupName: argocd-master
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+  haproxy:
+    enabled: true
+    replicas: 3
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+# Базовые параметры argocd-cm
 configs:
   cm:
-    # Включение mTLS между компонентами (v3.5+)
-    # server.initial.tls: "true"
-    # Альтернатива: global.tls.enabled в values.yaml
+    url: https://argocd.corp.internal
+    admin.enabled: "true"
+    timeout.reconciliation: 180s
+    helm.valuesFileSchemes: "https,oci"
+  params:
+    server.insecure: true
+    controller.sharding.algorithm: "round-robin"
 ```
 
-**3. Установка:**
+**3. Развертывание чарта с использованием Server-Side Apply:**
 ```bash
-# Использование --server-side обязательно для установки объемных CRD v3.x
-helm upgrade --install argocd argo/argo-cd \
-    --namespace argocd --create-namespace \
-    -f values.yaml --server-side
+# Создание пространства имен
+kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+# → result: namespace/argocd created
 
-# Ожидание готовности
+# Установка с флагом --server-side (критично для больших CRD v3.x)
+helm upgrade --install argocd argo/argo-cd \
+  --namespace argocd \
+  -f values-ha.yaml \
+  --server-side \
+  --timeout 10m
+# → result: Release "argocd" has been upgraded. Happy Helming!
+```
+
+**4. Контроль готовности всех подов:**
+```bash
 kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
+# → result: deployment.apps/argocd-server condition met
+
+kubectl wait --for=condition=available deployment/argocd-repo-server -n argocd --timeout=300s
+# → result: deployment.apps/argocd-repo-server condition met
+
+kubectl get pods -n argocd -o wide
+# → result: все поды в статусе Running и распределены по разным нодам
 ```
 
-**4. Profile-based установка (продвинутый режим):**
+---
+
+### Сценарий 2: Установка через манифесты (Server-Side Apply)
+
+Если в контуре не используется Helm, развертывание выполняется официальными HA-манифестами.
+
+**1. Применение манифестов с принудительным разрешением конфликтов SSA:**
 ```bash
-# Использование профилей для разных окружений
-helm upgrade --install argocd argo/argo-cd \
-    --namespace argocd --create-namespace \
-    --set global.ha.enabled=true \
-    --set server.autoscaling.enabled=true \
-    --set server.autoscaling.minReplicas=3 \
-    --server-side
-```
+kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
 
-### Сценарий 2: Установка через манифесты (SSA)
-
-Если Helm не используется, примените официальные HA-манифесты.
-
-```bash
-kubectl create namespace argocd
-
-# --server-side позволяет избежать ошибок "too long" для аннотаций в CRD
+# Применение официального бандла высокой доступности
 kubectl apply -n argocd --server-side --force-conflicts \
   -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/ha/install.yaml
-
-# → result: customresourcedefinition.apiextensions.k8s.io/applications.argoproj.io configured...
+# → result: customresourcedefinition.apiextensions.k8s.io/applications.argoproj.io configured
+# → result: service/argocd-server created
 ```
 
-**Проверка установленных CRD:**
+**2. Валидация зарегистрированных CRD:**
 ```bash
-kubectl get crd | grep argoproj
-# Ожидаемый результат:
-# applicationsets.argoproj.io
-# applications.argoproj.io
-# appprojects.argoproj.io
-# argocds.argoproj.io        # если используется Operator
+kubectl get crd -l app.kubernetes.io/part-of=argocd
+# → result:
+# NAME                          CREATED AT
+# applications.argoproj.io      2026-10-12T10:00:00Z
+# applicationsets.argoproj.io   2026-10-12T10:00:00Z
+# appprojects.argoproj.io       2026-10-12T10:00:00Z
 ```
 
-### Сценарий 3: Настройка доступа (Gateway API и Ingress)
+---
 
-Для работы через внешние балансировщики необходимо настроить публикацию сервиса `argocd-server`.
+### Сценарий 3: Настройка сетевой публикации (Ingress и Gateway API на Bare-Metal)
 
-**Вариант А: Gateway API (Стандарт 2026 года)**
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: argocd-server
-  namespace: argocd
-spec:
-  parentRefs: [{name: prod-gateway, namespace: istio-system}]
-  hostnames: ["argocd.example.com"]
-  rules:
-  - matches: [{path: {type: PathPrefix, value: /}}]
-    backendRefs: [{name: argocd-server, port: 80}]
-```
+Argo CD API-сервер одновременно обслуживает стандартный HTTP(S) трафик для Web UI и gRPC-соединения для утилиты CLI.
 
-**Вариант Б: Ingress (Классический метод с SSL-терминацией)**
-Для работы через Ingress рекомендуется отключить TLS на самом `argocd-server`:
-```yaml
-# Патч Deployment argocd-server
-spec:
-  template:
-    spec:
-      containers:
-      - name: argocd-server
-        command: ["argocd-server", "--insecure"]
-```
+#### Вариант А: Ingress NGINX (Классическая схема с SSL-терминацией)
+
+Для корректной работы веб-интерфейса и gRPC через NGINX Ingress Controller сервер запускается с параметром `--insecure` (чтобы избежать двойного шифрования и redirect loops):
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -212,12 +322,17 @@ metadata:
   name: argocd-server-ingress
   namespace: argocd
   annotations:
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Базовые параметры NGINX
     nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "128k"
 spec:
   ingressClassName: nginx
   rules:
-  - host: argocd.example.com
+  - host: argocd.corp.internal
     http:
       paths:
       - path: /
@@ -225,562 +340,636 @@ spec:
         backend:
           service:
             name: argocd-server
-            port: {name: http}
+            port:
+              name: http
   tls:
-  - hosts: ["argocd.example.com"]
-    secretName: argocd-tls
+  - hosts:
+    - argocd.corp.internal
+    secretName: argocd-corp-tls-secret
 ```
 
-### Сценарий 4: Подключение приватных репозиториев (GitLab/GitHub и Harbor)
+#### Вариант Б: Gateway API (HTTPRoute)
 
-**1. Создание секрета для Git (HTTPS):**
+Если в кластере используется Gateway API (реализации Envoy Gateway, Cilium Service Mesh или Istio):
+
 ```yaml
-apiVersion: v1
-kind: Secret
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
-  name: private-repo-creds
+  name: argocd-server-route
   namespace: argocd
-  labels:
-    argocd.argoproj.io/secret-type: repository
-stringData:
-  url: https://gitlab.example.com/org/project.git
-  username: "git-bot"
-  password: "glpat-secret-token"
+spec:
+  parentRefs:
+  - name: internal-gateway
+    namespace: gateway-system
+  hostnames:
+  - "argocd.corp.internal"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: argocd-server
+      port: 80
 ```
 
-**2. Подключение Harbor (OCI Helm Repo):**
+Применение манифеста:
 ```bash
-argocd repo add harbor.example.com/library --type helm --name harbor-oci \
-    --enable-oci --username <robot-user> --password <robot-pwd>
+kubectl apply -f argocd-ingress.yaml
+# → result: ingress.networking.k8s.io/argocd-server-ingress created
 ```
 
-**3. SSH-доступ к репозиториям:**
+---
+
+### Сценарий 4: Подключение приватных корпоративных Git-репозиториев и Harbor OCI
+
+Argo CD требует учетных данных для чтения манифестов из защищенных репозиториев.
+
+#### Вариант 1: GitLab / Gitea через HTTPS (Personal/Project Access Token)
+
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: ssh-repo-creds
+  name: repo-gitlab-internal
   namespace: argocd
   labels:
     argocd.argoproj.io/secret-type: repository
 stringData:
-  url: git@github.com:org/repo.git
+  type: git
+  url: https://gitlab.corp.internal/platform/gitops-manifests.git
+  username: "gitops-sync-bot"
+  password: "glpat-secret-token-value"
+  # Включение LFS при необходимости
+  enableLfs: "false"
+```
+
+#### Вариант 2: SSH-доступ по ed25519 ключу
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: repo-ssh-internal
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  type: git
+  url: git@gitlab.corp.internal:platform/gitops-manifests.git
   sshPrivateKey: |
     -----BEGIN OPENSSH PRIVATE KEY-----
+    b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
     ...
     -----END OPENSSH PRIVATE KEY-----
   insecure: "false"
 ```
 
-**4. Добавление known hosts для SSH:**
-```bash
-# Скачивание SSH known hosts
-ssh-keyscan github.com >> /tmp/known_hosts
+**Регистрация доверенных SSH-хостов (`known_hosts`):**
+Для предотвращения атак Man-in-the-Middle `argocd-repo-server` сверяет публичный ключ SSH-сервера.
 
-# Создание ConfigMap
+```bash
+# Получение публичного ключа Git-сервера
+ssh-keyscan -t ed25519 -p 22 gitlab.corp.internal > /tmp/ssh_known_hosts
+# → result: # gitlab.corp.internal:22 SSH-2.0-OpenSSH_8.9p1
+
+# Добавление в системный ConfigMap
 kubectl create configmap argocd-ssh-known-hosts-cm \
-  --from-file=ssh_known_hosts=/tmp/known_hosts \
-  -n argocd
+  --from-file=ssh_known_hosts=/tmp/ssh_known_hosts \
+  -n argocd --dry-run=client -o yaml | kubectl apply -f -
+# → result: configmap/argocd-ssh-known-hosts-cm configured
 ```
 
-### Сценарий 5: Настройка доверенных TLS-сертификатов (Internal CA)
-
-Если внутренние реестры используют самоподписанные сертификаты, добавьте их в доверенные на уровне Argo CD:
+#### Вариант 3: Подключение Harbor OCI Helm-репозитория
 
 ```bash
-# 1. Создание ConfigMap с корневым сертификатом
+argocd repo add harbor.corp.internal/charts \
+  --type helm \
+  --name harbor-charts \
+  --enable-oci \
+  --username "robot-argocd" \
+  --password "harbor-robot-secret-token"
+# → result: Repository 'harbor.corp.internal/charts' added
+```
+
+---
+
+### Сценарий 5: Настройка доверенных внутренних TLS-сертификатов (Internal Corporate CA)
+
+Если локальные сервисы (GitLab, Harbor, Vault) используют сертификаты, подписанные корпоративным центром сертификации (Private CA), поды `argocd-repo-server` и `argocd-server` будут отклонять соединения с ошибкой `x509: certificate signed by unknown authority`.
+
+**1. Добавление корневого сертификата в ConfigMap:**
+```bash
+# Создание ConfigMap с файлом корневого сертификата
 kubectl -n argocd create configmap argocd-tls-certs-cm \
-  --from-file=internal-root.ca=/path/to/root-ca.crt \
-  -o yaml --dry-run=client | kubectl apply -f -
-
-# 2. Сервис автоматически подмонтирует сертификаты из CM с соответствующим лейблом
+  --from-file=corp-root-ca.crt=/etc/ssl/certs/corporate-root-ca.crt \
+  --dry-run=client -o yaml | kubectl apply -f -
+# → result: configmap/argocd-tls-certs-cm configured
 ```
 
-**Проверка доверенных сертификатов:**
+**2. Автоматическое монтирование:**
+Компоненты Argo CD автоматически сканируют `argocd-tls-certs-cm` и добавляют сертификаты в системный пул доверенных CA. Перезапуск подов не требуется, но для ускорения применения можно выполнить:
 ```bash
-kubectl get configmap argocd-tls-certs-cm -n argocd -o yaml
+kubectl rollout restart deployment/argocd-repo-server -n argocd
+# → result: deployment.apps/argocd-repo-server restarted
 ```
 
-### Сценарий 6: Базовая настройка RBAC и локальных пользователей
+---
 
-Настройка выполняется через `argocd-cm` (пользователи) и `argocd-rbac-cm` (права).
+### Сценарий 6: Установка и настройка CLI (`argocd`)
 
-**1. Создание пользователя (`argocd-cm`):**
-```yaml
-data:
-  accounts.readonly-user: login, apiKey
-```
-
-**2. Назначение прав (`argocd-rbac-cm`):**
-```yaml
-data:
-  policy.csv: |
-    p, role:readonly, applications, get, */*, allow
-    g, readonly-user, role:readonly
-```
-
-**3. Настройка AppProject для изоляции команд:**
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: AppProject
-metadata:
-  name: team-backend
-  namespace: argocd
-spec:
-  description: "Backend team project"
-  sourceRepos:
-    - "https://gitlab.example.com/backend/*"
-  destinations:
-    - namespace: "backend-*"
-      server: "https://kubernetes.default.svc"
-  clusterResourceWhitelist:
-    - group: ""
-      kind: Namespace
-  roles:
-    - name: developer
-      description: "Backend developer"
-      policies:
-        - p, proj:team-backend:developer, applications, get, team-backend/*, allow
-        - p, proj:team-backend:developer, applications, sync, team-backend/*, allow
-      groups:
-        - backend-team
-```
-
-### Сценарий 7: Шардирование контроллера (Controller Sharding)
-
-При управлении более чем 500 приложениями или десятками удаленных кластеров увеличьте количество реплик контроллера.
-
-**Контекст Multi-cluster:**
-При подключении кластеров через прокси (Teleport) шардирование критично для распределения нагрузки на скрипты аутентификации. Подробнее о масштабировании такой архитектуры: **[GitOps-мозг: Производительность](../Concepts/gitops-policy-management.md#производительность-и-масштабирование)**.
-
-**Настройка в `argocd-cmd-params-cm`:**
-```yaml
-data:
-  controller.sharding.algorithm: round-robin
-```
-
-**Масштабирование:**
+#### Установка на Linux (amd64 / arm64)
 ```bash
-kubectl scale deployment argocd-application-controller -n argocd --replicas=2
+# Определение актуальной стабильной версии
+ARGOCD_VERSION=$(curl -sSL "https://api.github.com/repos/argoproj/argo-cd/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+
+# Загрузка исполняемого файла
+curl -sSL -o argocd "https://github.com/argoproj/argo-cd/releases/download/${ARGOCD_VERSION}/argocd-linux-amd64"
+
+# Установка прав и перенос в PATH
+chmod +x argocd
+sudo mv argocd /usr/local/bin/
+
+# Проверка
+argocd version --client
+# → result: argocd: v3.5.x+...
 ```
 
-**Проверка шардов:**
+#### Настройка автодополнения (Shell Completion)
 ```bash
-# Статистика кластера
-argocd admin cluster stats
+# Для Bash
+sudo sh -c 'argocd completion bash > /etc/bash_completion.d/argocd'
 
-# Просмотр распределения приложений по шардам
-kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-application-controller -o wide
-```
-
-### Сценарий 8: Установка в изолированном контуре (Offline/Air-gapped)
-
-1.  **Перенос образов:** Скачайте все образы Argo CD и перенесите их в локальный реестр (например, Harbor).
-2.  **Правка манифестов:** Используйте Kustomize для замены `image` и добавления `imagePullSecrets`.
-3.  **Локальные репозитории:** Все внешние Helm-чарты должны быть зеркалированы во внутренний OCI-реестр.
-
-**Чеклист Air-gapped установки:**
-```
-□ 1. Скачать все Docker-образы Argo CD (сервер, repo-server, controller, redis, dex)
-□ 2. Перенести образы в локальный реестр (Harbor, Nexus)
-□ 3. Настроить imagePullSecrets в namespace argocd
-□ 4. Зеркалировать Helm-чарты во внутренний OCI-реестр
-□ 5. Настроить SSH known hosts для Git-серверов (если SSH-доступ)
-□ 6. Добавить TLS-сертификаты внутренних CA
-□ 7. Настроить DNS для внутренних сервисов (vault, gitlab, harbor)
-□ 8. Протестировать сетевую доступность всех зависимостей
-```
-
-### Сценарий 9: Установка CLI
-
-CLI `argocd` необходим для управления Argo CD из командной строки.
-
-**macOS:**
-```bash
-# Homebrew (рекомендуется)
-brew install argocd
-
-# Или скачать бинарник вручную
-curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-darwin-amd64
-chmod +x argocd && sudo mv argocd /usr/local/bin/
-```
-
-**Linux (amd64):**
-```bash
-# Скачивание последней версии
-curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
-chmod +x argocd && sudo mv argocd /usr/local/bin/
-
-# Проверка версии
-argocd version
-```
-
-**Windows:**
-```powershell
-# Chocolatey
-choco install argocd
-
-# Или скачать .exe с GitHub Releases
-# https://github.com/argoproj/argo-cd/releases/latest
-```
-
-**Настройка completion:**
-```bash
-# Bash
-argocd completion bash > /etc/bash_completion.d/argocd
-
-# Zsh
+# Для Zsh
 argocd completion zsh > "${fpath[1]}/_argocd"
 ```
 
-### Сценарий 10: Начальная конфигурация
+---
 
-После установки Argo CD требуется первичная настройка.
+### Сценарий 7: Первичная аутентификация и безопасная смена пароля администратора
 
-**1. Получение первичного пароля:**
+После развертывания Argo CD генерирует случайный пароль для встроенного пользователя `admin`.
+
+**1. Извлечение первичного сгенерированного пароля:**
 ```bash
-kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d; echo
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath="{.data.password}" | base64 -d; echo
+# → result: vN8k9LmX2pQ4rS1z
 ```
 
-**2. Доступ к UI:**
+**2. Вход через CLI:**
 ```bash
-kubectl port-forward svc/argocd-server -n argocd 8080:443
-# Откройте http://localhost:8080
-# Логин: admin
-# Пароль: из шага 1
+argocd login argocd.corp.internal --username admin --password "vN8k9LmX2pQ4rS1z" --grpc-web
+# → result: 'admin:login' logged in successfully
+# → result: Context 'argocd.corp.internal' updated
 ```
 
-**3. Вход через CLI:**
+**3. Смена пароля через CLI:**
 ```bash
-argocd login localhost:8080 --username admin --password <password> --insecure
+argocd account update-password \
+  --current-password "vN8k9LmX2pQ4rS1z" \
+  --new-password "SecureProdPassword2026!"
+# → result: Password updated
 ```
 
-**4. Изменение пароля:**
+**4. Альтернатива: Декларативная установка пароля через bcrypt-хэш:**
+Если смена пароля автоматизируется через скрипты без интерактивного CLI:
 ```bash
-# Через CLI
-argocd account update-password
+# Генерация bcrypt-хэша с фактором стоимости 10
+NEW_HASH=$(htpasswd -nbBC 10 "" "SecureProdPassword2026!" | tr -d ':\n')
+MTIME=$(date -u +%FT%T%Z)
 
-# Или через Secret ( нового пароля)
-NEW_PASSWORD=$(echo -n 'new-password' | base64)
-kubectl -n argocd patch secret argocd-initial-admin-secret \
-  -p '{"data": {"password": "'$NEW_PASSWORD'"}}'
+# Патчинг системного секрета argocd-secret (НЕ initial-admin-secret!)
+kubectl -n argocd patch secret argocd-secret \
+  -p "{\"stringData\": {\"admin.password\": \"$NEW_HASH\", \"admin.passwordMtime\": \"$MTIME\"}}"
+# → result: secret/argocd-secret patched
 ```
 
-**5. Создание первого приложения:**
+**5. Удаление первичного секрета (Обязательное требование безопасности):**
 ```bash
-argocd app create my-app \
-  --repo https://github.com/argoproj/argocd-example-apps.git \
-  --path guestbook \
-  --dest-server https://kubernetes.default.svc \
-  --dest-namespace guestbook \
-  --sync-policy automated \
-  --auto-prune \
-  --self-heal
-
-# Синхронизация
-argocd app sync my-app
-
-# Просмотр состояния
-argocd app get my-app
+kubectl -n argocd delete secret argocd-initial-admin-secret
+# → result: secret "argocd-initial-admin-secret" deleted
 ```
 
-### Сценарий 11: Обновление и миграция v2→v3
+---
 
-**Важно:** Обновление с v2 на v3 требует миграции CRD и проверки совместимости.
+### Сценарий 8: Подключение удаленных целевых On-Premise кластеров (Multi-Cluster)
 
-**1. Миграция CRD (обязательно для v3.x):**
+В топологии Central Hub управляющий экземпляр подключается к внешним кластерам Kubernetes.
+
+**1. Добавление кластера через `argocd` CLI:**
+Команда считывает текущий контекст `kubectl`, создает в целевом кластере ServiceAccount `argocd-manager` с кластерными правами и генерирует секрет в namespace `argocd`.
+
 ```bash
-# Обновление CRD с SSA (критично!)
-kubectl apply -n argocd --server-side --force-conflicts \
-  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/crds.yaml
+# Просмотр доступных контекстов
+kubectl config get-contexts -o name
+# → result: kubernetes-admin@cluster-worker-prod-01
 
-# Или через Helm
-helm upgrade argocd argo/argo-cd \
+# Регистрация кластера
+argocd cluster add kubernetes-admin@cluster-worker-prod-01 \
+  --name "worker-prod-01" \
+  --system-namespace kube-system \
+  --yes
+# → result: Cluster 'https://192.168.10.50:6443' added
+```
+
+**2. Декларативное создание секрета кластера:**
+Для чистого GitOps-подхода создание объекта `Cluster Secret` выполняется манифестом:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster-worker-prod-01
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+type: Opaque
+stringData:
+  name: "worker-prod-01"
+  server: "https://192.168.10.50:6443"
+  config: |
+    {
+      "bearerToken": "eyJhGciOi...",
+      "tlsClientConfig": {
+        "insecure": false,
+        "caData": "LS0tLS1CRUdJTi..."
+      }
+    }
+```
+
+```bash
+kubectl apply -f cluster-secret.yaml
+# → result: secret/cluster-worker-prod-01 created
+
+# Проверка списка кластеров в Argo CD
+argocd cluster list
+# → result:
+# SERVER                          NAME            STATUS      MESSAGE
+# https://kubernetes.default.svc  in-cluster      Successful  
+# https://192.168.10.50:6443      worker-prod-01  Successful
+```
+
+---
+
+### Сценарий 9: Шардирование контроллера (Controller Sharding)
+
+При росте числа управляемых приложений (более 500) или кластеров (более 10) один экземпляр `argocd-application-controller` может упираться в лимиты CPU/Memory или задерживать цикл реконсиляции.
+
+**1. Конфигурация в `argocd-cmd-params-cm`:**
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  # Алгоритм распределения: round-robin или legacy (по кластерам)
+  controller.sharding.algorithm: "round-robin"
+```
+
+**2. Масштабирование контроллера в StatefulSet:**
+В официальном Helm-чарте шардирование активируется масштабированием `controller.replicas`:
+```bash
+kubectl scale statefulset argocd-application-controller -n argocd --replicas=3
+# → result: statefulset.apps/argocd-application-controller scaled
+```
+
+Каждый под получает переменную окружения `ARGOCD_CONTROLLER_SHARD` с номером реплики (0, 1, 2) и флаг `--replicas 3`, обрабатывая строго свою часть приложений.
+
+**3. Проверка распределения шардов:**
+```bash
+argocd admin cluster stats
+# → result:
+# SHARD  CLUSTERS  APPLICATIONS
+# 0      3         180
+# 1      3         175
+# 2      4         192
+```
+
+---
+
+### Сценарий 10: Установка в полностью изолированном контуре (Offline / Air-Gapped)
+
+В закрытых датацентрах без прямого выхода в Интернет развертывание выполняется через локальное зеркало.
+
+**1. Перечень обязательных контейнерных образов (v3.5+):**
+- `quay.io/argoproj/argocd:v3.5.x` (основной образ для server, repo-server, controller)
+- `quay.io/argoproj/argocd-applicationset:v3.5.x`
+- `docker.io/redis:7.2.x-alpine`
+- `docker.io/haproxy:2.8.x-alpine` (для redis-ha)
+- `ghcr.io/dexidp/dex:v2.41.x`
+
+**2. Скрипт синхронизации с внутренним Harbor:**
+```bash
+REGISTRY="harbor.corp.internal/base-images"
+
+for IMG in "quay.io/argoproj/argocd:v3.5.4" "docker.io/redis:7.2.4-alpine"; do
+  skopeo copy "docker://${IMG}" "docker://${REGISTRY}/$(basename ${IMG})"
+done
+# → result: Copying blob... Copying config... Writing manifest...
+```
+
+**3. Подготовка Helm-чарта в OCI:**
+```bash
+helm pull argo/argo-cd --version 7.7.x
+helm push argo-cd-7.7.x.tgz oci://harbor.corp.internal/charts/
+# → result: Pushed: harbor.corp.internal/charts/argo-cd:7.7.x
+```
+
+**4. Развертывание из внутреннего OCI-источника:**
+```bash
+helm upgrade --install argocd oci://harbor.corp.internal/charts/argo-cd \
   --namespace argocd \
-  --set server.initArgs[0]="--server" \
+  --set global.image.repository="harbor.corp.internal/base-images/argocd" \
+  --set redis-ha.redis.image.repository="harbor.corp.internal/base-images/redis" \
+  -f values-airgapped.yaml \
   --server-side
 ```
 
-**2. Миграция ApplicationSet:**
+---
+
+### Сценарий 11: Обновление и миграция между версиями
+
+При обновлении минорных версий (например, v2.14 на v3.x или v3.4 на v3.5) соблюдайте регламент:
+
+**1. Предварительное обновление CRD с Server-Side Apply:**
 ```bash
-# v3.x интегрирует ApplicationSet Controller в ядро
-# Удалите старый ApplicationSet Controller (если был установлен отдельно)
-kubectl delete deployment argocd-applicationset-controller -n argocd
+kubectl apply -n argocd --server-side --force-conflicts \
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.4/manifests/crds.yaml
+# → result: customresourcedefinition.apiextensions.k8s.io/... configured
 ```
 
-**3. Проверка совместимости:**
+**2. Обновление Helm-релиза:**
 ```bash
-# Проверка версии
+helm upgrade argocd argo/argo-cd \
+  --namespace argocd \
+  -f values-ha.yaml \
+  --server-side
+# → result: Release "argocd" has been upgraded.
+```
+
+**3. Проверка версий сервера и клиента:**
+```bash
 argocd version
-
-# Проверка CRD
-kubectl get crd | grep argoproj
-
-# Проверка логов на ошибки миграции
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller --tail=100
+# → result:
+# argocd: v3.5.4+...
+# argocd-server: v3.5.4+...
 ```
 
-**4. Rollback при проблемах:**
+**4. План отката (Rollback):**
+Если после обновления возникли критические ошибки в reconciliation loop:
 ```bash
-# Откат на предыдущую версию Helm
-helm rollback argocd <revision> -n argocd
+# Просмотр истории релизов
+helm history argocd -n argocd
 
-# Или откат CRD
-kubectl apply -n argocd --server-side -f https://raw.githubusercontent.com/argoproj/argo-cd/v2.9.0/manifests/crds.yaml
+# Откат на стабильную ревизию
+helm rollback argocd <previous-revision> -n argocd
+# → result: Rollback release argocd to <previous-revision> success
 ```
 
-### Сценарий 12: Backup и Disaster Recovery
+---
 
-**1. Резервное копирование состояния Argo CD:**
-```bash
-# Экспорт всех Application и AppProject
-kubectl get applications -n argocd -o yaml > argocd-apps-backup.yaml
-kubectl get appprojects -n argocd -o yaml > argocd-projects-backup.yaml
+### Сценарий 12: Декларативная базовая конфигурация (`argocd-cm`, `argocd-cmd-params-cm`, `argocd-rbac-cm`)
 
-# Экспорт секретов (репозитории, кластеры)
-kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type -o yaml > argocd-secrets-backup.yaml
-
-# Экспорт ConfigMaps (конфигурация)
-kubectl get configmaps -n argocd argocd-cm argocd-rbac-cm argocd-params-cm -o yaml > argocd-config-backup.yaml
-```
-
-**2. Восстановление:**
-```bash
-# Восстановление в порядке зависимостей
-kubectl apply -f argocd-config-backup.yaml
-kubectl apply -f argocd-secrets-backup.yaml
-kubectl apply -f argocd-projects-backup.yaml
-kubectl apply -f argocd-apps-backup.yaml
-```
-
-**3. Восстановление из etcd (полное):**
-```bash
-# Если доступен etcd snapshot
-etcdctl snapshot restore /backup/etcd-snapshot.db --data-dir=/var/lib/etcd-restored
-```
-
-### Сценарий 13: NetworkPolicies (Security Hardening)
-
-Ограничьте сетевой доступ компонентов Argo CD.
+Ключевые системные настройки Argo CD задаются тремя ConfigMap:
 
 ```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: argocd-server-network-policy
-  namespace: argocd
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: argocd-server
-  policyTypes:
-  - Ingress
-  - Egress
-  ingress:
-  - from:
-    - namespaceSelector:
-        matchLabels:
-          name: istio-system
-    ports:
-    - port: 8080
-      protocol: TCP
-  egress:
-  - to:
-    - namespaceSelector:
-        matchLabels:
-          name: argocd
-    ports:
-    - port: 6379
-      protocol: TCP
-    - port: 8083
-      protocol: TCP
-  - to: [] # Разрешить DNS
-    ports:
-    - port: 53
-      protocol: UDP
-    - port: 53
-      protocol: TCP
-```
-
-**Основные правила:**
-- Ingress: только из ingress controller / istio
-- Egress: только в Redis, repo-server, DNS
-- Isolation: изолируйте Argo CD от production namespace
-
-### Сценарий 14: Интеграция с Prometheus и Grafana
-
-**1. Включение метрик в Argo CD:**
-```yaml
-# argocd-cmd-params-cm
-data:
-  metrics.enabled: "true"
-  controller.metrics.enabled: "true"
-  server.metrics.enabled: "true"
-  repoServer.metrics.enabled: "true"
-```
-
-**2. ServiceMonitor для Prometheus Operator:**
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: argocd-metrics
+  name: argocd-cm
   namespace: argocd
   labels:
-    release: prometheus
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: argocd-metrics
-  endpoints:
-  - port: metrics
-    interval: 30s
-    path: /metrics
+    app.kubernetes.io/part-of: argocd
+data:
+  url: "https://argocd.corp.internal"
+  application.instanceLabelKey: "argocd.argoproj.io/instance"
+  # Настройка таймаута сверки (по умолчанию 180s)
+  timeout.reconciliation: "180s"
+  # Включение локальных пользователей
+  accounts.deployer: apiKey
+  accounts.auditor: login
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+data:
+  policy.default: role:readonly
+  policy.csv: |
+    # Права для сервисного аккаунта deployer (CI/CD)
+    p, role:deployer, applications, sync, */*, allow
+    p, role:deployer, applications, get, */*, allow
+    g, deployer, role:deployer
+
+    # Права для группы безопасности auditors
+    p, role:auditor, applications, get, */*, allow
+    p, role:auditor, logs, get, */*, allow
+    g, auditor, role:auditor
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+data:
+  server.insecure: "true"
+  controller.status.processors: "20"
+  controller.operation.processors: "10"
+  repo.server.timeout.seconds: "120"
 ```
 
-**3. Основные метрики для дашбордов:**
-| Метрика | Описание | Тип |
-| :--- | :--- | :--- |
-| `argocd_app_info` | Информация о приложении (labels: health_status, sync_status, project) | Gauge |
-| `argocd_app_sync_total` | Количество синхронизаций (по статусам, label `phase`) | Counter |
-| `argocd_app_reconcile` | Длительность сверки приложения, секунды | Histogram |
-| `argocd_app_sync_duration_seconds_total` | Суммарная длительность синхронизаций, секунды | Counter |
-
-**4. Grafana Dashboard:**
+Применение:
 ```bash
-# Импорт дашборда ID 14582 (Argo CD)
-# https://grafana.com/grafana/dashboards/14582-argo-cd/
+kubectl apply -f argocd-core-configs.yaml
+# → result: configmap/argocd-cm configured
+# → result: configmap/argocd-rbac-cm configured
+# → result: configmap/argocd-cmd-params-cm configured
 ```
 
-## Технический справочник
+## Операции и команды
 
-### Рекомендации по ресурсам
+Сводная таблица основных административных команд сопровождения Argo CD:
 
-| Компонент | Non-HA (100 apps) | HA (1000+ apps) | Memory-intensive |
+| Команда | Назначение | Пример использования | Ожидаемый результат |
 | :--- | :--- | :--- | :--- |
-| `argocd-application-controller` | 1 CPU / 2Gi | 2 CPU / 4Gi | 4 CPU / 8Gi |
-| `argocd-repo-server` | 500m / 1Gi | 1 CPU / 2Gi | 2 CPU / 4Gi |
-| `argocd-server` | 200m / 512Mi | 500m / 1Gi | 1 CPU / 2Gi |
-| `argocd-redis` | 500m / 1Gi | 1 CPU / 2Gi | 2 CPU / 4Gi |
-| `argocd-dex-server` | 50m / 64Mi | 100m / 128Mi | 200m / 256Mi |
+| `argocd login` | Аутентификация в API-сервере | `argocd login <host> --username admin` | `Context '<host>' updated` |
+| `argocd version` | Проверка версии CLI и сервера | `argocd version` | Вывод версий клиента и сервера |
+| `argocd repo add` | Регистрация Git или Helm репозитория | `argocd repo add <git-url> --ssh-private-key-path id_rsa` | `Repository '<git-url>' added` |
+| `argocd repo list` | Список зарегистрированных репозиториев | `argocd repo list` | Таблица с URL, TYPE, STATUS (Successful) |
+| `argocd cluster add` | Регистрация нового кластера K8s | `argocd cluster add <context-name> --name <name>` | `Cluster '<api-url>' added` |
+| `argocd cluster list` | Просмотр подключенных кластеров | `argocd cluster list` | Таблица с адресами кластеров и статусом связи |
+| `argocd admin settings rbac validate` | Синтаксическая валидация RBAC | `argocd admin settings rbac validate` | `Policy syntax OK` |
+| `argocd admin cluster stats` | Статистика по шардам и кластерам | `argocd admin cluster stats` | Распределение приложений по шардам |
+| `kubectl wait` | Ожидание доступности подов | `kubectl wait --for=condition=available deploy/argocd-server -n argocd` | `condition met` |
+| `redis-cli ping` | Проверка доступности кэша Redis | `kubectl exec -n argocd deploy/argocd-redis -- redis-cli ping` | `PONG` |
 
-### Ключевые переменные окружения
+## Диагностика и устранение неисправностей
 
-| Переменная | Описание | Значение по умолчанию |
-| :--- | :--- | :--- |
-| `ARGOCD_SERVER` | Адрес API сервера | `argocd-server.argocd` |
-| `ARGOCD_OPTS` | Дополнительные опции CLI | — |
-| `ARGOCD_LATEST` | Использовать latest версию CLI | `true` |
-| `ARGOCD_INSECURE` | Отключить проверку TLS | `false` |
-| `ARGOCD_PRIMARY_CACERT` | Путь к CA-сертификату | — |
+### Ошибка 1: Ошибка размера аннотации при установке CRD
+- **Симптом:** При выполнении `kubectl apply -f .../crds.yaml` команда завершается с ошибкой:
+  `The CustomResourceDefinition "applications.argoproj.io" is invalid: metadata.annotations: Too long: must have at most 262144 bytes`
+- **Причина:** Клиентский `kubectl apply` пытается сохранить предыдущее состояние манифеста в аннотацию `kubectl.kubernetes.io/last-applied-configuration`, размер которой превышает жесткий лимит etcd в 256 КБ.
+- **Диагностика:** Попытка повторного применения без SSA завершается с тем же сообщением.
+- **Решение:** Применять CRD исключительно с флагом Server-Side Apply:
+  ```bash
+  kubectl apply --server-side --force-conflicts -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.4/manifests/crds.yaml
+  # → result: customresourcedefinition.apiextensions.k8s.io/applications.argoproj.io configured
+  ```
 
-### Параметры `argocd-cm` (ConfigMap)
+---
 
-| Параметр | Описание | Значение по умолчанию |
-| :--- | :--- | :--- |
-| `url` | Публичный URL Argo CD | — |
-| `statusbadge.enabled` | Включить Status Badge | `false` |
-| `admin.enabled` | Включить admin-пользователя | `true` |
-| `users.allowSignup` | Разрешить регистрацию | `false` |
-| `helm.valuesFileSchemes` | Допустимые схемы values файлов | `https,oci` |
-| `timeout.reconciliation` | Таймаут реконсиляции | `180s` |
+### Ошибка 2: Ошибка верификации TLS при клонировании Git (`x509: certificate signed by unknown authority`)
+- **Симптом:** При создании `Application` статус синхронизации переходит в `ComparisonError`:
+  `rpc error: code = Unknown desc = Get "https://gitlab.corp.internal/...": x509: certificate signed by unknown authority`
+- **Причина:** Поды `argocd-repo-server` не имеют корневого сертификата доверенного корпоративного CA.
+- **Диагностика:**
+  ```bash
+  kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server --tail=50 | grep -i "x509"
+  # → result: x509: certificate signed by unknown authority
+  ```
+- **Решение:** Создать ConfigMap `argocd-tls-certs-cm` с сертификатом CA и привязать к пространству имен `argocd`:
+  ```bash
+  kubectl -n argocd create configmap argocd-tls-certs-cm \
+    --from-file=corp-ca.crt=/path/to/root-ca.crt \
+    --dry-run=client -o yaml | kubectl apply -f -
+  kubectl rollout restart deployment/argocd-repo-server -n argocd
+  ```
 
-### Параметры `argocd-rbac-cm` (RBAC)
+---
 
-| Параметр | Описание | Значение по умолчанию |
-| :--- | :--- | :--- |
-| `policy.default` | Роль по умолчанию | `role:readonly` |
-| `policy.csv` | Политики доступа (CSV) | — |
-| `scopes` | Области применения политик | `[groups]` |
+### Ошибка 3: Бесконечный редирект (HTTP 307 Redirect Loop) в веб-интерфейсе
+- **Симптом:** При попытке открыть URL в браузере страница бесконечно перезагружается, либо выдается `ERR_TOO_MANY_REDIRECTS`.
+- **Причина:** Ingress-контроллер выполняет SSL-терминацию и передает трафик на `argocd-server` по HTTP, а `argocd-server` считает соединение незащищенным и принудительно возвращает HTTP 307 Redirect на `https://`.
+- **Диагностика:**
+  ```bash
+  curl -I http://argocd.corp.internal
+  # → result: HTTP/1.1 307 Temporary Redirect
+  # → result: Location: https://argocd.corp.internal/
+  ```
+- **Решение:** Запустить `argocd-server` с флагом `--insecure` (в Helm `server.extraArgs: ["--insecure"]` или `configs.params.server.insecure: true`), сообщив серверу, что TLS завершается на внешнем балансировщике.
 
-### Пост-установочные проверки (Health Check)
+---
 
-1. **Поды:** `kubectl get pods -n argocd` (все `Running`).
-2. **CRD:** `kubectl get crd | grep argoproj` (5+ ресурсов).
-3. **API:** `curl -k https://argocd.example.com/healthz` (200 OK).
-4. **Redis:** `kubectl exec -it -n argocd deployment/argocd-redis -- redis-cli ping` (должен вернуть `PONG`).
-5. **CLI:** `argocd version` (выводит версию клиента и сервера).
-6. **RBAC:** `argocd admin settings rbac validate` (валидация политик).
-7. **Порты:** Проверка доступности сервисов:
-   ```bash
-   kubectl get svc -n argocd argocd-server
-   # Ожидаемый результат: CLUSTER-IP, порты 80/443
+### Ошибка 4: Невозможность входа администратора после утери или сброса пароля
+- **Симптом:** Команда `argocd login` возвращает `Invalid username or password`, а секрет `argocd-initial-admin-secret` удален.
+- **Причина:** Рассинхронизация или утеря хэша `admin.password` в секрете `argocd-secret`.
+- **Диагностика:**
+  ```bash
+  kubectl get secret argocd-secret -n argocd -o jsonpath="{.data.admin\.password}"
+  # → result: пусто либо устаревший хэш
+  ```
+- **Решение:** Сгенерировать новый bcrypt-хэш и обновить системный секрет напрямую:
+  ```bash
+  NEW_BCRYPT=$(htpasswd -nbBC 10 "" "NewEmergencyPass123!" | tr -d ':\n')
+  kubectl -n argocd patch secret argocd-secret -p "{\"stringData\": {\"admin.password\": \"$NEW_BCRYPT\", \"admin.passwordMtime\": \"$(date -u +%FT%T%Z)\"}}"
+  # → result: secret/argocd-secret patched
+  ```
+
+---
+
+### Ошибка 5: Сбой Redis HA / Sentinel Failover
+- **Симптом:** Веб-интерфейс выдает `Internal Server Error`, в логах `argocd-server` и `argocd-repo-server` появляются ошибки: `dial tcp: lookup redis-ha-haproxy: no such host` или `READONLY You can't write against a read only replica`.
+- **Причина:** Сбой мастера Redis, зависание Sentinel quorum или отсутствие Persistent Volume для пода Redis.
+- **Диагностика:**
+  ```bash
+  kubectl get pods -n argocd -l app.kubernetes.io/name=redis-ha
+  # → result: поды Redis в статусе CrashLoopBackOff или Pending
+
+  # Проверка текущего мастера в Sentinel
+  kubectl exec -it -n argocd argocd-redis-ha-server-0 -c sentinel -- redis-cli -p 26379 sentinel get-master-addr-by-name argocd-master
+  # → result: IP мастера
+  ```
+- **Решение:** Проверить доступность PVC и StorageClass для Redis. Если кворум Sentinel разорван, перезапустить стейтфулсет Redis HA:
+  ```bash
+  kubectl rollout restart statefulset/argocd-redis-ha-server -n argocd
+  ```
+
+---
+
+### Ошибка 6: `argocd-repo-server` OOMKilled при сборке тяжелых манифестов
+- **Симптом:** Приложения переходят в статус `Unknown`, в событиях пода фиксируется `OOMKilled` (Exit Code 137).
+- **Причина:** Рендеринг объемных Helm-чартов или монорепозиториев Kustomize с десятками оверлеев потребляет больше памяти, чем задано в `resources.limits`.
+- **Диагностика:**
+  ```bash
+  kubectl describe pod -n argocd -l app.kubernetes.io/name=argocd-repo-server | grep -E 'Last State|Exit Code'
+  # → result: Last State: Terminated, Exit Code: 137, Reason: OOMKilled
+  ```
+- **Решение:** Увеличить лимиты памяти в `values.yaml` (минимум 2–4 GiB на под в продуктивных средах) и настроить переменную окружения `ARGOCD_EXEC_TIMEOUT` до 180s.
+
+## Лучшие практики и регламент обслуживания
+
+### Отказоустойчивость и сайзинг в On-Premise
+1. **Распределение реплик:** Всегда активируйте `podAntiAffinity` для компонентов `server`, `repo-server` и `redis-ha`, чтобы экземпляры распределялись по разным физическим нодам кластера.
+2. **PodDisruptionBudget (PDB):** Устанавливайте `minAvailable: 1` для предотвращения одновременного вывода реплик из строя при регламентных работах и обновлении узлов K8s.
+3. **Автономность контроллера:** Для `argocd-application-controller` задавайте `requests` и `limits` по CPU в соотношении 1:2, чтобы не допускать дросселирования (CPU throttling) в момент массовых событий синхронизации.
+
+### Hardening безопасности
+1. **Деактивация локального `admin`:** После интеграции с корпоративным SSO (GitLab/Keycloak) полностью отключите локальную учетную запись администратора в `argocd-cm`:
+   ```yaml
+   data:
+     admin.enabled: "false"
    ```
+2. **Защита файловой системы:** Включайте `readOnlyRootFilesystem: true` и запуск от непривилегированного пользователя (`runAsNonRoot: true`, UID 999) во всех подах Argo CD.
+3. **Сетевые политики (NetworkPolicies):** Изолируйте namespace `argocd`. Входящий трафик к `argocd-server` разрешайте только от Ingress Controller, а доступ к порту Redis (6379) — исключительно изнутри namespace `argocd`.
 
-### Диагностика
+### Регламент полного удаления и очистки ресурсов (Clean Uninstallation)
 
+При выводе стенда из эксплуатации или повторном бутстрапе кластера соблюдайте строгий порядок очистки, чтобы избежать зависания неймспейсов из-за финалайзеров (`finalizers`).
+
+**1. Удаление всех объектов `Application` с удалением финалайзеров:**
 ```bash
-# Статистика кластера и шардов
-argocd admin cluster stats
-
-# События контроллера
-kubectl get events -n argocd --field-selector involvedObject.kind=Application
-
-# Проверка mTLS между компонентами (v3.5+)
-# Если включено global.tls.enabled=true, проверьте логи repo-server на наличие TLS handshake errors
-
-# Просмотр логов всех компонентов
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-server --tail=100
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server --tail=100
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller --tail=100
-
-# Проверка ConfigMaps
-kubectl get configmaps -n argocd
-
-# Проверка Secrets
-kubectl get secrets -n argocd | grep -E 'repository|cluster|ssh'
+# Снятие финалайзеров, если ресурсы не удаляются штатно
+kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' | xargs -r -n1 kubectl patch application -n argocd -p '{"metadata":{"finalizers":null}}' --type=merge
+kubectl delete applications -n argocd --all --timeout=60s
+# → result: application.argoproj.io "..." deleted
 ```
 
-### Security Hardening Checklist
-
-```
-□ 1. Включить mTLS между компонентами (global.tls.enabled=true)
-□ 2. Настроить NetworkPolicies (изолировать namespace argocd)
-□ 3. Удалить admin-пользователя после настройки SSO
-□ 4. Ограничить RBAC: использовать minimal privileges
-□ 5. Включить Audit Logging в Vault (если используется)
-□ 6. Настроить Pod Security Standards (Restricted)
-□ 7. Ограничить ресурсы (CPU/Memory limits) для всех компонентов
-□ 8. Включить readOnlyRootFilesystem для repo-server
-□ 9. Настроить ImagePullPolicy: Always
-□ 10. Проверить Secrets на наличие plaintext паролей
+**2. Удаление Helm-релиза:**
+```bash
+helm uninstall argocd -n argocd
+# → result: release "argocd" uninstalled
 ```
 
-## Ограничения и edge cases
+**3. Удаление CRD и связанных ресурсов:**
+```bash
+kubectl delete crd -l app.kubernetes.io/part-of=argocd
+# → result: customresourcedefinition.apiextensions.k8s.io "applications.argoproj.io" deleted
+# → result: customresourcedefinition.apiextensions.k8s.io "applicationsets.argoproj.io" deleted
+# → result: customresourcedefinition.apiextensions.k8s.io "appprojects.argoproj.io" deleted
+```
 
-### Ограничения
+**4. Удаление пространства имен и остаточных PVC:**
+```bash
+kubectl delete namespace argocd
+# → result: namespace "argocd" deleted
+```
 
-1. **Namespace isolation:** Argo CD v3.x не поддерживает multi-tenancy через один instance без AppProject.
-2. **ApplicationSet limits:** При 1000+ ApplicationSet требуется шардирование ApplicationSet Controller.
-3. **Redis scalability:** Вертикальное масштабирование Redis ограничено; для кластеров 10000+ apps используется Redis Cluster.
-4. **Git rate limits:** GitHub/GitLab API limits (5000 req/hour) могут блокировать большие монорепозитории.
-5. **SSA conflicts:** Параллельные операции с одним ресурсом могут вызывать conflicts.
+## Ограничения и граничные условия
 
-### Edge Cases
+1. **Лимиты Server-Side Apply:** При наличии нескольких систем, управляющих одним объектом, возможны конфликты field ownership. Для Argo CD рекомендуется явный флаг `ServerSideApply=true` в `syncOptions`.
+2. **Масштабирование Redis:** Вертикальный предел одного узла Redis в HA-режиме — порядка 5 000–8 000 приложений. Для сверхкрупных инсталляций (10 000+ приложений) требуется переход на Redis Cluster с шардированием ключей.
+3. **Лимиты Git API при активном опросе:** По умолчанию Argo CD опрашивает Git каждые 3 минуты (`timeout.reconciliation: 180s`). В монорепозиториях с сотнями приложений это может исчерпать лимиты Git-сервера. Решение — настройка Webhooks от GitLab/Gitea в `argocd-server`.
+4. **Сетевые задержки при Multi-Cluster управлении:** При межкластерном latency более 100 мс время выполнения sync loop существенно возрастает. Рекомендуется размещать локальные инстансы Argo CD в каждом удаленном датацентре либо оптимизировать таймауты `argocd-cmd-params-cm`.
 
-1. **CRD upgrade failure:** Если CRD не обновились, Argo CD может потерять доступ к Application объектам.
-2. **Redis OOM:** При большом количестве приложений Redis может потребовать горизонтального масштабирования.
-3. **Helm chart dependencies:** При использовании chart dependencies с OCI-реестрами требуется дополнительная настройка.
-4. **SSH key rotation:** При ротации SSH ключей необходимо обновлять Secret в namespace argocd.
-5. **Multi-cluster latency:** При управлении удалёнными кластерами через Internet увеличивается latency реконсиляции.
-6. **ApplicationSet conflicts:** При параллельном обновлении ApplicationSet и Application могут возникать conflicts.
-7. **Dex downtime:** При недоступности Dex-сервера SSO-аутентификация недоступна (локальные пользователи работают).
-8. **mTLS handshake errors:** При неправильной настройке TLS могут возникать ошибки handshakes между компонентами.
+## Дополнительная информация
 
-## См. также
-
-- [Argo CD: Обзор системы](./argocd_overview.md)
-- [Argo CD: Настройка SSO через GitLab](./argocd_sso_gitlab.md) — детальная настройка OIDC.
-- [Argo CD: Синхронизация и её политики](./synchronization.md)
-- [Argo CD: Интеграция с Vault](./argocd_vault_integration.md)
-- [Argo CD: Диагностика и мониторинг](./argocd_troubleshooting_and_monitoring.md)
-- [Argo CD: Custom Tooling и плагины](./argocd_custom_tooling.md)
-- [Официальное руководство по HA](https://argo-cd.readthedocs.io/en/stable/operator-manual/high-availability/)
-- [RBAC — модель доступа](./argocd_rbac_deep.md) — Модель доступа, policy.csv, встроенные роли, JWT-токены, диагностика.
-- [AppProject — изоляция проектов](./argocd_appproject_deep.md) — Изоляция проектов, квоты, restrictions, кастомные роли.
-- [Multiple Sources и sourceHydrator](./argocd_multi_source_apps.md) — Multiple Sources, sourceHydrator, Helm+Git, CI-рендеринг vs Multi-Source.
-- [Отслеживание ресурсов](./argocd_resource_tracking.md) — Методы отслеживания ресурсов: Label, Annotation, Annotation+Label.
-- [Удаление и очистка](./argocd_deletion_and_cleanup.md) — Prune, Cascading Deletion, Propagation Policy, Orphan, Finalizers.
-- [Disaster Recovery](./argocd_disaster_recovery.md) — Бэкап, восстановление, etcd snapshot, HA, geo-recovery.
-- [Безопасность](./argocd_security_hardening.md) — GPG, NetworkPolicies, mTLS, SecurityContext, proxy, audit logging.
-- [Мультитенантность](./argocd_multi_tenancy.md) — Паттерны мультитенантности, tenant isolation, project-per-team.
+- [Argo CD: Обзор архитектуры системы](./argocd_overview.md) — Базовая концепция, компоненты и цикл реконсиляции.
+- [Argo CD: Настройка SSO через GitLab](./argocd_sso_gitlab.md) — Детальное руководство по интеграции OIDC и групп.
+- [Argo CD: Синхронизация и её политики](./synchronization.md) — Параметры автоматической синхронизации, prune и self-heal.
+- [Argo CD: Диагностика и мониторинг](./argocd_troubleshooting_and_monitoring.md) — Метрики Prometheus, ServiceMonitor и дашборды Grafana.
+- [Argo CD: Custom Tooling и плагины](./argocd_custom_tooling.md) — Настройка CMP v2 sidecar для генерации манифестов.
+- [RBAC — модель доступа](./argocd_rbac_deep.md) — Настройка ролей, прав и политик в `argocd-rbac-cm`.
+- [AppProject — изоляция проектов](./argocd_appproject_deep.md) — Проекты, квоты и разграничение доступа команд.
+- [Disaster Recovery и резервное копирование](./argocd_disaster_recovery.md) — Бэкап манифестов, секретов и восстановление после сбоев.
+- [Безопасность и hardening](./argocd_security_hardening.md) — GPG-подписи, NetworkPolicies и Pod Security Standards.
+- [Мультитенантность в Argo CD](./argocd_multi_tenancy.md) — Паттерны изоляции команд и инфраструктурных контуров.
+- [Удаление и очистка ресурсов](./argocd_deletion_and_cleanup.md) — Cascading deletion, orphan resources и finalizers.
+- [GitOps-мозг: Управление политиками](../Concepts/gitops-policy-management.md) — Централизованное управление кластерами и политиками.

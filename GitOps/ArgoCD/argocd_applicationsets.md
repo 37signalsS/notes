@@ -1,176 +1,269 @@
 # Argo CD: ApplicationSet — генераторы приложений и автоматизация флота
 
-**ApplicationSet** решает главную проблему масштабирования Argo CD: ручное создание и сопровождение сотен однотипных объектов `Application`. Вместо копирования YAML для каждого приложения или кластера описывается один шаблон и правила генерации параметров — а ApplicationSet Controller сам создает, обновляет и удаляет дочерние приложения.
+**Актуально для:** Argo CD v3.5+ (покрывает v3.4.x, v3.5.x, v3.6.x; ApplicationSet Controller встроен в ядро, поддержка goTemplate v2, Matrix/Merge генераторы, Progressive Syncs)
+
+**ApplicationSet** решает главную проблему масштабирования Argo CD: ручное создание и сопровождение сотен однотипных объектов `Application`. Вместо копирования YAML для каждого приложения или кластера описывается один шаблон и правила генерации параметров — а ApplicationSet Controller сам создает, обновляет и удаляет дочерние приложения в соответствии с настроенными политиками.
 
 ## Предварительные требования
 
 | Компонент | Требование |
 | :--- | :--- |
-| Argo CD | Линейка v3.x (ApplicationSet Controller входит в состав ядра, отдельная установка не требуется) |
-| Права | Создание ApplicationSet — привилегированная операция (см. раздел «Безопасность»); для чтения источников — токен/PAT целевого Git-хостинга |
-| CLI | `kubectl` с контекстом hub-кластера; `argocd` CLI той же минорной версии |
-| Для PR-генератора | API-токен Git-хостинга (GitHub PAT / GitLab project access token) в объекте `Secret` |
+| Argo CD | Линейка v3.x (ApplicationSet Controller входит в состав базового дистрибутива, отдельная установка не требуется) |
+| Права доступа | Создание ApplicationSet — привилегированная операция уровня кластерного администратора; для чтения Git/SCM источников — токен с минимально необходимыми правами (read-only) |
+| Инструменты CLI | `kubectl` с контекстом управляющего (hub) кластера; `argocd` CLI той же минорной версии |
+| Секреты для генераторов | API-токен Git-хостинга (GitLab Project/Group Access Token, Gitea Token, Bitbucket Token) в объекте `Secret` в namespace `argocd` |
+| Окружение | Bare-metal или on-premise Kubernetes кластеры (v1.28+), управляемые центральным hub-кластером Argo CD ([руководство по установке](./argocd_installation_and_setup.md)) |
 
-Исходное состояние: установленный Argo CD ([руководство по установке](./argocd_installation_and_setup.md)), рабочий проект `default`, тестовый репозиторий со структурой `apps/<имя>/base` + `apps/<имя>/overlays`.
+Исходное состояние: рабочий Argo CD, целевые кластеры зарегистрированы через `argocd cluster add` (или Secret-манифесты), тестовый Git-репозиторий со структурой приложений и оверлеев Kustomize/Helm.
 
 ## Определения
 
-- **ApplicationSet**: CRD (`argoproj.io/v1alpha1`), объединяющий один или несколько **генераторов** и **шаблон** объекта Application. Контроллер непрерывно сверяет множество сгенерированных приложений с текущими параметрами генераторов.
-- **Генератор (Generator)**: Источник параметров — список кластеров, структура каталогов Git, открытые pull request'ы, файлы конфигурации. Каждый элемент источника превращается в набор переменных для подстановки в шаблон.
-- **Шаблон (Template)**: Скелет объекта Application с плейсхолдерами (`{{.name}}`, `{{.cluster}}`). Рендерится один раз на каждый элемент параметров генератора.
-- **Go-шаблоны (goTemplate)**: Современный режим шаблонизации (`spec.goTemplate: true`) с полным синтаксисом Go templates и функциями sprig; рекомендован во всей актуальной документации вместо устаревшего fasttemplate-подобного режима.
-- **Владение (Ownership)**: Каждое сгенерированное приложение помечается аннотацией родительского ApplicationSet; контроллер имеет право изменять и удалять только свои приложения. При удалении ApplicationSet дочерние приложения удаляются согласно настроенной политике.
+- **ApplicationSet**: Пользовательский ресурс Kubernetes (`argoproj.io/v1alpha1`, kind: `ApplicationSet`), объединяющий один или несколько **генераторов** и **шаблон** объекта `Application`. Контроллер непрерывно сверяет состояние сгенерированных приложений с текущими параметрами генераторов.
+- **Генератор (Generator)**: Источник параметров для шаблонизации (структура каталогов Git, конфигурационные файлы JSON/YAML, открытые Pull/Merge Requests, список зарегистрированных кластеров, фиксированные списки значений). Каждый элемент источника формирует набор пар ключ-значение.
+- **Шаблон (Template)**: Каркас объекта `Application` с плейсхолдерами (`{{.name}}`, `{{.cluster}}`, `{{.path.basename}}`). Рендерится один раз для каждого набора параметров, возвращенного генератором.
+- **goTemplate**: Режим шаблонизации (`spec.goTemplate: true`), использующий нативный синтаксис Go text/template и функции библиотеки Sprig. Рекомендован и является де-факто стандартом взамен устаревшего fasttemplate-синтаксиса.
+- **Владение (Ownership & Finalizers)**: Каждое сгенерированное приложение помечается аннотацией владельца `argocd.argoproj.io/application-set-name: <имя-appset>` и контролируется финализатором `resources-finalizer.argocd.argoproj.io`. При удалении ApplicationSet дочерние приложения обрабатываются согласно параметру `preserveResourcesOnDeletion`.
+- **Post Selector**: Механизм фильтрации параметров генератора с помощью выражений Kubernetes labelSelector над уже полученными переменными до передачи их в шаблон.
+- **Progressive Syncs**: Механизм поэтапного выката (`spec.strategy.type: RollingSync`), управляющий последовательностью применения изменений на группе дочерних приложений с контролем состояния здоровья (health gating).
 
-## Основные концепции
+## Основные концепции и архитектура
 
-### Архитектура и цикл работы
+### Архитектура и цикл работы контроллера
 
 ```
-┌─────────────────┐    параметры     ┌──────────────────┐   рендер   ┌──────────────┐
-│  Генератор(ы)    │ ───────────────> │ ApplicationSet   │ ─────────> │ Applications │
-│ (Git/API/список) │                  │ Controller       │  create/   │  в кластере   │
-└─────────────────┘                  │ (цикл опроса)    │  update/   └──────────────┘
-                                     └──────────────────┘  delete
+┌────────────────────────────────────────────────────────────────────────┐
+│ Hub Kubernetes Cluster (Namespace: argocd)                             │
+│                                                                        │
+│  ┌────────────────────────┐      Опрос API / Webhook                   │
+│  │ Git / SCM / Clusters   │ ───────────────────────────────┐           │
+│  └────────────────────────┘                                │           │
+│                                                            ▼           │
+│  ┌────────────────────────┐  Параметры     ┌────────────────────────┐  │
+│  │ ApplicationSet CRD     │ ─────────────> │ ApplicationSet         │  │
+│  │ (Генераторы + Шаблон)  │                │ Controller             │  │
+│  └────────────────────────┘                │ (Reconciliation Loop)  │  │
+│                                            └────────────────────────┘  │
+│                                                            │           │
+│                                                            │ Рендеринг │
+│                                                            │ и сверка  │
+│                                                            ▼           │
+│               ┌─────────────────────────────────────────────────────┐  │
+│               │             Дочерние CRD Application                │  │
+│               │ ┌─────────────────┐ ┌─────────────────┐ ┌─────────┐ │  │
+│               │ │ app-cluster-01  │ │ app-cluster-02  │ │ app-... │ │  │
+│               │ └─────────────────┘ └─────────────────┘ └─────────┘ │  │
+│               └─────────────────────────────────────────────────────┘  │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Application Controller применяет манифесты
+                                    ▼
+       ┌─────────────────────────────────────────────────────────┐
+       │     Целевые кластеры и пространства имен (Spokes)       │
+       │     (Workloads: Deployments, StatefulSets, Services)    │
+       └─────────────────────────────────────────────────────────┘
 ```
 
-Цикл контроллера:
+Цикл работы контроллера (`Reconciliation Loop`):
+1. **Сбор параметров генераторов**: Контроллер опрашивает источники данных (Git-репозитории, API локального кластера с объектами Secrets кластеров, API Git-хостинга).
+2. **Фильтрация и трансформация**: Применение Post Selectors, слияние генераторов (Merge) или вычисление декартова произведения (Matrix).
+3. **Рендеринг шаблона**: Подстановка параметров в блок `spec.template` через движок `goTemplate`.
+4. **Сверка множества приложений (Reconciliation)**:
+   - Если приложение из параметров отсутствует в кластере — оно создается (`create`).
+   - Если спецификация существующего приложения отличается от отрендеренной — она обновляется (`update`).
+   - Если приложение пропало из генератора — оно удаляется (`delete`) в зависимости от политики `spec.syncPolicy.applicationsSync`.
 
 ```bash
-# Наблюдение за работой контроллера в ядре v3.x
-kubectl logs -n argocd deployment/argocd-applicationset-controller -f
-# -> ApplicationSet preview-envs: generated 3 applications (MR #42, #43, #45)
+# Проверка работы контроллера ApplicationSet в namespace argocd
+kubectl logs -n argocd deployment/argocd-applicationset-controller -f --tail=50
+# → time="2026-10-11T21:40:12Z" level=info msg="generated 6 applications for ApplicationSet default/infra-fleet"
+# → time="2026-10-11T21:40:12Z" level=info msg="syncing Application default/infra-fleet-prod-db-01"
 
-# Все дочерние приложения видны как обычные Application
-argocd app list
-# → NAME                PROJECT        SYNC STATUS   HEALTH
-# → billing-pr-42       finance-team   Synced        Healthy
-# → billing-prod        finance-team   Synced        Healthy
+# Просмотр созданных дочерних приложений
+argocd app list -l argocd.argoproj.io/application-set-name=infra-fleet
+# → NAME                 PROJECT   SYNC STATUS   HEALTH STATUS
+# → infra-fleet-dc1-k8s  infra     Synced        Healthy
+# → infra-fleet-dc2-k8s  infra     Synced        Healthy
 ```
 
-Ключевые следствия модели:
-- **Дочерние приложения — полноценные Application**: к ним применимы весь арсенал Argo CD (sync waves, hooks, RBAC, AppProject-ограничения, уведомления).
-- **Источник правды — генератор**: чтобы удалить приложение из кластера, нужно удалить его источник (каталог, MR, элемент списка), а не сам Application.
-- **Ручные правки дочерних приложений затираются** следующей итерацией контроллера — ApplicationSet всегда приводит свои приложения к отрендеренному виду.
+Важные свойства модели:
+- **Дочерние объекты — стандартные Application**: к ним применимы все штатные механизмы Argo CD: волны синхронизации ([Sync Waves и Hooks](./synchronization/scenarios/sync_waves_hooks.md)), [Окна синхронизации (Sync Windows)](./synchronization/scenarios/sync_windows.md), [RBAC](./argocd_rbac_deep.md).
+- **Идемпотентность и затирание локальных правок**: если администратор вручную изменит параметры дочернего `Application` через `kubectl edit`, следующая итерация ApplicationSet Controller вернет манифест к отрендеренному шаблону.
+- **Очистка и защита**: удаление самого ресурса `ApplicationSet` приводит к удалению всех дочерних приложений, если не установлена опция `spec.syncPolicy.preserveResourcesOnDeletion: true`.
+
+---
 
 ### Каталог генераторов
 
-| Генератор | Источник параметров | Типовой сценарий |
+| Генератор | Источник параметров | Назначение и типовой сценарий |
 | :--- | :--- | :--- |
-| **List** | Явный YAML-список пар «параметр-значение» | Небольшое фиксированное множество окружений |
-| **Cluster** | Зарегистрированные в Argo CD кластеры (и их метки) | Раскатка стека на все/часть кластеров флота |
-| **Git: Directories** | Подкаталоги репозитория | Монорепозиторий: приложение на каждый каталог `apps/*` |
-| **Git: Files** | JSON/YAML-файлы в репозитории | Конфигурация как данные: параметры каждого приложения в отдельном файле |
-| **Pull Request** | Открытые MR/PR через API Git-хостинга | Preview-окружения на каждый merge request |
-| **SCM Provider** | Список репозиториев организации через API GitHub/GitLab/Bitbucket | Онбординг всех репозиториев с манифестами автоматически |
-| **Matrix** | Декартово произведение двух генераторов | Окружения × кластеры |
-| **Merge** | Объединение выводов нескольких генераторов с переопределением | Базовый список + локальные исключения/правки |
-| **Plugin** | Внешний сервис, возвращающий параметры по HTTP/RPC | Интеграция с внутренними реестрами сервисов |
-| **Cluster Decision Resource** | Внешний контроллер решает, на какие кластеры деплоить | Продвинутые сценарии размещения (placement) |
+| **List** | Явный статический массив элементов в YAML | Небольшие статические окружения (`dev`, `stage`, `prod`) с индивидуальными портами/репликами |
+| **Cluster** | Секреты целевых кластеров, зарегистрированные в Argo CD | Раскатка системного ПО (Ingress, мониторинг, CNI) по меткам кластеров во всем парке серверов |
+| **Git: Directories** | Структура подкаталогов в Git-репозитории | Монорепозиторий микросервисов: один каталог — одно приложение |
+| **Git: Files** | Файлы JSON или YAML в репозитории | Data-driven подход: каждый сервис описывается файлом параметров `config.json` / `values.yaml` |
+| **Pull Request** | API Git-хостинга (GitLab, Gitea, Bitbucket) | Автоматические динамические preview-окружения на каждый открытый Merge Request |
+| **SCM Provider** | API организации Git-хостинга | Сканирование всех репозиториев команды/организации и онбординг сервисов без ручных манифестов |
+| **Matrix** | Декартово произведение двух независимых генераторов | Мультипликация: `Кластеры × Микросервисы` или `Окружения × Регионы` |
+| **Merge** | Объединение списков с переопределением по ключам (`mergeKeys`) | Базовый шаблон для 20 кластеров + специфические оверлеи/реплики для 2 критичных кластеров |
+| **Plugin** | Внешний gRPC/HTTP сервис, возвращающий JSON-параметры | Интеграция с корпоративной CMDB, NetBox или внутренней базой инвентаря оборудования |
+| **Cluster Decision Resource** | Внешний CRD в Kubernetes (например, Open Cluster Management Placement) | Размещение нагрузок динамическими планировщиками на основе загрузки нод и топологии |
 
-Любой генератор можно дополнительно фильтровать **Post Selector**'ом — выражением над уже сгенерированными параметрами, что позволяет строить сложные условия без вложенности.
+---
 
-### Pull Request Generator
+### Pull Request Generator (Preview-окружения)
 
-Механика: контроллер опрашивает API Git-хостинга каждые `requeueAfterSeconds` (по умолчанию 30 минут — обязательно уменьшайте или настраивайте вебхук), для каждого подходящего MR рендерит приложение; при закрытии MR или потере соответствия критериям приложение **удаляется автоматически**. Доступные параметры шаблона: `.branch`, `.number`, `.head_sha`, `.author`, `.title` и другие.
+Генератор Pull Request опрашивает API Git-хостинга с периодичностью `requeueAfterSeconds` (по умолчанию 30 минут — в боевых условиях рекомендуется уменьшать до 180–300 секунд либо настраивать прием Webhook).
 
-Поддерживаемые провайдеры: `github`, `gitlab`, `gitea`, `bitbucketServer`, `bitbucket` (Cloud). Фильтрация — по меткам, состоянию (`pullRequestState`) или регулярным выражениям (`filters.branchMatch`, `filters.titleMatch`).
+Поддерживаемые on-premise и корпоративные провайдеры:
+- `gitlab`: локальные и self-hosted инсталляции GitLab CE/EE.
+- `gitea`: легковесный self-hosted Git-сервис.
+- `bitbucketServer`: корпоративный Bitbucket Data Center / Server.
+- `github`: Enterprise Server / Cloud.
 
-Жизненный цикл делает генератор идеальным для preview-окружений: создали MR — появилось окружение, смержили/закрыли — исчезло вместе со всеми ресурсами.
+Доступные переменные шаблона:
+- `{{ .number }}` — номер PR / MR.
+- `{{ .branch }}` — имя ветки источника (head branch).
+- `{{ .branch_slug }}` — DNS-безопасная строка из имени ветки (длина до 63 символов, спецсимволы заменены на `-`).
+- `{{ .target_branch }}` — целевая ветка (base branch, например `main`).
+- `{{ .head_sha }}` — полный SHA коммита, на который указывает PR.
+- `{{ .labels }}` — список меток PR (позволяет фильтровать окружения, например создавать только при наличии метки `deploy-preview`).
 
-### Шаблонизация: goTemplate
+---
+
+### Движок шаблонизации: goTemplate
+
+Современный режим шаблонизации включается директивой `spec.goTemplate: true`. Он исключает двусмысленности парсинга и дает доступ к 100+ функциям трансформации строк и структур данных:
 
 ```yaml
 spec:
   goTemplate: true
-  goTemplateOptions: ["missingkey=error"]   # ошибка вместо пустой строки при отсутствии поля
+  goTemplateOptions: ["missingkey=error"]
   template:
     metadata:
-      name: 'app-{{.values.env}}'
+      name: '{{ .name | lower | trunc 50 | trimSuffix "-" }}'
     spec:
+      project: default
       source:
-        # функции sprig доступны напрямую
-        targetRevision: '{{ .branch | trimPrefix "release/" | default "main" }}'
+        repoURL: '{{ .repoURL | default "https://git.internal.corp/platform/base.git" }}'
+        targetRevision: '{{ .revision | default "HEAD" }}'
+        helm:
+          values: |
+            replicaCount: {{ .replicas | default 2 }}
+            environment: {{ .env | quote }}
 ```
 
-Практические правила:
-- Всегда включайте `missingkey=error`: молчаливая подстановка пустых строк порождает приложения с невалидными именами и путями, которые трудно диагностировать.
-- Имена приложений обязаны быть DNS-совместимыми: нормализуйте параметры (`{{ .branch | lower | replace "/" "-" }}`).
-- Экранирование: если значение может содержать спецсимволы Go-шаблонов (например, содержимое файлов из Git Files Generator), используйте `{{ .value | quote }}` или функции `toJson`.
+Критические правила безопасного шаблонирования:
+1. **Опция `missingkey=error` обязательна**: по умолчанию Go template при отсутствии ключа подставляет пустую строку. Это приводит к созданию приложений с именами `app--prod` или пустым `repoURL`, которые ломают синхронизацию. `missingkey=error` немедленно переводит ApplicationSet в статус ошибки и логирует имя отсутствующего поля.
+2. **DNS-1123 валидация имен**: имена объектов `Application` и пространств имен должны состоять только из строчных букв, цифр и дефисов, начинаться и заканчиваться буквой/цифрой и не превышать 63 символов. Всегда используйте фильтры `lower`, `replace "/" "-"`, `trunc 50`.
+3. **Экранирование конфигураций**: при генерации многострочных values или вставке строк со спецсимволами используйте `quote` или `toJson`.
+
+---
 
 ### Политики жизненного цикла дочерних приложений
 
-Поле `spec.syncPolicy` управляет тем, как контроллер обращается с созданными приложениями:
+Поле `spec.syncPolicy` управляет тем, как контроллер обрабатывает расхождения между генератором и состоянием кластера:
 
-| Значение `applicationsSync` | Поведение | Когда использовать |
-| :--- | :--- | :--- |
-| `create-update` (по умолчанию) | Создает и обновляет; удаления вручную созданных не производит | Большинство случаев |
-| `create-update-delete` | Полный контроль: удаляет приложения, пропавшие из генератора | Строгие флоты, где источник — единственная правда |
-| `create-only` | Создает один раз, дальше приложения живут своей жизнью | Делегирование командам: шаблон задает стартовую точку |
+```yaml
+spec:
+  syncPolicy:
+    applicationsSync: create-update       # create-update | create-update-delete | create-only
+    preserveResourcesOnDeletion: true     # не удалять Application при удалении ApplicationSet
+```
 
-Дополнительно:
-- `preserveResourcesOnDeletion: true` — при удалении самого ApplicationSet дочерние приложения остаются в кластере (защита от случайного каскада; детали механизмов удаления — в [Удалении и очистке](./argocd_deletion_and_cleanup.md)).
-- Приложения можно защитить от prune-удалений индивидуально аннотацией `argocd.argoproj.io/sync-options: Prune=false`.
-- Устаревший механизм `strategy.spotStrategy`/`updatePolicy` заменен единой схемой `applicationsSync` — в новых манифестах используйте ее.
+| Режим `applicationsSync` | Создание | Обновление | Удаление пропавших | Сценарий применения |
+| :--- | :---: | :---: | :---: | :--- |
+| `create-update` (по умолчанию) | Да | Да | **Нет** | Безопасный production: случайное удаление каталога из Git не уничтожит приложение |
+| `create-update-delete` | Да | Да | **Да** | Строгий GitOps и preview-окружения: если ветка/каталог удалены, приложение вычищается |
+| `create-only` | Да | **Нет** | **Нет** | Bootstrap шаблонов: генерирует базовый Application, далее разработчики правят его независимо |
 
-### Безопасность ApplicationSet
+Удаление ресурсов и каскадность:
+- Если `preserveResourcesOnDeletion: false` (по умолчанию), удаление ApplicationSet запускает финализатор, который каскадно удаляет все порожденные объекты `Application`. Если у этих `Application` включен каскадный финализатор `resources-finalizer.argocd.argoproj.io`, Kubernetes **физически удалит все поды, сервисы и PVC в кластерах**!
+- Для production-инсталляций **всегда** выставляйте `preserveResourcesOnDeletion: true`.
 
-ApplicationSet — самая мощная абстракция Argo CD, и потому самая опасная при неправильном доступе:
+---
 
-1. **Только администраторы должны иметь право создавать/изменять ApplicationSet**: шаблон может сослаться на любой репозиторий и любой кластер, разрешенные на уровне сервера. RBAC-правило: `p, role:admin, applicationsets, *, */*, allow`.
-2. **Шаблонизация поля `project` в связке с PR/SCM-генераторами опасна**: внешний пользователь, создающий MR, потенциально управляет значением `project` — и, следовательно, обходит ограничения AppProject. Если поле проекта шаблонизировано, доверять можно только MR из защищенных веток/репозиториев.
-3. **Токены генераторов храните в Secrets** (`tokenRef.secretName`) и ограничивайте scope токена одним репозиторием/организацией — утечка такого токена раскрывает только метаданные MR, но не код.
-4. Ограничения на конечные ресурсы все равно enforced на уровне AppProject и RBAC приложений — ApplicationSet не отменяет [изоляцию проектов](./argocd_appproject_deep.md).
+### Безопасность и многопользовательская изоляция (SRE / DevOps)
+
+1. **Разграничение прав RBAC**:
+   - Манифест `ApplicationSet` обладает кластерными полномочиями: шаблон может указать любой целевой кластер и любой репозиторий.
+   - Обычные пользователи и команды разработчиков **не должны** иметь прав на создание/редактирование CRD `applicationsets`.
+   - В политиках Argo CD RBAC доступ ограничивается администраторами платформы:
+     ```csv
+     p, role:platform-admin, applicationsets, *, */*, allow
+     p, role:developer, applicationsets, get, */*, allow
+     ```
+2. **Уязвимость подмены проекта (`spec.template.spec.project`)**:
+   - Если генератор читает непроверенный источник (например, PR от внешних контрибьюторов или Git Files Generator, где разработчик сам правит `config.json`), параметр `{{ .project }}` нельзя брать напрямую из генератора.
+   - Злоумышленник может указать `project: default` вместо ограниченного `project: team-isolated`, обойдя белые списки кластеров и репозиториев ([подробнее в изоляции проектов](./argocd_appproject_deep.md)).
+   - Правило: жестко фиксируйте проект (`project: tenant-apps`) в самом манифесте ApplicationSet.
+3. **Хранение токенов Git**:
+   - Токены доступа к SCM должны монтироваться исключительно через ссылки на секреты:
+     ```yaml
+     tokenRef:
+       secretName: gitlab-token-secret
+       key: token
+     ```
+   - Токены должны обладать правами `read_repository` / `read_api` без права записи.
+
+---
 
 ## Практические сценарии
 
-### Сценарий 1: Preview-окружение на каждый merge request (PR Generator)
+### Сценарий 1: Preview-окружение для Merge Request (PR Generator в self-hosted GitLab)
 
-Задача: для каждого MR в репозиторий приложения автоматически развернуть изолированное окружение с адресом вида `pr-<номер>.preview.example.com`; при закрытии MR — удалить.
+**Задача:** Автоматически разворачивать изолированное окружение приложения в тестовом bare-metal кластере на каждый открытый MR с меткой `deploy-preview`. При закрытии или мерже MR — полностью удалять окружение и освобождать ресурсы.
+
+1. Создание секрета с токеном доступа GitLab:
 
 ```bash
-# 1. Токен для чтения MR
-kubectl create secret generic gitlab-mr-token -n argocd \
-  --from-literal=token='glpat-xxxxxxxxxxxx'
-# → secret/gitlab-mr-token created
+kubectl create secret generic gitlab-ci-token -n argocd \
+  --from-literal=token='glpat-SecretTokenReadOnly2026'
+# → secret/gitlab-ci-token created
 ```
+
+2. Манифест `ApplicationSet`:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: preview-envs
+  name: billing-preview-environments
   namespace: argocd
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    applicationsSync: create-update-delete   # удалять приложения при закрытии MR
+    preserveResourcesOnDeletion: false
   generators:
     - pullRequest:
         gitlab:
-          project: "42"                      # ID проекта
-          api: https://gitlab.example.com/   # для self-hosted
+          project: "158"                     # ID проекта в GitLab
+          api: https://git.internal.corp/    # Внутренний self-hosted GitLab
           tokenRef:
-            secretName: gitlab-mr-token
+            secretName: gitlab-ci-token
             key: token
-          pullRequestState: opened           # только открытые MR
+          pullRequestState: opened
           labels:
-            - deploy-preview                 # и только с меткой
-        requeueAfterSeconds: 300             # опрос раз в 5 минут
+            - deploy-preview
+        requeueAfterSeconds: 180             # Интервал резервного опроса (3 минуты)
   template:
     metadata:
-      name: 'preview-{{ .branch | lower | replace "/" "-" }}'
+      name: 'preview-billing-mr-{{ .number }}'
+      labels:
+        environment: preview
+        mr-id: '{{ .number }}'
     spec:
-      project: previews
+      project: previews                      # AppProject с жесткими лимитами квот
       source:
-        repoURL: https://gitlab.example.com/team/billing-api.git
-        targetRevision: '{{ .head_sha }}'    # ровно коммит MR
-        path: kubernetes/
+        repoURL: https://git.internal.corp/fintech/billing-service.git
+        targetRevision: '{{ .head_sha }}'
+        path: deploy/kustomize/overlays/preview
         kustomize:
-          namePrefix: 'pr-{{ .number }}-'
+          namePrefix: 'mr{{ .number }}-'
           images:
-            - 'ghcr.io/org/billing-api:pr-{{ .number }}'
+            - 'registry.internal.corp/fintech/billing:{{ .head_sha | trunc 8 }}'
       destination:
-        server: https://kubernetes.default.svc
-        namespace: 'preview-pr-{{ .number }}'
+        server: https://kubernetes-test.internal.corp:6443
+        namespace: 'preview-billing-{{ .number }}'
       syncPolicy:
         automated:
           prune: true
@@ -179,277 +272,520 @@ spec:
           - CreateNamespace=true
 ```
 
-Проверка полного цикла:
+3. Проверка жизненного цикла:
 
 ```bash
-# Разработчик открывает MR с меткой deploy-preview
-sleep 320 && argocd app list | grep preview-
-# → preview-feature-new-api   previews   Synced   Healthy
+# Разработчик выставил метку deploy-preview в MR #104
+kubectl get applications -n argocd -l mr-id=104
+# → NAME                     PROJECT    SYNC STATUS   HEALTH STATUS
+# → preview-billing-mr-104   previews   Synced        Healthy
 
-kubectl get ingress -n preview-pr-42
-# → NAME              HOSTS                        ADDRESS
-# → pr-42-billing     pr-42.preview.example.com    203.0.113.10
+# Проверка созданных ресурсов в целевом кластере
+kubectl --context=k8s-test get pods -n preview-billing-104
+# → NAME                               READY   STATUS    RESTARTS   AGE
+# → mr104-billing-58797f77b8-x2k41     1/1     Running   0          2m
 
-# MR закрыт — приложение исчезнет само после следующего опроса
-sleep 320 && argocd app get preview-feature-new-api
-# → ERROR: application 'preview-feature-new-api' not found
+# После закрытия MR в GitLab контроллер удаляет Application
+kubectl logs -n argocd deployment/argocd-applicationset-controller --tail=20 | grep "mr-104"
+# → time="2026-10-11T21:42:00Z" level=info msg="Deleting Application preview-billing-mr-104 as PR #104 is closed"
 ```
 
-Чтобы реакция была мгновенной, настройте вебхук Git-хостинга на endpoint ApplicationSet-контроллера (`/api/webhook` того же сервиса, что и основной Argo CD) — тогда опрос остается лишь страховкой.
+---
 
-Богатая инфраструктура для preview (отдельные БД, очереди) поверх этого паттерна разбирается в [динамических окружениях с Crossplane](./dynamic_environments_crossplane.md).
+### Сценарий 2: Раскатка системного платформенного стека (Cluster Generator)
 
-### Сценарий 2: Раскатка платформенного стека на все кластера (Cluster Generator)
-
-Задача: monitoring, ingress-контроллер и политики должны присутствовать в каждом кластере флота; новые кластеры получают стек автоматически после регистрации.
+**Задача:** Обеспечить единый набор системных сервисов (например, Node Exporter, Promtail, локальный Ingress NGINX) на всех подключенных bare-metal кластерах. При добавлении нового кластера стек должен раскатываться автоматически.
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: platform-stack
+  name: fleet-node-monitoring
   namespace: argocd
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    applicationsSync: create-update          # не удалять при временном сбое связи
+    preserveResourcesOnDeletion: true        # сохранить мониторинг при манипуляциях с AppSet
   generators:
     - clusters:
         selector:
           matchExpressions:
-            - key: tier
+            - key: environment
               operator: In
-              values: ["platform", "workload"]   # кроме служебных
+              values: ["staging", "production"]
+            - key: node-exporter-enabled
+              operator: NotIn
+              values: ["false"]
   template:
     metadata:
-      name: 'stack-{{ .name }}'
+      name: 'node-exporter-{{ .name }}'
     spec:
-      project: platform
+      project: platform-system
       sources:
-        - repoURL: https://github.com/org/fleet-infra.git
+        - repoURL: https://git.internal.corp/infra/k8s-platform.git
           targetRevision: main
-          path: 'platform/{{ .metadata.labels.environment }}'   # overlay по окружению кластера
-          kustomize:
-            patches:
-              - target: { kind: ConfigMap, name: cluster-info }
-                patch: |-
-                  - op: replace
-                    path: /data/clusterName
-                    value: {{ .name }}
+          path: manifests/system/node-exporter
+          helm:
+            values: |
+              clusterName: {{ .name | quote }}
+              datacenter: {{ index .metadata.labels "datacenter" | default "dc-default" | quote }}
       destination:
-        server: '{{ .server }}'                   # адрес конкретного spoke
-        namespace: platform
+        server: '{{ .server }}'
+        namespace: monitoring-system
       syncPolicy:
         automated:
           prune: true
           selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
 ```
 
-Проверка:
+Проверка применения:
 
 ```bash
+# Список целевых кластеров и их меток
 argocd cluster list
-# → SERVER                          NAME         VERSION   LABELS
-# → https://prod-eu.k8s.internal    prod-eu      1.35      tier=workload,environment=prod
-# → https://staging.k8s.internal    staging      1.36      tier=platform,environment=staging
+# → SERVER                                      NAME        STATUS      LABELS
+# → https://k8s-core-dc1.internal.corp:6443     dc1-prod    Successful  environment=production,datacenter=dc1
+# → https://k8s-core-dc2.internal.corp:6443     dc2-prod    Successful  environment=production,datacenter=dc2
 
-kubectl get applications -n argocd -l argocd.argoproj.io/application-set-name=platform-stack
-# → NAME            SYNC STATUS   HEALTH
-# → stack-prod-eu   Synced        Healthy
-# → stack-staging   Synced        Healthy
+# Проверка созданных приложений мониторинга
+kubectl get applications -n argocd -l argocd.argoproj.io/application-set-name=fleet-node-monitoring
+# → NAME                    SYNC STATUS   HEALTH STATUS
+# → node-exporter-dc1-prod  Synced        Healthy
+# → node-exporter-dc2-prod  Synced        Healthy
 ```
 
-Механика регистрации самих кластеров, выбор топологии и изоляция fleet-конфигурации разобраны в [мульти-кластерных паттернах](../Concepts/multi_cluster_patterns.md).
+---
 
-### Сценарий 3: Монорепозиторий приложений (Git Directory Generator)
+### Сценарий 3: Монорепозиторий микросервисов (Git Directory Generator)
 
-Задача: команда добавляет каталог `apps/<новый-сервис>` — приложение появляется без изменения инфраструктурного кода.
+**Задача:** Автоматически регистрировать приложения при появлении нового подкаталога в Git-каталоге `services/*`, игнорируя служебные каталоги и шаблоны.
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: monorepo-apps
+  name: backend-services-monorepo
   namespace: argocd
 spec:
   goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    applicationsSync: create-update-delete
+    preserveResourcesOnDeletion: true
   generators:
     - git:
-        repoURL: https://github.com/org/apps-monorepo.git
-        revision: main
+        repoURL: https://git.internal.corp/backend/monorepo.git
+        revision: master
         directories:
-          - path: apps/*
-          - path: apps/system-*       # второй путь с ведущим дефисом = исключение
+          - path: services/*
+          - path: services/_*                # исключение вспомогательных каталогов
+            exclude: true
+          - path: services/shared-libs       # исключение библиотек общего пользования
             exclude: true
   template:
     metadata:
-      name: '{{ .path.basename }}'
+      name: 'svc-{{ .path.basename }}'
     spec:
-      project: default
+      project: backend
       source:
-        repoURL: https://github.com/org/apps-monorepo.git
-        targetRevision: main
-        path: '{{ .path.path }}/overlays/prod'
+        repoURL: https://git.internal.corp/backend/monorepo.git
+        targetRevision: master
+        path: '{{ .path.path }}/k8s'
       destination:
         server: https://kubernetes.default.svc
-        namespace: '{{ .path.basename }}'
+        namespace: 'backend-{{ .path.basename }}'
       syncPolicy:
         automated:
           prune: true
           selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
 ```
 
-Переменная `.path.path` содержит полный путь (`apps/billing`), `.path.basename` — последний сегмент (`billing`). Удаление каталога из Git приведет к удалению приложения контроллером (при политике `create-update-delete`) либо останется осиротевшим (при `create-update`) — выбирайте политику осознанно.
+Параметры пути, предоставляемые генератором:
+- `{{ .path.path }}`: полный путь относительно корня репозитория (например, `services/auth-service`).
+- `{{ .path.basename }}`: имя конечного каталога (например, `auth-service`).
+- `{{ .path.filename }}`: имя родительского каталога или файла.
 
-### Сценарий 4: Параметры приложений как данные (Git Files Generator)
+---
 
-Задача: владельцы сервисов описывают желаемые параметры в собственных файлах, платформа читает их без ревью инфраструктурного кода.
+### Сценарий 4: Параметры как данные (Git Files Generator)
 
-```yaml
-# apps/billing/config.json в монорепозитории
-{ "team": "finance", "replicas": 3, "image": "ghcr.io/org/billing:v1.9.2" }
+**Задача:** Делегировать командам настройку параметров приложений без прямого доступа к манифестам Kubernetes. Команда коммитит в репозиторий файл `app-config.json` с описанием реплик, образов и ресурсов.
+
+Содержимое файла `services/payment-gateway/app-config.json`:
+
+```json
+{
+  "appName": "payment-gateway",
+  "team": "billing-team",
+  "replicas": 4,
+  "ingressHost": "payments.internal.corp",
+  "resources": {
+    "requests": { "cpu": "200m", "memory": "512Mi" },
+    "limits": { "cpu": "1000m", "memory": "1Gi" }
+  }
+}
 ```
+
+Манифест `ApplicationSet`:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: data-driven-apps
+  name: data-driven-microservices
   namespace: argocd
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
     - git:
-        repoURL: https://github.com/org/apps-monorepo.git
+        repoURL: https://git.internal.corp/deployments/apps-configs.git
         revision: main
         files:
-          - path: 'apps/*/config.json'
+          - path: "services/*/app-config.json"
   template:
     metadata:
-      name: '{{ .path.basename }}'
+      name: '{{ .appName }}'
     spec:
-      project: '{{ .team }}'
+      project: default
       source:
-        repoURL: https://github.com/org/charts.git
-        chart: universal-service
-        targetRevision: 2.4.1
+        repoURL: https://git.internal.corp/helm/universal-microservice.git
+        chart: universal-microservice
+        targetRevision: 1.8.0
         helm:
-          parameters:
-            - name: image.tag
-              value: '{{ .image }}'
-            - name: replicaCount
-              value: '{{ .replicas }}'
+          values: |
+            replicaCount: {{ .replicas }}
+            ingress:
+              enabled: true
+              host: {{ .ingressHost | quote }}
+            resources:
+              requests:
+                cpu: {{ .resources.requests.cpu | quote }}
+                memory: {{ .resources.requests.memory | quote }}
+              limits:
+                cpu: {{ .resources.limits.cpu | quote }}
+                memory: {{ .resources.limits.memory | quote }}
       destination:
         server: https://kubernetes.default.svc
-        namespace: '{{ .path.basename }}'
+        namespace: 'app-{{ .appName }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
 ```
 
-Файл целиком становится набором параметров шаблона: `.team`, `.replicas`, `.image` — плюс стандартные `.path.*`. Это основа паттерна self-service: команды меняют только свой JSON, PR проходит ревью владельцев каталога по CODEOWNERS.
+---
 
-### Сценарий 5: Комбинирование генераторов (Matrix) и исключений (Merge)
+### Сценарий 5: Матричная генерация (Matrix) и переопределения (Merge)
 
-Матрица «приложение × кластер» и поэтапная раскатка по группам кластеров подробно показаны в [прогрессивной синхронизации](./synchronization/scenarios/progressive_sync.md) (Rolling Sync поверх Matrix Generator). Генератор Merge полезен, когда базовый список нужно переопределить точечно:
-
-```yaml
-generators:
-  - list:
-      elements:
-        - env: dev
-          replicas: "1"
-        - env: prod
-          replicas: "5"
-  - merge:
-      mergeKeys:
-        - env
-      generators:
-        - list:
-            elements:
-              - env: prod
-                replicas: "7"      # переопределяет базовое значение для prod
-```
-
-### Сценарий 6: Защита продакшена при работе с ApplicationSet
-
-Комбинация политик для безопасной эксплуатации:
+**Задача:** Развернуть набор приложений во всех окружениях (`staging`, `production`) на нескольких датацентрах, при этом для production в DC2 переопределить количество реплик.
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: production-apps
+  name: fleet-matrix-deploy
   namespace: argocd
 spec:
   goTemplate: true
-  syncPolicy:
-    applicationsSync: create-update        # не удалять приложения, выпавшие из генератора
-    preserveResourcesOnDeletion: true      # удаление ApplicationSet не трогает приложения
+  goTemplateOptions: ["missingkey=error"]
   generators:
-    - list:
-        elements:
-          - name: payments
-            namespace: payments
+    # Merge генератор объединяет базовую матрицу и точечные переопределения
+    - merge:
+        mergeKeys:
+          - app
+          - clusterName
+        generators:
+          # Базовая матрица: Сервисы × Кластеры
+          - matrix:
+              generators:
+                - list:
+                    elements:
+                      - app: user-api
+                        replicas: "2"
+                      - app: order-api
+                        replicas: "3"
+                - clusters:
+                    selector:
+                      matchLabels:
+                        tier: workload
+          # Точечные оверлеи для высоконагруженного кластера dc2-prod
+          - list:
+              elements:
+                - app: order-api
+                  clusterName: dc2-prod
+                  replicas: "10"             # переопределяет replicas для order-api на dc2-prod
   template:
     metadata:
-      annotations:
-        argocd.argoproj.io/manifest-generate-cm-annotation: ""   # см. типовые проблемы
+      name: '{{ .app }}-{{ .name }}'
     spec:
-      project: critical
-      # ...
+      project: default
+      source:
+        repoURL: https://git.internal.corp/helm/services.git
+        chart: '{{ .app }}'
+        targetRevision: 1.0.0
+        helm:
+          parameters:
+            - name: replicaCount
+              value: '{{ .replicas }}'
+      destination:
+        server: '{{ .server }}'
+        namespace: 'services'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+```
+
+---
+
+### Сценарий 6: Отказоустойчивая конфигурация для Production
+
+**Задача:** Настроить управление флотом критических приложений с гарантией защиты от случайного удаления, опечаток в ветках Git и блокировкой непреднамеренного каскадного удаления сервисов.
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: core-banking-fleet
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    applicationsSync: create-update          # исключено автоматическое удаление
+    preserveResourcesOnDeletion: true        # запрет каскадного удаления дочерних приложений
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            criticality: tier-0
+  template:
+    metadata:
+      name: 'core-banking-{{ .name }}'
+      annotations:
+        # Предотвращает каскадное удаление физических ресурсов внутри k8s при удалении Application
+        argocd.argoproj.io/sync-options: Prune=false
+    spec:
+      project: core-banking                  # изолированный AppProject с проверкой подписей коммитов
+      source:
+        repoURL: https://git.internal.corp/banking/core-ledger.git
+        targetRevision: v2.14.2              # жестко зафиксированный релизный тег
+        path: k8s/overlays/production
+      destination:
+        server: '{{ .server }}'
+        namespace: banking-production
+      syncPolicy:
+        # Автоматический синк без prune для исключения случайного удаления баз и очередей
+        automated:
+          prune: false
+          selfHeal: true
 ```
 
 Проверка защиты:
 
 ```bash
-# Попытка удалить ApplicationSet — приложения остаются
-kubectl delete applicationset production-apps -n argocd && sleep 15
-argocd app list | grep payments
-# → payments   critical   Synced   Healthy    ← живо благодаря preserveResourcesOnDeletion
+# Удаление ApplicationSet не приводит к удалению дочерних Application
+kubectl delete applicationset core-banking-fleet -n argocd
+# → applicationset.argoproj.io "core-banking-fleet" deleted
+
+argocd app list -l project=core-banking
+# → NAME                         PROJECT        SYNC STATUS   HEALTH STATUS
+# → core-banking-dc1-prod        core-banking   Synced        Healthy
+# → core-banking-dc2-prod        core-banking   Synced        Healthy
+# Приложения остались активными благодаря preserveResourcesOnDeletion: true
 ```
+
+---
+
+## Операции, администрирование и мониторинг
+
+### Параметры запуска контроллера (SRE / Sysadmin)
+
+Контроллер ApplicationSet запускается как Kubernetes Deployment `argocd-applicationset-controller` в пространстве имен `argocd`. Параметры конфигурации передаются через аргументы командной строки или ConfigMap `argocd-cmd-params-cm`:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  # Включение поэтапного выката Progressive Syncs
+  applicationsetcontroller.enable.progressive.syncs: "true"
+  # Настройка параллелизма reconciler workers (по умолчанию 50)
+  applicationsetcontroller.concurrent.reconciliations: "30"
+  # Адрес для экспорта метрик Prometheus
+  applicationsetcontroller.metrics.addr: ":8080"
+  # Лимит запросов к Git-серверу для предотвращения DoS
+  applicationsetcontroller.git.submodule.enabled: "false"
+```
+
+Основные флаги запуска контейнера контроллера:
+- `--enable-progressive-syncs`: включает поддержку `RollingSync` стратегий ([Progressive Syncs](./synchronization/scenarios/progressive_sync.md)).
+- `--concurrent-reconciliations <int>`: число воркеров сверки ApplicationSet (при наличии 100+ AppSet увеличьте с 10 до 30–50).
+- `--policy <sync|create-only|create-update|create-delete>`: глобальное переопределение политики создания/удаления приложений для всех ApplicationSet кластера.
+- `--metrics-addr :8080`: порт для сбора метрик Prometheus.
+- `--probe-addr :8081`: порт liveness/readiness проб Kubernetes.
+
+### Мониторинг и метрики Prometheus
+
+Контроллер отдает стандартные метрики в формате Prometheus на порту `8080` по пути `/metrics`.
+
+| Метрика | Тип | Описание и применение в алертах |
+| :--- | :--- | :--- |
+| `argocd_appset_reconcile_total` | Counter | Общее количество циклов сверки (лейблы: `name`, `result="success"\|"error"`) |
+| `argocd_appset_reconcile_duration_seconds` | Histogram | Длительность цикла сверки контроллера. Рост p99 указывает на троттлинг Git API |
+| `argocd_appset_generator_reconcile_duration_seconds` | Histogram | Длительность опроса конкретного генератора (`generator_type="pullRequest"\|"git"\|...`) |
+| `argocd_appset_application_changes_total` | Counter | Количество изменений в дочерних Application (`change="create"\|"update"\|"delete"`) |
+
+Пример Prometheus AlertRule для мониторинга сбоев генераторов:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: argocd-applicationset-alerts
+  namespace: argocd
+spec:
+  groups:
+    - name: argocd-applicationset
+      rules:
+        - alert: ApplicationSetReconcileErrors
+          expr: |
+            rate(argocd_appset_reconcile_total{result="error"}[5m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+            team: platform-sre
+          annotations:
+            summary: "Ошибки сверки ApplicationSet {{ $labels.name }}"
+            description: "Контроллер не может отрендерить или обновить дочерние приложения более 10 минут. Проверьте токены SCM, синтаксис goTemplate или доступность Git."
+```
+
+### Эксплуатационные команды (CLI Reference)
+
+```bash
+# 1. Проверка статуса условий и ошибок генерации ApplicationSet
+kubectl describe applicationset fleet-matrix-deploy -n argocd
+# Секция Status -> Conditions отображает точные сообщения об ошибках парсинга
+
+# 2. Форсирование немедленного пересканирования источников (Hard Refresh)
+# Контроллер перерендерит шаблон без ожидания таймера requeueAfterSeconds
+kubectl annotate applicationset billing-preview-environments -n argocd \
+  argocd.argoproj.io/refresh="hard" --overwrite
+# → applicationset.argoproj.io/billing-preview-environments annotated
+
+# 3. Поиск всех приложений, созданных конкретным ApplicationSet
+kubectl get applications -n argocd \
+  -l argocd.argoproj.io/application-set-name=fleet-matrix-deploy \
+  -o custom-columns=NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status
+# → NAME                 SYNC     HEALTH
+# → user-api-dc1-prod    Synced   Healthy
+# → order-api-dc1-prod   Synced   Healthy
+
+# 4. Проверка логов контроллера на предмет ошибок валидации Go-шаблонов
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-applicationset-controller \
+  --tail=100 | grep -E "error|level=error"
+```
+
+---
+
+## Диагностика и устранение неисправностей (Troubleshooting)
+
+### Сводная таблица типовых сбоев
+
+| Симптом / Ошибка | Первопричина | Метод диагностики и исправление |
+| :--- | :--- | :--- |
+| `failed to execute template: map has no entry for key "..."` | Отсутствует ключ в источнике данных при включенном `missingkey=error` | 1. Выполните `kubectl describe applicationset <name>`.<br>2. Проверьте имена полей в файле JSON/YAML.<br>3. Используйте функцию Sprig `default`: `{{ .env \| default "dev" }}`. |
+| `Application ... is invalid: metadata.name: Invalid value` | Имя приложения нарушает RFC 1123 (содержит `/`, `_`, прописные буквы или >63 знаков) | В шаблоне нормализуйте имя:<br>`{{ .branch \| lower \| replace "/" "-" \| trunc 50 }}`. |
+| `HTTP 429 Too Many Requests` в логах при работе PR/SCM генератора | Исчерпан лимит запросов к API GitLab/Gitea/GitHub из-за частого опроса | 1. Увеличьте `requeueAfterSeconds` (минимум 300–600 с).<br>2. Настройте отправку Webhook от Git-хостинга на endpoint Argo CD. |
+| При закрытии MR preview-приложение не удаляется | В `spec.syncPolicy` установлено значение `create-update` вместо `create-update-delete` | Измените манифест: установите `spec.syncPolicy.applicationsSync: create-update-delete`. |
+| После правки шаблона в ApplicationSet приложения не обновляются | Кэширование параметров или длительный интервал реконсиляции | 1. Добавьте аннотацию `argocd.argoproj.io/refresh: hard`.<br>2. Проверьте права сервис-аккаунта контроллера на обновление ресурсов `Application`. |
+| Дочернее приложение создается в ошибочном namespace | Отсутствует параметр создания namespace в политике синхронизации | Добавьте в `spec.template.spec.syncPolicy.syncOptions` директиву `- CreateNamespace=true`. |
+| `Permission denied` при создании ApplicationSet пользователем | Отсутствуют права в кластерном RBAC Kubernetes или Argo CD RBAC | Пользователь должен обладать кластерными правами на CRD `applicationsets.argoproj.io`. Выдавайте только администраторам. |
+
+### Пошаговый алгоритм отладки зависшего генератора
+
+Если ApplicationSet не генерирует ожидаемые приложения:
+1. **Проверьте условия в CRD**:
+   ```bash
+   kubectl get applicationset <имя-appset> -n argocd -o yaml
+   ```
+   В поле `status.conditions` ищите тип `ErrorOccurred` или `ParametersGenerated`.
+2. **Проверьте сетевую связность и аутентификацию SCM**:
+   Если используется self-hosted GitLab/Gitea, убедитесь, что Pod `argocd-applicationset-controller` имеет доступ к корпоративному Git через внутренний DNS и HTTP-прокси, а сертификат TLS доверен кластеру (вмонтирован в CA trust store).
+3. **Проверьте фильтры Post Selector**:
+   Если используется `selector.matchLabels` или `postSelector`, временно закомментируйте фильтр, чтобы убедиться, что генератор вообще отдает записи.
+4. **Проверьте права на AppProject**:
+   Если шаблон создает приложение в проекте `payments`, убедитесь, что в этом проекте разрешен доступ к целевому кластеру и репозиторию ([диагностика проектов](./argocd_appproject_deep.md)).
+
+---
+
+## Лучшие практики (Best Practices)
+
+1. **Всегда включайте `spec.goTemplate: true` и `missingkey=error`**: Устаревший fasttemplate скрывает ошибки и подставляет пустые строки. Строгая валидация предотвращает развертывание испорченных конфигураций.
+2. **Защищайте Production через `preserveResourcesOnDeletion: true`**: Случайное удаление манифеста `ApplicationSet` в Git не должно приводить к каскадной ликвидации продакшн-сервисов.
+3. **Ограничивайте права на создание ApplicationSet**: Предоставляйте доступ к `kind: ApplicationSet` только инженерам платформы через жесткий кластерный RBAC.
+4. **Никогда не берите `project` из недоверенных данных генератора**: Фиксируйте имя проекта жесткой константой, чтобы внешний PR или конфигурационный файл не мог развернуть нагрузку в чужой изолированный namespace.
+5. **Используйте Webhook вместо агрессивного Polling**: Для PR и Git генераторов настраивайте вебхуки на `/api/webhook`. Это снижает нагрузку на Git-сервер и обеспечивает мгновенную реакцию на коммиты.
+6. **Нормализуйте все генерируемые имена через Sprig**: Все имена объектов и пространств имен должны принудительно обрезаться (`trunc 50`) и приводиться к нижнему регистру (`lower`) во избежание сбоев валидации Kubernetes API.
+7. **Используйте `requeueAfterSeconds` осознанно**: Не выставляйте опрос чаще одного раза в 180 секунд без реальной необходимости, чтобы не исчерпать квоты внутренних API.
+8. **Разделяйте генерацию инфраструктуры и бизнес-приложений**: Не объединяйте раскатку Ingress/CNI и приложений команд в один гигантский ApplicationSet.
+9. **Контролируйте размер Matrix Generator**: Декартово произведение 20 кластеров на 50 веток генерирует 1000 объектов `Application`, создавая пиковую нагрузку на etcd и Kubernetes API.
+10. **Интегрируйте Progressive Syncs для критических раскаток**: Для обновлений на десятках кластеров используйте стратегию `RollingSync` с canary-шагами вместо одновременного обновления всего флота.
+
+---
 
 ## Дополнительная информация
 
-### App-of-Apps против ApplicationSet
+### Сравнение подходов: App-of-Apps и ApplicationSet
 
-| Критерий | App-of-Apps | ApplicationSet |
+| Критерий сравнения | Паттерн App-of-Apps | Контроллер ApplicationSet |
 | :--- | :--- | :--- |
-| Механика | Корневой Application указывает на каталог с манифестами других Application | Генераторы + шаблон, приложения создает контроллер |
-| Добавление члена | Коммит нового Application-YAML в Git | Появление источника (каталог, MR, кластер, элемент списка) |
-| Динамика | Статичен: состав меняется только коммитами | Динамичен: реагирует на внешние события (MR, новые кластеры) |
-| Владение | Приложения независимы | Приложения принадлежат ApplicationSet и им управляются |
-| Когда выбирать | Bootstrapping самого Argo CD, явный контроль состава | Однотипные множества, self-service, флоты |
+| **Механизм управления** | Корневой объект `Application`, разворачивающий дочерние манифесты `Application` из Git | Специализированный контроллер, генерирующий `Application` на основе внешних источников данных |
+| **Добавление нового сервиса** | Ручное написание и коммит нового YAML-файла `Application` в репозиторий | Автоматическое обнаружение по факту появления каталога, файла, MR или кластера |
+| **Динамические сценарии (PR)** | Не поддерживаются (требуют внешних скриптов в CI/CD) | Нативная поддержка через Pull Request Generator |
+| **Масштабирование на флот** | Сложное сопровождение сотен файлов манифестов | Один декларативный манифест масштабируется на сотни кластеров |
+| **Порог входа** | Минимальный (стандартный синтаксис Argo CD) | Средний (требуется понимание генераторов и Go-шаблонов) |
+| **Рекомендуемая сфера** | Начальный bootstrap самого Argo CD и базовых системных чартов | Автоматизация флота кластеров, self-service платформы, динамические окружения |
 
-Паттерны не конкурируют, а вкладываются: ApplicationSet часто живет внутри корневого приложения App-of-Apps.
+### Связанные документы
 
-### Типовые проблемы и их решение
+- [Обзор архитектуры Argo CD](./argocd_overview.md) — базовые компоненты, цикл синхронизации и паттерн App-of-Apps.
+- [Установка и базовая настройка Argo CD](./argocd_installation_and_setup.md) — развертывание управляющего hub-кластера.
+- [Глубокое погружение в RBAC](./argocd_rbac_deep.md) — настройка политик разграничения доступа к ApplicationSet и проектам.
+- [Изоляция и AppProject](./argocd_appproject_deep.md) — разграничение доступа к кластерам и пространствам имен.
+- [Прогрессивная синхронизация (Progressive Syncs)](./synchronization/scenarios/progressive_sync.md) — стратегии RollingSync и канареечные раскатки на флоте.
+- [Удаление и очистка ресурсов](./argocd_deletion_and_cleanup.md) — механика финализаторов, каскадное удаление и защита ресурсов.
+- [Мультикластерные паттерны GitOps](../Concepts/multi_cluster_patterns.md) — сетевые топологии и управление парком кластеров.
 
-| Симптом | Причина | Решение |
-| :--- | :--- | :--- |
-| `initial generation attempted... failed` в событиях ApplicationSet | Ошибка шаблона или генератора (опечатка в параметре, недоступен API Git) | `kubectl describe applicationset <name>` — секция условий содержит точную причину; проверьте `missingkey=error` и токены |
-| Приложение называется `app-` или путь пустой | Параметр отсутствует, fasttemplate подставил пустоту | Включить `goTemplate: true` c `missingkey=error` |
-| MR закрыт, но приложение висит | Политика `applicationsSync: create-update` не удаляет пропавшие | Либо `create-update-delete`, либо ручная чистка; для preview-генератора удаление работает всегда |
-| PR Generator не замечает новый MR часами | Дефолтный интервал опроса 30 минут | `requeueAfterSeconds: 300` + вебхук на `/api/webhook` |
-| `Permission denied` при создании ApplicationSet пользователем | RBAC: право на `applications` не дает прав на `applicationsets` | Добавить отдельную политику `p, ..., applicationsets, ...` — выдавать только администраторам |
-| Внешний MR создал приложение в чужом проекте | Шаблонизированное поле `project` берется из данных MR | Не шаблонизировать `project` для недоверенных источников либо ограничить MR защищенными ветками |
-| После правки шаблона дочерние приложения не обновились | Кэш рендеринга / интервал реконсиляции | Аннотация `argocd.argoproj.io/refresh: hard` на ApplicationSet либо ожидание интервала контроллера |
-
-**Связанные документы:**
-- [Динамические окружения с Crossplane](./dynamic_environments_crossplane.md) — богатые preview-окружения с БД и S3.
-- [Прогрессивная синхронизация](./synchronization/scenarios/progressive_sync.md) — Rolling Sync для поэтапной раскатки на флоте.
-- [Обзор ArgoCD](./argocd_overview.md) — архитектура и паттерн App-of-Apps.
+---
 
 ## Вопросы для собеседования
 
-### Чем Pull Request Generator отличается от SCM Provider?
-PR Generator опрашивает API открытых merge request'ов одного репозитория — классика preview-окружений на каждый MR. SCM Provider перечисляет **репозитории** организации (GitLab/GitHub/Bitbucket) и создает приложение на каждый подходящий репо — сценарий «мультитенантный монорепо-хостинг», когда команды приносят свои репозитории.
+### 1. Как устроен жизненный цикл дочерних приложений при удалении самого ApplicationSet?
+**Ответ:** По умолчанию контроллер регистрирует финализатор на ресурсе `ApplicationSet`. При удалении `ApplicationSet` контроллер каскадно удаляет все созданные им объекты `Application`. Если у этих `Application` настроен стандартный финализатор ресурсов `resources-finalizer.argocd.argoproj.io`, Argo CD удалит все связанные нагрузки в Kubernetes. Чтобы разорвать каскад и сохранить работающие приложения при удалении или пересоздании ApplicationSet, в спецификации манифеста задается параметр `spec.syncPolicy.preserveResourcesOnDeletion: true`.
 
-### Что произойдет с дочерними приложениями при удалении ApplicationSet?
-По умолчанию — каскадное удаление всех сгенерированных Application (и их ресурсов). Защита: `preserveResourcesOnDeletion: true` оставляет приложения жить; дополнительно `policy.annotations` управляют тем, что происходит при потере связи с генератором.
+### 2. Почему опасно динамически шаблонизировать поле `spec.template.spec.project`?
+**Ответ:** Если значение для `project` берется из ненадежного источника данных (например, из PR открытого репозитория или пользовательского `config.json`), автор изменений может подставить привилегированный проект (например, `default` или `platform-admins`). Это позволит приложению развернуться в защищенные пространства имен (например, `kube-system`) или на production-кластеры в обход установленных в AppProject ограничений белых списков. Для предотвращения таких атак проект должен быть жестко зафиксирован в манифесте ApplicationSet.
 
-### Зачем включать goTemplate вместо legacy fasttemplate?
-Sprig-функции в шаблонах (default, upperCase, toJson), строгий контроль отсутствующих ключей (`missingkey=error` вместо молчаливой подстановки пустой строки) и валидация параметров до рендеринга — меньше «приложение называется app-» сюрпризов.
+### 3. Чем генератор Matrix отличается от генератора Merge?
+**Ответ:** Генератор **Matrix** выполняет декартово произведение (Cartesian product) двух генераторов. Например, 3 кластера × 4 микросервиса сформируют 12 приложений. Генератор **Merge** берет результат работы первого (базового) генератора и обновляет или дополняет параметры записей на основе совпадения ключей `mergeKeys` со вторым генератором. Это позволяет задать единые дефолтные параметры для десятков кластеров и точечно переопределить значения (например, реплики или URL) для выделенных кластеров.
 
-### Как не дать ApplicationSet задеть прод?
-Фиксированный `project` в шаблоне (не из данных генератора), AppProject с жесткими destinations/resource whitelist'ами, sync windows для prod, RollingSync с maxUpdate для поэтапной раскатки, RBAC: права на `applicationsets` только у администраторов платформы.
+### 4. Для чего включается параметр `spec.goTemplateOptions: ["missingkey=error"]`?
+**Ответ:** По умолчанию Go-шаблонизатор при обращении к несуществующему ключу объекта возвращает пустую строку без генерации ошибки. В результате формируются некорректные имена (`app--staging`), пустые пути к репозиториям или дефектные селекторы, которые приводят к труднодиагностируемым сбоям в работе контроллера. Опция `missingkey=error` заставляет рендерер немедленно завершать генерацию с явной ошибкой в статусе ApplicationSet при отсутствии любого ожидаемого параметра.
 
-### Назовите разницу между Matrix и Merge генераторами.
-Matrix комбинирует параметры двух генераторов декартовым произведением (кластеры × ветки). Merge берет первый генератор как базу и **исключает/добавляет** элементы по правилам дополнительных — способ вырезать проблемные кластеры или переопределить параметры точечно.
+### 5. Как защитить Git-хостинг от исчерпания API rate limits при использовании PR Generator на крупном флоте?
+**Ответ:** Основные меры:
+1. Увеличить значение `requeueAfterSeconds` (например, с дефолтных или частых опросов до 300–600 секунд).
+2. Настроить входящие Webhooks от GitLab/Gitea/GitHub на контроллер Argo CD (endpoint `/api/webhook`), что позволяет перевести обнаружение событий в режим push, оставив периодический опрос только в качестве страховки.
+3. Использовать фильтрацию по меткам (`labels`) или регулярным выражениям веток (`branchMatch`), чтобы контроллер не опрашивал метаданные всех открытых запросов в организации.

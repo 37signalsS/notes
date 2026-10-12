@@ -1,19 +1,24 @@
 # Развертывание Apache Kafka с помощью Ansible
 
-**Автоматизация развертывания Kafka через Ansible** — это стандарт де-факто для управления жизненным циклом (Lifecycle Management) кластеров на выделенных серверах (Bare Metal) или виртуальных машинах. Использование Ansible обеспечивает идемпотентность конфигурации, упрощает масштабирование и позволяет внедрять лучшие практики безопасности (TLS, SASL) централизованно.
+**Актуально для:** Apache Kafka 3.9.x / 4.0+ (KRaft), Ansible core 2.16+
+
+**Автоматизация развертывания Kafka через Ansible** — это стандарт де-факто для управления жизненным циклом (Lifecycle Management) кластеров на выделенных серверах (Bare Metal) и в частных виртуализированных средах (KVM, Proxmox, VMware). Использование Ansible обеспечивает строгую идемпотентность конфигурации, повторяемость развертывания, автоматизацию тюнинга операционной системы и централизованное управление безопасностью (mTLS, SASL/SCRAM).
 
 ---
 
 ## Определения
 
-- **Ansible Role (Роль):** Структурированный набор плейбуков, шаблонов и переменных для выполнения конкретной задачи (установка Kafka, настройка тюнинга).
-- **Inventory (Инвентарь):** Файл или скрипт, содержащий список всех хостов кластера и их группировку (например, `controllers` и `brokers`).
-- **KRaft (Kafka Raft):** Режим работы без ZooKeeper, использующий протокол Raft для управления метаданными. В Kafka 3.x+ это основной режим для промышленной эксплуатации, а с Kafka 4.0 — единственный поддерживаемый режим.
-- **Node ID:** Уникальный числовой идентификатор брокера в кластере, обязательный для KRaft.
-- **Voters:** Список узлов (контроллеров), участвующих в голосовании по протоколу Raft для обеспечения консенсуса.
-- **Handlers (Обработчики):** Задачи в Ansible, которые запускаются только при изменении конфигурации (например, перезапуск сервиса Kafka после смены настроек в `server.properties`).
-- **Control Node:** Управляющая машина, с которой запускаются Ansible-плейбуки. Требует Python 3.9+ и Ansible 2.14+.
-- **Managed Node:** Целевой сервер, на котором развертывается Kafka. Доступен по SSH с Control Node.
+- **Ansible Role (Роль):** Структурированный набор плейбуков, шаблонов Jinja2, файлов и обработчиков (handlers) для автоматизации отдельного слоя (установка пакетов, настройка ОС, запуск сервиса Kafka).
+- **Directory Inventory:** Структура каталогов инвентаря (`inventory/hosts.ini` или `hosts.yml` вместе с `group_vars/` и `host_vars/`), разделяющая конфигурации брокеров и контроллеров по группам.
+- **KRaft (Kafka Raft Metadata mode):** Архитектура управления метаданными на основе протокола Raft без использования внешнего сервиса ZooKeeper. Начиная с Kafka 4.0, KRaft является единственным поддерживаемым режимом.
+- **Node ID (`node.id`):** Уникальный целочисленный идентификатор узла в кластере KRaft. Заменяет устаревший параметр `broker.id`.
+- **Process Roles (`process.roles`):** Список ролей узла в KRaft. Возможные значения: `broker`, `controller` или `broker,controller` (совмещенный режим).
+- **Voters (`controller.quorum.voters`):** Статический или динамический список контроллеров, формирующих кворум Raft для согласования метаданных (формат: `id1@host1:port1,id2@host2:port2,...`).
+- **Cluster ID (`cluster.id`):** 16-байтный Base64-идентификатор кластера, генерируемый утилитой `kafka-storage.sh random-uuid` и записываемый в `meta.properties` при форматировании журнала метаданных.
+- **Under-Replicated Partitions (URP):** Партиции, для которых количество реплик в ISR (In-Sync Replicas) меньше заданного `replication.factor`. Основной индикатор деградации репликации при обновлениях.
+- **Handlers (Обработчики):** Задачи в Ansible, вызываемые через `notify` только при реальном изменении конфигурационных файлов (например, перезапуск сервиса при изменении `server.properties`).
+- **Control Node:** Управляющая машина, с которой выполняются плейбуки Ansible (требует Python 3.10+ и Ansible core 2.16+).
+- **Managed Node:** Целевой сервер (Bare Metal или виртуальная машина под управлением Linux), на котором развертывается и функционирует Kafka.
 
 ---
 
@@ -21,496 +26,843 @@
 
 ### Требования к управляющей машине (Control Node)
 
-| Компонент | Минимальная версия | Рекомендуемая версия | Примечание |
-|-----------|-------------------|---------------------|------------|
-| Python | 3.9 | 3.11+ | Ansible требует Python на Control Node |
-| Ansible | 2.14 | 2.16+ | Проверка: `ansible --version` |
-| SSH Client | OpenSSH 8.0 | OpenSSH 9.0+ | Для подключения к managed nodes |
+| Компонент | Минимальная версия | Рекомендуемая версия | Назначение |
+|---|---|---|---|
+| Python | 3.10 | 3.11+ | Интерпретатор для исполнения модулей Ansible |
+| Ansible core | 2.16 | 2.17+ | Ядро системы автоматизации |
+| Коллекция `ansible.posix` | 1.5.0 | 2.0+ | Управление `sysctl`, `pam_limits`, `mount` |
+| Коллекция `community.general` | 8.0.0 | 9.0+ | Системные утилиты и генерация конфигураций |
+| OpenSSH Client | 8.8 | 9.0+ | Защищенный транспорт для управления хостами |
+
+Установка и проверка окружения на Control Node:
+
+```bash
+# Подготовка виртуального окружения Python
+python3 -m venv ~/ansible-kafka-venv
+source ~/ansible-kafka-venv/bin/activate
+
+# Установка Ansible и базовых коллекций
+pip install --upgrade pip
+pip install "ansible-core>=2.16,<2.18"
+
+ansible-galaxy collection install ansible.posix community.general
+
+# Проверка версии
+ansible --version
+# → ansible [core 2.16.x]
+# → python version = 3.11.x
+```
 
 ### Требования к целевым серверам (Managed Nodes)
 
-| Компонент | Минимальные требования | Рекомендуемые требования | Примечание |
-|-----------|----------------------|-------------------------|------------|
-| ОС | Ubuntu 20.04, CentOS 8, RHEL 8 | Ubuntu 22.04 LTS, RHEL 9 | Поддерживаемые версии |
-| Java | OpenJDK 17 | OpenJDK 21 LTS | Kafka 3.7+ требует Java 17+ |
-| RAM | 8 GB | 16 GB+ | 6-8 GB Heap для Kafka, остальное для Page Cache |
-| CPU | 4 vCPU | 8+ vCPU | Зависит от нагрузки |
-| Диск | 500 GB SSD | 1+ TB NVMe | Для логов Kafka (log.dirs) |
-| Файловые дескрипторы | 65536 | 100000+ | Настраивается через `ulimit` |
+| Ресурс / Компонент | Минимальные требования | Промышленные требования (Production) | Примечание |
+|---|---|---|---|
+| Операционная система | Ubuntu 22.04 LTS, RHEL / Rocky Linux 9 | Ubuntu 24.04 LTS, Rocky Linux 9.4 | 64-битные дистрибутивы Linux |
+| Среда исполнения Java | OpenJDK 17 LTS | OpenJDK 21 LTS | Kafka 4.0+ требует Java 17+ |
+| Оперативная память (RAM) | 16 GB | 64–128 GB+ | 6–8 GB под Heap JVM, остальное — под системный Page Cache |
+| Процессор (CPU) | 4 ядра | 16–32 vCPU / ядра | Высокая параллелизация сетевых и дисковых потоков |
+| Дисковая подсистема | 500 GB NVMe / SATA SSD | 2+ TB NVMe в режиме JBOD (XFS) | Изолированные диски под `log.dirs` с отключенным atime |
+| Файловые дескрипторы | 65 536 | 1 000 000 | Настраивается через `pam_limits` и systemd |
 
-### Сетевые требования
+### Сетевая матрица портов
 
-| Порт | Протокол | Назначение |
-|------|----------|------------|
-| 9092 | TCP | PLAINTEXT или SASL (клиенты) |
-| 9093 | TCP | Controller quorum (KRaft) |
-| 9094 | TCP | TLS/SSL (клиенты) |
-| 8080 | TCP | JMX Exporter (опционально) |
-
-### Установка Ansible на Control Node
-
-```bash
-# Ubuntu/Debian
-sudo apt update
-sudo apt install -y python3-pip python3-venv
-python3 -m venv ~/ansible-venv
-source ~/ansible-venv/bin/activate
-pip install ansible==2.16.*
-
-# Проверка установки
-ansible --version
-# → ansible [core 2.16.x]
-```
+| Порт | Протокол | Направление | Назначение |
+|---|---|---|---|
+| 9092 | TCP | Внутри кластера / Клиенты | Listener `INTERNAL` (межброкерное взаимодействие, PLAINTEXT или SASL_PLAINTEXT) |
+| 9093 | TCP | Только между контроллерами | Listener `CONTROLLER` (кворум KRaft Raft metadata) |
+| 9094 | TCP | Клиенты | Listener `CLIENT` (внешние/внутренние клиенты, TLS или SASL_SSL) |
+| 8080 | TCP | Сервер мониторинга | Prometheus JMX Exporter (метрики брокера и KRaft) |
+| 9100 | TCP | Сервер мониторинга | Prometheus `node_exporter` (системные метрики ОС) |
 
 ---
 
 ## Основные концепции
 
-### Почему Ansible для Kafka?
+### Почему Ansible для Apache Kafka?
 
-В отличие от ручной установки, Ansible позволяет:
-1. **Идемпотентность:** Повторный запуск плейбука не изменит систему, если конфигурация уже соответствует целевой.
-2. **Безопасность:** Автоматическая генерация TLS-сертификатов и дистрибуция Java Keystores (JKS) на десятки нод.
-3. **Контроль версий:** Вся инфраструктура описывается кодом (IaC), что позволяет версионировать изменения через Git.
-4. **Тюнинг ОС:** Автоматическая настройка лимитов (`ulimit`), TCP-стека и параметров ядра (`sysctl`) под высокие нагрузки.
+1. **Идемпотентность и предсказуемость:** Повторный запуск плейбука не вызывает рестарта сервиса или изменения конфигурации, если целевое состояние уже достигнуто.
+2. **Низкий overhead по сравнению с контейнеризацией:** На выделенных серверах (Bare Metal) Kafka напрямую взаимодействует с сетевым стеком ядра Linux и дисковой подсистемой без промежуточных сетевых оверлеев (overlay network), гарантируя максимальный IOPS и пропускную способность (throughput).
+3. **Управление всем стеком хоста:** В рамках единого плейбука настраиваются дисковые разделы (XFS), параметры ядра (`sysctl`), лимиты процессов (`limits.conf`), правила брандмауэра, сертификаты и systemd-юниты.
+4. **Контроль последовательности (Rolling Operations):** Директива `serial: 1` в сочетании с проверкой состояния ISR и кворума позволяет выполнять беспростойные обновления кластера.
 
-### Жизненный цикл развертывания в KRaft
+### Топологии KRaft: Совмещенный vs Выделенный режим
 
-Процесс автоматизации развертывания в режиме KRaft включает специфичные шаги:
-1. **Генерация Cluster ID:** Использование `kafka-storage.sh random-uuid`. В Ansible рекомендуется сохранять ID в локальный файл на управляющей машине (Control Node), чтобы использовать один и тот же UUID для всех нод кластера.
-2. **Форматирование хранилища:** Выполнение `kafka-storage.sh format` с использованием Cluster ID. 
-   - **Важно:** В Ansible это должно быть защищено проверкой наличия файла `meta.properties` в директории `data`, чтобы избежать повторного форматирования и потери данных.
-3. **Управление кворумом:** Правильная настройка `controller.quorum.voters` на основе IP-адресов из инвентаря.
+```
+Совмещенный режим (Colocated: 3 узла)
+┌─────────────────────────┐  ┌─────────────────────────┐  ┌─────────────────────────┐
+│ Node 1 (Broker + Ctrler)│  │ Node 2 (Broker + Ctrler)│  │ Node 3 (Broker + Ctrler)│
+│ ID: 1, Port: 9092/9093  │──│ ID: 2, Port: 9092/9093  │──│ ID: 3, Port: 9092/9093  │
+└─────────────────────────┘  └─────────────────────────┘  └─────────────────────────┘
 
-### Архитектура KRaft в Kafka 4.0
+Выделенный режим (Dedicated / Isolated: 3 контроллера + N брокеров)
+┌───────────────────────┐   ┌───────────────────────┐   ┌───────────────────────┐
+│ Controller 1 (ID: 1)  │   │ Controller 2 (ID: 2)  │   │ Controller 3 (ID: 3)  │
+│ Port: 9093            │───│ Port: 9093            │───│ Port: 9093            │
+└───────────┬───────────┘   └───────────┬───────────┘   └───────────┬───────────┘
+            │                           │                           │
+   ─────────┴───────────────────────────┴───────────────────────────┴─────────
+            │                           │                           │
+┌───────────▼───────────┐   ┌───────────▼───────────┐   ┌───────────▼───────────┐
+│ Broker 101 (ID: 101)  │   │ Broker 102 (ID: 102)  │   │ Broker 103 (ID: 103)  │
+│ Port: 9092 / 9094     │   │ Port: 9092 / 9094     │   │ Port: 9092 / 9094     │
+└───────────────────────┘   └───────────────────────┘   └───────────────────────┘
+```
 
-Начиная с Kafka 4.0, ZooKeeper полностью удален. Все метаданные хранятся в внутреннем топике `__cluster_metadata`, управляемом кворумом контроллеров. Это упрощает развертывание и снижает операционные затраты.
+- **Совмещенный режим (`broker,controller`):** Подходит для малых и средних кластеров (до 5 узлов). Все узлы участвуют в кворуме Raft и одновременно обслуживают клиентские топики.
+- **Выделенный режим (`isolated`):** Рекомендуется для промышленных сред с высокой нагрузкой (High Load) и более чем 5 узлами. Контроллеры изолированы: они не обрабатывают клиентский I/O и не конкурируют за Page Cache и диск, что исключает потерю кворума из-за интенсивных дисковых сбросов брокеров.
+
+### Жизненный цикл автоматизированного развертывания KRaft
+
+1. **Системная подготовка:** Создание пользователя `kafka`, монтирование томов под данные с опциями XFS `noatime,nodiratime`, применение параметров ядра и отключение Transparent Huge Pages (THP).
+2. **Генерация PKI / Сертификатов:** Создание корневого CA на Control Node, генерация приватных ключей и сертификатов с расширениями SAN для каждого узла, сборка Java Keystore (JKS) и Truststore.
+3. **Инициализация Cluster ID:** На этапе bootstrap генерация единого `cluster.id` через `kafka-storage.sh random-uuid` на первом узле кластера и регистрация его в фактах Ansible.
+4. **Форматирование хранилища:** Проверка отсутствия файла `meta.properties` в директории данных. При первом развертывании — вызов `kafka-storage.sh format` с полученным `cluster.id`.
+5. **Запуск сервиса:** Генерация конфигурации `server.properties` и запуск юнита `kafka.service` через systemd.
+6. **Пост-проверка:** Проверка доступности портов, состояния кворума через `kafka-metadata-quorum.sh` и готовности брокеров принимать трафик.
 
 ---
 
 ## Практические сценарии
 
-### 1. Подготовка промышленного кластера (Production Ready)
+### 1. Промышленное развертывание 3-узлового совмещенного кластера KRaft
 
-Этот сценарий описывает настройку кластера из 3 узлов в совмещенном режиме (Controller + Broker) с учетом тюнинга ОС и JVM.
+Сценарий описывает полную автоматизацию развертывания 3 узлов в совмещенном режиме (`broker,controller`) с тюнингом ОС, XFS, системными лимитами и валидацией.
 
-#### Шаг 1: Инвентарь (`inventory/hosts.ini`)
+#### Шаг 1: Инвентарь проекта (`inventory/hosts.ini`)
 
 ```ini
-[kafka_cluster]
+[kafka_controllers]
 kafka-node-1 ansible_host=10.0.1.1 kafka_node_id=1
 kafka-node-2 ansible_host=10.0.1.2 kafka_node_id=2
 kafka-node-3 ansible_host=10.0.1.3 kafka_node_id=3
 
+[kafka_brokers]
+kafka-node-1
+kafka-node-2
+kafka-node-3
+
+[kafka_cluster:children]
+kafka_controllers
+kafka_brokers
+
 [kafka_cluster:vars]
 ansible_user=deploy
-ansible_become=yes
+ansible_become=true
 kafka_version=3.9.0
 scala_version=2.13
-kafka_heap_opts=-Xmx6G -Xms6G
+kafka_user=kafka
+kafka_group=kafka
+kafka_install_dir=/opt/kafka
+kafka_data_dir=/var/lib/kafka/data
+kafka_log_dir=/var/log/kafka
+kafka_heap_opts="-Xms6g -Xmx6g"
+kafka_process_roles="broker,controller"
+# Voters формируются из всех членов группы контроллеров
+kafka_controller_quorum_voters="1@10.0.1.1:9093,2@10.0.1.2:9093,3@10.0.1.3:9093"
 ```
 
-#### Шаг 2: Настройка Systemd (`templates/kafka.service.j2`)
+#### Шаг 2: Системный тюнинг ОС и дисков (Pre-tasks)
 
-Использование systemd гарантирует автоматический запуск после перезагрузки и перезапуск при сбоях.
+В соответствии с правилами [OS тюнинга для Kafka](./kafka_os_tuning.md), параметры ядра должны предотвращать блокировку операций записи и выгрузку Page Cache:
+
+```yaml
+# roles/kafka/tasks/system_tuning.yml
+---
+- name: Создание системной группы kafka
+  ansible.builtin.group:
+    name: "{{ kafka_group }}"
+    state: present
+    system: true
+
+- name: Создание системного пользователя kafka
+  ansible.builtin.user:
+    name: "{{ kafka_user }}"
+    group: "{{ kafka_group }}"
+    home: "{{ kafka_install_dir }}"
+    shell: /usr/sbin/nologin
+    system: true
+    state: present
+
+- name: Настройка лимитов ресурсов процесса (pam_limits)
+  community.general.pam_limits:
+    domain: "{{ kafka_user }}"
+    limit_type: "{{ item.type }}"
+    limit_item: "{{ item.item }}"
+    value: "{{ item.value }}"
+  loop:
+    - { type: 'soft', item: 'nofile', value: 1000000 }
+    - { type: 'hard', item: 'nofile', value: 1000000 }
+    - { type: 'soft', item: 'nproc', value: 65536 }
+    - { type: 'hard', item: 'nproc', value: 65536 }
+    - { type: 'soft', item: 'memlock', value: 'unlimited' }
+    - { type: 'hard', item: 'memlock', value: 'unlimited' }
+
+- name: Применение оптимальных параметров sysctl для Kafka
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    sysctl_file: /etc/sysctl.d/99-kafka.conf
+    reload: true
+  loop:
+    # Защита Page Cache от свопирования
+    - { key: 'vm.swappiness', value: '1' }
+    # Сброс грязных страниц: ранний фоновый сброс без блокировки write()
+    - { key: 'vm.dirty_background_ratio', value: '5' }
+    - { key: 'vm.dirty_ratio', value: '10' }
+    # Лимит областей mmap под индексные файлы Kafka
+    - { key: 'vm.max_map_count', value: '262144' }
+    # Буферы приема и передачи сокетов
+    - { key: 'net.core.rmem_max', value: '16777216' }
+    - { key: 'net.core.wmem_max', value: '16777216' }
+    - { key: 'net.ipv4.tcp_rmem', value: '4096 87380 16777216' }
+    - { key: 'net.ipv4.tcp_wmem', value: '4096 65536 16777216' }
+    - { key: 'net.ipv4.tcp_window_scaling', value: '1' }
+    - { key: 'net.core.netdev_max_backlog', value: '30000' }
+    - { key: 'net.ipv4.tcp_max_syn_backlog', value: '16384' }
+
+- name: Отключение Transparent Huge Pages (THP) через systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/disable-thp.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Disable Transparent Huge Pages for Kafka
+      DefaultDependencies=no
+      After=sysinit.target local-fs.target
+      Before=basic.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/sh -c 'echo never > /sys/kernel/mm/transparent_hugepage/enabled && echo never > /sys/kernel/mm/transparent_hugepage/defrag'
+
+      [Install]
+      WantedBy=basic.target
+  notify: Enable and start disable-thp
+```
+
+#### Шаг 3: Шаблон сервиса Systemd (`templates/kafka.service.j2`)
+
+При развертывании в systemd критически важно задавать высокий `TimeoutStopSec` (не менее 120 с), чтобы брокер успел корректно синхронизировать сегменты на диск и закрыть соединения (Graceful Shutdown). Дефолтный таймаут systemd (90 с) при высокой нагрузке приводит к принудительному `SIGKILL`, повреждению индексов и долгому восстановлению журнала при следующем старте:
 
 ```ini
 [Unit]
-Description=Apache Kafka Server
-Documentation=http://kafka.apache.org/documentation.html
-Requires=network.target remote-fs.target
-After=network.target remote-fs.target
+Description=Apache Kafka Distributed Message Broker (KRaft)
+Documentation=https://kafka.apache.org/documentation/
+After=network.target network-online.target systemd-sysctl.service disable-thp.service
+Wants=network-online.target
 
 [Service]
 Type=simple
 User={{ kafka_user }}
 Group={{ kafka_group }}
+EnvironmentFile=-/etc/default/kafka
 Environment="KAFKA_HEAP_OPTS={{ kafka_heap_opts }}"
 Environment="KAFKA_JVM_PERFORMANCE_OPTS={{ kafka_jvm_performance_opts }}"
-ExecStart=/opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/server.properties
-ExecStop=/opt/kafka/bin/kafka-server-stop.sh
+Environment="KAFKA_GC_LOG_OPTS=-Xlog:gc*:file={{ kafka_log_dir }}/kafka-gc.log:time,uptime,level,tags:filecount=10,filesize=100M"
+ExecStart={{ kafka_install_dir }}/bin/kafka-server-start.sh {{ kafka_install_dir }}/config/server.properties
+ExecStop={{ kafka_install_dir }}/bin/kafka-server-stop.sh
+
 Restart=on-failure
-RestartSec=30
-LimitNOFILE=100000
+RestartSec=10
+TimeoutStopSec=120
+KillMode=control-group
+
+# Системные лимиты процесса
+LimitNOFILE=1000000
 LimitNPROC=65536
+LimitMEMLOCK=infinity
+TasksMax=infinity
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-#### Шаг 3: Плейбук с тюнингом (`playbook.yaml`)
+#### Шаг 4: Конфигурация KRaft (`templates/server.properties.j2`)
+
+```properties
+############################# Базовые параметры узла #############################
+node.id={{ kafka_node_id }}
+process.roles={{ kafka_process_roles }}
+
+############################# Сетевые Listener'ы #############################
+# Listener CONTROLLER не указывается в advertised.listeners
+listeners=INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+advertised.listeners=INTERNAL://{{ ansible_host }}:9092
+controller.listener.names=CONTROLLER
+inter.broker.listener.name=INTERNAL
+listener.security.protocol.map=INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,CLIENT:SSL
+
+############################# Кворум KRaft #############################
+controller.quorum.voters={{ kafka_controller_quorum_voters }}
+
+############################# Журналы и хранилище #############################
+log.dirs={{ kafka_data_dir }}
+num.partitions=3
+default.replication.factor=3
+min.insync.replicas=2
+
+# Потоки сетевого и дискового ввода-вывода
+num.network.threads=8
+num.io.threads=16
+socket.send.buffer.bytes=1048576
+socket.receive.buffer.bytes=1048576
+socket.request.max.bytes=104857600
+
+# Политики хранения журналов (Retention: 7 дней)
+log.retention.hours=168
+log.segment.bytes=1073741824
+log.retention.check.interval.ms=300000
+
+# Восстановление и завершение
+num.recovery.threads.per.data.dir=4
+controlled.shutdown.enable=true
+auto.create.topics.enable=false
+```
+
+#### Шаг 5: Идемпотентная инициализация хранилища KRaft
+
+Форматирование каталогов данных KRaft (`kafka-storage.sh format`) должно выполняться строго один раз с одинаковым `cluster.id` для всех узлов кластера. Повторное форматирование на работающем кластере уничтожает журнал метаданных:
 
 ```yaml
-- name: Развертывание кластера Kafka KRaft
+# roles/kafka/tasks/kraft_init.yml
+---
+- name: Проверка наличия инициализированного хранилища (meta.properties)
+  ansible.builtin.stat:
+    path: "{{ kafka_data_dir }}/meta.properties"
+  register: kafka_meta_file
+
+- name: Генерация Cluster ID на первом контроллере (run_once)
+  ansible.builtin.command:
+    cmd: "{{ kafka_install_dir }}/bin/kafka-storage.sh random-uuid"
+  register: generated_cluster_id
+  run_once: true
+  delegate_to: "{{ groups['kafka_controllers'][0] }}"
+  when: not kafka_meta_file.stat.exists
+  changed_when: false
+
+- name: Установка факта kafka_cluster_id для всех узлов
+  ansible.builtin.set_fact:
+    kafka_cluster_id: "{{ hostvars[groups['kafka_controllers'][0]]['generated_cluster_id'].stdout }}"
+  when: not kafka_meta_file.stat.exists
+
+- name: Форматирование каталога данных KRaft
+  ansible.builtin.command:
+    cmd: >
+      {{ kafka_install_dir }}/bin/kafka-storage.sh format
+      --cluster-id {{ kafka_cluster_id }}
+      --config {{ kafka_install_dir }}/config/server.properties
+      --ignore-formatted
+  become_user: "{{ kafka_user }}"
+  when: not kafka_meta_file.stat.exists
+  register: format_result
+  changed_when: "'Formatting' in format_result.stdout"
+```
+
+#### Шаг 6: Главный плейбук развертывания (`playbooks/deploy.yml`)
+
+```yaml
+---
+- name: Развертывание кластера Apache Kafka KRaft
   hosts: kafka_cluster
-  become: yes
-  roles:
-    - role: kafka
-      vars:
-        # Системные настройки
-        kafka_user: kafka
-        kafka_group: kafka
-        kafka_data_dir: /var/lib/kafka/data
-        kafka_install_dir: /opt/kafka
-        
-        # JVM Тюнинг (Java 17/21)
-        # Не давайте Kafka слишком много Heap, оставьте RAM для Page Cache ОС
-        kafka_jvm_performance_opts: >-
-          -XX:+UseG1GC 
-          -XX:MaxGCPauseMillis=20 
-          -XX:InitiatingHeapOccupancyPercent=35 
-          -XX:+ExplicitGCInvokesConcurrent
-          -XX:+ParallelRefProcEnabled
-        
-        # Настройки KRaft
-        kafka_process_roles: "broker,controller"
-        kafka_controller_quorum_voters: "1@10.0.1.1:9093,2@10.0.1.2:9093,3@10.0.1.3:9093"
-        
-        # Тюнинг производительности
-        kafka_additional_config:
-          num.network.threads: 8
-          num.io.threads: 16
-          socket.send.buffer.bytes: 102400
-          socket.receive.buffer.bytes: 102400
-          num.partitions: 3
-          default.replication.factor: 3
-          min.insync.replicas: 2
-          
-          # Настройки Retention (7 дней)
-          log.retention.hours: 168
-          log.segment.bytes: 1073741824 # 1GB
-          
-          # Настройки KRaft
-          controller.listener.names: "CONTROLLER"
-          inter.broker.listener.name: "INTERNAL"
-          listeners: "INTERNAL://:9092,CONTROLLER://:9093"
-          advertised.listeners: "INTERNAL://{{ ansible_host }}:9092"
+  become: true
+  vars:
+    kafka_jvm_performance_opts: >-
+      -server
+      -XX:+UseG1GC
+      -XX:MaxGCPauseMillis=20
+      -XX:InitiatingHeapOccupancyPercent=35
+      -XX:G1HeapRegionSize=16M
+      -XX:+ExplicitGCInvokesConcurrent
+      -XX:+ParallelRefProcEnabled
+      -Djava.awt.headless=true
+
+  tasks:
+    - name: Применение настроек ядра и системных лимитов
+      ansible.builtin.include_tasks: ../roles/kafka/tasks/system_tuning.yml
+
+    - name: Создание каталогов для Kafka
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ kafka_user }}"
+        group: "{{ kafka_group }}"
+        mode: '0750'
+      loop:
+        - "{{ kafka_install_dir }}"
+        - "{{ kafka_data_dir }}"
+        - "{{ kafka_log_dir }}"
+
+    - name: Скачивание и распаковка дистрибутива Kafka
+      ansible.builtin.unarchive:
+        src: "https://archive.apache.org/dist/kafka/{{ kafka_version }}/kafka_{{ scala_version }}-{{ kafka_version }}.tgz"
+        dest: "{{ kafka_install_dir }}"
+        remote_src: true
+        extra_opts: ['--strip-components=1']
+        owner: "{{ kafka_user }}"
+        group: "{{ kafka_group }}"
+        creates: "{{ kafka_install_dir }}/bin/kafka-server-start.sh"
+
+    - name: Генерация конфигурационного файла server.properties
+      ansible.builtin.template:
+        src: ../roles/kafka/templates/server.properties.j2
+        dest: "{{ kafka_install_dir }}/config/server.properties
+        owner: "{{ kafka_user }}"
+        group: "{{ kafka_group }}"
+        mode: '0640'
+      notify: Restart kafka
+
+    - name: Инициализация метаданных хранилища KRaft
+      ansible.builtin.include_tasks: ../roles/kafka/tasks/kraft_init.yml
+
+    - name: Установка юнита systemd
+      ansible.builtin.template:
+        src: ../roles/kafka/templates/kafka.service.j2
+        dest: /etc/systemd/system/kafka.service
+        mode: '0644'
+      notify:
+        - Reload systemd
+        - Restart kafka
+
+    - name: Запуск и включение сервиса Kafka в автозагрузку
+      ansible.builtin.systemd:
+        name: kafka
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart kafka
+      ansible.builtin.systemd:
+        name: kafka
+        state: restarted
+
+    - name: Enable and start disable-thp
+      ansible.builtin.systemd:
+        name: disable-thp
+        state: started
+        enabled: true
 ```
 
-#### Шаг 4: Настройка ОС через Ansible (Pre-tasks)
+#### Шаг 7: Валидация развертывания
 
-Перед установкой самой Kafka важно подготовить ОС и сетевой стек:
-```yaml
-  pre_tasks:
-    - name: Увеличение лимитов файловых дескрипторов
-      pam_limits:
-        domain: "{{ kafka_user }}"
-        limit_type: "{{ item }}"
-        limit_item: nofile
-        value: 100000
-      loop: [ 'soft', 'hard' ]
+После завершения выполнения плейбука выполняется комплексная проверка состояния сервиса, портов и кворума:
 
-    - name: Увеличение лимитов процессов
-      pam_limits:
-        domain: "{{ kafka_user }}"
-        limit_type: "{{ item }}"
-        limit_item: nproc
-        value: 65536
-      loop: [ 'soft', 'hard' ]
+```bash
+# 1. Проверка статуса сервиса на всех узлах
+ansible kafka_cluster -i inventory/hosts.ini -m command -a "systemctl is-active kafka"
+# → active
 
-    - name: Настройка параметров ядра для сети и диска
-      sysctl:
-        name: "{{ item.key }}"
-        value: "{{ item.value }}"
-        state: present
-        sysctl_set: yes
-        reload: yes
-      with_dict:
-        net.core.rmem_max: 16777216
-        net.core.wmem_max: 16777216
-        net.ipv4.tcp_rmem: "4096 87380 16777216"
-        net.ipv4.tcp_wmem: "4096 65536 16777216"
-        vm.swappiness: 1
-        vm.dirty_ratio: 60
-        vm.dirty_background_ratio: 10
-        vm.max_map_count: 262144
+# 2. Проверка открытых портов на первой ноде
+ansible kafka-node-1 -i inventory/hosts.ini -m command -a "ss -tulpn"
+# → tcp LISTEN 0 50 *:9092 users:(("java",pid=...,fd=...))
+# → tcp LISTEN 0 50 *:9093 users:(("java",pid=...,fd=...))
+
+# 3. Проверка статуса кворума метаданных KRaft
+ansible kafka-node-1 -i inventory/hosts.ini -m command -a \
+  "/opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server 10.0.1.1:9092 describe --status"
+# → ClusterId:              c_Z17o6uT-2pW92xVd6VRA
+# → LeaderId:               1
+# → LeaderEpoch:            1
+# → HighWatermark:          124
+# → MaxFollowerLag:         0
+# → MaxFollowerLagTimeMs:   42
+# → CurrentVoters:          [1,2,3]
+
+# 4. Проверка создания тестового топика
+ansible kafka-node-1 -i inventory/hosts.ini -m command -a \
+  "/opt/kafka/bin/kafka-topics.sh --bootstrap-server 10.0.1.1:9092 --create --topic test-healthcheck --partitions 3 --replication-factor 3"
+# → Created topic test-healthcheck.
 ```
 
-#### Шаг 5: Автоматизация TLS (SSL)
+---
 
-Пример генерации Keystore для каждого брокера через Ansible:
+### 2. Развертывание с разделением ролей (Dedicated Controllers + Dedicated Brokers)
+
+Для нагруженных сред (>5 узлов) контроллеры отделяются от брокеров данных, предотвращая падение кворума из-за нехватки памяти или перегрузки дисков.
+
+#### Шаг 1: Инвентарь для выделенного режима (`inventory/dedicated_hosts.ini`)
+
+```ini
+[kafka_controllers]
+ctrl-node-1 ansible_host=10.0.2.1 kafka_node_id=1 kafka_process_roles="controller" kafka_heap_opts="-Xms4g -Xmx4g"
+ctrl-node-2 ansible_host=10.0.2.2 kafka_node_id=2 kafka_process_roles="controller" kafka_heap_opts="-Xms4g -Xmx4g"
+ctrl-node-3 ansible_host=10.0.2.3 kafka_node_id=3 kafka_process_roles="controller" kafka_heap_opts="-Xms4g -Xmx4g"
+
+[kafka_brokers]
+broker-node-1 ansible_host=10.0.2.11 kafka_node_id=101 kafka_process_roles="broker" kafka_heap_opts="-Xms8g -Xmx8g"
+broker-node-2 ansible_host=10.0.2.12 kafka_node_id=102 kafka_process_roles="broker" kafka_heap_opts="-Xms8g -Xmx8g"
+broker-node-3 ansible_host=10.0.2.13 kafka_node_id=103 kafka_process_roles="broker" kafka_heap_opts="-Xms8g -Xmx8g"
+
+[kafka_cluster:children]
+kafka_controllers
+kafka_brokers
+
+[kafka_cluster:vars]
+kafka_controller_quorum_voters="1@10.0.2.1:9093,2@10.0.2.2:9093,3@10.0.2.3:9093"
+```
+
+#### Шаг 2: Адаптация шаблона `server.properties.j2` под роли
+
+```jinja2
+node.id={{ kafka_node_id }}
+process.roles={{ kafka_process_roles }}
+controller.quorum.voters={{ kafka_controller_quorum_voters }}
+
+{% if 'controller' in kafka_process_roles and 'broker' not in kafka_process_roles %}
+# Выделенный контроллер: слушает только порт кворума
+listeners=CONTROLLER://0.0.0.0:9093
+controller.listener.names=CONTROLLER
+log.dirs=/var/lib/kafka/metadata
+{% elif 'broker' in kafka_process_roles and 'controller' not in kafka_process_roles %}
+# Выделенный брокер: слушает трафик данных и подключается к внешним контроллерам
+listeners=INTERNAL://0.0.0.0:9092,CLIENT://0.0.0.0:9094
+advertised.listeners=INTERNAL://{{ ansible_host }}:9092,CLIENT://{{ ansible_host }}:9094
+controller.listener.names=CONTROLLER
+inter.broker.listener.name=INTERNAL
+log.dirs={{ kafka_data_dir }}
+{% else %}
+# Совмещенный узел
+listeners=INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+advertised.listeners=INTERNAL://{{ ansible_host }}:9092
+controller.listener.names=CONTROLLER
+inter.broker.listener.name=INTERNAL
+log.dirs={{ kafka_data_dir }}
+{% endif %}
+```
+
+---
+
+### 3. Автоматизация безопасности: mTLS (PKI) и SASL/SCRAM
+
+Промышленное развертывание требует шифрования трафика между узлами и строгой аутентификации клиентов.
+
+#### Шаг 1: Автоматизация PKI и генерация Keystore/Truststore через Ansible
 
 ```yaml
-- name: Создание директории для сертификатов
-  file:
-    path: "{{ kafka_certs_dir }}"
+# roles/kafka/tasks/tls_pki.yml
+---
+- name: Создание каталога сертификатов
+  ansible.builtin.file:
+    path: /etc/kafka/secrets
     state: directory
     owner: "{{ kafka_user }}"
     group: "{{ kafka_group }}"
     mode: '0700'
 
-- name: Генерация Keystore для брокера
-  shell: >
-    keytool -genkey -keystore {{ kafka_certs_dir }}/kafka.keystore.jks
-    -alias {{ inventory_hostname }} -validity 3650
-    -keyalg RSA -keysize 4096 -storepass {{ keystore_pass }}
-    -keypass {{ keystore_pass }} -dname "CN={{ inventory_hostname }}"
-    -ext SAN=DNS:{{ inventory_hostname }},IP:{{ ansible_host }}
-  args:
-    creates: "{{ kafka_certs_dir }}/kafka.keystore.jks"
+- name: Генерация приватного ключа и Keystore для брокера
+  ansible.builtin.command:
+    cmd: >
+      keytool -genkeypair -alias {{ inventory_hostname }}
+      -keyalg RSA -keysize 4096 -validity 1095
+      -keystore /etc/kafka/secrets/kafka.keystore.jks
+      -storepass {{ vault_keystore_password }}
+      -keypass {{ vault_keystore_password }}
+      -dname "CN={{ inventory_hostname }}, OU=Infra, O=Company, C=RU"
+      -ext SAN=DNS:{{ inventory_hostname }},IP:{{ ansible_host }}
+    creates: /etc/kafka/secrets/kafka.keystore.jks
   no_log: true
 
-- name: Генерация Truststore
-  shell: >
-    keytool -export -keystore {{ kafka_certs_dir }}/kafka.keystore.jks
-    -alias {{ inventory_hostname }} -file {{ kafka_certs_dir }}/{{ inventory_hostname }}.cer
-    -storepass {{ keystore_pass }} -rfc
-  args:
-    creates: "{{ kafka_certs_dir }}/{{ inventory_hostname }}.cer"
+- name: Экспорт CSR из Keystore
+  ansible.builtin.command:
+    cmd: >
+      keytool -certreq -alias {{ inventory_hostname }}
+      -keystore /etc/kafka/secrets/kafka.keystore.jks
+      -storepass {{ vault_keystore_password }}
+      -file /etc/kafka/secrets/{{ inventory_hostname }}.csr
+    creates: /etc/kafka/secrets/{{ inventory_hostname }}.csr
+
+- name: Копирование CSR на Control Node для подписания CA
+  ansible.builtin.fetch:
+    src: /etc/kafka/secrets/{{ inventory_hostname }}.csr
+    dest: /tmp/pki_staging/{{ inventory_hostname }}.csr
+    flat: true
+
+- name: Подписание сертификата корневым CA на Control Node
+  ansible.builtin.command:
+    cmd: >
+      openssl x509 -req -in /tmp/pki_staging/{{ inventory_hostname }}.csr
+      -CA /etc/ansible/ca/ca.crt -CAkey /etc/ansible/ca/ca.key -CAcreateserial
+      -out /tmp/pki_staging/{{ inventory_hostname }}.crt
+      -days 1095 -sha256
+      -extfile <(printf "subjectAltName=DNS:{{ inventory_hostname }},IP:{{ ansible_host }}")
+  delegate_to: localhost
+  become: false
+
+- name: Доставка подписанного сертификата и CA на Managed Node
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ kafka_user }}"
+    group: "{{ kafka_group }}"
+    mode: '0600'
+  loop:
+    - { src: "/etc/ansible/ca/ca.crt", dest: "/etc/kafka/secrets/ca.crt" }
+    - { src: "/tmp/pki_staging/{{ inventory_hostname }}.crt", dest: "/etc/kafka/secrets/server.crt" }
+
+- name: Импорт CA в Truststore узла
+  ansible.builtin.command:
+    cmd: >
+      keytool -importcert -noprompt -alias ca-root
+      -file /etc/kafka/secrets/ca.crt
+      -keystore /etc/kafka/secrets/kafka.truststore.jks
+      -storepass {{ vault_truststore_password }}
+    creates: /etc/kafka/secrets/kafka.truststore.jks
+  no_log: true
+
+- name: Импорт подписанного сертификата брокера в Keystore
+  ansible.builtin.command:
+    cmd: >
+      keytool -importcert -noprompt -alias {{ inventory_hostname }}
+      -file /etc/kafka/secrets/server.crt
+      -keystore /etc/kafka/secrets/kafka.keystore.jks
+      -storepass {{ vault_keystore_password }}
+  register: import_res
+  failed_when: import_res.rc != 0 and "already exists" not in import_res.stderr
+  changed_when: import_res.rc == 0
   no_log: true
 ```
 
-#### Шаг 6: Валидация развертывания
+#### Шаг 2: Настройка аутентификации SASL/SCRAM-SHA-512
 
-```bash
-# Проверка статуса сервиса на всех нодах
-ansible kafka_cluster -i inventory/hosts.ini -m command -a "systemctl status kafka"
+В современных окружениях механизм `SCRAM-SHA-512` является стандартом, превосходящим `PLAIN` по криптостойкости (пароли не передаются в открытом виде даже внутри TLS-туннеля):
 
-# Проверка логов на ошибки
-ansible kafka_cluster -i inventory/hosts.ini -m command -a "journalctl -u kafka --no-pager -n 50"
+```yaml
+# Добавление конфигурации JAAS
+- name: Создание конфигурации JAAS для SASL/SCRAM
+  ansible.builtin.copy:
+    dest: /etc/kafka/kafka_jaas.conf
+    owner: "{{ kafka_user }}"
+    group: "{{ kafka_group }}"
+    mode: '0600'
+    content: |
+      KafkaServer {
+          org.apache.kafka.common.security.scram.ScramLoginModule required
+          username="admin"
+          password="{{ vault_kafka_admin_scram_password }}";
+      };
 
-# Проверка кворума KRaft
-ansible kafka-node-1 -i inventory/hosts.ini -m shell -a \
-  "/opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status"
-# Ожидаемый вывод: LeaderId: 1, VoterCount: 3, LeaderHighWatermark: ...
+- name: Экспорт переменной KAFKA_OPTS для подключения JAAS
+  ansible.builtin.lineinfile:
+    path: /etc/default/kafka
+    regexp: '^KAFKA_OPTS='
+    line: 'KAFKA_OPTS="-Djava.security.auth.login.config=/etc/kafka/kafka_jaas.conf"'
+    create: true
+    mode: '0644'
+  notify: Restart kafka
+```
 
-# Проверка топиков
-ansible kafka-node-1 -i inventory/hosts.ini -m shell -a \
-  "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"
+Создание пользователей SCRAM через стандартную CLI-утилиту (выполняется один раз на кластере):
+
+```yaml
+- name: Инициализация учетной записи администратора SCRAM-SHA-512
+  ansible.builtin.command:
+    cmd: >
+      {{ kafka_install_dir }}/bin/kafka-configs.sh --bootstrap-server localhost:9092
+      --entity-type users --entity-name admin
+      --alter --add-config 'SCRAM-SHA-512=[password={{ vault_kafka_admin_scram_password }}]'
+  run_once: true
+  delegate_to: "{{ groups['kafka_cluster'][0] }}"
+  changed_when: true
 ```
 
 ---
 
-### 2. Автоматизация обновления (Rolling Upgrade)
+### 4. Автоматизация беспростойного обновления (Rolling Upgrade)
 
-Обновление Kafka без простоя требует последовательного перезапуска нод. В Ansible это реализуется через `serial: 1`.
+Для обновления версий Kafka или внесения изменений в конфигурацию без нарушения доступности кластера используется последовательный перезапуск узлов (`serial: 1`) со строгим контролем синхронизации реплик (ISR) и кворума.
 
 ```yaml
-- name: Обновление конфигурации Kafka (Rolling)
+# playbooks/rolling_restart.yml
+---
+- name: Последовательный контролируемый перезапуск узлов Kafka
   hosts: kafka_cluster
-  serial: 1 # Выполнять по одной ноде за раз
-  max_fail_percentage: 0 # Остановиться при первой ошибке
-  
+  serial: 1
+  max_fail_percentage: 0
+  become: true
+
   tasks:
-    - name: Обновление server.properties
-      template:
-        src: server.properties.j2
-        dest: /opt/kafka/config/server.properties
-        owner: "{{ kafka_user }}"
-        group: "{{ kafka_group }}"
-        mode: '0644'
-      notify: restart kafka
+    - name: Перезапуск сервиса Kafka на узле
+      ansible.builtin.systemd:
+        name: kafka
+        state: restarted
 
-    - name: Ожидание вхождения ноды в ISR
-      shell: "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe"
-      register: topic_status
-      until: "'Isr' in topic_status.stdout"
-      retries: 30
-      delay: 10
-      changed_when: false
+    - name: Ожидание доступности порта TCP 9092
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 9092
+        delay: 5
+        timeout: 120
 
-    - name: Проверка кворума после перезапуска
-      shell: "/opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status"
-      register: quorum_status
-      until: "'LeaderId' in quorum_status.stdout"
-      retries: 10
+    - name: Контроль состояния кворума метаданных KRaft
+      ansible.builtin.command:
+        cmd: "{{ kafka_install_dir }}/bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status"
+      register: quorum_check
+      until: "'LeaderId' in quorum_check.stdout"
+      retries: 20
       delay: 5
       changed_when: false
 
-  handlers:
-    - name: restart kafka
-      systemd:
-        name: kafka
-        state: restarted
-        daemon_reload: yes
+    - name: Ожидание полного восстановления реплик (отсутствие Under-Replicated Partitions)
+      ansible.builtin.command:
+        cmd: "{{ kafka_install_dir }}/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --under-replicated-partitions"
+      register: urp_check
+      # Перезапуск следующего узла разрешен только когда вывод пуст (все партиции синхронизированы)
+      until: urp_check.stdout == ""
+      retries: 60
+      delay: 10
+      changed_when: false
 ```
+
+> **Важно:** Проверка `until: urp_check.stdout == ""` критична. Простая проверка на наличие подстроки `'Isr'` ошибочна, так как поле `Isr:` присутствует в описании каждой партиции даже при аварийном выпадении узла из репликации.
 
 ---
 
-### 3. Настройка SASL/PLAIN аутентификации
+### 5. Горизонтальное масштабирование (добавление брокеров и ребалансировка)
 
-Для production-сред рекомендуется использовать SASL для аутентификации клиентов и межброкерного взаимодействия.
+При расширении кластера новый брокер (`process.roles=broker`) вводится в эксплуатацию без изменения параметров кворума контроллеров.
 
-#### Шаг 1: Конфигурация JAAS (`templates/kafka_server_jaas.conf.j2`)
-
-```conf
-KafkaServer {
-    org.apache.kafka.common.security.plain.PlainLoginModule required
-    user_admin="{{ sasl_admin_password }}"
-    user_client1="{{ sasl_client1_password }}"
-    user_client2="{{ sasl_client2_password }}";
-};
-
-KafkaClient {
-    org.apache.kafka.common.security.plain.PlainLoginModule required
-    username="admin"
-    password="{{ sasl_admin_password }}";
-};
-```
-
-#### Шаг 2: Плейбук для настройки SASL
-
-```yaml
-- name: Настройка SASL аутентификации
-  hosts: kafka_cluster
-  become: yes
-  vars:
-    sasl_admin_password: "{{ vault_sasl_admin_password }}"
-    sasl_client1_password: "{{ vault_sasl_client1_password }}"
-    sasl_client2_password: "{{ vault_sasl_client2_password }}"
-  
-  tasks:
-    - name: Создание JAAS конфигурации
-      template:
-        src: kafka_server_jaas.conf.j2
-        dest: /opt/kafka/config/kafka_server_jaas.conf
-        owner: "{{ kafka_user }}"
-        group: "{{ kafka_group }}"
-        mode: '0600'
-      notify: restart kafka
-
-    - name: Добавление SASL в server.properties
-      lineinfile:
-        path: /opt/kafka/config/server.properties
-        regexp: "^{{ item.key }}="
-        line: "{{ item.key }}={{ item.value }}"
-      loop:
-        - { key: "sasl.enabled.mechanisms", value: "PLAIN" }
-        - { key: "sasl.mechanism.inter.broker.protocol", value: "PLAIN" }
-        - { key: "security.inter.broker.protocol", value: "SASL_SSL" }
-        - { key: "security.protocol", value: "SASL_SSL" }
-      notify: restart kafka
-
-    - name: Настройка переменной окружения для JAAS
-      lineinfile:
-        path: /etc/default/kafka
-        line: 'KAFKA_OPTS="-Djava.security.auth.login.config=/opt/kafka/config/kafka_server_jaas.conf"'
-        create: yes
-      notify: restart kafka
-```
-
-#### Шаг 3: Валидация SASL
-
-```bash
-# Создание тестового топика с аутентификацией
-cat > /tmp/client.properties <<EOF
-security.protocol=SASL_SSL
-sasl.mechanism=PLAIN
-sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required \
-  username="admin" \
-  password="{{ sasl_admin_password }}";
-EOF
-
-/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-node-1:9094 \
-  --command-config /tmp/client.properties --create --topic test-sasl --partitions 1 --replication-factor 1
-```
-
----
-
-### 4. Масштабирование кластера (добавление брокеров)
-
-Добавление новых брокеров в существующий кластер без простоя.
-
-#### Шаг 1: Обновление инвентаря
+#### Шаг 1: Добавление хоста в инвентарь
 
 ```ini
-[kafka_cluster]
-kafka-node-1 ansible_host=10.0.1.1 kafka_node_id=1
-kafka-node-2 ansible_host=10.0.1.2 kafka_node_id=2
-kafka-node-3 ansible_host=10.0.1.3 kafka_node_id=3
-kafka-node-4 ansible_host=10.0.1.4 kafka_node_id=4  # Новый брокер
-
-[kafka_cluster:vars]
-kafka_controller_quorum_voters: "1@10.0.1.1:9093,2@10.0.1.2:9093,3@10.0.1.3:9093,4@10.0.1.4:9093"
+[kafka_brokers]
+kafka-node-1
+kafka-node-2
+kafka-node-3
+kafka-node-4 ansible_host=10.0.1.4 kafka_node_id=4  # Новый рабочий брокер
 ```
 
-#### Шаг 2: Плейбук для добавления брокера
+#### Шаг 2: Ввод брокера в эксплуатацию
+
+1. Запустите базовый плейбук деплоя с лимитом на новый хост:
+   ```bash
+   ansible-playbook -i inventory/hosts.ini playbooks/deploy.yml --limit kafka-node-4
+   ```
+2. Новый узел подключится к кворуму контроллеров, зарегистрирует свой `node.id=4` и начнет принимать запросы.
+
+#### Шаг 3: Автоматизация ребалансировки партиций (`kafka-reassign-partitions.sh`)
+
+Автоматически новые топики начнут распределяться на новый узел, но существующие данные остаются на прежних узлах. Для перераспределения существующих партиций формируется JSON-план:
 
 ```yaml
-- name: Добавление нового брокера в кластер
-  hosts: kafka-node-4
-  become: yes
-  serial: 1
-  
+# playbooks/rebalance.yml
+---
+- name: Ребалансировка партиций на новые брокеры
+  hosts: kafka-node-1
+  become: true
   tasks:
-    - name: Установка Kafka (используем основной плейбук)
-      include_role:
-        name: kafka
+    - name: Формирование списка целевых топиков
+      ansible.builtin.copy:
+        dest: /tmp/topics-to-move.json
+        content: |
+          {"topics": [{"topic": "orders"}, {"topic": "payments"}], "version": 1}
+        mode: '0644'
 
-    - name: Обновление controller.quorum.voters на всех нодах
-      lineinfile:
-        path: /opt/kafka/config/server.properties
-        regexp: "^controller.quorum.voters="
-        line: "controller.quorum.voters={{ kafka_controller_quorum_voters }}"
-      delegate_to: "{{ item }}"
-      loop: "{{ groups['kafka_cluster'] }}"
-      notify: restart kafka
-
-    - name: Ожидание присоединения нового брокера к кворуму
-      shell: "/opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status"
-      register: quorum_status
-      until: "'VoterCount' in quorum_status.stdout"
-      retries: 20
-      delay: 15
+    - name: Генерация плана распределения партиций
+      ansible.builtin.command:
+        cmd: >
+          {{ kafka_install_dir }}/bin/kafka-reassign-partitions.sh
+          --bootstrap-server localhost:9092
+          --topics-to-move-json-file /tmp/topics-to-move.json
+          --broker-list "1,2,3,4"
+          --generate
+      register: reassign_plan_raw
       changed_when: false
 
-- name: Запуск ребалансировки
-  hosts: kafka-node-1
-  tasks:
-    - name: Запуск Kafka Reassign Partitions
-      shell: >
-        /opt/kafka/bin/kafka-reassign-partitions.sh 
-        --bootstrap-server localhost:9092
-        --broker-list "1,2,3,4"
-        --generate
-      register: reassign_plan
+    - name: Извлечение сгенерированного плана в файл
+      ansible.builtin.copy:
+        dest: /tmp/reassign-execution.json
+        content: "{{ (reassign_plan_raw.stdout_lines | select('match', '^{\"version\":.*') | list)[0] }}"
+        mode: '0644'
+
+    - name: Применение плана с ограничением пропускной способности (Throttle 50 MB/s)
+      ansible.builtin.command:
+        cmd: >
+          {{ kafka_install_dir }}/bin/kafka-reassign-partitions.sh
+          --bootstrap-server localhost:9092
+          --reassignment-json-file /tmp/reassign-execution.json
+          --throttle 52428800
+          --execute
+      register: execute_res
+      changed_when: "'Successfully started reassignment' in execute_res.stdout"
+
+    - name: Контроль завершения миграции данных
+      ansible.builtin.command:
+        cmd: >
+          {{ kafka_install_dir }}/bin/kafka-reassign-partitions.sh
+          --bootstrap-server localhost:9092
+          --reassignment-json-file /tmp/reassign-execution.json
+          --verify
+      register: verify_res
+      until: "'is completed' in verify_res.stdout and 'is in progress' not in verify_res.stdout"
+      retries: 60
+      delay: 30
       changed_when: false
 ```
 
 ---
 
-### 5. Настройка мониторинга через JMX Exporter
+### 6. Настройка мониторинга через Prometheus JMX Exporter
+
+Сбор метрик брокера и KRaft контроллера организуется через Java-агент Prometheus JMX Exporter, подключаемый через переменную окружения `KAFKA_OPTS`.
 
 ```yaml
-- name: Установка JMX Exporter
-  hosts: kafka_cluster
-  become: yes
-  vars:
-    jmx_exporter_version: "0.19.0"
-    jmx_exporter_port: 8080
-  
-  tasks:
-    - name: Скачивание JMX Exporter
-      get_url:
-        url: "https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/{{ jmx_exporter_version }}/jmx_prometheus_javaagent-{{ jmx_exporter_version }}.jar"
-        dest: /opt/kafka/libs/jmx_prometheus_javaagent.jar
-        owner: "{{ kafka_user }}"
-        group: "{{ kafka_group }}"
-        mode: '0644'
+# roles/kafka/tasks/monitoring.yml
+---
+- name: Скачивание JMX Exporter JavaAgent
+  ansible.builtin.get_url:
+    url: "https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/1.0.1/jmx_prometheus_javaagent-1.0.1.jar"
+    dest: "{{ kafka_install_dir }}/libs/jmx_prometheus_javaagent.jar"
+    owner: "{{ kafka_user }}"
+    group: "{{ kafka_group }}"
+    mode: '0644'
 
-    - name: Создание конфигурации JMX Exporter
-      copy:
-        dest: /opt/kafka/config/jmx_exporter.yml
-        content: |
-          startDelaySeconds: 0
-          lowercaseOutputName: true
-          lowercaseOutputLabelNames: true
-          rules:
-            - pattern: "kafka.server<type=(.+), name=(.+)><>Value"
-              name: kafka_server_$1_$2
-              type: GAUGE
-            - pattern: "kafka.controller<type=(.+), name=(.+)><>Value"
-              name: kafka_controller_$1_$2
-              type: GAUGE
-        owner: "{{ kafka_user }}"
-        group: "{{ kafka_group }}"
-        mode: '0644'
+- name: Создание конфигурации JMX Exporter под KRaft и метрики брокера
+  ansible.builtin.copy:
+    dest: "{{ kafka_install_dir }}/config/jmx_exporter.yml"
+    owner: "{{ kafka_user }}"
+    group: "{{ kafka_group }}"
+    mode: '0644'
+    content: |
+      startDelaySeconds: 0
+      ssl: false
+      lowercaseOutputName: true
+      lowercaseOutputLabelNames: true
+      rules:
+        # Критические метрики кворума KRaft
+        - pattern: "kafka.controller<type=KafkaController, name=(.+)><>Value"
+          name: kafka_controller_active_$1
+        - pattern: "kafka.controller<type=MetadataLoader, name=(.+)><>Value"
+          name: kafka_controller_metadata_loader_$1
+        # Метрики репликации и состояния брокера
+        - pattern: "kafka.server<type=ReplicaManager, name=UnderReplicatedPartitions><>Value"
+          name: kafka_server_replica_under_replicated_partitions_count
+        - pattern: "kafka.server<type=ReplicaManager, name=OfflineReplicaCount><>Value"
+          name: kafka_server_replica_offline_replica_count
+        - pattern: "kafka.server<type=BrokerTopicMetrics, name=(BytesInPerSec|BytesOutPerSec|MessagesInPerSec)><>Count"
+          name: kafka_server_brokertopicmetrics_$1_total
+        # JVM метрики
+        - pattern: "java.lang<type=Memory><HeapMemoryUsage>used"
+          name: jvm_heap_memory_used_bytes
 
-    - name: Добавление JMX Exporter в Kafka сервис
-      lineinfile:
-        path: /etc/default/kafka
-        line: 'KAFKA_OPTS="${KAFKA_OPTS} -javaagent:/opt/kafka/libs/jmx_prometheus_javaagent.jar={{ jmx_exporter_port }}:/opt/kafka/config/jmx_exporter.yml"'
-      notify: restart kafka
+- name: Добавление JavaAgent в /etc/default/kafka
+  ansible.builtin.lineinfile:
+    path: /etc/default/kafka
+    regexp: '^KAFKA_JMX_OPTS='
+    line: 'KAFKA_JMX_OPTS="-javaagent:{{ kafka_install_dir }}/libs/jmx_prometheus_javaagent.jar=8080:{{ kafka_install_dir }}/config/jmx_exporter.yml"'
+    create: true
+    mode: '0644'
+  notify: Restart kafka
+```
+
+Проверка метрик:
+
+```bash
+curl -s http://10.0.1.1:8080/metrics | grep kafka_server_replica_under_replicated_partitions_count
+# → kafka_server_replica_under_replicated_partitions_count 0.0
 ```
 
 ---
@@ -518,133 +870,131 @@ kafka_controller_quorum_voters: "1@10.0.1.1:9093,2@10.0.1.2:9093,3@10.0.1.3:9093
 ## Troubleshooting
 
 | Симптом | Причина | Диагностика | Решение |
-|---------|---------|-------------|---------|
-| `java.net.BindException: Address already in use` | Порт занят другим процессом | `ss -tlnp \| grep 9092` | Остановите конкурирующий процесс или измените порт |
-| `kafka.errors.NotControllerException` | Запрос ушел не на контроллер | Проверьте `kafka-metadata-quorum.sh describe --status` | Используйте `--bootstrap-server` с любым брокером, клиент сам найдет контроллер |
-| `InconsistentClusterIdException` | Несовпадение Cluster ID при форматировании | Проверьте `/var/lib/kafka/data/meta.properties` | Убедитесь, что используете один Cluster ID для всех нод |
-| `java.lang.OutOfMemoryError: Java heap space` | Недостаточно Heap | Проверьте `kafka.log` и `jstat -gcutil` | Увеличьте `KAFKA_HEAP_OPTS` до 8G, проверьте нагрузку |
-| `Too many open files` | Превышен лимит файловых дескрипторов | `cat /proc/$(pgrep kafka)/limits \| grep "Max open files"` | Увеличьте `LimitNOFILE` в systemd unit до 100000 |
-| `SSLHandshakeException` | Проблема с TLS сертификатами | `openssl s_client -connect host:9094` | Проверьте срок действия сертификатов и SAN |
-| `ReplicaFetcherThread` ошибки | Проблемы с репликацией | `kafka-topics.sh --under-replicated-partitions` | Проверьте сеть между брокерами и `min.insync.replicas` |
+|---|---|---|---|
+| `InconsistentClusterIdException` | Рассогласование `cluster.id` в `meta.properties` между узлами | `cat /var/lib/kafka/data/meta.properties \| grep cluster.id` на всех нодах | Привести все узлы к единому Cluster ID; перед повторным форматированием остановить сервис и очистить каталог данных |
+| `NotControllerException` / `LeaderRecoveryException` | Запрос административной утилиты направлен на брокер без кворума или кворум потерян | `kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe --status` | Проверить сетевую доступность порта 9093 между всеми контроллерами (`ss -tulpn`, брандмауэр) |
+| `java.net.BindException: Address already in use` | Порт 9092, 9093 или 8080 занят другим процессом или зависшим PID Kafka | `ss -tulpn \| grep -E '9092|9093|8080'` | Найти и завершить зависший процесс (`kill -15 <pid>`); скорректировать порты в `server.properties` |
+| `java.lang.OutOfMemoryError: Java heap space` | Недостаточный размер Heap для текущей нагрузки или утечка памяти | Проверить логи GC: `/var/log/kafka/kafka-gc.log` и метрики через `jstat -gcutil <pid> 1000` | Увеличить `KAFKA_HEAP_OPTS` до 8G (не более), проверить количество активных партиций на брокере |
+| `Too many open files` | Превышен лимит дескрипторов файлов процесса | `cat /proc/$(pgrep -f kafka)/limits \| grep 'Max open files'` | Проверить применение `pam_limits` и директивы `LimitNOFILE=1000000` в `kafka.service` |
+| `SSLHandshakeException: General SSLEngine problem` | Сертификат узла не содержит IP/DNS в SAN, либо истек срок действия, либо нет CA в truststore | `openssl s_client -connect 10.0.1.1:9094 -servername 10.0.1.1` | Перевыпустить сертификат с явным указанием `SAN=DNS:...,IP:...` и пересобрать Keystore |
+| Ошибки репликации (`UnderReplicatedPartitions > 0`) | Сетевые задержки, деградация диска ввода-вывода или падение одного из брокеров | `kafka-topics.sh --bootstrap-server localhost:9092 --describe --under-replicated-partitions` | Проверить состояние дисков (`iostat -xz 1`), журнал `journalctl -u kafka` на сбойном узле |
+| Долгая остановка сервиса и `SIGKILL` от systemd | Малый `TimeoutStopSec` в systemd при сбросе больших сегментов на диск | `journalctl -u kafka \| grep 'Terminating process with SIGKILL'` | Увеличить `TimeoutStopSec=120` (или 180) в шаблоне `kafka.service.j2` |
 
-### Диагностические команды
+### Диагностические сценарии и команды
 
 ```bash
-# Проверка состояния кластера
-/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092
+# 1. Проверка реальных лимитов запущенного процесса Kafka
+cat /proc/$(pgrep -f "kafka.Kafka")/limits | grep -E "open files|max processes"
+# → Max open files            1000000              1000000              files
+# → Max processes             65536                65536                processes
 
-# Проверка логов в реальном времени
-journalctl -u kafka -f
+# 2. Проверка состояния Transparent Huge Pages (должно быть [never])
+cat /sys/kernel/mm/transparent_hugepage/enabled
+# → always madvise [never]
 
-# Проверка метрик JMX
-curl -s localhost:8080/metrics | grep kafka_server
+# 3. Детальный аудит логов systemd в реальном времени
+journalctl -u kafka -n 100 -f --no-pager
 
-# Проверка сетевых соединений
-ss -tlnp | grep -E '9092|9093|9094'
+# 4. Проверка валидности сертификатов Keystore
+keytool -list -v -keystore /etc/kafka/secrets/kafka.keystore.jks -storepass changeit | grep -E "Alias name|Valid from|Owner"
 ```
 
 ---
 
 ## Best Practices
 
-1. **Разделение Controller и Broker ролей** В production-средах рекомендуется разделять узлы на чистые контроллеры (3-5 нод) и чистые брокеры для повышения стабильности.
-
-2. **Используйте Ansible Vault для секретов** Никогда не храните пароли и ключи в открытом виде:
+1. **Разделение ролей для кластеров от 5 узлов:** Начиная с 5 серверов, выделяйте 3 отдельных компактных узла под кворум контроллеров (`process.roles=controller`), а остальные — под брокеры данных (`process.roles=broker`). Это устраняет конкуренцию за ресурсы.
+2. **Использование Ansible Vault для секретов:** Никогда не коммитьте пароли от Keystore, Truststore и учетных записей SASL в репозиторий в открытом виде:
    ```bash
-   ansible-vault encrypt_string 'my_secret_password' --name 'sasl_admin_password'
+   ansible-vault encrypt_string 'SuperSecretP@ssw0rd' --name 'vault_keystore_password'
    ```
-
-3. **Настройте резервное копирование** Регулярно резервируйте директорию `/var/lib/kafka/data` и конфигурации.
-
-4. **Мониторинг кворума** Настройте алерты на падение кворума контроллеров (потеря более половины нод).
-
-5. **Тестируйте обновления в staging** Всегда тестируйте обновления версий Kafka на staging-среде перед production.
-
-6. **Используйте отдельные диски для логов** Выделите отдельный физический диск или раздел для `log.dirs` для изоляции I/O.
-
-7. **Настройте log rotation** Настройте `log.retention.hours` и `log.retention.bytes` в соответствии с бизнес-требованиями.
+3. **Изоляция хранилища под данные и логи:** Размещайте каталог `kafka_data_dir` на выделенном дисковом томе NVMe/SSD, отформатированном в **XFS** с опциями монтирования `noatime,nodiratime,logbufs=8,logbsize=256k`. Журналы сервиса (`/var/log/kafka`) направляйте на отдельный системный диск во избежание заполнения раздела данных.
+4. **Контроль параметров сброса Page Cache:** В высоконагруженных системах устанавливайте `vm.dirty_background_ratio=5` и `vm.dirty_ratio=10`. Значения выше 20 вызывают массивные всплески задержек I/O из-за блокирующего синхронного сброса данных ядром.
+5. **Безопасный Graceful Shutdown:** Убедитесь, что в конфигурации включен `controlled.shutdown.enable=true`, а в systemd задан `TimeoutStopSec=120`. Это гарантирует передачу лидерства партиций до остановки процесса.
+6. **Тестирование ролей через Ansible-Lint:** Регулярно запускайте статический анализ плейбуков для предотвращения ошибок синтаксиса и безопасности:
+   ```bash
+   ansible-lint playbooks/deploy.yml
+   ```
 
 ---
 
 ## Edge Cases
 
-### Kafka 4.0 и удаление ZooKeeper
+### Восстановление после потери кворума KRaft
 
-Начиная с Kafka 4.0, ZooKeeper полностью удален. При миграции с Kafka 3.x на 4.0 необходимо:
-1. Убедиться, что кластер работает в режиме KRaft
-2. Обновить все клиентские библиотеки
-3. Проверить совместимость всех интеграций
+Если 2 из 3 контроллеров безвозвратно вышли из строя, кворум Raft утрачивает большинство и переходит в режим read-only.
+- Для восстановления оставшийся контроллер не может самостоятельно выбрать нового лидера.
+- В Kafka 3.8+ / 4.0 используется утилита динамической реконфигурации кворума:
+  ```bash
+  /opt/kafka/bin/kafka-metadata-quorum.sh --bootstrap-server localhost:9092 remove-controller --controller-id 2
+  ```
+- В аварийном сценарии полной утраты кворума требуется восстановление из резервной копии каталога `metadata.log.dir`.
 
-### Миграция с ZooKeeper на KRaft
+### Защита от случайного повторного форматирования
 
-Для миграции существующего кластера с ZooKeeper на KRaft используйте поэтапный подход:
-1. Включите двойной режим (ZooKeeper + KRaft) в Kafka 3.3+
-2. Постепенно переведите контроллеры на KRaft
-3. Отключите ZooKeeper после полной миграции
+Команда `kafka-storage.sh format` при повторном запуске на работающем диске без флага `--ignore-formatted` завершается ошибкой, однако если флаг указан некорректно или каталог данных частично очищен, метаданные могут быть затерты. Задача Ansible обязательно должна включать предварительную проверку `ansible.builtin.stat` файла `meta.properties`.
 
-### Работа с большими кластерами (10+ нод)
+### Аварийное отключение питания хоста (Unclean Shutdown)
 
-При масштабировании более 10 брокеров:
-- Используйте отдельные ноды для контроллеров (минимум 3-5)
-- Настройте `auto.leader.rebalance.enable=true`
-- Рассмотрите использование Cruise Control для автоматической балансировки
-
-### Мульти-региональные кластеры
-
-Для географически распределенных кластеров:
-- Используйте MirrorMaker 2 для репликации между регионами
-- Настройте `replica.socket.timeout.ms` с учетом задержек сети
-- Рассмотрите использование Rack Awareness (`broker.rack`)
+При внезапном отключении питания брокер может обнаружить поврежденный сегмент лога. При следующем старте Kafka выполняет проверку контрольных сумм CRC всех сегментов, начиная с точки последнего чекпоинта (`recovery.point.offset.checkpoint`).
+- Количество потоков проверки регулируется параметром `num.recovery.threads.per.data.dir=4`.
+- Если на диске поврежден индексный файл (`.index` или `.timeindex`), удаление только поврежденного индекса позволяет брокеру восстановить его из сегмента `.log` без потери данных сообщений.
 
 ---
 
 ## Дополнительная информация
 
-### Тюнинг JVM: Почему 6-8 ГБ Heap?
+### Почему Heap ограничен 6–8 ГБ?
 
-Одной из самых частых ошибок является выделение Kafka 32 ГБ+ оперативной памяти под Heap.
-- **Page Cache:** Kafka спроектирована так, что она почти не держит данные в памяти приложения. Она использует системные вызовы `sendfile`, которые читают данные из кэша файловой системы (Page Cache) напрямую в сетевой сокет.
-- **Производительность:** Если вы отдадите 90% RAM под JVM Heap, ОС не сможет эффективно кэшировать файлы сегментов, что приведет к резкому росту операций чтения с диска (Disk I/O) и падению производительности всего кластера.
+В отличие от традиционных Java-сервисов (например, Elasticsearch), Kafka спроектирована для работы в связке с дисковым кэшем операционной системы (**Page Cache**):
+- Данные топиков передаются из дискового кэша напрямую в сетевой сокет через системный вызов `sendfile` (Zero-Copy Transfer), минуя пространство пользователя (JVM).
+- Если выделить под JVM Heap 32 ГБ или 64 ГБ оперативной памяти, это отнимет ресурсы у Page Cache, приведет к деградации пропускной способности чтения и вызовет длительные паузы сборщика мусора (GC Stop-The-World).
+- Рекомендуемый размер: 6–8 ГБ для брокера, 4 ГБ для выделенного контроллера KRaft. Подробный анализ работы GC и подбора параметров см. в [JVM и GC тюнинг для Kafka](./kafka_jvm_gc_tuning.md).
 
-### Структура проекта Ansible
+### Референсная структура проекта Ansible
 
 ```
 kafka-ansible/
+├── ansible.cfg
 ├── inventory/
-│   ├── hosts.ini              # Статический инвентарь
+│   ├── hosts.ini                      # Статический инвентарь (или hosts.yml)
 │   └── group_vars/
-│       ├── all.yml            # Общие переменные
-│       └── kafka_cluster.yml  # Переменные кластера
+│       ├── all.yml                    # Общие переменные (версии, пути)
+│       ├── kafka_controllers.yml      # Настройки кворума и ресурсов контроллеров
+│       └── kafka_brokers.yml          # Настройки I/O и лимитов брокеров
 ├── roles/
 │   └── kafka/
 │       ├── tasks/
-│       │   ├── main.yml
-│       │   ├── install.yml
-│       │   ├── configure.yml
-│       │   └── tls.yml
+│       │   ├── main.yml               # Точка входа роли
+│       │   ├── system_tuning.yml      # Тюнинг sysctl, limits, THP
+│       │   ├── install.yml            # Установка пакетов и дистрибутива
+│       │   ├── tls_pki.yml            # Сертификаты, Keystore и Truststore
+│       │   ├── kraft_init.yml         # Идемпотентная инициализация KRaft
+│       │   └── monitoring.yml         # Установка и настройка JMX Exporter
 │       ├── templates/
-│       │   ├── server.properties.j2
-│       │   ├── kafka.service.j2
-│       │   └── kafka_server_jaas.conf.j2
-│       ├── handlers/
-│       │   └── main.yml
-│       └── defaults/
-│           └── main.yml
-├── playbooks/
-│   ├── deploy.yml
-│   ├── upgrade.yml
-│   └── scale.yml
-└── ansible.cfg
+│       │   ├── server.properties.j2   # Шаблон конфигурации брокера/контроллера
+│       │   └── kafka.service.j2       # Шаблон сервиса systemd
+│       └── handlers/
+│           └── main.yml               # Обработчики рестарта и перезагрузки systemd
+└── playbooks/
+    ├── deploy.yml                     # Полное развертывание кластера
+    ├── rolling_restart.yml            # Беспростойный перезапуск
+    └── rebalance.yml                  # Автоматизация ребалансировки партиций
 ```
 
 ### См. также
 
-- **[Обзор Apache Kafka](./kafka_overview.md)** — архитектура журналов и режим KRaft.
-- **[Гарантии доставки](./delivery_guarantees.md)** — как настройки `acks` влияют на надежность после деплоя.
-- **[Kafka для мониторинга](./kafka_for_monitoring.md)** — метрики JMX, которые стоит собирать.
+- **[Обзор Apache Kafka](./kafka_overview.md)** — архитектура журналов, брокеров и основы протокола KRaft.
+- **[OS тюнинг для Apache Kafka](./kafka_os_tuning.md)** — системные параметры ядра Linux, файловые системы XFS и дисковые планировщики.
+- **[JVM и GC тюнинг для Apache Kafka](./kafka_jvm_gc_tuning.md)** — параметры сборщика мусора G1GC, логирование GC и управление памятью.
+- **[CLI-инструменты для работы с Apache Kafka](./kafka_cli_tools.md)** — стандартные утилиты управления кворумом, топиками и клиентами.
+- **[Гарантии доставки в Apache Kafka](./delivery_guarantees.md)** — влияние параметров `min.insync.replicas` и `acks` на надежность.
+- **[Kafka для систем мониторинга](./kafka_for_monitoring.md)** — сбор ключевых JMX-метрик и мониторинг Consumer Lag.
+- **[Capacity Planning и Disaster Recovery](./kafka_capacity_dr.md)** — формулы сайзинга аппаратных ресурсов и стратегии восстановления.
 
-### Инструменты
+### Внешние источники и инструменты
 
-- **[Confluent Ansible Roles](https://github.com/confluentinc/cp-ansible):** Официальные роли от Confluent.
-- **[JMX Exporter:](https://github.com/prometheus/jmx_exporter)** Рекомендуется устанавливать через Ansible как Java Agent.
-- **[Ansible Lint](https://ansible.readthedocs.io/projects/lint/):** Инструмент для проверки качества Ansible кода.
+- **[Apache Kafka Documentation](https://kafka.apache.org/documentation/)** — официальная документация проекта Apache Kafka.
+- **[Confluent Platform Ansible (cp-ansible)](https://github.com/confluentinc/cp-ansible)** — эталонная открытая реализация Ansible-ролей для платформы Confluent.
+- **[Prometheus JMX Exporter](https://github.com/prometheus/jmx_exporter)** — агент для экспорта JMX-метрик Java-приложений в формат Prometheus.
+- **[Ansible Lint Documentation](https://ansible.readthedocs.io/projects/lint/)** — статический анализатор качества кода и соблюдения лучших практик Ansible.

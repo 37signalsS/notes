@@ -1,166 +1,172 @@
 # Argo CD: Мультитенантность — паттерны изоляции, project-per-team и tenant namespace isolation
 
-**Актуально для:** Argo CD v3.5.x (v3.5.0 – v3.5.4+; проверено против релиза v3.5.4 от 6 октября 2026 года)
+**Актуально для:** Argo CD v3.5.x (v3.5.0–v3.5.4+; проверено против релиза v3.5.4 от октября 2026 года; Kubernetes 1.28–1.32+; bare-metal / on-premise)
 
-> **Актуальность (2026):** Мультитенантность в Argo CD v3.5.x реализуется через комбинацию AppProject (ограничения на источники/назначения, типы ресурсов, окна синхронизации), RBAC (роли для пользователей/групп, fine-grained control для `update`/`delete` суб-ресурсов), SSO (OIDC/LDAP для аутентификации) и Namespace (сетевая и resource изоляция). Основные паттерны: Project-per-team, Project-per-environment, Shared-controller с tenant namespaces, Multi-controller sharding, Applications-in-any-Namespace, Namespace-scoped Argo CD. Ключевые новшества v3.5: `sourceNamespaces`, `permitOnlyProjectScopedClusters`, `orphanedResources`, `sourceIntegrity` (наследник устаревшего `signatureKeys`), `jwtTokens` в ролях проектов, fine-grained RBAC для `update`/`delete` суб-ресурсов (v3.0+), `destinationServiceAccounts` для имперсонации.
+> **Актуальность (2026):** Мультитенантность в Argo CD v3.5.x реализуется через эшелонированную модель защиты (Defense-in-Depth): разграничение прав и областей видимости в `AppProject` (ограничения репозиториев, кластеров, типов ресурсов, окон синхронизации), ролевую модель RBAC (глобальные роли и роли проектов с гранулярным контролем `update`/`delete` суб-ресурсов), корпоративный SSO (OIDC/LDAP через Keycloak или Dex) и инфраструктурную изоляцию в Kubernetes (Namespace, NetworkPolicy, ResourceQuota, LimitRange, Pod Security Admission). Ключевые возможности v3.5: децентрализованное управление манифестами через `sourceNamespaces` (Applications-in-any-Namespace), имперсонация сервисных аккаунтов через `destinationServiceAccounts`, проверка криптографической подлинности коммитов `sourceIntegrity` (полноценная замена устаревшего `signatureKeys`), изоляция проектных кластеров `permitOnlyProjectScopedClusters` и репозиториев `permitOnlyProjectScopedRepositories`, шардирование контроллеров по кластерам и тенантам (`controller.sharding.algorithm`), а также запуск полностью изолированных экземпляров Argo CD в режиме `namespace-install`.
 
-## Предварительные требования
-
-1. **Argo CD установлен** (см. [Установка и настройка](./argocd_installation_and_setup.md)). Рекомендуется версия v3.5.x — последняя на момент обновления (v3.5.4, октябрь 2026).
-2. **kubectl** с доступом к namespace `argocd` (или к tenant namespace для namespace-scoped режима).
-3. **argocd CLI** настроен (версия, совместимая с сервером).
-4. **SSO настроен** (рекомендуется) — см. [SSO с GitLab](./argocd_sso_gitlab.md).
-5. **Понимание RBAC и AppProject** — см. [RBAC](./argocd_rbac_deep.md), [AppProject](./argocd_appproject_deep.md).
-6. **Доступ к кластеру** для редактирования ConfigMap/Secret в namespace Argo CD (для настройки `argocd-rbac-cm`, `argocd-cm`).
-7. **Понимание Sync Windows** — см. [Sync Windows](./synchronization/scenarios/sync_windows.md).
-8. **Понимание Kubernetes multi-tenancy** — см. [Kubernetes Multi-tenancy](../../Kubernetes/Concepts/multi-tenancy.md) (Namespace, NetworkPolicy, ResourceQuota, RBAC).
+---
 
 ## Определения
 
 | Термин | Определение |
 | :--- | :--- |
-| **Мультитенантность (Multi-tenancy)** | Архитектурный паттерн, при котором один экземпляр Argo CD обслуживает несколько независимых команд/проектов с изоляцией данных, конфигурации и доступа. |
-| **Tenant (Тенант)** | Команда, проект или бизнес-единица, использующая Argo CD с изолированным доступом к своим приложениям и ресурсам. |
-| **AppProject** | CRD, определяющий границы (boundary): разрешённые источники, назначения, типы ресурсов, роли, окна синхронизации. |
-| **Project-per-team** | Паттерн, при котором каждая команда имеет свой AppProject с уникальными restrictions, roles и sync windows. |
-| **Project-per-environment** | Паттерн, при котором каждое окружение (dev/staging/prod) является отдельным AppProject с разными уровнями доступа. |
-| **Tenant Namespace** | Kubernetes-namespace, выделенный для конкретного тенанта. Обеспечивает сетевую и resource изоляцию. |
-| **Shared Controller** | Единый экземпляр argocd-application-controller, обслуживающий несколько тенантов через AppProject и RBAC. |
-| **Applications-in-any-Namespace** | Функция (v3.x), позволяющая создавать Application CR в tenant-namespace вместо namespace Argo CD. Требует `sourceNamespaces` в AppProject для ограничения. |
-| **Namespace-scoped Argo CD** | Режим установки Argo CD, при котором все компоненты работают в одном namespace (без cluster-admin). Обеспечивает изоляцию tenant'а на уровне namespace. |
-| **destinationServiceAccounts** | Поле AppProject, позволяющее указать service account для имперсонации при синхронизации в каждый destination. Ключевой механизм защиты: тенант не получает прямые кластерные токены. |
-| **Project-scoped репозитории/кластеры** | Секреты с меткой `project: <name>`, доступные только приложениям того же проекта. Позволяет self-service добавление репозиториев/кластеров без админа. |
-| **Global Project** | AppProject с `labelSelector` в `argocd-cm` (`globalProjects`), от которого наследуются whitelist/blacklist, syncWindows, sourceRepos и destinations другие проекты. |
-| **Source Integrity** | Механизм (v3.5+), заменяющий устаревший `signatureKeys`. Позволяет объявлять критерии проверки подлинности источников (GPG commit signatures) в `AppProject.spec.sourceIntegrity`. |
-| **Controller Sharding** | Разделение нагрузки argocd-application-controller на несколько реплик по шардам. Критично для масштабирования при 1000+ приложений. |
-| **RBAC Fine-grained Permissions** | Правила v3.0+, позволяющие разрешать/запрещать действия на конкретные sub-ресурсы (pods, services) внутри приложения: `delete/*/Pod/*/*`. |
+| **Мультитенантность (Multi-tenancy)** | Архитектурная модель, при которой единая инсталляция Argo CD обслуживает множество независимых команд, сервисов или инфраструктурных контуров с гарантированной изоляцией конфигураций, доступов и ресурсов. |
+| **Тенант (Tenant)** | Команда разработки, продуктовое подразделение или проект, обладающий изолированным пространством имен в Kubernetes и собственным скоупом управления в Argo CD. |
+| **AppProject** | Custom Resource (`argoproj.io/v1alpha1`), задающий логические границы безопасности: разрешенные Git/Helm/OCI-репозитории, целевые кластеры и пространства имен, белые и черные списки видов ресурсов K8s, проектные роли и регламентные окна синхронизации. |
+| **Project-per-team** | Архитектурный паттерн, при котором каждому тенанту выделяется собственный `AppProject` с уникальным набором ограничений, ролей и синхронизационных окон. |
+| **Project-per-environment** | Паттерн разделения сред выполнения (development, staging, production) по независимым проектам `AppProject` с ужесточением политик безопасности по мере продвижения к production. |
+| **Tenant Namespace** | Пространство имен Kubernetes, закрепленное за тенантом. Обеспечивает изоляцию рабочих нагрузок на уровне ядра K8s посредством NetworkPolicy, ResourceQuota и RBAC. |
+| **Shared Controller** | Единый разделяемый экземпляр `argocd-application-controller`, обрабатывающий задачи сверки для всех тенантов с логическим разделением через `AppProject`. |
+| **Applications-in-any-Namespace** | Архитектурный режим (Argo CD v3.x), позволяющий тенантам объявлять ресурсы `Application` в собственных пространствах имен без доступа к системному namespace `argocd`. Требует активации через `application.namespaces` в `argocd-cmd-params-cm` и разрешения в `AppProject.spec.sourceNamespaces`. |
+| **Namespace-scoped Argo CD** | Режим развертывания Argo CD (`namespace-install.yaml`), при котором компоненты контроллера и сервера функционируют с правами локального namespace (без `ClusterRole` и доступа cluster-admin) и управляют внешними целевыми кластерами. |
+| **destinationServiceAccounts** | Механизм имперсонации Kubernetes ServiceAccount в целевом кластере/namespace. Контроллер Argo CD при синхронизации манифестов действует от имени указанного SA тенанта с его локальными правами RBAC, исключая использование избыточных прав контроллера. |
+| **Project-scoped ресурсы** | Секреты репозиториев (`repository`) и кластеров (`cluster`), помеченные меткой `project: <имя>`, доступные только приложениям указанного проекта. Позволяет организовать безопасный self-service без вмешательства системных администраторов. |
+| **Global Projects** | Механизм наследования политик, при котором дочерние проекты автоматически получают базовые правила (whitelist/blacklist ресурсов, syncWindows) от базового `AppProject` на основе `labelSelector` в ConfigMap `argocd-cm`. |
+| **Source Integrity** | Механизм проверки подлинности источников манифестов (Argo CD v3.5+), пришедший на смену устаревшему полю `signatureKeys`. Валидирует GPG-подписи коммитов перед запуском генерации и синхронизации. |
+| **Controller Sharding** | Горизонтальное масштабирование `argocd-application-controller` путем разделения пула обслуживаемых кластеров и приложений между несколькими репликами (шардами) StatefulSet. |
+| **RBAC Fine-grained Permissions** | Гранулярные правила авторизации (введены в v3.0+, стабилизированы в v3.5+), позволяющие разграничивать доступ к отдельным суб-ресурсам и действиям внутри приложения (например, разрешение на перезапуск подов `delete/*/Pod/*/*` при запрете на изменение спецификации приложения). |
 
-## Базовые концепции
+---
 
-### Принцип Defense-in-Depth
+## Архитектура и базовые концепции
 
-Мультитенантность в Argo CD реализуется трёхуровневой моделью защиты:
+### Четырёхуровневая модель Defense-in-Depth
+
+Изоляция тенантов в Argo CD строится по принципу эшелонированной обороны (Defense-in-Depth). Запрос на управление или синхронизацию последовательно проходит четыре независимых барьера проверки:
 
 ```text
-Запрос (UI/CLI/API)
+Запрос (UI / CLI / REST API / GitOps-триггер)
     │
     ▼
-┌─────────────────────┐
-│ 1. Аутентификация    │ ← SSO (OIDC/LDAP), локальный аккаунт, JWT
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│ 2. Авторизация       │ ← RBAC (policy.csv + project roles)
-│    (Кто?)            │   "кто может sync в production/*"
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│ 3. AppProject        │ ← Границы (Что?)
-│    Restrictions      │   "разрешено деплоить только Deployment в team-a/*"
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│ 4. destinationSA     │ ← Имперсонация для синхронизации
-│    (Как?)            │   "контроллер синхронизирует от service account тенанта"
-└─────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│ 1. Аутентификация (Identity & SSO)                          │
+│    Проверка подлинности субъекта: Keycloak, Dex, OIDC,     │
+│    локальный аккаунт, подписанный JWT-токен API             │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 2. Авторизация (RBAC Evaluation)                            │
+│    Проверка прав субъекта на действие в Casbin:              │
+│    Глобальные правила policy.csv + проектные роли (roles)   │
+│    «Может ли инженер team-a выполнить sync приложения X?»   │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 3. Границы проекта (AppProject Boundaries)                  │
+│    Проверка допустимости манифеста и окружения:             │
+│    - Источник Git/Helm разрешен в sourceRepos?              │
+│    - Кластер и Namespace входят в destinations?             │
+│    - Виды ресурсов разрешены в Whitelist / не в Blacklist?  │
+│    - Не блокируют ли операцию Sync Windows?                 │
+│    - Валидна ли GPG-подпись коммита в sourceIntegrity?      │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 4. Исполнение в Kubernetes API (K8s API & Impersonation)     │
+│    Применение манифестов в целевом кластере:                │
+│    - Без имперсонации: от имени ServiceAccount контроллера  │
+│    - С destinationServiceAccounts: от имени локального SA   │
+│      тенанта (Kubernetes API возвращает 403 при выходе за   │
+│      пределы назначенных тенанту прав RBAC)                 │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-RBAC отвечает **кто** может что сделать, AppProject определяет **что** разрешено сделать, а `destinationServiceAccounts` контролирует **как** (от чьего имени) выполняется синхронизация.
+Каждый уровень решает свою строгую задачу:
+- **Аутентификация** удостоверяет личность пользователя или пайплайна.
+- **RBAC** определяет, **кто** имеет право запросить действие (`get`, `sync`, `create`, `delete`).
+- **AppProject** определяет, **что именно** и **куда** разрешено доставлять декларативно.
+- **destinationServiceAccounts** определяет, **с какими привилегиями в ядре Kubernetes** происходит материализация объектов.
+
+---
 
 ### Архитектурные паттерны мультитенантности
 
+В зависимости от требований к безопасности и масштабу инфраструктуры применяются следующие архитектурные схемы:
+
 ```text
-┌──────────────────────────────────────────────────────────┐
-│  Argo CD (shared instance)                               │
-│                                                          │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │
-│  │ AppProject  │  │ AppProject  │  │ AppProject  │      │
-│  │ (team-a)    │  │ (team-b)    │  │ (shared)    │      │
-│  │             │  │             │  │             │      │
-│  │ sourceRepos: │  │ sourceRepos: │  │ sourceRepos: │      │
-│  │  team-a/*   │  │  team-b/*   │  │  *          │      │
-│  │ destinations:│  │ destinations:│  │ destinations:│      │
-│  │  ns:team-a  │  │  ns:team-b  │  │  ns:shared  │      │
-│  │ sourceNS:   │  │ sourceNS:   │  │ sourceNS:   │      │
-│  │  team-a-*   │  │  team-b-*   │  │  shared-*   │      │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘      │
-│         │                │                │              │
-│         ▼                ▼                ▼              │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │           argocd-application-controller              ││
-│  │           (shared, sharded by project)                ││
-│  └─────────────────────────────────────────────────────┘│
-└──────────────────────────────────────────────────────────┘
-          │                │                │
-          ▼                ▼                ▼
-┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-│ namespace   │  │ namespace   │  │ namespace   │
-│ team-a      │  │ team-b      │  │ shared      │
-│ (isolated)  │  │ (isolated)  │  │ (isolated)  │
-└─────────────┘  └─────────────┘  └─────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Схема 1: Shared Control Plane (Project-per-team + Applications-in-NS)    │
+│                                                                         │
+│  Argo CD Control Plane (namespace: argocd)                              │
+│  ├── argocd-server                                                      │
+│  ├── argocd-repo-server                                                 │
+│  └── argocd-application-controller (sharded)                           │
+│                                                                         │
+│       │                              │                             │    │
+│       │ watch CRs                    │ watch CRs                   │    │
+│       ▼                              ▼                             ▼    │
+│  ┌───────────────────────┐  ┌───────────────────────┐  ┌──────────────┐ │
+│  │ Namespace: team-a-apps│  │ Namespace: team-b-apps│  │ ...          │ │
+│  │ Application: backend  │  │ Application: frontend │  │              │ │
+│  │ AppProject: team-a    │  │ AppProject: team-b    │  │              │ │
+│  └───────────┬───────────┘  └───────────┬───────────┘  └──────────────┘ │
+└──────────────┼──────────────────────────┼───────────────────────────────┘
+               │ sync (via Impersonation) │ sync (via Impersonation)
+               ▼                          ▼
+ ┌───────────────────────────┐ ┌───────────────────────────┐
+ │ Целевой Namespace:        │ │ Целевой Namespace:        │
+ │ team-a-prod               │ │ team-b-prod               │
+ │ NetworkPolicy / Quotas    │ │ NetworkPolicy / Quotas    │
+ └───────────────────────────┘ └───────────────────────────┘
 ```
 
-### Матрица изоляции и защиты
+#### Сравнение моделей изоляции
 
-| Уровень | Механизм | Что ограничивает | Где настраивается |
+| Паттерн | Степень изоляции | Нагрузка на Control Plane | Операционная сложность | Целевой сценарий использования |
+| :--- | :--- | :--- | :--- | :--- |
+| **Project-per-team (Shared)** | Логическая (Soft) | Низкая (единый контроллер) | Минимальная | Внутренние команды одной организации, доверенные разработчики. |
+| **Applications-in-any-Namespace** | Логическая + Self-Service | Средняя (контроллер слушает несколько NS) | Средняя | Децентрализованный GitOps: команды сами создают Application CR в своих NS. |
+| **Multi-controller Sharding** | Логическая (масштабируемая) | Оптимизированная (пул шардов) | Средняя | Крупные on-prem инсталляции (>1000 приложений, десятки кластеров). |
+| **Namespace-scoped Argo CD** | Высокая (изоляция процессов) | Высокая (отдельные поды на тенанта) | Высокая | Враждебные тенанты, жесткие требования безопасности (PCI-DSS / гостайна). |
+| **Dedicated Instance per Tenant** | Максимальная (Hard) | Наивысшая (N полных инсталляций) | Высокая (требует автоматизации) | Полная изоляция команд в разных физических или виртуальных кластерах. |
+
+---
+
+### Матрица механизмов изоляции и защиты
+
+| Уровень стека | Механизм | Что защищает / ограничивает | Точка конфигурации |
 | :--- | :--- | :--- | :--- |
-| **Аутентификация** | SSO (OIDC/LDAP) | Кто может войти в Argo CD | `argocd-cm` (OIDC config) |
-| **Авторизация** | RBAC (policy.csv) | Какие действия (get/sync/create/delete) с какими ресурсами | `argocd-rbac-cm` |
-| **Границы проекта** | AppProject.sourceRepos | Какие Git-репозитории разрешены | `AppProject.spec.sourceRepos` |
-| **Границы проекта** | AppProject.destinations | Куда можно деплоить (кластеры + namespace) | `AppProject.spec.destinations` |
-| **Границы проекта** | AppProject.namespaceResourceWhitelist/Blacklist | Какие типы ресурсов разрешены/запрещены | `AppProject.spec` |
-| **Границы проекта** | AppProject.clusterResourceWhitelist/Blacklist | Какие cluster-scoped ресурсы разрешены | `AppProject.spec` |
-| **Область Application** | sourceNamespaces | В каких namespaces могут жить Application CR | `AppProject.spec.sourceNamespaces` |
-| **Имперсонация** | destinationServiceAccounts | От чьего service account синхронизировать | `AppProject.spec.destinationServiceAccounts` |
-| **Временные окна** | Sync Windows | Когда можно синхронизировать | `AppProject.spec.syncWindows` |
-| **Аудит источников** | sourceIntegrity | GPG-подпись коммитов перед sync | `AppProject.spec.sourceIntegrity` |
-| **Сетевая изоляция** | NetworkPolicy | Pod-to-Pod трафик между tenant namespaces | Kubernetes NetworkPolicy |
-| **Resource изоляция** | ResourceQuota + LimitRange | Лимиты CPU/RAM/объектов на namespace | Kubernetes ResourceQuota |
+| **Аутентификация** | SSO / OIDC (Keycloak / Dex) | Доступ в интерфейс и API Argo CD | ConfigMap `argocd-cm` (`oidc.config` / `dex.config`) |
+| **Авторизация** | RBAC (`policy.csv`, роли) | Допустимые операции над сущностями Argo CD | ConfigMap `argocd-rbac-cm`, поле `.spec.roles` в `AppProject` |
+| **Границы репозиториев** | `sourceRepos` | Запрет на использование чужих или недоверенных Git/Helm репозиториев | `AppProject.spec.sourceRepos` |
+| **Границы кластеров и NS** | `destinations` | Запрет деплоя в чужие неймспейсы или инфраструктурные контуры | `AppProject.spec.destinations` |
+| **Фильтрация ресурсов** | `namespaceResourceWhitelist` / `Blacklist` | Запрет создания привилегированных объектов (например, `Secret`, `RoleBinding`) | `AppProject.spec` |
+| **Кластерные ресурсы** | `clusterResourceWhitelist` / `Blacklist` | Запрет создания `ClusterRole`, `CRD`, `Namespace`, `MutatingWebhookConfiguration` | `AppProject.spec` |
+| **Область создания Application** | `sourceNamespaces` | Список неймспейсов, откуда разрешено принимать Application CR | `AppProject.spec.sourceNamespaces` + `argocd-cmd-params-cm` |
+| **Имперсонация K8s API** | `destinationServiceAccounts` | Ограничение прав синхронизации правами сервисного аккаунта тенанта | `AppProject.spec.destinationServiceAccounts` + K8s RBAC |
+| **Временные интервалы** | Sync Windows | Запрет автоматического или ручного деплоя в часы пиковой нагрузки / выходные | `AppProject.spec.syncWindows` |
+| **Контроль подлинности** | `sourceIntegrity` | Проверка криптографической GPG-подписи коммитов в Git | `AppProject.spec.sourceIntegrity` |
+| **Сетевая изоляция K8s** | `NetworkPolicy` | Блокировка межподового трафика между неймспейсами тенантов | Kubernetes `NetworkPolicy` в tenant namespace |
+| **Лимиты ресурсов K8s** | `ResourceQuota` + `LimitRange` | Предотвращение исчерпания CPU, RAM, диска и дескрипторов etcd (Noisy Neighbor) | Kubernetes `ResourceQuota`, `LimitRange` |
+| **Безопасность подов K8s** | Pod Security Standards (PSA) | Запрет привилегированных контейнеров, hostPath, hostNetwork | Метки namespace: `pod-security.kubernetes.io/enforce: restricted` |
 
-### Паттерн: Applications-in-any-Namespace
-
-Начиная с v3.x, Application CR может быть создан в tenant namespace (не в `argocd`):
-
-```text
-tenant team-a
-├── Namespace: team-a  (tenant-owned)
-│   ├── AppProject (team-a) — управляется Platform Team через Argo CD
-│   └── Application (app-backend) — создан team-a через Argo CD или pull request
-argocd namespace
-├── argocd-application-controller
-├── argocd-server
-└── AppProject (team-a) — sourceNamespaces: ["team-a-*"]
-```
-
-Это паттерн **declarative-app-per-team**: команда управляет своими Application через GitOps, а Platform Team задаёт границы через `sourceNamespaces` в AppProject.
-
-### Паттерн: Namespace-scoped Argo CD
-
-Для враждебных тенантов (external customers) используется **namespace-scoped установка** (`namespace-install.yaml`):
-
-```bash
-# Namespace-scoped установка (без cluster-admin)
-kubectl create namespace argocd-team-a
-# CRDs устанавливаются отдельно администратором
-kubectl apply -n argocd-team-a --server-side --force-conflicts \
-  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.4/manifests/namespace-install.yaml
-```
-
-Ограничения:
-- CRD должны быть установлены администратором кластера (разово).
-- Argo CD может деплоить только во внешние кластеры (не в `kubernetes.default.svc`).
-- Application/ApplicationSet/AppProject создаются только в этом namespace.
+---
 
 ## Практические сценарии
 
-### Сценарий 1: Project-per-team
+### Предварительные требования
 
-Каждая команда имеет свой AppProject с полной изоляцией.
+Перед реализацией сценариев убедитесь в готовности окружения:
+1. **Кластер Kubernetes:** версия v1.28–v1.32+ (on-premise / bare-metal).
+2. **Установленный Argo CD:** версия v3.5.x (v3.5.4+) в namespace `argocd` (см. [Установка и настройка](./argocd_installation_and_setup.md)).
+3. **Утилиты управления:** настроенные CLI `kubectl` и `argocd` с правами администратора.
+4. **Смежные знания:**
+   - Модель прав доступа и правила Casbin: [RBAC](./argocd_rbac_deep.md).
+   - Детальная спецификация полей проекта: [AppProject](./argocd_appproject_deep.md).
+   - Расписания окон блокировок: [Sync Windows](./synchronization/scenarios/sync_windows.md).
+   - Базовые концепции мультитенантности K8s: [Kubernetes Multi-tenancy](../../Kubernetes/Concepts/multi-tenancy.md).
 
-**1. Команда Backend:**
+---
+
+### Сценарий 1: Паттерн Project-per-team (Изоляция команд разработки)
+
+**Контекст:** В организации две команды разработки — `backend` и `frontend`. Команды должны иметь доступ только к своим приложениям, репозиториям и пространствам имен. Администраторы платформы (SRE) имеют глобальный доступ.
+
+#### 1. AppProject для команды Backend
+
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
@@ -170,14 +176,18 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: "Backend команда"
+  description: "Проект для сервисов команды Backend"
+  # Разрешены только репозитории бэкенда
   sourceRepos:
-    - "https://github.com/myorg/backend/*"
-    - "https://charts.myorg.io/backend/*"
+    - "https://git.corp.internal/backend/*"
+    - "https://helm.corp.internal/charts/backend/*"
+  # Разрешен деплой только в неймспейсы бэкенда
   destinations:
     - server: https://kubernetes.default.svc
-      namespace: backend-*
+      namespace: "backend-*"
+  # Полный запрет на любые кластерные ресурсы
   clusterResourceWhitelist: []
+  # Белый список разрешенных пространственных ресурсов
   namespaceResourceWhitelist:
     - group: "apps"
       kind: Deployment
@@ -189,33 +199,35 @@ spec:
       kind: ConfigMap
     - group: ""
       kind: Secret
+  # Делегирование создания Application из пространства имен разработчиков
   sourceNamespaces:
-    - "team-a-*"
+    - "backend-apps"
+  # Имперсонация выделенного ServiceAccount при деплое в production
   destinationServiceAccounts:
     - server: https://kubernetes.default.svc
       namespace: backend-prod
       defaultServiceAccount: backend-deployer
+  # Проектные роли
   roles:
     - name: developer
-      description: "Backend разработчик"
+      description: "Разработчик команды Backend"
       policies:
         - p, proj:backend:developer, applications, get, backend/*, allow
         - p, proj:backend:developer, applications, sync, backend/*, allow
         - p, proj:backend:developer, applications, create, backend/*, allow
       groups:
-        - backend-team
-    - name: sre
-      description: "Backend SRE"
+        - "sso-backend-devs"
+    - name: ci-deployer
+      description: "Автоматизация CI/CD для выкатки релизов"
       policies:
-        - p, proj:backend:sre, applications, get, backend/*, allow
-        - p, proj:backend:sre, logs, get, backend/*, allow
+        - p, proj:backend:ci-deployer, applications, get, backend/*, allow
+        - p, proj:backend:ci-deployer, applications, sync, backend/*, allow
       jwtTokens:
-        - iat: 1535390316
-      groups:
-        - sre-team
+        - iat: 1770000000
 ```
 
-**2. Команда Frontend:**
+#### 2. AppProject для команды Frontend
+
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
@@ -225,12 +237,13 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: "Frontend команда"
+  description: "Проект для SPA и статических сервисов Frontend"
   sourceRepos:
-    - "https://github.com/myorg/frontend/*"
+    - "https://git.corp.internal/frontend/*"
   destinations:
     - server: https://kubernetes.default.svc
-      namespace: frontend-*
+      namespace: "frontend-*"
+  clusterResourceWhitelist: []
   namespaceResourceWhitelist:
     - group: "apps"
       kind: Deployment
@@ -238,156 +251,148 @@ spec:
       kind: Service
     - group: "networking.k8s.io"
       kind: Ingress
+    - group: ""
+      kind: ConfigMap
+  # Черный список: фронтенд не должен управлять Secret напрямую через Git
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: Secret
   roles:
     - name: developer
       policies:
         - p, proj:frontend:developer, applications, get, frontend/*, allow
         - p, proj:frontend:developer, applications, sync, frontend/*, allow
       groups:
-        - frontend-team
+        - "sso-frontend-devs"
 ```
 
-**3. RBAC для всех команд:**
+#### 3. Настройка глобального RBAC в ConfigMap `argocd-rbac-cm`
+
 ```yaml
-# argocd-rbac-cm
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: argocd-rbac-cm
   namespace: argocd
 data:
+  # Принцип наименьших привилегий: все неавторизованные пользователи получают readonly
   policy.default: role:readonly
   policy.csv: |
-    # Backend
-    p, role:backend-dev, applications, get, backend/*, allow
-    p, role:backend-dev, applications, sync, backend/*, allow
-    g, backend-team, role:backend-dev
+    # Маппинг проектных ролей на группы корпоративного OIDC
+    g, sso-backend-devs, proj:backend:developer
+    g, sso-frontend-devs, proj:frontend:developer
 
-    # Frontend
-    p, role:frontend-dev, applications, get, frontend/*, allow
-    p, role:frontend-dev, applications, sync, frontend/*, allow
-    g, frontend-team, role:frontend-dev
-
-    # SRE (общий доступ)
-    p, role:sre, applications, get, */*, allow
+    # Глобальная роль SRE с полным доступом ко всем проектам и приложениям
+    p, role:sre, applications, *, */*, allow
+    p, role:sre, clusters, *, *, allow
+    p, role:sre, repositories, *, *, allow
     p, role:sre, logs, get, */*, allow
     p, role:sre, exec, create, */*, allow
-    g, sre-team, role:sre
-
+    g, sso-sre-engineers, role:sre
   scopes: "[groups]"
 ```
 
-### Сценарий 2: Project-per-environment
+**Валидация применения:**
+```bash
+# Проверка валидности синтаксиса политик
+argocd admin settings rbac validate
+# → result: RBAC configuration is valid
 
-Каждое окружение — отдельный AppProject с разными restrictions.
+# Тестирование прав пользователя frontend на чужой проект backend
+argocd admin settings rbac can role:frontend-dev sync applications 'backend/api'
+# → result: no
+```
+
+---
+
+### Сценарий 2: Паттерн Project-per-environment с дифференцированными окнами синхронизации
+
+**Контекст:** Разделение контуров `dev`, `staging` и `production` с запретом неконтролируемых изменений в рабочее время и выходные дни.
 
 ```yaml
-# Development
+# 1. Среда разработки: максимальная свобода, автоматический синк в любое время
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: dev
+  name: dev-env
   namespace: argocd
 spec:
+  description: "Контур разработки"
   sourceRepos: ["*"]
   destinations:
     - server: https://kubernetes.default.svc
-      namespace: dev-*
-  clusterResourceWhitelist:
-    - group: ""
-      kind: Namespace
+      namespace: "*-dev"
   namespaceResourceWhitelist:
-    - group: "apps"
-      kind: Deployment
-    - group: ""
-      kind: Service
+    - group: "*"
+      kind: "*"
   roles:
     - name: developer
       policies:
-        - p, proj:dev:developer, applications, *, dev/*, allow
+        - p, proj:dev-env:developer, applications, *, dev-env/*, allow
       groups:
-        - dev-team
+        - "developers-all"
 ---
-# Staging
+# 2. Production: жесткие ограничения и запреты синхронизации
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: staging
+  name: prod-env
   namespace: argocd
 spec:
-  sourceRepos: ["*"]
-  destinations:
-    - server: https://kubernetes.default.svc
-      namespace: staging-*
-  namespaceResourceWhitelist:
-    - group: "apps"
-      kind: Deployment
-    - group: ""
-      kind: Service
-  roles:
-    - name: releaser
-      policies:
-        - p, proj:staging:releaser, applications, get, staging/*, allow
-        - p, proj:staging:releaser, applications, sync, staging/*, allow
-      groups:
-        - release-team
-  syncWindows:
-    - kind: allow
-      schedule: "0 9 * * 1-5"
-      duration: 10h
-      timeZone: "Europe/Moscow"
----
-# Production
-apiVersion: argoproj.io/v1alpha1
-kind: AppProject
-metadata:
-  name: production
-  namespace: argocd
-spec:
+  description: "Боевой контур Production"
   sourceRepos:
-    - "https://github.com/myorg/prod-*"
+    - "https://git.corp.internal/production-releases/*"
   destinations:
     - server: https://kubernetes.default.svc
-      namespace: production
+      namespace: "*-prod"
+  # Полный запрет на создание/изменение кластерных сущностей и манипуляцию секретами
   clusterResourceWhitelist: []
-  namespaceResourceWhitelist:
-    - group: "apps"
-      kind: Deployment
-    - group: ""
-      kind: Service
   namespaceResourceBlacklist:
     - group: ""
       kind: Secret
   roles:
-    - name: deployer
+    - name: release-manager
       policies:
-        - p, proj:production:deployer, applications, get, production/*, allow
-        - p, proj:production:deployer, applications, sync, production/*, allow
+        - p, proj:prod-env:release-manager, applications, get, prod-env/*, allow
+        - p, proj:prod-env:release-manager, applications, sync, prod-env/*, allow
       groups:
-        - sre-team
+        - "release-engineers"
+  # Окна синхронизации: релизы разрешены только в будни с 10:00 до 17:00
   syncWindows:
     - kind: allow
       schedule: "0 10 * * 1-5"
-      duration: 8h
+      duration: 7h
       timeZone: "Europe/Moscow"
-    - kind: deny
-      schedule: "0 0 * * 0,6"
-      duration: 24h
       applications:
-        - "prod-*"
+        - "*"
+    # Безусловный запрет деплоя в выходные дни (даже при ручной попытке)
+    - kind: deny
+      schedule: "0 0 * * 6,0"
+      duration: 24h
+      timeZone: "Europe/Moscow"
+      manualSync: false
+      applications:
+        - "*"
 ```
 
-### Сценарий 3: Харденинг default project
+---
 
-AppProject `default` по умолчанию разрешает всё. Для безопасности его нужно ограничить.
+### Сценарий 3: Харденинг дефолтного проекта (`default`)
 
-```yaml
+**Контекст безопасности:** При стандартной установке проект `default` имеет настройки `sourceRepos: ['*']` и `destinations: [{server: '*', namespace: '*'}]`. Любой пользователь с базовыми правами на создание приложений может использовать `default` и развернуть привилегированный под в любой namespace.
+
+#### Полная блокировка проекта `default`
+
+```bash
+# Применение манифеста с полным обнулением прав проекта default
+kubectl apply -f - <<'EOF'
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: default
   namespace: argocd
 spec:
+  description: "LOCKED DEFAULT PROJECT. DO NOT USE. ALL WORKLOADS MUST USE DEDICATED APPPROJECT."
   sourceRepos: []
   destinations: []
   clusterResourceBlacklist:
@@ -396,24 +401,108 @@ spec:
   namespaceResourceBlacklist:
     - group: "*"
       kind: "*"
+EOF
+# → result: appproject.argoproj.io/default configured
 ```
 
-После применения любое приложение без явного `project` будет отклонено. Переместите приложения в специализированные проекты.
+**Проверка блокировки:**
+```bash
+# Попытка создания приложения в проекте default завершится ошибкой
+argocd app create test-exploit \
+  --project default \
+  --repo https://git.corp.internal/test.git \
+  --path . \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace kube-system
+# → result: FAILED: application destination is not permitted in project 'default'
+```
 
-### Сценарий 4: Applications-in-any-Namespace
+---
 
-Создаём AppProject с `sourceNamespaces` для разрешения Application CR в tenant namespace.
+### Сценарий 4: Applications-in-any-Namespace (Децентрализованный GitOps)
+
+**Контекст:** Разработчики тенанта работают исключительно в своем пространстве имен `team-a-apps`. Они должны самостоятельно объявлять манифесты `Application` через свои CI/CD-пайплайны или Git-репозитории, не имея доступа к namespace `argocd`.
+
+#### Шаг 1: Активация мониторинга пространств имен в `argocd-cmd-params-cm`
+
+По умолчанию Argo CD отслеживает CRD `Application` только в собственном namespace (`argocd`). Для включения мониторинга внешних неймспейсов системный администратор настраивает параметр `application.namespaces`:
 
 ```yaml
-# AppProject (в namespace argocd, управляется Platform Team)
+# Патч ConfigMap argocd-cmd-params-cm
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  # Список пространств имен (через запятую) или шаблон
+  application.namespaces: "team-a-apps, team-b-apps"
+```
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+data:
+  application.namespaces: "team-a-apps, team-b-apps"
+EOF
+# → result: configmap/argocd-cmd-params-cm configured
+
+# Перезапуск контроллера и сервера для применения изменений параметров
+kubectl rollout restart deployment argocd-server -n argocd
+kubectl rollout restart statefulset argocd-application-controller -n argocd
+# → result: deployment.apps/argocd-server restarted
+# → result: statefulset.apps/argocd-application-controller restarted
+```
+
+#### Шаг 2: Настройка RBAC в Kubernetes для доступа контроллера к неймспейсу тенанта
+
+Контроллер `argocd-application-controller` и API-сервер `argocd-server` должны иметь права на чтение и обновление `Application` внутри `team-a-apps`:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argocd-application-manager
+  namespace: team-a-apps
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications", "appprojects"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argocd-application-manager-binding
+  namespace: team-a-apps
+subjects:
+  - kind: ServiceAccount
+    name: argocd-application-controller
+    namespace: argocd
+  - kind: ServiceAccount
+    name: argocd-server
+    namespace: argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argocd-application-manager
+```
+
+#### Шаг 3: Объявление разрешения в AppProject
+
+```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: team-a
   namespace: argocd
 spec:
+  description: "Проект team-a с поддержкой Applications-in-any-Namespace"
   sourceRepos:
-    - "https://github.com/myorg/team-a/*"
+    - "https://git.corp.internal/team-a/*"
   destinations:
     - server: https://kubernetes.default.svc
       namespace: team-a-prod
@@ -422,31 +511,28 @@ spec:
       kind: Deployment
     - group: ""
       kind: Service
+  # Ключевой параметр: разрешаем создание Application в namespace team-a-apps
   sourceNamespaces:
     - "team-a-apps"
-  roles:
-    - name: admin
-      policies:
-        - p, proj:team-a:admin, applications, *, team-a/*, allow
-      groups:
-        - team-a
 ```
 
+#### Шаг 4: Создание Application тенантом внутри своего namespace
+
 ```yaml
-# Application CR в tenant namespace team-a-apps
+# Манифест создается разработчиком в namespace team-a-apps!
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: backend-app
+  name: payment-service
   namespace: team-a-apps
   finalizers:
-    - resources-finalizer.argoproj.argoproj.io
+    - resources-finalizer.argocd.argoproj.io
 spec:
   project: team-a
   source:
-    repoURL: "https://github.com/myorg/team-a/backend"
-    targetRevision: HEAD
-    path: k8s/production
+    repoURL: "https://git.corp.internal/team-a/payment-service.git"
+    targetRevision: main
+    path: deploy/production
   destination:
     server: https://kubernetes.default.svc
     namespace: team-a-prod
@@ -456,133 +542,243 @@ spec:
       selfHeal: true
 ```
 
-**Важно:** `sourceNamespaces` ограничивает, в каких namespaces могут находиться Application CR для этого проекта. Без него Argo CD не будет recognizes Application из tenant namespaces.
-
-### Сценарий 5: Namespace-scoped Argo CD (для враждебных тенантов)
-
+**Валидация:**
 ```bash
-# 1. Создаём namespace для tenant
-kubectl create namespace argocd-team-a
+# Проверка регистрации приложения в namespace тенанта
+kubectl get application -n team-a-apps
+# → result: NAME              SYNC STATUS   HEALTH STATUS
+# → result: payment-service   Synced        Healthy
 
-# 2. Устанавливаем Argo CD в namespace-scoped режим
-#    CRD устанавливаются администратором один раз для всех tenant'ов
-kubectl apply -n argocd-team-a --server-side --force-conflicts \
-  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.4/manifests/namespace-install.yaml
+# Проверка, что приложение отображается в Argo CD CLI
+argocd app get team-a-apps/payment-service
+# → result: Name:               team-a-apps/payment-service
+# → result: Project:            team-a
+# → result: Server:             https://kubernetes.default.svc
+# → result: Namespace:          team-a-prod
+# → result: Status:             Synced
+```
 
-# 3. Настраиваем tenant-scoped AppProject
-kubectl apply -f - <<'EOF'
+---
+
+### Сценарий 5: Имперсонация ServiceAccount (`destinationServiceAccounts`)
+
+**Архитектурный контекст:** По умолчанию `argocd-application-controller` подключается к целевому кластеру под собственным ServiceAccount, обладающим широкими (часто кластерными) привилегиями. При ошибке в белом списке `AppProject` тенант может случайно применить объект, выходящий за рамки его зоны ответственности. 
+
+Использование `destinationServiceAccounts` заставляет контроллер выполнять все вызовы к K8s API через механизм **Kubernetes API Impersonation** от имени сервисного аккаунта тенанта.
+
+```text
+argocd-application-controller
+  │
+  │ Запрос к K8s API с заголовком:
+  │ Impersonate-User: system:serviceaccount:team-a-prod:team-a-deployer
+  ▼
+kube-apiserver
+  │
+  ├── Проверка: имеет ли контроллер право impersonate на этот SA?
+  │   └── ДА
+  │
+  └── Проверка: имеет ли сам team-a-deployer право создать запрашиваемый ресурс?
+      ├── ДА  ──> Ресурс создан
+      └── НЕТ ──> 403 Forbidden (блокировка на уровне ядра K8s!)
+```
+
+#### 1. Создание ServiceAccount и RBAC тенанта в целевом namespace
+
+```yaml
+# В пространстве имен назначения team-a-prod
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: team-a-deployer
+  namespace: team-a-prod
+---
+# Роль ограничивает действия тенанта ТОЛЬКО разрешенными ресурсами
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: team-a-deployer-role
+  namespace: team-a-prod
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: team-a-deployer-binding
+  namespace: team-a-prod
+subjects:
+  - kind: ServiceAccount
+    name: team-a-deployer
+    namespace: team-a-prod
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: team-a-deployer-role
+```
+
+#### 2. Предоставление прав на имперсонацию контроллеру Argo CD
+
+```yaml
+# Разрешаем контроллеру Argo CD имперсонировать ServiceAccount в team-a-prod
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argocd-impersonator
+  namespace: team-a-prod
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["impersonate"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argocd-impersonator-binding
+  namespace: team-a-prod
+subjects:
+  - kind: ServiceAccount
+    name: argocd-application-controller
+    namespace: argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argocd-impersonator
+```
+
+#### 3. Настройка AppProject с `destinationServiceAccounts`
+
+```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: team-a
-  namespace: argocd-team-a
+  namespace: argocd
 spec:
   sourceRepos:
-    - "https://github.com/myorg/team-a/*"
+    - "https://git.corp.internal/team-a/*"
   destinations:
-    - server: https://prod-cluster.example.com
+    - server: https://kubernetes.default.svc
       namespace: team-a-prod
+  # Привязка имперсонации
+  destinationServiceAccounts:
+    - server: https://kubernetes.default.svc
+      namespace: team-a-prod
+      defaultServiceAccount: team-a-deployer
   namespaceResourceWhitelist:
     - group: "apps"
       kind: Deployment
     - group: ""
       kind: Service
-EOF
+    - group: ""
+      kind: ConfigMap
 ```
 
-Ограничения namespace-scoped режима:
-- Нельзя деплоить в `kubernetes.default.svc` (in-cluster) — нужен внешний кластер.
-- CRD должны быть установлены администратором.
-- ApplicationSet Controller и Notifications тоже scoped.
+**Тест безопасности:** Если разработчик добавит в Git манифест `RoleBinding`, дающий права `cluster-admin`, контроллер попытается применить его от имени `team-a-deployer`. Kube-apiserver моментально вернет ошибку:
+```text
+# → result: Operation cannot be fulfilled: rolebindings.rbac.authorization.k8s.io is forbidden:
+# → result: User "system:serviceaccount:team-a-prod:team-a-deployer" cannot create resource "rolebindings" in API group "rbac.authorization.k8s.io"
+```
 
-### Сценарий 6: Project-scoped репозитории и кластеры (self-service)
+---
 
-Разработчик может добавлять свои репозитории/кластеры в проект без обращения к администратору.
+### Сценарий 6: Project-scoped репозитории и кластеры (Безопасный Self-Service)
+
+**Контекст:** Команда `team-a` должна самостоятельно регистрировать приватные Git-репозитории и подключать изолированные dev-кластеры без обращения к администраторам платформы.
+
+#### 1. Делегирование прав на управление репозиториями в `argocd-rbac-cm`
 
 ```yaml
-# argocd-rbac-cm
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
 data:
   policy.csv: |
-    # Разрешить admin проекта управлять репозиториями
+    # Разрешаем администратору проекта управлять репозиториями строго в рамках своего проекта
     p, proj:team-a:admin, repositories, create, team-a/*, allow
-    p, proj:team-a:admin, repositories, delete, team-a/*, allow
+    p, proj:team-a:admin, repositories, get, team-a/*, allow
     p, proj:team-a:admin, repositories, update, team-a/*, allow
-    p, proj:team-a:admin, clusters, create, team-a/*, allow
-    p, proj:team-a:admin, clusters, delete, team-a/*, allow
-    p, proj:team-a:admin, clusters, update, team-a/*, allow
+    p, proj:team-a:admin, repositories, delete, team-a/*, allow
+    g, team-a-leads, proj:team-a:admin
 ```
+
+#### 2. Добавление репозитория тенантом через CLI
 
 ```bash
-# Разработчик добавляет репозиторий в свой проект
-argocd repo add --name my-repo \
-  https://github.com/myorg/team-a/special-repo.git \
-  --type git --project team-a
+# Добавление приватного Git-репозитория с привязкой к проекту team-a
+argocd repo add https://git.corp.internal/team-a/internal-libs.git \
+  --project team-a \
+  --username git-reader \
+  --password-path /tmp/git-token.txt
+# → result: Repository 'https://git.corp.internal/team-a/internal-libs.git' added
 ```
 
-Секрет репозитория будет project-scoped:
+#### 3. Структура созданного Kubernetes Secret
+
+Argo CD автоматически изолирует такой секрет меткой `project: <имя>`:
+
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: argocd-my-repo
+  name: repo-internal-libs-10928374
+  namespace: argocd
   labels:
     argocd.argoproj.io/secret-type: repository
 type: Opaque
 stringData:
   project: team-a
-  name: argocd-my-repo
-  url: https://github.com/myorg/team-a/special-repo.git
-  username: ****
-  password: ****
+  type: git
+  url: https://git.corp.internal/team-a/internal-libs.git
+  username: git-reader
+  password: "..."
 ```
 
-**Ограничение:** Project-scoped репозитории с templated `project` в ApplicationSet не поддерживаются (нельзя использовать `{{...}}` в поле `project` при project-scoped repo).
+**Ограничение изоляции:** Приложения из проекта `team-b` не смогут использовать данный репозиторий, даже если в манифесте `Application` указан точный URL. Попытка синхронизации завершится ошибкой `repository not permitted in project 'team-b'`.
 
-### Сценарий 7: Global Projects (наследование конфигурации)
+---
 
-Один проект задаёт базовые политики, от которых наследуют другие проекты через label selector.
+### Сценарий 7: Наследование политик безопасности через Global Projects
+
+**Контекст:** В организации десятки продуктовых проектов. Для всех production-проектов необходимо централизованно гарантировать единые базовые правила безопасности: запрет секретов из Git, единые окна бэкапов и блокировку кластерных ресурсов.
+
+#### 1. Определение базового проекта в GitOps
 
 ```yaml
-# Базовый глобальный проект
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: prod-baseline
+  name: prod-security-baseline
+  namespace: argocd
   labels:
-    env: prod
+    tier: production-baseline
 spec:
+  description: "Глобальные политики безопасности для всех production проектов"
+  # Полный запрет кластерных ресурсов для всех дочерних проектов
+  clusterResourceBlacklist:
+    - group: "*"
+      kind: "*"
+  # Запрет секретов в открытом Git
   namespaceResourceBlacklist:
     - group: ""
       kind: Secret
+  # Единое окно технологического обслуживания: блокировка синхронизации в ночь на воскресенье
   syncWindows:
     - kind: deny
-      schedule: "0 0 * * 0,6"
-      duration: 24h
-      namespaces:
-        - "prod-*"
----
-# Дочерний проект наследует политики
-apiVersion: argoproj.io/v1alpha1
-kind: AppProject
-metadata:
-  name: team-a-prod
-  labels:
-    env: prod
-spec:
-  sourceRepos:
-    - "https://github.com/myorg/team-a/*"
-  destinations:
-    - server: https://kubernetes.default.svc
-      namespace: team-a-prod
-  namespaceResourceWhitelist:
-    - group: "apps"
-      kind: Deployment
-  # Унаследовано из prod-baseline:
-  # - namespaceResourceBlacklist (Secret)
-  # - syncWindows (deny on weekends)
+      schedule: "0 0 * * 0"
+      duration: 6h
+      timeZone: "Europe/Moscow"
+      applications: ["*"]
 ```
 
-Настройка в `argocd-cm`:
+#### 2. Регистрация селектора в `argocd-cm`
+
 ```yaml
 apiVersion: v1
 kind: ConfigMap
@@ -590,438 +786,659 @@ metadata:
   name: argocd-cm
   namespace: argocd
 data:
-  globalProjects: |-
-    - labelSelector:
-        matchExpressions:
-          - key: env
-            operator: In
-            values:
-              - prod
-      projectName: prod-baseline
+  globalProjects: |
+    - projectName: prod-security-baseline
+      labelSelector:
+        matchLabels:
+          environment: production
 ```
 
-### Сценарий 8: Source Integrity (GPG commit verification)
-
-Замена устаревшего `signatureKeys` новым `sourceIntegrity` (v3.5+).
+#### 3. Дочерний проект с наследованием
 
 ```yaml
-# AppProject с GPG-проверкой коммитов
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: production
+  name: billing-service
   namespace: argocd
+  labels:
+    # Метка активирует наследование prod-security-baseline
+    environment: production
 spec:
+  description: "Проект сервиса биллинга"
   sourceRepos:
-    - "https://github.com/myorg/prod-*"
+    - "https://git.corp.internal/billing/*"
   destinations:
     - server: https://kubernetes.default.svc
-      namespace: production
+      namespace: billing-prod
+  namespaceResourceWhitelist:
+    - group: "apps"
+      kind: Deployment
+    - group: ""
+      kind: Service
+```
+
+Дочерний проект `billing-service` автоматически объединяет свои белые списки с запретами базового проекта `prod-security-baseline`.
+
+---
+
+### Сценарий 8: Проверка подлинности коммитов через Source Integrity (GPG)
+
+**Контекст:** В production запрещен деплой неподписанных коммитов или коммитов, подписанных неуполномоченными инженерами. На смену устаревшему `signatureKeys` в v3.5+ пришел механизм `sourceIntegrity`.
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: payment-core
+  namespace: argocd
+spec:
+  description: "Критичный проект платежного шлюза со строгой верификацией подписей"
+  sourceRepos:
+    - "https://git.corp.internal/fintech/payment-core.git"
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: payment-prod
+  # Новая спецификация v3.5+: Source Integrity
   sourceIntegrity:
     git:
       policies:
         - repos:
-            - url: "https://github.com/myorg/prod-*"
+            - url: "https://git.corp.internal/fintech/payment-core.git"
           gpg:
+            # Режим strict: каждый коммит в ветке ОБЯЗАН быть подписан доверенным ключом
             mode: strict
             keys:
+              # Идентификаторы доверенных публичных GPG-ключей релиз-инженеров
               - "D56C4FCA57A46444"
+              - "8A4B6291C8240F12"
 ```
 
-**Миграция с `signatureKeys` → `sourceIntegrity`:**
+**Добавление публичного ключа в Argo CD:**
+```bash
+# Импорт публичного GPG ключа доверенного инженера в контроллер
+argocd gpg add --from-file /etc/pki/gpg/release-engineer-d56c.pub
+# → result: GPG public key 'D56C4FCA57A46444' added
 
-Старый способ (deprecated, удаляется в следующей major версии):
-```yaml
-spec:
-  signatureKeys:
-    - keyID: "D56C4FCA57A46444"
+# Список зарегистрированных ключей
+argocd gpg list
+# → result: ID                OWNER                         TRUSTED
+# → result: D56C4FCA57A46444  release-eng@corp.internal     true
 ```
 
-**Важно:** При включённой `sourceIntegrity` синхронизация с локальных источников (`argocd app sync --local`) невозможна до тех пор, пока критерии не будут выполнены.
+Если коммит не подписан или подписан сторонним ключом, Argo CD блокирует операцию генерации манифестов со статусом `ComparisonError`:
+```text
+# → result: ComparisonError: Commit e4a8f9c is not signed with a trusted GPG key for project payment-core
+```
 
-### Сценарий 9: Namespace-per-tenant изоляция
+---
 
-Выделение namespace для каждого тенанта с NetworkPolicy и ResourceQuota.
+### Сценарий 9: Сетевая и ресурсная изоляция тенантов в On-Prem кластере
+
+**Контекст:** Изоляция пространств имен тенанта на уровне ядра Linux и Kubernetes в среде Bare-Metal. Предотвращение сетевых перехватов и защиты кластера от проблемы Noisy Neighbor (исчерпание CPU, RAM и объектов etcd).
+
+#### 1. Пространство имен с Pod Security Admission (Restricted)
 
 ```yaml
-# Namespace для team-a
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: team-a
+  name: team-a-prod
   labels:
     tenant: team-a
     environment: production
+    # Полный запрет root-контейнеров, hostNetwork, hostPID и privilegeEscalation
     pod-security.kubernetes.io/enforce: restricted
----
-# NetworkPolicy: Default Deny + разрешить Argo CD и DNS
+    pod-security.kubernetes.io/enforce-version: latest
+```
+
+#### 2. NetworkPolicy: Default Deny + разрешенный трафик
+
+```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: tenant-isolation
-  namespace: team-a
+  name: tenant-default-isolation
+  namespace: team-a-prod
 spec:
   podSelector: {}
   policyTypes:
     - Ingress
     - Egress
   ingress:
+    # 1. Разрешаем трафик внутри собственного неймспейса
+    - from:
+        - podSelector: {}
+    # 2. Разрешаем входящий HTTP/HTTPS трафик строго от Ingress Controller (например, ingress-nginx)
     - from:
         - namespaceSelector:
             matchLabels:
-              app.kubernetes.io/name: argocd
+              kubernetes.io/metadata.name: ingress-nginx
       ports:
-        - port: 8082
-          protocol: TCP
+        - protocol: TCP
+          port: 8080
+    # 3. Разрешаем сбор метрик системой Prometheus из пространства monitoring
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9090
   egress:
+    # 1. Обязательный резолвинг DNS через CoreDNS в kube-system
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system
       ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # 2. Доступ к корпоративным сервисам и базам данных в приватной сети
     - to:
-        - namespaceSelector: {}
+        - ipBlock:
+            cidr: 10.100.0.0/16
       ports:
-        - port: 443
-          protocol: TCP
-        - port: 6443
-          protocol: TCP
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
 ```
 
+> **Важно для DevOps/SRE:** Argo CD `application-controller` взаимодействует с Kubernetes через API-сервер (`kube-apiserver:6443`), поэтому ему не требуется прямой сетевой доступ внутрь подов тенанта.
+
+#### 3. ResourceQuota и LimitRange
+
 ```yaml
-# ResourceQuota для tenant namespace
 apiVersion: v1
 kind: ResourceQuota
 metadata:
   name: team-a-quota
-  namespace: team-a
+  namespace: team-a-prod
 spec:
   hard:
-    requests.cpu: "10"
-    requests.memory: 20Gi
-    limits.cpu: "20"
-    limits.memory: 40Gi
+    requests.cpu: "16"
+    requests.memory: 32Gi
+    limits.cpu: "32"
+    limits.memory: 64Gi
+    # Защита etcd от разрастания сущностей тенанта
     pods: "100"
+    count/services: "20"
+    count/configmaps: "50"
     count/secrets: "50"
-    count/configmaps: "100"
-    count/services: "30"
+    count/persistentvolumeclaims: "10"
+---
+# Обязательный спутник ResourceQuota: задает значения по умолчанию, если разработчик забыл указать их в Pod
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: team-a-limits
+  namespace: team-a-prod
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "500m"
+        memory: "512Mi"
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+      max:
+        cpu: "4"
+        memory: "8Gi"
+      min:
+        cpu: "50m"
+        memory: "64Mi"
 ```
 
-### Сценарий 10: Controller Sharding для масштабирования
+---
 
-Для 1000+ приложений используется шардирование application-controller.
+### Сценарий 10: Масштабирование контроллера (Controller Sharding) для On-Prem
+
+**Контекст:** В масштабных bare-metal инсталляциях с количеством приложений > 1000 один процесс `argocd-application-controller` исчерпывает ресурсы CPU/RAM и вызывает задержки очереди сверки (reconciliation queue).
+
+#### 1. Механизм шардирования в On-Prem среде
+
+Argo CD поддерживает шардирование контроллера через `StatefulSet`. По умолчанию шардирование распределяет **кластеры**, а не приложения:
+- `legacy`: вычисление хеша от URL кластера (`hash(cluster_url) % replicas`).
+- `round-robin`: циклическое распределение кластеров по шардам.
+- `consistent-hashing`: консистентное хеширование для минимизации миграции при изменении количества шардов.
+
+**Нюанс для монокластера (Single-Cluster Pitfall):** Если все 1000 приложений тенантов развернуты в локальном кластере (`https://kubernetes.default.svc`), при обычном шардинге ВСЕ приложения попадут на шард 0, а остальные реплики будут простаивать!
+
+**Решения для SRE в On-Prem:**
+1. Включение динамического распределения кластеров через переменную окружения `ARGOCD_ENABLE_DYNAMIC_CLUSTER_DISTRIBUTION=true`.
+2. Регистрация локального кластера как отдельных виртуальных кластерных записей для каждого проекта с явным назначением метки шарда `shard: "0"`, `shard: "1"` в Secret кластера.
+
+#### 2. Настройка ConfigMap `argocd-cmd-params-cm`
 
 ```yaml
-# argocd-cm — настройка алгоритма шардирования
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: argocd-cm
+  name: argocd-cmd-params-cm
   namespace: argocd
 data:
-  # Алгоритмы: "legacy" (default, hash-based), "round-robin", "consistent"
-  controller.sharding.algorithm: "legacy"
-  # Для dynamic cluster distribution (alpha, v2.9+):
-  # использовать Deployment вместо StatefulSet и env ARGOCD_ENABLE_DYNAMIC_CLUSTER_DISTRIBUTION=true
+  # Алгоритм распределения нагрузки
+  controller.sharding.algorithm: "round-robin"
 ```
 
+#### 3. Масштабирование StatefulSet контроллера
+
 ```bash
-# Проверка распределения приложений по шардам
-kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller \
-  -c application-controller --tail=100 | grep -i shard
-# → application set: 0, shard: 0, app: team-a-app-1
-# → application set: 0, shard: 1, app: team-b-app-1
+# Увеличение количества реплик контроллера до 3
+kubectl scale statefulset argocd-application-controller -n argocd --replicas=3
+# → result: statefulset.apps/argocd-application-controller scaled
+
+# Проверка распределения шардов между подами
+kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-application-controller
+# → result: NAME                              READY   STATUS    RESTARTS   AGE
+# → result: argocd-application-controller-0   1/1     Running   0          5m
+# → result: argocd-application-controller-1   1/1     Running   0          1m
+# → result: argocd-application-controller-2   1/1     Running   0          1m
 ```
+
+Каждая реплика StatefulSet автоматически получает свой номер шарда через переменную `ARGOCD_CONTROLLER_SHARD` (0, 1, 2) и флаг `--replicas 3`.
+
+#### 4. Проверка статистики распределения нагрузки
+
+```bash
+# Статистика распределения кластеров и приложений по шардам
+argocd admin cluster stats
+# → result: SHARD  CLUSTERS  APPLICATIONS
+# → result: 0      4         342
+# → result: 1      4         351
+# → result: 2      3         318
+```
+
+---
+
+### Сценарий 11: Установка в режиме Namespace-scoped (Для изолированных тенантов)
+
+**Контекст:** Для клиентов или подразделений с повышенными требованиями к изоляции (например, внешние подрядчики) выделяется персональный инстанс Argo CD, запускаемый строго внутри одного пространства имен без глобальных прав `cluster-admin`.
+
+```bash
+# 1. Администратор кластера создает пространство имен тенанта
+kubectl create namespace tenant-secure-zone
+# → result: namespace/tenant-secure-zone created
+
+# 2. Установка Argo CD без кластерных привилегий (manifest namespace-install.yaml)
+#    (CRDs должны быть предварительно установлены в кластере администратором)
+kubectl apply -n tenant-secure-zone --server-side --force-conflicts \
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.4/manifests/namespace-install.yaml
+# → result: serviceaccount/argocd-application-controller created
+# → result: role.rbac.authorization.k8s.io/argocd-application-controller created
+# → result: rolebinding.rbac.authorization.k8s.io/argocd-application-controller created
+# → result: service/argocd-server created
+# → result: deployment.apps/argocd-server created
+```
+
+**Особенности эксплуатации Namespace-scoped:**
+- Инстанс управляет ресурсами строго через внешние кластерные эндпоинты или локально в рамках своего неймспейса (не может деплоить в другие системные пространства имен хост-кластера).
+- Доступ пользователей изолирован: скомпрометированный сервер Argo CD тенанта не имеет доступа к управляющему контуру хост-кластера.
+
+---
+
+### Сценарий 12: Декларативная фабрика тенантов (Tenant Factory через ApplicationSet)
+
+**Контекст:** Автоматизация онбординга новых команд. Инженер платформы добавляет описание нового тенанта в Git, а центральный контроллер автоматически генерирует пространство имен, `AppProject`, квоты, сетевые политики и базовые роли.
+
+#### Манифест ApplicationSet (Tenant Onboarding Generator)
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: tenant-factory
+  namespace: argocd
+spec:
+  generators:
+    - git:
+        repoURL: "https://git.corp.internal/platform/tenants-inventory.git"
+        revision: main
+        files:
+          - path: "tenants/*/tenant.json"
+  template:
+    metadata:
+      name: "tenant-{{name}}"
+    spec:
+      project: default
+      source:
+        repoURL: "https://git.corp.internal/platform/tenant-blueprints.git"
+        targetRevision: main
+        path: blueprints/standard-tenant
+        helm:
+          parameters:
+            - name: "tenantName"
+              value: "{{name}}"
+            - name: "cpuQuota"
+              value: "{{quota.cpu}}"
+            - name: "memoryQuota"
+              value: "{{quota.memory}}"
+            - name: "gitRepo"
+              value: "{{gitRepo}}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "argocd"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+```
+
+#### Файл конфигурации тенанта в Git (`tenants/billing/tenant.json`)
+
+```json
+{
+  "name": "billing",
+  "gitRepo": "https://git.corp.internal/billing/*",
+  "quota": {
+    "cpu": "32",
+    "memory": "64Gi"
+  }
+}
+```
+
+Создание PR с добавлением `tenant.json` автоматически разворачивает всю мультитенантную обвязку за считанные секунды.
+
+---
 
 ## Операции и команды
 
-### Управление проектами
+### Управление проектами и ролями через CLI
 
 ```bash
-# Список всех проектов
+# 1. Просмотр списка всех проектов
 argocd proj list
+# → result: NAME      DESCRIPTION                     DESTINATIONS  SOURCES
+# → result: default   Locked default project          0             0
+# → result: backend   Проект для сервисов Backend     1             2
+# → result: frontend  Проект для сервисов Frontend    1             1
 
-# Создание проекта
-argocd proj create team-a \
-  --description "Team A project" \
-  --src https://github.com/myorg/team-a/* \
-  --dest https://kubernetes.default.svc,team-a-prod
+# 2. Создание нового проекта команды
+argocd proj create analytics \
+  --description "Команда аналитики данных" \
+  --src "https://git.corp.internal/analytics/*" \
+  --dest "https://kubernetes.default.svc,analytics-prod"
+# → result: Project 'analytics' created
 
-# Добавление роли с policy
-argocd proj role create team-a ci-deployer
-argocd proj role add-policy team-a ci-deployer \
-  --actions sync,get \
-  --resource applications \
-  --object team-a/* \
+# 3. Добавление роли разработчика в проект
+argocd proj role create analytics developer \
+  --description "Разработчик аналитических сервисов"
+# → result: Role 'developer' created in project 'analytics'
+
+# 4. Назначение прав на синхронизацию для роли (флаг --action)
+argocd proj role add-policy analytics developer \
+  --action sync \
+  --object "analytics/*" \
   --permission allow
+# → result: Policy added to role 'developer' in project 'analytics'
 
-# Генерация JWT-токена для роли
-argocd proj role create-token team-a ci-deployer -e 720h
+# 5. Выпуск сервисного JWT-токена для CI/CD с временем жизни 30 дней (720 часов)
+argocd proj role create-token analytics developer --expires-in 720h
+# → result: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NzAwMDAwMDAsImlzcyI6ImFyZ29jZCIsInN1YiI6InByb2o6YW5hbHl0aWNzOmRldmVsb3BlciJ9...
 
-# Удаление роли
-argocd proj role delete team-a ci-deployer
-
-# Обновление проекта
-argocd proj set team-a --src !https://github.com/myorg/forbidden/*
-
-# Удаление проекта (только если нет привязанных приложений)
-argocd proj rm team-a
+# 6. Удаление проекта (возможно только при отсутствии привязанных Application)
+argocd proj rm analytics
+# → result: Project 'analytics' deleted
 ```
 
-### Управление правами и доступом
+---
+
+### Аудит доступа и валидация политик RBAC
 
 ```bash
-# Просмотр всех приложений в проекте
-argocd app list --project team-a
+# 1. Проверка прав конкретной роли на выполнение операции
+argocd admin settings rbac can proj:backend:developer sync applications 'backend/billing-api'
+# → result: Yes
 
-# Проверка RBAC для пользователя
-argocd account get-user-info --account <username>
+# 2. Проверка запрещенного действия роли (попытка деплоя в чужой проект)
+argocd admin settings rbac can proj:frontend:developer sync applications 'backend/billing-api'
+# → result: No
 
-# Просмотр проекта (yaml)
-argocd proj get team-a -o yaml
+# 3. Проверка гранулярных прав на суб-ресурсы (удаление пода для перезапуска)
+argocd admin settings rbac can role:backend-dev delete/*/Pod/*/* 'backend/billing-api'
+# → result: Yes
 
-# Проверка конкретного разрешения
-argocd admin settings rbac can role:backend-dev sync applications 'backend/*'
-
-# Валидация RBAC конфигурации
-argocd admin settings rbac validate
-# → RBAC configuration is valid
-
-# Проверка fine-grained прав (v3.0+)
-argocd admin settings rbac can role:team-a delete/*/Pod/*/* 'team-a/my-app'
-# → yes
-
-# Просмотр JWT токенов роли проекта
-kubectl get appproject team-a -n argocd -o jsonpath='{.spec.roles[*].jwtTokens}'
-
-# Проверка истекания токена
-argocd account generate-token --account ci-bot | cut -d. -f2 | base64 -d | jq '.exp'
+# 4. Получение информации об аутентифицированном пользователе и его группах
+argocd account get-user-info
+# → result: Logged In: true
+# → result: User: ivan.ivanov
+# → result: Groups: sso-backend-devs, sso-developers-all
 ```
 
-### Управление окнами синхронизации
+---
+
+### Управление окнами синхронизации (Sync Windows)
 
 ```bash
-# Добавить окно
-argocd proj windows add production \
+# 1. Добавление разрешающего окна синхронизации на рабочие часы
+argocd proj windows add backend \
   --kind allow \
-  --schedule "0 22 * * *" \
-  --duration 1h \
+  --schedule "0 9 * * 1-5" \
+  --duration 9h \
+  --time-zone "Europe/Moscow" \
   --applications "*"
+# → result: Sync window added to project 'backend' with ID 0
 
-# Обновить namespaces
-argocd proj windows update production 0 --namespaces default,prod-1,prod-2
+# 2. Добавление блокирующего окна (deny) на выходные дни
+argocd proj windows add backend \
+  --kind deny \
+  --schedule "0 0 * * 6,0" \
+  --duration 24h \
+  --time-zone "Europe/Moscow" \
+  --applications "*"
+# → result: Sync window added to project 'backend' with ID 1
 
-# Включить overrun (v3.5+)
-argocd proj windows enable-sync-overrun production 0
+# 3. Разрешение ручного синка инженером в период действия окна (manualSync override)
+argocd proj windows enable-manual-sync backend 1
+# → result: Manual sync enabled for sync window 1 in project 'backend'
 
-# Разрешить ручной синк в окне
-argocd proj windows enable-manual-sync production 0
-
-# Список окон
-argocd proj windows list production
+# 4. Просмотр активных окон проекта
+argocd proj windows list backend
+# → result: ID  KIND   SCHEDULE       DURATION  TIMEZONE       APPLICATIONS  MANUALSYNC
+# → result: 0   allow  0 9 * * 1-5    9h        Europe/Moscow  *             false
+# → result: 1   deny   0 0 * * 6,0    24h       Europe/Moscow  *             true
 ```
 
-### Диагностика изоляции
+---
 
-```bash
-# Проверка, что тенант НЕ видит чужие namespace
-kubectl auth can-i list pods --namespace=other-team-prod --as=alice
-# → no
-
-# Проверка, что тенант НЕ имеет cluster-admin
-kubectl auth can-i create clusterrolebindings --as=alice
-# → no
-
-# Проверка project-scoped репозитория
-kubectl get secret -n argocd -o jsonpath='{range .items[?(@.data.project=="team-a")]}{.metadata.name}{"\n"}{end}'
-
-# Проверка NetworkPolicy в tenant namespace
-kubectl get networkpolicy -n team-a
-
-# Проверка ResourceQuota
-kubectl describe quota team-a-quota -n team-a
-
-# Проверка, что default project ограничен
-kubectl get appproject default -n argocd -o jsonpath='{.spec.sourceRepos}'
-# → []
-
-# Проверка sourceNamespaces для проекта
-kubectl get appproject team-a -n argocd -o jsonpath='{.spec.sourceNamespaces}'
-# → [team-a-*]
-
-# Проверка destinationServiceAccounts
-kubectl get appproject team-a -n argocd -o jsonpath='{.spec.destinationServiceAccounts}'
-```
-
-### Мониторинг (Prometheus метрики)
+### Мониторинг мультитенантности через Prometheus
 
 ```promql
-# Приложения с активным deny-окном
-argocd_app_sync_window{window_kind="deny"} == 1
+# 1. Количество приложений, принадлежащих каждому проекту (инвентаризация тенантов)
+count by (project) (argocd_app_info)
 
-# Синхронизации, заблокированные окнами (v3.5+)
-argocd_app_sync_blocked == 1
+# 2. Количество приложений в статусе Degraded по проектам
+sum by (project) (argocd_app_info{health_status="Degraded"})
 
-# Ошибки в конфигурации окон (fail-closed, v3.5+)
-argocd_app_sync_window_error == 1
+# 3. Количество заблокированных синхронизаций из-за окон Sync Windows
+sum by (project) (argocd_app_sync_window{window_kind="deny"}) == 1
 
-# Приложения в Degraded статусе по проекту
-argocd_app_info{project="team-a", health_status="Degraded"} > 0
+# 4. Распределение приложений по шардам контроллера (контроль балансировки)
+count by (shard) (argocd_app_info)
 
-# Количество приложений на шард
-count by(shard) (argocd_app_info)
+# 5. Ошибки синхронизации, вызванные отказом в правах K8s API (Impersonation)
+sum by (project) (rate(argocd_app_sync_total{phase="Failed"}[5m])) > 0
 ```
 
-## Диагностика
+---
 
-### Типичные ошибки мультитенантности
+## Диагностика и устранение неисправностей
 
-| Ошибка | Причина | Решение |
-| :--- | :--- | :--- |
-| `application is not permitted` | AppProject `sourceRepos` не разрешает репозиторий | Добавьте URL в `sourceRepos` проекта |
-| `application destination is not permitted` | Namespace/cluster не в `destinations` | Добавьте назначение в `destinations` |
-| `resource type is not permitted` | Тип ресурса не в whitelist/blacklist | Добавьте тип в `namespaceResourceWhitelist` |
-| `namespace is not permitted` | Application CR в namespace не в `sourceNamespaces` | Добавьте namespace в `sourceNamespaces` проекта |
-| `permission denied` | RBAC не разрешает действие | Проверьте policy.csv и project roles |
-| `permission denied` (sync) | `deny` имеет приоритет над `allow` | Проверьте порядок правил; deny всегда побеждает |
-| `project not found` | AppProject не существует | Создайте AppProject |
-| `Sync operation blocked by sync window` | Синхронизация попала в deny-окно | Подождите, или используйте `manualSync: true` |
-| `ResourceComparison` (source integrity) | Коммит не GPG-подписан | Подпишите коммит или добавьте ключ в `sourceIntegrity` |
-| `orphaned resources detected` | Ресурсы в namespace не управляются Argo CD | Включите `orphanedResources` в AppProject или очистите |
-| `application project was not found` | Application ссылается на несуществующий проект | Проверьте поле `spec.project` Application CR |
+### Типичные ошибки и способы их устранения
 
-### Пошаговая диагностика при ошибке `permission denied`
+| Сообщение об ошибке | Причина сбоя | Метод диагностики | Способ решения |
+| :--- | :--- | :--- | :--- |
+| `application repo <URL> is not permitted in project '<NAME>'` | Репозиторий манифестов отсутствует в `spec.sourceRepos` проекта. | `kubectl get appproject <NAME> -n argocd -o yaml` | Добавить URL репозитория или маску в поле `sourceRepos`. |
+| `application destination <CLUSTER, NS> is not permitted in project '<NAME>'` | Целевой кластер или namespace назначения отсутствует в `spec.destinations`. | Сверить поля `destination` в Application и `destinations` в AppProject. | Добавить пару `server` (или `name`) и `namespace` в `destinations`. |
+| `resource <GROUP:KIND> is not permitted in project '<NAME>'` | Вид ресурса заблокирован `namespaceResourceBlacklist` или отсутствует в Whitelist. | Проверить логи контроллера: `kubectl logs -n argocd statefulset/argocd-application-controller`. | Добавить вид ресурса в `namespaceResourceWhitelist` или удалить из Blacklist. |
+| `application is outside permitted source namespaces` | Манифест `Application` создан в namespace, не включенном в `sourceNamespaces`. | `kubectl get appproject <NAME> -o jsonpath='{.spec.sourceNamespaces}'` | Добавить namespace в `sourceNamespaces` проекта и в `application.namespaces` в `argocd-cmd-params-cm`. |
+| `Permission denied` (UI/CLI) | Правила Casbin RBAC в `argocd-rbac-cm` не разрешают действие субъекту. | `argocd admin settings rbac can <ROLE> <ACTION> <RESOURCE> <OBJECT>` | Проверить маппинг групп OIDC в `policy.csv` и права проектной роли. |
+| `Sync operation blocked by sync window` | Синхронизация заблокирована активным окном `deny` или отсутствием окна `allow`. | `argocd proj windows list <PROJECT>` | Дождаться окончания окна, скорректировать cron-расписание или включить `manualSync: true`. |
+| `User "..." cannot create resource in API group` (403) | Сервисный аккаунт имперсонации `destinationServiceAccounts` не имеет прав K8s. | `kubectl auth can-i create <KIND> -n <NS> --as=system:serviceaccount:<NS>:<SA>` | Расширить Role/RoleBinding сервисного аккаунта тенанта в целевом namespace. |
+| `Commit ... is not signed with a trusted GPG key` | Коммит не имеет валидной подписи GPG при активной политике `sourceIntegrity`. | `git log --show-signature -1 <COMMIT>` в Git-репозитории. | Подписать коммит доверенным ключом или импортировать ключ через `argocd gpg add`. |
+| `All controller shards assigned to single instance` | Все приложения используют локальный кластер, и алгоритм хеширует один URL на шард 0. | `argocd admin cluster stats` | Включить динамическое шардирование или зарегистрировать кластер с явными метками шардов. |
+
+---
+
+### Пошаговое дерево диагностики при ошибках доступа
 
 ```text
-1. argocd account get-user-info
-   ├── Нет? → Проблема аутентификации (SSO, токен, локальный аккаунт)
-   └── Есть? → Перейдите к шагу 2
-
-2. argocd admin settings rbac can <role> <action> <resource> <object>
-   ├── yes → Доступ есть на уровне RBAC, проверьте AppProject restrictions
-   └── no → Перейдите к шагу 3
-
-3. kubectl get configmap argocd-rbac-cm -n argocd -o yaml
-   ├── policy.default задан? → Нет? Добавьте role:readonly
-   ├── policy.csv содержит нужные p, правила? → Нет? Добавьте
-   ├── g, маппинги корректны? → Нет? Исправьте названия групп
-   └── scopes настроен? → Нет? Добавьте scopes: "[groups]"
-
-4. Проверьте AppProject:
-   kubectl get appproject <project> -n argocd -o yaml
-   ├── namespaceResourceWhitelist/Blacklist блокирует?
-   ├── destinations разрешен?
-   ├── sourceRepos разрешены?
-   ├── sourceNamespaces включает ли namespace Application CR?
-   └── syncWindows не блокируют?
+[Проблема: Ошибка авторизации или сбой синхронизации]
+                           │
+                           ▼
+                 [Шаг 1: Аутентификация]
+       Пользователь успешно входит в UI/CLI?
+       ├── НЕТ ──> Проверить OIDC/Dex: логи argocd-server,
+       │           валидность токена, истечение сертификатов IdP.
+       └── ДА  ──> Переход к Шагу 2.
+                           │
+                           ▼
+                 [Шаг 2: Проверка RBAC]
+       Команда 'argocd admin settings rbac can' возвращает Yes?
+       ├── НЕТ ──> Проверить argocd-rbac-cm:
+       │           1. Задан ли policy.default?
+       │           2. Привязана ли SSO-группа через 'g,' к роли?
+       │           3. Соответствует ли scopes: "[groups]" claims провайдера?
+       └── ДА  ──> Переход к Шагу 3.
+                           │
+                           ▼
+              [Шаг 3: Границы AppProject]
+       Соответствует ли Application спецификации AppProject?
+       ├── Repo не разрешен?     ──> Добавить URL в spec.sourceRepos.
+       ├── Destination не в белом?──> Добавить namespace в spec.destinations.
+       ├── Ресурс заблокирован?  ──> Проверить namespaceResourceBlacklist.
+       ├── SourceNamespace чужой?──> Проверить spec.sourceNamespaces и
+       │                             argocd-cmd-params-cm.
+       └── Все разрешено         ──> Переход к Шагу 4.
+                           │
+                           ▼
+              [Шаг 4: Окна Sync Windows]
+       Синхронизация блокируется расписанием?
+       ├── ДА ──> Проверить активные окна: argocd proj windows list.
+       └── НЕТ ──> Переход к Шагу 5.
+                           │
+                           ▼
+          [Шаг 5: K8s API & Impersonation SA]
+       Возвращает ли Kube-API ошибку 403 Forbidden?
+       ├── ДА ──> Проверить права ServiceAccount в целевом namespace:
+       │           kubectl auth can-i create ... --as=system:serviceaccount:...
+       └── НЕТ ──> Проверить статус самого пода приложения (CrashLoopBackOff, ImagePullBackOff).
 ```
+
+---
 
 ## Лучшие практики
 
-### Архитектура и паттерны
+### Архитектура и разграничение зон ответственности
 
-- **Project-per-team:** Рекомендуется для организаций >5 команд. Каждая команда изолирована в своём AppProject с собственными ролями, репозиториями и назначениями.
-- **Project-per-environment:** Используйте для разделения dev/staging/prod. Production требует самых строгих ограничений (blacklist Secret, sync windows, limited roles).
-- **Namespace-per-tenant:** Для полной изоляции tenant namespace с Default Deny NetworkPolicy, ResourceQuota и LimitRange.
-- **Applications-in-any-Namespace:** Для self-service команд, которым нужно управлять своими Application CR. Используйте `sourceNamespaces` для ограничения.
-- **Namespace-scoped Argo CD:** Для враждебных тенантов (external customers), где каждая команда/клиент получает изолированный namespace с Argo CD.
-- **Project-scoped репозитории/кластеры:** Для self-service, позволяющее командам добавлять свои репозитории без обращения к администратору.
-- **Global projects:** Для наследования базовых политик (prod база) через label selector.
+1. **Принцип жестких границ проектов:** Каждая продуктовая команда обязана иметь изолированный `AppProject`. Использование общего проекта для нескольких команд нарушает изоляцию аудита и увеличивает радиус поражения (blast radius).
+2. **Hardening проекта `default`:** Всегда обнуляйте `sourceRepos` и `destinations` в проекте `default` сразу после установки Argo CD. Это предотвратит случайный или злонамеренный деплой мимо проектных политик.
+3. **Строгая иерархия сред:** Проекты production обязаны быть изолированы от dev/staging. В production-проектах недопустимо использование масок `*` в `sourceRepos` и `destinations`.
+4. **Централизация базовых политик через Global Projects:** Используйте Global Projects для автоматического применения базовых запретов (например, блокировка `ClusterRole` и `Secret` из Git) во всех production-проектах.
 
-### Безопасность
+---
 
-- **Харденинг default project:** Всегда ограничивайте default project — `sourceRepos: []`, `destinations: []`, blacklist всех ресурсов.
-- **SSO groups:** Интегрируйте с OIDC/LDAP для автоматического назначения ролей. Используйте `groups` claim.
-- **Namespace isolation:** Используйте NetworkPolicy с Default Deny для tenant namespaces.
-- **Fine-grained RBAC:** Используйте `update/*` и `delete/*` паттерны (v3.0+) для ограничения действий на sub-ресурсы.
-- **GPG/Source Integrity:** Включайте `sourceIntegrity` для production-проектов (наследник устаревшего `signatureKeys`).
-- **destinationServiceAccounts:** Используйте имперсонацию service account'ов тенантов для синхронизации — тенант не получает прямые кластерные токены.
-- **Exec/terminal:** Запрещайте `exec create` для большинства ролей через RBAC.
-- **Deny по умолчанию:** `policy.default: role:readonly`, явно разрешайте только необходимое.
+### Безопасность и Least Privilege
 
-### Производительность и масштабирование
+1. **Отказ от прямого доступа разработчиков в namespace `argocd`:** Команды должны оперировать только в своих tenant-неймспейсах через паттерн `Applications-in-any-Namespace`.
+2. **Обязательная имперсонация через `destinationServiceAccounts`:** Не позволяйте контроллеру Argo CD синхронизировать production-манифесты с правами кластерного администратора. Сервисный аккаунт тенанта должен иметь права только на явно разрешенные сущности.
+3. **NetworkPolicy Default Deny:** Каждый tenant namespace обязан содержать сетевую политику `Default Deny` для входящего и исходящего трафика, разрешая взаимодействие только с Ingress-контроллером, DNS и выделенными базами данных.
+4. **Контроль подлинности коммитов:** Включайте `sourceIntegrity` со строгим режимом (`strict`) для критичных проектов. Запрещайте локальную синхронизацию (`--local`) для production-контуров.
+5. **Запрет интерактивного терминала:** Не предоставляйте разработчикам право `exec create` в production-проектах через RBAC Argo CD. Доступ в контейнеры должен осуществляться только через регламентированные процедуры отладки.
 
-- **Controller sharding:** Для 1000+ приложений используйте sharding (`controller.sharding.algorithm`).
-- **ApplyOutOfSyncOnly:** Оптимизирует применение только изменённых ресурсов.
-- **Shallow Git Cloning:** Используйте для монорепозиториев (>1000 файлов).
+---
 
-### Операции и онбординг
+### Производительность и сайзинг в On-Prem
 
-- **Единый шаблон namespace:** `<команда>-<окружение>` с метками `team`, `environment`, `cost-centre`, `contact`.
-- **ResourceQuota + LimitRange:** Всегда вместе — LimitRange подставляет `requests` по умолчанию, а без них квоты на `requests.*` блокируют создание подов.
-- **Object count quotas:** Ограничивайте `count/secrets`, `count/configmaps`, `count/pods` для защиты etcd.
-- **PSA (Pod Security Admission):** Применяйте профиль `restricted` для prod namespace через метку.
+1. **Согласованная настройка Quota и Limits:** Всегда создавайте `LimitRange` вместе с `ResourceQuota`. Без `LimitRange` поды без явных `requests`/`limits` будут отклонены Kubernetes, блокируя работу тенанта.
+2. **Защита etcd через квоты на количество объектов:** Ограничивайте `count/secrets`, `count/configmaps` и `count/pods` на уровне 50–100 объектов на namespace для защиты базы данных кластера.
+3. **Шардирование при росте нагрузки:** Переходите на шардирование `argocd-application-controller` при превышении порога в 500 приложений. Для монокластеров настраивайте виртуальные кластерные секреты или флаг динамического шардинга.
 
-### Cleanup (офбординг тенанта)
+---
+
+### Регламент офбординга (Удаление тенанта)
+
+Для безопасного удаления тенанта без оставления «висячих» ресурсов (orphaned objects) соблюдайте регламент:
 
 ```bash
-# 1. Экспорт данных перед удалением
-kubectl get all,secrets,configmaps -n tenant-x --no-headers | wc -l
+# 1. Проверка наличия активных приложений тенанта
+argocd app list --project tenant-legacy
+# → result: (список приложений)
 
-# 2. Удаление Application CR
-argocd app list --project tenant-x --hard-refresh
+# 2. Каскадное удаление всех приложений проекта с очисткой K8s ресурсов
+for app in $(argocd app list --project tenant-legacy -o name); do
+  argocd app delete "$app" --cascade --yes
+done
+# → result: Application deleted successfully
 
-# 3. Удаление namespace (вместе с ресурсами)
-kubectl delete namespace tenant-x --wait
+# 3. Удаление проектных секретов репозиториев
+kubectl get secret -n argocd -l argocd.argoproj.io/secret-type=repository -o json \
+  | jq -r '.items[] | select(.stringData.project=="tenant-legacy") | .metadata.name' \
+  | xargs -r -I{} kubectl delete secret {} -n argocd
+# → result: secret "repo-legacy" deleted
 
-# 4. Очистка project-scoped секретов
-kubectl get secret -n argocd -o jsonpath='{range .items[?(@.data.project=="tenant-x")]}{.metadata.name}{"\n"}{end}' \
-  | xargs -I{} kubectl delete secret {} -n argocd
+# 4. Удаление AppProject тенанта
+argocd proj rm tenant-legacy
+# → result: Project 'tenant-legacy' deleted
+
+# 5. Удаление tenant namespace в Kubernetes
+kubectl delete namespace tenant-legacy-prod --wait
+# → result: namespace "tenant-legacy-prod" deleted
 ```
 
-## Ограничения и edge cases
+---
 
-### Ограничения
+## Ограничения и граничные случаи
 
-- **Нет вложенности проектов:** Проекты не могут иметь родительских/дочерних связей. Для наследования используйте Global Projects.
-- **Нет cross-project RBAC:** Роли не могут ссылаться на несколько проектов. Используйте глобальные роли в `policy.csv` для кросс-проектного доступа.
-- **Shared controller:** Все проекты используют один контроллер (без sharding) — производительность. Шардируйте для масштабирования.
-- **Одна policy.csv:** Все правила хранятся в одном ConfigMap. Нет возможности разделить политики по namespace.
-- **Namespace-scoped режим:** Не поддерживает in-cluster деплой (`kubernetes.default.svc`). Требуется внешний кластер для destinations.
-- **Project-scoped репозитории + templated project:** ApplicationSet с templated `project` (`{{...}}`) не работает с project-scoped репозитериями.
-- **Source Integrity + local sync:** При включённой `sourceIntegrity` нельзя синхронизировать с локальных источников (`argocd app sync --local`).
-- **SignatureKeys deprecated:** Устаревшее `signatureKeys` удаляется в следующей major версии. Мигрируйте на `sourceIntegrity`.
-- **Нет wildcard для действий:** Нельзя написать `p, role:X, applications, *, proj/*, allow` — каждое действие требует отдельного правила.
+### Системные ограничения
 
-### Edge Cases
+1. **Отсутствие произвольной вложенности проектов:** `AppProject` не поддерживает иерархическое дерево (проект не может быть подпроектом другого проекта). Для частичной эмуляции иерархии используется только механизм `globalProjects`.
+2. **Единый конфигурационный файл RBAC:** Все глобальные политики Casbin хранятся в едином объекте `argocd-rbac-cm`. Невозможно разделить глобальные политики по отдельным неймспейсам (разграничение внутри неймспейсов доступно только через локальные `.spec.roles` в `AppProject`).
+3. **Шардирование по кластерам по умолчанию:** Стандартные алгоритмы шардинга (`legacy`, `round-robin`) разделяют нагрузку по кластерам. При сосредоточении сотен приложений в одном bare-metal кластере требуется дополнительная настройка распределения.
+4. **Project-scoped репозитории в ApplicationSet:** Генераторы `ApplicationSet`, использующие шаблонизацию имени проекта (например, `project: "{{name}}"`), не могут использовать репозитории, помеченные как project-scoped, так как контроллер валидирует репозиторий до разрешения шаблона.
+5. **Ограничения Namespace-scoped режима:** Экземпляр Argo CD, установленный через `namespace-install.yaml`, не может управлять локальным кластером через `https://kubernetes.default.svc` без кластерных прав и требует подключения внешних кластеров через токены.
 
-- **Удаление проекта с активными приложениями:** Приложения переходят в `Unknown` статус. Сначала перенесите приложения в другой проект.
-- **Cross-project dependencies:** Нет встроенного механизма для зависимостей между проектами. Используйте Sync Waves + App-of-Apps.
-- **Shared Secrets:** Secrets между проектами не изолированы на уровне AppProject — только через namespace. Используйте `namespaceResourceBlacklist` для `Secret` в prod.
-- **Controller sharding по проектам:** Возможен, но требует ручной настройки `controller.sharding.algorithm` и соответствия репликам Deployment.
-- **Deny vs Allow приоритет:** `deny` всегда побеждает `allow`. В order важен: первое совпадение побеждает, но deny имеет приоритет на одинаковом уровне специфичности.
-- **Fine-grained RBAC inheritance (v3.0+):** По умолчанию `update`/`delete` без `/*` не применяются к sub-ресурсам. Для обратной совместимости установите `server.rbac.disableApplicationFineGrainedRBACInheritance: "false"` в `argocd-cm`.
-- **Application в чужом namespace:** Без `sourceNamespaces` в AppProject Application CR из tenant namespace будет отклонён.
-- **Orphaned resources:** При включённом `orphanedResources` контроллер мониторит namespace на наличие ресурсов не из Argo CD. Это создаёт нагрузку — включайте только на well-scoped namespaces.
-- **Permit-only project-scoped clusters:** При `permitOnlyProjectScopedClusters: true` приложения могут синхронизироваться только на кластеры, зарегистрированные в проекте.
-- **Project-scoped репозитории и ApplicationSet:** Если ApplicationSet использует templated `project`, project-scoped репозитории недоступны.
+---
+
+### Граничные случаи эксплуатации
+
+1. **Приоритет запрещающих правил (Deny Trumps Allow):** В окнах синхронизации (`syncWindows`) и списках ресурсов (`clusterResourceBlacklist`, `namespaceResourceBlacklist`) запрещающие правила имеют безусловный приоритет. Если ресурс разрешен в Whitelist, но попадает под маску Blacklist — он будет заблокирован.
+2. **Удаление AppProject при существующих Application:** Если администратор принудительно удаляет `AppProject`, в котором остались приложения (например, сняв finalizer), приложения переходят в статус `Unknown` и не могут быть синхронизированы или удалены через стандартный цикл без восстановления проекта.
+3. **Утечка секретов через общие репозитории:** Если два тенанта используют один монорепозиторий, разграничение через `sourceRepos` должно использовать строгие подкаталоги, а для Helm-чартов — строгие значения `path` и `targetRevision`.
+4. **Конфликты CRD при децентрализованном деплое:** Если два тенанта пытаются применить манифесты одной и той же CRD с разными версиями, побеждает последний применивший, что может сломать контроллер первого тенанта. Поэтому `CustomResourceDefinition` ОБЯЗАН находиться в `clusterResourceBlacklist` для всех тенантов и управляться централизованно Platform SRE.
+5. **Наследование Fine-grained RBAC:** В версиях v3.0+ действия `update` и `delete` без явного указания суб-ресурса не распространяются на суб-ресурсы автоматически. При необходимости сохранения старого поведения требуется выставить `server.rbac.disableApplicationFineGrainedRBACInheritance: "false"` в `argocd-cm`.
+
+---
 
 ## Дополнительная информация
 
 ### См. также
 
-- [RBAC — модель доступа](./argocd_rbac_deep.md) — политика policy.csv, built-in роли, fine-grained RBAC, JWT-токены
-- [AppProject — изоляция проектов](./argocd_appproject_deep.md) — поля спецификации, роли, sync windows
-- [SSO с GitLab](./argocd_sso_gitlab.md) — OIDC-аутентификация и группы
-- [Установка и настройка](./argocd_installation_and_setup.md) — развёртывание, HA, mTLS
-- [Sync Windows](./synchronization/scenarios/sync_windows.md) — временные окна синхронизации
-- [Безопасность](./argocd_security_hardening.md) — GPG, NetworkPolicies, mTLS, SecurityContext, proxy, audit logging
-- [Disaster Recovery](./argocd_disaster_recovery.md) — бэкап, восстановление, etcd snapshot, HA
-- [Multiple Sources и sourceHydrator](./argocd_multi_source_apps.md) — Multiple Sources, Helm+Git
-- [Отслеживание ресурсов](./argocd_resource_tracking.md) — Label, Annotation, Annotation+Label
-- [Удаление и очистка](./argocd_deletion_and_cleanup.md) — Prune, Cascading Deletion, Finalizers
-- [Kubernetes Multi-tenancy](../../Kubernetes/Concepts/multi-tenancy.md) — Namespace, NetworkPolicy, ResourceQuota, RBAC, Capsule, vcluster
+- [RBAC — модель доступа, policy.csv и практические сценарии](./argocd_rbac_deep.md) — детальное описание синтаксиса Casbin, built-in ролей и JWT токенов.
+- [AppProject — изоляция проектов и границы безопасности](./argocd_appproject_deep.md) — полное руководство по спецификации полей `AppProject`.
+- [SSO с GitLab и Dex](./argocd_sso_gitlab.md) — настройка корпоративной аутентификации OIDC и сопоставления групп.
+- [Установка и настройка Argo CD](./argocd_installation_and_setup.md) — развертывание в режиме High Availability, базовые ConfigMap и тюнинг.
+- [Временные окна синхронизации (Sync Windows)](./synchronization/scenarios/sync_windows.md) — регламентные ограничения синхронизации.
+- [Hardening безопасности Argo CD](./argocd_security_hardening.md) — сетевые политики контроллера, mTLS, proxy и audit logging.
+- [ApplicationSets — генераторы и шаблонизация](./argocd_applicationsets.md) — генерация приложений для множества тенантов.
+- [Мониторинг и траблшутинг Argo CD](./argocd_troubleshooting_and_monitoring.md) — метрики Prometheus, алерты и диагностика производительности.
+- [Disaster Recovery и резервное копирование](./argocd_disaster_recovery.md) — восстановление конфигурации тенантов и экспорт манифестов.
+- [Отслеживание ресурсов и Tracking Methods](./argocd_resource_tracking.md) — аннотации и метки отслеживания объектов K8s.
+- [Удаление и очистка ресурсов](./argocd_deletion_and_cleanup.md) — каскадное удаление, финализаторы и сборка мусора.
+- [Мульти-тенантность в Kubernetes](../../Kubernetes/Concepts/multi-tenancy.md) — фундаментальные концепции изоляции неймспейсов, Capsule и vcluster.
 
-### Ссылки
+---
 
-- [Project Specification Reference](https://argo-cd.readthedocs.io/en/stable/operator-manual/project-specification)
-- [Projects — User Guide](https://argo-cd.readthedocs.io/en/stable/user-guide/projects)
-- [RBAC Configuration](https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac)
-- [Source Integrity](https://argo-cd.readthedocs.io/en/stable/user-guide/source-integrity)
-- [Orphaned Resources Monitoring](https://argo-cd.readthedocs.io/en/stable/user-guide/orphaned-resources)
-- [Applications in any namespace](https://argo-cd.readthedocs.io/en/stable/operator-manual/app-any-namespace/)
-- [Multi-Tenancy in Argo CD (ArgoCon 2023)](https://static.sched.com/hosted_files/colocatedeventsna2023/66/ArgoCD_Multitenancy_ArgoCon2023_Final.pdf)
+### Ссылки и источники
+
+- [Официальная документация: AppProject Specification Reference](https://argo-cd.readthedocs.io/en/stable/operator-manual/project-specification/)
+- [Официальная документация: Projects User Guide](https://argo-cd.readthedocs.io/en/stable/user-guide/projects/)
+- [Официальная документация: RBAC Configuration](https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/)
+- [Официальная документация: Applications in Any Namespace](https://argo-cd.readthedocs.io/en/stable/operator-manual/app-any-namespace/)
+- [Официальная документация: Source Integrity](https://argo-cd.readthedocs.io/en/stable/user-guide/source-integrity/)
+- [Официальная документация: High Availability and Controller Sharding](https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/)
+- [Документация Kubernetes: Multi-tenancy Guide](https://kubernetes.io/docs/concepts/security/multi-tenancy/)

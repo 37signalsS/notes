@@ -1,121 +1,226 @@
 # Архитектура Jaeger
 
-> **Важно:** Документация описывает **Jaeger v2**. Jaeger v1 достиг **EOL (End of Life)**.
+> **Важно:** Документация описывает **Jaeger v2** (текущая стабильная линейка v2.x / v2.22+). Jaeger v1 достиг **EOL (End of Life)**.
 
-**Архитектура Jaeger v2** спроектирована как нативное расширение **OpenTelemetry Collector**. Это означает, что компоненты Jaeger теперь интегрированы непосредственно в бинарный файл OpenTelemetry, что обеспечивает унификацию пайплайнов телеметрии, нативную поддержку протокола OTLP и бесшовную интеграцию с экосистемой OpenTelemetry.
+**Архитектура Jaeger v2** построена на базе фреймворка **OpenTelemetry Collector**. Компоненты Jaeger интегрированы непосредственно в бинарный дистрибутив OpenTelemetry в виде специализированных расширений (Extensions), процессоров (Processors) и экспортеров (Exporters). Это обеспечивает унификацию конвейеров телеметрии, нативную обработку протокола OTLP, гибкую маршрутизацию спанов и модульную ролевую модель на базе единого исполняемого файла.
 
-Общий обзор возможностей системы: **[Обзор Jaeger](./jaeger_overview.md)**.
+Общий обзор концепций трассировки: **[Обзор Jaeger](./jaeger_overview.md)**.  
+Варианты топологического развертывания: **[Варианты развертывания](./jaeger_deployment_options.md)**.
 
 ---
 
 ## Определения
 
-| Компонент | Назначение |
+| Компонент / Термин | Назначение |
 | :--- | :--- |
-| **OpenTelemetry SDK** | Библиотека для инструментирования кода приложения. Генерирует спаны и передает их в коллектор по протоколу OTLP. Рекомендуется как замена устаревшим Jaeger Clients |
-| **Jaeger Binary (v2)** | Единый бинарный файл, который может запускаться в различных ролях (Collector, Query, All-in-one). Построен на базе OTel Collector |
-| **OTEL_COLLECTOR_ROLE** | Концепция v2, где роль компонента определяется конфигурационным файлом YAML, а не отдельными исполняемыми файлами |
-| **Storage Extension** | Специализированный модуль Jaeger v2 для взаимодействия с бэкендами хранения (Elasticsearch, ClickHouse и др.) в рамках OTel Collector |
-| **Sampling Extension** | Модуль для реализации стратегий адаптивного сэмплирования, заменяющий централизованное управление сэмплированием из v1 |
-| **Jaeger Ingester** | Роль бинарного файла, считывающая данные из Kafka и записывающая их в Storage с использованием Jaeger Storage API |
-| **Jaeger Query** | Сервис, предоставляющий API и UI для извлечения данных из хранилища |
-| **Jaeger UI** | Веб-интерфейс на React для поиска, просмотра и анализа трассировок. В v2 интегрирован в Query extension |
-| **Agent Mode (OTel Collector)** | Режим работы коллектора как локального edge-агента, заменяющий Jaeger Agent v1. Выполняет батчинг, обогащение метаданными и пересылку в центральный коллектор |
+| **Jaeger Binary (v2)** | Единый бинарный дистрибутив на базе OpenTelemetry Collector Core/Contrib, выполняющий функции приема, буферизации, обработки, маршрутизации и отдачи данных трассировки |
+| **Pipeline DAG** | Направленный ациклический граф конвейера обработки данных внутри коллектора: цепочка `receivers → processors → exporters` (или `connectors`) |
+| **pdata (Pipeline Data)** | Внутренняя zero-copy модель данных OpenTelemetry в памяти процесса Jaeger, используемая для эффективной передачи спанов между компонентами без постоянной переупаковки |
+| **Storage Extension (`jaeger_storage`)** | Централизованное расширение Jaeger v2, управляющее пулами соединений, повторными попытками и адаптерами к бэкендам хранения (ClickHouse, Elasticsearch, Cassandra, Memory) |
+| **Storage Exporter (`jaeger_storage_exporter`)** | Специализированный экспортер, преобразующий структуры спанов OTLP в формат хранения Jaeger и отправляющий их в бэкенд через `jaeger_storage` |
+| **Query Extension (`jaeger_query`)** | Расширение, запускающее HTTP и gRPC серверы для обслуживания Query API и встроенного веб-интерфейса Jaeger UI |
+| **Remote Sampling Extension (`remote_sampling`)** | Расширение для обслуживания клиентских запросов SDK по протоколам HTTP/gRPC с выдачей статических или динамических стратегий сэмплирования |
+| **Adaptive Sampling Processor (`adaptive_sampling`)** | Процессор, анализирующий входящий поток спанов по связкам `(service, operation)` и рассчитывающий вероятности сэмплирования для удержания целевого RPS |
+| **Memory Limiter Processor (`memory_limiter`)** | Процессор ранней защиты от аварийного завершения процесса (OOM) путем принудительного отбрасывания данных или отказа в приеме при исчерпании лимитов RAM |
+| **Unified Binary Role** | Специализация инстанса Jaeger (`all-in-one`, `collector`, `ingester`, `query`, `agent`), определяемая исключительно составом включенных в YAML компонентов |
+| **Ingester Role** | Роль бинарного файла, считывающая спаны из очередей Kafka (через `kafka` receiver) и записывающая их в постоянное хранилище |
+| **Connector** | Компонент OTel Collector, объединяющий конец одного конвейера с началом другого (в Jaeger v2 используется `jaeger_storage_exporter` для построения Dead-Letter Queue) |
+| **Backpressure** | Механизм передачи сигнала о перегрузке от хранилища и очередей экспортера обратно к входящим портам коллектора и клиентам SDK |
 
 ---
 
-## Базовые концепции
+## Базовые концепции и архитектура
 
-### Трансформация из Jaeger v1 в v2
+### Эволюция архитектуры: переход от Jaeger v1 к v2
 
-Jaeger v1 использовал архитектуру с отдельными бинарными файлами для каждой роли:
-- **Jaeger Agent** — sidecar или локальный процесс для приема спанов от SDK
-- **Jaeger Collector** — серверный компонент для валидации и обработки
-- **Jaeger Query** — сервис доступа к данным
-- **Jaeger UI** — отдельный процесс
+Архитектура Jaeger v1 состояла из нескольких отдельных монофункциональных исполняемых файлов:
+- `jaeger-agent` — локальный демон/sidecar, принимавший спаны от устаревших Jaeger SDK по UDP (Thrift) и пересылавший их по gRPC в Collector;
+- `jaeger-collector` — центральный сервис валидации, предобработки и записи спанов в БД;
+- `jaeger-ingester` — специализированный сервис вычитывания сообщений из Kafka и записи в БД;
+- `jaeger-query` — отдельный веб-сервис с REST API и статическими файлами UI.
 
-В v2 эта модель заменена на **единый бинарный файл на базе OpenTelemetry Collector**. Ключевые преимущества перехода:
-- **Унификация протоколов:** Нативный OTLP вместо смеси Thrift, gRPC и Zipkin форматов
-- **Гибкость пайплайнов:** Возможность использования любых стандартных процессоров OpenTelemetry (transform, k8sattributes, spanmetrics и др.)
-- **Упрощение эксплуатации:** Один образ Docker вместо нескольких, единая модель конфигурации YAML
-- **Расширяемость:** Добавление новых функциональных блоков через механизм Extensions без изменения ядра
+В Jaeger v2 эта модель заменена на **единую расширяемую платформу OpenTelemetry Collector**:
 
-### Поток данных в Jaeger v2
+```
+[Jaeger v1 Architecture]
+SDK (Thrift/UDP) ──> jaeger-agent (gRPC) ──> jaeger-collector ──> Storage
+                                                    │
+                                                    └──> Kafka ──> jaeger-ingester ──> Storage
+Browser ──> jaeger-query (HTTP/UI) ───────────────────────────────────┘
 
-В версии v2 путь прохождения трассировки базируется на пайплайнах OpenTelemetry:
+[Jaeger v2 Architecture]
+OTel SDK (OTLP/gRPC) ──> [Edge OTel Collector] ──> Jaeger v2 Binary ──> Storage (ClickHouse/ES)
+                                                   ├── jaeger_storage
+                                                   ├── jaeger_query (HTTP 16686 UI)
+                                                   └── remote_sampling
+```
 
-`Приложение (OTel SDK) → [OTel Collector (Agent Mode)] → Jaeger v2 (Collector Mode) → [Kafka → Ingester] → Storage → Query → UI`
+Ключевые архитектурные преимущества v2:
+1. **Унификация сетевого протокола:** Стандартом стал протокол **OTLP** (OpenTelemetry Protocol) поверх gRPC (порт 4317) и HTTP (порт 4318) с Protobuf-сериализацией. Устаревшие протоколы (Jaeger Thrift, Zipkin) поддерживаются как опциональные receivers.
+2. **Модульный конвейер обработки данных:** Любой инстанс Jaeger v2 может использовать стандартные процессоры экосистемы OTel (батчинг, обогащение метаданными инфраструктуры, фильтрация персональных данных, агрегация метрик).
+3. **Единый образ и бинарный файл:** Эксплуатация упрощена за счет одного бинарного файла `jaeger` (образ `jaegertracing/jaeger:2.x`), чья роль задается YAML-конфигурацией.
+4. **Концепция Extensions:** Функционал разделения доступа к хранилищам, интерфейсам UI и сэмплированию вынесен в расширения, управляющие жизненным циклом фоновых служб независимо от потоков данных.
 
-1.  **Инструментированное приложение:** Отправляет трейсы по OTLP (gRPC: 4317, HTTP: 4318).
-2.  **OTel Collector (Agent Mode):** Заменяет `jaeger-agent`. Принимает данные локально, выполняет первичную обработку (батчинг, добавление метаданных инфраструктуры) и пересылает в центральный коллектор.
-3.  **Jaeger v2 (Collector Mode):** Принимает данные через `otlp` receiver, обрабатывает их через `processors` и передает в `jaeger_storage_exporter`.
-4.  **Kafka & Ingester:** Используются для сглаживания пиков. Collector пишет в Kafka (через `kafka` exporter), а Ingester читает из нее и пишет в финальное хранилище.
-5.  **Storage:** Elasticsearch, Cassandra или ClickHouse.
-6.  **Query & UI:** Предоставляет доступ к данным через HTTP (порт 16686).
+---
 
-### Ролевая модель (Roles)
+### Внутренний конвейер обработки данных (Pipeline DAG)
 
-В Jaeger v2 один и тот же бинарный файл может выполнять разные задачи в зависимости от набора включенных компонентов в YAML-конфигурации:
+Внутри процесса Jaeger v2 спаны проходят строгий конвейер, построенный на модели pdata (структуры данных в памяти с минимальным оверхедом на аллокации):
 
-*   **All-in-one:** Включает все компоненты (receiver, storage, query, UI) и использует in-memory или Badger хранилище.
-*   **Collector:** Включает только `receivers` (OTLP) и `exporters` для записи в БД или Kafka.
-*   **Ingester:** Включает `receiver` для Kafka и `exporter` для записи в БД.
-*   **Query:** Включает `jaeger_query` extension и предоставляет доступ к данным и UI.
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│ Jaeger v2 Process                                                         │
+│                                                                           │
+│  [Receivers]              [Processors Pipeline]            [Exporters]    │
+│  ┌──────────────┐         ┌─────────────────────────┐      ┌────────────┐ │
+│  │ otlp (gRPC)  │────┐    │ 1. memory_limiter       │  ┌──>│ jaeger_    │ │
+│  └──────────────┘    │    │    (ранний дроп при OOM)│  │   │ storage_   │ │
+│  ┌──────────────┐    ├───>│ 2. k8sattributes/attrs  │──┤   │ exporter   │ │
+│  │ otlp (HTTP)  │────┤    │    (обогащение спанов)  │  │   └──────┬─────┘ │
+│  └──────────────┘    │    │ 3. batch                │  │          │       │
+│  ┌──────────────┐    │    │    (буферизация пачек)  │  │          ▼       │
+│  │ kafka (Ing.) │────┘    └─────────────────────────┘  │   ┌────────────┐ │
+│  └──────────────┘                                      └──>│ kafka      │ │
+│                                                            │ exporter   │ │
+│  [Extensions Subsystem]                                    └────────────┘ │
+│  ┌────────────────────────┐  ┌────────────────────────┐                   │
+│  │ jaeger_storage         │  │ jaeger_query           │                   │
+│  │ (ClickHouse/ES/Memory) │  │ (REST API & UI: 16686) │                   │
+│  └────────────────────────┘  └────────────────────────┘                   │
+└───────────────────────────────────────────────────────────────────────────┘
+```
 
-### Механизм расширений (Extensions)
+Этапы прохождения спана:
+1. **Прием (Ingestion):** `receiver` принимает байты из сетевого сокета (TCP), валидирует Protobuf/JSON и преобразует payload во внутренние структуры `pdata.Traces`.
+2. **Защита от перегрузки (Memory Check):** `memory_limiter` проверяет текущее состояние кучи Go и cgroup-лимитов. Если память превышает `spike_limit`, запрос немедленно отклоняется с ошибкой gRPC `ResourceExhausted` (Backpressure).
+3. **Обогащение и трансформация (Processing):** Процессоры модифицируют спаны, маскируют чувствительные теги, добавляют атрибуты узла или пода.
+4. **Батчинг (Batching):** `batch` processor накапливает спаны до достижения лимита размера (`send_batch_size`) или таймаута (`timeout`), снижая количество I/O-операций.
+5. **Очередь и отправка (Queue & Export):** `jaeger_storage_exporter` помещает батч во внутреннюю очередь `queue` (bounded buffer). Воркеры пула извлекают пачки и передают их в драйвер бэкенда через `jaeger_storage`.
 
-В отличие от v1, где каждый компонент был отдельным сервисом, v2 использует механизм **Extensions** OTel Collector для добавления функциональности Jaeger:
+---
 
-- **Storage Extension:** Предоставляет единый интерфейс для всех бэкендов хранения. Управляет пулом соединений, повторными попытками и retry-логикой.
-- **Sampling Extension:** Реализует стратегии сэмплирования (probabilistic, rate limiting, remote). В v2 стратегии могут быть частью пайплайна, что позволяет применять их до экспорта данных.
-- **Query Extension:** Заменяет отдельный Query-сервис v1. Предоставляет REST API и статические файлы UI.
-- **jaeger_storage_exporter:** Специализированный exporter, который преобразует OTLP-спаны в формат хранения Jaeger и использует Storage Extension для записи.
+### Ролевая модель Unified Binary
 
-### Порты Jaeger v2
+В Jaeger v2 функциональная роль экземпляра определяется набором компонентов в конфигурационном файле:
 
-| Порт | Протокол | Назначение |
+| Роль | Активные компоненты | Назначение в архитектуре |
 | :--- | :--- | :--- |
-| **4317** | gRPC | OTLP приемник (основной для v2) |
-| **4318** | HTTP | OTLP приемник |
-| **16686** | HTTP | Jaeger UI и Query API |
-| **14250** | gRPC | Jaeger Collector (для обратной совместимости с агентами v1) |
-| **14268** | HTTP | Прием Jaeger Thrift (устарело) |
-| **9411** | HTTP | Прием Zipkin спанов |
-| **8888** | HTTP | Метрики самого Jaeger (Prometheus format) |
-| **6831** | UDP | Jaeger Agent (только для обратной совместимости с v1 SDK) |
-| **5778** | HTTP | Конфигурация агента (tracing sampling, v1) |
+| **All-in-one** | `receivers`: [otlp, jaeger]<br>`processors`: [batch]<br>`exporters`: [jaeger_storage_exporter]<br>`extensions`: [jaeger_storage, jaeger_query, remote_sampling] | Локальная разработка, стенды интеграционного тестирования, небольшие автономные контуры (in-memory / Badger) |
+| **Collector** | `receivers`: [otlp]<br>`processors`: [memory_limiter, batch]<br>`exporters`: [jaeger_storage_exporter] или [kafka]<br>`extensions`: [jaeger_storage] | Высоконагруженный прием телеметрии от приложений, валидация и запись напрямую в БД или буфер Kafka |
+| **Ingester** | `receivers`: [kafka]<br>`processors`: [batch]<br>`exporters`: [jaeger_storage_exporter]<br>`extensions`: [jaeger_storage] | Асинхронное вычитывание спанов из очередей Kafka и пакетная запись в постоянное хранилище |
+| **Query** | `receivers`: [nop]<br>`processors`: []<br>`exporters`: [nop]<br>`extensions`: [jaeger_storage, jaeger_query] | Выделенный узел чтения: UI и Query API для инженеров, Grafana и внешних систем. Не принимает входящие трейсы |
+| **Agent / Edge** | `receivers`: [otlp]<br>`processors`: [memory_limiter, batch]<br>`exporters`: [otlp]<br>`extensions`: [] | Локальный сборщик на хосте или DaemonSet в Kubernetes. Выполняет предварительный батчинг и проксирует OTLP в центральные коллекторы |
 
-### Хранилище и расширение Storage
+---
 
-Jaeger v2 использует механизм расширений (**Extensions**) для интеграции с базами данных. Это позволяет:
-- Использовать единый пул соединений для всех пайплайнов.
-- Поддерживать специфичные для Jaeger индексы и оптимизации.
-- **ClickHouse:** В v2 стал первоклассным гражданином (first-class citizen). Архитектура ClickHouse позволяет хранить миллиарды спанов с минимальными затратами на ресурсы по сравнению с Elasticsearch.
+### Архитектура подсистемы хранения (Storage Extension)
 
-### Адаптивное сэмплирование (Adaptive Sampling)
+В отличие от классического OpenTelemetry Collector, где каждый экспортер независимо открывает свои сетевые соединения, Jaeger v2 требует совместного использования бэкенда хранения компонентами записи (`jaeger_storage_exporter`) и чтения (`jaeger_query`).
 
-В v2 адаптивное сэмплирование реализовано через `sampling` extension.
-1.  Коллектор анализирует входящий поток данных по каждому сервису и операции.
-2.  На основе целевого RPS (например, 10 трейсов в секунду на сервис) рассчитывается вероятность сэмплирования.
-3.  Вероятности отдаются SDK приложений через расширение (бинарный файл Jaeger выступает в роли сервера стратегий).
+Эту задачу решает расширение **`jaeger_storage`**:
+- **Пул соединений (Connection Pooling):** Создает единый пул TCP/HTTP соединений к базе данных, предотвращая исчерпание сокетов.
+- **Драйверы бэкендов:** Реализует интерфейсы взаимодействия с базами данных:
+  - **ClickHouse:** Первоклассный бэкенд (first-class citizen) для высоконагруженных сред. Колоночное хранение, эффективное сжатие (LZ4/ZSTD) и партиционирование по дням обеспечивают минимальную нагрузку на дисковую подсистему и мгновенное удаление старых данных по TTL.
+  - **Elasticsearch / OpenSearch:** Документоориентированное хранилище с полнотекстовым поиском. Требует управления индексами (ILM/ISM) и потребляет существенно больше памяти под JVM.
+  - **Cassandra:** Исторический NoSQL бэкенд для линейной масштабируемости записи по ключу, но с ограниченными возможностями фильтрации по произвольным тегам.
+  - **Memory:** Хранилище в оперативной памяти процесса (кольцевой буфер `max_traces`), данные сбрасываются при перезапуске.
+  - **Badger:** Встраиваемое key-value хранилище на основе LSM-дерева на локальном диске для одноузловых инсталляций.
 
-### Обработка пиковых нагрузок и backpressure
+---
 
-Архитектура Jaeger v2 включает несколько механизмов для устойчивости к перегрузкам:
+### Управление памятью, очередями и Backpressure
 
-- **Memory Limiter Processor:** Предотвращает исчерпание памяти коллектора при всплесках трафика. Конфигурирует лимиты памяти и принудительно сбрасывает данные при превышении.
-- **Batch Processor:** Группирует спаны перед отправкой, уменьшая количество сетевых вызовов и сглаживая пики.
-- **Kafka как буфер:** В streaming-архитектуре Kafka выступает как промежуточный буфер между Collector и Ingester. Это отделяет SLA приема данных от скорости записи в хранилище.
-- **Circuit Breaker в Storage Extension:** При недоступности хранилища экспортер может включать circuit breaker, чтобы не перегружать сеть futile retry-запросами.
+Для надежной работы в SRE/DevOps окружениях Jaeger v2 реализует многоуровневый контур контроля очередей и ресурсов памяти:
 
-### Ограничения архитектуры
+```
+[Входящий OTLP запрос]
+       │
+       ▼
+┌────────────────────────────────────────────────────────┐
+│ 1. Memory Limiter Processor                            │
+│    Использование RAM > limit?                          │
+│    ├── ДА ──> Возврат gRPC ResourceExhausted (429/503) │
+│    └── НЕТ                                             │
+└──────────────────────┬─────────────────────────────────┘
+                       ▼
+┌────────────────────────────────────────────────────────┐
+│ 2. Batch Processor                                     │
+│    Накопление до send_batch_size или timeout           │
+└──────────────────────┬─────────────────────────────────┘
+                       ▼
+┌────────────────────────────────────────────────────────┐
+│ 3. Storage Exporter Queue                              │
+│    Очередь queue_size заполнена?                       │
+│    ├── ДА  ──> otelcol_exporter_enqueue_failed_spans   │
+│    └── НЕТ ──> Пул воркеров num_consumers              │
+└──────────────────────┬─────────────────────────────────┘
+                       ▼
+┌────────────────────────────────────────────────────────┐
+│ 4. Storage Driver & Database                           │
+│    Сбой записи / таймаут сокета?                       │
+│    ├── retry_on_failure: повторные попытки             │
+│    └── Dead-Letter Queue Connector (при терминальном   │
+│        сбое)                                           │
+└────────────────────────────────────────────────────────┘
+```
 
-- **In-memory хранилище:** Поддерживается только в All-in-one режиме. Данные теряются при перезапуске. Не рекомендуется для production.
-- **Badger:** Встраиваемое хранилище на основе LSM-tree. Подходит для небольших инсталляций (до 1M спанов/день), но не поддерживает горизонтальное масштабирование.
-- **Elasticsearch:** Требует тщательного планирования индексов и шардирования. При росте выше 10TB требует использования ISM (Index State Management).
-- **ClickHouse:** Не имеет встроенного механизма TTL на уровне строк — требует явной конфигурации партиций и TTL на уровне таблицы.
-- **Latency penalty в Kafka-пайплайне:** Добавляет задержку 1-5 секунд (зависит от `decision_wait` в tail-sampling) перед записью в хранилище.
-- **Cardinality тегов:** Высокая кардинальность тегов (например, `user_id` с миллионами значений) приводит к взрыву индексов в Elasticsearch и росту потребления памяти в ClickHouse.
+1. **Взаимодействие Go Runtime и cgroups:**
+   - Коллектор написан на Go. По умолчанию сборщик мусора ориентируется на процент прироста кучи (`GOGC=100`). При резком всплеске спанов аллокации могут превысить лимит памяти контейнера/узла до срабатывания GC, что приводит к OOM-Kill ядром Linux.
+   - В Jaeger v2 критически важно задавать переменную окружения `GOMEMLIMIT` (на уровне 80–85% от лимита памяти процесса) совместно с `memory_limiter` процессором (`limit_percentage: 80`, `spike_limit_percentage: 20`).
+2. **Буферная очередь экспортера (`queue`):**
+   - Настраивает локальную очередь в памяти: `queue_size` (количество батчей) и `num_consumers` (число параллельных горутин отправки).
+   - Если хранилище замедляет запись, очередь заполняется. При переполнении спаны сбрасываются, инкрементируя счетчик `otelcol_exporter_enqueue_failed_spans_total`.
+   - Флаг `wait_for_result: true` синхронизирует подтверждение приема с фактом записи, гарантируя семантику At-least-once, но снижая пиковый RPS.
+3. **Dead-Letter Queue через Connectors:**
+   - Компонент `jaeger_storage_exporter` может объявляться в секции `connectors:`. В этом режиме спаны, которые база данных окончательно отклонила (например, нарушение схемы или фатальная ошибка), перенаправляются в отдельный выходной конвейер (например, запись на аварийный локальный диск или в файл).
+
+---
+
+### Архитектура подсистемы сэмплирования
+
+Jaeger v2 поддерживает три архитектурных механизма сэмплирования:
+
+1. **Head-based Sampling (на клиенте):**
+   - Решение о сохранении спана принимается SDK приложения в момент создания корневого спана.
+   - Расширение `remote_sampling` выступает сервером конфигураций: SDK периодически запрашивает стратегии по HTTP (порт 5778 или 4318) / gRPC (порт 4317).
+2. **Adaptive Sampling Engine:**
+   - Процессор `adaptive_sampling` в конвейере коллектора подсчитывает входящий RPS по каждой паре `(сервис, операция)`.
+   - Алгоритм динамически пересчитывает вероятность выборки (от 0.0 до 1.0) для каждого эндпоинта, стремясь к заданному лимиту (например, не более 5 трейсов в секунду на операцию).
+   - Вычисленные вероятности сохраняются в общее состояние и раздаются расширением `remote_sampling` клиентам SDK.
+3. **Tail-based Sampling (на коллекторе):**
+   - Процессор `tailsampling` задерживает все спаны трейса в памяти на интервал `decision_wait` (например, 5–10 секунд).
+   - После сбора полного графа трейса процессор анализирует его атрибуты: если в трейсе есть спаны со статусом `Error` или длительностью выше SLA, трейс сохраняется; успешные рутинные трейсы отбрасываются.
+   - *Архитектурное ограничение:* требует маршрутизации всех спанов одного `trace_id` на один и тот же инстанс коллектора (Trace ID aware routing / Load-balancing exporter).
+
+---
+
+### Сетевая архитектура и порты Jaeger v2
+
+| Порт | Протокол | Сервис / Компонент | Назначение в архитектуре |
+| :--- | :--- | :--- | :--- |
+| **4317** | TCP (gRPC) | OTLP Receiver | Основной порт приема спанов от OpenTelemetry SDK и Edge-агентов |
+| **4318** | TCP (HTTP) | OTLP Receiver | Прием спанов по OTLP/HTTP (Protobuf/JSON), web-клиенты, serverless |
+| **16686** | TCP (HTTP) | `jaeger_query` Extension | Веб-интерфейс Jaeger UI и HTTP API поиска трасс |
+| **16685** | TCP (gRPC) | `jaeger_query` Extension | Высокопроизводительный gRPC API чтения данных (для интеграций) |
+| **8888** | TCP (HTTP) | Internal Telemetry | Метрики состояния самого процесса Jaeger в формате Prometheus (`/metrics`) |
+| **13133** | TCP (HTTP) | `healthcheckv2` Extension | Проверка готовности и жизнеспособности процесса (Liveness/Readiness probes) |
+| **1777** | TCP (HTTP) | `pprof` Extension | Профилирование производительности Go runtime (`/debug/pprof`) |
+| **55679** | TCP (HTTP) | `zpages` Extension | Диагностические HTML-страницы состояния конвейеров (`/debug/tracez`) |
+| **14250** | TCP (gRPC) | Legacy Receiver | Прием данных от устаревших агентов Jaeger v1 (обратная совместимость) |
+| **14268** | TCP (HTTP) | Legacy Receiver | Прием данных в формате Jaeger Thrift напрямую от старых клиентов |
+| **9411** | TCP (HTTP) | Zipkin Receiver | Прием трассировок от сервисов с библиотеками Zipkin v1/v2 |
+| **6831** | UDP | Legacy Receiver | Прием компактного Thrift по UDP от устаревших клиентов v1 |
+| **5778** | TCP (HTTP) | `remote_sampling` | Раздача конфигураций сэмплирования клиентам v1 |
+
+---
+
+### Граничные условия и ограничения архитектуры
+
+- **In-Memory хранилище:** Допустимо только для All-in-one режима и тестирования. При перезапуске процесса или ротации контейнера данные безвозвратно теряются.
+- **Встраиваемый Badger:** Ограничен одним узлом (Single Node), не поддерживает кластеризацию и горизонтальное масштабирование. Подходит для локальных стендов или объемов до 1 млн спанов в сутки.
+- **Высокая кардинальность атрибутов (Cardinality Explosion):** Передача уникальных идентификаторов (`user_id`, `jwt_token`, `query_hash`) в тегах спанов без предварительной нормализации приводит к исчерпанию памяти в ClickHouse и неконтролируемому разрастанию индексов в Elasticsearch.
+- **Потеря данных при жестком завершении (`SIGKILL`):** Спаны, находящиеся в оперативной памяти `batch` процессора и очереди экспортера `queue`, не сбрасываются на диск при аварийной остановке процесса. Для корректной остановки требуется передача сигнала `SIGTERM` с паузой на graceful shutdown (по умолчанию 15–30 секунд).
+- **Отсутствие кэширования в Query:** `jaeger_query` не имеет встроенного L2-кэша ответов. Повторные тяжелые запросы из UI или Grafana транслируются напрямую в ClickHouse/Elasticsearch.
 
 ---
 
@@ -123,106 +228,203 @@ Jaeger v2 использует механизм расширений (**Extensio
 
 ### Подготовка окружения
 
-**Минимальные требования для запуска All-in-one:**
-- CPU: 0.5 - 1 ядро
-- RAM: 512MB - 2GB
-- Docker Engine 20.10+ или Kubernetes 1.24+
+Минимальные системные требования для запуска компонентов Jaeger v2 на Linux (on-premise / bare-metal / VM):
 
-**Для Production с ClickHouse:**
-- CPU: 2 - 4 ядра на инстанс Collector
-- RAM: 2GB - 4GB на инстанс Collector
-- ClickHouse кластер: минимум 3 узла для HA
+```bash
+# 1. Проверка доступности памяти и ядер процессора
+free -h
+# →               total        used        free      shared  buff/cache   available
+# → Mem:           15Gi       1.2Gi        12Gi       1.0Mi       2.3Gi        14Gi
 
-**Сетевые порты (входящие):**
-- 4317/tcp — OTLP gRPC
-- 4318/tcp — OTLP HTTP
-- 16686/tcp — UI и Query API
+nproc
+# → 8
 
-### Сценарий 1: Локальная валидация архитектуры через Docker Compose
-
-**Ситуация:** Необходимо быстро проверить, что компоненты Jaeger v2 корректно взаимодействуют между собой в режиме All-in-one, без развертывания production-инфраструктуры.
-
-```yaml
-# compose.yml
-services:
-  jaeger:
-    image: jaegertracing/jaeger:2.0
-    ports:
-      - "16686:16686" # UI и Query API
-      - "4317:4317"   # OTLP gRPC (основной порт для v2)
-      - "4318:4318"   # OTLP HTTP
-    environment:
-      - SPAN_STORAGE_TYPE=memory
-      - METRICS_STORAGE_TYPE=prometheus
+# 2. Проверка открытых портов (убедиться, что 4317, 4318, 16686 свободны)
+ss -tulpn | grep -E ':(4317|4318|16686|8888|13133)'
+# → (вывод должен быть пуст)
 ```
 
-**Валидация:**
+---
 
-1.  Отправить тестовый спан из приложения на `localhost:4317` (gRPC) или `localhost:4318` (HTTP).
-2.  Открыть `http://localhost:16686` и убедиться, что сервис отображается в выпадающем списке.
-3.  Выполнить поиск по `service=имя-сервиса` и проверить, что спан содержит корректные атрибуты (`http.method`, `http.status_code`).
+### Сценарий 1: Production архитектура Collector с ClickHouse и защитой по памяти
 
-**Ожидаемый результат:** Трасса появляется в UI в течение 1–2 секунд после отправки. При использовании in-memory хранилища данные исчезают после перезапуска контейнера.
+**Контекст:** Настройка высокопроизводительного коллектора для приема спанов по OTLP, буферизации, защиты от OOM и надежной записи в кластер ClickHouse.
 
-### Сценарий 2: Production развертывание с ClickHouse
-
-Jaeger v2 рекомендует ClickHouse как наиболее эффективное хранилище. Пример конфигурации коллектора:
+Создание конфигурационного файла:
 
 ```yaml
-# collector-config.yaml
+# /etc/jaeger/collector-clickhouse.yaml
 receivers:
   otlp:
     protocols:
       grpc:
+        endpoint: "0.0.0.0:4317"
+        max_concurrent_streams: 1024
       http:
+        endpoint: "0.0.0.0:4318"
+
+processors:
+  memory_limiter:
+    check_interval: 500ms
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
+  batch:
+    send_batch_size: 2048
+    timeout: 2s
+    send_batch_max_size: 4096
+
+extensions:
+  healthcheckv2:
+    endpoint: "0.0.0.0:13133"
+  jaeger_storage:
+    backends:
+      prod_clickhouse:
+        clickhouse:
+          endpoint: "tcp://127.0.0.1:9000"
+          database: "jaeger_v2"
+          username: "default"
+          password: ""
+          connection_params:
+            dial_timeout: "5s"
+            compress: "lz4"
 
 exporters:
   jaeger_storage_exporter:
-    trace_storage:
-      type: clickhouse
-      options:
-        clickhouse:
-          endpoint: "tcp://clickhouse-server:9000"
-          database: jaeger_v2
+    trace_storage: prod_clickhouse
+    queue:
+      num_consumers: 16
+      queue_size: 1000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 10s
+      max_elapsed_time: 30s
 
 service:
-  extensions: [jaeger_storage]
+  extensions: [healthcheckv2, jaeger_storage]
   pipelines:
     traces:
       receivers: [otlp]
+      processors: [memory_limiter, batch]
       exporters: [jaeger_storage_exporter]
+  telemetry:
+    metrics:
+      level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: "0.0.0.0"
+                port: 8888
+    logs:
+      level: info
 ```
 
-**Валидация:**
+**Запуск процесса с переменными окружения Go:**
 
-1.  Применить конфигурацию: `jaeger --config collector-config.yaml`.
-2.  Отправить тестовый спан и убедиться, что он появился в UI через `http://localhost:16686`.
-3.  Проверить метрики: `curl http://localhost:8888/metrics | grep jaeger_exporter_send_spans` — количество отправленных спанов должно расти.
-4.  Проверить таблицы в ClickHouse: `SELECT count() FROM jaeger_v2.spans` — количество записей должно совпадать с отправленными спанами.
+```bash
+# Экспорт лимитов памяти Go Runtime (например, для ноды с 8GB RAM выделяем 6800MiB)
+export GOMEMLIMIT=6800MiB
+export GOGC=100
 
-### Сценарий 3: Настройка роли Ingester (Kafka -> ClickHouse)
+# Запуск Jaeger v2 бинарника
+jaeger --config /etc/jaeger/collector-clickhouse.yaml
+# → 2026-10-12T13:30:00.000Z info service@v0.110.0/service.go:175 Everything is ready. Begin running and processing data.
+```
 
-Пример конфигурации для асинхронной записи данных в ClickHouse:
+**Валидация работы архитектурного конвейера:**
+
+```bash
+# 1. Проверка состояния Liveness через healthcheckv2
+curl -i http://localhost:13133/
+# → HTTP/1.1 200 OK
+# → Content-Type: application/json
+# → {"status":"Server available"}
+
+# 2. Проверка метрик загрузки очередей и лимитов памяти в Prometheus
+curl -s http://localhost:8888/metrics | grep -E 'otelcol_processor_memory_limiter|otelcol_exporter_queue'
+# → otelcol_processor_memory_limiter_current_usage_mib 124.5
+# → otelcol_processor_memory_limiter_refused_spans_total 0
+# → otelcol_exporter_queue_size{exporter="jaeger_storage_exporter"} 0
+```
+
+---
+
+### Сценарий 2: Потоковая Decoupled-архитектура через Kafka
+
+**Контекст:** Разделение контура приема спанов и контура дисковой записи через персистентную очередь Kafka для сглаживания пиковых нагрузок и предотвращения потерь при деградации базы данных.
+
+**1. Конфигурация Collector (Producer):**
 
 ```yaml
-# ingester-config.yaml
+# /etc/jaeger/collector-kafka.yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 85
+    spike_limit_percentage: 15
+  batch:
+    send_batch_size: 4096
+    timeout: 1s
+
+exporters:
+  kafka:
+    brokers: ["192.168.10.11:9092", "192.168.10.12:9092", "192.168.10.13:9092"]
+    topic: "jaeger-spans-v2"
+    protocol_version: "2.8.0"
+    encoding: "otlp_proto"
+    compression: "lz4"
+    producer:
+      max_message_bytes: 4194304
+      required_acks: 1
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [kafka]
+```
+
+**2. Конфигурация Ingester (Consumer):**
+
+```yaml
+# /etc/jaeger/ingester-storage.yaml
 receivers:
   kafka:
-    brokers: ["kafka:9092"]
-    topic: jaeger-spans
-    protocol_version: 2.0.0
+    brokers: ["192.168.10.11:9092", "192.168.10.12:9092", "192.168.10.13:9092"]
+    topic: "jaeger-spans-v2"
+    protocol_version: "2.8.0"
+    encoding: "otlp_proto"
+    group_id: "jaeger-ingester-group"
+    client_id: "jaeger-ingester-01"
 
 processors:
   batch:
+    send_batch_size: 8192
+    timeout: 3s
+
+extensions:
+  jaeger_storage:
+    backends:
+      clickhouse_backend:
+        clickhouse:
+          endpoint: "tcp://192.168.10.20:9000"
+          database: "jaeger_v2"
 
 exporters:
   jaeger_storage_exporter:
-    trace_storage:
-      type: clickhouse
-      options:
-        clickhouse:
-          endpoint: "tcp://clickhouse:9000"
-          database: jaeger
+    trace_storage: clickhouse_backend
+    queue:
+      num_consumers: 32
+      queue_size: 2000
 
 service:
   extensions: [jaeger_storage]
@@ -233,111 +435,290 @@ service:
       exporters: [jaeger_storage_exporter]
 ```
 
-**Валидация:**
+**Валидация задержек и отставания Ingester:**
 
-1.  Запустить Ingester: `jaeger --config ingester-config.yaml`.
-2.  Отправить спаны в Kafka через Collector.
-3.  Проверить, что Ingester потребляет сообщения: `curl http://localhost:8888/metrics | grep kafka_received_messages`.
-4.  Убедиться, что спаны появились в ClickHouse: `SELECT count() FROM jaeger.spans`.
-
-### Сценарий 4: Настройка роли Query с UI
-
-Конфигурация для запуска только интерфейса и API доступа к данным:
-
-```yaml
-# query-config.yaml
-extensions:
-  jaeger_storage:
-    trace_storage:
-      type: elasticsearch
-      options:
-        elasticsearch:
-          server-urls: ["http://elasticsearch:9200"]
-  jaeger_query:
-    ui:
-      config_file: /etc/jaeger/ui.json
-
-service:
-  extensions: [jaeger_storage, jaeger_query]
-  pipelines:
-    # Пайплайн traces не нужен, если Query только читает данные
-    traces:
-      receivers: []
-      exporters: []
+```bash
+# Проверка лага консьюмер-группы в Kafka
+kafka-consumer-groups.sh --bootstrap-server 192.168.10.11:9092 --describe --group jaeger-ingester-group
+# → GROUP                 TOPIC            PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
+# → jaeger-ingester-group jaeger-spans-v2  0          1048590         1048600         10
+# → jaeger-ingester-group jaeger-spans-v2  1          1029401         1029402         1
 ```
 
-**Валидация:**
+---
 
-1.  Запустить Query: `jaeger --config query-config.yaml`.
-2.  Открыть UI: `http://localhost:16686`.
-3.  Выполнить поиск по сервису и убедиться, что UI загружает данные из Elasticsearch.
+### Сценарий 3: Выделенный узел чтения (Query Service) с UI и коррекцией Clock Skew
+
+**Контекст:** Развертывание отдельного независимого узла Jaeger v2 для обслуживания веб-интерфейса инженеров и Grafana Data Source без приема входящих спанов.
+
+```yaml
+# /etc/jaeger/query-service.yaml
+receivers:
+  nop:
+
+processors:
+
+exporters:
+  nop:
+
+extensions:
+  healthcheckv2:
+    endpoint: "0.0.0.0:13133"
+  jaeger_storage:
+    backends:
+      clickhouse_read:
+        clickhouse:
+          endpoint: "tcp://127.0.0.1:9000"
+          database: "jaeger_v2"
+  jaeger_query:
+    storage:
+      traces: clickhouse_read
+    base_path: "/jaeger"
+    max_clock_skew_adjust: "10s"
+    ui:
+      config_file: "/etc/jaeger/ui-config.json"
+      log_access: true
+    http:
+      endpoint: "0.0.0.0:16686"
+    grpc:
+      endpoint: "0.0.0.0:16685"
+
+service:
+  extensions: [healthcheckv2, jaeger_storage, jaeger_query]
+  pipelines:
+    traces:
+      receivers: [nop]
+      processors: []
+      exporters: [nop]
+```
+
+**Валидация интерфейса и API:**
+
+```bash
+# 1. Проверка доступности UI по сконфигурированному префиксу base_path
+curl -I http://localhost:16686/jaeger/
+# → HTTP/1.1 200 OK
+# → Content-Type: text/html; charset=utf-8
+
+# 2. Проверка Query REST API (получение списка зарегистрированных сервисов)
+curl -s http://localhost:16686/jaeger/api/services | jq .
+# → {
+# →   "data": [
+# →     "billing-service",
+# →     "order-api",
+# →     "payment-gateway"
+# →   ],
+# →   "total": 3,
+# →   "limit": 0,
+# →   "offset": 0,
+# →   "errors": null
+# → }
+```
+
+---
+
+### Сценарий 4: Архитектура адаптивного сэмплирования (Adaptive Sampling)
+
+**Контекст:** Автоматическая регуляция процента сохраняемых трасс для каждого эндпоинта инфраструктуры без ручной правки конфигураций приложений.
+
+```yaml
+# /etc/jaeger/collector-adaptive-sampling.yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+
+processors:
+  adaptive_sampling:
+    calculation_interval: 1m
+    target_samples_per_second: 10
+    initial_sampling_probability: 0.1
+    min_sampling_probability: 0.001
+
+  batch:
+    send_batch_size: 1024
+    timeout: 1s
+
+extensions:
+  jaeger_storage:
+    backends:
+      sampling_store:
+        clickhouse:
+          endpoint: "tcp://127.0.0.1:9000"
+          database: "jaeger_v2"
+  remote_sampling:
+    adaptive:
+      sampling_store: sampling_store
+      initial_sampling_probability: 0.1
+    http:
+      endpoint: "0.0.0.0:5778"
+    grpc:
+      endpoint: "0.0.0.0:14250"
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: sampling_store
+
+service:
+  extensions: [jaeger_storage, remote_sampling]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [adaptive_sampling, batch]
+      exporters: [jaeger_storage_exporter]
+```
+
+**Валидация отдачи стратегий сэмплирования клиентам SDK:**
+
+```bash
+# Опрос стратегий для сервиса "order-api" через HTTP эндпоинт remote_sampling
+curl -s "http://localhost:5778/api/sampling?service=order-api" | jq .
+# → {
+# →   "strategyType": "PROBABILISTIC",
+# →   "probabilisticSampling": {
+# →     "samplingRate": 0.045
+# →   },
+# →   "operationSampling": {
+# →     "defaultSamplingProbability": 0.01,
+# →     "perOperationStrategies": [
+# →       {
+# →         "operation": "POST /v1/checkout",
+# →         "probabilisticSampling": {
+# →           "samplingRate": 0.25
+# →         }
+# →       }
+# →     ]
+# →   }
+# → }
+```
+
+---
+
+## Операции и команды системного администрирования
+
+### Оптимизация ядра Linux (Sysctl) под высокую нагрузку на Collector
+
+При приеме более 20,000 OTLP-запросов в секунду сетевой стек Linux по умолчанию отбрасывает входящие SYN-пакеты и исчерпывает сокеты.
+
+```bash
+# Применение оптимизаций сетевого стека в /etc/sysctl.d/99-jaeger-collector.conf
+cat << 'EOF' | sudo tee /etc/sysctl.d/99-jaeger-collector.conf
+# Увеличение длины очереди соединений сокета
+net.core.somaxconn = 8192
+net.ipv4.tcp_max_syn_backlog = 16384
+
+# Расширение пула локальных портов для исходящих соединений к ClickHouse/Kafka
+net.ipv4.ip_local_port_range = 10240 65535
+
+# Ускоренное освобождение закрытых TCP сокетов в TIME_WAIT
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_tw_reuse = 1
+
+# Увеличение размеров буферов приема/отправки сокетов (до 16MB)
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+EOF
+
+# Немедленное применение параметров
+sudo sysctl -p /etc/sysctl.d/99-jaeger-collector.conf
+# → net.core.somaxconn = 8192
+# → net.ipv4.tcp_max_syn_backlog = 16384
+# → net.ipv4.ip_local_port_range = 10240 65535
+# → net.ipv4.tcp_fin_timeout = 15
+# → net.ipv4.tcp_tw_reuse = 1
+# → net.core.rmem_max = 16777216
+# → net.core.wmem_max = 16777216
+```
+
+### Диагностика производительности через pprof
+
+Если коллектор демонстрирует аномальное потребление CPU или задержки:
+
+```bash
+# Сбор профиля CPU в течение 30 секунд (требуется расширение pprof на порту 1777)
+go tool pprof -top http://localhost:1777/debug/pprof/profile?seconds=30
+# → Showing top 10 nodes out of 145
+# →       flat  flat%   sum%        cum   cum%
+# →      1.20s 25.10% 25.10%      1.20s 25.10%  runtime.cgocall
+# →      0.80s 16.74% 41.84%      1.10s 23.01%  go.opentelemetry.io/collector/pdata/ptrace...
+# →      0.45s  9.41% 51.26%      0.45s  9.41%  runtime.mallocgc
+
+# Инспекция распределения памяти кучи (Heap allocations)
+go tool pprof -top http://localhost:1777/debug/pprof/heap
+```
 
 ---
 
 ## Типичные проблемы и устранение неполадок
 
-| Проблема | Возможная причина | Решение |
-| :--- | :--- | :--- |
-| Спаны не появляются в UI | Collector не запущен или порт 4317 закрыт | Проверить `curl localhost:4317` и логи Collector |
-| Высокая задержка между отправкой и отображением | Отсутствует Batch processor или слишком большой `timeout` | Добавить `batch` processor с `timeout: 5s`, `send_batch_size: 512` |
-| Collector падает с OOM | Отсутствует `memory_limiter` processor при высокой нагрузке | Добавить `memory_limiter` с `limit_mib: 512` и `check_interval: 1s` |
-| Данные не сохраняются в ClickHouse | Неверный `endpoint` или база данных не существует | Проверить подключение: `clickhouse-client --host clickhouse-server --query "SHOW DATABASES"` |
-| Kafka не потребляет сообщения | Ingester не запущен или неверный `topic` | Проверить `kafka-console-consumer --topic jaeger-spans --from-beginning` |
-| UI показывает пустой список сервисов | Query extension не настроен или хранилище пустое | Проверить конфигурацию `jaeger_storage` и наличие данных в БД |
-| Ошибка TLS при подключении к ClickHouse | Отсутствуют сертификаты или неверный `tls` конфиг | Проверить секреты и конфигурацию `tls` в Storage Extension |
+| Симптом / Проблема | Архитектурная причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| **Collector отбрасывает спаны (код 429 / ResourceExhausted)** | Сработал `memory_limiter`: использование RAM приблизилось к `limit_percentage` | `curl -s http://localhost:8888/metrics \| grep otelcol_processor_memory_limiter_refused_spans_total` | 1. Увеличить физическую память узла.<br>2. Проверить значение `GOMEMLIMIT`.<br>3. Увеличить `send_batch_size` и частоту сброса в бэкенд. |
+| **Процесс завершается с кодом 137 (OOM-Killed)** | Лимит cgroup превышен до срабатывания `memory_limiter` и GC | `dmesg -T \| grep -i oom-killer` или `journalctl -u jaeger -e` | Задать `GOMEMLIMIT` на уровне 80% от лимита памяти cgroup и установить `spike_limit_percentage: 20` в конфигурации. |
+| **Рост счетчика `otelcol_exporter_enqueue_failed_spans_total`** | Переполнена очередь `queue_size` из-за медленного бэкенда хранения | `curl -s http://localhost:8888/metrics \| grep otelcol_exporter_enqueue_failed` | 1. Увеличить `num_consumers` в `queue`.<br>2. Увеличить `queue_size`.<br>3. Проверить производительность дисков ClickHouse/Elasticsearch. |
+| **Дочерние спаны отображаются левее родительских в UI** | Рассинхронизация часов (Clock Skew) между серверами приложений | Предупреждение `Clock Skew Adjustment` в деталях трейса в Jaeger UI | 1. Настроить службу синхронизации времени `chrony` на всех узлах.<br>2. Скорректировать параметр `max_clock_skew_adjust` в `jaeger_query`. |
+| **Ошибка `too many open files` в логах коллектора** | Исчерпан лимит файловых дескрипторов процесса при наплыве OTLP TCP-соединений | `ulimit -n` или `ls /proc/$(pgrep jaeger)/fd \| wc -l` | Увеличить `LimitNOFILE=65536` в systemd unit файле сервиса `jaeger`. |
+| **Пустой список сервисов в Jaeger UI (`/api/services`)** | Ошибка подключения `jaeger_query` к бэкенду или отсутствие записанных спанов | `curl -s http://localhost:16686/jaeger/api/services` возвращает `{"data":[]}` | Проверить параметры подключения в `jaeger_storage` и убедиться в наличии прав на чтение базы данных. |
 
 ---
 
-## Лучшие практики и очистка
+## Рекомендации и лучшие практики
 
-### Лучшие практики
+### 1. Изоляция ролей в архитектуре (Role Separation)
+В высоконагруженных средах никогда не запускайте инстансы в роли `all-in-one`. Разделяйте инфраструктуру как минимум на два независимых пула:
+- **Collector Pool:** Масштабируется горизонтально по CPU и сетевому трафику. Занимается только приемом и сбросом спанов.
+- **Query Pool:** Размещается за балансировщиком нагрузки (Nginx/HAProxy) и масштабируется по числу аналитических запросов пользователей и Grafana. Деградация или тяжелый поисковый запрос в Query никогда не аффектит контур приема телеметрии.
 
-- **OTLP повсеместно:** Используйте порты 4317/4318 как единственные точки входа для трейсов. Отключите устаревшие протоколы (Thrift, Zipkin) в production.
-- **Memory Limiter:** Всегда добавляйте `memory_limiter` processor в начале пайплайна для защиты от OOM при всплесках.
-- **Batch Processing:** Настройте `batch` processor с параметрами, соответствующими вашей нагрузке (`send_batch_size: 1024`, `timeout: 10s`).
-- **Мониторинг Collector:** Экспортируйте метрики на порт 8888 и настройте алерты на `otelcol_receiver_refused_spans` и `otelcol_exporter_send_failed_spans`.
-- **ClickHouse TTL:** Настройте TTL на уровне таблицы для автоматического удаления старых трейсов (`TTL createdAt + INTERVAL 7 DAY`).
-- **Семантические конвенции:** Используйте стандартные атрибуты OpenTelemetry (`http.method`, `db.system`) для корректной работы UI и поиска.
+### 2. Сбалансированная связка памяти (Memory Sizing Triangle)
+Для предотвращения сбоев по памяти настраивайте три взаимосвязанных параметра:
+1. **cgroup Memory Limit:** Жесткий лимит памяти контейнера или systemd unit (например, `8 GiB`).
+2. **Go Runtime Limit:** Переменная `GOMEMLIMIT=6800MiB` (~83% от cgroup лимита).
+3. **Memory Limiter Processor:**
+   ```yaml
+   processors:
+     memory_limiter:
+       check_interval: 500ms
+       limit_percentage: 80
+       spike_limit_percentage: 20
+   ```
 
-### Очистка окружения
+### 3. Буферизация через Kafka при пиковых нагрузках
+Если пиковый трафик превышает 50,000 спанов/сек или время доступности дисковой подсистемы БД не гарантировано, включайте Streaming-архитектуру с Kafka:
+- Топик Kafka должен иметь не менее 12–24 партиций для параллельной обработки.
+- Ingester-ноды группируются в один `group_id` и масштабируются синхронно с числом партиций Kafka.
 
-```bash
-# Остановка Docker Compose окружения
-docker compose down -v
-
-# Удаление данных ClickHouse (если использовался Docker)
-docker volume rm jaeger_clickhouse_data
-
-# Очистка старых спанов из in-memory (перезапуск контейнера)
-docker restart jaeger
-
-# Удаление тестовых ресурсов Kubernetes
-kubectl delete namespace jaeger-test
+### 4. Graceful Shutdown
+При обновлении конфигураций или перезапуске нод обеспечьте корректный останов процесса:
+```ini
+# /etc/systemd/system/jaeger.service
+[Service]
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+ExecStop=/bin/kill -s SIGTERM $MAINPID
 ```
+Это позволит воркерам `queue` сбросить накопленные спаны в базу данных до уничтожения процесса.
 
 ---
 
 ## Дополнительная информация
 
-**Смежные темы:**
+**Смежные материалы базы знаний:**
+* Концепции распределенной трассировки и терминология: **[Обзор Jaeger](./jaeger_overview.md)**
+* Развертывание в виде systemd-сервисов и контейнеров: **[Варианты развертывания](./jaeger_deployment_options.md)**
+* Детальная конфигурация бэкендов хранения (ClickHouse, Elasticsearch): **[Storage Deep Dive](./jaeger_storage_deep_dive.md)**
+* Тонкая настройка сетевых протоколов OTLP и буферов: **[OTLP Configuration](./jaeger_otlp_configuration.md)**
+* Спецификация HTTP и gRPC интерфейсов чтения: **[Query API Jaeger](./jaeger_query_api.md)**
+* Расчет вычислительных ресурсов и сайзинг: **[Capacity Planning](./jaeger_capacity_planning.md)**
+* Отказоустойчивость и кластеризация компонентов: **[High Availability и DR](./jaeger_high_availability.md)**
+* Анализ задержек и настройка Tail-based сэмплирования: **[Анализ производительности](./jaeger_performance_analysis.md)**
+* Защита сетевых соединений (mTLS) и изоляция: **[Security Hardening](./jaeger_security_hardening.md)**
+* Развертывание в локальных кластерах Kubernetes: **[Интеграция с Kubernetes](./jaeger_kubernetes_integration.md)**
+* Пошаговая миграция с устаревшей версии: **[Миграция Jaeger v1 → v2](./jaeger_migration_v1_to_v2.md)**
 
-* Варианты развертывания и масштабирования: **[Варианты развертывания](./jaeger_deployment_options.md)**
-* Специфика работы в Kubernetes: **[Интеграция с Kubernetes](./jaeger_kubernetes_integration.md)**
-* Анализ производительности и Tail-sampling: **[Анализ производительности с Jaeger](./jaeger_performance_analysis.md)**
-* Общий обзор системы: **[Обзор Jaeger](./jaeger_overview.md)**
-* Query API Reference: **[Query API Jaeger](./jaeger_query_api.md)**
-* Миграция с v1 на v2: **[Миграция Jaeger v1 → v2](./jaeger_migration_v1_to_v2.md)**
-* Capacity Planning: **[Capacity Planning для Jaeger](./jaeger_capacity_planning.md)**
-* Storage Deep Dive: **[Storage Deep Dive](./jaeger_storage_deep_dive.md)**
-* HA и Disaster Recovery: **[High Availability и DR](./jaeger_high_availability.md)**
-* Интеграция с Grafana: **[Интеграция Jaeger с Grafana](./jaeger_grafana_integration.md)**
-* Service Mesh Integration: **[Интеграция Jaeger с Service Mesh](./jaeger_service_mesh_integration.md)**
-* OTLP Configuration: **[OTLP Configuration для Jaeger](./jaeger_otlp_configuration.md)**
-* eBPF и Auto-instrumentation: **[eBPF и автоматическая инструментация](./jaeger_ebpf_auto_instrumentation.md)**
-* Multi-tenancy: **[Multi-tenancy и изоляция](./jaeger_multi_tenancy.md)**
-* Security Hardening: **[Security Hardening для Jaeger](./jaeger_security_hardening.md)**
-* Стандарт OTLP: **[OTLP Protocol](../OpenTelemetry/otlp_protocol.md)**
-
-### См. также
-* [Official Jaeger Deployment Guide](https://www.jaegertracing.io/docs/next/deployment/)
-* [Jaeger v2 Configuration Schema](https://github.com/jaegertracing/jaeger/tree/main/cmd/jaeger/config-schema.json)
+**Официальные технические ресурсы:**
+* [Официальная архитектурная документация Jaeger v2](https://www.jaegertracing.io/docs/latest/architecture/)
+* [Спецификация конфигурации Jaeger v2](https://www.jaegertracing.io/docs/latest/deployment/configuration/)
+* [Репозиторий проекта Jaeger Tracing](https://github.com/jaegertracing/jaeger)
