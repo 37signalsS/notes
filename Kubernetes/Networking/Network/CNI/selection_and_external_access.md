@@ -155,6 +155,7 @@
 | **Архитектура** | Отдельный Controller + Speaker (DaemonSet) | Встроен в Cilium Agent |
 | **BGP Backend** | FRR-K8s (рекомендуется) | Встроенный BGP Control Plane (Cilium 1.16+) |
 | **L2 Announcement** | Да (ARP/NDP) | Да (встроенный) |
+| **Ответ на ARP (L2)** | Userspace (speaker pod генерирует ARP-ответ) | eBPF in-kernel (TC hook, inplace, без перехода в userspace) |
 | **DSR** | Нет (трафик всегда через лидера/ECMP) | Да (опционально) |
 | **Интеграция с NetworkPolicy** | Зависит от CNI (Calico/Cilium) | Нативная (eBPF) |
 | **Сложность** | Средняя | Высокая (требует Cilium) |

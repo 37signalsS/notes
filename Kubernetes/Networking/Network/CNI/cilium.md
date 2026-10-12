@@ -104,7 +104,7 @@ Cilium обеспечивает полную поддержку:
 - **Native Routing и BGP Control Plane:** Режим `native-routing` исключает оверлейные туннели (VXLAN/Geneve), используя реальные IP-адреса подов и стандартную маршрутизацию ядра. Для анонсирования маршрутов во внешнюю сеть используется BGP Control Plane с CRD `CiliumBGPClusterConfig` (Cilium 1.16+). Подробнее: [Настройка native routing и BGP](#настройка-native-routing-и-bgp-control-plane).
 - **XDP Acceleration:** Возможность обработки пакетов на уровне драйвера сетевой карты (eXpress Data Path), что обеспечивает максимальную защиту от DDoS и минимальную задержку для NodePort-сервисов.
 - **Load Balancer (L2 & BGP):** Нативная поддержка сервисов типа `LoadBalancer`, заменяющая сторонние решения (например, MetalLB).
-    - **L2 Mode:** Использует ARP/NDP-анонсы. IP-адрес приземляется на одну из нод (выбор лидера через Kubernetes Lease).
+    - **L2 Mode:** Использует ARP/NDP-анонсы (NDP — начиная с Cilium 1.19). IP-адрес приземляется на одну из нод (выбор лидера через Kubernetes Lease). Ответ на ARP формируется eBPF-программой в TC-hook, минуя userspace. Подробнее: [Настройка Load Balancer (L2 Mode)](#настройка-load-balancer-l2-mode).
 - **Egress Gateway:** Маршрутизация исходящего трафика подов через фиксированные IP-адреса узлов (шлюзов) для интеграции с внешними корпоративными файрволами.
 - **Bandwidth Manager:** Управление полосой пропускания и предотвращение эффекта "шумного соседа" через очереди ядра (EDT - Earliest Departure Time).
 
@@ -635,6 +635,51 @@ hubble observe --type drop --follow
 
 ### Настройка Load Balancer (L2 Mode)
 
+**L2 Announcements** (Beta) — функция, которая делает сервисы типа `LoadBalancer` (и `externalIPs`) доступными во всей L2-сети bare-metal кластера: один из узлов отвечает на ARP/NDP-запросы за виртуальный IP сервиса своим MAC-адресом и выполняет балансировку трафика на входе в кластер (north/south load balancer). Преимущество перед NodePort: каждый сервис получает уникальный IP, поэтому сервисы могут использовать одинаковые порты (80/443), а при падении узла VIP мигрирует на другой узел и продолжает работать.
+
+#### Как это работает (datapath)
+
+Ответ на ARP формирует не ядро Linux и не userspace-процесс, а eBPF-программа Cilium, подцепленная к TC ingress hook физических интерфейсов:
+
+```bash
+# Программа cil_from_netdev подцеплена к ingress интерфейса
+# direct-action = программа сама принимает решение о судьбе пакета
+# not offloaded = программа не офлоадена в сетевую карту (таких NIC очень мало)
+sudo tc filter show dev eth0 ingress
+# → filter protocol all pref 1 bpf chain 0 handle 0x1 cil_from_netdev direct-action not offloaded
+```
+
+Путь ARP-запроса в datapath Cilium:
+
+1. ARP-запрос перехватывается на TC hook (`cil_from_netdev`) — очень рано в сетевом пути, близко к сетевой карте.
+2. Проверяется, включены ли L2 announcements (`enable_l2_announcements`). Если нет — пакет уходит дальше в сетевой стек, и ARP обрабатывает ядро Linux напрямую.
+3. Проверяется «живость» Cilium Agent: агент периодически обновляет timestamp в BPF config map (`RUNTIME_CONFIG_AGENT_LIVENESS`). Если агент умер, а eBPF-программа осталась в ядре, datapath перестаёт отвечать и пропускает пакет дальше — защита от «зомби»-ответов при неработающем агенте.
+4. Валидируется ARP-запрос, извлекаются ключевые поля (IP-адрес, индекс интерфейса).
+5. Проверяется BPF map `cilium_l2_responder_v4` (ключ: `{ip4, ifindex}`): отвечаем ли мы за этот IP на этом интерфейсе.
+6. Если да — ARP-ответ формируется **inplace**: в том же SKB подменяются поля (MAC-адреса, направление `EGRESS`), и пакет отправляется обратно в сетевой стек через redirect (`TC_ACT_REDIRECT`), минуя значительную часть стека Linux.
+
+Такой путь быстрее классического (ядро → userspace → ядро): не выделяется дополнительная память, обработка происходит inplace, а пакет почти всегда укладывается в кэш CPU.
+
+При захвате лизы новый лидер рассылает gratuitous ARP на всех сконфигурированных интерфейсах (по одному пакету на интерфейс) — клиенты, принимающие такие пакеты, сразу обновляют ARP-таблицы.
+
+#### Включение и предварительные требования
+
+```bash
+helm upgrade --install cilium cilium/cilium \
+  --namespace kube-system \
+  --version 1.20.0 \
+  --set kubeProxyReplacement=true \
+  --set l2announcements.enabled=true \
+  --set externalIPs.enabled=true   # только если анонсируются externalIPs
+```
+
+**Предварительные требования:**
+- Включён `kubeProxyReplacement` — обязательное условие (без замены kube-proxy BPF-программы ARP-ответа не загружаются).
+- Интерфейсы, на которых анонсируются IP, должны входить в `--devices` / Helm-опцию `devices`, если она задана явно.
+- Для анонса `externalIPs` дополнительно требуется `externalIPs.enabled=true`.
+
+#### Пул IP и политика анонсирования
+
 Для работы сервисов типа `LoadBalancer` в L2-режиме необходимо создать два ресурса:
 
 1. **Пул IP-адресов (`CiliumLoadBalancerIPPool`):**
@@ -662,7 +707,130 @@ hubble observe --type drop --follow
      loadBalancerIPs: true
    ```
 
-**Механизм выбора лидера:** Cilium использует объект `Lease` (Kind: `Lease` в `kube-system`) для определения узла, который будет отвечать на ARP-запросы для конкретного IP. По умолчанию интервал проверки (`leaseDuration`) составляет 15 секунд.
+Поля политики:
+- `serviceSelector` — label selector сервисов. Если не указан, выбраны все сервисы. Сервис должен иметь неуказанный `loadBalancerClass` или `io.cilium/l2-announcer`. Специальные селекторы: `io.kubernetes.service.name` и `io.kubernetes.service.namespace` (матчат имя/namespace сервиса).
+- `nodeSelector` — подмножество узлов-кандидатов. Лидер для сервиса выбирается среди них; он же становится north/south балансировщиком всего трафика сервиса.
+- `interfaces` — список regex (golang-синтаксис), логика OR; по умолчанию — все интерфейсы. Это **не** механизм безопасности: сервис остаётся доступным и через неанонсированные интерфейсы (например, при hard-coded ARP-записях).
+- `externalIPs` / `loadBalancerIPs` — какие IP анонсировать; оба по умолчанию `false`, поэтому рабочая политика должна включить хотя бы один.
+
+Статус политики отражает ошибки конфигурации (например, пустой `values` у оператора `In`):
+
+```bash
+kubectl describe l2announcement policy1
+# → Status: Conditions: Type: io.cilium/bad-service-selector, Status: True
+```
+
+#### Выбор лидера (Leader Election) и тюнинг failover
+
+Хост хранит один MAC-адрес на IP (последний увиденный ответ), поэтому только один узел кластера может отвечать за конкретный сервисный IP. Каждый Cilium Agent участвует в выборе лидера для каждого сервиса через механизм Kubernetes **Lease** — first come, first serve (первый захвативший лизу получает её, что может давать асимметричное распределение трафика).
+
+- Лизы создаются в namespace Cilium (обычно `kube-system`) с именами `cilium-l2announce-<namespace>-<service>`.
+- `holderIdentity` — узел-лидер; если лидер не продлевает лизу в течение `leaseDurationSeconds`, выбирается новый.
+
+```bash
+kubectl -n kube-system get lease | grep cilium-l2announce
+# → cilium-l2announce-default-deathstar   worker-node   2d20h
+```
+
+Тюнинг (Helm-опции):
+
+| Параметр | По умолчанию | Назначение |
+| :--- | :--- | :--- |
+| `l2announcements.leaseDuration` | `15s` | Значение `leaseDurationSeconds` создаваемых лиз; определяет, как долго лидер должен быть недоступен, прежде чем произойдёт failover. Должен быть >1s и больше `leaseRenewDeadline` |
+| `l2announcements.leaseRenewDeadline` | `5s` | Интервал продления лизы лидером. Должен быть больше `leaseRetryPeriod` минимум на 20% |
+| `l2announcements.leaseRetryPeriod` | `2s` | Пауза между попытками продления при ошибке. Должен быть меньше `leaseRenewDeadline` минимум на 20% |
+
+Теоретическое окно failover: от `leaseDuration - leaseRenewDeadline` до `leaseDuration + leaseRenewDeadline`. Со значениями по умолчанию — **10–20 секунд**; при тюнинге (`leaseDuration=3s`, `leaseRenewDeadline=1s`, `leaseRetryPeriod=200ms`) — 2–4 секунды:
+
+```bash
+helm upgrade cilium cilium/cilium --version 1.20.0 \
+  --namespace kube-system --reuse-values \
+  --set l2announcements.enabled=true \
+  --set kubeProxyReplacement=true \
+  --set l2announcements.leaseDuration=3s \
+  --set l2announcements.leaseRenewDeadline=1s \
+  --set l2announcements.leaseRetryPeriod=200ms
+```
+
+**Trade-off:** чем быстрее детект падения, тем выше нагрузка на API server и CPU (каждый сервис — отдельная лиза и отдельный renew-запрос). Кластеры с небольшим числом сервисов могут позволить быстрый failover; крупным кластерам, возможно, придётся увеличить параметры.
+
+**Механика failover:** узлы, участвующие в выборе, обнаруживают непродление лизы и запрашивают у API server статус нового держателя — проходит первый запрос, остальные отклоняются. Новый лидер рассылает gratuitous ARP. Клиенты, не принимающие gratuitous ARP (защита от ARP spoofing), переключатся только по истечении TTL своего ARP-кэша — их downtime будет больше настроенного окна.
+
+#### Sizing client rate limit
+
+Выбор лидера генерирует постоянный трафик к API server. Стандартный лимит клиента Cilium — **5 QPS / burst 10** — быстро достигается при L2 announcements, поэтому лимит нужно рассчитывать:
+
+```
+QPS = #services × (1 / leaseRenewDeadline)
+
+# пример: 65 сервисов, leaseRenewDeadline = 2s
+QPS = 65 × (1/2s) = 32.5 QPS
+```
+
+```bash
+helm upgrade cilium cilium/cilium --version 1.20.0 \
+  --namespace kube-system --reuse-values \
+  --set l2announcements.enabled=true \
+  --set k8sClientRateLimit.qps=33 \
+  --set k8sClientRateLimit.burst=50
+```
+
+Burst ставят чуть выше расчётного значения, чтобы покрыть всплески от остальных фич Cilium. Симптом слишком низкого лимита в логах агента: `Waited for ... due to client-side throttling`, прерывистые ошибки продления лиз, частая смена лидеров.
+
+#### Ограничения
+
+- **Нет балансировки до кластера:** из-за механизма L3→L2-трансляции все ARP-запросы на конкретный IP приходят на одну ноду; балансировка начинается только внутри кластера.
+- **Асимметричная загрузка:** механизма выравнивания нагрузки между нодами одной политики нет.
+- **Несовместимость с `externalTrafficPolicy: Local`:** IP анонсируется на всех нодах, соответствующих policy, включая ноды без подов сервиса — трафик на такой ноде дропается. Используйте `externalTrafficPolicy: Cluster`.
+- **IPv6/NDP:** поддержка NDP добавлена в Cilium 1.19; в более ранних версиях (≤1.18) работает только IPv4/ARP.
+
+#### Диагностика
+
+```bash
+# 1. Фича включена и KPR активен?
+kubectl -n kube-system exec ds/cilium -- cilium-dbg config --all | grep EnableL2Announcements
+# → EnableL2Announcements             : true
+kubectl -n kube-system exec ds/cilium -- cilium-dbg config --all | grep KubeProxyReplacement
+# → KubeProxyReplacement              : true
+
+# 2. Есть политика и лизы?
+kubectl get CiliumL2AnnouncementPolicy
+kubectl -n kube-system get lease | grep cilium-l2announce
+# → cilium-l2announce-default-service-red   kind-worker   34s
+
+# 3. Агент знает, что должен анонсировать (IP + интерфейс)?
+kubectl -n kube-system exec ds/cilium -- cilium-dbg shell -- db/show l2-announce
+# → # IP        NetworkInterface
+# → 10.0.10.0   eth0
+
+# 4. Устройство отобрано для анонсов (только Selected=true участвуют)?
+kubectl -n kube-system exec ds/cilium -- cilium-dbg shell -- db/show devices
+
+# 5. ARP отвечает? (arping из пода cilium-agent на том же L2-сегменте)
+kubectl -n kube-system exec pod/cilium-z4ef7 -- sh -c 'apt update && apt install -y arping && arping -i eth0 10.0.10.0'
+# → ARPING 10.0.10.0
+# → 58 bytes from 02:42:ac:13:00:03 (10.0.10.0): index=0 time=11.772 usec
+
+# 6. Счётчик ответов datapath: 0 = запрос не доходит до ноды; >0 = проблема на обратном пути
+kubectl -n kube-system exec pod/cilium-vxz67 -- bpftool map dump pinned /sys/fs/bpf/tc/globals/cilium_l2_responder_v4
+# → [{ "key": { "ip4": 655370, "ifindex": 50 }, "value": { "responses_sent": 20 } }]
+```
+
+Типичные ошибки:
+- **RBAC:** при включении не через Helm-чарт агент не может создавать лизы — в логах `leases.coordination.k8s.io ... is forbidden`. Исправление: `kubectl edit clusterrole cilium` и добавление правил для `coordination.k8s.io/leases` (`create`, `get`, `update`, `list`, `delete`).
+- **Устройство не в `devices`:** лиза есть, но IP отсутствует в `db/show l2-announce` — проверить regex в `interfaces` политики и Helm-опцию `devices`.
+
+#### Известные проблемы: non-linear SKB (Talos)
+
+На некоторых сочетаниях NIC + драйвер (впервые воспроизведено на Talos) ядро разбивает ARP-пакет на фрагменты: в linear-области SKB оказывается только 14 байт (Ethernet-заголовок), а остальное — в page-фрагментах. Внутренние функции обработки ARP (`lib/arp.h`) ожидают linearized packet, проверка границ данных не проходит, и L2 announcements перестаёт отвечать: лиза захвачена, `cilium-dbg statedb l2-announce` показывает IP, tcpdump видит запрос, но `responses_sent` в BPF map остаётся 0.
+
+Исправление: PR cilium/cilium#41233 «bpf: add support for delinearized ARP packets» (автор vsinitsyn, вмержен в августе 2025, fixes #40419) — реализована функция `revalidate_data_arp_pull()`, линеаризующая ARP-пакет перед обработкой, аналогично IPv4/IPv6. В актуальных версиях Cilium (включая 1.20.x, scope этого файла) баг не воспроизводится.
+
+**Урок:** eBPF-программы, работающие с пакетами, должны корректно обрабатывать non-linear SKB — иначе баг воспроизводится только на узком сочетании оборудования и ядра.
+
+**Отладка в средах без shell (Talos):** приём, описанный в докладе (не верифицирован в официальной документации): модифицированный исходник eBPF-программы подкладывается в ConfigMap, который Cilium Agent подхватывает перед компиляцией при старте — так можно вставить print-выводы в datapath и увидеть реальное содержимое SKB.
+
+Смежная фича: **L2 Pod Announcements** (включается отдельно: `l2podAnnouncements.enabled=true` + `l2podAnnouncements.interfacePattern`) анонсирует IP-адреса подов через gratuitous ARP — пока только для IPv4.
 
 ### Настройка Gateway API
 
@@ -928,6 +1096,7 @@ kubectl -n kube-system exec -it ds/cilium -- cilium-dbg encrypt status
 | **Потеря связности после обновления** | Конфликт iptables и eBPF | `iptables-save \| grep -i kube`; `cilium status` | Использовать `kubeProxyReplacement=strict`; перезапустить DS |
 | **Высокий CPU на узле** | Слишком много BPF Maps или churn сервисов | `top`/`htop`; `cilium bpf metrics list` | Настроить `bpf-map-dynamic-size-ratio`; уменьшить количество сервисов |
 | **L7-политика не применяется** | Трафик идет через HTTPS или SNI mismatch | `hubble observe --verdict dropped`; `tcpdump` | Проверить SNI; для HTTPS требуется инспекция TLS или `matchName` в `toFQDNs` |
+| **L2 announcements не отвечает на ARP** | Не включён kube-proxy replacement, политика не матчит устройства/сервисы, нет RBAC на leases или низкий `k8sClientRateLimit` | `cilium-dbg config --all \| grep EnableL2Announcements`; `bpftool map dump pinned /sys/fs/bpf/tc/globals/cilium_l2_responder_v4` (поле `responses_sent`) | Проверить `l2announcements.enabled=true`, селекторы политики, ClusterRole `cilium` на `coordination.k8s.io/leases`, лимит `k8sClientRateLimit` |
 
 ### Проверка состояния eBPF
 

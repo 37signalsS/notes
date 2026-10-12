@@ -237,7 +237,7 @@ backend postgres_backend
 
 ### Stick Tables: Rate Limiting и защита от Brute-force
 
-Stick Tables — механизм хранения состояний в разделяемой памяти HAProxy. Позволяет реализовать rate limiting, защиту от перебора и sticky sessions без внешних зависимостей.
+Stick Tables — механизм хранения состояний в разделяемой памяти HAProxy. Позволяет реализовать rate limiting, защиту от перебора и sticky sessions без внешних зависимостей. Примеры ниже ограничивают запросы по IP; для глобального ограничения суммарного RPS и вероятностного сбрасывания при перегрузе — в [балансировке между локациями](./Concepts/haproxy_multi_location_load_balancing.md).
 
 ```haproxy
 frontend http_frontend
@@ -729,6 +729,7 @@ HAProxy — это узкоспециализированный балансир
 
 ### См. также
 
+- **[Балансировка между локациями и защита от перегруза](./Concepts/haproxy_multi_location_load_balancing.md)** — peers-синхронизация stick tables, вероятностное сбрасывание, мультилокационная маршрутизация.
 - **[Сравнение балансировщиков: Nginx, Angie, HAProxy, Traefik](../Nginx/Proxy/Load_Balancing/additional_info_and_comparisons.md)**
 - **[Keepalived: Обзор и настройка](../Networking/ServicesAndTools/keepalived_overview.md)**
 - **[Отказоустойчивость PostgreSQL](../Databases/PostgreSQL/Concepts/high_availability.md)**
