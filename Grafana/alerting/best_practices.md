@@ -458,7 +458,7 @@ JSON
 | Состояние `Error` | Ошибка синтаксиса, недоступность источника, нет прав | Лог Grafana (`logger=alerting`); проверьте доступность datasource |
 | Уведомления не приходят | Неверная маршрутизация, активная тишина/mute timing, ошибка шаблона | Проверьте политику по меткам, Silences и Mute Timings, лог рендера шаблона |
 | Дублирующиеся уведомления в HA | Несколько Grafana Alertmanager без внешней БД | Внешняя БД + встроенный Grafana Alertmanager (дедуп по fingerprint) |
-| Скриншот не прикладывается | Нет Chromium / отключён image renderer | Установите Chromium, включите `[screenshots] enabled = true` |
+| Скриншот не прикладывается | Не настроен/недоступен сервис `grafana-image-renderer` | Проверьте `[rendering] server_url` и `/healthz` сервиса; включите `[unified_alerting.screenshots] capture = true` |
 | Ошибка доставки «template» | Некорректный Go-шаблон в contact point | Проверьте синтаксис шаблона, используйте `{{ .CommonLabels }}` аккуратно |
 | «Пропущенные» инциденты | Слишком длинный `for` или агрессивное inhibition | Уменьшите окно `for`, проверьте иерархию подавления |
 | Alert Storm | Нет группировки / высокая кардинальность `group_by` | `group_by` по `alertname`+`service`, не по `pod`/`instance` |

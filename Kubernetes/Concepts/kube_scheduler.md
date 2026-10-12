@@ -201,6 +201,8 @@ spec:
 | `bin-packing-scheduler` | MostAllocated | Упаковка подов на минимальное число узлов (экономия на лицензиях, облегчение масштабирования) |
 | `spread-scheduler` | LeastAllocated + PodTopologySpread | Максимальное распределение для отказоустойчивости |
 
+**Профили по типам нагрузки:** разные типы нагрузки требуют разных стратегий — инференс равномернее распределять (`LeastAllocated` + `ImageLocality` для быстрого старта), обучение упаковывать плотнее (`MostAllocated` в скопе `nvidia.com/gpu`). Готовый пример конфигурации с двумя профилями и рекомендации по выбору — в [Обзоре решений для планирования](../Scheduling/scheduling_solutions_overview.md#практические-сценарии).
+
 ### Сценарий 4: Multi-Scheduler — изоляция рабочих нагрузок
 В кластере могут одновременно работать несколько экземпляров планировщика. Каждый под привязывается к определенному планировщику через поле `schedulerName`. Это позволяет изолировать критические и фоновые нагрузки.
 
@@ -493,6 +495,19 @@ kubectl get pods -n kube-system -l component=kube-scheduler -o wide
 *   **Планируйте Capacity**: Мониторьте `scheduler_pending_pods{queue="unschedulable"}` — растущее значение указывает на нехватку ресурсов.
 *   **Избегайте `nodeSelector` + `nodeAffinity` одновременно**: Это избыточно — `nodeAffinity` более гибкий и покрывает все кейсы `nodeSelector`.
 
+### Тестирование конфигурации: kube-scheduler-simulator
+
+Перед применением `KubeSchedulerConfiguration` или кастомных плагинов в production конфигурацию можно проверить в **kube-scheduler-simulator** (проект kubernetes-sigs) — веб-симулятор планировщика:
+
+* Создаются и редактируются Nodes, Pods, PV/PVC, StorageClasses, PriorityClasses через YAML;
+* Подключается произвольный `KubeSchedulerConfiguration` (переменная окружения `KUBE_SCHEDULER_CONFIG_PATH`; на результаты планирования влияют поля `.profiles`);
+* Для каждого пода видны результаты **каждого Filter-плагина**, **каждого Score-плагина** и итоговый нормализованный балл с учётом весов плагинов по каждому узлу;
+* Симулятор работает на фейковом кластере **KWOK** (Kubernetes WithOut Kubelet) — Kubernetes без kubelet, что позволяет моделировать кластер без реальных нод;
+* Запуск: `make docker_build_and_up` в репозитории, доступ на `http://localhost:3000`;
+* Поддерживаются out-of-tree плагины — можно тестировать кастомные плагины планировщика.
+
+Репозиторий: [kubernetes-sigs/kube-scheduler-simulator](https://github.com/kubernetes-sigs/kube-scheduler-simulator).
+
 ### Расширяемость (Scheduling Framework)
 
 Помимо встроенных плагинов, планировщик поддерживает кастомные плагины через **Scheduling Framework**. Кастомные плагины реализуют интерфейсы на различных Extension Points:
@@ -619,3 +634,7 @@ kubectl get --raw /metrics | grep scheduler_pending_pods{queue="gated"}
 *   [PriorityClass](./priorityclass.md)
 *   [Pod Disruption Budget](../Autoscaling/pod_disruption_budget.md)
 *   [Продвинутые темы Pod](../Base/Pod/pod_advanced_topics.md)
+*   [Обзор решений для планирования](../Scheduling/scheduling_solutions_overview.md) — матрица выбора планировщика
+*   [Kueue](../Scheduling/kueue.md) — очереди и квоты для batch/AI-нагрузок
+*   [Apache YuniKorn](../Scheduling/yunikorn.md) — иерархические очереди
+*   [KAI Scheduler](../Scheduling/kai_scheduler.md) — topology-aware GPU-планирование

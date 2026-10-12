@@ -182,16 +182,16 @@ cat /sys/fs/cgroup/system.slice/nginx.service/io.stat
 
 ### Системы с экстремальной нагрузкой
 
-*   **Базы данных (ScyllaDB, PostgreSQL, Dragonfly)**: Использование `io_uring` с `SQPOLL` позволяет достигать 10M+ IOPS на современных NVMe-накопителях. Для PostgreSQL 17+ используйте расширение `pg_io_uring` для обхода kernel page cache.
+*   **Базы данных (ScyllaDB, PostgreSQL, Dragonfly)**: Использование `io_uring` с `SQPOLL` позволяет достигать 10M+ IOPS на современных NVMe-накопителях. PostgreSQL 18 поддерживает `io_uring` нативно через `io_method = io_uring` (сборка с `--with-liburing`, ядро 5.6+); при этом PostgreSQL читает через kernel page cache, а не в обход него — см. [Асинхронный ввод-вывод в PostgreSQL](../../../Databases/PostgreSQL/Operations/async_io.md).
 *   **Сетевые прокси (QEMU, Nginx, Envoy)**: Асинхронная обработка сетевых соединений без накладных расходов `epoll` и лишних переключений контекста.
 *   **User-space драйверы (ublk)**: Реализация блочных устройств в пространстве пользователя, не уступающих по производительности нативным драйверам ядра.
 
 ### Конфигурации для типовых рабочих нагрузок
 
 **Базы данных (PostgreSQL / MySQL):**
-- Используйте `O_DIRECT` (`libaio` или `io_uring` с `direct=1`) для обхода page cache.
+- `O_DIRECT` (`libaio` или `io_uring` с `direct=1`) обходит page cache — применимо к движкам, поддерживающим direct I/O (например, MySQL InnoDB); PostgreSQL работает через buffered I/O.
 - Зарегистрируйте файлы данных через `IORING_REGISTER_FILES` для снижения накладных расходов на поиск FD.
-- Настройте `shared_buffers` и `work_mem` с учетом того, что `io_uring` не потребляет page cache.
+- Настройте `shared_buffers` и `work_mem` с учетом того, что PostgreSQL при `io_method = io_uring` читает через kernel page cache (buffered I/O), а не в обход него.
 - Отключите `SQPOLL` для интерактивных транзакционных нагрузок, где важна низкая задержка при малой глубине очереди.
 
 **Высоконагруженные веб-серверы:**

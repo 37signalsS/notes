@@ -16,7 +16,7 @@
 
 **MarkdownV2** — строгий поднабор Markdown, поддерживаемый Telegram для форматирования сообщений. Требует обязательного экранирования спецсимволов: `_`, `*`, `[`, `]`, `(`, `)`, `~`, `` ` ``, `>`, `#`, `+`, `-`, `=`, `|`, `{`, `}`, `.`, `!`.
 
-**Image Renderer (Рендерер изображений)** — компонент Grafana, отвечающий за генерацию скриншотов панелей. В Grafana 11+ используется встроенный рендерер на базе headless Chromium; внешний `grafana-image-renderer` поддерживается как альтернатива.
+**Image Renderer (Рендерер изображений)** — сервис Grafana, отвечающий за генерацию скриншотов панелей. В актуальных версиях это внешний сервис `grafana-image-renderer` на базе headless Chromium; плагинный (встроенный) режим удалён в Grafana 13.
 
 **Mute Timing** — именованное расписание (Time Interval), привязанное к политике уведомлений, в рамках которого доставка уведомлений подавляется. Противоположность — `active_time_intervals` (алертит только внутри указанных окон).
 
@@ -88,7 +88,7 @@ Telegram Bot API поддерживает три типа целей для до
 | **Grafana** | Версия 12.x (LTS) или 13.3.x (текущая); 11.x — EOL (июнь 2026). |
 | **Telegram Bot** | Токен, полученный от @BotFather. |
 | **Chat ID** | Идентификатор чата, группы или канала. |
-| **Image Renderer** | Встроенный рендерер (на базе Chromium) или внешний сервис Grafana Image Renderer. |
+| **Image Renderer** | Внешний сервис `grafana-image-renderer` (на базе Chromium). |
 | **Доступность API** | API `api.telegram.org` должен быть доступен (напрямую или через прокси). |
 | **Chromium** | Установленный Chromium в системе или доступный в Docker-образе (для скриншотов). |
 
@@ -139,7 +139,7 @@ Telegram Bot API поддерживает три типа целей для до
 *   **Права:** пользователь Grafana с ролью `Admin` или `Alerting > Edit rules`.
 *   **Источник данных:** настроен и доступен (Prometheus/Mimir/Loki/SQL).
 *   **Сеть:** выходной доступ `api.telegram.org:443` из узла Grafana (напрямую или через прокси).
-*   **Chromium:** для скриншотов — установленный Chromium или включённый встроенный рендерер.
+*   **Renderer:** для скриншотов — запущенный сервис `grafana-image-renderer` (Chromium в его образе).
 *   **Секреты:** переменные окружения для токенов заданы в окружении процесса Grafana.
 
 ## Практические сценарии
@@ -413,14 +413,13 @@ muteTimes:
 
 Grafana позволяет прикреплять к сообщениям скриншоты панелей.
 *   **Настройка:** В параметрах контакт-пойнта включите опцию **"Include image"** (`uploadImage: true`).
-*   **Механизм (Grafana 11+):** Предпочтительно использование встроенного рендерера (`headless_chrome`).
+*   **Механизм:** Скриншоты снимает внешний сервис `grafana-image-renderer` (см. [Рендеринг изображений](../grafana_image_rendering.md)).
 *   **Конфигурация (grafana.ini):**
   ```ini
-  [screenshots]
-  enabled = true
-  method = headless_chrome
+  [unified_alerting.screenshots]
+  capture = true
   ```
-*   **Проверка:** убедитесь, что Chromium доступен в PATH или укажите полный путь в `[screenshots]` → `chromium` (или `chrome`).
+*   **Проверка:** убедитесь, что сервис рендеринга запущен и доступен Grafana по `[rendering] server_url` (`curl /healthz`).
 
 ### Тихие уведомления и режимы тишины
 
@@ -479,7 +478,7 @@ botToken: ${TELEGRAM_BOT_TOKEN}
 | Бот не видит сообщения в группе | Privacy mode включён | Отключите через `@BotFather` → `/setprivacy` → `Disable`. |
 | Ошибка соединения / таймаут | Ограничение доступа к API | Проверьте сетевые настройки, прокси, DNS. |
 | Сообщения приходят пустыми | Ошибка в шаблоне Go | Проверьте переменные через Preview в UI. Убедитесь, что аннотации (`summary`, `description`) присутствуют у алерта. |
-| Нет изображений | Проблема с рендерером | Проверьте логи Grafana (`logger=rendering`), наличие Chromium, `[screenshots] enabled = true`. |
+| Нет изображений | Проблема с рендерером | Проверьте логи Grafana (`logger=rendering`), доступность сервиса `grafana-image-renderer` (`/healthz`), `[unified_alerting.screenshots] capture = true`. |
 | Уведомление о восстановлении не приходит | `sendResolved` отключён | Включите `disableResolveMessage: false` в контакт-пойнте. |
 
 ## Лучшие практики и очистка (Best Practices & Cleanup)

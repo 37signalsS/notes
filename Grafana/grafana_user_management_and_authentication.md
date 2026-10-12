@@ -1,8 +1,10 @@
 # Grafana: Управление пользователями и аутентификация
 
+**Актуально для:** Grafana 13.2.x / 12.x (LTS)
+
 ## Определения
 
-**Управление пользователями и аутентификация** в Grafana — комплекс механизмов для идентификации субъектов (пользователей и программных агентов) и разграничения их прав доступа к ресурсам платформы (дашбордам, источникам данных, алертам и настройкам). Состояние на 2026 год (версии 13.x) характеризуется окончательным переходом к модели **Service Accounts** как основному способу программного доступа и повсеместным использованием **Fine-grained access control (RBAC)** в Open Source версии.
+**Управление пользователями и аутентификация** в Grafana — комплекс механизмов для идентификации субъектов (пользователей и программных агентов) и разграничения их прав доступа к ресурсам платформы (дашбордам, источникам данных, алертам и настройкам). Ключевые особенности актуальных версий: модель **Service Accounts** как основной способ программного доступа (API-ключи упразднены) и распространение **Fine-grained access control (RBAC)** — возможности **Grafana Enterprise и Grafana Cloud** (в OSS доступны только базовые роли).
 
 **Grafana Admin (серверный администратор)** — особая глобальная роль, не привязанная ни к одной организации. Имеет доступ ко всем организациям и ко всем настройкам сервера (включая управление другими администраторами). Отличается от роли **Admin** уровня организации, которая властна только в рамках своей организации.
 
@@ -23,7 +25,7 @@
 
 1.  **Организации (Organizations):** Высший уровень изоляции. Дашборды, источники данных и пользователи полностью разделены.
     -   **Multi-org membership:** Один пользователь может состоять в нескольких организациях с разными ролями.
-    -   **Переключение:** В интерфейсе через меню профиля; в API — через заголовок `X-Grafana-Org-Id` (допустим только для сессии Grafana Admin; токены сервисных аккаунтов жёстко привязаны к той организации, в которой созданы).
+    -   **Переключение:** В интерфейсе через меню профиля; в API — через заголовок `X-Grafana-Org-Id` (работает только у субъекта, состоящего более чем в одной организации, — сессии пользователя или basic auth; токен сервисного аккаунта жёстко привязан к организации создания и заголовок игнорирует).
 2.  **Команды (Teams):** Группы пользователей внутри одной организации.
     -   **Назначение:** Группировка для упрощения выдачи прав на папки и дашборды.
     -   **Team Sync:** Автоматическая синхронизация членства в командах на основе групп из внешних провайдеров (LDAP, GitHub, SAML).
@@ -31,7 +33,7 @@
 
 ### Роли и RBAC (Role-Based Access Control)
 
-Начиная с версии 11, расширенное управление доступом (Fine-grained access control) стало доступно в Open Source версии.
+Начиная с версии 11, расширенное управление доступом (Fine-grained access control) стало доступно в **Grafana Enterprise и Grafana Cloud**. В Open Source версии присутствуют только базовые организационные роли. Подробнее — в [Fine-grained RBAC](grafana_rbac_fine_grained.md).
 
 **Базовые роли организации:**
 - **Viewer:** Просмотр дашбордов, панелей и алертов. Не может вносить изменения.
@@ -51,7 +53,7 @@
 - `org.users:add`, `org.users:remove` — управление пользователями.
 - `alert.rules:read`, `alert.rules:write` — управление алертами.
 
-Создание и назначение кастомных ролей доступно через API в Open Source версии. Расширенное управление в веб-интерфейсе (назначение ролей через UI, Team Sync для RBAC) относится к возможностям Enterprise.
+Fine-grained RBAC (фиксированные и кастомные роли, RBAC API) доступен только в **Grafana Enterprise и Grafana Cloud**. В Open Source версии присутствуют лишь базовые организационные роли; расширенное управление и Team Sync для RBAC — возможности Enterprise.
 
 **Назначение ролей** происходит на уровне организации и привязывается к субъекту (пользователю, команде или сервисному аккаунту). Итоговые права субъекта — объединение (union) всех назначенных ему ролей и ролей его команд.
 
@@ -68,7 +70,7 @@
 
 ### Субъекты доступа
 
-| Субъект | Назначение | Особенности (2026) |
+| Субъект | Назначение | Особенности |
 | :--- | :--- | :--- |
 | **User** | Реальный человек | Вход через логин/пароль или SSO (OAuth/LDAP). |
 | **Service Account** | Программный доступ | **Замена устаревшим API Keys**. Принадлежит организации, поддерживает несколько токенов с разными сроками действия и RBAC. |
@@ -77,7 +79,7 @@
 ### Жизненный цикл аутентификации и токенов
 
 - **Веб-вход (UI):** пользователь открывает `/login` → Grafana перенаправляет на провайдера (OAuth/SAML) или показывает локальную форму → после успеха Grafana создаёт/обновляет запись пользователя в БД и выдаёт подписанный cookie-сессии (подпись проверяется через `secret_key`). Дальнейшие запросы аутентифицируются по cookie.
-- **API / автоматизация:** клиент передаёт `Authorization: Bearer <token>`. Grafana сверяет токен с хешем в БД (для токенов сервисных аккаунтов), проверяет срок действия и область организации. Чтобы обратиться от имени другой организации, Grafana Admin использует заголовок `X-Grafana-Org-Id`; токен сервисного аккаунта всегда «заперт» в своей организации.
+- **API / автоматизация:** клиент передаёт `Authorization: Bearer <token>`. Grafana сверяет токен с хешем в БД (для токенов сервисных аккаунтов), проверяет срок действия и область организации. Чтобы обратиться от имени другой организации, субъект с членством в нескольких организациях (сессия или basic auth) использует заголовок `X-Grafana-Org-Id`; токен сервисного аккаунта всегда «заперт» в своей организации.
 - **Ротация и отзыв:** токены сервисных аккаунтов можно отозвать по одному (`DELETE /api/serviceaccounts/{id}/tokens/{tokenId}`) без затрагивания остальных. Токены могут быть бессрочными (поле `expires` не задано) — этого следует избегать из соображений безопасности.
 
 ### Хранение и защита секретов
@@ -94,22 +96,21 @@
 
 | Метод | Описание | Сценарий использования |
 | :--- | :--- | :--- |
-| **OAuth 2.0 / OIDC** | GitHub, GitLab, Google, Keycloak, Azure AD | Основной метод для веб-сред. Поддерживает динамическое сопоставление ролей (Role Mapping). |
+| **OAuth 2.0 / OIDC** | GitHub, GitLab, Google, Keycloak, Azure AD (Entra ID) | Основной метод для веб-сред. Поддерживает динамическое сопоставление ролей (Role Mapping). |
 | **LDAP** | Active Directory, OpenLDAP | Корпоративные каталоги. Поддерживает глубокую синхронизацию групп в команды (Team Sync). |
-| **Workload Identity Federation (WIF)** | GCP, AWS, Azure | **Новое в v13**. Аутентификация без статических секретов для Grafana, запущенной в облачных кластерах. |
 | **JWT** | Аутентификация по токену | Интеграция Grafana в сторонние порталы (Embedding). |
 | **SAML** | Okta, Auth0, Ping Identity | Крупные корпорации (Enterprise функционал). |
 | **Auth proxy** | Заголовки от обратного прокси (nginx/Apache) | SSO без OAuth/SAML: прокси аутентифицирует пользователя и передаёт его имя/группы в заголовках. |
 
 ### Встроенная аутентификация
 
-Использование локальной БД (SQLite/Postgres/MySQL). В Grafana 13 реализованы строгие политики сложности паролей и защита от перебора (Brute-force protection).
+Использование локальной БД (SQLite/Postgres/MySQL). Базовая политика паролей требует минимум 4 символа; строгую политику включает опция `[auth.basic] password_policy = true` (с Grafana 11.0): не менее 12 символов, минимум одна заглавная, одна строчная буква, цифра и спецсимвол. Защита от перебора настраивается в `[security]` (`disable_brute_force_login_protection`, `brute_force_login_protection_max_attempts` — по умолчанию 5 попыток).
 
 ### Auth proxy (аутентификация через обратный прокси)
 
 Когда перед Grafana уже стоит корпоративный обратный прокси (nginx/Apache/Traefik), который сам аутентифицирует пользователя (например, через `auth_request` к Keycloak, mTLS или Apache mod_auth), Grafana может доверять заголовкам, переданным прокси. Это даёт SSO без настройки отдельного OAuth/SAML и полезно в закрытых контурах.
 
-Принцип: прокси проверяет учётные данные клиента, затем добавляет заголовок с именем пользователя (и опционально — группами/ролями) и проксирует запрос в Grafana. Grafana читает `X-WEBAUTH-USER` (имя настраивается), при `auto_sign_up = true` создаёт/обновляет пользователя в БД и, при наличии заголовка групп, назначает роль через `role_attribute_path` (аналогично сценарию 1).
+Принцип: прокси проверяет учётные данные клиента, затем добавляет заголовок с именем пользователя (и опционально — группами/ролями) и проксирует запрос в Grafana. Grafana читает `X-WEBAUTH-USER` (имя настраивается), при `auto_sign_up = true` создаёт/обновляет пользователя в БД и назначает роль из заголовка (`Role:X-WEBAUTH-ROLE`), а группы берёт из `Groups:X-WEBAUTH-GROUPS` (см. сценарий 9). У auth proxy нет `role_attribute_path` — роль приходит готовым значением из заголовка.
 
 **Критическое требование безопасности:** Grafana доверяет заголовку без проверки подписи. Прокси обязан жёстко отсекать любые входящие от клиента заголовки с этим именем (например, `proxy_set_header X-WEBAUTH-USER ""` перед внешним `auth_request`, либо `proxy_hide_header`/фильтрация на входе), иначе пользователь может подделать свою личность. Подробности по защите прокси — в разделе безопасности.
 
@@ -130,7 +131,7 @@ curl -s -H "Authorization: Bearer <SA_TOKEN>" \
 
 ### Предварительные требования
 
-- **Grafana 13.x** (актуально на 2026 год; 12.x — LTS; 11.x — EOL с июня 2026). Для RBAC в OSS требуется не ниже v11; для WIF — не ниже v13.
+- **Grafana 13.x** (12.x — LTS; 11.x — EOL с июня 2026). Fine-grained RBAC требует лицензии Grafana Enterprise/Cloud (в OSS недоступен).
 - Доступ к файлу `grafana.ini` (или переменным окружения `GF_*`) и к каталогу провиженинга (`/etc/grafana/provisioning/...`).
 - Для внешней аутентификации — заранее зарегистрированное приложение OAuth (client_id/client_secret), либо доступный LDAP-сервер, либо настроенный провайдер SAML/OIDC.
 - Для запросов к API — токен сервисного аккаунта с нужной ролью (см. сценарий 5) или сессия администратора. Базовый URL API: `http://grafana.example.com/api` (порт 3000 по умолчанию).
@@ -154,14 +155,14 @@ client_secret = ${GF_AUTH_GITHUB_CLIENT_SECRET}
 scopes = user:email,read:org
 allowed_organizations = my-tech-org
 # Сопоставление ролей на основе команд в GitHub
-role_attribute_path = contains(groups[*], 'admins') && 'Admin' || contains(groups[*], 'devs') && 'Editor' || 'Viewer'
+role_attribute_path = contains(groups[*], '@my-tech-org/admins') && 'Admin' || contains(groups[*], '@my-tech-org/devs') && 'Editor' || 'Viewer'
 ```
 
 **Параметры:**
 - `root_url` — полный внешний URL; callback для GitHub формируется как `<root_url>/login/github`.
 - `scopes = read:org` — обязателен, чтобы Grafana могла прочитать членство в организации/командах для `role_attribute_path`.
 - `allowed_organizations` — ограничивает вход только участникам указанной GitHub-организации.
-- `role_attribute_path` — выражение (синтаксис JMESPath) для преобразования утверждений провайдера в роль Grafana.
+- `role_attribute_path` — выражение (синтаксис JMESPath) для преобразования утверждений провайдера в роль Grafana. Для GitHub команды доступны в `groups` в формате `@org/team` (требует scope `read:org`); для выдачи роли Grafana Admin добавьте `allow_assign_grafana_admin = true`.
 
 **Валидация:**
 1. В GitHub OAuth App укажите Authorization callback URL = `https://grafana.example.com/login/github`.
@@ -206,44 +207,46 @@ curl -s http://grafana.example.com/api/org
 
 Программное управление идентификационными данными (вместо ручных действий в UI), например, из Ansible/Terraform.
 
+> Административные эндпоинты (`/api/orgs/*`, `/api/admin/*`) принимают **только basic auth** от Grafana Admin — токены сервисных аккаунтов для них не подходят (SA не может получить серверные права). Организационные эндпоинты (`/api/teams`, `/api/org/users`) работают и с SA-токеном соответствующей роли.
+
 ```bash
-# 3.1 Создать организацию (требуется роль Grafana Admin)
-curl -s -X POST -H "Authorization: Bearer <ADMIN_TOKEN>" \
+# 3.1 Создать организацию (только basic auth Grafana Admin; требуется users.allow_org_create=true)
+curl -s -u "<GRAFANA_ADMIN>:<PASSWORD>" -X POST \
      -H "Content-Type: application/json" \
      -d '{"name":"team-infra"}' \
      http://grafana.example.com/api/orgs
 # → {"orgId":2,"message":"Organization created"}
 
-# 3.2 Создать команду внутри организации
-curl -s -X POST -H "Authorization: Bearer <ADMIN_TOKEN>" \
+# 3.2 Создать команду внутри организации (org-scoped, достаточно SA-токена)
+curl -s -X POST -H "Authorization: Bearer <SA_TOKEN>" \
      -H "Content-Type: application/json" \
      -d '{"name":"sre-team"}' \
      http://grafana.example.com/api/teams
 # → {"teamId":3,"message":"Team created"}
 
-# 3.3 Создать пользователя (локальная БД)
-curl -s -X POST -H "Authorization: Bearer <ADMIN_TOKEN>" \
+# 3.3 Создать пользователя в локальной БД (только basic auth Grafana Admin)
+curl -s -u "<GRAFANA_ADMIN>:<PASSWORD>" -X POST \
      -H "Content-Type: application/json" \
      -d '{"name":"Bob","email":"bob@example.com","login":"bob","password":"<strong-password>"}' \
      http://grafana.example.com/api/admin/users
 # → {"id":4,"message":"User created"}
 
-# 3.4 Добавить пользователя в организацию с ролью Editor (X-Grafana-Org-Id задаёт целевую org)
-curl -s -X POST -H "Authorization: Bearer <ADMIN_TOKEN>" \
-     -H "Content-Type: application/json" -H "X-Grafana-Org-Id: 2" \
+# 3.4 Добавить пользователя в конкретную организацию с ролью Editor (basic auth Grafana Admin)
+curl -s -u "<GRAFANA_ADMIN>:<PASSWORD>" -X POST \
+     -H "Content-Type: application/json" \
      -d '{"loginOrEmail":"bob","role":"Editor"}' \
-     http://grafana.example.com/api/org/users
-# → {"message":"User added to organization"}
+     http://grafana.example.com/api/orgs/2/users
+# → {"message":"User added to organization","userId":4}
 
-# 3.5 Добавить пользователя в команду
-curl -s -X POST -H "Authorization: Bearer <ADMIN_TOKEN>" \
+# 3.5 Добавить пользователя в команду (org-scoped, SA-токен)
+curl -s -X POST -H "Authorization: Bearer <SA_TOKEN>" \
      -H "Content-Type: application/json" \
      -d '{"loginOrEmail":"bob"}' \
      http://grafana.example.com/api/teams/3/members
 # → {"message":"Member added to Team"}
 ```
 
-**Валидация:** `GET /api/org/users` (с нужным `X-Grafana-Org-Id`) возвращает список с `bob` и ролью `Editor`; `GET /api/teams/3/members` — список участников команды.
+**Валидация:** `GET /api/orgs/2/users` (basic auth Grafana Admin) возвращает `bob` с ролью `Editor`; `GET /api/teams/3/members` — список участников команды.
 
 ### 4. Управление сервисными аккаунтами (API и Провиженинг)
 
@@ -303,34 +306,35 @@ curl -s -X DELETE -H "Authorization: Bearer <ADMIN_TOKEN>" \
 
 ### 5. Создание кастомной RBAC-роли и назначение через API
 
-Вместо выдачи широкой роли `Admin`/`Editor` можно создать минимально необходимый набор прав.
+Вместо выдачи широкой роли `Admin`/`Editor` можно создать минимально необходимый набор прав (подробнее — [Fine-grained RBAC](grafana_rbac_fine_grained.md)).
 
 ```bash
 # 5.1 Создать кастомную роль с нужными экшенами (в текущей организации)
 curl -s -X POST -H "Authorization: Bearer <ADMIN_TOKEN>" \
      -H "Content-Type: application/json" \
-     -d '{"name":"dashboard-viewer-explorer","description":"Только просмотр и explore",
-          "version":1,
+     -d '{"uid":"custom_dashboard_viewer",
+          "name":"custom:dashboard-viewer",
+          "description":"Только просмотр и explore",
           "global":false,
           "permissions":[
-            {"action":"dashboards:read"},
+            {"action":"dashboards:read","scope":"dashboards:*"},
             {"action":"datasources:explore"},
-            {"action":"datasources:query"}
+            {"action":"datasources:query","scope":"datasources:*"}
           ]}' \
      http://grafana.example.com/api/access-control/roles
-# → {"role":{"name":"dashboard-viewer-explorer","uid":"...","version":1}}
+# → 200 OK: определение созданной роли (uid, name, permissions, version, ...)
 
-# 5.2 Назначить роль сервисному аккаунту (по uid роли и login субъекта)
+# 5.2 Назначить роль сервисному аккаунту (по uid роли и id аккаунта)
 curl -s -X POST -H "Authorization: Bearer <ADMIN_TOKEN>" \
      -H "Content-Type: application/json" \
-     -d '{"roleUid":"<ROLE_UID>","users":[],"serviceAccounts":[5]}' \
-     http://grafana.example.com/api/access-control/roles/<ROLE_UID>/assignments
-# → {"message":"Role assigned"}
+     -d '{"roleUid":"custom_dashboard_viewer"}' \
+     http://grafana.example.com/api/access-control/users/<SA_ID>/roles
+# → {"message":"Role added to the user."}
 ```
 
-**Валидация:** запрос от токена этого аккаунта к защищённому экшену проходит, к запрещённому (например, `POST /api/dashboards/db` при отсутствии `dashboards:write`) — возвращает `403`. Список назначений: `GET /api/access-control/roles/<ROLE_UID>/assignments`.
+**Валидация:** запрос от токена этого аккаунта к защищённому экшену проходит, к запрещённому (например, `POST /api/dashboards/db` при отсутствии `dashboards:write`) — возвращает `403`. Права аккаунта: `GET /api/access-control/users/<SA_ID>/permissions`.
 
-> Полный список экшенов — в [Grafana RBAC Actions List](https://grafana.com/docs/grafana/latest/administration/access-control/permissions/).
+> Полный список экшенов — в [Grafana RBAC Actions List](https://grafana.com/docs/grafana/latest/administration/roles-and-permissions/access-control/custom-role-actions-scopes/).
 
 ### 6. Интеграция с LDAP (Active Directory)
 
@@ -373,34 +377,54 @@ ldapsearch -H ldaps://ad.example.com:636 -D "cn=grafana_bind,ou=users,dc=example
 2. В Grafana включите `[auth.ldap] enabled = true`, перезапустите, выполните вход пользователем из AD. Проверьте роль через `GET /api/user` от его сессии.
 3. При проблемах включите трассировку: `[log] filters = ldap:debug` в `grafana.ini` и смотрите логи Grafana.
 
-### 7. Миграция с API Keys на Service Accounts
+### 7. API-ключи: полный отказ и переход на сервисные аккаунты
 
-API-ключи (Legacy) привязаны к пользователю, создавшему их. Service Accounts — это самостоятельные сущности.
+API-ключи упразднены и больше не поддерживаются. Создание новых ключей стало невозможным с 31 августа 2024 года, а все оставшиеся ключи в начале 2025 года автоматически перенесены в сервисные аккаунты в процессе запуска Grafana (начиная с 11.6), после чего эндпоинты `/api/auth/keys` были удалены. Отдельного экрана «API keys» в актуальных версиях нет: все ключи уже стали токенами сервисных аккаунтов, поэтому для работающей интеграции отдельный «перенос» не требуется — старый ключ продолжает работать как токен SA.
 
-1.  **Создайте Service Account:** В UI (Administration > Users and access > Service accounts) или через API.
-2.  **Назначьте роль:** Выберите соответствующую RBAC-роль (например, `Editor`).
-3.  **Сгенерируйте токен:** Скопируйте новый Bearer-токен.
-4.  **Обновите интеграции:** Замените старый API Key на новый токен в Terraform/Ansible/скриптах.
+Порядок для новой автоматизации:
 
-**Валидация:** старый API-ключ можно отозвать в UI (Administration > Service accounts > API keys) или API `DELETE /api/auth/keys/{id}`; убедитесь, что интеграции продолжают работать с новым SA-токеном (см. 4.3). API-ключи считаются Legacy начиная с версии 12.
+1.  **Создайте Service Account:** В UI (Administration → Users and access → Service accounts) или через API (сценарий 4).
+2.  **Назначьте роль:** базовую (`Viewer`/`Editor`/`Admin`) или кастомную RBAC-роль (сценарий 5).
+3.  **Сгенерируйте токен:** значение показывается один раз; задайте срок жизни (`secondsToLive`).
+4.  **Обновите интеграции:** используйте токен как `Authorization: Bearer <token>` в Terraform/Ansible/скриптах.
 
-### 8. Настройка Workload Identity Federation (WIF) для GCP
+**Валидация:** интеграция с новым SA-токеном отвечает успешно (см. 4.3). Если учётные данные отклоняются с `401` — ключ уже недействителен, создайте SA-токен заново. В Grafana Terraform Provider ресурс `grafana_api_key` удалён в v3.0.0 — используйте `grafana_service_account` и `grafana_service_account_token`.
 
-Позволяет Grafana аутентифицироваться в Google Cloud без использования JSON-ключей сервисных аккаунтов.
+### 8. Вход через Generic OAuth (Keycloak / on-prem OIDC)
+
+Единая секция `[auth.generic_oauth]` подключает произвольный OIDC-провайдер (Keycloak, Authentik, Okta и др.). Для закрытых контуров это основной способ SSO без обращения к внешним сервисам.
 
 ```ini
-# grafana.ini (v13+)
+# grafana.ini
+[server]
+root_url = https://grafana.example.com
+
 [auth.generic_oauth]
 enabled = true
-name = Google Cloud WIF
-client_id = ${GCP_WIF_CLIENT_ID}
+name = Keycloak
+allow_sign_up = true
+client_id = grafana
+client_secret = ${GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET}
+scopes = openid profile email
+auth_url = https://keycloak.example.internal/realms/corp/protocol/openid-connect/auth
+token_url = https://keycloak.example.internal/realms/corp/protocol/openid-connect/token
+api_url = https://keycloak.example.internal/realms/corp/protocol/openid-connect/userinfo
 use_pkce = true
-auth_url = https://accounts.google.com/o/oauth2/v2/auth
-token_url = https://oauth2.googleapis.com/token
-# Identity Provider доверяет токенам пода из K8s
+# Роль из claim roles (JMESPath); claim должен присутствовать в токене/userinfo
+role_attribute_path = contains(roles[*], 'grafana-admin') && 'Admin' || contains(roles[*], 'grafana-editor') && 'Editor' || 'Viewer'
+role_attribute_strict = false
+allow_assign_grafana_admin = false
 ```
 
-**Валидация:** после настройки и перезапуска выполните вход через провайдера WIF; проверьте, что сессия создаётся без ошибок обмена токеном (отсутствие `oauth2: token exchange failed` в логах). Убедитесь, что audience/client_id соответствует пулу Workload Identity в GCP, а ServiceAccount в кластере аннотирован нужным email.
+**Параметры:**
+- `auth_url`/`token_url`/`api_url` — эндпоинты realm Keycloak (суффиксы `.../openid-connect/*`).
+- `client_id`/`client_secret` — учётные данные OAuth-клиента Grafana в Keycloak.
+- `role_attribute_path` — JMESPath-выражение по claims (подробнее о Role Mapping — в разделе OAuth выше); при `role_attribute_strict = true` вход без валидной роли запрещается.
+
+**Валидация:**
+1. В Keycloak укажите Valid Redirect URI = `https://grafana.example.com/login/generic_oauth`.
+2. Перезапустите Grafana и войдите через кнопку провайдера.
+3. Убедитесь, что роль применилась: `GET /api/user` от сессии возвращает ожидаемый `role`.
 
 ### 9. Auth proxy через nginx (SSO без OAuth/SAML)
 
@@ -416,16 +440,17 @@ enabled = true
 header_name = X-WEBAUTH-USER
 header_property = username
 auto_sign_up = true
-# Имя заголовка с группами (через запятую), для сопоставления ролей
-headers = X-WEBAUTH-GROUPS:X-Webauth-Groups
-ldap_sync_ttl = 60
+# Маппинг «атрибут:заголовок»: роль и группы передаются заголовками прокси
+headers = Name:X-WEBAUTH-NAME Role:X-WEBAUTH-ROLE Email:X-WEBAUTH-EMAIL Groups:X-WEBAUTH-GROUPS
+sync_ttl = 60
 ```
 
 ```nginx
-# nginx: прокси аутентифицирует пользователя и ПЕРЕЗАПИСЫВАЕТ заголовок
+# nginx: прокси аутентифицирует пользователя и ПЕРЕЗАПИСЫВАЕТ заголовки
 location / {
     auth_request /auth;                       # внешняя проверка у прокси/IdP
     proxy_set_header X-WEBAUTH-USER $authenticated_user;
+    proxy_set_header X-WEBAUTH-ROLE $authenticated_role;   # Viewer/Editor/Admin
     proxy_set_header X-WEBAUTH-GROUPS $authenticated_groups;
     # Защита: запретить клиенту протащить поддельный заголовок
     proxy_hide_header X-WEBAUTH-USER;
@@ -434,11 +459,12 @@ location / {
 ```
 
 **Параметры:**
-- `header_name` — имя заголовка, из которого берётся логин (чувствительно к регистру в `headers`).
+- `header_name` — имя заголовка, из которого берётся логин (значение заголовка должно быть в `headers` как `Username:...`; `header_name` можно не задавать отдельно).
 - `auto_sign_up` — создавать пользователя в БД при первом входе; иначе должен быть заведён заранее.
-- `headers` — маппинг `имя_заголовка:внутреннее_имя`; группы используются в `role_attribute_path`.
+- `headers` — маппинг `атрибут:заголовок` (атрибут слева, имя заголовка справа): имя, email, роль и группы. Роль передаётся заголовком, например `Role:X-WEBAUTH-ROLE`, группы — `Groups:X-WEBAUTH-GROUPS`. У auth proxy нет `role_attribute_path` — роль приходит готовым значением из заголовка.
+- `sync_ttl` — период (в минутах) обновления данных пользователя из заголовков; `ldap_sync_ttl` (устаревшее имя) не использовать.
 
-**Валидация:** войдите через прокси → Grafana создаёт/обновляет пользователя по `X-WEBAUTH-USER` и назначает роль по группам; проверьте `GET /api/user` от сессии (возвращает ожидаемый `login` и `role`). Если пользователь не создаётся — проверьте, что прокси действительно проставляет заголовок (в логах Grafana: `auth.proxy: ...`).
+**Валидация:** войдите через прокси → Grafana создаёт/обновляет пользователя по `X-WEBAUTH-USER` и назначает роль из заголовка `X-WEBAUTH-ROLE`; проверьте `GET /api/user` от сессии (возвращает ожидаемый `login` и `role`). Если пользователь не создаётся — проверьте, что прокси действительно проставляет заголовок (в логах Grafana: `auth.proxy: ...`).
 
 ### 10. Тонкие права на источник данных и папку/дашборд
 
@@ -462,9 +488,9 @@ curl -s -X POST -H "Authorization: Bearer <ADMIN_TOKEN>" \
 # 10.3 Назначить команде право на папку (наследуется вложенными дашбордами/папками)
 curl -s -X POST -H "Authorization: Bearer <ADMIN_TOKEN>" \
   -H "Content-Type: application/json" \
-  -d '{"role":"Viewer"}' \
-  http://grafana.example.com/api/folders/<FOLDER_UID>/teams/3
-# → права команды 3 на папку заданы
+  -d '{"items":[{"teamId":3,"permission":1}]}' \
+  http://grafana.example.com/api/folders/<FOLDER_UID>/permissions
+# → {"message":"Folder permissions updated"}  (permission: 1=View, 2=Edit, 4=Admin)
 ```
 
 **Валидация:** пользователь вне назначенной команды при запросе источника получает `403`/`404` (источник «невидим»), пользователь команды — успешный запрос. Дашборд в папке виден только тем, у кого есть право View на папку. Перечисление прав: `GET /api/datasources/uid/<DS_UID>/permissions` и `GET /api/folders/<FOLDER_UID>/permissions`. Включение прав на дашборд напрямую — через `POST /api/dashboards/<uid>/permissions` (аналогичная модель `permission`).
@@ -511,7 +537,7 @@ curl -s -X PUT -H "Authorization: Bearer <ADMIN_TOKEN>" \
 
 ### Рекомендации по безопасности
 
-- **Отказ от API-ключей:** В версиях 12+ API-ключи считаются Legacy. Всегда используйте Service Accounts для новой автоматизации.
+- **Отказ от API-ключей:** API-ключи упразднены и автоматически перенесены в сервисные аккаунты (в 2025 году), эндпоинты `/api/auth/keys` удалены. Для новой автоматизации всегда используйте Service Accounts.
 - **Двухфакторная аутентификация (2FA):** Grafana не имеет встроенной 2FA для локальных пользователей; реализуйте её на уровне внешнего провайдера (Keycloak, Google, GitHub) через OIDC/SAML.
 - **Синхронизация ролей (Role Mapping):** Настраивайте автоматическое назначение ролей (Admin/Editor) на основе групп в OAuth/LDAP, чтобы избежать ручного управления правами.
 - **Защита `secret_key`:** Убедитесь, что `secret_key` в `grafana.ini` является сложной строкой и одинаков для всех узлов в HA-кластере. Он используется для шифрования секретов в БД.
@@ -536,9 +562,8 @@ curl -s -X PUT -H "Authorization: Bearer <ADMIN_TOKEN>" \
 | SA-токен возвращает `401` | Токен истёк/отозван или создан в другой организации | Создайте новый токен в нужной org; для Grafana Admin используйте `X-Grafana-Org-Id` |
 | Разрывы сессий / не расшифровываются секреты в HA | Разный `secret_key` на узлах | Задайте идентичный `GF_SECURITY_SECRET_KEY` на всех узлах, перезапустите |
 | Анонимный доступ всё равно требует логин | `[auth.anonymous] enabled = false` или неверный `org_name`/`org_role` | Установите `enabled = true` и корректные `org_name`/`org_role` |
-| WIF: `token exchange failed` | Несовпадение audience/client_id или SA в кластере не аннотирован | Сверьте пул Workload Identity в GCP и аннотацию ServiceAccount |
-| API-ключ отклоняется (`401`) | API-ключи Legacy/отключены в v12+ | Перейдите на сервисные аккаунты (сценарий 7) |
-| `X-Grafana-Org-Id` игнорируется | Заголовок работает только для сессии Grafana Admin; SA-токены привязаны к своей org | Создайте токен в целевой организации |
+| API-ключ отклоняется (`401`) | API-ключи упразднены, эндпоинты `/api/auth/keys` удалены | Используйте токен сервисного аккаунта (сценарий 7) |
+| `X-Grafana-Org-Id` игнорируется | Заголовок действует только у субъекта с членством в нескольких организациях (сессия/basic auth); SA-токен привязан к своей org | Для SA создайте токен в целевой организации; для смены org сессией используйте заголовок |
 | Блокировка после нескольких неудачных входов | Brute-force protection в `[security]` | Подождите снятия блокировки или скорректируйте лимиты |
 | Auth proxy: любой заходит под чужим именем | Прокси не фильтрует входящий `X-WEBAUTH-USER` от клиента | На прокси переопределяйте/скрывайте заголовок (`proxy_set_header X-WEBAUTH-USER ""` до внешней проверки), доверяйте только после auth |
 | После включения прав на источник он «пропал» | Тонкие права меняют поведение на «по умолчанию запрещено» | Назначьте нужные команды/пользователей/SA через `.../permissions` |
@@ -546,10 +571,10 @@ curl -s -X PUT -H "Authorization: Bearer <ADMIN_TOKEN>" \
 
 ### Ограничения и особые случаи
 
-- **Multi-org и токены:** токены сервисных аккаунтов жёстко привязаны к организации создания. Для доступа к другой организации создавайте отдельный токен в ней либо используйте сессию Grafana Admin с `X-Grafana-Org-Id`.
+- **Multi-org и токены:** токены сервисных аккаунтов жёстко привязаны к организации создания. Для доступа к другой организации создавайте отдельный токен в ней либо используйте сессию пользователя/basic auth с членством в нескольких организациях и заголовок `X-Grafana-Org-Id`.
 - **Встроенный admin:** учётная запись `admin` (логин `admin`, пароль `admin` по умолчанию) — серверный администратор, глобальна. Смените пароль через `GF_SECURITY_ADMIN_PASSWORD` или `grafana cli admin reset-admin-password`.
-- **RBAC по редакциям:** Fine-grained RBAC доступен в OSS с v11 (создание и назначение через API); расширенное UI-управление и Team Sync для RBAC — возможности Enterprise.
-- **API-ключи:** продолжают работать, но помечены Legacy с v12; для новых интеграций обязателен переход на сервисные аккаунты.
+- **RBAC по редакциям:** Fine-grained RBAC (фиксированные и кастомные роли, RBAC API) доступен только в Grafana Enterprise/Cloud; в OSS — лишь базовые организационные роли.
+- **API-ключи:** упразднены и автоматически перенесены в сервисные аккаунты; отдельного механизма API-ключей больше нет — используйте SA-токены.
 - **Бессрочные токены:** если `expires`/`secondsToLive` не заданы, токен не истекает — избегайте этого в продакшене.
 - **`disable_login_form`** отключает только локальную форму входа, но не анонимный доступ и не SSO.
 - **Локальные пароли:** для пользователей внешних провайдеров локальный пароль не используется; сброс пароля применим только к локальным учётным записям.
@@ -564,17 +589,11 @@ curl -s -X PUT -H "Authorization: Bearer <ADMIN_TOKEN>" \
 - **Вернуть анонимный доступ:** `enabled = false` в `[auth.anonymous]`.
 - **Выйти из режима «только SSO»:** `disable_login_form = false` (и при необходимости `oauth_auto_login = false`).
 
-### Актуальность и статус
-
-- Актуальная линейка: **13.x** (текущая), **12.x** (LTS), **11.x** (EOL с июня 2026).
-- **RBAC в OSS** — доступен с v11; **API Keys — Legacy** с v12; **Workload Identity Federation** — с v13.
-- Рекомендуемый подход 2026 года: внешняя аутентификация (OIDC/SAML/LDAP) + сервисные аккаунты с кастомными RBAC-ролями для автоматизации; локальные пароли — только для резервного Grafana Admin.
-
 ### Полезные ссылки
 
 - [Официальная документация: Authentication](https://grafana.com/docs/grafana/latest/administration/authentication/)
 - [Настройка Service Accounts](https://grafana.com/docs/grafana/latest/administration/service-accounts/)
-- [Grafana RBAC Actions List](https://grafana.com/docs/grafana/latest/administration/access-control/permissions/)
+- [Grafana RBAC Actions List](https://grafana.com/docs/grafana/latest/administration/roles-and-permissions/access-control/custom-role-actions-scopes/)
 
 ### Связанные темы
 

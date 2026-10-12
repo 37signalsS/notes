@@ -249,8 +249,8 @@ enabled = true
 header_name = X-WEBAUTH-USER
 header_property = username
 auto_sign_up = true
-headers = X-WEBAUTH-GROUPS:X-Webauth-Groups
-ldap_sync_ttl = 60
+headers = Name:X-WEBAUTH-NAME Role:X-WEBAUTH-ROLE Email:X-WEBAUTH-EMAIL Groups:X-WEBAUTH-GROUPS
+sync_ttl = 60
 ```
 
 **Nginx:**
@@ -259,6 +259,7 @@ ldap_sync_ttl = 60
 location / {
     auth_request /auth;                       # внешняя проверка у прокси/IdP
     proxy_set_header X-WEBAUTH-USER $authenticated_user;
+    proxy_set_header X-WEBAUTH-ROLE $authenticated_role;   # Viewer/Editor/Admin
     proxy_set_header X-WEBAUTH-GROUPS $authenticated_groups;
 
     # Защита: запретить клиенту протащить поддельный заголовок

@@ -200,9 +200,9 @@ Grafana записывает каждое изменение состояния 
 
 Функция включения скриншотов панелей в уведомления (Slack, Telegram, Email). Подробная настройка — в [Рендеринг изображений](../grafana_image_rendering.md).
 
-*   **Статус:** В актуальных версиях базовый функционал рендеринга встроен в ядро Grafana (на базе headless Chromium) и не требует установки внешнего плагина. Внешний `grafana-image-renderer` поддерживается как альтернатива.
-*   **Требования:** Наличие установленных библиотек Chromium в системе (или использование Docker-образа с предустановленным Chromium).
-*   **Конфигурация:** Включается в `grafana.ini` в секции `[screenshots]` (параметр `enabled = true`, `capture_timeout`, путь к `chromium` при необходимости). В Grafana 13+ рекомендуется `method = headless_chrome`.
+*   **Статус:** Рендеринг выполняет внешний сервис `grafana-image-renderer` (на базе headless Chromium). Плагинный (встроенный) режим устарел и удалён в Grafana 13 — сервис разворачивается отдельно.
+*   **Требования:** Запущенный сервис `grafana-image-renderer` (Docker-образ или бинарник с установленным Chromium), доступный Grafana по `[rendering] server_url`.
+*   **Конфигурация:** В `grafana.ini` секция `[rendering]` (`server_url`, `callback_url`, `renderer_token`); включение картинок в уведомлениях — `[unified_alerting.screenshots] capture = true`.
 
 ### Состояния правил
 
@@ -293,7 +293,7 @@ Grafana записывает каждое изменение состояния 
 | Состояние `Error` | Ошибка синтаксиса, недоступность источника, нет прав | Смотрите лог Grafana (`logger=alerting`); проверьте доступность datasource |
 | Уведомления не приходят | Неверная маршрутизация, активная тишина/mute timing, ошибка шаблона | Проверьте политику по меткам, Silences и Mute Timings, лог рендера шаблона |
 | Дублирующиеся уведомления в HA | Несколько Grafana Alertmanager без внешней БД / дедуп не работает | Используйте внешнюю БД и встроенный Grafana Alertmanager (дедуп по fingerprint) |
-| Скриншот не прикладывается | Нет Chromium / отключён image renderer | Установите Chromium, включите `[screenshots] enabled = true` |
+| Скриншот не прикладывается | Не настроен/недоступен сервис `grafana-image-renderer` | Проверьте `[rendering] server_url` и `/healthz` сервиса; включите `[unified_alerting.screenshots] capture = true` |
 | Ошибка доставки «template” | Некорректный Go-шаблон в contact point | Проверьте синтаксис шаблона, используйте `{{ .CommonLabels }}` аккуратно |
 | Правило в `Error` из-за лимита результатов | Запрос возвращает больше `alerting_rule_evaluation_results` | Уменьшите кардинальность запроса или увеличьте лимит в `[quota]` |
 | `query evaluation returned too many results` | Превышен лимит экземпляров (Grafana Cloud: 100 на правило Free) | Используйте `group_by`, Reduce, фильтрацию по меткам |

@@ -25,7 +25,7 @@ PostgreSQL использует модель **Process-per-connection** (отд�
     - **TidStore (PG 17):** Новая подсистема хранения TID для `VACUUM` — существенно снижает потребление RAM и снимает неявное ограничение в 1 ГБ памяти при больших `maintenance_work_mem` / `autovacuum_work_mem`, что ускоряет обслуживание очень больших таблиц.
 *   **Журнал предзаписи (WAL):** Все изменения сначала пишутся в последовательный журнал (`pg_wal`), что обеспечивает **Durability** при сбоях питания. В **PG 17** `pg_basebackup` поддерживает инкрементальные бэкапы (`--incremental`, сборка — утилитой `pg_combinebackup`) и суммаризацию WAL (`summarize_wal`).
 *   **Потоковое чтение (PG 17):** Streaming I/O для последовательных чтений — группировка файловых чтений (`io_combine_limit`), ускоряет sequential reads.
-*   **Асинхронный ввод-вывод AIO (PG 18):** Нативная подсистема асинхронного I/O (`io_method`, `io_combine_limit` / `io_max_combine_limit`) позволяет бэкендам ставить запросы чтения в очередь, что ускоряет `Sequential Scan`, `Bitmap Heap Scan` и `VACUUM`; статистика — в системном представлении `pg_aios`.
+*   **Асинхронный ввод-вывод AIO (PG 18):** Нативная подсистема асинхронного I/O (`io_method`, `io_combine_limit` / `io_max_combine_limit`) позволяет бэкендам ставить запросы чтения в очередь, что ускоряет `Sequential Scan`, `Bitmap Heap Scan` и `VACUUM`; занятые I/O-операции — в представлении `pg_aios`, накопленная статистика — в `pg_stat_io`. Подробно: [Асинхронный ввод-вывод](./Operations/async_io.md).
 *Подробнее: [Архитектура](./Concepts/architecture.md) и [MVCC](./Concepts/concurrency_and_locking.md)*.
 
 ### Репликация и доступность
@@ -132,7 +132,7 @@ LIMIT 5;
 *   **Dead tuples и bloat:** `autovacuum` освобождает место внутри таблицы, но не уменьшает файл на диске; сжатие — `VACUUM FULL` или `pg_repack` (сторонний).
 *   **Длинные транзакции:** мешают `VACUUM` (накопление dead tuples); параметр `old_snapshot_threshold` удалён в PG 17.
 *   **Репликация:** асинхронная — возможна потеря записей при failover; синхронная — рост latency коммита.
-*   **AIO (PG 18):** включается через `io_method`; эффект зависит от нагрузки — сначала замерить на staging.
+*   **AIO (PG 18):** включается через `io_method`; эффект зависит от нагрузки — сначала замерить на staging. Режимы, параметры и мониторинг: [Асинхронный ввод-вывод](./Operations/async_io.md).
 
 ## Дополнительная информация
 
@@ -145,7 +145,7 @@ LIMIT 5;
 *   **Наблюдаемость:** [Мониторинг и трассировка SQL](./Operations/observability.md), [Профилирование запросов](./Concepts/query_profiling.md) — pg_qualstats, pgsi, pg_profile, pg_store_plans, и [Ёмкостное планирование](./Operations/capacity_planning.md).
 *   **Платформа:** [Тюнинг Linux под PostgreSQL](./Operations/linux_tuning.md) — THP, huge pages, NUMA, cgroups, sysctl.
 *   **Резервное копирование:** [Бэкап и восстановление](./Concepts/backup_and_recovery.md) и [Corruption Recovery](./Concepts/corruption_recovery.md).
-*   **Оптимизация:** [Производительность](./Operations/performance_tuning.md), [Масштабирование](./Concepts/scaling.md), [Оптимизация PL/pgSQL](./Concepts/pl_pgsql_optimization.md) и [Отладка хранимых объектов](./Concepts/stored_objects_debugging.md).
+*   **Оптимизация:** [Производительность](./Operations/performance_tuning.md), [Асинхронный ввод-вывод (AIO)](./Operations/async_io.md), [Масштабирование](./Concepts/scaling.md), [Оптимизация PL/pgSQL](./Concepts/pl_pgsql_optimization.md) и [Отладка хранимых объектов](./Concepts/stored_objects_debugging.md).
 *   **Диагностика:** [Диагностический runbook](./Operations/troubleshooting_runbook.md) — симптом → команда → причина; [Справочник кодов ошибок](./Concepts/error_codes.md) — SQLSTATE.
 *   **Подготовка к собеседованию:** [Вопросы и ответы (DevOps/SRE/Sysadmin)](./interview_qa.md).
 

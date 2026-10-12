@@ -983,6 +983,7 @@ Impersonation: каждая Kustomization/HelmRelease выполняется о�
 
 **Связанные документы:**
 - [Сравнение с ArgoCD](./argo_vs_flux_manifests.md) — детальное сравнение архитектур и манифестов.
+- [Организация Flux CD monorepo: кейс](./Concepts/flux_monorepo_organization.md) — миграция с v1 на v2, структура `clusters/` + `components/`, конвенции именования.
 - [Управление секретами](./secrets_encryption.md) — шифрование через SOPS и Sealed Secrets.
 - [GitOps: Уведомления](./gitops_notifications.md) — настройка оповещений и алертинга (Provider/Alert/Receiver во Flux).
 

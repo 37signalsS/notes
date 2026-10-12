@@ -301,6 +301,7 @@ kubectl delete serviceaccount descheduler -n kube-system
 - Pod с аннотацией `descheduler.alpha.kubernetes.io/safe-to-evict: false` не выселяются
 - Descheduler не пересоздает поды — он только вызывает Eviction, а родительский контроллер (Deployment, ReplicaSet) создает новые
 - При работе с HPA — настройте `stabilizationWindowSeconds` в HPA, чтобы избежать флаппинга
+- **Тестируйте политики в staging перед production**: выселение подов увеличивает время простоя нагрузки (переезд, запуск, загрузка). Агрессивные политики не запускайте в prime-time — сначала проверьте поведение перепланировки в предпродакшн/тестовом окружении и настройте политики под свои кейсы
 
 ### Диагностика проблем
 

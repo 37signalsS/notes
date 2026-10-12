@@ -422,3 +422,4 @@ kube-bench покрывает требования следующих станд
 * [Kyverno](./kyverno/policies/practical_scenarios.md) — принудительное исполнение политик в рантайме.
 * [Falco](../../Security/Tools/falco.md) — обнаружение аномалий в реальном времени.
 * [Безопасность Kubelet](./kubelet_security.md) — полный гайд по аутентификации, авторизации и TLS kubelet.
+* [Аудит до развёртывания (Cluster API)](./cluster_api_security_audit.md) — проверка CAPI-манифестов до создания кластера.

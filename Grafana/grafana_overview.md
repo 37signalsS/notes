@@ -87,7 +87,7 @@ Grafana официально поддерживает в качестве вне
 
 Grafana 13.x реализует многоуровневую модель безопасности:
 
-- **RBAC (Role-Based Access Control):** Начиная с версии 11 расширенное управление доступом (Fine-grained access control) доступно в OSS. Поддерживаются базовые роли (Viewer, Editor, Admin) и кастомные роли с гранулярными экшенами (`dashboards:read`, `datasources:query`). Создание и назначение ролей в OSS выполняются через API; расширенное UI-управление — в Enterprise. См. [Управление пользователями и аутентификация](./grafana_user_management_and_authentication.md) и [Fine-grained RBAC](./grafana_rbac_fine_grained.md).
+- **RBAC (Role-Based Access Control):** Fine-grained access control (фиксированные и кастомные роли с гранулярными экшенами `dashboards:read`, `datasources:query`) доступен только в **Grafana Enterprise и Grafana Cloud**. В Grafana OSS присутствуют лишь базовые организационные роли (Viewer, Editor, Admin). Роли задаются через RBAC API, Terraform или provisioning. См. [Управление пользователями и аутентификация](./grafana_user_management_and_authentication.md) и [Fine-grained RBAC](./grafana_rbac_fine_grained.md).
 - **Аутентификация:** Встроенная (локальная БД), OAuth 2.0/OIDC, LDAP, SAML, JWT. Провайдеры и способы интеграции — в [Управление пользователями и аутентификация](./grafana_user_management_and_authentication.md), [SSO: SAML, JWT](./grafana_sso_saml_jwt.md).
 - **Авторизация запросов:** Каждый запрос к источнику данных проверяется на соответствие прав пользователя. Источники данных могут быть помечены как `editable: false` через провиженинг для защиты от случайного изменения.
 - **Сеть:** Grafana не открывает входящие порты к источникам данных через брандмауэр — взаимодействие инициирует сам Grafana (проксирование или прямой доступ в зависимости от конфигурации). Практические меры — в [Безопасность и hardening](./grafana_security_hardening.md).
@@ -122,8 +122,8 @@ Grafana предоставляет HTTP API двух поколений:
   `/apis/<GROUP>/<VERSION>/namespaces/<NAMESPACE>/<RESOURCE>[/<NAME>]`
   Версии следуют уровням стабильности: `v1alpha1` (alpha), `v1beta1` (beta), `v1` (GA, включена по умолчанию).
 
-- **Аутентификация:** Bearer-токен (Service Account) или API Key (Legacy). См. [Управление пользователями и аутентификация](./grafana_user_management_and_authentication.md).
-- **Контекст организации:** заголовок `X-Grafana-Org-Id`.
+- **Аутентификация:** Bearer-токен сервисного аккаунта (API-ключи упразднены и перенесены в Service Accounts). См. [Управление пользователями и аутентификация](./grafana_user_management_and_authentication.md).
+- **Контекст организации:** заголовок `X-Grafana-Org-Id` (работает у сессии/basic auth с членством в нескольких организациях; токен сервисного аккаунта привязан к своей организации).
 - **Спецификация:** OpenAPI/Swagger доступны встроенным UI по адресу `/swagger-ui` (JSON-описание — `/swagger`); внешняя документация — на [grafana.com](https://grafana.com/docs/grafana/latest/developers/http_api/).
 
 ## Практические сценарии
@@ -256,7 +256,7 @@ docker logs grafana 2>&1 | grep -i provisioning
 
 - **Версионирование:** Фиксируйте версии Grafana в Docker (`grafana/grafana:13.2.x`) и плагинов в `values.yaml` (Helm) или manifests (Kubernetes). Избегайте тегов `latest` в production.
 - **Безопасность:**
-  - Используйте Service Accounts вместо Legacy API Keys.
+  - Используйте Service Accounts (API-ключи упразднены и автоматически перенесены в сервисные аккаунты).
   - Включите RBAC и назначайте минимально необходимые права (принцип наименьших привилегий).
   - Храните `secret_key` во внешнем vault; для HA он должен быть идентичен на всех узлах.
   - Никогда не используйте `allow_loading_unsigned_plugins = true` в production.

@@ -440,7 +440,7 @@ curl -s -H "Authorization: Bearer <SA_TOKEN>" \
 
 ### 5. Провиженинг RBAC (Grafana Enterprise)
 
-> Файловый провиженинг RBAC доступен **только в Grafana Enterprise** для self-managed инстансов. В Grafana Cloud и в OSS используйте HTTP API или Terraform (см. [Fine-grained RBAC](./grafana_rbac_fine_grained.md)).
+> Файловый провиженинг RBAC доступен **только в Grafana Enterprise** для self-managed инстансов. В Grafana Cloud используйте HTTP API или Terraform (см. [Fine-grained RBAC](./grafana_rbac_fine_grained.md)). В Grafana OSS RBAC недоступен — там есть только базовые организационные роли.
 
 Файл в `access-control/` описывает кастомные роли и их назначения командам. Изменения перечитываются в рантайме без перезапуска Grafana.
 
@@ -579,7 +579,7 @@ docker compose config | grep PROM_PASSWORD   # должно быть в .env, н
 | **Дашборд не загружается** | Невалидный JSON или `uid` источника | `jq . file.json`; убедитесь, что `datasource.uid` совпадает с источником |
 | **Дашборд v2 не грузится из JSON** | Классический JSON вместо Kubernetes-формата | Используйте `kind: Dashboard`, `apiVersion: dashboard.grafana.app/v1` |
 | **Изменения из UI «исчезли»** | Configuration drift после рестарта | Установите `editable: false` / `disableDeletion: true` |
-| **Роль RBAC не применилась** | Не Grafana Enterprise | Проверьте лицензию; в OSS используйте API/Terraform |
+| **Роль RBAC не применилась** | Нет лицензии Grafana Enterprise | Проверьте лицензию; в OSS RBAC недоступен |
 | **Секрет не подставился** | Переменная не в окружении процесса | `kubectl exec ... -- env \| grep VAR`; рестарт для ротации |
 
 **Диагностика:** основные ошибки видны в логах Grafana (`logger=provisioning`, `logger=provisioning.alerting`, `logger=provisioning.dashboard`). Быстрая проверка: `docker logs grafana 2>&1 | grep -i provisioning` или `kubectl logs -n monitoring deploy/my-grafana | grep -i provisioning`. Статус ресурсов — через HTTP API (`/api/datasources`, `/api/search`, `/api/ruler/...`).
@@ -601,7 +601,7 @@ docker compose config | grep PROM_PASSWORD   # должно быть в .env, н
 - **Автоматическое применение при изменении файла** работает для источников данных и дашбордов (watcher/poll). Конфигурация плагинов применяется **только при старте**; RBAC перечитывается в рантайме.
 - **Интерполяция только при загрузке**: ротация секрета требует перезапуска Grafana, чтобы процесс перечитал переменные окружения.
 - **Не провижинится файлами**: сервисные аккаунты (HTTP API `/api/serviceaccounts`, Terraform `grafana_service_account`), пользователи (API/LDAP/SSO), организации, плейлисты (UI или HTTP API `playlist.grafana.app/v1`, Grafana 12+).
-- **RBAC-провиженинг — только Enterprise.** В OSS файлы `access-control/` игнорируются; используйте API/Terraform.
+- **RBAC-провиженинг — только Enterprise.** В OSS RBAC недоступен (файлы `access-control/` игнорируются); кастомные роли задавайте через API/Terraform на Enterprise-инстансе.
 - **`prune: true` и `deleteDatasources`** применяются к источникам данных; для дашбордов удаление файла удаляет дашборд из БД, если не задан `disableDeletion: true`.
 - **`foldersFromFilesStructure`** требует пустых `folder`/`folderUid`; глубина вложенных папок ограничена 4 уровнями.
 - **Дашборды v2 / dynamic dashboards** требуют Kubernetes-формата JSON при файловом провиженинге.

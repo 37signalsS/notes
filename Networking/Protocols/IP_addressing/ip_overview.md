@@ -441,6 +441,8 @@ ip link show eth0 | grep mtu
 ping -M do -s 8972 <host>  # 8972 + 28 = 9000 = MTU
 ```
 
+Диагностика отсутствия прироста производительности от Jumbo Frames (почему эффект может быть нулевым): [ethtool — MTU и Jumbo Frames](../../../Linux/Networking/Tools/ethtool.md).
+
 ### IPv6 Extension Headers
 
 **Особенности:**

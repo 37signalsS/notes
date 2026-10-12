@@ -6,7 +6,7 @@
 
 * **Exemplar** — точка-метка на временном ряде, хранящая ссылку на конкретный трейс (обычно `trace_id`). Позволяет перейти от всплеска на графике метрик к конкретному запросу в системе трассировки (Jaeger, Tempo).
 * **Корреляция метрик и трейсов** — механизм связывания двух сигналов observability: метрики показывают симптом (всплеск задержки), трейсы — причину (конкретный медленный запрос).
-* **Exemplar Storage** — хранилище exemplars в TSDB. В Prometheus v3.x включено по умолчанию при использовании нативных гистограмм. В v2.x требует флага `--enable-feature=exemplar-storage`.
+* **Exemplar Storage** — хранилище exemplars в TSDB. Отключено по умолчанию; включается флагом `--enable-feature=exemplar-storage` (и в Prometheus v2.x, и в v3.x).
 * **Trace ID** — уникальный идентификатор распределенного трейса, передаваемый как значение метки в exemplar (например, `{trace_id="a1b2c3d4"}`).
 
 ## Основные концепции
@@ -184,7 +184,7 @@ datasources:
 |:---|:---|:---|
 | Ромбиков exemplars нет на графике | Приложение не отдаёт exemplars / выключен exemplar-storage | Проверить `/api/v1/status/flags`, инструментацию приложения |
 | Линк есть, трейс "Not found" | Tempo хранит ограниченное окно / sampling отсёк трейс | Сверить retention Tempo и стратегию sampling |
-| Grafana не показывает Exemplars | `exemplar-storage` не включен (v2.x) | Добавить `--enable-feature=exemplar-storage` или перейти на v3.x |
+| Grafana не показывает Exemplars | `exemplar-storage` не включён | Добавить `--enable-feature=exemplar-storage` |
 | Высокое потребление памяти | Слишком высокий `max_exemplars` при высокой кардинальности | Снизить `max_exemplars` или использовать `metric_relabel_configs` |
 
 ## Дополнительная информация

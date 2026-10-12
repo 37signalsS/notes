@@ -304,6 +304,7 @@ events:
 | `pg_stat_checkpointer` | PG 17+ | `checkpoints_timed`/`checkpoints_req`, `buffers_checkpoint`, `checkpoint_write_time`/`checkpoint_sync_time` (в ≤16 эти столбцы были в `pg_stat_bgwriter`) |
 | `pg_stat_bgwriter` | все | `buffers_clean`, `maxwritten_clean` — работа background writer'а |
 | `pg_stat_io` | PG 17+ | I/O по `backend_type`/context/объекту (включая WAL-объекты с `read_bytes`/`write_bytes`/`fsync_time`; в PG 18 заменяет удалённые WAL timing столбцы из `pg_stat_wal`) |
+| `pg_aios` | PG 18+ | In-use I/O-handle'ы асинхронного I/O с состояниями (`SUBMITTED`, `COMPLETED_IO`, `COMPLETED_SHARED` и т.д.) — для тюнинга AIO; см. [Асинхронный ввод-вывод](./async_io.md) |
 | `pg_stat_wal` | PG 14+ | `wal_bytes`, `wal_records`, `wal_fpi` — генерация WAL; в PG 18 удалены столбцы `wal_write`/`wal_sync` и их тайминги (переехали в `pg_stat_io`); `track_wal_io_timing` удалён в PG 18 |
 | `pg_stat_archiver` | все | `archived_count`, `failed_count`, `last_archived_wal`, `last_failed_wal` |
 | `pg_stat_database` | все | `xact_commit`/`xact_rollback`, `conflicts`, `deadlocks`, `temp_bytes`; session/active-время — PG 14+ |

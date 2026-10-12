@@ -278,6 +278,9 @@ spec:
 - [Cluster Autoscaler: Глубокое погружение](cluster_autoscaler_detailed.md) — полная документация CA
 - [Karpenter vs CA](cluster_autoscaler_vs_karpenter.md) — сравнение решений
 - [Descheduler](descheduler.md) — ребалансировка кластера
+- [Apache YuniKorn](../Scheduling/yunikorn.md) — иерархические очереди и квоты для batch/ML
+- [Kueue](../Scheduling/kueue.md) — очереди и квоты для batch/AI-нагрузок
+- [Обзор решений для планирования](../Scheduling/scheduling_solutions_overview.md) — матрица выбора
 - [Overview: On-Premise specifics](overview_concepts.md#предварительные-требования-технический-чек-лист) — требования к on-premise
 - [MetalLB](../Networking/metallb.md) — LoadBalancer для bare-metal
 - [Kubespray](../Installation/Kubespray/overview.md) — установка Kubernetes на bare-metal

@@ -111,7 +111,7 @@ EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM users WHERE id = 42;
 | `maintenance_work_mem` | 64MB | 512MB - 2GB | Ускоряет `VACUUM`, `CREATE INDEX`, `ALTER TABLE ADD FOREIGN KEY`. Может быть многократно больше `work_mem`: операции выполняются по одной на сессию. |
 | `autovacuum_work_mem` | -1 (наследует `maintenance_work_mem`) | Задать явно при большом числе таблиц | Иначе каждый воркер autovacuum получает полный `maintenance_work_mem`, и суммарно их может быть до `autovacuum_max_workers × maintenance_work_mem`. |
 | `wal_buffers` | -1 (≈1/32 `shared_buffers`, min 64kB) | Оставить -1 | Контекст: **postmaster**. Автонастройка даёт разумный результат; вручную (несколько МБ) имеет смысл только при массе одновременных коммитов — эффект от больших значений незначителен. |
-| `effective_io_concurrency` | 1 | 200 (SSD/NVMe) | Число одновременных I/O-операций на одну сессию (Seq Scan, bitmap heap scan). Для HDD оставить 1. Аналог для обслуживающих операций — `maintenance_io_concurrency` (default 10). |
+| `effective_io_concurrency` | 16 (PG 18) / 1 (PG ≤17) | 200 (SSD/NVMe) | Число одновременных I/O-операций на одну сессию (Seq Scan, bitmap heap scan). Для HDD оставить 1. Аналог для обслуживающих операций — `maintenance_io_concurrency` (default 16 в PG 18, 10 в ≤17). Режимы и параметры AIO: [Асинхронный ввод-вывод](./async_io.md). |
 | `max_parallel_workers_per_gather` | 2 | 2 - 4 | Параллельные запросы: каждый воркер получает собственный лимит `work_mem`, поэтому пиковое потребление памяти умножается на `(1 + число воркеров)`. |
 | `random_page_cost` | 4.0 | 1.1 (SSD) / 4.0 (HDD) | Для современных хранилищ разрыв между Seq и Random минимален. |
 | `max_wal_size` | 1GB | 4GB - 16GB | Увеличивает интервал между Checkpoint, снижая I/O пики. |

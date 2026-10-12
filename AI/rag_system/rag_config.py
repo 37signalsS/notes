@@ -70,6 +70,12 @@ HF_HUB_TIMEOUT_DEFAULT = 180
 MAX_PARALLEL_SEARCHES_DEFAULT = 4
 MAX_MEMORY_MB_DEFAULT = 10240
 
+# Persistent cache for fastembed models (Qdrant/bm25). The library's default is the
+# OS temp dir (e.g. /var/folders/.../T/fastembed_cache), which the OS periodically
+# clears — after cleanup offline mode can no longer reload the model. Keep it in the
+# user cache dir alongside the HuggingFace cache instead.
+FASTEMBED_CACHE_PATH_DEFAULT = os.path.join(os.path.expanduser("~"), ".cache", "fastembed")
+
 QDRANT_MODE_DEFAULT = "local"
 QDRANT_HOST_DEFAULT = "localhost"
 QDRANT_PORT_DEFAULT = 6333
@@ -148,6 +154,7 @@ BM25_B: float = _cfg["bm25_b"]
 HF_HUB_TIMEOUT: int = _cfg["hf_hub_timeout"]
 MAX_PARALLEL_SEARCHES: int = _cfg["max_parallel_searches"]
 MAX_MEMORY_MB: int = _cfg["max_memory_mb"]
+FASTEMBED_CACHE_PATH: str = os.environ.get("FASTEMBED_CACHE_PATH") or FASTEMBED_CACHE_PATH_DEFAULT
 QDRANT_MODE: str = _cfg["qdrant"]["mode"]
 QDRANT_HOST: str = _cfg["qdrant"]["host"]
 QDRANT_PORT: int = _cfg["qdrant"]["port"]

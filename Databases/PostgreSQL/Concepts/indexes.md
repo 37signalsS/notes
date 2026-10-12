@@ -147,7 +147,7 @@ CREATE INDEX idx_orders_user_id ON orders (user_id) TABLESPACE fast_ssp;
 - `Index Cond`: Условие, по которому сработал индекс.
 - `Filter`: Условие, которое пришлось проверять перебором после индекса (плохо, если строк много).
 
-**AIO в PostgreSQL 18+:** Для мониторинга асинхронного I/O используйте `pg_aios` и `pg_stat_activity` (ищите `io worker` в `backend_type`). Параметр `io_method` в `postgresql.conf` управляет режимом AIO (`worker` по умолчанию, `io_uring` на Linux для максимальной производительности, `sync` для отката к поведению PG 17).
+**AIO в PostgreSQL 18+:** Для мониторинга асинхронного I/O используйте `pg_aios` и `pg_stat_activity` (ищите `io worker` в `backend_type`). Параметр `io_method` в `postgresql.conf` управляет режимом AIO (`worker` по умолчанию, `io_uring` на Linux для максимальной производительности — требует сборки с `--with-liburing` и ядра 5.6+, `sync` для отката к поведению PG 17). Подробно: [Асинхронный ввод-вывод](../Operations/async_io.md).
 
 ### 7. Пошаговый пример оптимизации
 

@@ -147,7 +147,7 @@ dmesg -T | grep -i "nvme.*throttl"
     echo 1 | sudo tee /sys/block/nvme0n1/queue/io_poll
     ```
 
-3.  **Использование io_uring:** Перевод приложений (RocksDB, PostgreSQL 17+) на асинхронный движок с `O_DIRECT` минимизирует влияние Burst I/O.
+3.  **Использование io_uring:** Перевод приложений (RocksDB, PostgreSQL 18+) на асинхронный движок с `O_DIRECT` минимизирует влияние Burst I/O.
 
 ### Полный справочник параметров очереди (sysfs)
 

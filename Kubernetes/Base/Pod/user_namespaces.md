@@ -60,8 +60,10 @@ cat /proc/1/uid_map
 
 | Версия | Статус | Feature Gate | Примечание |
 | :--- | :--- | :--- | :--- |
-| **1.30** | Beta | `UserNamespacesSupport=true` | Поддержка томов и StatefulSet. |
-| **1.33+** | **GA** | Включено по умолчанию | Полная стабилизация механизма. |
+| **1.25** | Alpha | `UserNamespacesStatelessPodsSupport` | Только stateless-поды. |
+| **1.30** | Beta | `UserNamespacesSupport=true` | Поддержка томов и StatefulSet; отключено по умолчанию. |
+| **1.33** | Beta, включено по умолчанию | — | Включение без флагов; `idsPerPod` в `KubeletConfiguration`. |
+| **1.36** | **GA** | Заблокирован (отключить нельзя) | Полная стабилизация механизма. |
 
 #### Системные требования
 

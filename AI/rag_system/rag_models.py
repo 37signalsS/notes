@@ -12,6 +12,7 @@ from rag_config import (
     HF_HUB_TIMEOUT,
     ENGINES,
     MAX_MEMORY_MB,
+    FASTEMBED_CACHE_PATH,
 )
 
 log = logging.getLogger("rag")
@@ -231,13 +232,14 @@ def get_sparse_embedding_model() -> "SparseTextEmbedding":
         if _sparse_embedding_cache is not None:
             return _sparse_embedding_cache
         from fastembed import SparseTextEmbedding
-        try:
-            _sparse_embedding_cache = _load_with_timeout(
-                lambda: SparseTextEmbedding(model_name="Qdrant/bm25"), HF_HUB_TIMEOUT
-            )
-            return _sparse_embedding_cache
-        except Exception as exc:
-            raise RuntimeError("Failed to load SparseTextEmbedding") from exc
+        _sparse_embedding_cache = _with_hf_offline_fallback(
+            lambda: SparseTextEmbedding(
+                model_name="Qdrant/bm25", cache_dir=FASTEMBED_CACHE_PATH
+            ),
+            HF_HUB_TIMEOUT,
+            "Failed to load SparseTextEmbedding",
+        )
+        return _sparse_embedding_cache
 
 
 def get_reranker_inference_lock() -> threading.Lock:

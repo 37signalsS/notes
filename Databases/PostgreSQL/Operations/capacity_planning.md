@@ -300,7 +300,7 @@ ls $PGDATA/base/*/pgsql_tmp/
 *   **`interval '1 day'` ≠ 24 часа:** при смене season (DST) `interval '1 day'` = 24 часа фиксированно, а `timestamp + interval '1 day'` может сместиться на час. Используйте `timestamp + interval '1 day'` только если это допустимо.
 *   **Контейнеры (systemd-nspawn, chroot):** `--tmpfs /var/lib/postgresql/data/pg_wal` для уменьшения WAL-нагрузки на диск; `shared_buffers` ограничены cgroup-лимитами — проверяйте `memory.max` в systemd-юните.
 *   **Logical replication:** `pg_logical` слоты не удерживают WAL так же, как physical — но `max_replication_slots` всё равно ограничен.
-*   **AIO (PG 18+):** `io_uring` может снизить latency, но не решает проблему insufficient IOPS — планировать диск с запасом.
+*   **AIO (PG 18+):** `io_uring` может снизить latency, но не решает проблему insufficient IOPS — планировать диск с запасом. Режимы и параметры: [Асинхронный ввод-вывод](./async_io.md).
 *   **`wal_compression = on`:** уменьшает WAL volume за счёт CPU — эффективно при storage-бутылочном горлышке, но не при CPU-bound.
 
 ## Дополнительная информация

@@ -14,9 +14,9 @@ fi
 
 source "$VENV_PATH"
 
-# Offline mode — models are cached locally
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
+# Models are loaded cache-first: cached models load without network, missing ones
+# are downloaded (internet required). Do NOT force HF_HUB_OFFLINE here — it makes a
+# missing model (e.g. fastembed Qdrant/bm25) unloadable instead of downloading it.
 
 echo "--- Starting manual RAG synchronization ---"
 
