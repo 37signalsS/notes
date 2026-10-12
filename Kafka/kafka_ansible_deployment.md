@@ -805,7 +805,106 @@ kafka-node-4 ansible_host=10.0.1.4 kafka_node_id=4  # Новый рабочий 
 
 ---
 
-### 6. Настройка мониторинга через Prometheus JMX Exporter
+### 6. Вывод брокера из эксплуатации (Graceful Decommissioning & Scale-down)
+
+Вывод брокера из production-кластера (плановая замена серверного оборудования, уменьшение емкости) выполняется строго без простоя и потери данных. Процесс гарантирует перенос всех реплик и лидерств на оставшиеся узлы перед остановкой службы.
+
+```yaml
+# playbooks/decommission.yml
+---
+- name: Безопасный вывод брокера из эксплуатации (Decommissioning)
+  hosts: kafka-node-1
+  become: true
+  vars:
+    decommission_broker_id: 4
+    remaining_brokers: "1,2,3"
+
+  tasks:
+    - name: Получение полного списка всех бизнес-топиков кластера
+      ansible.builtin.command:
+        cmd: "{{ kafka_install_dir }}/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list --exclude-internal"
+      register: all_topics_raw
+      changed_when: false
+
+    - name: Формирование JSON-файла топиков для миграции
+      ansible.builtin.copy:
+        dest: /tmp/decommission-topics.json
+        content: |
+          {
+            "topics": [
+              {% for t in all_topics_raw.stdout_lines %}
+              {"topic": "{{ t }}"}{% if not loop.last %},{% endif %}
+              {% endfor %}
+            ],
+            "version": 1
+          }
+        mode: '0644'
+
+    - name: Генерация плана миграции без участия выводимого брокера
+      ansible.builtin.command:
+        cmd: >
+          {{ kafka_install_dir }}/bin/kafka-reassign-partitions.sh
+          --bootstrap-server localhost:9092
+          --topics-to-move-json-file /tmp/decommission-topics.json
+          --broker-list "{{ remaining_brokers }}"
+          --generate
+      register: decommission_plan_raw
+      changed_when: false
+
+    - name: Сохранение сгенерированного плана в файл выполнения
+      ansible.builtin.copy:
+        dest: /tmp/decommission-execution.json
+        content: "{{ (decommission_plan_raw.stdout_lines | select('match', '^{\"version\":.*') | list)[0] }}"
+        mode: '0644'
+
+    - name: Запуск миграции с ограничением сетевой полосы (Throttle 50 MB/s)
+      ansible.builtin.command:
+        cmd: >
+          {{ kafka_install_dir }}/bin/kafka-reassign-partitions.sh
+          --bootstrap-server localhost:9092
+          --reassignment-json-file /tmp/decommission-execution.json
+          --throttle 52428800
+          --execute
+      register: execute_res
+      changed_when: "'Successfully started reassignment' in execute_res.stdout"
+
+    - name: Ожидание полного завершения переноса данных и снятие троттлинга
+      ansible.builtin.command:
+        cmd: >
+          {{ kafka_install_dir }}/bin/kafka-reassign-partitions.sh
+          --bootstrap-server localhost:9092
+          --reassignment-json-file /tmp/decommission-execution.json
+          --verify
+      register: verify_res
+      until: "'is completed' in verify_res.stdout and 'is in progress' not in verify_res.stdout"
+      retries: 120
+      delay: 30
+      changed_when: false
+
+    - name: Финальная проверка отсутствия партиций на выводимом брокере
+      ansible.builtin.command:
+        cmd: >
+          {{ kafka_install_dir }}/bin/kafka-topics.sh
+          --bootstrap-server localhost:9092
+          --describe
+      register: describe_cluster
+      failed_when: "'Replicas: ' ~ decommission_broker_id in describe_cluster.stdout or 'Leader: ' ~ decommission_broker_id in describe_cluster.stdout"
+      changed_when: false
+
+- name: Остановка сервиса и изоляция выведенного узла
+  hosts: kafka-node-4
+  become: true
+  tasks:
+    - name: Остановка службы systemd Kafka
+      ansible.builtin.systemd:
+        name: kafka
+        state: stopped
+        enabled: false
+```
+
+---
+
+### 7. Настройка мониторинга через Prometheus JMX Exporter
 
 Сбор метрик брокера и KRaft контроллера организуется через Java-агент Prometheus JMX Exporter, подключаемый через переменную окружения `KAFKA_OPTS`.
 

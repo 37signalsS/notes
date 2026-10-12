@@ -648,6 +648,7 @@ kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group or
 - **[Troubleshooting Playbook для Apache Kafka](./kafka_troubleshooting_playbook.md)** — деревья решений и регламенты реагирования на инциденты деградации кластера.
 - **[Kafka для мониторинга](./kafka_for_monitoring.md)** — сбор метрик через Prometheus JMX Exporter, настройка дашбордов Grafana и правил оповещения.
 - **[Capacity Planning и Disaster Recovery](./kafka_capacity_dr.md)** — сайзинг кластеров, расчет дисковой емкости и сценарии аварийного восстановления.
+- **[Log Compaction и сегменты хранения](./kafka_log_compaction.md)** — анатомия сегментов, Tombstone, индексы и дедупликация по ключам.
 - **[Strimzi Kafka Operator](./strimzi_kafka_operator.md)** — управление кластерами Kafka и автоматическая ребалансировка через Cruise Control в Kubernetes.
 
 ### Внешние инструменты экосистемы
