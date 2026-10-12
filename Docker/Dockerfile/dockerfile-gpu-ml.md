@@ -176,6 +176,19 @@ docker run --rm --device nvidia.com/gpu=mig0g0 my-ml-app
 
 MIG доступен на GPU Ampere (A100) и новее. Каждый MIG-инстанс — изолированная доля GPU (память, SM). В Kubernetes — через `nvidia.com/mig-1g.5gb` resource (см. [Device Manager](../../Kubernetes/Scheduling/device_manager.md)).
 
+### Сценарий 7: Сжатие слоёв в ZSTD (ускорение pull-а)
+
+**Задача:** сократить время скачивания и экстракции больших GPU-образов (Triton ~20 ГБ) при автоскейлинге.
+
+```bash
+# Сборка и пуш образа со слоями в ZSTD вместо GZIP (по умолчанию)
+docker buildx build \
+  --output type=image,name=<registry>/<image>,push=true,compression=zstd .
+# → слои в реестре: application/vnd.oci.image.layer.v1.tar+zstd
+```
+
+`compression` принимает `uncompressed`/`gzip`/`estargz`/`zstd`; `compression-level` — 0–22 для zstd (3–6 — default); `force-compression=true` пережимает слои, унаследованные от базового образа. На практике (замер из доклада про GPU-инференс): pull образа Triton сократился с 6,5 до 2 минут. Подробнее — в [GPU-инференс: автоскейлинг](../../Kubernetes/Autoscaling/gpu_inference_autoscaling.md).
+
 ## Операции и команды
 
 | Команда | Описание |
@@ -266,6 +279,8 @@ nvidia-smi | head -1
 - **[GPU-диагностика](../../Linux/Diagnostics/Hardware/gpu_diagnostics.md)** — диагностика GPU на хосте, DCGM-exporter, мониторинг в Prometheus.
 - **[Topology Manager: NUMA-изолированный ML-инференс](../../Kubernetes/Scheduling/topology_manager.md)** — GPU + NUMA в Kubernetes.
 - **[Device Manager](../../Kubernetes/Scheduling/device_manager.md)** — GPU/MIG как расширенные ресурсы в Kubernetes.
+- **[Шеринг GPU в Kubernetes](../../Kubernetes/Scheduling/gpu_sharing.md)** — time-slicing, MPS, MIG, HAMi, dynamic MIG.
+- **[GPU-инференс: автоскейлинг](../../Kubernetes/Autoscaling/gpu_inference_autoscaling.md)** — ускорение деплоя (ZSTD, lazy loading, кэш образов).
 - **[Container Device Interface (CDI)](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/cdi-support.html)** — спецификация CDI от NVIDIA.
 - **[CUDA Compatibility Guide](https://docs.nvidia.com/deploy/cuda-compatibility/)** — матрица совместимости драйверов и версий CUDA.
 - **[NVIDIA Container Toolkit Releases](https://github.com/NVIDIA/nvidia-container-toolkit/releases)** — changelog и версии toolkit.

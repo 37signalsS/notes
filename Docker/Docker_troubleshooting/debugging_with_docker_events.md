@@ -173,7 +173,7 @@ docker events --since 1h --until 30m
 
 | Инструмент | Фокус | Преимущество |
 | :--- | :--- | :--- |
-| **`docker events`** | Жизненный цикл | Минимальная нагрузка, ловит «мгновенные» падения. |
+| **`docker events`** | Жизненный цикл | Минимальная нагрузка, ловит «мгновенные» падения — фиксация `exitCode` при субсекундном падении см. [docker_exit_codes.md](./docker_exit_codes.md), Сценарий 8. |
 | **`docker logs`** | Логика кода | Детальный вывод ошибок приложения. |
 | **`docker debug`** | Интерактивность | Shell и Toolbox внутри контейнера/образа даже без `/bin/sh`; функция Docker Desktop 4.33+ (подписка Pro/Teams/Business), в standalone Engine недоступна — см. [docker_debug.md](./docker_debug.md). |
 | **eBPF (Inspektor Gadget)** | Трафик и системные вызовы | Анализ Data Plane без внедрения в контейнер. |

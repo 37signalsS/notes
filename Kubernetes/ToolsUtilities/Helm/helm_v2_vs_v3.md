@@ -135,6 +135,15 @@ dependencies:
 *   **v2/v3:** Работа с HTTP-индексами (`helm repo add`).
 *   **v4:** OCI-реестры стали стандартом де-факто. `helm registry login` требует только домен.
 
+### Создание namespace при установке релиза
+
+**Helm 2 (Tiller):** при установке в несуществующий namespace Tiller создавал его автоматически — он работал внутри кластера, как правило, с правами `cluster-admin`.
+
+**Helm 3/v4:** namespace должен существовать заранее. При его отсутствии Helm возвращает ошибку `namespace not found` — поведение выровнено под `kubectl` (namespace — кластерный ресурс, создание которого требует прав cluster-admin, которыми пользователь Helm может не обладать). Восстановить удобство Helm 2 позволяет флаг `--create-namespace` (добавлен в Helm 3.2):
+```bash
+helm install my-app ./chart --namespace prod --create-namespace
+```
+
 ### Работа с CRD (Custom Resource Definitions)
 
 В **Helm 2** CRD были обычными шаблонами. Если чарт создавал CRD и ресурс этого типа одновременно, Helm часто падал с ошибкой, так как API-сервер еще не знал о новом типе ресурса.
@@ -308,6 +317,7 @@ helm upgrade my-release ./chart -n prod --atomic --wait
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
 | `Error: tiller not found` | Helm 2 пытается использовать Tiller, но он не развёрнут | Установите Helm 3/4; Tiller удалён насовсем |
+| `Error: namespace "xxx" not found` | Namespace не существует; Helm 3/v4 не создаёт его автоматически (в отличие от Helm 2/Tiller) | `kubectl create namespace xxx` или флаг `--create-namespace` (Helm 3.2+) |
 | `Error: release: "xxx" already exists` при migrate | Release Storage v2 (ConfigMap) конфликтует с v3 (Secret) | Запустите `helm 2to3 convert` до установки v3 |
 | `Error: incompatible versions` | `Chart.yaml` имеет `apiVersion: v1`, а Helm v3/v4 требует `v2` | Обновите `apiVersion` и секцию `dependencies` |
 | `Error: failed to download` (air-gapped) | Helm пытается тянуть зависимости из интернета | Используйте `helm dependency build` + `helm package` на сборной машине |

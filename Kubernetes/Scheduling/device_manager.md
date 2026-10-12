@@ -10,7 +10,7 @@
 
 **Device Plugin Registry Directory** (`/var/lib/kubelet/device-plugins/`) — директория, в которой Device Plugins регистрируют свои gRPC-сокеты. Kubelet отслеживает эту директорию для обнаружения новых плагинов.
 
-**Dynamic Resource Allocation (DRA)** — механизм (Beta с K8s 1.30+), приходящий на смену Device Plugins. Позволяет описывать сложные требования к ресурсам через `ResourceClaim` и `ResourceClass`, обеспечивая более глубокую интеграцию со специфическим железом.
+**Dynamic Resource Allocation (DRA)** — механизм (Beta с K8s 1.32, feature gate `DynamicResourceAllocation`), приходящий на смену Device Plugins. Позволяет описывать сложные требования к ресурсам через `ResourceClaim` и `DeviceClass`, обеспечивая более глубокую интеграцию со специфическим железом.
 
 ---
 
@@ -18,7 +18,7 @@
 
 ### Требования к кластеру
 
-* **Kubernetes:** 1.26+ (Device Plugins GA), 1.30+ (DRA Beta)
+* **Kubernetes:** 1.26+ (Device Plugins GA), 1.32+ (DRA Beta)
 * **Kubelet:** доступ к директории `/var/lib/kubelet/device-plugins/`
 * **Container Runtime:** containerd 1.6+ или CRI-O 1.20+
 
@@ -476,4 +476,5 @@ kubectl describe node <node> | grep -A 5 "nvidia.com/gpu"
 * [Topology Manager](./topology_manager.md) — координация CPU, Memory и Device Manager
 * [Memory Manager](./memory_manager.md) — NUMA-осознанное выделение памяти
 * [QoS, Requests и Limits](./qos_limit_and_requests.md) — расширенные ресурсы и QoS
+* [Шеринг GPU](./gpu_sharing.md) — time-slicing, MPS, MIG, HAMi, dynamic MIG
 * [Affinity и Anti-Affinity](./affinity.md) — управление размещением подов

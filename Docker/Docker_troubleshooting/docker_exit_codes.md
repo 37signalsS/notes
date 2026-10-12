@@ -245,6 +245,45 @@ docker compose ps --all --status=exited
 - Для разовых задач: `docker compose run --rm <service>` — поднимает зависимости, выполняет команду, передаёт код в `$?`.
 - `docker run --rm <image>` в скриптах корректно передаёт код в `$?` — `--rm` не влияет на пропагацию.
 
+### Сценарий 8: Мгновенное падение контейнера (exit 255 и др.) — отладка через переопределение entrypoint
+
+**Проблема:** Контейнер падает за долю секунды (часто с кодом 255), `docker logs` пуст — приложение не успевает вывести ничего, а `docker exec` не успевает отработать до остановки контейнера.
+
+**Диагностика:**
+
+**Шаг 1 — зафиксировать факт падения и код.** `docker events` перехватывает событие `die` с атрибутом `exitCode` даже для субсекундных падений, когда `docker exec` не успевает отработать; заодно видны сопутствующие события (`oom`, `kill`). См. [debugging_with_docker_events.md](./debugging_with_docker_events.md):
+```bash
+# В соседнем терминале, до запуска контейнера
+docker events --filter event=die --filter event=oom
+# → 2026-07-19T10:00:06.123456789+00:00 container die c1f2a3b4c5d6 (exitCode=255, image=my-app:latest, name=my-app)
+```
+
+**Шаг 2 — узнать причину.** Переопределите entrypoint командой, которая не завершается, — контейнер останется живым, и внутри можно запустить оригинальный entrypoint вручную:
+```bash
+# Держим контейнер живым: sleep infinity (или tail -f /dev/null для образов без sleep)
+docker run -d --name debug-app --entrypoint sleep my-app:latest infinity
+
+docker exec -it debug-app sh
+# внутри контейнера — запускаем оригинальный entrypoint вручную
+/app/entrypoint.sh
+# или трассируем системные вызовы (если strace нет в образе — установите его внутри)
+strace -f -o /tmp/trace.log /app/entrypoint.sh
+docker cp debug-app:/tmp/trace.log .
+```
+
+**Альтернатива без exec:** strace сам становится PID 1 и трассирует оригинальный entrypoint до самого падения:
+```bash
+docker run --name debug-app --entrypoint strace my-app:latest \
+  -f -o /tmp/trace.log /app/entrypoint.sh
+docker cp debug-app:/tmp/trace.log .
+```
+
+**Нюансы:**
+- Пустые `docker logs` не всегда означают падение до вывода: приложение может писать логи в файл внутри контейнера или буферизовать stdout (для Python — `PYTHONUNBUFFERED=1`); в живом контейнере (Шаг 2) проверьте наличие лог-файлов.
+- `sleep infinity` в качестве PID 1 игнорирует SIGTERM (ядро отбрасывает сигналы для PID 1 без обработчика) — останавливайте такой контейнер через `docker kill` или запускайте с `--init`.
+- Если приложение работает локально, но падает в контейнере — проверьте различия окружения: `$PATH`, отсутствующие файлы и переменные окружения (см. Сценарий 5).
+- Несовместимость архитектур (amd64-бинарник на arm64-хосте) проявляется как `exec format error`, а не как код 255 — см. [troubleshooting_methodology.md](./troubleshooting_methodology.md), Сценарий 8.
+
 ## Операции и команды
 
 | Команда | Назначение | Пример |
@@ -280,7 +319,7 @@ docker compose ps --all --status=exited
 | **139** | Профилирование памяти | Ошибки в нативных библиотеках (C/C++ extensions) |
 | **141** | `docker logs` | Запись в закрытый pipe (broken pipe) |
 | **143** | Проверка PID 1 | Наличие `exec` в entrypoint и обработка сигналов |
-| **255** | `docker logs` | Код, заданный приложением (часто — общая ошибка CLI) |
+| **255** | `docker logs` | Код, заданный приложением (часто — общая ошибка CLI); мгновенное падение без логов — см. Сценарий 8 |
 
 ## Лучшие практики
 

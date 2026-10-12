@@ -52,6 +52,8 @@
 * **Kueue** — очереди и квоты (ClusterQueue/LocalQueue/ResourceFlavor), gang scheduling через удержание заданий, разделение GPU между командами. См. [Kueue](./kueue.md).
 * **Apache YuniKorn** — иерархические очереди с guaranteed/max, reservation, ACL, gang scheduling. См. [YuniKorn](./yunikorn.md).
 * **KAI Scheduler** — GPU-планировщик NVIDIA: topology-aware scheduling (NVLink-домены), bin-packing, fairshare. См. [KAI Scheduler](./kai_scheduler.md).
+* **Koordinator** — QoS-based scheduling: колокация microservices/AI/big data, overcommitment, GPU-шаринг (`koordinator.sh/gpu-core`, `koordinator.sh/gpu-memory-ratio`), интеграция с HAMi для изоляции. См. [Koordinator](https://koordinator.sh/).
+* **HAMi** — GPU-виртуализация (time-slicing + изоляция видеопамяти/ядер, dynamic MIG). См. [Шеринг GPU](./gpu_sharing.md).
 
 ---
 
@@ -81,6 +83,11 @@
 | Volcano | Gang scheduling, приоритетные очереди, fair sharing | Средняя | Большие распределённые задания |
 | Apache YuniKorn | Иерархические очереди, reservation, ACL | Высокая | Крупный enterprise |
 | KAI Scheduler | Топологическая оптимизация GPU, bin-packing | Средняя | Крупные GPU-кластеры |
+| Koordinator | Колокация нагрузок, GPU-шаринг, overcommitment | Средняя | Гибридные кластеры |
+
+### Выбор планировщика для GPU-кластера (критерии из практики)
+
+Нативный `kube-scheduler` с `nvidia.com/gpu` годится для небольших кластеров, но при одновременном деплое нескольких GPU-ворклоадов возникает гонка за видеокартами («кто первый съел, тот и прав»). Критерии выбора специализированного планировщика: гарантия ресурсов (квоты на команду), preemption, gang scheduling, очереди с квотами, мониторинг. Финалисты практики GPU-инференса — Kueue и Koordinator; выбран Kueue как более зрелый. См. [GPU-инференс: автоскейлинг](../Autoscaling/gpu_inference_autoscaling.md) и [Шеринг GPU](./gpu_sharing.md).
 
 ### Рекомендации по внедрению
 
