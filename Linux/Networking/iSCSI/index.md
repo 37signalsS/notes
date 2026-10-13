@@ -65,6 +65,7 @@ iqn.YYYY-MM.domain.reversed:optional_identifier
 - **[Настройка iSCSI Target (Сервер)](./iscsi_target_setup.md)** — развертывание серверной части с использованием стека **LIO** (`targetcli`): создание backstores (block, fileio), LUN, TPG, ACL. Legacy-решение `tgt` (scsi-target-utils) для старых систем.
 - **[Настройка iSCSI Initiator (Клиент)](./iscsi_initiator_setup.md)** — использование `open-iscsi` (`iscsiadm`): установка, настройка IQN, Discovery, Login, привязка к NIC через `iface`, автоматическое подключение при загрузке.
 - **[Настройка Multipath I/O](./iscsi_multipath.md)** — обеспечение высокой доступности (HA) и агрегации пропускной способности через несколько сетевых путей (MPIO): `multipathd`, ALUA, `find_multipaths`, интеграция с LVM.
+- **[iSCSI Gateway на базе Ceph для выделенных серверов](./iscsi_ceph_gateway_bare_metal.md)** — эталонная продуктовая архитектура: ceph-iscsi как пограничный узел (почему прямой доступ к RBD небезопасен в мультитенанте — клиент всегда получает полную карту размещения данных), HA-пары gateway + ALUA multipath, отдельная SAN-фабрика (Leaf-Spine, VXLAN/VRF/VNI, адресация /22//30, ECMP), автоматизация на Nomad/Consul/Packer/Terraform, клиентское подключение. **Статус:** ceph-iscsi upstream — maintenance mode с ноября 2022.
 
 ## Безопасность и аутентификация
 

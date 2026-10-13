@@ -145,12 +145,17 @@ qm clone 9000 9001 --name Alt10Template30GB --full
 # Пример для AltLinux
 wget https://ftp.altlinux.org/pub/distributions/ALTLinux/p11/images/cloud/x86_64/alt-server-11.1-p11-cloud-x86_64.qcow2
 
-# Пример для Ubuntu (Resolute Raccoon / 25.04)
+# Пример для Ubuntu (Resolute Raccoon / 26.04 LTS)
 wget https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img
 
 # Пример для Ubuntu (Noble Numbat / 24.04 LTS)
 wget https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+
+# Пример для Rocky Linux (GenericCloud, x86_64)
+wget https://download.rockylinux.org/pub/rocky/10/images/x86_64/Rocky-10-GenericCloud-Base.latest.x86_64.qcow2
 ```
+
+> Образы по умолчанию скачивают в `/var/lib/vz/template/iso` (local storage). При подключённых сетевых хранилищах образы лежат в директориях соответствующих storage — список см. через `pvesm status`. Cloud-образы Rocky Linux (GenericCloud, qcow2) публикуются для актуальных версий 9 и 10 в `download.rockylinux.org/pub/rocky/<версия>/images/x86_64/`; если для нужного дистрибутива cloud-образа нет — используйте метод создания cloud-init образа из существующей ВМ (см. ниже).
 
 Импортируйте диск в созданную ВМ:
 ```bash
@@ -217,6 +222,12 @@ virt-sysprep -d vm-9001-disk-0 --enable customize --hostname template --network
 qm set 9001 --sshkey ~/.ssh/id_rsa.pub --ipconfig0 ip=dhcp
 ```
 
+Полный набор полей Cloud-Init (GUI → CLI): пользователь (`--ciuser`), пароль (`--cipassword`), SSH-ключ (`--sshkey`), сеть (`--ipconfig0`), DNS (`--nameserver`, `--searchdomain`), обновление пакетов при первом запуске (`--ciupgrade 0|1`):
+```bash
+qm set 9001 --ciuser admin --cipassword '<password>' --sshkey ~/.ssh/id_rsa.pub \
+  --ipconfig0 ip=dhcp --nameserver 192.168.1.1 --searchdomain example.com --ciupgrade 0
+```
+
 ### 3. Использование кастомных конфигураций (Snippets)
 
 Если стандартных полей в GUI недостаточно (например, нужно выполнить скрипты `runcmd`), используйте snippets.
@@ -234,7 +245,7 @@ qm set 9001 --cicustom "user=local:snippets/user-data-ubuntu.yaml"
 После завершения настроек конвертируйте ВМ в шаблон:
 `ПКМ по ВМ → Convert to template`.
 
-### 2.6 Альтернативный метод: Прямой импорт образа в новую ВМ
+### 5. Альтернативный метод: Прямой импорт образа в новую ВМ
 
 Вместо создания Generic Template и клонирования можно создать ВМ напрямую и импортировать cloud-image:
 
@@ -267,14 +278,14 @@ qm template 9001
 > mv noble-server-cloudimg-amd64.img noble-server-cloudimg-amd64.qcow2
 > ```
 
-## Практические сценарии
-
 ### Клонирование ВМ из шаблона
 
 При развертывании новой ВМ из шаблона:
 1. Выберите `Clone` (Full Clone для независимости, Linked Clone для экономии места).
 2. Во вкладке `Cloud-init` склонированной ВМ (до запуска) можно переопределить настройки, например, задать статический IP.
 3. Запустите ВМ.
+
+> При смене пользователя cloud-init (`ciuser`) при клонировании новый пользователь **добавляется** к существующим: в `/home` остаются и прежний, и новый пользователь. Удалите ненужных пользователей вручную после первого запуска.
 
 **CLI-полный цикл (Full Clone + Cloud-Init):**
 ```bash
@@ -311,6 +322,79 @@ qm start 1002
 > **Важно**: Linked Clone требует, чтобы исходный шаблон (9001) существовал и был включен или хотя бы доступен на хранилище. Удаление шаблона разорвет зависимость, и клоны станут непригодными для запуска.
 
 > **Ограничение миграции**: Перемещение linked clone между узлами кластера возможно только при использовании shared storage (Ceph, NFS). При локальных хранилищах linked clone придется конвертировать в full clone перед миграцией.
+
+### Создание собственного cloud-init образа из существующей ВМ
+
+Когда подходящего официального cloud-image нет (нужна кастомная ОС, предустановленное ПО или ВМ, установленная с ISO), cloud-init можно включить вручную на существующей ВМ и использовать её как шаблон.
+
+**Prerequisites:** ВМ с Ubuntu/Debian (cloud-init должен быть в репозиториях дистрибутива), root-доступ внутри ВМ.
+
+**Шаг 1 — установка пакетов внутри ВМ:**
+```bash
+apt update
+apt install cloud-init qemu-guest-agent
+systemctl is-enabled qemu-guest-agent
+# → enabled
+cloud-init --version
+# → 24.4-... (зависит от версии дистрибутива)
+```
+
+**Шаг 2 — разрешение datasource NoCloud.** В ВМ, установленной с ISO, файл `/etc/cloud/cloud.cfg.d/99-installer.cfg` создаётся subiquity-инсталлятором и содержит `datasource_list: [ None ]` с захардкоженным `instance-id`, а также `preserve_hostname: true`, `resize_rootfs: false` и `growpart: mode: 'off'`. Это полностью блокирует обнаружение cloud-init drive Proxmox. Отредактируйте файл:
+```bash
+vim /etc/cloud/cloud.cfg.d/99-installer.cfg
+```
+Замените `datasource_list: [ None ]` на:
+```yaml
+datasource_list: [ NoCloud, ConfigDrive ]
+```
+> Это официальная рекомендация Proxmox ([Cloud-Init FAQ](https://pve.proxmox.com/wiki/Cloud-Init_FAQ)): для шаблонов, используемых только с Proxmox VE, достаточно `NoCloud` и `ConfigDrive` — это ускоряет обнаружение datasource при загрузке. Официальные cloud-images Ubuntu этой проблемы не имеют — `99-installer.cfg` с `datasource_list: [ None ]` создаёт только subiquity-инсталлятор с ISO.
+
+**Шаг 3 — снятие блокировки сетевой конфигурации.** Файл `/etc/cloud/cloud.cfg.d/50-curtin-networking.cfg` (в ISO-установках может называться `subiquity-disable-cloudinit-networking.cfg`) содержит `network: {config: disabled}`, что запрещает cloud-init настраивать сеть. Перенесите его за пределы каталога (не удаляйте — пригодится для отката):
+```bash
+mkdir -p /root/cloud-init-disabled
+mv /etc/cloud/cloud.cfg.d/50-curtin-networking.cfg /root/cloud-init-disabled/
+```
+
+**Шаг 4 — удаление конфигурации netplan.** Ubuntu генерирует `/etc/netplan/*.yaml` с DHCP для интерфейса (`ens18` в ВМ Proxmox). Пока файл на месте, cloud-init не применит сетевые настройки из cloud-init drive. Перенесите:
+```bash
+mv /etc/netplan/50-cloud-init.yaml /root/cloud-init-disabled/
+# или все файлы:
+mv /etc/netplan/*.yaml /root/cloud-init-disabled/
+```
+
+**Шаг 5 — очистка идентификаторов:**
+```bash
+cloud-init clean
+rm -f /etc/machine-id
+rm -f /etc/ssh/ssh_host_*
+apt clean
+# опционально — полностью чистый образ:
+rm -rf /var/log/*
+```
+
+**Шаг 6 — подключение CloudInit Drive.** Выключите ВМ (`poweroff`), затем в GUI: `Hardware → Add → CloudInit Drive`, выберите storage. CLI-эквивалент: `qm set <VMID> --ide2 <storage>:cloudinit`.
+
+**Шаг 7 — тестирование до конвертации в шаблон.** Проверьте работу cloud-init на клоне (шаблон ещё не создан): клонируйте ВМ, во вкладке `Cloud-Init` задайте пользователя, пароль и сеть (DHCP или статика), запустите. Проверка внутри ВМ:
+```bash
+cloud-init status
+# → status: done
+cloud-init status --long
+# → подробный вывод по стадиям
+```
+Смена IP через cloud-init: во вкладке Cloud-Init задайте `IP Config` вида `ip=10.10.10.92/24,gw=10.10.10.1`, перезапустите ВМ — адрес применится при следующем запуске.
+
+**Шаг 8 — финальная очистка и конвертация.** После успешного теста:
+```bash
+cloud-init clean --logs
+rm -f /etc/ssh/ssh_host_*
+poweroff
+```
+Затем `ПКМ по ВМ → Convert to template` (или `qm template <VMID>`).
+
+> **Особенности:**
+> - Cloud-init **добавляет** нового пользователя, но не удаляет прежнего: после клонирования с другим `ciuser` в `/home` остаются обе учётные записи. Удалите старого пользователя вручную, если он не нужен.
+> - Раскладка клавиатуры в консоли по умолчанию английская — измените её **до** конвертации в шаблон, иначе придётся пересобирать образ.
+> - Все настройки (пользователи, раскладка, пакеты) нужно завершить **до** конвертации в шаблон: после конвертации ВМ доступна только для чтения.
 
 ### Управление через pvesh
 
@@ -690,7 +774,7 @@ qm exec 1001 -- xfs_growfs /
 Для развёртывания Windows Domain Controller в Proxmox:
 
 ```bash
-# Создание Windows VM с足够的 ресурсами
+# Создание Windows VM с достаточными ресурсами
 qm create 300 \
   --name win-dc \
   --memory 8192 \
@@ -704,14 +788,14 @@ qm create 300 \
 
 # Установка Windows Server (через VNC или web GUI)
 # После установки:
-# 1. Установитеvirtio drivers (virtio-win.iso)
-# 2. УстановитеQEMU Guest Agent
-# 3. Запустите dcpromo дляPromotion в Domain Controller
+  # 1. Установите virtio drivers (virtio-win.iso)
+  # 2. Установите QEMU Guest Agent
+  # 3. Запустите dcpromo для promotion в Domain Controller
 ```
 
 **Важные замечания для Windows AD:**
 - Используйте `cpu: host` для поддержки AES-NI (ускорение шифрования AD).
-- Для FSMO-ролей выделитеVM с высоким приоритетом (`--shares 2048`).
+- Для FSMO-ролей выделите VM с высоким приоритетом (`--shares 2048`).
 - Настройте NTP-сервер на DC для синхронизации времени в кластере.
 - Используйте отдельный VLAN для AD-трафика (replication, authentication).
 

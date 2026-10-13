@@ -76,7 +76,7 @@ GitOps не появился в вакууме, а стал результато
 | **«Легитимный дрейф»** | HPA меняет `spec.replicas`; мутационные вебхуки добавляют поля (sidecar injection) | Исключить поле из сверки: ArgoCD `ignoreDifferences`, Flux `.spec.ignore` — иначе контроллер и другой компонент будут бесконечно конфликтовать |
 | **Императивные операции** | Автоматические миграции, job'ы, создающие объекты | Перенести создание объекта в Git либо исключить его из области управления контроллера |
 
-Процесс разбора инцидентов дрейфа и журналирование ручных изменений описаны в [GitOps: Журналы аудита](./Concepts/audit_logs.md).
+Процесс разбора инцидентов дрейфа и журналирование ручных изменений описаны в [GitOps: Журналы аудита](./Concepts/audit_logs.md). Механика трёхстороннего согласования (3-way merge), из-за которой ручные правки «прилипают» к объектам и не видны в Git, и спираль страха автоматизации разобраны в [декомпозиции GitOps](./Concepts/gitops_decomposition.md#трёхстороннее-согласование-3-way-merge).
 
 ### Преимущества и недостатки
 
@@ -484,6 +484,7 @@ GitOps обеспечивает надежный механизм восстан
 - [Kargo: promotion-пайплайны](./Concepts/kargo_promotion_pipelines.md) — формализованное продвижение артефактов
 - [Stateful-нагрузки в GitOps](./Concepts/stateful_workloads_gitops.md) — БД, операторы, защита данных от prune
 - [DORA-метрики в GitOps](./Concepts/dora_metrics_gitops.md) — измерение скорости и стабильности доставки
+- [Декомпозиция GitOps и апгрейд CIOps](./Concepts/gitops_decomposition.md) — критический разбор принципов, схемы перехода от CIOps, безопасность push-схем
 - [Feature Flags в GitOps](./Concepts/feature_flags_gitops.md) — разделение deploy и release
 - [Crossplane: интеграция с GitOps](./Crossplane/gitops_integration.md)
 

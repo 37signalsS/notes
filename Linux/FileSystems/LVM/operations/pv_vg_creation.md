@@ -289,6 +289,25 @@ sudo pvcreate /dev/sdb1 /dev/sdb2
 sudo vgcreate vg_data /dev/sdb1 /dev/sdb2
 ```
 
+**Альтернатива: fdisk (MBR)** — тип раздела `8e` (Linux LVM):
+
+```bash
+sudo fdisk /dev/sdb
+# n — новый раздел: p (primary), номер, сектора по умолчанию (или размер +2G)
+# t — изменить тип раздела → 8e (Linux LVM)
+# p — просмотр таблицы, w — запись и выход
+
+# Проверка
+sudo fdisk -l /dev/sdb
+# → Device     Boot  Start      End  Sectors Size Id Type
+# → /dev/sdb1          2048  4194303  4192256  2G 8e Linux LVM
+
+# Инициализация PV на разделах
+sudo pvcreate /dev/sdb1 /dev/sdb2
+```
+
+> **Примечание:** Тип `8e` — метка назначения раздела для удобства администрирования; `pvcreate` работает и без неё. Эквивалент для GPT: код `8E00` в fdisk, GUID `E6D6D379-F507-44C2-A23C-238F2A3DF928`, строковый алиас `lvm` в новых версиях fdisk.
+
 ### Сценарий 8: Создание PV на LUKS-контейнере
 
 LVM может работать поверх LUKS-шифрования. Сначала создаётся зашифрованный контейнер, затем — PV.

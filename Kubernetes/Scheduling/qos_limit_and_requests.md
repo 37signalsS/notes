@@ -3,7 +3,7 @@
 ## Предварительные требования
 
 ### Требования к кластеру
-* **Kubernetes:** версия 1.26+ (для стабильной работы QoS и ResourceQuota), 1.31+ для In-Place Pod Resize
+* **Kubernetes:** версия 1.26+ (для стабильной работы QoS и ResourceQuota), 1.33+ для In-Place Pod Resize (Beta)
 * **Kubelet:** настроенные флаги `--kube-reserved` и `--system-reserved` для корректного расчета `Node Allocatable`
 * **Container Runtime:** containerd 1.7+ или CRI-O 1.26+ (для поддержки cgroups v2 и In-Place Resize)
 
@@ -938,4 +938,5 @@ kubectl get events --field-selector reason=FailedCreate
 * [PriorityClass](../Concepts/priorityclass.md) — управление приоритетами планирования.
 * [Affinity и Anti-Affinity](./affinity.md) — правила размещения подов для высокой доступности.
 * [In-Place Pod Resize](../Autoscaling/in_place_pod_resize.md) — изменение ресурсов без перезапуска.
+* [Горячий старт Java-приложений](./java-startup-cpu-boost.md) — динамические CPU-лимиты на время старта (Kyverno + In-Place Resize).
 * [HPA](../Autoscaling/HPA/index.md) — горизонтальное автомасштабирование подов.

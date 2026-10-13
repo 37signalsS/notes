@@ -245,6 +245,7 @@ Kyverno динамически управляет двумя основными 
 - **Runtime Security**: Для защиты на уровне выполнения (когда процессы уже запущены) рекомендуется связка с [Falco](../../../Security/Tools/falco.md).
 
 ### См. также
+- [Горячий старт Java-приложений](../../Scheduling/java-startup-cpu-boost.md) — практический пример использования мутаций Kyverno для управления CPU-лимитами.
 - [Определения и концепции: типы правил, lifecycle, match/exclude](./policies/definitions_and_concepts.md)
 - [Типы правил и их синтаксис](./rules.md)
 - [Система отчетов Policy Reports](./reports.md)

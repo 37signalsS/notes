@@ -231,6 +231,43 @@ sudo vgcfgrestore --list vg_data
 - **[LVM — Расширенные темы (Диагностика)](./advanced_topics/advanced_topics.md#сценарий-5-диагностика-целостности-метаданных)**
 - **[LVM — Практические сценарии восстановления](./advanced_topics/practical_scenarios.md)**
 
+### Сценарий 5: Переименование VG и LV (vgrename, lvrename)
+
+Переименование выполняется на активных VG и LV — деактивация не требуется (prerequisites в документации RHEL: root-доступ, установленный lvm2, созданные PV и VG).
+
+**Переименование VG:**
+```bash
+sudo vgrename vg_data vg_storage
+
+# Проверка
+sudo vgs
+# → VG         #PV #LV #SN Attr   VSize   VFree
+# → vg_storage   1   2   0 wz--n- <20.00g <5.00g
+```
+
+**Переименование LV** — две формы записи (man lvrename):
+```bash
+# Форма 1: отдельные имена VG и LV
+sudo lvrename vg_storage lv_db lv_data
+
+# Форма 2: путь к устройству
+sudo lvrename /dev/vg_storage/lv_db /dev/vg_storage/lv_data
+
+# Проверка
+sudo lvs vg_storage
+# → LV      VG         Attr       LSize   Pool Origin Data%  Meta%
+# → lv_data vg_storage -wi-a----- 10.00g
+```
+
+**Когда применяется:**
+- Диски перемещены между хостами и VG получила дублирующее имя — все видимые системе VG должны иметь уникальные имена, иначе многие команды LVM отказываются работать; при конфликте имён в `vgrename` вместо имени можно указать UUID VG (man vgrename).
+- Приведение имён к соглашению (Сценарий 12 в [Создание PV, VG и LV](./operations/pv_vg_creation.md#сценарий-12-соглашение-об-именовании)).
+
+**После переименования:**
+- Пути к устройствам меняются (`/dev/vg_data/lv_db` → `/dev/vg_storage/lv_db`) — обновить `/etc/fstab`; надёжнее ссылаться на UUID (`blkid /dev/vg_storage/lv_data`), а не на путь `/dev/VG/LV`.
+- Проверить systemd-юниты, cron-задания и скрипты со ссылками на старое имя.
+- Метаданные VG автоматически бэкапятся в `/etc/lvm/backup/` после изменения (опция `--autobackup`, включена по умолчанию).
+
 ## Безопасность LVM
 
 ### Защита от случайного удаления

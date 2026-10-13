@@ -5,7 +5,7 @@
 ## Определения
 
 *   **In-Place Pod Resize** — нативная функция Kubernetes, обновляющая ресурсы контейнеров «на лету» через механизмы ядра Linux (`cgroups`).
-*   **GA (General Availability)** — функция признана стабильной и включена по умолчанию начиная с **Kubernetes 1.35** (до этого — Alpha в 1.27, Beta в 1.31).
+*   **GA (General Availability)** — функция признана стабильной и включена по умолчанию начиная с **Kubernetes 1.35** (до этого — Alpha в 1.27, Beta в 1.33).
 *   **resizePolicy** — параметр в спецификации контейнера, определяющий, как `kubelet` должен применять изменения (`NotRequired` или `RestartContainer`).
 *   **allocatedResources** — поле в `status.containerStatuses`, показывающее объем ресурсов, фактически выделенных узлом в текущий момент времени.
 *   **Status.Resize** — индикатор состояния транзакции изменения ресурсов (`Proposed`, `InProgress`, `Infeasible`, `Deferred`).
@@ -19,8 +19,8 @@
 
 | Компонент | Минимальная версия | Примечание |
 | :--- | :--- | :--- |
-| Kubernetes | 1.31+ (Beta), 1.35+ (GA) | Для GA — 1.35+, включение флага не требуется |
-| Kubelet | Соответствует версии кластера | Должен иметь включенный feature gate `InPlacePodVerticalScaling` (до 1.35) |
+| Kubernetes | 1.33+ (Beta), 1.35+ (GA) | Для GA — 1.35+, включение флага не требуется |
+| Kubelet | Соответствует версии кластера | Должен иметь включенный feature gate `InPlacePodVerticalScaling` (до 1.33) |
 | Container Runtime | containerd 1.7+, CRI-O 1.27+ | Должен поддерживать `UpdateContainerResources` CRI API |
 | Ядро Linux | 5.15+ с cgroup v2 | Обязательно для memory resize без нестабильности |
 
@@ -577,5 +577,6 @@ kubectl describe resourcequota -n <namespace>
 ### См. также
 * **[Vertical Pod Autoscaler (VPA)](./vpa_detailed.md)** — основной инструмент, генерирующий запросы на In-Place Resize.
 * **[QoS классы и лимиты](../Scheduling/qos_limit_and_requests.md)** — глубокое погружение в классы обслуживания и cgroups.
+* **[Горячий старт Java-приложений](../Scheduling/java-startup-cpu-boost.md)** — паттерн временного повышения CPU-лимитов на время старта через Kyverno + In-Place Resize.
 * **[Horizontal Pod Autoscaler (HPA)](./HPA/index.md)** — как совмещать вертикальное и горизонтальное масштабирование.
 * **[OOMKilled: диагностика](../Troubleshooting/Common_Errors/oomkilled_pods.md)** — решение проблем с утечками памяти.

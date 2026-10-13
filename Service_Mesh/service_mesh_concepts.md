@@ -354,6 +354,7 @@ Service Mesh используется для настройки сложной �
 ### См. также
 
 - [Управление трафиком (Gateway API)](./traffic_management.md)
+- [Свой Service Mesh на Envoy (опыт Яндекса)](./envoy-custom-service-mesh.md) — кастомный Control Plane, bud-демон, panic mode, alt_stat_name
 - [Сравнение Istio и Linkerd](./istio_vs_linkerd.md)
 - [Gateway API: Глубокое погружение](../Kubernetes/Networking/gateway_api/definitions.md)
 - [Ограничение скорости (Rate Limiting) в Istio](./istio_rate_limiting.md)

@@ -279,6 +279,7 @@ kubectl logs <pod-name> --previous | grep -i startup
 ## См. также
 
 * **[Жизненный цикл пода](./Pod/pod_lifecycle_and_state.md)**
+* **[Горячий старт Java-приложений](../Scheduling/java-startup-cpu-boost.md)** — ускорение старта через `startupProbe` + динамические CPU-лимиты.
 * **[Траблшутинг Kubernetes](../Troubleshooting/troubleshooting_overview.md)**
 * **[Native Sidecar контейнеры](./Pod/pod_sidecar_patterns.md)**
 * **[Проверки здоровья в CI/CD](../../CI-CD/Deployment_Strategies/deployment_health_checks_and_rollback.md)**

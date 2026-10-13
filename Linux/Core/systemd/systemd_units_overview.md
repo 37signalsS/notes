@@ -542,6 +542,8 @@ sudo systemctl isolate maintenance.target
 sudo systemctl default
 ```
 
+Разница между `isolate` (volatile, сбрасывается после перезагрузки) и `set-default` (персистентный таргет по умолчанию) — в [Управление службами через systemctl](./service_management.md).
+
 ### Очистка и обслуживание
 
 ```bash

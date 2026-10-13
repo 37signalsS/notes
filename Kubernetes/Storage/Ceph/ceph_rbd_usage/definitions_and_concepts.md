@@ -270,6 +270,7 @@ lsblk
 - [Обзор архитектуры Ceph](../ceph_overview.md) — фундаментальные принципы работы RADOS и CRUSH.
 - [Persistent Volumes в Kubernetes](../../pv_and_pvc_scenarios.md#динамическое-выделение-ceph-rbd) — интеграция RBD с оркестратором.
 - [Сравнение CSI-драйверов](../../CSI/csi_drivers_comparison.md) — выбор между RBD и CephFS.
+- [iSCSI Gateway на базе Ceph для выделенных серверов](../../../../Linux/Networking/iSCSI/iscsi_ceph_gateway_bare_metal.md) — почему прямой доступ к RBD небезопасен в мультитенантном продукте (клиент получает полную карту размещения данных вне зависимости от caps cephx) и как это решается через iSCSI-gateway.
 - [Администрирование Ceph](../Administration/index.md) — управление кластером, пулы, OSD.
 
 ### Ресурсы
