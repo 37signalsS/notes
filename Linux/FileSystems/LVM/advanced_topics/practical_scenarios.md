@@ -339,10 +339,6 @@ sudo lvs -a -o name,copy_percent,devices
 # -> raid_lv  100.00  [raid_lv_rimage_0](0), [raid_lv_rimage_1](unknown)
 #                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #                                    Unknown device - сбойный диск
-
-cat /proc/mdstat
-# -> md0 : active raid1 sdb1[0] sda1[1]
-# ->       1048576 blocks [2/1] [_U]   <- один диск потерян
 ```
 
 **Шаг 2: Вставка нового диска (если доступен)**
@@ -372,10 +368,6 @@ sudo vgchange -ay --partial vg_data
 ```bash
 sudo lvs -o name,attr,copy_percent vg_data
 # -> raid_lv  rwi-a-r--  45.23   <- rebuild в процессе
-
-cat /proc/mdstat
-# -> md0 : active raid1 sdd1[0] sdb1[1]
-# ->       1048576 blocks [2/2] [UU]   <- оба диска работоспособны
 ```
 
 **Важно:** Во время rebuild производительность снижается. Не откладывайте rebuild - чем дольше массив в degraded mode, тем выше риск второго отказа.

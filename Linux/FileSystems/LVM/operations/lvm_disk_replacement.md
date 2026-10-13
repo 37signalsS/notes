@@ -210,10 +210,6 @@ sudo lvconvert --replace /dev/old_pv /dev/new_pv my_vg/raid_lv
 sudo lvs -o lv_name,copy_percent,devices my_vg
 # → LV       Copy% Devices
 # → raid_lv  45.23 /dev/sdd(0-1023),/dev/sdb(0-1023)
-
-cat /proc/mdstat | grep md
-# → md127 : active raid1 sdd[0] sdb[1]
-#     [====>................]  recovery = 22.45% ...
 ```
 *Это инициирует штатное перестроение (rebuild) массива на новом диске.*
 

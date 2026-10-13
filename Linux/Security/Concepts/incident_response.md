@@ -410,8 +410,8 @@ Incident lead: <имя/контакт>
 | :--- | :--- | :--- |
 | **LinPEAS** | Автоматизированный аудит безопасности | `curl -L https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh | sh` |
 | **linux-exploit-suggester** | Поиск уязвимостей для эскалации привилегий | `curl -L https://github.com/The-Z-Labs/linux-exploit-suggester/raw/master/linux-exploit-suggester.sh` |
-| **chkrootkit** | Обнаружение руткитов | `sudo apt install chkrootkit` |
-| **rkhunter** | Обнаружение руткитов и бэкдоров | `sudo apt install rkhunter` |
+| **[chkrootkit](../../../Security/Tools/chkrootkit.md)** | Обнаружение руткитов | `sudo apt install chkrootkit` |
+| **[rkhunter](../../../Security/Tools/rkhunter.md)** | Обнаружение руткитов и бэкдоров | `sudo apt install rkhunter` |
 | **lynis** | Аудит безопасности системы | `sudo apt install lynis` |
 | **ausyscall** | Маппинг системных вызовов аудита | `sudo apt install auditd` |
 
@@ -432,11 +432,11 @@ Incident lead: <имя/контакт>
 6. **Мониторинг**: настройте алерты на критические события безопасности
 
 ### Связанные темы
-- **[auditd](../../Linux/SystemAdministration/Logging/auditd.md)** — аудит системных вызовов для обнаружения инцидентов
+- **[auditd](../../../Linux/SystemAdministration/Logging/auditd.md)** — аудит системных вызовов для обнаружения инцидентов
 - **[AIDE/Tripwire](./file-integrity-checking.md)** — проверка целостности файлов
 - **[SELinux/AppArmor](../Mechanisms/SELinux.md)**, **[AppArmor](../Mechanisms/AppArmor.md)** — принудительный контроль доступа
-- **[Сетевой мониторинг](../../Networking/Concepts/firewall_concepts.md)** — обнаружение аномалий в трафике
-- **[Централизованное логирование](../../Linux/SystemAdministration/Logging/rsyslog.md)** — сбор логов для анализа
-- **[Wazuh](../../Security/Tools/wazuh.md)** — SIEM для корреляции событий
-- **[Lynis](../../Security/Tools/lynis.md)** — аудит безопасности после инцидента
-- **[Управление секретами](../../Vault/overview.md)** — ротация скомпрометированных секретов
+- **[Сетевой мониторинг](../../../Networking/Concepts/firewall_concepts.md)** — обнаружение аномалий в трафике
+- **[Централизованное логирование](../../../Linux/SystemAdministration/Logging/rsyslog.md)** — сбор логов для анализа
+- **[Wazuh](../../../Security/Tools/wazuh.md)** — SIEM для корреляции событий
+- **[Lynis](../../../Security/Tools/lynis.md)** — аудит безопасности после инцидента
+- **[Управление секретами](../../../Vault/overview.md)** — ротация скомпрометированных секретов

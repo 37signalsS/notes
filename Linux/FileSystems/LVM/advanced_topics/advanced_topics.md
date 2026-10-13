@@ -227,34 +227,78 @@ sudo vgscan -vvv    # verbose mode — покажет все устройств�
 
 ### LVM RAID и отказоустойчивость
 
-В отличие от классического MDADM, LVM RAID позволяет создавать избыточные тома внутри VG, используя свободное пространство PV. Драйвер MD ядра используется как бэкенд, но управление осуществляется исключительно через LVM.
+В отличие от классического MDADM, LVM RAID позволяет создавать избыточные тома внутри VG, используя свободное пространство PV. LVM RAID реализован через target `dm-raid` (device-mapper), который взаимодействует с RAID-личностями MD (multiple devices) ядра — задействованы обе подсистемы ядра: device-mapper и MD. Управление осуществляется исключительно через LVM (`lvcreate`/`lvconvert`/`lvchange`), `mdadm` не требуется. mdadm и LVM RAID можно комбинировать: mdadm-массив может использоваться как PV для VG, а LVM-тома — объединяться в mdadm-массив.
 
 #### Уровни RAID
 
 | Уровень | Мин. PV | Отказоустойчивость | Write Performance | Read Performance | Use Case |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **raid0** | 2 | Нет | 2x (stripe) | 2x (stripe) | Временные данные, кэш |
-| **raid1** | 1 (зеркало) | 1 диск | 1x | 2x (чтение с обоих) | Критичные данные, boot |
+| **raid1** | 2 | 1 диск | 1x | 2x (чтение с обоих) | Критичные данные, boot |
 | **raid4** | 3 | 1 диск | N-1 (parity) | N (чтение) | Редко используется |
 | **raid5** | 3 | 1 диск | N-1 (distributed parity) | N (чтение) | Общие данные, файловые сервера |
-| **raid6** | 4 | 2 диска | N-2 (двойная parity) | N (чтение) | Крупные массивы, архивы |
+| **raid6** | 5 | 2 диска | N-2 (двойная parity) | N (чтение) | Крупные массивы, архивы |
 | **raid10** | 4 | N/2 дисков | N/2 (mirror) | N (чтение) | Базы данных, высокая нагрузка |
 
 *Где N — количество дисков в массиве.*
 
-#### Write Journal (Фурнал)
+#### Параметры создания RAID-томов
 
-LVM RAID1, RAID4, RAID5, RAID6 используют write journal для保证 целостности данных при отказе питания во время записи.
+Все RAID-уровни создаются командой `lvcreate` с указанием типа через `--type`:
 
 ```bash
-# Включение write journal (рекомендуется для RAID5/6)
-sudo lvchange --write-journal /dev/vg_data/lv_raid
-
-# Проверка состояния журнала
-sudo lvs -o name,writebehind,writecache,stripesize
+sudo lvcreate --type raidN -n <имя_тома> -L <размер> \
+    [-i <stripes>] [-m <mirrors>] [-I <stripe_size>] <VG> [PV ...]
 ```
 
-*Примечание:* Write journal снижает производительность записи на 10–30%, но гарантирует отсутствие «half-written» данных после аварийного отключения.
+Если список PV не указан, LVM автоматически подбирает нужное количество устройств из доступных PV указанной VG. Тип тома удобно проверять командой `lvs -o name,segtype` (segtype — это и есть уровень RAID).
+
+**Параметры:**
+
+| Параметр | Значение | Уровни |
+| :--- | :--- | :--- |
+| `-i`, `--stripes <Number>` | Количество stripe-устройств (устройств данных) | raid0/4/5/6/10 |
+| `-m`, `--mirrors <Number>` | Число дополнительных копий; всего копий = `-m` + 1 | raid1, raid10 |
+| `-I`, `--stripesize <Size>` | Размер stripe в КБ — объём данных, записываемых на одно устройство перед переходом к следующему | raid0/4/5/6/10 |
+
+Параметры строго привязаны к уровню: raid1 не принимает `-i` и `-I`; raid4/5/6 не принимают `-m`; raid10 принимает `-m` только со значением 1 (только двухкопийное зеркало, `RAID10 currently supports only 2-way mirroring`).
+
+**Значения по умолчанию:**
+- `--stripes`: 2 для raid0/4/5/10, 3 для raid6 (минимально допустимое значение)
+- `--mirrors`: 1 для raid1/raid10 (итого 2 копии данных)
+- `--stripesize`: 64 КБ; допустимый диапазон 4 КБ–512 КБ, обязательно степень двойки
+
+**Число устройств** (параметр `-i` задаёт устройства данных, parity-устройства добавляются сверху):
+- raid0: всего = `-i` (минимум 2)
+- raid1: всего = `-m` + 1 (минимум 2)
+- raid4/5: всего = `-i` + 1 (диск чётности); `-i` ≥ 2
+- raid6: всего = `-i` + 2 (два диска чётности); `-i` ≥ 3
+- raid10: всего = `-i` × (`-m` + 1); `-i` ≥ 2, `-m` = 1
+
+**Максимальное число устройств** (`DEFAULT_RAID_MAX_IMAGES = 64` в исходниках lvm2):
+- raid0: до 64 stripes
+- raid4/5: до 63 stripes (64 − 1 parity)
+- raid6: до 62 stripes (64 − 2 parity)
+- raid10: до 32 stripes (64 / 2, две копии данных)
+- raid1: до 64 образов (`DEFAULT_RAID1_MAX_IMAGES`)
+
+**Примеры:**
+
+```bash
+# RAID0 из 2 устройств (stripe)
+sudo lvcreate --type raid0 -n lvr0 -L 10G -i 2 vg_data
+
+# RAID1, 2 копии данных (-m 1 → original + 1 mirror)
+sudo lvcreate --type raid1 -n lvr1 -L 2G -m 1 vg_data
+
+# RAID5: 3 устройства данных + 1 чётность = 4 устройства, stripe 64 КБ (по умолчанию)
+sudo lvcreate --type raid5 -n lvr5 -L 3G -i 3 vg_data
+
+# RAID10: 2 stripe-группы × 2 копии = 4 устройства
+sudo lvcreate --type raid10 -n lvr10 -L 4G -i 2 -m 1 vg_data
+```
+
+**Примечание по RAID10.** Число устройств: `всего = stripes × (mirrors + 1)`. Например, `-i 2 -m 1` даёт 2 × 2 = 4 устройства (две stripe-группы, каждая зеркалирована). Внутренне lvm2 удваивает значение stripes и затем делит на число копий (`stripes *= 2` в `_read_raid_params`, `stripes /= mirrors` в `_check_raid_parameters`), поэтому итоговое число stripe-групп совпадает с `-i`. Проза в `lvmraid(7)` («total number of devices = stripes», «devices per mirror = stripes/(mirrors+1)») противоречит приведённому там же примеру (`--stripes 2 --mirrors 1` → 4 rimage) и исходному коду — это ошибка документации. RAID10 — не «зеркало поверх stripe» (это RAID01, менее устойчивый к отказам), а stripe поверх зеркал: данные доступны, пока в каждой зеркальной паре живёт хотя бы одно устройство.
 
 #### Мониторинг RAID
 
@@ -267,10 +311,13 @@ sudo lvs -o name,copy_percent,devices my_vg
 sudo lvs -a -o name,attr,copy_percent my_vg
 # → [lv_raid_rimage_0]  Unknown device    — сбойный диск
 
-# Просмотр mdadm-статуса (внутренний)
-cat /proc/mdstat
-# → md0 : active raid1 sdb1[1] sda1[0]
-# →       1048576 blocks [2/2] [UU]
+# Статус scrubbing (проверка целостности) и прогресс
+sudo lvs -a -o name,raid_sync_action,sync_percent
+# → lvr5  idle  100.00
+
+# Число несогласованных блоков после scrub check
+sudo lvs -o name,raid_mismatch_count
+# → lvr5  0
 
 # Мониторинг через dmeventd
 sudo lvchange -my y /dev/vg_data/lv_raid
@@ -753,10 +800,10 @@ sudo lvs -o name,attr,copy_percent,stripes my_vg
 # → lv_mirrored  rwi---r--  100.00  4
 ```
 
-**Пример 2: RAID 5 с write journal**
+**Пример 2: RAID 5 (distributed parity)**
 ```bash
 # Требует минимум 3 PV. Выдерживает отказ одного диска.
-sudo lvcreate --type raid5 -L 200G --write-journal -n lv_protected my_vg
+sudo lvcreate --type raid5 -L 200G -n lv_protected my_vg
 
 # Проверка
 sudo lvs -o name,attr,copy_percent my_vg
@@ -773,9 +820,6 @@ sudo lvcreate --type raid6 -L 300G -n lv_critical my_vg
 ```bash
 # Проверка синхронизации
 sudo lvs -o name,copy_percent,devices my_vg
-
-# Проверка через mdadm (внутренний статус)
-cat /proc/mdstat
 
 # Проверка деградации
 sudo lvs -a -o name,attr my_vg
@@ -898,7 +942,7 @@ sudo lvcreate -L 100G -T vg_data/thin_pool --poolmetadata vg_data/thin_pool_meta
 
 # 2. Создание тонкого LV
 sudo lvcreate -V 500G -T vg_data/thin_pool -n thin_lv
-# LV看起来 500 GiB, но физически потребляет только записанные блоки
+# LV выглядит как 500 GiB, но физически потребляет только записанные блоки
 
 # 3. Проверка использования
 sudo lvs -o name,thin_data_percent,thin_metadata_percent vg_data
@@ -923,7 +967,7 @@ sudo systemctl enable --now dmeventd
 
 ### Сценарий 10: Взаимодействие LVM с NVMe-oF (Remote NVMe)
 
-Для серверов, подключённых к NVMe-oF хранилищам (ёггер, тетер).
+Для серверов, подключённых к NVMe-oF хранилищам.
 
 **Подключение NVMe-oF устройства:**
 ```bash
@@ -1119,7 +1163,7 @@ sudo lvconvert --type thin-pool --poolmetadata vg_data/thin_pool_meta vg_data/th
 
 ### RAID
 
-6. **Write Journal:** Включайте для RAID5/6 — снижает риск half-written данных при аварийном отключении.
+6. **Scrubbing:** Регулярно запускайте `lvchange --syncaction check` для RAID5/6 — полное сканирование, выявляющее несогласованные области, пропущенные частичной синхронизацией (режим `repair` — с исправлением).
 7. **Восстановление:** Не откладывайте rebuild — чем дольше массив degraded, тем выше риск второго отказа.
 8. **Размер rebuild:** На больших массивах rebuild занимает часы. Планируйте в нерабочее время.
 9. **Мониторинг:** Настройте оповещения о degraded state через `dmeventd` или mdadm.
@@ -1141,7 +1185,7 @@ sudo lvconvert --type thin-pool --poolmetadata vg_data/thin_pool_meta vg_data/th
 ## Ограничения и особые случаи
 
 - **LVM RAID не заменяет hardware RAID:** Для критичных данных используйте hardware RAID + LVM поверх.
-- **Cache池 не является заменой SSD для swap:** Для swap лучше использовать отдельный LV на SSD без кэширования.
+- **Cache-пул не является заменой SSD для swap:** Для swap лучше использовать отдельный LV на SSD без кэширования.
 - **Thin Pool metadata важна:** Потеря metadata = потеря всех данных в Thin Pool. Всегда дублируйте metadata LV.
 - **Initramfs с LUKS:** При использовании шифрования (LUKS+LVM) необходимы дополнительные модули в initramfs.
 - **NVMe-oF и Multipath:** Используйте `global_filter` для исключения дублирующих путей.

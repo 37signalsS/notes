@@ -118,8 +118,8 @@ auth       include   system-login
 
 | Модуль | Ключевые аргументы | Описание |
 | :--- | :--- | :--- |
-| `pam_unix.so` | `nullok`, `obscure`, `remember=N`, `use_authtok`, `use_first_pass`, `try_first_pass`, `yescrypt`, `sha512`, `sha256`, `rounds=N` | `nullok` — разрешить пустой пароль; `obscure` — проверять простоту; `remember=N` — хранить N последних паролей; `yescrypt`/`sha512`/... — алгоритм; `rounds=N` — количество раундов для SHA-* |
-| `pam_faillock.so` | `preauth`, `authfail`, `silent`, `deny=N`, `unlock_time=S`, `even_deny_root` | `preauth` — перед `pam_unix`; `authfail` — после провала; `even_deny_root` — блокировать root |
+| `pam_unix.so` | `nullok`, `obscure`, `remember=N`, `use_authtok`, `use_first_pass`, `try_first_pass`, `yescrypt`, `sha512`, `sha256`, `rounds=N` | `nullok` — разрешить пустой пароль; `obscure` — проверять простоту; `remember=N` — хранить N последних паролей (хэши MD5; предпочтительнее `pam_pwhistory` — см. [Хранение истории паролей](../SystemAdministration/Users/password_history.md)); `yescrypt`/`sha512`/... — алгоритм; `rounds=N` — количество раундов для SHA-* |
+| `pam_faillock.so` | `preauth`, `authfail`, `authsucc`, `silent`, `deny=N`, `fail_interval=S`, `unlock_time=S`, `even_deny_root`, `root_unlock_time=S`, `nodelay`, `audit`, `dir=`, `conf=` | `preauth` — перед `pam_unix`; `authfail` — после провала; `authsucc` — после успеха (сброс счётчика); `even_deny_root` — блокировать root; `root_unlock_time` — таймаут разблокировки root (подразумевает `even_deny_root`); `nodelay` — отключить задержку после неудач; аргументы в строке модуля переопределяют значения из `/etc/security/faillock.conf` |
 | `pam_pwquality.so` | `retry=N`, `minlen=N`, `minclass=N`, `difok=N`, `ucredit=`, `lcredit=`, `dcredit=`, `ocredit=`, `enforce_for_root`, `reject_username`, `gecoscheck` | Жёсткая проверка сложности пароля |
 | `pam_limits.so` | `conf=/path/to/file`, `quiet` | `quiet` — не писать в syslog каждый вызов |
 | `pam_access.so` | `fieldsep=`, `listsep=` | Разделители полей/списков в `access.conf` |
@@ -147,7 +147,7 @@ auth       include   system-login
 | `pam_shells.so` | Проверка, что пользовательский shell входит в `/etc/shells` |
 | `pam_issue.so` | Вывод `/etc/issue` и `/etc/issue.net` перед запросом пароля |
 | `pam_xauth.so` | Передача `XAUTHORITY` между пользователями (`sudo`/`su`) |
-| `pam_tally2.so` | **Устарел (deprecated)**; счётчик неудач. Заменяется `pam_faillock.so` |
+| `pam_tally2.so` | **Устарел (deprecated)**; счётчик неудач в `/var/log/tallylog`. Заменяется `pam_faillock.so` (см. раздел 6) |
 
 **Логика обработки (Stacking):**
 PAM обрабатывает модули в стеке сверху вниз. Итоговое решение формируется на основе кодов возврата всех модулей в группе (тип):
@@ -323,6 +323,14 @@ prlimit -o -p $$   # → nofile: 65536,1048576
 
 ### 6. Защита от перебора паролей (`pam_faillock.so`)
 
+Защита от перебора паролей — ограничение количества неудачных попыток аутентификации: после заданного числа подряд идущих неудачных попыток учётная запись блокируется на определённое время. Реализуется на нескольких уровнях:
+
+*   **Уровень PAM (низкоуровневый):** модули `pam_faillock.so` (современный) или `pam_tally2.so` (устаревший) считают неудачи в подсистеме аутентификации — действует на все сервисы, использующие PAM (`login`, `sshd`, `su`, `sudo`, графический вход).
+*   **Уровень сетевой службы:** собственные настройки службы, если она поддерживает ограничение попыток.
+*   **Внешние решения:** например, [fail2ban](./Tools/fail2ban.md) — следит за журналом неудачных SSH-аутентификаций, высчитывает количество попыток и блокирует трафик с IP-адреса атакующего средствами пакетного фильтра.
+
+Ниже — низкоуровневый вариант: настройка на уровне PAM.
+
 **Задача:** заблокировать пользователя на 15 минут после 3 неудачных попыток входа.
 
 **Шаг 1:** настроить параметры в `/etc/security/faillock.conf`:
@@ -332,6 +340,8 @@ deny = 3
 unlock_time = 900
 silent
 ```
+
+Полный набор опций `faillock.conf` со значениями по умолчанию: `deny = 3` (порог блокировки), `fail_interval = 900` (окно в секундах, в течение которого считаются подряд идущие неудачи), `unlock_time = 600` (время блокировки; `0` — без автоматической разблокировки, только `faillock --reset`), `dir = /var/run/faillock` (каталог счётчиков; очищается при перезагрузке — для сохранения счётчиков между перезагрузками задайте постоянный путь, например `/var/log/faillock`), `silent`, `audit`, `nodelay`. По умолчанию модуль выдерживает задержку после каждой неудачной попытки перед повторным запросом пароля — это замедляет автоматизированный перебор; опция `nodelay` её отключает.
 
 **Шаг 2:** подключить модуль в стек `auth`. Порядок важен: `pam_faillock.so preauth` **в начале**, `pam_unix.so` после него, `pam_faillock.so authfail` **в конце**.
 
@@ -363,6 +373,13 @@ session     optional      pam_keyinit.so force revoke
 
 **Порядок действий:** `preauth` считывает счётчик; если `pam_unix` возвращает `PAM_SUCCESS` — стек проходит (`sufficient`) и `authfail` пропускается; иначе выполнение доходит до `[default=die] pam_faillock.so authfail`, который фиксирует неудачу и, при превышении `deny`, возвращает `PAM_MAXTRIES` — из‑за `die` это немедленный отказ. Флаг `silent` подавляет пользовательские сообщения о блокировке.
 
+**Альтернатива — аргументы прямо в строке модуля** (переопределяют значения из `faillock.conf`). Пример — блокировка на 2 часа после 4 неудачных попыток:
+
+```text
+auth        required      pam_faillock.so preauth silent deny=4 unlock_time=7200
+auth        [default=die] pam_faillock.so authfail deny=4 unlock_time=7200
+```
+
 **Эквивалент через `authselect` (RHEL 8+):** профиль `sssd` с включённым faillock:
 
 ```bash
@@ -390,6 +407,10 @@ faillock --user root
 *   Просмотр попыток: `faillock --user <имя>` (или `faillock --all`)
 *   Сброс блокировки: `faillock --user <имя> --reset`
 *   Сброс всех: `faillock --reset --all`
+
+**Почему root исключён по умолчанию.** Ограничивающие настройки аутентификации по умолчанию не действуют на суперпользователя — и это осознанный выбор, а не упущение. Имя `root` известно любому атакующему, поэтому блокировка учётной записи после N неудачных попыток превращается в тривиальную атаку отказа в обслуживании: достаточно извне подбирать пароль к `root`, чтобы заблокировать учётную запись. Для root применяют дополнительные средства защиты: опции `even_deny_root` и `root_unlock_time` (блокировать root, но с отдельным таймаутом разблокировки), SELinux, запрет входа под root по сетевым службам (`PermitRootLogin no` в `sshd_config` — см. [SSH hardening](./ssh/server/ssh_hardening_best_practices.md)).
+
+**Устаревший вариант — `pam_tally2.so`.** До `pam_faillock` учёт неудачных попыток вёл `pam_tally2`: счётчик хранится в `/var/log/tallylog`, управление — утилитой `pam_tally2 --user <имя>` (просмотр) и `pam_tally2 --user <имя> --reset` (сброс). Форматы счётчиков `pam_tally2` (`/var/log/tallylog`) и `pam_faillock` (`/var/run/faillock` или `dir=` из `faillock.conf`) несовместимы, поэтому в конфигурации должен использоваться только один из модулей. В RHEL 8+, CentOS 8+ и Fedora `pam_tally2` заменён на `pam_faillock`; базовые опции (`deny=`, `unlock_time=`, `even_deny_root`, `root_unlock_time=`, `audit`) задаются аналогично.
 
 **Восстановление после блокировки (lockout recovery):** если доступ потерян, придите в одиночный режим (init=/bin/bash), смонтируйте `/` для записи (`mount -o remount,rw /`) и выполните `faillock --user <имя> --reset`. Безопаснее — держать резервный root-доступ по ключу (без `pam_faillock` на пути `auth`). См. [Восстановление пароля и доступа](../SystemAdministration/linux_password_recovery.md).
 
@@ -588,7 +609,7 @@ auth    [success=1 default=ignore] pam_unix.so debug
 account required pam_faillock.so audit
 ```
 
-`pam_faillock.so audit` — логировать каждую попытку (включая успешные) в `auth.log`. Чтобы включить отладку на уровне системы, можно задать переменную `PAM_DEBUG` или собрать `pamtester` с флагом `-v`.
+`pam_faillock.so audit` — логировать имя пользователя в системный журнал, если пользователь не найден. Чтобы включить отладку на уровне системы, можно задать переменную `PAM_DEBUG` или собрать `pamtester` с флагом `-v`.
 
 > **Важно:** `debug`/`audit` в продакшене избыточно шумят и растут логи. Включайте таймбоксированно, а после диагностики убирайте аргумент.
 
@@ -660,6 +681,9 @@ grep -H "pam_" /etc/pam.d/sshd
 
 **Безопасность модулей ядра:**
 - [Безопасность модулей ядра](./Mechanisms/kernel_module_security.md) — подпись и контроль загрузки модулей
+
+**Защита от перебора паролей:**
+- [fail2ban](./Tools/fail2ban.md) — внешняя блокировка IP-адресов по журналам неудачных аутентификаций
 
 **Мониторинг и аудит:**
 - [Аудит системы (auditd)](../SystemAdministration/Logging/auditd.md)
