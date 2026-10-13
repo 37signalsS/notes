@@ -51,6 +51,13 @@
 3. **Kind** (сначала Namespace, затем прочие ресурсы Kubernetes, затем Custom Resources)
 4. **Имя** ресурса
 
+> [!IMPORTANT]
+> **Приоритет: Фаза главнее Волны (Phase outranks Wave):**
+> Фазы выполняются строго последовательно. Любой хук фазы `PreSync` (даже с волной `10` или `100`) **всегда выполнится раньше**, чем любой манифест фазы `Sync` (даже с отрицательной волной `-10`). Внутри каждой фазы ресурсы сортируются по номеру волны.
+
+**Поведение ресурсов без встроенного Health Check:**
+Объекты, не имеющие поля `status` или встроенной логики оценки здоровья (`ConfigMap`, `Secret`, `ServiceAccount`, `NetworkPolicy`), признаются контроллером `Healthy` мгновенно в момент успешного применения API-сервером. Контроллер не ожидает и сразу переходит к следующей волне (с учетом `ARGOCD_SYNC_WAVE_DELAY`).
+
 Алгоритм применения волн:
 
 1. Контроллер определяет **первую применяемую волну** — это первый номер волны, в которой есть хотя бы один out-of-sync или нездоровый ресурс.
@@ -530,6 +537,85 @@ ingress-nginx:
 ```
 
 Симптом зависания: операция в фазе `Running` с сообщением `waiting for completion of hook batch/Job/ingress-nginx-admission-create`.
+
+### Сценарий 10: Установка оператора и Custom Resources в одном приложении (проблема «Курицы и яйца»)
+
+**Контекст:** типовая задача при установке Prometheus Operator, Cert-Manager или CloudNativePG в Kubernetes. Манифест CustomResourceDefinition (CRD) и манифест использующего его кастомного ресурса (например, `Certificate` или `PrometheusRule`) находятся в одном репозитории или Helm-чарте.
+
+**Проблема:**
+1. **Сбой Dry-Run:** перед началом применения Argo CD выполняет пре-валидацию схемы в режиме dry-run. Если CRD еще не установлена в кластере, `kube-apiserver` возвращает ошибку `no matches for kind "Certificate" in version "cert-manager.io/v1"`, и синхронизация аварийно прерывается еще до применения манифестов.
+2. **Порядок применения:** если CRD и CR находятся в одной волне, API-сервер отклонит создание CR до завершения регистрации CRD.
+
+**Решение:**
+1. Разделение по волнам через аннотацию `argocd.argoproj.io/sync-wave`:
+   - CRD и Namespace: волна `"-1"` (или `"-2"`).
+   - Deployment/StatefulSet оператора: волна `"0"`.
+   - Экземпляры Custom Resources (`Certificate`, `Issuer`): волна `"1"`.
+2. Обязательная sync option `SkipDryRunOnMissingResource=true` в манифесте `Application`. Она инструктирует контроллер пропустить dry-run валидацию для тех типов, чьи схемы CRD еще отсутствуют в API-сервере на момент старта синка.
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager-bundle
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://gitlab.internal.company/gitops/platform.git
+    targetRevision: main
+    path: infrastructure/cert-manager
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    # КРИТИЧЕСКИ ВАЖНО: пропустить валидацию отсутствующих CRD на этапе Dry Run
+    - SkipDryRunOnMissingResource=true
+    # Рекомендуется для операторов с крупными CRD
+    - ServerSideApply=true
+```
+
+**Пример разметки манифестов по волнам:**
+```yaml
+# infrastructure/cert-manager/crd-certificates.yaml
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: certificates.cert-manager.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+# ...
+
+---
+# infrastructure/cert-manager/operator-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cert-manager-controller
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+# ...
+
+---
+# infrastructure/cert-manager/production-issuer.yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: internal-ca-issuer
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  ca:
+    secretName: internal-root-ca-secret
+```
+
+> [!NOTE]
+> В редких случаях после создания CRD в волне `"-1"` discovery-клиент контроллера приложений `argocd-application-controller` может кратковременно не видеть новый API-ресурс из-за кэширования схем. `ARGOCD_SYNC_WAVE_DELAY` (по умолчанию 2с) или кастомный Health Check на CRD гарантируют, что схема успеет зарегистрироваться в K8s API до старта волны `"1"`.
 
 ## Технический справочник
 

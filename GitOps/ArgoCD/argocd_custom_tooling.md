@@ -609,6 +609,106 @@ volumes:
 
 ---
 
+### Сценарий 8: KSOPS (Mozilla SOPS + age) — прозрачная расшифровка секретов через CMP v2
+
+В организациях без централизованного кластера HashiCorp Vault основным методом защиты конфиденциальных данных является шифрование в Git через **Mozilla SOPS** с асимметричными ключами **age** (см. детальное руководство по криптографии в [Управление секретами и шифрование в GitOps](../secrets_encryption.md)). 
+
+Для прозрачной расшифровки файлов секретов непосредственно в процессе рендеринга Kustomize используется плагин **KSOPS** (Kustomize SOPS Plugin), разворачиваемый как CMP v2 sidecar.
+
+#### 1. Создание секрета с приватным ключом age в кластере:
+```bash
+# Приватный ключ age создается утилитой age-keygen и регистрируется в namespace argocd
+kubectl create secret generic sops-age-key -n argocd \
+  --from-file=key.txt=/etc/security/age/keys.txt
+# → result: secret/sops-age-key created
+```
+
+#### 2. Описание спецификации плагина в ConfigMap (`ksops-cmp-cm.yaml`):
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ksops-plugin-cm
+  namespace: argocd
+data:
+  plugin.yaml: |
+    apiVersion: argoproj.io/v1alpha1
+    kind: ConfigManagementPlugin
+    metadata:
+      name: ksops-plugin
+    spec:
+      version: v1.0
+      discover:
+        find:
+          command: ["sh", "-c", "grep -rq 'ksops' . 2>/dev/null"]
+      generate:
+        command: ["kustomize", "build", "--enable-alpha-plugins", "--enable-exec", "."]
+```
+
+#### 3. Подключение sidecar-контейнера KSOPS в `values.yaml` чарта `argo-cd`:
+```yaml
+repoServer:
+  extraContainers:
+    - name: ksops-plugin
+      image: viaductoss/ksops:v4.3.3
+      command: ["/var/run/argocd/argocd-cmp-server"]
+      env:
+        - name: SOPS_AGE_KEY_FILE
+          value: /var/run/secrets/age/key.txt
+      volumeMounts:
+        - mountPath: /var/run/argocd
+          name: var-files
+        - mountPath: /tmp
+          name: cmp-tmp
+        - mountPath: /home/argocd/cmp-server/config/plugin.yaml
+          subPath: plugin.yaml
+          name: ksops-plugin-config
+        - mountPath: /var/run/secrets/age
+          name: sops-age-key-volume
+          readOnly: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        readOnlyRootFilesystem: true
+  volumes:
+    - name: ksops-plugin-config
+      configMap:
+        name: ksops-plugin-cm
+    - name: sops-age-key-volume
+      secret:
+        secretName: sops-age-key
+        defaultMode: 0400
+    - name: cmp-tmp
+      emptyDir: {}
+```
+
+#### 4. Использование KSOPS в репозитории приложения:
+В файле `kustomization.yaml` объявляется генератор `ksops`:
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml
+
+generators:
+  - secret-generator.yaml
+```
+
+Генератор `secret-generator.yaml`:
+```yaml
+apiVersion: viaduct.ai/v1
+kind: ksops
+metadata:
+  name: app-secrets-generator
+files:
+  - ./secrets.enc.yaml
+```
+
+В момент выполнения `kustomize build` бинарник KSOPS внутри sidecar-контейнера считывает приватный ключ из `/var/run/secrets/age/key.txt`, расшифровывает значения из `secrets.enc.yaml` в оперативной памяти и возвращает чистый `Secret` в stdout gRPC-потока без сохранения на диск.
+
+---
+
 ## Сравнение CMP v1 и CMP v2
 
 | Характеристика | CMP v1 (Legacy, удален в v2.8) | CMP v2 (Современный стандарт) |

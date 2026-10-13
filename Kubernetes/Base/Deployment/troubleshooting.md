@@ -1,569 +1,739 @@
 # Устранение неполадок Deployment и RollingUpdate
 
-Руководство по диагностике и решению проблем, возникающих при развертывании и обновлении stateless-приложений в Kubernetes: теория механики зависаний, системный алгоритм поиска причины и экстренные процедуры восстановления.
+**Актуально для:** Kubernetes 1.30–1.32+
+
+Руководство для инженеров DevOps, SRE и системных администраторов по диагностике и решению проблем, возникающих при развертывании и обновлении stateless-приложений в Kubernetes: теория механики зависаний, системный алгоритм поиска причины, матрица сбоев и экстренные процедуры восстановления. Фокус на on-premise и bare-metal инфраструктуре без использования облачных абстракций.
 
 ## Предварительные требования (Prerequisites)
 
-- Рабочий кластер Kubernetes (v1.16+, стабильная группа `apps/v1`).
-- Установленный `kubectl` с доступом к кластеру и правами на `get`, `describe`, `logs`, `events`, `rollout`, `scale`, `annotate`, `wait`, `auth`.
-  - Команда `kubectl events` доступна начиная с kubectl v1.24 (ранее — `kubectl alpha events`). Универсальный вариант — `kubectl get events`.
-- Базовое понимание объектов [Deployment](./index.md), [Pod](../Pod/pod_overview.md) и [ReplicaSet](../replicaset.md), а также полей манифеста ([Манифест и лучшие практики](./deployment_manifest.md)).
-- Для продвинутой диагностики: доступ к узлам (SSH), понимание [ResourceQuota/LimitRange](../../Scheduling/qos_limit_and_requests.md) и установленный `jq` для работы с JSON-выводом.
-- Для анализа алертов и метрик: Prometheus + kube-state-metrics (см. [Kubernetes-алерты](../../../Grafana/alerting/kubernetes_alerts.md)).
+- **Рабочий кластер Kubernetes:** версии 1.30–1.32+ (на базе `kubeadm`, RKE2 или K3s на bare-metal или локальных виртуальных машинах). Стабильная группа API `apps/v1`.
+- **Утилиты командной строки и права доступа:**
+  - `kubectl` актуальной версии (совпадающей с версией кластера ±1 minor). Команда `kubectl events` доступна штатно (начиная с v1.24 заменила `kubectl alpha events`).
+  - Минимальный набор RBAC-прав: чтение и управление объектами `deployments`, `replicasets`, `pods`, чтение `events`, `resourcequotas`, `limitranges`, `poddisruptionbudgets` и выполнение `kubectl auth can-i`.
+- **Системный доступ к узлам (для bare-metal SRE):**
+  - Доступ по SSH к worker-нодам кластера с правами `sudo`.
+  - Утилиты рантайма и ОС: `crictl`, `journalctl -u kubelet`, `dmesg`, `conntrack`.
+- **Вспомогательные инструменты:**
+  - `jq` (версии 1.6+) и `curl` для парсинга ответов API и проверки сетевой доступности из подов.
+- **Базовые знания архитектуры:**
+  - Понимание иерархии абстракций: [Deployment: Обзор](./index.md), [ReplicaSet](../replicaset.md), [Pod](../Pod/pod_overview.md).
+  - Структура полей спецификации: [Манифест и лучшие практики](./deployment_manifest.md).
+  - Механика сетевых проверок: [Пробы жизнедеятельности в Kubernetes](../probes.md).
+  - Политики доступности: [PodDisruptionBudget](../../Autoscaling/pod_disruption_budget.md).
+
+---
 
 ## 1. Определения
 
-**Зависшее обновление (Stuck Rollout)** — состояние объекта Deployment, при котором процесс перехода на новую версию (RollingUpdate) останавливается и не завершается в течение времени, заданного в `progressDeadlineSeconds`.
+- **Зависшее обновление (Stuck Rollout)** — состояние объекта Deployment, при котором процесс перехода на новую версию (RollingUpdate) останавливается и не завершается в течение времени, заданного в `progressDeadlineSeconds`.
+- **ProgressDeadlineExceeded** — условие (`Condition`) в статусе Deployment (`type: Progressing`, `status: "False"`, `reason: ProgressDeadlineExceeded`), сигнализирующее о том, что контроллер не смог завершить обновление в отведенный лимит времени.
+- **ReplicaFailure** — условие в статусе Deployment (`type: ReplicaFailure`, `status: "True"`), сигнализирующее о невозможности создания или запуска подов контроллером ReplicaSet (например, из-за нехватки прав RBAC, исчерпания ResourceQuota или недопустимой конфигурации).
+- **observedGeneration** — целое число (`status.observedGeneration`), отражающее последнее значение `metadata.generation`, которое контроллер Deployment успел прочитать и обработать. Если `status.observedGeneration < metadata.generation`, контроллер еще не обработал последнее изменение спецификации — обновление технически не началось.
+- **Каскадный отказ (Cascading Failure)** — цепная реакция деградации, при которой сбой одного компонента (например, недоступность ConfigMap, ошибка миграции БД или дефицит ресурсов при surge) вызывает массовые падения подов и блокировку всего процесса развертывания.
+- **Зависший под в Terminating (Terminating Pod Deadlock)** — состояние, когда под помечен на удаление (`metadata.deletionTimestamp` установлен), но процесс удаления не завершается в течение `terminationGracePeriodSeconds` (типичные причины: зависший хук `preStop`, неснятый `finalizer`, зависший или сетевой изолированный kubelet). Зависшие поды блокируют масштабирование вниз старого ReplicaSet и завершение rollout.
+- **Deployment Controller Reconcile Loop** — бесконечный цикл согласования в составе `kube-controller-manager`, непрерывно сравнивающий желаемое состояние (`spec`) с фактическим (`status`) и управляющий дочерними объектами ReplicaSet.
+- **Откат вперед (Rollout Undo / Forward Recovery)** — механика возврата к стабильной версии в Kubernetes: контроллер не удаляет исторические записи и не перематывает ревизии назад, а создает новую ревизию с шаблоном пода (`spec.template`), скопированным из выбранного целевого ReplicaSet.
 
-**ProgressDeadlineExceeded** — условие (`Condition`) в статусе Deployment (`type: Progressing`, `status: "False"`, `reason: ProgressDeadlineExceeded`), указывающее на то, что контроллер не смог завершить обновление в отведенный срок.
+---
 
-**ReplicaFailure** — состояние, сигнализирующее о невозможности контроллера создать поды (например, из-за нехватки прав, нарушения квот или ошибок планирования).
-
-**observedGeneration** — значение `metadata.generation`, которое контроллер успел «заметить» и применить. Если `status.observedGeneration < metadata.generation`, контроллер еще не обработал последнее изменение спецификации — обновление технически даже не началось.
-
-**Каскадный отказ (Cascading Failure)** — ситуация, когда сбой в одном компоненте (например, ConfigMap, Secret, PersistentVolume) вызывает цепочку перезапусков и зависание всего обновления.
-
-**Зависший под в Terminating** — под, помеченный на удаление, но не завершившийся в течение `terminationGracePeriodSeconds` (причины: бесконечный `preStop`, finalizer, зависший kubelet). Блокирует масштабирование вниз старого ReplicaSet и, как следствие, rollout.
-
-## 2. Основные концепции
+## 2. Базовые концепции и архитектура сбоев
 
 ### Зависшее обновление как механизм защиты
 
-Зависшее обновление в Kubernetes — это **механизм защиты**, а не просто сбой. Контроллер Deployment намеренно приостанавливает процесс, если новые поды не проходят проверку готовности. Это предотвращает «выжигание» рабочей нагрузки: старые (здоровые) поды не удаляются, пока новые не подтвердят работоспособность.
+Зависшее обновление в Kubernetes — это **механизм защиты**, а не фатальный сбой платформы. Контроллер Deployment намеренно останавливает продвижение процесса ротации, если поды новой ревизии не проходят проверки готовности (`readinessProbe`) или завершаются аварийно. 
 
-### Контроллер не откатывает сам: повторные попытки
+Благодаря этому предотвращается полная деградация сервиса («выжигание» рабочей нагрузки): старые, стабильно работающие поды продолжают обслуживать входящий трафик до тех пор, пока новые реплики не подтвердят свою работоспособность.
 
-Важное теоретическое уточнение: после истечения `progressDeadlineSeconds` контроллер **не выполняет автоматический откат** и **не останавливает** попытки применить желаемое состояние. Он лишь выставляет condition `Progressing=False` с `reason=ProgressDeadlineExceeded` и продолжает повторные попытки (Reconcile Loop). Kubernetes «не предпринимает никаких действий», кроме публикации состояния, — восстановление всегда требует внешнего вмешательства оператора (откат, `rollout restart`, исправление конфигурации). Автоматический откат заявлен как будущая функциональность, рассчитывать на него нельзя.
+```text
+               Deployment (spec.replicas: 3, maxUnavailable: 0, maxSurge: 1)
+                                      │
+            ┌─────────────────────────┴─────────────────────────┐
+            ▼                                                   ▼
+   ReplicaSet (New: rev 2)                             ReplicaSet (Old: rev 1)
+   Desired: 1, Current: 1, Ready: 0                    Desired: 3, Current: 3, Ready: 3
+            │                                                   │
+     [ Pod (rev 2) ]                                     [ 3x Pod (rev 1) ]
+  (CrashLoop / Ready 0/1)                                 (Трафик идет сюда)
+            │
+  ⛔ Rollout ЗАВИС: контроллер ждет Ready-статуса от нового пода
+     Старые поды НЕ удаляются благодаря maxUnavailable: 0
+```
 
-Из этого следуют два операционных вывода:
+### Контроллер не откатывает сам: логика Reconcile Loop
 
-1. Зависший rollout **сам по себе не завершится** и не навредит старым подам — триггер на восстановление обязан строить человек или CI/CD-автоматизация.
-2. Условие `ProgressDeadlineExceeded` — это сигнал для алертинга и pipeline'ов (см. раздел «Мониторинг и алертинг»), а не штатное завершение процесса.
+После истечения лимита времени `progressDeadlineSeconds` контроллер Deployment **не выполняет автоматический откат** и **не прекращает** попытки достичь желаемого состояния. 
 
-### Иерархия диагностики
+1. Контроллер переводит условие в блоке `status.conditions`:
+   - `type: Progressing`
+   - `status: "False"`
+   - `reason: ProgressDeadlineExceeded`
+   - `message: ReplicaSet "<new-rs-name>" has timed out progressing.`
+2. Контроллер продолжает регулярные циклы согласования (Reconcile Loop). Если причина сбоя устранена во внешнем окружении (например, освобождены ресурсы узла, создан недостающий Secret или поднялась БД), rollout возобновится и условие `Progressing` вернется в `True`.
+3. Kubernetes сам по себе не вмешивается в конфигурацию приложения. Восстановление стабильности при неудачном релизе требует **внешнего действия**:
+   - Вмешательство дежурного инженера (ручной откат `kubectl rollout undo` или исправление манифеста).
+   - Автоматический триггер в CI/CD (команда `kubectl rollout status --timeout=...`, возвращающая ненулевой код выхода и запускающая шаг отката).
 
-Диагностику Deployment следует проводить по уровням — от симптома к корневой причине:
+### Иерархия уровней диагностики
 
-1. **Уровень 1 — Симптом:** `kubectl rollout status` не показывает прогресса.
-2. **Уровень 2 — Conditions:** Анализ `status.conditions` в Deployment.
-3. **Уровень 3 — ReplicaSet:** Проверка распределения реплик между старым и новым RS.
-4. **Уровень 4 — Pod:** Глубокий анализ конкретных подов (события, логи, статус, init-контейнеры).
-5. **Уровень 5 — Инфраструктура:** Узел, сеть, хранилище, квоты.
+Диагностику проблем с Deployment следует проводить строго по уровням — от верхнеуровневого симптома к первопричине на уровне инфраструктуры:
 
-### Три режима зависания (точка отказа)
+1. **Уровень 1 — Симптом:** Команда `kubectl rollout status` блокируется или возвращает ошибку таймаута; клиенты видят деградацию или старую версию.
+2. **Уровень 2 — Conditions и Generation:** Анализ `status.conditions` и сравнение `metadata.generation` с `status.observedGeneration`.
+3. **Уровень 3 — ReplicaSet:** Проверка распределения реплик (`Desired`, `Current`, `Ready`) между старыми и новым ReplicaSet; изучение событий ReplicaSet (`FailedCreate`).
+4. **Уровень 4 — Pod:** Глубокий анализ подов проблемной ревизии: фазы (`Pending`, `Running`, `CrashLoopBackOff`), события пода, логи основного и init-контейнеров, коды завершения (exit codes).
+5. **Уровень 5 — Инфраструктура (Node, CRI, OS):** Анализ ресурсов узла (CPU/RAM/диск), квот namespace, сетевых политик, работы Kubelet и рантайма containerd/CRI-O.
 
-Прежде чем глубоко копать, определите, на каком этапе застрял процесс. Это сильно сужает поиск:
+### Три режима зависания (Точка отказа)
 
-| Режим | Признак | Типовая причина | Что проверить в первую очередь |
+Перед началом детального поиска первопричины необходимо локализовать фазу, на которой заблокирован процесс обновления:
+
+| Режим | Признак | Типовая первопричина | Что проверить в первую очередь |
 | :--- | :--- | :--- | :--- |
-| **A. Обновление не началось** | `rollout status` пишет «Waiting for deployment spec update to be observed...»; **новый RS не создан** | `observedGeneration < generation` (контроллер не увидел изменение), `paused: true`, изменение не в `template` | `observedGeneration`, флаг `paused`, история RS |
-| **B. Новые поды не становятся Ready** | Новый RS создан, но `CURRENT > READY`; поды в `Pending`/`ImagePullBackOff`/`CrashLoopBackOff`/`Ready 0/1` | Пробы, образ, ресурсы, квоты, scheduling | Поды нового RS, их события и логи |
-| **C. Старые поды не удаляются** | Новый RS достиг `READY`, но старый RS не масштабируется вниз (`DESIRED > 0`) | Поды застряли в `Terminating` (preStop/finalizer), kubelet не отвечает | Поды в `Terminating`, событие `FailedKillPod` |
+| **A. Обновление не началось** | `rollout status` сообщает: «Waiting for deployment spec update to be observed...»; **новый RS не создается** | `observedGeneration < generation` (контроллер не обработал спецификацию), `spec.paused: true`, изменение вне `spec.template` | Поля `generation`, флаг `paused`, события controller-manager |
+| **B. Новые поды не становятся Ready** | Новый RS создан, но `CURRENT > READY`; поды в статусах `Pending`, `ImagePullBackOff`, `CrashLoopBackOff`, `Ready 0/1` | Ошибки приложения, падение `readinessProbe`, отсутствие ConfigMap/Secret, дефицит CPU/RAM, Taints узлов | Поды нового RS, логи контейнеров, события пода |
+| **C. Старые поды не удаляются** | Новый RS достиг целевого числа `READY`, но старый RS не масштабируется вниз (`DESIRED > 0`) | Поды старого RS застряли в `Terminating` (бесконечный `preStop`, висящий finalizer, отказ Kubelet на узле) | Поды со статусом `Terminating`, события `FailedKillPod`, статус узлов |
 
-### Параметры, влияющие на процесс обновления
+### Параметры спецификации, влияющие на процесс обновления
 
-| Параметр | Роль при сбое | Критическая ситуация |
-| :--- | :--- | :--- |
-| **`maxUnavailable`** | Определяет допустимую потерю мощности | При `0` контроллер не удалит ни одного старого пода, пока новый не станет `Ready`. Если ресурсы кластера на пределе, обновление застрянет. |
-| **`maxSurge`** | Определяет временный всплеск ресурсов | Высокое значение ускоряет выкатку, но может вызвать срабатывание `ResourceQuota` или нехватку CPU/RAM на узлах. |
-| **`minReadySeconds`** | Задержка признания пода «здоровым» | Позволяет выявить ошибки, возникающие не сразу после старта (например, утечки при инициализации). |
-| **`progressDeadlineSeconds`** | Таймер ожидания успеха | По истечении этого времени (по умолчанию 600с) контроллер выставляет `Progressing=False` с `reason=ProgressDeadlineExceeded` и продолжает попытки. Должен быть **больше** `minReadySeconds` — при нарушении условие срабатывает сразу. |
+| Параметр | Значение по умолчанию | Роль при сбое | Критическая ситуация в продакшне |
+| :--- | :--- | :--- | :--- |
+| **`spec.strategy.rollingUpdate.maxUnavailable`** | `25%` | Определяет максимальное число реплик, которые могут быть недоступны в процессе ротации. | При значении `0` контроллер не удалит ни одного старого пода, пока новый не перейдет в статус `Ready`. Если в кластере нет свободных ресурсов под surge, rollout зависнет намертво. |
+| **`spec.strategy.rollingUpdate.maxSurge`** | `25%` | Определяет максимальное число дополнительных реплик сверх желаемого `replicas`. | Высокое значение ускоряет выкатку, но создает резкий всплеск нагрузки на CPU/RAM узлов и может превысить лимиты `ResourceQuota`, вызвав отказ создания подов. |
+| **`spec.minReadySeconds`** | `0` | Минимальное время в секундах, в течение которого новый под должен оставаться готовым (Ready) без падений, чтобы контроллер признал его доступным (`Available`). | Позволяет выявлять отложенные падения (например, утечки памяти при старте, ошибки прогрева кэша). Замедляет выкатку пропорционально числу шагов. |
+| **`spec.progressDeadlineSeconds`** | `600` (10 мин) | Максимальное время ожидания прогресса обновления перед выставлением признака ошибки. | Если значение меньше или равно `minReadySeconds`, условие ошибки сработает мгновенно при старте. Должно покрывать время вытягивания образов и прогрева приложения. |
 
 ### Условия (Conditions) в статусе Deployment
 
-Каждое условие содержит поля: `type`, `status` (`True`/`False`/`Unknown`), `reason` (машиночитаемый код), `message` (человекочитаемое пояснение), `lastUpdateTime` и `lastTransitionTime`. Полезно понимать полный набор метаданных статуса: `observedGeneration`, `replicas`, `readyReplicas`, `availableReplicas`, `updatedReplicas`.
+Блок `status.conditions` объекта Deployment содержит три ключевых типа условий. Каждое условие включает поля `type`, `status` (`True`/`False`/`Unknown`), `reason` (машиночитаемый код) и `message` (описание).
 
-| Тип условия | `True` означает | Частые `reason` |
-| :--- | :--- | :--- |
-| **`Available`** | Достигнута минимальная доступность реплик | `MinimumReplicasAvailable` (True); `MinimumReplicasUnavailable` (False) |
-| **`Progressing`** | Контроллер выполняет rollout | `NewReplicaSetAvailable` (успех); `DeploymentPaused` (пауза); `ReplicaSetCreateError`, `TimedOutReplicaSet` (False); **`ProgressDeadlineExceeded`** |
-| **`ReplicaFailure`** | Имеются сбои при создании подов | Агрегируется из событий ReplicaSet (`FailedCreate`, `FailedScheduling`) |
+| Тип условия | Значение `status` | Интерпретация | Типовые `reason` |
+| :--- | :--- | :--- | :--- |
+| **`Available`** | `True` | Минимально необходимое число реплик приложения готово и обслуживает запросы. | `MinimumReplicasAvailable` |
+| | `False` | Число доступных реплик ниже допустимого минимума (приложение частично или полностью недоступно). | `MinimumReplicasUnavailable` |
+| **`Progressing`** | `True` | Контроллер успешно выполняет обновление или успешно завершил его. | `NewReplicaSetAvailable`, `ReplicaSetUpdated` |
+| | `False` | Процесс обновления заблокирован и превысил отведенный дедлайн. | `ProgressDeadlineExceeded`, `TimedOutReplicaSet` |
+| | `Unknown` / `Paused` | Обновление приостановлено оператором. | `DeploymentPaused` |
+| **`ReplicaFailure`** | `True` | Контроллер ReplicaSet столкнулся с ошибкой при попытке создать или удалить поды. | `FailedCreate`, `FailedScheduling` |
 
-Комбинированный анализ: `Available=False` + `Progressing=False` + `ProgressDeadlineExceeded` — приложение полностью недоступно и обновление провалено. `Available=True` + `Progressing=False` + `ProgressDeadlineExceeded` — старые поды продолжают работать, но rollout провален (самый частый «зависший» сценарий).
+**Диагностическая матрица условий:**
+- `Available=True` + `Progressing=False` (`ProgressDeadlineExceeded`): Старая версия приложения продолжает штатно работать и обслуживать клиентов, но выкатка новой версии зависла. Безопасная ситуация для SLA, требующая планового вмешательства.
+- `Available=False` + `Progressing=False` (`ProgressDeadlineExceeded`): Авария (Outage). Старые поды были частично или полностью удалены (при `maxUnavailable > 0`), а новые не смогли запуститься. Требуется немедленный откат.
 
-### Взаимодействие с PodDisruptionBudget (PDB)
+### Взаимодействие с PodDisruptionBudget (PDB) на on-premise
 
-PDB и `maxUnavailable` в Deployment — это **разные механизмы**, которые могут конфликтовать:
+`PodDisruptionBudget` (PDB) и параметр `maxUnavailable` в Deployment контролируют доступность реплик, но работают на разных уровнях:
 
-- **Deployment `maxUnavailable`**: контроллер сам решает, сколько подов может быть недоступно во время RollingUpdate.
-- **PodDisruptionBudget**: внешний запрет на одновременное удаление подов (для защиты от Eviction, drains, upgrades).
+- **Deployment `maxUnavailable`**: контролирует плановую ротацию подов, инициированную самим контроллером Deployment. Контроллер сам решает, когда удалить старый под в рамках стратегии RollingUpdate, и **не обращается** к PDB API.
+- **PodDisruptionBudget**: ограничивает **добровольное вытеснение (Voluntary Eviction)**, выполняемое через API вытеснения (`/v1/pods/eviction`), например при выполнении `kubectl drain <node>`.
 
-**Ключевое различие:** PDB блокирует **только вытеснение (eviction)** — например, `kubectl drain` узла. На масштабирование ReplicaSets во время обычного rollout контроллер Deployment PDB не смотрит, поэтому сам по себе PDB не заблокирует обновление. Конфликт возникает, когда **drain узла** происходит одновременно с обновлением: PDB с `minAvailable: 3` не даст выселить поды ниже бюджета, обновление застрянет, а событие `Eviction`/`PodDisruptionBudget` появится у пода.
+**Механика взаимной блокировки (Deadlock):**
+Сам по себе PDB не блокирует штатный rollout. Конфликт возникает, когда системный администратор выполняет обслуживание узла (`kubectl drain`) **одновременно** с процессом RollingUpdate:
+1. PDB требует, чтобы минимум 3 из 4 реплик оставались доступными (`minAvailable: 3`).
+2. В процессе RollingUpdate одна реплика обновляется и еще не стала `Ready`.
+3. Команда `kubectl drain` пытается вытеснить старый под с обслуживаемого узла, но API-сервер отклоняет запрос с ошибкой `Cannot evict pod as it would violate the pod's disruption budget`.
+4. В результате дренаж узла зависает, узел переходит в статус `SchedulingDisabled`, а новые поды не могут разместиться из-за дефицита емкости.
 
-> Подробнее о механиках дедлоков PDB и их разрешении см. в [Проблемы завершения: блокировка PDB](../../Troubleshooting/Common_Errors/PodTerminating/pdb_blocking.md) и [PodDisruptionBudget](../../Autoscaling/pod_disruption_budget.md).
+---
 
-## 3. Практические сценарии
+## 3. Практические сценарии диагностики и аварийного восстановления
 
-### Алгоритм диагностики при зависании (Rollout Stuck)
+### Системный пошаговый алгоритм диагностики (Rollout Stuck)
 
-Если команда `kubectl rollout status deployment <name>` не показывает прогресса, следуйте системному алгоритму.
+Если команда `kubectl rollout status deployment/<name>` заблокирована или завершилась с ошибкой, выполните последовательную диагностику по шагам.
 
-#### Шаг 0: Определить характер зависания
+#### Шаг 0: Локализовать режим зависания
 
-Сначала выясните, на каком режиме (A/B/C из раздела «Три режима зависания») находится rollout:
+Определите, на каком этапе (A, B или C) остановился процесс:
 
 ```bash
-# Сгенерированное поколение и обработанное контроллером
-kubectl get deploy <name> -o jsonpath='observedGeneration={.status.observedGeneration} generation={.metadata.generation}{"\n"}'
+# Проверка фиксации поколения спецификации контроллером
+kubectl get deploy <name> -n <namespace> -o jsonpath='observedGeneration={.status.observedGeneration} generation={.metadata.generation}{"\n"}'
+# → observedGeneration=3 generation=3
 
-# Пауза?
-kubectl get deploy <name> -o jsonpath='paused={.spec.paused}{"\n"}'
+# Проверка флага паузы
+kubectl get deploy <name> -n <namespace> -o jsonpath='paused={.spec.paused}{"\n"}'
+# → paused=false
 
-# Список RS: есть ли новый кандидат?
-kubectl get rs -l app=<your-app-label>
+# Проверка списка ReplicaSet по селектору приложения
+kubectl get rs -n <namespace> -l app=<app-label> --sort-by='.metadata.creationTimestamp'
+# → NAME                 DESIRED   CURRENT   READY   AGE
+# → my-app-7d6b9f4b9c   0         0         0       5d
+# → my-app-58f8b88df8   3         3         3       1d
+# → my-app-6c589b4f77   1         1         0       4m  ← Новая ревизия
 ```
 
-- `observedGeneration < generation` → режим **A**: контроллер не увидел изменение. Проверьте флаг `paused` и корректность `metadata.generation` (изменялся ли именно `spec.template`).
-- Новый RS создан, но реплики не готовы → режим **B**: переходите к шагам 2–3.
-- Новый RS полностью готов, но старый не сворачивается, поды в `Terminating` → режим **C**: см. раздел «Поды не завершаются (Terminating)».
+**Анализ результата:**
+- Если `observedGeneration < generation` или `paused=true` → **Режим A** (обновление не запущено).
+- Если новый RS создан, но `READY < CURRENT` → **Режим B** (поды новой ревизии не готовы).
+- Если новый RS имеет `READY == DESIRED`, но старый RS сохраняет `DESIRED > 0` и поды висят в `Terminating` → **Режим C** (зависание сворачивания старых подов).
 
-#### Шаг 1: Инспекция объекта Deployment
+#### Шаг 1: Инспекция объекта Deployment и условий
+
+Проверьте статус условий и сводку событий контроллера:
 
 ```bash
-kubectl describe deployment <name>
+# Детальный статус Deployment
+kubectl describe deployment <name> -n <namespace>
+# → Conditions:
+# →   Type           Status  Reason
+# →   ----           ------  ------
+# →   Available      True    MinimumReplicasAvailable
+# →   Progressing    False   ProgressDeadlineExceeded
+
+# Извлечение машиночитаемых условий через JSONPath
+kubectl get deploy <name> -n <namespace> -o jsonpath='{range .status.conditions[*]}{.type}={.status} reason={.reason} msg="{.message}"{"\n"}{end}'
+# → Available=True reason=MinimumReplicasAvailable msg="Deployment has minimum availability."
+# → Progressing=False reason=ProgressDeadlineExceeded msg="ReplicaSet \"my-app-6c589b4f77\" has timed out progressing."
 ```
 
-Ищите в секции `Conditions`:
-- **Type=Progressing, Status=False, Reason=ProgressDeadlineExceeded**: Обновление официально признано проваленным (контроллер продолжает попытки).
-- **Type=Progressing, Reason=DeploymentPaused**: вовремя не выполнен `kubectl rollout resume`.
-- **Type=Available, Status=False, Reason=MinimumReplicasUnavailable**: приложение недоступно для пользователей.
-- **Type=ReplicaFailure**: контроллер не может создать поды.
+#### Шаг 2: Анализ дочерних ReplicaSet
+
+Определите имя проблемного ReplicaSet и проверьте события контроллера ReplicaSet:
 
 ```bash
-# Машиночитаемый вывод условий (для скриптов)
-kubectl get deploy <name> -o jsonpath='{range .status.conditions[*]}{.type}={.status} reason={.reason}{"\n"}{end}'
+# Получение событий целевого ReplicaSet
+kubectl describe rs <new-rs-name> -n <namespace>
+# → Events:
+# →   Type     Reason        Age    From                   Message
+# →   ----     ------        ----   ----                   -------
+# →   Normal   SuccessfulCreate  4m   replicaset-controller  Created pod: my-app-6c589b4f77-x9k2p
+# →   Warning  FailedCreate      2m   replicaset-controller  Error creating: pods "my-app-6c589b4f77-z4m1q" is forbidden: exceeded quota: default-quota
 ```
 
-#### Шаг 2: Анализ ReplicaSets
+Если обнаружено событие `FailedCreate`, проблема кроется на уровне Admission Webhook, ResourceQuota или прав ServiceAccount.
 
-Deployment создает новый `ReplicaSet` (RS) для каждой ревизии. Проверьте количество реплик в новом RS:
+#### Шаг 3: Глубокая диагностика подов новой ревизии
+
+Получите список подов нового ReplicaSet и изучите их жизненный цикл:
 
 ```bash
-kubectl get rs -l app=<your-app-label>
-# → NAME                        DESIRED   CURRENT   READY   AGE
-# → my-app-7f6f8d6f5d          1         1         0       2m     ← новый
-# → my-app-5c6b7c8d9e          3         3         3       1h     ← старый
+# Список подов с выводом узлов и IP
+kubectl get pods -n <namespace> -l app=<app-label> -o wide
+# → NAME                       READY   STATUS             RESTARTS   NODE      IP
+# → my-app-58f8b88df8-2b8zq   1/1     Running            0          node-02   10.244.2.14
+# → my-app-58f8b88df8-m9k1l   1/1     Running            0          node-03   10.244.3.22
+# → my-app-6c589b4f77-x9k2p   0/1     CrashLoopBackOff   4          node-01   10.244.1.88
+
+# Детальная инспекция пода (состояния контейнеров, exit codes, монтирование)
+kubectl describe pod <new-pod-name> -n <namespace>
+
+# Логи текущего запуска контейнера
+kubectl logs <new-pod-name> -n <namespace> --tail=100
+
+# Логи предыдущего аварийно завершившегося запуска
+kubectl logs <new-pod-name> -n <namespace> --previous --tail=100
+
+# Логи init-контейнера (если под застрял в Init:CrashLoopBackOff или Init:Error)
+kubectl logs <new-pod-name> -n <namespace> -c <init-container-name>
 ```
 
-Интерпретация колонок (см. также [Анализ полей ReplicaSet](./lifecycle_management.md)):
-- Если в новом RS `DESIRED > CURRENT` или `CURRENT > READY` — проблема на уровне создания или готовности подов (режим **B**).
-- Если новый RS `READY` полный, но старый `DESIRED > 0` — проблема завершения старых подов (режим **C**).
+#### Шаг 4: Анализ системных событий кластера
 
-Детальная информация по конкретному RS:
+Отфильтруйте события, связанные с подом, неймспейсом и контроллерами:
+
 ```bash
-kubectl describe rs <new-rs-name>
-# → Events содержит FailedCreate / FailedScheduling от ReplicaSet-контроллера
+# События для конкретного пода (kubectl >= 1.24)
+kubectl events -n <namespace> --for pod/<new-pod-name>
+# → LAST SEEN   TYPE      REASON      OBJECT                              MESSAGE
+# → 2m          Warning   Unhealthy   Pod/my-app-6c589b4f77-x9k2p        Readiness probe failed: HTTP probe failed with statuscode: 503
+
+# Последние события namespace, отсортированные по времени
+kubectl get events -n <namespace> --sort-by='.lastTimestamp' | tail -25
+
+# Поиск критических предупреждений по признакам планирования и монтирования
+kubectl get events -n <namespace> --field-selector type=Warning
 ```
 
-#### Шаг 3: Глубокая диагностика подов
+#### Шаг 5: Проверка ресурсов и инфраструктуры узла на Bare-Metal
+
+Если поды находятся в фазе `Pending` или падают с кодом 137 (`OOMKilled`), проверьте ресурсы кластера и состояние узла:
 
 ```bash
-# Список подов (метка pod-template-hash помогает отличить ревизии)
-kubectl get pods -l app=<label> -o wide
-
-# Детальный осмотр проблемного пода
-kubectl describe pod <new-pod-name>
-
-# Логи текущего запуска
-kubectl logs <new-pod-name>
-
-# Логи предыдущего запуска (если контейнер падает и перезапускается)
-kubectl logs <new-pod-name> --previous
-
-# Логи init-контейнера (статусы Init:Error, Init:CrashLoopBackOff)
-kubectl logs <new-pod-name> -c <init-container-name>
-```
-
-Особые статусы подов, характерные для rollout:
-- `Pending` — не удалось запланировать (resources/taints/affinity). См. [Диагностика Pod Pending](../../Troubleshooting/Common_Errors/pod_pending/diagnostics.md).
-- `Init:CrashLoopBackOff` / `Init:Error` — падает подготовительный контейнер (миграции, ожидание зависимостей).
-- `Ready 0/1` — не проходит `readinessProbe` (раздел «Проблемы с пробами»).
-- `Terminating` — не завершается (раздел «Поды не завершаются (Terminating)»).
-- `OOMKilled` — превышение `limits.memory`, exit code 137. См. [Анализ OOMKilled](../../Troubleshooting/Common_Errors/oomkilled_pods.md).
-
-#### Шаг 4: Проверка событий кластера
-
-```bash
-# События конкретного пода
-kubectl events --for pod/<pod-name> --watch        # kubectl >= 1.24
-kubectl get events --field-selector involvedObject.name=<pod-name> -A
-
-# События уровня неймспейса за последние 10 минут
-kubectl get events -n <namespace> --sort-by='.lastTimestamp' | tail -20
-
-# События, связанные с конкретным Deployment (только верхнеуровневые)
-kubectl get events --field-selector involvedObject.name=<deployment-name>,involvedObject.kind=Deployment
-
-# События по конкретной причине (справедливо и для FailedCreate, FailedScheduling)
-kubectl get events -n <namespace> --field-selector reason=ProgressDeadlineExceeded
-```
-
-Важное различие уровней событий:
-- Событие `ScalingReplicaSet` (deployment-controller) — контроллер принял решение масштабировать RS. Наличие события без результата → смотрим ниже.
-- Событие `FailedCreate` (replicaset-controller) — не удалось создать под (квота, RBAC, схема). Это ключевое событие уровня ReplicaSet.
-- События пода (`FailedScheduling`, `FailedMount`, `Warning`) — собственно причина на самом нижнем уровне.
-
-#### Шаг 5: Проверка квот и ресурсов
-
-```bash
-# Текущее потребление квот в неймспейсе
+# Проверка расхода ResourceQuota в namespace
 kubectl describe quota -n <namespace>
+# → Resource     Used   Hard
+# → requests.cpu 7900m  8000m  ← Исчерпание квоты процессора
 
-# Доступные ресурсы на узлах
+# Анализ нагрузки на узлы
 kubectl top nodes
+# → NAME      CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%
+# → node-01   3820m        95%    28900Mi         90%
 
-# Поды, которые не могут быть запланированы (Pending)
-kubectl get pods --field-selector=status.phase=Pending -n <namespace>
-kubectl describe pod <pending-pod>  # → Events: "Insufficient cpu" или "node(s) had taint"
+# Проверка условий узла (DiskPressure, MemoryPressure, PIDPressure)
+kubectl describe node <node-name> | grep -A6 "Conditions:"
 
-# Состояние узла (MemoryPressure, DiskPressure, PIDPressure)
-kubectl describe node <node-name>
+# Диагностика на самом узле через SSH (уровень рантайма containerd)
+crictl ps -a --name <container-name>
+# → CONTAINER     IMAGE          CREATED         STATE     NAME         ATTEMPT
+# → b4f8a129d10e  my-image:v2    10 seconds ago  Exited    app-server   5
+
+# Проверка системного лога Kubelet на узле
+sudo journalctl -u kubelet --no-pager -n 50 | grep -E 'Failed|Error|OOM'
 ```
 
-### Типичные ошибки и их решение
+---
 
-| Статус / Ошибка | Причина | Решение |
-| :--- | :--- | :--- |
-| **`Pending`** | Нехватка ресурсов, Taints, Affinity | `kubectl describe pod` → проверить Events. Увеличить ресурсы или уменьшить `requests`. См. [Pod Pending](../../Troubleshooting/Common_Errors/pod_pending/diagnostics.md). |
-| **`ImagePullBackOff`** | Ошибка реестра, неверный тег, отсутствие `imagePullSecrets` | Проверить имя образа, секрет доступа. См. [Ошибки загрузки образов](../../Troubleshooting/Common_Errors/PodImagePullErrors/definitions.md). |
-| **`CrashLoopBackOff`** | Ошибка приложения, мисконфигурация | `kubectl logs <pod> --previous`; изучить exit code. См. [Диагностика CrashLoopBackOff](../../Troubleshooting/Common_Errors/pod_crash_loop_back_off/diagnostics.md). |
-| **`Init:CrashLoopBackOff` / `Init:Error`** | Падает подготовительный контейнер | `kubectl logs <pod> -c <init-container> --previous`, проверить миграции и ожидание зависимостей. |
-| **`Running (Ready 0/1)`** | Не проходит `readinessProbe` | Проверить логи, порт и путь пробы. Убедиться, что приложение слушает на ожидаемом порту. См. [Пробы](../probes.md). |
-| **`OOMKilled`** | Превышение `limits.memory` | Увеличить лимит памяти. См. [Анализ OOMKilled](../../Troubleshooting/Common_Errors/oomkilled_pods.md). |
-| **`CreateContainerConfigError`** | Ссылка на несуществующий ConfigMap/Secret | Проверить имена: `kubectl get configmap`, `kubectl get secret`. См. [CreateContainerConfigError](../../Troubleshooting/Common_Errors/CreateContainerConfigError/definitions.md). |
-| **`Unhealthy` (livenessProbe)** | Приложение зависло или упало | `kubectl describe pod` → Last State → Exit Code. Читать логи, проверять дедлоки. |
-| **`FailedScheduling`** | Нет подходящих узлов (Taints, Affinity, ресурсы) | Проверить `kubectl describe pod` → Events: "Insufficient cpu/memory", "node(s) had taint". |
-| **`Evicted`** | Kubelet вытеснил под из-за давления на узле | Проверить `kubectl describe node <node>` → Conditions: MemoryPressure, DiskPressure. |
-| **`ReplicaFailure`** | Контроллер не может создать под (квота, RBAC, PDB) | Проверить `kubectl describe deployment` → Conditions → Reason=ReplicaFailure. |
-| **`Terminating`** (завис) | `preStop`, finalizer, зависший kubelet | См. раздел «Поды не завершаются (Terminating)». |
+### Специфические проблемы и методы их устранения
 
-### Специфические проблемы
+#### 1. Дедлок зондов доступности (Readiness / Startup Probe)
 
-#### Конфликт с PodDisruptionBudget
+Самая распространенная причина зависания в **Режиме B**: контейнер переходит в статус `Running`, но порт приложения не готов вовремя отвечать на запросы проверки, под остается `Ready 0/1`, и контроллер Deployment блокирует запуск следующих реплик.
 
-Если обновление проходит, но во время него начался drain узла, PDB может заблокировать удаление старых подов:
-
-```bash
-# Проверить PDB, влияющие на поды вашего Deployment
-kubectl get pdb -n <namespace>
-kubectl describe pdb <pdb-name>
-
-# Проверить, какие поды защищены PDB
-kubectl get pods -l app=<label> -o json | jq '.items[].metadata.labels'
-
-# Подтверждение блокировки eviction
-kubectl get events -n <namespace> --field-selector reason=PodDisruptionBudget,reason=Evicted
+**Математика окна проверки:**
+Максимальное время, отведенное приложению на успешный старт до фиксации отказа:
+```text
+T_start = initialDelaySeconds + (failureThreshold - 1) * periodSeconds
 ```
-
-**Решение:** Убедитесь, что `maxUnavailable` в Deployment и `minAvailable` в PDB совместимы. Например, если PDB требует `minAvailable: 3` из 5 подов, то `maxUnavailable` не должен превышать 1. При плановых работах на узлах связывайте во времени rollout и drain, либо временно ослабляйте PDB (`spec.unhealthyPodEvictionPolicy: AlwaysAllow` — см. [блокировка PDB](../../Troubleshooting/Common_Errors/PodTerminating/pdb_blocking.md)).
-
-#### Проблемы с ConfigMap и Secret
-
-Если новая версия ссылается на ConfigMap/Secret, которого не существует, поды не запустятся (в статусе пода — `CreateContainerConfigError`):
-
-```bash
-# Проверить наличие ConfigMap и Secret
-kubectl get configmap <name> -n <namespace>
-kubectl get secret <name> -n <namespace>
-
-# Проверить, что поды могут смонтировать тома
-kubectl describe pod <pod-name> | grep -A5 "Mounts:"
-kubectl describe pod <pod-name> | grep -A5 "Events:"
-```
-
-**Типичная ошибка:** `Warning FailedMount` при монтировании тома из ConfigMap. Причины: ConfigMap/Secret не существует в неймспейсе пода, ссылка на несуществующий ключ (`key`) или недопустимое имя ключа (для томов запрещено начинаться с `.`). Решение: сверьте имя объекта и имя ключа в манифесте.
-
-**Ограничения имен ключей:** значения, передаваемые через `env`/`envFrom`, должны быть валидными C-идентификаторами (без дефисов, начинаться с буквы или `_`). Ключ вида `my-key` работает как файл в томе, но не как переменная окружения.
-
-**Важный нюанс:** изменение содержимого уже существующего ConfigMap/Secret **не инициирует Rollout** — поды продолжат работать со старой конфигурацией (тома обновляются kubelet'ом с задержкой, переменные окружения — только при пересоздании). Применяйте `kubectl rollout restart deployment/<name>`.
-
-#### Проблемы с RBAC и ServiceAccount
-
-Если приложению нужен доступ к API Kubernetes во время rollout (например, операторы, миграции), отсутствие прав приведет к падению новых подов:
-
-```bash
-# Проверить, какой ServiceAccount используется подом
-kubectl get pod <pod-name> -o jsonpath='{.spec.serviceAccountName}'
-
-# Проверить, существует ли ServiceAccount
-kubectl get serviceaccount <name> -n <namespace>
-
-# Проверить RoleBinding/ClusterRoleBinding
-kubectl get rolebinding,clusterrolebinding -A | grep <name>
-
-# Быстрая проверка прав от имени служебного аккаунта
-kubectl auth can-i list secrets --as system:serviceaccount:<namespace>:<sa-name>
-```
-
-Подробный алгоритм — в [Ошибки доступа (RBAC)](../../Troubleshooting/Common_Errors/ApiAccessForbidden/diagnostics.md).
-
-#### Поды не завершаются (Terminating)
-
-Режим **C** зависания: новый RS полностью готов, но старый не сворачивается, потому что старые поды застряли в `Terminating`.
-
-```bash
-kubectl get pods -l app=<label> | grep Terminating
-kubectl describe pod <old-pod-name>
-
-# Как долго под висит и по какой причине
-kubectl get pod <old-pod-name> -o jsonpath='{.metadata.deletionTimestamp}{"\n"}{.metadata.finalizers}{"\n"}'
-```
-
-Типовые причины и решения:
-
-| Причина | Признак | Решение |
-| :--- | :--- | :--- |
-| Долгий `preStop` | Событие `Kill-container` происходит поздно | Сократить `preStop sleep`; он должен покрываться `terminationGracePeriodSeconds`. См. [Graceful Shutdown](../../Troubleshooting/Common_Errors/PodTerminating/graceful_shutdown.md). |
-| Finalizer (внешний контроллер) | `metadata.finalizers` непуст после удаления | Найти контроллер, держащий finalizer; разобраться с ним, а не удалять вручную. См. [Проблемы с finalizer](../../Troubleshooting/Common_Errors/PodTerminating/finalizer_issues.md). |
-| Kubelet не отвечает / NodeNotReady | Поды не удаляются с конкретного узла | Восстановить узел, либо `kubectl delete pod <name> --grace-period=0 --force` как крайнее средство. |
-
-> Принудительное `--grace-period=0 --force` обходит `preStop` и может оставить orphaned-состояние в приложении. Применяется только после исчерпания остальных вариантов. Полный алгоритм — в [Диагностика завершения пода](../../Troubleshooting/Common_Errors/PodTerminating/diagnostics.md).
-
-#### Проблемы с пробами (Ready 0/1)
-
-Самая частая причина режима **B**. Поды запускаются, но не достигают `Ready` — rollout не продвигается.
-
-```bash
-# Статус пробы в описании пода
-kubectl describe pod <new-pod-name> | grep -A8 "Readiness"
-
-# Логи — приложение может не слушать на ожидаемом порту
-kubectl logs <new-pod-name> --tail=50
-
-# Проверка изнутри кластера (если в образе есть curl/wget)
-kubectl exec -it <new-pod-name> -- curl -v http://127.0.0.1:<port><path>
-```
-
-**Расчет окна пробы:** максимальное время до признания пода неготовым = `initialDelaySeconds + (failureThreshold - 1) * periodSeconds`. Например, `initialDelaySeconds: 10`, `periodSeconds: 5`, `failureThreshold: 3` → 20 секунд до `NotReady`. Если приложению нужно 60 секунд на старт — окно должно быть больше, иначе под никогда не станет `Ready` (это классическая «мисконфигурация пробы», отличная от реального сбоя приложения).
-
-Типовые исправления:
-- Увеличить `initialDelaySeconds` / `failureThreshold`.
-- Использовать `startupProbe` для медленных стартов (Java, кеши) — она не входит в `readiness`/`liveness` гонку.
-- Проверить, что эндпоинт пробы не требует аутентификации и отвечает `2xx`.
-
-Подробная настройка — в [Пробы (Probes)](../probes.md).
-
-### Экстренные процедуры
-
-#### Принудительная остановка зависшего обновления
-
-Если обновление застряло и критически важно вернуть стабильность:
-
-```bash
-# Вариант 1: Откат к предыдущей ревизии (безопасно)
-kubectl rollout undo deployment/<name>
-
-# Вариант 2: Откат к конкретной ревизии
-kubectl rollout history deployment/<name>       # Найти номер нужной ревизии
-kubectl rollout undo deployment/<name> --to-revision=<N>
-
-# Вариант 3: «Сухой» предпросмотр отката (ничего не меняет)
-kubectl rollout undo deployment/<name> --dry-run=server -o yaml | head -40
-
-# Вариант 4: Пауза обновления (остановить процесс, но не откатывать)
-kubectl rollout pause deployment/<name>
-```
-
-Важные детали отката:
-- `kubectl rollout undo` **не создает исключение из-за `--force`** — такого флага не существует. Принудительное пересоздание подов выполняется через `kubectl delete pod <name>` (ReplicaSet пересоздаст его) или `kubectl rollout restart`.
-- Откат выполняется как **новая ревизия** (история не «отматывается», ревизии только увеличиваются) и подчиняется `maxSurge`/`maxUnavailable`.
-- **Нельзя откатить приостановленный (paused) Deployment** — сначала выполните `kubectl rollout resume deployment/<name>`.
-- Старый ReplicaSet уже существует и его образ не нужно тянуть из реестра — восстановление происходит быстро.
-- Возможность отката ограничена `revisionHistoryLimit` (по умолчанию 10): удаленные старые RS для отката недоступны.
-
-#### Экстренное масштабирование
-
-Если новые поды падают и нагружают систему:
-
-```bash
-# Масштабировать Deployment до 0 (полная остановка)
-kubectl scale deployment/<name> --replicas=0
-
-# Дождаться завершения всех подов
-kubectl rollout status deployment/<name> --timeout=5m
-
-# После исправления — восстановить
-kubectl scale deployment/<name> --replicas=<original-count>
-```
-
-### Реальный пример: Ошибка миграции БД
-
-**Ситуация:** Обновление застряло на 1 новой реплике. Старые поды работают, но новые не становятся `Ready`.
-
-**Диагностика:**
-1. `kubectl rollout status` висит.
-2. `kubectl get pods` показывает новый под в `Running`, но `Ready 0/1`.
-3. `kubectl logs <pod>` выдает: `FATAL: database "users_db" does not have table "sessions"`.
-
-**Причина:** Новая версия кода требует новую таблицу, но миграция БД в CI/CD не выполнилась или `Job` миграции упал.
-
-**Решение:**
-```bash
-# 1. Выполнить миграцию вручную
-kubectl create job --from=cronjob/db-migration manual-migration-$(date +%s)
-
-# 2. Дождаться завершения миграции
-kubectl get jobs -l app=db-migration --watch
-
-# 3. После успешной миграции — перезапустить rollout
-kubectl rollout restart deployment/<name>
-```
-
-### Реальный пример: Конфликт с квотами
-
-**Ситуация:** Deployment имеет `maxSurge: 2`, в неймспейсе установлена квота `requests.cpu: 4`. Каждый под требует `requests.cpu: 1`. При 3 активных репликах и попытке создания 2 новых — обновление застряло.
+Если приложению на прогрев пула соединений с БД или загрузку кэша требуется 45 секунд, а в манифесте задано `initialDelaySeconds: 5`, `periodSeconds: 5`, `failureThreshold: 3` (окно = 5 + 2 * 5 = 15 секунд), под будет циклически признаваться нездоровым.
 
 **Диагностика:**
 ```bash
-kubectl describe quota -n <namespace>
-# → requests.cpu: 5/4  (5 запрошено, лимит 4)
+kubectl describe pod <new-pod-name> -n <namespace> | grep -A8 "Readiness:"
+# → Readiness: exec [curl -f http://localhost:8080/healthz] delay=5s timeout=2s period=5s #success=1 #failure=3
+# → Events:
+# →   Warning  Unhealthy  1m (x8 over 2m)  kubelet  Readiness probe failed: HTTP probe failed with statuscode: 503
 ```
 
 **Решение:**
-```bash
-# Вариант 1: Уменьшить maxSurge
-kubectl patch deployment <name> -p '{"spec":{"strategy":{"rollingUpdate":{"maxSurge":1}}}}'
+1. Разделите проверки инициализации и рабочей готовности: внедрите `startupProbe` для приложений с медленным стартом.
+2. Во время работы `startupProbe` проверки `readinessProbe` и `livenessProbe` отключены и не инициируют перезапуски:
 
-# Вариант 2: Увеличить квоту (если есть права)
-kubectl patch resourcequota default-quota -n <namespace> \
-  -p '{"spec":{"hard":{"requests.cpu":"6"}}}'
-
-# Вариант 3: Снизить requests (если реальное потребление меньше)
-kubectl set resources deployment/<name> -c=<container> --requests=cpu=500m
+```yaml
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  failureThreshold: 30
+  periodSeconds: 5   # Дает приложению до 150 секунд на инициализацию
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+  periodSeconds: 5
+  failureThreshold: 2
 ```
 
-### Реальный пример: Слишком строгая readiness-проба
+#### 2. Ошибки монтирования томов и конфигураций (CreateContainerConfigError / FailedMount)
 
-**Ситуация:** Новые поды `Running`, но `Ready 0/1`; rollout не прогрессирует даже после нескольких попыток.
+Если новая ревизия Deployment ссылается на ConfigMap или Secret, который отсутствует в кластере или содержит недопустимые ключи:
+
+```bash
+# Диагностика статуса подов
+kubectl get pods -n <namespace> -l app=<app-label>
+# → NAME                       READY   STATUS                         RESTARTS   AGE
+# → my-app-6c589b4f77-x9k2p   0/1     CreateContainerConfigError     0          2m
+
+# Поиск конкретного отсутствующего ресурса в событиях
+kubectl describe pod <new-pod-name> -n <namespace> | grep -A5 "Events:"
+# → Warning  FailedMount  1m  kubelet  configmap "app-config-v2" not found
+```
+
+**Нюансы валидации имен ключей:**
+- Переменные окружения (`envFrom.configMapRef`): ключи обязаны быть валидными C-идентификаторами (символы `[A-Za-z_][A-Za-z0-9_]*`). Ключи с точками или дефисами (например, `application.yaml`) не могут быть импортированы через `envFrom` и вызовут падение контейнера.
+- Тома (`volumes.configMap`): имя ключа становится именем файла на диске. Здесь точки разрешены, но запрещены ведущие точки или разделители путей.
+
+**Решение:**
+```bash
+# Проверить наличие требуемого ConfigMap/Secret в целевом namespace
+kubectl get configmap,secret -n <namespace>
+
+# Применить недостающий ConfigMap перед продолжением rollout
+kubectl apply -f configmap-v2.yaml -n <namespace>
+```
+
+#### 3. Ошибки доступа RBAC и ServiceAccount
+
+Если новые реплики при старте обращаются к API-серверу Kubernetes (например, для чтения CRD, синхронизации секретов или координации кластера):
+
+```bash
+# Проверка привязанного ServiceAccount к поду
+kubectl get pod <new-pod-name> -n <namespace> -o jsonpath='{.spec.serviceAccountName}{"\n"}'
+# → app-service-account
+
+# Проверка прав сервисного аккаунта через API авторизации
+kubectl auth can-i get configmaps -n <namespace> --as=system:serviceaccount:<namespace>:app-service-account
+# → no - User "system:serviceaccount:default:app-service-account" cannot get resource "configmaps"
+```
+
+**Решение:**
+Создать недостающий `Role` и `RoleBinding` для предоставления необходимых полномочий сервисному аккаунту пода.
+
+#### 4. Зависшие поды в статусе Terminating на Bare-Metal (Режим C)
+
+Старый ReplicaSet не может уменьшить число реплик до `0`, потому что поды старой ревизии заблокированы в фазе удаления.
+
+```bash
+# Поиск зависших подов со временем удаления
+kubectl get pods -n <namespace> -l app=<app-label> | grep Terminating
+# → my-app-58f8b88df8-2b8zq   1/1   Terminating   0   14m
+
+# Проверка финализаторов и времени начала удаления
+kubectl get pod <terminating-pod> -n <namespace> -o jsonpath='deletionTimestamp={.metadata.deletionTimestamp} finalizers={.metadata.finalizers}{"\n"}'
+# → deletionTimestamp=2026-10-13T16:40:12Z finalizers=["storage.example.com/cleanup-lock"]
+```
+
+**Первопричины и действия:**
+1. **Бесконечный `preStop` hook:** Kubelet блокирует отправку `SIGTERM`, пока не завершится команда хука `preStop`. По истечении `spec.terminationGracePeriodSeconds` Kubelet отправляет принудительный `SIGKILL`. Если grace period задан равным 3600с, под будет висеть час.
+   - *Решение:* Скорректировать `terminationGracePeriodSeconds` и длительность команды хука в шаблоне Deployment.
+2. **Зависший Finalizer:** Внешний оператор или контроллер хранилища не снял блокировку удаления из `.metadata.finalizers`.
+   - *Решение:* Убедиться, что процесс очистки завершен, и снять финализатор вручную:
+     ```bash
+     kubectl patch pod <terminating-pod> -n <namespace> -p '{"metadata":{"finalizers":[]}}' --type=merge
+     ```
+3. **Отказ узла (Node NotReady / Сетевой Partition на bare-metal):** Kubelet на узле отключен или потерял связь с Control Plane. Control Plane не может подтвердить удаление контейнера.
+   - *ВНИМАНИЕ SRE:* Принудительное удаление `kubectl delete pod <name> --grace-period=0 --force` удаляет объект из etcd, но **не останавливает** реальный процесс на изолированном узле. Это может привести к состоянию Split-Brain (два экземпляра пишут в один том или базу данных). Выполняйте force delete только после физического отключения питания или изоляции проблемного сервера!
+
+---
+
+### Экстренные процедуры восстановления (SRE Runbooks)
+
+#### Процедура 1: Экстренный откат к предыдущей ревизии (Rollout Undo)
+
+При критическом сбое обновления самым быстрым способом восстановления доступности является откат.
+
+```bash
+# 1. Просмотр истории ревизий для определения стабильной версии
+kubectl rollout history deployment/<name> -n <namespace>
+# → REVISION  CHANGE-CAUSE
+# → 2         Релиз 2.1.0 с миграцией схемы
+# → 3         Релиз 2.2.0 (проблемный)
+
+# 2. Предпросмотр изменений отката (dry-run на стороне сервера)
+kubectl rollout undo deployment/<name> -n <namespace> --dry-run=server -o yaml | grep "image:"
+# → image: my-registry.local/app:2.1.0
+
+# 3. Выполнение отката к предыдущей версии
+kubectl rollout undo deployment/<name> -n <namespace>
+# → deployment.apps/my-app rolled back
+
+# 4. Выполнение отката к явно указанной исторической ревизии
+kubectl rollout undo deployment/<name> -n <namespace> --to-revision=2
+
+# 5. Ожидание завершения восстановления
+kubectl rollout status deployment/<name> -n <namespace> --timeout=3m
+# → deployment "my-app" successfully rolled out
+```
+
+**Особенности механики отката:**
+- Откат формирует **новую ревизию** (например, ревизию 4, идентичную по спецификации ревизии 2).
+- Флага `rollout undo --force` не существует.
+- Нельзя выполнить откат Deployment, находящегося в состоянии паузы (`spec.paused: true`). Сначала выполните `kubectl rollout resume`.
+
+#### Процедура 2: Приостановка обновления (Rollout Pause) и Hotfix
+
+Если необходимо остановить замену оставшихся реплик для анализа ситуации на проде без немедленного сброса уже обновленных подов:
+
+```bash
+# 1. Приостановить процесс ротации
+kubectl rollout pause deployment/<name> -n <namespace>
+# → deployment.apps/my-app paused
+
+# 2. Внести исправление в конфигурацию (например, исправить переменную окружения)
+kubectl set env deployment/<name> -n <namespace> DB_TIMEOUT=30s
+# → deployment.apps/my-app env updated
+
+# 3. Возобновить процесс развертывания
+kubectl rollout resume deployment/<name> -n <namespace>
+# → deployment.apps/my-app resumed
+```
+
+#### Процедура 3: Экстренная остановка рабочей нагрузки (Zero-Scale Drain)
+
+Если дефектный релиз повреждает данные или вызывает лавину ошибок на зависимых системах:
+
+```bash
+# 1. Масштабировать Deployment в 0 реплик
+kubectl scale deployment/<name> -n <namespace> --replicas=0
+# → deployment.apps/my-app scaled
+
+# 2. Дождаться полного завершения всех подов
+kubectl wait --for=delete pod -l app=<app-label> -n <namespace> --timeout=2m
+# → pod/my-app-6c589b4f77-x9k2p condition met
+
+# 3. После устранения дефекта — вернуть расчетное число реплик
+kubectl scale deployment/<name> -n <namespace> --replicas=5
+```
+
+---
+
+### Разбор реальных инцидентов (Post-Mortem Cases)
+
+#### Инцидент 1: Сбой миграции схемы базы данных в Init-контейнере
+
+**Симптомы:**
+Rollout завис на 1 новой реплике. Пользователи продолжают работать со старой версией, но релиз заблокирован. Новый под висит в статусе `Init:CrashLoopBackOff`.
 
 **Диагностика:**
 ```bash
-kubectl describe pod <new-pod-name> | grep -A8 "Readiness"
-# → Readiness probe failed: HTTP probe failed with statuscode: 503
-kubectl logs <new-pod-name>
-# → Cache warming... (приложение готово отвечать только через 90 секунд)
+# 1. Проверка подов
+kubectl get pods -n prod -l app=billing-api
+# → NAME                           READY   STATUS                  RESTARTS   AGE
+# → billing-api-58f8b88df8-v2k1m   1/1     Running                 0          12d
+# → billing-api-7d9f5c4b6a-9m4lp   0/1     Init:CrashLoopBackOff   3          6m
+
+# 2. Проверка логов init-контейнера миграций
+kubectl logs billing-api-7d9f5c4b6a-9m4lp -n prod -c schema-migration
+# → 2026-10-13 16:42:01 FATAL [db:migrate] relation "invoices_v2" already exists with conflicting schema
 ```
 
-**Причина:** Окно пробы (`initialDelaySeconds + (failureThreshold-1)*periodSeconds`) меньше реального времени прогрева приложения.
+**Первопричина:**
+Миграция базы данных выполнялась внутри `initContainers` каждого пода. При параллельном старте возник конфликт блокировок или попытка повторного наката миграции.
 
-**Решение:** добавить `startupProbe` со щадящими параметрами (например, `failureThreshold: 30, periodSeconds: 10` → окно 300с), а `readiness`/`liveness` оставить для штатной работы:
+**Решение:**
+1. Выполнять миграции схемы базы данных через отдельный атомарный объект `Job` в рамках CI/CD до старта обновления Deployment, а не внутри Pod template.
+2. Откатить зависший Deployment:
+   ```bash
+   kubectl rollout undo deployment/billing-api -n prod
+   ```
 
+#### Инцидент 2: Исчерпание ResourceQuota из-за всплеска maxSurge
+
+**Симптомы:**
+При обновлении сервиса с 10 репликами процесс останавливается после создания 2 новых реплик. Команда `kubectl rollout status` блокируется.
+
+**Диагностика:**
 ```bash
-kubectl patch deployment <name> --type='json' -p '[{"op":"add","path":"/spec/template/spec/containers/0/startupProbe","value":{"httpGet":{"path":"/healthz","port":8080},"failureThreshold":30,"periodSeconds":10}}]'
+# 1. Проверка условий Deployment
+kubectl describe deployment payment-gateway -n finance | grep -A5 "Conditions:"
+# → Type: ReplicaFailure, Status: True, Reason: FailedCreate
+
+# 2. Проверка событий ReplicaSet
+kubectl describe rs payment-gateway-8f4b2c1d -n finance | grep "FailedCreate"
+# → Warning  FailedCreate  2m  replicaset-controller  Error creating: pods "payment-gateway-8f4b2c1d-..." is forbidden: exceeded quota: finance-quota, requested: requests.cpu=2, used: requests.cpu=19, limited: requests.cpu=20
+
+# 3. Проверка параметров стратегии
+kubectl get deploy payment-gateway -n finance -o jsonpath='maxSurge={.spec.strategy.rollingUpdate.maxSurge} maxUnavailable={.spec.strategy.rollingUpdate.maxUnavailable}{"\n"}'
+# → maxSurge=25% maxUnavailable=0
 ```
 
-## 4. Дополнительная информация
+**Первопричина:**
+При 10 репликах по 1 CPU каждая и `maxSurge: 25%` контроллер попытался создать 3 дополнительных пода (итого 13 CPU при лимите квоты в 20 CPU, но другие сервисы namespace уже занимали 9 CPU). Параметр `maxUnavailable: 0` запретил удалять старые поды до готовности новых. Возник тупик (deadlock).
 
-### Полезные команды для траблшутинга
-
+**Решение:**
+Скорректировать стратегию, разрешив временное уменьшение доступности старых реплик:
 ```bash
-# === Обзор состояния ===
-# Статус Rollout с таймаутом (для скриптов; при зависании завершается с ненулевым кодом и сообщением "exceeded its progress deadline")
-kubectl rollout status deployment/<name> --timeout=5m
-
-# Ожидание достижения условия Available (альтернатива для CI)
-kubectl wait --for=condition=Available deployment/<name> --timeout=5m
-
-# История ревизий с аннотациями (причины изменений)
-kubectl rollout history deployment/<name>
-
-# Текущее и желаемое состояние
-kubectl get deployment/<name> -o yaml | grep -E 'replicas:|availableReplicas:|unavailableReplicas:|observedGeneration|generation:'
-
-# === Диагностика подов ===
-# Поды с проблемами (не Running или не Ready)
-kubectl get pods -l app=<label> -o wide | grep -v Running
-kubectl get pods -l app=<label> -o wide | grep -v "1/1"
-
-# Все контейнеры в поде и их статус
-kubectl get pod <name> -o jsonpath='{range .status.containerStatuses[*]}{.name}{"\t"}{.state}{"\n"}{end}'
-
-# Последние события пода (быстрый доступ)
-kubectl describe pod <name> | grep -A10 "Events:"
-
-# === Логи ===
-# Логи всех реплик Deployment (селектор по метке)
-kubectl logs -l app=<label> --tail=100
-
-# Логи с фильтрацией по контейнеру
-kubectl logs <pod-name> -c <container-name>
-
-# Логи с таймстампами (для поиска циклов перезапуска)
-kubectl logs <pod-name> --timestamps
-
-# === Мониторинг в реальном времени ===
-# Отслеживание пересоздания подов при обновлении
-kubectl get pods -l app=<label> --watch
-
-# События уровня кластера
-kubectl get events --sort-by='.lastTimestamp' -n <namespace>
-
-# === Откат и управление ===
-# Откат с указанием причины
-kubectl annotate deployment/<name> kubernetes.io/change-cause="Откат из-за критической ошибки" --overwrite
-kubectl rollout undo deployment/<name>
-
-# Пауза + возобновление (для пакетного обновления)
-kubectl rollout pause deployment/<name>
-kubectl set resources deployment/<name> -c=<container> --limits=cpu=200m,memory=256Mi
-kubectl rollout resume deployment/<name>
+kubectl patch deployment payment-gateway -n finance --type='strategic' -p '{"spec":{"strategy":{"rollingUpdate":{"maxSurge":1,"maxUnavailable":1}}}}'
 ```
 
-### Коды завершения контейнеров (Exit Codes)
+#### Инцидент 3: Дедлок готовности при холодном старте кэша
 
-Быстрый справочник для шага 3 алгоритма — интерпретация `Last State → Exit Code` из `kubectl describe pod`:
+**Симптомы:**
+Новые поды запускаются, переходят в `Running`, но падают каждые 40 секунд. Статус `Running (Ready 0/1)` сменяется на `CrashLoopBackOff`.
 
-| Exit code | Расшифровка | Типовая причина |
+**Диагностика:**
+```bash
+# 1. Проверка проверок в описании пода
+kubectl describe pod catalog-service-6d8b9f-x1z4 -n shop | grep -E 'Liveness:|Readiness:|Last State:'
+# → Readiness: http-get http://:8080/healthz delay=10s timeout=2s period=5s #failure=3
+# → Liveness:  http-get http://:8080/healthz delay=20s timeout=2s period=5s #failure=3
+# → Last State: Terminated, Exit Code: 137, Reason: OOMKilled/Killed by liveness probe
+
+# 2. Логи приложения
+kubectl logs catalog-service-6d8b9f-x1z4 -n shop --previous | tail -20
+# → [Warmup] Loading product graph into memory... 65% completed
+# → Received SIGKILL from Kubelet
+```
+
+**Первопричина:**
+`livenessProbe` начала проверять здоровье приложения через 20 секунд после старта. Приложение выполняло прогрев локального кэша в течение 60 секунд и не отвечало на HTTP-запросы. Kubelet принудительно убил контейнер по таймауту Liveness-пробы.
+
+**Решение:**
+Внедрить `startupProbe` с достаточным запасом времени (`failureThreshold: 24`, `periodSeconds: 5` = 120 секунд), чтобы защитить контейнер от преждевременного завершения liveness-пробой:
+```bash
+kubectl patch deployment catalog-service -n shop --type='json' -p '[{"op":"add","path":"/spec/template/spec/containers/0/startupProbe","value":{"httpGet":{"path":"/healthz","port":8080},"failureThreshold":24,"periodSeconds":5}}]'
+```
+
+---
+
+## 4. Операции и команды диагностики
+
+### Справочная таблица основных команд диагностики
+
+| Задача диагностики | Команда `kubectl` | Ожидаемый результат / Вывод |
 | :--- | :--- | :--- |
-| `0` | Успешное завершение | Приложение корректно обработало сигнал завершения |
-| `1` | Ошибка приложения | Паника, исключение, аварийный выход — чаще всего код 1 |
-| `126` | Команда не может быть выполнена | Нет прав на выполнение, неверная архитектура бинарника (wrong arch) |
-| `127` | Команда не найдена | Ошибка в `command`/`args`, отсутствие файла в образе |
-| `130` | SIGINT | Приложение прервано по Ctrl+C / SIGINT (`128+2`) |
-| `137` | SIGKILL | **OOMKilled** (превышение `limits.memory`) или принудительный kill (`128+9`) |
-| `143` | SIGTERM | Корректное завершение по сигналу; ожидаемо при gracefully shutdown (`128+15`) |
+| **Проверка статуса с таймаутом** | `kubectl rollout status deployment/<name> -n <ns> --timeout=60s` | `# → deployment "my-app" successfully rolled out` или `# → error: deployment "my-app" exceeded its progress deadline` |
+| **Проверка поколения** | `kubectl get deploy <name> -n <ns> -o jsonpath='{.status.observedGeneration}/{.metadata.generation}{"\n"}'` | `# → 4/4` (синхронизировано) или `# → 3/4` (контроллер отстает) |
+| **Анализ условий** | `kubectl get deploy <name> -n <ns> -o jsonpath='{range .status.conditions[*]}{.type}={.status} ({.reason}){"\n"}{end}'` | `# → Progressing=False (ProgressDeadlineExceeded)` |
+| **История ревизий** | `kubectl rollout history deployment/<name> -n <ns>` | `# → REVISION  CHANGE-CAUSE`<br>`# → 1         v1.0.0`<br>`# → 2         v1.1.0` |
+| **Детали ревизии** | `kubectl rollout history deployment/<name> -n <ns> --revision=2` | `# → Pod Template: ... Containers: ... Image: ...` |
+| **Сверка реплик RS** | `kubectl get rs -n <ns> -l app=<label>` | `# → NAME         DESIRED  CURRENT  READY`<br>`# → app-v1     3        3        3` |
+| **Поиск нездоровых подов** | `kubectl get pods -n <ns> -l app=<label> --field-selector status.phase!=Running` | `# → NAME         READY   STATUS   RESTARTS`<br>`# → app-v2-xyz   0/1     Pending  0` |
+| **Просмотр событий пода** | `kubectl events -n <ns> --for pod/<pod-name>` | `# → Warning  FailedScheduling  pod/app-v2  Insufficient cpu` |
+| **Логи упавшего пода** | `kubectl logs <pod-name> -n <ns> --previous --tail=50` | `# → panic: runtime error: invalid memory address` |
+| **Перезапуск выкатки** | `kubectl rollout restart deployment/<name> -n <ns>` | `# → deployment.apps/my-app restarted` |
+| **Приостановка выкатки** | `kubectl rollout pause deployment/<name> -n <ns>` | `# → deployment.apps/my-app paused` |
+| **Возобновление выкатки** | `kubectl rollout resume deployment/<name> -n <ns>` | `# → deployment.apps/my-app resumed` |
+| **Откат к предыдущей версии**| `kubectl rollout undo deployment/<name> -n <ns>` | `# → deployment.apps/my-app rolled back` |
 
-См. также [Диагностика CrashLoopBackOff](../../Troubleshooting/Common_Errors/pod_crash_loop_back_off/diagnostics.md) и [Анализ OOMKilled](../../Troubleshooting/Common_Errors/oomkilled_pods.md).
+### Экспресс-команды JSONPath и jq для оператора и CI/CD
 
-### Мониторинг и алертинг
+```bash
+# Получить имя нового (активного) ReplicaSet
+TARGET_RS=$(kubectl get deploy <name> -n <ns> -o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}' | xargs -I {} kubectl get rs -n <ns> -l app=<label> -o json | jq -r --arg rev "{}" '.items[] | select(.metadata.annotations["deployment.kubernetes.io/revision"]==$rev) | .metadata.name')
+echo "Target RS: ${TARGET_RS}"
+# → Target RS: my-app-6c589b4f77
 
-Правило «сдвига влево»: зависший rollout дешевле поймать по алерту, чем по жалобам пользователей. Базовые метрики kube-state-metrics:
+# Получить список подов, находящихся в неготовности (NotReady)
+kubectl get pods -n <ns> -l app=<label> -o json | jq -r '.items[] | select(.status.containerStatuses[]?.ready==false) | .metadata.name'
+# → my-app-6c589b4f77-x9k2p
 
-- `kube_deployment_status_observed_generation` vs `kube_deployment_metadata_generation` — контроллер не обработал последнее изменение (режим A).
-- `kube_deployment_status_condition{condition="Progressing",reason="ProgressDeadlineExceeded"}` — rollout провален (режим B/C). Метка `reason` доступна в kube-state-metrics 2.7+.
-- `kube_deployment_spec_replicas != kube_deployment_status_available_replicas` — желаемое/фактическое число реплик не сходится.
+# Проверить наличие контейнеров с OOMKilled в namespace
+kubectl get pods -n <ns> -o json | jq -r '.items[] | {name: .metadata.name, terminated: .status.containerStatuses[]?.lastState.terminated} | select(.terminated.reason=="OOMKilled")'
+```
 
-Готовые примеры правил (включая чек `changes(kube_deployment_status_replicas_updated[10m]) == 0` для детекции отсутствия прогресса) — в [Kubernetes-алерты](../../../Grafana/alerting/kubernetes_alerts.md). В связке с метриками удобно использовать `kubectl rollout status --timeout` в пайплайнах (см. [Incident Response в CI/CD](../../../CI-CD/GitLab_CI/Advanced/incident_response_cicd.md)): команда возвращает ненулевой код при невыходе в срок, что позволяет автоматически откатывать релиз.
+### Коды завершения контейнеров (Exit Codes) и действия SRE
 
-### Лучшие практики (Best Practices)
+При анализе поля `Last State -> Exit Code` в выводе `kubectl describe pod`:
 
-1. **Автоматизация диагностики:** Настройте алерты на зависшие rollout (метрики из раздела «Мониторинг и алертинг») с `for: 15m`, чтобы не срабатывать на легитимно долгие выкатки. Алерт на `kube_deployment_status_condition{condition="Progressing",status="false"}` без учета `reason` ловит и ранние провалы (`ReplicaSetCreateError`) — выделяйте именно таймауты через `reason="ProgressDeadlineExceeded"`.
-2. **Причины изменений:** Флаг `--record` объявлен устаревшим и удален в kubectl v1.24. Всегда пишите причину через аннотацию `kubernetes.io/change-cause` — она видна в `kubectl rollout history` и ускоряет диагностику.
-3. **MinReadySeconds в продакшене:** Устанавливайте `minReadySeconds: 30-60` для критических сервисов, чтобы выявлять медленные падения (например, после включения в трафик).
-4. **Ограничение истории:** Устанавливайте `revisionHistoryLimit: 3-5` вместо дефолтных 10 для снижения нагрузки на etcd — однако не ниже, чем реально нужно для отката.
-5. **Graceful Termination:** Убедитесь, что приложение корректно обрабатывает `SIGTERM` и завершает активные соединения. `terminationGracePeriodSeconds` должен покрывать `preStop` + время дренажа.
-6. **PreStop хуки:** Используйте `preStop` для плавного дренажа соединений перед завершением пода (важно для HTTP-серверов и БД-клиентов). Не делайте `preStop` дольше `terminationGracePeriodSeconds`.
-7. **Пробы — «make or break» rollout:** считайте окно пробы (`initialDelaySeconds + (failureThreshold-1)*periodSeconds`), для медленных стартов используйте `startupProbe`. Подробнее в [Пробах](../probes.md).
-8. **Тайм-ауты в CI/CD:** всегда задавайте `kubectl rollout status --timeout=...` и завершайте пайплайн с ошибкой при невыходе в срок — тогда автоматика (или человек) успеет откатить до влияния на пользователей.
-9. **ReadinessProbe обязательна:** без нее RollingUpdate удаляет старые поды до готовности новых — эффект «все упало разом».
-10. **Проверяйте поколение:** перед отладкой смотрите `observedGeneration` — возможно, rollout даже не начался (режим A), и копать нужно в сторону paused/синхронизации манифеста.
+| Exit Code | Сигнал / Описание | Первопричина | План действий SRE |
+| :--- | :--- | :--- | :--- |
+| **`0`** | Успешный выход | Процесс завершил работу штатно. Если это не Job, приложение завершилось преждевременно. | Проверить аргументы запуска (`command`/`args`) и фоновые демоны. |
+| **`1`** | Ошибка приложения | Необработанное исключение, аварийный выход в коде (например, ошибка подключения к БД). | Читать логи `kubectl logs <pod> --previous`. |
+| **`126`** | Permission Denied | Бинарный файл не имеет прав на исполнение (`chmod +x`), либо несовместима архитектура процессора (ARM vs x86_64). | Проверить права в Dockerfile и скомпилированную архитектуру бинарника. |
+| **`127`** | Command Not Found | Указанный в `command` файл не существует внутри файловой системы контейнера (ошибка в `PATH`). | Проверить точку входа в манифесте и состав образа. |
+| **`130`** | SIGINT (128 + 2) | Процесс прерван сигналом прерывания с клавиатуры или инициализирующим скриптом. | Проверить оберточные bash-скрипты внутри контейнера. |
+| **`137`** | **SIGKILL (128 + 9)** | 1. **OOMKilled:** Процесс превысил лимит `limits.memory` и был убит ядром Linux.<br>2. Kubelet принудительно убил контейнер по истечении `terminationGracePeriodSeconds`. | 1. Изучить `kubectl describe pod` на наличие статуса `OOMKilled`. Увеличить `limits.memory`.<br>2. Проверить хук `preStop`. |
+| **`143`** | **SIGTERM (128 + 15)** | Штатное завершение: Kubelet запросил остановку контейнера при плановой ротации подов. | Нормальное поведение старых реплик при RollingUpdate. |
 
-### Ограничения и особенности (Edge Cases)
+---
 
-1. **Обновление с пустым `replicas`:** Если Deployment имеет `replicas: 0`, обновление шаблона не создаст поды и завершится сразу — ожидаемое поведение для временной остановки, неожиданное — для выкатки.
-2. **Параллельные обновления (Rollover):** Если отправить второе обновление во время первого, контроллер не ждет завершения первого. При быстрой смене версий старые RS могут не успеть «до-`Ready`-иться» — отсюда хаотичный вывод `rollout status`.
-3. **Неизменяемость селектора:** Поле `spec.selector` неизменяемо. Ошибка в селекторе приводит к бесконечному созданию подов. Проверяйте `kubectl get rs` перед первым применением.
-4. **HPA и RollingUpdate:** Настраивайте HPA на Deployment, а не на ReplicaSet — иначе во время Rollout autoscaler масштабирует старый (неактивный) RS.
-5. **Мутабельные теги:** `:latest`/`:stable` делает Rollout невоспроизводимым — Kubernetes не видит разницы и не инициирует обновление.
-6. **ConfigMap/Secret не инициируют Rollout:** изменение содержимого не перезапускает поды. Для применения — `kubectl rollout restart` (или аннотация-хеш конфигурации). Переменные окружения из `envFrom` обновляются только при пересоздании пода.
-7. **Нельзя откатить paused Deployment:** `kubectl rollout undo` не сработает, пока не выполнен `rollout resume`.
-8. **`progressDeadlineSeconds` <= `minReadySeconds`:** условие срабатывает сразу — параметры конфликтуют.
-9. **`rollout undo --force` не существует:** такой команды нет. Принудительное пересоздание — `kubectl delete pod` или `rollout restart`.
-10. **Откат ограничен историей:** удаленный из-за `revisionHistoryLimit` старый RS нельзя использовать для отката.
-11. **Зависшие `Terminating`:** блокируют масштабирование вниз (режим C). Помимо preStop/finalizer, причина может быть в невосприимчивом kubelet — смотрите события `FailedKillPod` и диагностику узла.
-12. **Поды в `Terminating` при scale-down после rollout:** если приложение не отвечает на SIGTERM, оно может не получить ни `preStop`, ни корректное завершение — настройте обработку сигнала заранее (это и есть профилактика «зависших» обновлений).
+## 5. Типичные ошибки и матрица устранения неисправностей
+
+| Статус / Ошибка | Первопричина | Команда быстрой диагностики | Решение SRE |
+| :--- | :--- | :--- | :--- |
+| **`Pending`** | Нехватка CPU/памяти на узлах, Taints, селекторы `nodeSelector` или `affinity`. | `kubectl describe pod <pod> \| grep -A5 "Events:"` | Увеличить емкость узлов, уменьшить `requests`, скорректировать tolerations. См. [Pod Pending](../../Troubleshooting/Common_Errors/pod_pending/diagnostics.md). |
+| **`ImagePullBackOff` / `ErrImagePull`** | Несуществующий тег образа, опечатка в URL реестра, отсутствие `imagePullSecrets`. | `kubectl describe pod <pod> \| grep -E 'Failed\|BackOff'` | Исправить тег в манифесте, проверить авторизацию в локальном реестре. См. [Ошибки образов](../../Troubleshooting/Common_Errors/PodImagePullErrors/definitions.md). |
+| **`CrashLoopBackOff`** | Сбой конфигурации приложения, отсутствие обязательных переменных окружения, падение при старте. | `kubectl logs <pod> --previous` | Исправить код или переменные окружения. См. [CrashLoopBackOff](../../Troubleshooting/Common_Errors/pod_crash_loop_back_off/diagnostics.md). |
+| **`Init:CrashLoopBackOff`** | Падение вспомогательного init-контейнера (миграция БД, проверка зависимостей). | `kubectl logs <pod> -c <init-container> --previous` | Исправить скрипт миграции или восстановить сетевую доступность зависимого сервиса. |
+| **`Running (Ready 0/1)`** | Приложение не проходит проверку `readinessProbe`. | `kubectl describe pod <pod> \| grep -A8 "Readiness:"` | Проверить порт, путь и таймауты проверки; добавить `startupProbe` для медленного старта. См. [Пробы](../probes.md). |
+| **`OOMKilled`** | Превышение лимита оперативной памяти `resources.limits.memory`. | `kubectl describe pod <pod> \| grep -E 'OOMKilled\|Exit Code'` | Профиль потребления памяти приложения, увеличение `limits.memory`. См. [Анализ OOMKilled](../../Troubleshooting/Common_Errors/oomkilled_pods.md). |
+| **`CreateContainerConfigError`** | Ссылка на несуществующий ConfigMap/Secret или некорректный ключ. | `kubectl get pods -n <ns> \| grep ConfigError` | Проверить наличие объекта: `kubectl get configmap,secret -n <ns>`. См. [ConfigError](../../Troubleshooting/Common_Errors/CreateContainerConfigError/definitions.md). |
+| **`FailedScheduling`** | Ни один узел кластера не удовлетворяет требованиям размещения пода. | `kubectl events --for pod/<pod>` | Освободить ресурсы на узлах, проверить Taints/Affinity. |
+| **`Evicted`** | Kubelet вытеснил под из-за дефицита дискового пространства или памяти на узле. | `kubectl describe node <node> \| grep -A5 "Conditions:"` | Очистить диск узла (`crictl rmi --prune`), проверить log rotation. |
+| **`ReplicaFailure`** | ReplicaSet не может создать под из-за исчерпания ResourceQuota или отказа Admission Webhook. | `kubectl describe deploy <name> \| grep -A5 "Conditions:"` | Проверить квоты `kubectl describe quota -n <ns>` и логи Admission вебхуков. |
+| **`Terminating` (зависший)** | Зависший хук `preStop`, неснятый finalizer, недоступность Kubelet на узле. | `kubectl get pod <pod> -o jsonpath='{.metadata.finalizers}'` | Снять зависший finalizer, проверить состояние узла и Kubelet. |
+
+---
+
+## 6. Мониторинг, алертинг и наблюдаемость
+
+### Ключевые метрики для выявления зависших выкаток
+
+Для проактивного обнаружения сбоев развертывания используются стандартные метрики экспортера `kube-state-metrics` (v2.10+) и метрики `kube-controller-manager`:
+
+- `kube_deployment_status_condition{condition="Progressing", status="false", reason="ProgressDeadlineExceeded"}` — флаг зависшего обновления (значение `1` означает зафиксированный таймаут).
+- `kube_deployment_status_replicas_unavailable` — число недоступных реплик Deployment в текущий момент.
+- `kube_deployment_status_observed_generation` и `kube_deployment_metadata_generation` — рассинхронизация поколений спецификации (контроллер не обработал изменения).
+- `kube_deployment_spec_replicas != kube_deployment_status_replicas_available` — несоответствие желаемого и фактического числа готовых реплик.
+
+### Production PromQL правила алертинга
+
+```yaml
+groups:
+  - name: deployment_troubleshooting_alerts
+    rules:
+      # Критический алерт: обновление зависло и превысило progressDeadlineSeconds
+      - alert: DeploymentRolloutStuck
+        expr: |
+          kube_deployment_status_condition{condition="Progressing", status="false", reason="ProgressDeadlineExceeded"} == 1
+        for: 2m
+        labels:
+          severity: critical
+          tier: platform
+        annotations:
+          summary: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} завис при обновлении"
+          description: "Контроллер Deployment зафиксировал условие ProgressDeadlineExceeded. Новые поды не могут стать доступными. Требуется вмешательство инженера или откат."
+
+      # Предупреждение: рассинхронизация поколения спецификации и статуса
+      - alert: DeploymentGenerationMismatch
+        expr: |
+          kube_deployment_metadata_generation{job="kube-state-metrics"}
+          !=
+          kube_deployment_status_observed_generation{job="kube-state-metrics"}
+        for: 5m
+        labels:
+          severity: warning
+          tier: platform
+        annotations:
+          summary: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} не обработан контроллером"
+          description: "observedGeneration отстает от metadata.generation более 5 минут. Проверьте состояние kube-controller-manager или флаг spec.paused."
+
+      # Деградация доступности: число доступных реплик меньше желаемого
+      - alert: DeploymentReplicasUnavailable
+        expr: |
+          (kube_deployment_spec_replicas{job="kube-state-metrics"}
+          -
+          kube_deployment_status_replicas_available{job="kube-state-metrics"}) > 0
+        for: 10m
+        labels:
+          severity: warning
+          tier: platform
+        annotations:
+          summary: "У Deployment {{ $labels.namespace }}/{{ $labels.deployment }} отсутствуют доступные реплики"
+          description: "Фактическое число доступных реплик меньше спецификации в течение 10 минут."
+```
+
+### Автоматизированный гейт в CI/CD пайплайнах
+
+Для реализации безопасной непрерывной доставки внедряйте проверку статуса в скрипты деплоя:
+
+```bash
+# Пример шага деплоя в Bash / CI/CD pipeline
+kubectl apply -f deployment.yaml
+
+echo "Ожидание завершения Rollout..."
+if ! kubectl rollout status deployment/my-app -n prod --timeout=300s; then
+    echo "ОШИБКА: Обновление превысило лимит времени 300 секунд! Запуск аварийного отката..."
+    kubectl rollout undo deployment/my-app -n prod
+    kubectl rollout status deployment/my-app -n prod --timeout=120s
+    exit 1
+fi
+
+echo "Развертывание успешно завершено."
+```
+
+---
+
+## 7. Лучшие практики (Best Practices)
+
+1. **Обязательная настройка `readinessProbe`:** Без проверки готовности Kubernetes считает под готовым сразу после запуска процесса, немедленно удаляя старые реплики. При сбое нового кода это приводит к полной недоступности приложения.
+2. **Внедрение `startupProbe` для медленных сервисов:** Выносите длительную инициализацию (прогрев кэша, подключение к БД) в `startupProbe`, чтобы избежать ложных срабатываний и циклических перезапусков от `livenessProbe`.
+3. **Фиксация причин изменений через аннотацию:** Флаг `--record` окончательно удален в Kubernetes v1.24. Всегда документируйте релизы через аннотацию `kubernetes.io/change-cause`:
+   ```bash
+   kubectl annotate deployment/my-app -n prod kubernetes.io/change-cause="Релиз 2.4.1 (тикет SRE-1042)" --overwrite
+   ```
+4. **Консервативный `progressDeadlineSeconds`:** Не занижайте таймаут прогресса ниже максимального времени вытягивания образов и прогрева подов на ваших bare-metal узлах. Для критических сервисов рекомендуемое значение — от 300 до 600 секунд.
+5. **Ограничение истории ревизий (`revisionHistoryLimit`):** Задавайте `revisionHistoryLimit: 3-5` (по умолчанию 10). Избыточные старые ReplicaSet создают бесполезную нагрузку на etcd, но значение не должно быть меньше глубины планируемого отката.
+6. **Корректный Graceful Shutdown:** Убедитесь, что приложение перехватывает сигнал `SIGTERM` и корректно завершает соединения. `spec.terminationGracePeriodSeconds` должен превышать время хука `preStop` плюс время дообслуживания активных запросов.
+7. **Безопасная стратегия ротации (`maxUnavailable: 0` для SLA):** Для критичных stateless-сервисов настраивайте `maxUnavailable: 0` и `maxSurge: 1` или `25%`, чтобы при любых сбоях новых реплик емкость работающего приложения не снижалась ниже 100%.
+8. **Проверка запаса ресурсов перед релизом:** Убедитесь, что суммарные `requests` новых реплик с учетом `maxSurge` укладываются в свободную емкость узлов и лимиты `ResourceQuota`.
+
+---
+
+## 8. Ограничения и особенности (Edge Cases)
+
+1. **Обновление при `spec.replicas: 0`:** Если Deployment масштабирован в 0, изменение `spec.template` завершается мгновенно (новые поды не создаются). Ожидаемо при плановой консервации сервиса, но может ввести в заблуждение при автоматическом релизе.
+2. **Перекрытие выкаток (Rollover):** Если применить второе обновление до завершения первого, контроллер Deployment не ждет завершения промежуточного rollout. Он начинает немедленно сворачивать недоразвернутый ReplicaSet и выкатывать последний. В выводе `kubectl rollout status` это может отображаться как резкие скачки номеров ревизий.
+3. **Неизменяемость селектора меток (`spec.selector`):** Поле `spec.selector` неизменяемо после создания объекта Deployment. Попытка изменить селектор приведет к ошибке валидации API-сервера. Для изменения селектора требуется полное пересоздание Deployment.
+4. **Взаимодействие HPA и RollingUpdate:** Настраивайте `HorizontalPodAutoscaler` строго на объект `Deployment`, а не на дочерний `ReplicaSet`. При ротации HPA масштабирует общий размер нагрузки, а контроллер Deployment делит реплики между старым и новым ReplicaSet.
+5. **Мутабельные теги образов (`:latest`):** Если в манифесте используется мутабельный тег без изменения самого манифеста, команда `kubectl apply` не изменит `spec.template`. Контроллер не зафиксирует новое поколение и не запустит rollout. Для обновления одинаковых тегов используйте `kubectl rollout restart`.
+6. **Изменения ConfigMap/Secret не инициируют Rollout:** Изменение содержимого ConfigMap или Secret не меняет хэш шаблона пода (`spec.template`). Контроллер Deployment не перезапускает поды. Для применения конфигурации требуется выполнить `kubectl rollout restart deployment/<name>` либо использовать утилиты автоматического перезапуска.
+7. **Откат приостановленного Deployment заблокирован:** Команда `kubectl rollout undo` завершится ошибкой, если Deployment находится на паузе (`spec.paused: true`). Сначала выполните `kubectl rollout resume`.
+8. **Конфликт параметров времени:** Если `progressDeadlineSeconds <= minReadySeconds`, условие `ProgressDeadlineExceeded` выставится мгновенно при старте, так как под не успеет подтвердить доступность до истечения дедлайна.
+9. **Отсутствие команды `rollout undo --force`:** Принудительный откат не предусмотрен синтаксисом kubectl. Принудительная перезагрузка осуществляется через удаление конкретных подов или `rollout restart`.
+10. **Ограничение глубины отката:** Нельзя откатиться к ревизии, чей ReplicaSet был удален сборщиком мусора из-за превышения `revisionHistoryLimit`.
+11. **Поды в Terminating блокируют сворачивание старого RS:** Пока старый под не освободит ресурсы узла и не завершит цикл удаления, старый ReplicaSet не сможет уменьшить счетчик `CURRENT` до нуля, блокируя закрытие фазы rollout.
+12. **Разрыв сетевых соединений при мгновенном SIGTERM:** Если приложение мгновенно завершает процесс по `SIGTERM`, клиенты получат ошибки `502 Bad Gateway`, поскольку переключение маршрутов в kube-proxy (iptables/IPVS) и EndpointSlice происходит асинхронно с задержкой в 1–3 секунды. Обязательно используйте задержку `preStop: exec: command: ["/bin/sleep", "5"]`.
+
+---
+
+## 9. Дополнительная информация
 
 ### См. также
-- [Deployment: Обзор и концепции](./index.md) — база для понимания контроллера и его состояний.
-- [Управление жизненным циклом Deployment](./lifecycle_management.md) — процессы Rollout, Rollback, пауза и возобновление.
-- [Поиск и устранение неисправностей в Kubernetes](../../Troubleshooting/troubleshooting_overview.md) — общий обзор методологии диагностики.
+- [Deployment: Архитектура и концепции](./index.md) — базовые принципы работы контроллера Deployment.
+- [Управление жизненным циклом Deployment](./lifecycle_management.md) — детальная механика процессов Rollout, Rollback и пропорционального масштабирования.
+- [Продвинутые сценарии диагностики Deployment](./advanced_troubleshooting_scenarios.md) — глубокий анализ сбоев уровня ядра Linux, CRI containerd и сетевого стека.
+- [Манифест Deployment и лучшие практики](./deployment_manifest.md) — эталонные конфигурации манифестов и параметры надежности.
+- [Пробы жизнедеятельности в Kubernetes](../probes.md) — тонкая настройка Startup, Liveness и Readiness проб.
+- [Производственный чек-лист Deployment](./production_checklist.md) — регламенты предрелизной валидации stateless-нагрузок.
+- [Поиск и устранение неисправностей в Kubernetes](../../Troubleshooting/troubleshooting_overview.md) — общая методология диагностики инфраструктуры кластера.

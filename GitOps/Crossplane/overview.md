@@ -1,333 +1,548 @@
 # Crossplane: Обзор
 
-> Актуально на август 2026 года. Crossplane — проект CNCF уровня Graduated, текущая стабильная ветка — v2.x (последний релиз v2.4, август 2026).
+**Актуально для:** Crossplane v1.18+ / v2.x (актуально v2.4); Kubernetes 1.28–1.32+; On-Premise / Bare-Metal
+
+---
 
 ## Определения
 
-**Crossplane** — это решение класса "инфраструктура как код" (IaC) с открытым исходным кодом, распространяемое под лицензией Apache 2.0, которое расширяет API Kubernetes для управления облачной и прикладной инфраструктурой от различных провайдеров. Он устанавливается в кластер Kubernetes и превращает его в универсальную платформу управления (Control Plane), позволяя определять и настраивать облачные ресурсы (базы данных, сети, виртуальные машины, объектные хранилища) и нативные объекты Kubernetes с помощью декларативных YAML-манифестов.
+**Crossplane** — платформа с открытым исходным кодом (CNCF Graduated, лицензия Apache 2.0), расширяющая Kubernetes API и превращающая кластер в универсальный уровень управления (Control Plane). В отличие от классических утилит класса Infrastructure as Code (Terraform, OpenTofu), исполняющих изменения по push-модели (`plan/apply`), Crossplane функционирует по непрерывной pull-модели сверки (Reconciliation Loop), автономно отслеживая и устраняя дрейф конфигурации (drift detection & remediation) между манифестами в etcd и реальным состоянием инфраструктурных систем.
 
-Ключевое отличие от классических инструментов IaC (Terraform, OpenTofu): Crossplane не выполняет инфраструктуру "по требованию" (push-модель `plan/apply`), а работает по модели непрерывной сверки (pull-модель). Контроллеры Crossplane постоянно следят за тем, чтобы реальное состояние ресурсов в облаке соответствовало желаемому состоянию, описанному в объектах Kubernetes, и автоматически устраняют дрейф конфигурации. Таким образом Kubernetes становится не просто "клиентом" облака, а его декларативным интерфейсом управления.
+**Control Plane (управляющий контур)** — выделенный кластер Kubernetes с развернутым ядром Crossplane, провайдерами и функциями композиции, выступающий единой точкой оркестрации инфраструктурных компонентов (вспомогательные Kubernetes-кластеры, bare-metal серверы, сетевые фабрики, СХД, базы данных, хранилища секретов) через декларативный Kubernetes API.
 
-**Control Plane (платформа управления)** — в терминологии Crossplane это кластер Kubernetes, в котором запущен Crossplane и который предоставляет единый набор декларативных API для оркестрации ресурсов независимо от того, где они физически находятся (в облаке, в другом кластере, on-prem).
+**Provider (провайдер)** — OCI-пакет и расширение ядра (`kind: Provider`, API-группа `pkg.crossplane.io`), регистрирующее в кластере контроллеры и набор CustomResourceDefinitions (CRD) для взаимодействия с целевой подсистемой (например, `provider-kubernetes`, `provider-helm`, `provider-sql`, `provider-vault`, `provider-ansible`).
 
-## Базовые концепции
+**ProviderConfig** — ресурс конфигурации провайдера (`kind: ProviderConfig`), определяющий сетевой эндпоинт, таймауты и способ аутентификации (ссылка на Kubernetes Secret или InjectedIdentity через проекцию токена ServiceAccount) для подключения к целевой инфраструктуре.
 
-### Ключевые возможности
+**Managed Resource (MR, управляемый ресурс)** — низкоуровневый декларативный ресурс Kubernetes, представляющий дискретный объект внешней или внутренней инфраструктуры (например, база данных в СУБД, роль в хранилище секретов, release в Helm или произвольный манифест `Object` в целевом кластере). Контролируется непосредственно контроллером соответствующего провайдера.
 
-* **Унифицированное управление:** Использование знакомого синтаксиса и инструментов Kubernetes (`kubectl`, GitOps) для управления приложениями и инфраструктурой в едином цикле. Инженеру не нужно переключаться между HCL, консолями облаков и манифестами — всё описывается одними и теми же ресурсами.
-* **Представление облачных сервисов как CRD:** Автоматическое создание Custom Resource Definitions (CRD) для облачных сервисов, делая их нативными ресурсами кластера. Например, после установки провайдера появляется возможность создавать объект `kind: Bucket`, как если бы это был встроенный ресурс Kubernetes.
-* **Непрерывная сверка (Reconciliation):** Контроллеры Crossplane постоянно следят за соответствием реального состояния ресурсов в облаке их описанию в Kubernetes, автоматически устраняя дрейф конфигурации (configuration drift). Это даёт эффект self-healing: ручное изменение в консоли облака будет отменено при следующей итерации сверки.
-* **Интеграция с GitOps:** Полная совместимость с Argo CD и Flux для реализации модели "Git как единственный источник правды" для инфраструктуры. Манифесты хранятся в Git, GitOps-инструмент доставляет их в кластер, а Crossplane приводит облако к описанному состоянию. См. [Интеграция с GitOps](./gitops_integration.md).
-* **Политики управления:** Использование RBAC и Open Policy Agent (OPA/Kyverno) для гранулярного контроля доступа к облачным ресурсам на уровне Kubernetes API. Platform-команды могут запрещать создание определённых ресурсов или ограничивать допустимые значения параметров.
-* **Композиция без написания контроллеров:** Crossplane позволяет строить собственные API платформы (внутренние платформы разработчика, IDP) без написания Go-кода контроллеров — через декларативные Composition Functions на YAML, KCL, Python или Go.
+**CompositeResourceDefinition (XRD)** — схема декларативного пользовательского API платформы (`kind: CompositeResourceDefinition`, API-группа `apiextensions.crossplane.io`). Определяет структуру входных параметров (OpenAPI v3 schema), область видимости и спецификацию создаваемого составного ресурса (XR) и пользовательской заявки (Claim).
 
-### Основные компоненты
+**Composition** — шаблон реализации XRD (`kind: Composition`, API-группа `apiextensions.crossplane.io`), связывающий абстрактный интерфейс с конкретным графом Managed Resources через последовательный конвейер вызова Composition Functions.
 
-* **Crossplane Core:** Набор контроллеров, отвечающих за жизненный цикл ресурсов, композицию, управление пакетами (Providers, Functions, Configurations) и RBAC. Состоит из основного контроллера (`crossplane`) и контроллера управления ролями (`crossplane-rbac-manager`).
-* **Providers (провайдеры):** Пакеты (`kind: Provider`), которые "обучают" Crossplane взаимодействию с API конкретного облака или системы (AWS, Azure, GCP, Yandex Cloud, Kubernetes, OCI, Cloudflare и др.). Каждый провайдер регистрирует свои CRD (Managed Resources) и контроллеры для сверки.
-* **Provider Families:** Современная архитектура провайдеров (введена в v1.x, стандарт в v2.x), разделяющая огромные монолитные провайдеры на более мелкие пакеты по сервисам (например, `provider-family-aws` + `provider-aws-s3`, `provider-aws-rds`) для снижения нагрузки на API-сервер Kubernetes. Монолитный `provider-aws` устанавливает более 900 CRD, что дестабилизирует control plane; семейства позволяют ставить только нужные сервисы.
-* **ProviderConfig:** Конфигурация (`kind: ProviderConfig`), содержащая учетные данные (ссылка на Kubernetes Secret) и настройки подключения провайдера к облачному API (регион, endpoint, профиль). MR ссылается на ProviderConfig через `spec.providerConfigRef`.
-* **Managed Resources (MR):** Низкоуровневые ресурсы, представляющие конкретный объект в облаке (например, `Bucket` в S3, `Instance` в Yandex Compute Cloud). Именно они управляются непосредственно провайдер-контроллером.
-* **Composition Engine (движок композиции):** Подсистема Crossplane, которая по заданному пайплайну функций (Composition Functions) преобразует высокоуровневый запрос пользователя в набор MR. Заменяет необходимость писать собственные контроллеры.
-* **Package Manager:** Подсистема установки и обновления пакетов (Providers, Functions, Configurations) из OCI-реестров. В v2.x требует всегда указывать полностью квалифицированный URL образа (`registry.example.com/repo/package:tag`).
-* **Functions (функции композиции):** Пакеты (`kind: Function`), реализующие логику формирования инфраструктуры. Выполняются как gRPC-сервисы (отдельные поды) и могут быть написаны на YAML, KCL, Python, Go (см. ниже).
+**Composite Resource (XR, составной ресурс)** — экземпляр абстракции платформы, порождаемый напрямую платформенными инженерами либо автоматически создаваемый в ответ на пользовательский Claim. В Crossplane v1.x являлся строго кластерным (`Cluster-scoped`), в архитектуре Crossplane v2.x поддерживает пространствозависимый режим (`Namespaced XR`).
 
-### Уровни абстракции и композиция
+**Composite Resource Claim (Claim / XRC, заявка на ресурс)** — пространствозависимый (`Namespace-scoped`) пользовательский манифест заказа инфраструктуры. Выступает интерфейсом самообслуживания (Self-Service) для разработчиков, скрывающим технические детали реализации за упрощенной схемой параметров.
 
-Crossplane позволяет строить собственные внутренние платформы разработчика (IDP) через систему композиции, скрывая сложность облака за простыми API:
+**Composition Functions (функции композиции)** — независимые OCI-микросервисы (`kind: Function`, API-группа `pkg.crossplane.io`), исполняющие логику трансформации, валидации, циклов и генерации манифестов по протоколу gRPC. В Crossplane v2.x являются единственным механизмом композиции (`mode: Pipeline`), полностью заменившим устаревшие статические патчи (Patch & Transform).
 
-1. **Composite Resource Definition (XRD):** Описание схемы вашего собственного высокоуровневого API (например, абстрактный ресурс `XPostgreSQL`). Задаёт `group`, `kind`, версии (`served`/`referenceable`) и OpenAPI-схему входных параметров. XRD может одновременно объявлять и Composition-Claim (через `claimNames`), давая пользователям namespace-scoped интерфейс.
-2. **Composition:** Реализация XRD, определяющая, из каких Managed Resources (MR) или других ресурсов состоит ваш абстрактный ресурс и как они связаны. В v2.x Composition использует режим `mode: Pipeline` — упорядоченный набор шагов, каждый из которых вызывает Composition Function.
-3. **Composite Resource (XR):** Экземпляр ресурса, созданный платформенной командой на базе XRD. В v1.x XR был только cluster-scoped; в v2.x появились **namespaced XR** для изоляции между командами.
-4. **Composite Resource Claim (XRC или Claim):** Запрос на создание ресурса пользователем из конкретного namespace (Namespace-scoped), аналогично `PersistentVolumeClaim`. При создании Claim Crossplane автоматически создаёт соответствующий XR (через `claimNames` в XRD), а XR разворачивается в MR через Composition.
+**DeploymentRuntimeConfig (DRC)** — кластерный ресурс (`kind: DeploymentRuntimeConfig`), управляющий системными параметрами подов провайдеров и функций: ресурсными лимитами (`requests/limits`), привязкой к нодам (`nodeSelector`, `tolerations`), сервисными аккаунтами и флагами запуска контроллеров (`--poll`, `--max-reconcile-rate`). Заменил устаревший `ControllerConfig`.
 
-**Composition Functions (функции композиции).** В v2.x это основной механизм формирования инфраструктуры. Функции — это gRPC-сервисы, запускаемые Crossplane как поды в `crossplane-system`. Поддерживаемые языки:
-* **YAML** — через `function-auto-ready` и `function-kro` (YAML+CEL, анонсирован март 2026);
-* **KCL** — декларативный конфигурационный язык (`function-kcl`);
-* **Python** — `function-python` (позволяет циклы, условия, внешние запросы);
-* **Go** — `function-go` (максимальная гибкость, компилируется в бинарный образ).
+**Management Policies (`spec.managementPolicies`)** — гранулярный перечень операций (`Observe`, `Create`, `Update`, `Delete`, `LateInitialize`), разрешенных контроллеру Crossplane над физическим ресурсом. Позволяет безопасно импортировать существующую инфраструктуру в режиме `ObserveOnly` или исключать случайное физическое удаление объектов.
 
-Нативная patch-and-transform композиция (статические шаблоны) **удалена в v2** (устарела ещё в v1.17) и заменена функциями.
+**Deletion Policy (`spec.deletionPolicy`)** — директива жизненного цикла ресурса: `Delete` (удаление физического ресурса во внешней системе при удалении MR в Kubernetes) или `Orphan` (сохранение физического ресурса во внешней системе с удалением только представления в Kubernetes).
 
-**Managed Resource Definitions (MRDs).** Возможность избирательной активации ресурсов провайдера: платформенная команда описывает, какие именно MR должен предоставлять провайдер, что дополнительно снижает нагрузку на API-сервер по сравнению с Family-подходом.
+**External Name (`crossplane.io/external-name`)** — системная аннотация, содержащая уникальный идентификатор или имя объекта в целевой инфраструктуре. Гарантирует идемпотентность и связывание манифеста с существующей сущностью.
 
-### Архитектура и поток данных
+---
 
-Интеграция Crossplane в GitOps-пайплайн обеспечивает автоматизацию полного цикла "Git → облако":
+## Базовые концепции и архитектура
+
+### Принцип работы: Kubernetes как универсальный Control Plane
+
+Crossplane использует архитектуру Kubernetes (API Server, etcd, контроллеры и кастомные ресурсы) для управления произвольными компонентами On-Premise и Bare-Metal инфраструктуры:
 
 ```text
-┌─────────────┐     ┌─────────────┐     ┌──────────────────┐     ┌─────────────┐
-│     Git     │────▶│   Argo CD   │────▶│     Crossplane    │────▶│  Облачный   │
-│  Repository │     │  (Sync)     │     │  (Reconcile)      │     │ Провайдер   │
-└─────────────┘     └─────────────┘     └──────────────────┘     └─────────────┘
-                                                   │                       │
-                                                   ▼                       ▼
-                                            etcd (желаемое)        Облако (реальное)
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                             KUBERNETES CONTROL PLANE                             │
+│                                                                                  │
+│   GitOps Engine (Argo CD / Flux) ────▶ kube-apiserver + etcd                     │
+│                                              │                                   │
+│                     ┌────────────────────────┴───────────────────────┐           │
+│                     ▼                                                ▼           │
+│           Composite Resource (XR)                        Managed Resources (MR)  │
+│                     │                                                ▲           │
+│                     ▼                                                │           │
+│         Composition Engine (Pipeline)                                │           │
+│                     │                                                │           │
+│          gRPC Calls │ (Proto3)                                       │           │
+│                     ▼                                                │           │
+│         Composition Functions Pods ──────────────────────────────────┘           │
+│         (kcl / patch-and-transform / auto-ready)                                 │
+└──────────────────────────────────────┬───────────────────────────────────────────┘
+                                       │
+                         Reconcile Loop (Watch / Poll)
+                                       │
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                            CROSSPLANE PROVIDERS PODS                             │
+│                                                                                  │
+│   ┌───────────────────────────────┐      ┌───────────────────────────────────┐   │
+│   │      provider-kubernetes      │      │           provider-sql            │   │
+│   │   (SSA, Dynamic K8s Client)   │      │   (PostgreSQL / MySQL Driver)     │   │
+│   └───────────────┬───────────────┘      └─────────────────┬─────────────────┘   │
+└───────────────────┼────────────────────────────────────────┼─────────────────────┘
+                    │                                        │
+                    ▼                                        ▼
+    ┌───────────────────────────────┐      ┌───────────────────────────────────┐
+    │     Целевые кластеры K8s      │      │     Self-Hosted СУБД (On-Prem)    │
+    │  Namespaces, RBAC, Workloads  │      │    Databases, Users, Privileges   │
+    └───────────────────────────────┘      └───────────────────────────────────┘
 ```
 
-1. **Применение манифеста:** Пользователь фиксирует YAML в Git, GitOps-инструмент (Argo CD/Flux) синхронизирует его в кластер Kubernetes, записывая объект в etcd.
-2. **Обработка Core:** Crossplane Core видит новый ресурс (MR, XR или Claim) через механизм watch Kubernetes API и добавляет его в очередь сверки.
-3. **Композиция:** Если это Claim — Crossplane создаёт XR; если XR — движок композиции по пайплайну Functions разворачивает его в набор Managed Resources.
-4. **Взаимодействие с провайдером:** Соответствующий Provider-контроллер берёт MR, читает `providerConfigRef`, получает учётные данные из Secret и вызывает API облака (Create/Update/Delete).
-5. **Создание ресурса:** Облачный сервис создаётся или обновляется; Crossplane записывает идентификатор облачного объекта в аннотацию `crossplane.io/external-name`.
-6. **Обратная связь:** Crossplane обновляет поле `status` ресурса (условия `Ready`, `Synced`, connection details). Если в облаке произойдут изменения вручную, следующая итерация сверки вернёт их к желаемому состоянию.
+1. **Декларативное описание:** Желаемое состояние инфраструктуры фиксируется в Git в виде YAML-манифестов и доставляется в кластер через GitOps-контроллеры (Argo CD, Flux).
+2. **Watch-механизм:** Контроллеры Crossplane Core и установленных провайдеров отслеживают события жизненного цикла объектов через стандартный `watch` API Kubernetes.
+3. **Конвейерная композиция:** Запрос на абстрактный ресурс (Claim или XR) передается в движок композиции. Crossplane последовательно вызывает зарегистрированные поды функций по протоколу gRPC, генерируя граф низкоуровневых Managed Resources.
+4. **Непрерывная сверка:** Контроллеры провайдеров опрашивают целевые системы (целевые K8s-кластеры, серверы баз данных, сетевые коммутаторы), выявляют расхождения и приводят фактическое состояние к заданному в `spec`.
+5. **Экспорт реквизитов подключения:** Чувствительные данные (пароли, сертификаты, токены доступа, сгенерированные целевыми системами) упаковываются в защищенные Kubernetes Secrets для использования прикладными подами.
 
-### Принцип непрерывной сверки (Reconciliation) — подробно
+---
 
-Каждый контроллер Crossplane реализует классический Kubernetes reconcile-цикл для своих ресурсов. Для Managed Resource типовой цикл:
+### Архитектура компонентов Crossplane
 
-* **Observe (наблюдение):** провайдер опрашивает облако, чтобы понять, существует ли ресурс и в каком он состоянии. Если ресурс найден вне Crossplane, выполняется `LateInitialization` — заполнение `spec` значениями, заданными облаком (например, автосгенерированные поля).
-* **Create / Update:** если ресурса нет — создаётся; если отличается от `spec` — обновляется.
-* **Delete:** при удалении объекта из Kubernetes облачный ресурс удаляется (поведение регулируется `managementPolicies` и `deletionPolicy`).
-* **PublishConnectionDetails:** запись чувствительных выходных данных (эндпоинты, пароли) в Kubernetes Secret для использования приложениями.
+Производственная инсталляция Crossplane Core состоит из следующих компонентов:
 
-Частота сверки управляется:
-* **poll interval** — как часто провайдер опрашивает облако (по умолчанию ~1 минута, настраивается через `DeploymentRuntimeConfig` аргументом `--poll`);
-* **max reconcile rate** — ограничение числа одновременных сверок (`--max-reconcile-rate`), защищает от превышения квот API облака.
-
-Важно: сверка **поллинговая**, а не событийная. Задержка обнаружения дрейфа равна примерно poll interval. Для ускорения реакции уменьшают poll interval (ценилось нагрузкой на API облака).
-
-**managementPolicies** — список операций, которые Crossplane вправе выполнять с ресурсом: `Observe`, `Create`, `Update`, `Delete`, `LateInitialize`. Режим `ObserveOnly` (только наблюдение) позволяет импортировать существующую инфраструктуру, не управляя ей.
-
-## Передовые возможности v2.x (актуально на 2026 год)
-
-Crossplane v2.0 выпущен 12 августа 2025 года и расширил модель за пределы инфраструкты: v2 позволяет управлять приложениями как объектами первого класса (Deployment, Service, CloudNativePG Cluster), строя единый API платформы.
-
-| Функция | Описание | Статус в v2 |
+| Компонент | Назначение | Особенности эксплуатации SRE |
 | :--- | :--- | :--- |
-| **Namespaced Composite/Managed Resources** | Возможность создавать XR и MR внутри пространств имён для изоляции команд и применения лимитов. Cluster-scoped MR/XR объявлены устаревшими (legacy), будут удалены в будущем. | Стабильно (v2) |
-| **Composition Functions** | Переход от статических шаблонов к gRPC-функциям на YAML, KCL, Python, Go (через `function-kro`, `function-kcl`, `function-python`, `function-go`). Позволяет циклы, условия, внешние запросы. | Стабильно (v2) |
-| **Managed Resource Definitions (MRDs)** | Избирательная активация только нужных ресурсов провайдера, снижение нагрузки на API-сервер сверх Family-подхода. | Стабильно (v2) |
-| **Operations** | Запуск операционных задач через пайплайны функций: `Operation` (разово), `CronOperation` (по расписанию), `WatchOperation` (при изменении ресурсов). Примеры: мониторинг сертификатов, плановое обслуживание. | Alpha (v2) |
-| **Compose any resource** | XR может компоновать не только MR, но и нативные ресурсы K8s (Deployment, Service) и сторонние CRD (например, CloudNativePG). | Стабильно (v2) |
-| **API-first инфраструктура для AI-агентов** | v2 позиционируется как machine-readable control plane, предоставляющий машиночитаемый декларативный API для автоматизации инфраструктуры AI-агентами (API-centric operations). | Концепция (v2) |
-| **Provider Families** | Дробление монолитных провайдеров на сервисные пакеты для снижения числа CRD. | Стабильно (v1.x→v2) |
+| **`crossplane` (Core Controller)** | Управляет жизненным циклом пакетов (`Provider`, `Function`, `Configuration`), обрабатывает XRD и выполняет конвейеры композиции. | Критичен к ресурсам CPU/памяти при большом количестве XR/Claim. Поддерживает Leader Election для высокой доступности (HA). |
+| **`crossplane-rbac-manager`** | Автоматически генерирует и агрегирует роли Kubernetes (`ClusterRole`, `Role`) для каждого установленного CRD, связывая их с системными группами `admin`, `edit`, `view`. | Может быть отключен флагом `--rbac-manager-disabled=true` при наличии внешней системы управления правами или строгих требований ИБ. |
+| **Provider Pods** | Отдельные Deployment'ы в `crossplane-system`, исполняющие reconciliation loop для конкретного домена инфраструктуры. | Потребляют память пропорционально числу управляемых CRD и объектов. Настраиваются через `DeploymentRuntimeConfig`. |
+| **Function Pods** | Локальные gRPC-микросервисы, исполняющие пользовательские функции композиции. | Запускаются ядром Crossplane. Коммуникация происходит внутри кластера по протоколу HTTP/2 (gRPC). |
 
-**Критическиеbreaking-изменения при переходе на v2** (важно для обновления и написания манифестов):
-* Удалена нативная patch-and-transform композиция (заменена функциями).
-* Удалён тип `ControllerConfig` — заменён на `DeploymentRuntimeConfig` для тюнинга poll interval/reconcile rate.
-* Удалена поддержка external secret stores (функция оставалась в alpha и не поддерживалась).
-* Удалена нативная поддержка connection details у составных ресурсов (XR); для MR — сохранена (воссоздаётся композицией собственного Secret).
-* Удалён default registry для пакетов: теперь всегда требуется полностью квалифицированный URL образа (`registry/repo/package:tag`).
+---
 
-Проверить использование устаревших функций перед обновлением: `crossplane beta upgrade check` (с CLI v1.20) против v1.x control plane.
+### Уровни абстракции платформы (XRD, Composition, XR, Claim)
 
-## Безопасность и наблюдаемость
+Crossplane реализует паттерн разделения ответственности между платформенной командой и прикладными разработчиками:
 
-### Безопасность
+```text
+  Платформенная команда (SRE / Platform Engineers)
+  ─────────────────────────────────────────────────────────────
+  1. Описывает схему API:    CompositeResourceDefinition (XRD)
+  2. Задает реализацию:      Composition (Pipeline Functions)
+  3. Настраивает доступы:    ClusterProviderConfig / Secrets
 
-* **RBAC Manager:** Компонент Crossplane (`crossplane-rbac-manager`), который автоматически создаёт и управляет ролями Kubernetes (`ClusterRole`/`Role`) для доступа к CRD, регистрируемым провайдерами, и связывает их с сервисными аккаунтами провайдеров. При отключении RBAC Manager права на создание Claim/XR нужно выдавать вручную.
-* **Secrets Management:** Интеграция с **External Secrets Operator (ESO)** и HashiCorp Vault для безопасной доставчи учетных данных провайдерам. Рекомендуется никогда не коммитить сырые ключи в Git; в GitOps-сценариях манифесты `ProviderConfig` шифруются через SOPS. См. [Интеграция с GitOps](./gitops_integration.md).
-* **Composition-level RBAC:** Возможность ограничивать, какие команды/namespace могут использовать конкретные `Compositions` и XRD, через стандартный RBAC Kubernetes и политики OPA/Kyverno (валидация параметров до применения).
-* **Полномочия провайдеров:** провайдер-контроллер действует от имени ServiceAccount с правами, выданными RBAC Manager; принцип наименьших привилегий применяется через ограничение устанавливаемых MRD/Family.
+                            │  Публикация API в кластере
+                            ▼
+  Прикладные команды (Developers / DevOps)
+  ─────────────────────────────────────────────────────────────
+  4. Создают заказ:          Composite Resource Claim (Claim)
+  5. Получают результат:     Готовая инфраструктура + Connection Secret
+```
 
-### Наблюдаемость
+* **CompositeResourceDefinition (XRD):** Определяет схему нового ресурса. Валидирует входные данные разработчика через OpenAPI v3 schema.
+* **Composition:** Реализует логику развертывания. В Crossplane v2.x манифест Composition состоит из массива `pipeline`, где каждый шаг вызывает специализированную функцию (`function-patch-and-transform`, `function-kcl`, `function-auto-ready`).
+* **Namespaced XR (v2.x) против Cluster-Scoped (v1.x):** Исторически составные ресурсы существовали только на уровне кластера, что затрудняло разграничение прав и квотирование. В Crossplane v2.x составные ресурсы могут быть локализованы в пространстве имен команды (`Namespaced XR`), что исключает коллизии имен и изолирует видимость.
 
-* **Crossplane CLI:** Инструмент `crossplane` для отладки ресурсов, проверки пакетов и визуализации графа композиции:
-  * `crossplane beta trace <xr>` — текстовая визуализация дерева композиции (XR → MR);
-  * `crossplane render <xr.yaml> <composition.yaml> <functions...>` — локальный рендеринг без обращения к кластеру;
-  * `crossplane beta validate` — проверка манифестов на соответствие схемам CRD;
-  * `crossplane xpkg install provider <url>` — установка провайдера из OCI.
-* **Metrics:** Экспорт метрик в формате Prometheus о времени сверки, ошибках API провайдеров, количестве ресурсов и их статусе (`crossplane_*`). В v2 расширены метрики здоровья control plane.
-* **Events:** Использование стандартных Kubernetes Events для уведомления о критических изменениях или сбоях (например, `Warning` при ошибке создания MR).
-* **Логи:** контроллеры пишут структурированные логи; диагностика провайдера — `kubectl -n crossplane-system logs -l pkg.crossplane.io/provider=<имя>`.
+---
 
-## Статус проекта
+### Механизм непрерывной сверки (Reconciliation Loop)
 
-* **CNCF Status:** Graduated (объявлено 6 ноября 2025 года, [анонс CNCF](https://www.cncf.io/announcements/2025/11/06/cloud-native-computing-foundation-announces-graduation-of-crossplane/)). Более 3 000 контрибьюторов из 450+ организаций.
-* **Текущая версия:** v2.4 (август 2026). График релизов — примерно раз в 3 месяца (v2.3 — май 2026, v2.4 — август 2026, v2.5 ожидается ноябрь 2026). Ветка v1.20 (последняя v1.x) уходит в EOL при выходе v2.5.
-* **Лицензия:** Apache 2.0.
+Жизненный цикл каждого Managed Resource подчиняется циклу сверки, состоящему из 5 дискретных фаз:
+
+```text
+ ┌──────────────┐      ┌─────────────────────────┐      ┌──────────────────┐
+ │ 1. Observe   │─────▶│ 2. Late-Initialize      │─────▶│ 3. Create /      │
+ │ (Опрос API)  │      │ (Фиксация авто-полей)   │      │    Update        │
+ └──────────────┘      └─────────────────────────┘      └─────────┬────────┘
+        ▲                                                         │
+        │                                                         ▼
+ ┌──────┴──────────────────┐                            ┌──────────────────┐
+ │ 5. Sleep & Exponential  │◀───────────────────────────│ 4. Publish       │
+ │    Backoff / Poll Period│                            │    Connection    │
+ └─────────────────────────┘                            │    Details       │
+                                                        └──────────────────┘
+```
+
+1. **Observe (Наблюдение):** Провайдер обращается к целевой системе для выяснения текущего состояния ресурса. Если объект существует, считываются его атрибуты.
+2. **Late-Initialization:** Если в целевой системе присутствуют параметры, не заданные явно в `spec` манифеста (но сгенерированные системой по умолчанию), контроллер может зафиксировать их в `spec.forProvider`, чтобы исключить ложный дрейф при последующих итерациях.
+3. **Create / Update:** Если объект отсутствует — вызывается процедура создания. Если параметры объекта в `spec` отличаются от параметров в целевой системе — контроллер отправляет патч/обновление.
+4. **Publish Connection Details:** При успешном создании контроллер извлекает учетные данные (хосты, порты, логины, пароли) и записывает их в целевой Kubernetes Secret.
+5. **Requeue:** Контроллер засыпает на интервал опроса (`poll interval`, по умолчанию 1 минута). При возникновении ошибки включается экспоненциальный backoff для предотвращения лавинообразной перегрузки целевого API.
+
+#### Различие статусов: Synced и Ready
+
+Каждый ресурс Crossplane содержит два ключевых индикатора в `status.conditions`:
+* `Synced = True`: Желаемая конфигурация из etcd успешно отправлена и принята целевым провайдером без синтаксических или сетевых ошибок.
+* `Ready = True`: Физический ресурс во внешней системе полностью инициализирован, прошел проверки работоспособности (readiness checks) и готов к приему нагрузки.
+* **Типовая ситуация:** Ресурс может быть `Synced=True`, но `Ready=False` (например, база данных находится в процессе создания или целевой Kubernetes-под ожидает монтирования томов).
+
+---
+
+### Модель пакетов и DeploymentRuntimeConfig
+
+Начиная с ветки v1.x и как фундаментальный стандарт в v2.x, Crossplane использует модель пакетирования OCI (Open Container Initiative). Провайдеры и функции распространяются в виде OCI-артефактов (`.xpkg`), загружаемых из контейнерных реестров.
+
+#### Требования к реестрам пакетов в Crossplane v2.x
+В Crossplane v2.x **удалена поддержка неявного реестра по умолчанию**. Поле `spec.package` всегда должно содержать полностью квалифицированный URL образа (`registry.domain.tld/repository/package:tag`).
+
+#### Тюнинг контроллеров через DeploymentRuntimeConfig (DRC)
+Для настройки производительности подов провайдеров и функций используется ресурс `DeploymentRuntimeConfig`:
+
+```yaml
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: tuned-provider-runtime
+spec:
+  deploymentTemplate:
+    spec:
+      replicas: 1
+      template:
+        spec:
+          nodeSelector:
+            node-role.kubernetes.io/infra: "true"
+          tolerations:
+            - key: "infra"
+              operator: "Exists"
+              effect: "NoSchedule"
+          containers:
+            - name: package-runtime
+              args:
+                - --poll=5m
+                - --max-reconcile-rate=20
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 512Mi
+                limits:
+                  cpu: 1000m
+                  memory: 2Gi
+```
+
+* `--poll`: интервал регулярного опроса целевой инфраструктуры. Увеличение (например, до `5m` или `10m`) снижает нагрузку на сеть и целевые API в больших инсталляциях.
+* `--max-reconcile-rate`: максимальное количество параллельных операций сверки. Защищает целевую систему от перегрузки при массовом накате манифестов.
+
+---
+
+### Жизненный цикл ресурсов и политики управления (Management Policies)
+
+Управление ресурсами через `spec.managementPolicies` гарантирует полный контроль SRE над уровнем вмешательства контроллера:
+
+| Политика | Действие контроллера Crossplane |
+| :--- | :--- |
+| `["*"]` или `["All"]` | Полный цикл: создание, регулярная сверка, обновление, удаление и фиксация автополей. |
+| `["Observe"]` (или `ObserveOnly`) | Режим инспекции. Контроллер считывает состояние ресурса, но не вносит изменений и не удаляет его. Идеально для безопасного аудита существующей On-Prem инфраструктуры. |
+| `["Create", "Update", "Observe"]` | Создание и поддержание конфигурации без права на физическое удаление. Если объект MR удаляется из Kubernetes, физический ресурс во внешней системе сохраняется. |
+
+#### Защита от удаления: DeletionPolicy и Usage CRD
+* `spec.deletionPolicy: Orphan`: При удалении манифеста MR из кластера Kubernetes снимает системный финалайзер `finalizer.managedresource.crossplane.io`, но контроллер **не отправляет** вызов на удаление физического объекта.
+* `Usage` CRD (`protection.crossplane.io/v1beta1`): Механизм блокировки удаления базовых ресурсов (например, сетевого пространства или СУБД) до тех пор, пока существуют зависимые ресурсы (например, базы данных или рабочие нагрузки). См. [Защита зависимостей (Usage)](./usage_protection.md).
+
+#### Заморозка сверки: аннотация paused
+Для проведения регламентных работ на целевой инфраструктуре любой ресурс Crossplane может быть изолирован от reconciler-цикла установкой аннотации:
+
+```bash
+kubectl annotate managed <resource-name> crossplane.io/paused="true"
+# → managed annotated
+```
+
+Контроллер мгновенно прекращает попытки обновления или удаления целевого объекта до снятия аннотации: `crossplane.io/paused-`.
+
+---
 
 ## Практические сценарии
 
-Ниже — базовый сквозной сценарий работы с Crossplane на уровне обзора. Подробные инструкции для конкретных провайдеров и GitOps-доставки вынесены в профильные файлы (см. конец раздела).
+Ниже приведено развертывание отказоустойчивого Control Plane Crossplane v2.x для управления On-Premise инфраструктурой и Kubernetes-кластерами без привязки к публичным облакам.
 
 ### Предварительные требования
 
-* Кластер Kubernetes **v1.28+** с доступом `kubectl` и правами cluster-admin (для установки CRD и провайдеров).
-* Установленный **Helm 3.14+**.
-* Установленный **Crossplane CLI** (`kubectl crossplane` plugin или бинарь `crossplane`) — опционально, для отладки.
-* Учётные данные облачного провайдера (API-ключ/сервисный аккаунт) с правами на создание целевых ресурсов.
-* Свободные ресурсы в namespace `crossplane-system` (рекомендуется выделенный узел/квоты при большом числе провайдеров из-за нагрузки от CRD).
+* Кластер Kubernetes v1.28–1.32+ с доступом администратора (`kubectl cluster-info`).
+* Установленный пакетный менеджер **Helm v3.14+**.
+* Установленный бинарный файл **Crossplane CLI v2.x**.
+* Доступ к OCI-реестру с образами провайдеров (для закрытых контуров — внутренний Harbor / Nexus).
 
-Установка CLI (пример для Linux/amd64):
+Установка Crossplane CLI на рабочую станцию SRE / Bastion (Linux x86_64):
 
 ```bash
 curl -sL "https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh" | bash
 # → crossplane installed to ./crossplane
 sudo mv crossplane /usr/local/bin/
 crossplane version
-# → Version: <2.4.x>
+# → Client Version: v2.4.0
 ```
 
-### Сценарий 1: Установка Crossplane Core
+---
+
+### Сценарий 1: Развертывание Crossplane Core в High Availability (HA) режиме
+
+Для промышленных сред Crossplane разворачивается с включенным режимом лидер-выборов, несколькими репликами и выделением системных ресурсов:
 
 ```bash
 helm repo add crossplane-stable https://charts.crossplane.io/stable
 helm repo update
+# → "crossplane-stable" has been added to your repositories
+# → Update Complete. ⎈Successfully got an update from the "crossplane-stable" chart repository
+
 helm install crossplane crossplane-stable/crossplane \
-  --namespace crossplane-system --create-namespace \
+  --namespace crossplane-system \
+  --create-namespace \
+  --set replicas=2 \
+  --set leaderElection=true \
+  --set resourcesCrossplane.requests.cpu="500m" \
+  --set resourcesCrossplane.requests.memory="1Gi" \
+  --set resourcesCrossplane.limits.cpu="2000m" \
+  --set resourcesCrossplane.limits.memory="4Gi" \
   --set args='{"--enable-composition-functions=true"}'
 # → NAME: crossplane
-# → LAST DEPLOYED: ...
+# → LAST DEPLOYED: Mon Oct 13 17:15:00 2026
+# → NAMESPACE: crossplane-system
 # → STATUS: deployed
 ```
 
-Проверка готовности:
+Проверка статуса подов и регистрация системных CRD:
 
 ```bash
-kubectl -n crossplane-system get pods
-# → crossplane-<hash>               1/1  Running
-# → crossplane-rbac-manager-<hash>  1/1  Running
+kubectl -n crossplane-system get pods -o wide
+# → crossplane-79bfbd4895-4k8qx               1/1     Running   0          42s   10.244.1.15   node-infra-01
+# → crossplane-79bfbd4895-x9z2p               1/1     Running   0          42s   10.244.2.18   node-infra-02
+# → crossplane-rbac-manager-699cb4cf8f-7w8q2  1/1     Running   0          42s   10.244.1.16   node-infra-01
 
-kubectl get crds | grep crossplane.io | head
-# → (вывод зарегистрированных CRD ядра Crossplane)
+kubectl get crds | grep 'crossplane.io' | head -n 5
+# → compositeresourcedefinitions.apiextensions.crossplane.io   2026-10-13T14:15:20Z
+# → compositions.apiextensions.crossplane.io                   2026-10-13T14:15:20Z
+# → configurationrevisions.pkg.crossplane.io                   2026-10-13T14:15:20Z
+# → configurations.pkg.crossplane.io                           2026-10-13T14:15:20Z
+# → deploymentruntimeconfigs.pkg.crossplane.io                 2026-10-13T14:15:20Z
 ```
 
-Если поды не стартуют — проверить события `kubectl -n crossplane-system describe pod crossplane-<hash>` (частая причина — нехватка памяти/лимиты).
-
-### Сценарий 2: Установка провайдера (Provider / Provider Family)
-
-В v2.x обязателен полностью квалифицированный URL образа. Рекомендуется Family-подход — ставить только нужный сервис.
-
-Пример для AWS (семейство + конкретный сервис S3):
-
-```bash
-kubectl apply -f - <<'EOF'
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata:
-  name: upbound-provider-family-aws
-spec:
-  package: xpkg.upbound.io/upbound/provider-family-aws:v1.0.0
 ---
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata:
-  name: upbound-provider-aws-s3
-spec:
-  package: xpkg.upbound.io/upbound/provider-aws-s3:v1.0.0
-EOF
-# → provider.pkg.crossplane.io/upbound-provider-family-aws created
-# → provider.pkg.crossplane.io/upbound-provider-aws-s3 created
-```
 
-Проверка установки и здоровья пакета:
+### Сценарий 2: Установка провайдера и настройка DeploymentRuntimeConfig
 
-```bash
-kubectl get providers
-# → NAME                          INSTALLED  HEALTHY   PACKAGE                                       AGE
-# → upbound-provider-family-aws   True       True      xpkg.upbound.io/upbound/provider-family-aws:v1.0.0   1m
-# → upbound-provider-aws-s3       True       True      xpkg.upbound.io/upbound/provider-aws-s3:v1.0.0       1m
-
-kubectl get crds | grep 's3.aws.upbound.io'
-# → (появились CRD для ресурсов S3, напр. buckets.s3.aws.upbound.io)
-```
-
-Подробная настройка провайдеров: [Yandex Cloud](./provider_yandex_cloud_setup.md), [Kubernetes](./provider_kubernetes_setup.md).
-
-### Сценарий 3: Настройка ProviderConfig
-
-ProviderConfig хранит способ аутентификации провайдера. Учётные данные передаются через Secret (никогда не встраивайте ключи в сам ProviderConfig в открытом виде).
-
-```bash
-# 1. Создание Secret с учётными данными (пример AWS, формат зависит от провайдера)
-kubectl -n crossplane-system create secret generic aws-creds \
-  --from-literal=credentials='[default]
-aws_access_key_id = <AWS_ACCESS_KEY_ID>
-aws_secret_access_key = <AWS_SECRET_ACCESS_KEY>'
-# → secret/aws-creds created
-```
+Развернем `provider-kubernetes` (v1.3.0) с привязкой к тюнингованному `DeploymentRuntimeConfig`:
 
 ```yaml
-# 2. ProviderConfig, ссылающийся на Secret
-apiVersion: aws.upbound.io/v1beta1
+# 1. runtime-config.yaml
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: k8s-provider-config
+spec:
+  deploymentTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: package-runtime
+              args:
+                - --poll=2m
+                - --max-reconcile-rate=15
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 256Mi
+                limits:
+                  cpu: 1000m
+                  memory: 1Gi
+---
+# 2. provider-install.yaml
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-kubernetes
+spec:
+  package: xpkg.upbound.io/crossplane-contrib/provider-kubernetes:v1.3.0
+  runtimeConfigRef:
+    name: k8s-provider-config
+```
+
+Применение и контроль установки:
+
+```bash
+kubectl apply -f runtime-config.yaml
+# → deploymentruntimeconfig.pkg.crossplane.io/k8s-provider-config created
+
+kubectl apply -f provider-install.yaml
+# → provider.pkg.crossplane.io/provider-kubernetes created
+
+kubectl get providers
+# → NAME                  INSTALLED   HEALTHY   PACKAGE                                                         AGE
+# → provider-kubernetes   True        True      xpkg.upbound.io/crossplane-contrib/provider-kubernetes:v1.3.0   45s
+
+kubectl get providerrevisions
+# → NAME                             HEALTHY   REVISION   IMAGE                                                           STATE    DEP-FOUND   DEP-INSTALLED   AGE
+# → provider-kubernetes-8b2c4e09f1   True      1          xpkg.upbound.io/crossplane-contrib/provider-kubernetes:v1.3.0   Active                               50s
+```
+
+Также установим стандартную функцию композиции `function-patch-and-transform` и функцию автоматической фиксации готовности `function-auto-ready`:
+
+```yaml
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-patch-and-transform
+spec:
+  package: xpkg.upbound.io/crossplane-contrib/function-patch-and-transform:v0.8.1
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-auto-ready
+spec:
+  package: xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.5.1
+```
+
+```bash
+kubectl apply -f functions.yaml
+# → function.pkg.crossplane.io/function-patch-and-transform created
+# → function.pkg.crossplane.io/function-auto-ready created
+
+kubectl get functions
+# → NAME                           INSTALLED   HEALTHY   PACKAGE                                                                    AGE
+# → function-auto-ready            True        True      xpkg.upbound.io/crossplane-contrib/function-auto-ready:v0.5.1               30s
+# → function-patch-and-transform   True        True      xpkg.upbound.io/crossplane-contrib/function-patch-and-transform:v0.8.1      30s
+```
+
+---
+
+### Сценарий 3: Настройка ProviderConfig с безопасной аутентификацией
+
+Для управления локальным кластером (In-Cluster) настроим `ProviderConfig`, использующий ServiceAccount пода провайдера, с выдачей минимально необходимых прав через scoped RBAC:
+
+```bash
+# Определение системного ServiceAccount, созданного для пода провайдера
+SA_NAME=$(kubectl -n crossplane-system get sa -o jsonpath='{.items[?(@.metadata.annotations.pkg\.crossplane\.io/package=="provider-kubernetes")].metadata.name}')
+echo "ServiceAccount провайдера: ${SA_NAME}"
+# → ServiceAccount провайдера: provider-kubernetes-8b2c4e09f1
+```
+
+Создание ограниченной роли и привязки:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane-provider-k8s-scoped
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "configmaps", "resourcequotas", "limitranges", "serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crossplane-provider-k8s-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: crossplane-provider-k8s-scoped
+subjects:
+  - kind: ServiceAccount
+    name: provider-kubernetes-8b2c4e09f1
+    namespace: crossplane-system
+```
+
+```bash
+kubectl apply -f provider-rbac.yaml
+# → clusterrole.rbac.authorization.k8s.io/crossplane-provider-k8s-scoped created
+# → clusterrolebinding.rbac.authorization.k8s.io/crossplane-provider-k8s-binding created
+```
+
+Создание `ProviderConfig`:
+
+```yaml
+apiVersion: kubernetes.crossplane.io/v1alpha1
 kind: ProviderConfig
 metadata:
   name: default
 spec:
   credentials:
-    source: Secret
-    secretRef:
-      namespace: crossplane-system
-      name: aws-creds
-      key: credentials
+    source: InjectedIdentity
 ```
-
-Поля:
-* `metadata.name` — имя конфигурации, на которое ссылаются MR через `spec.providerConfigRef.name`.
-* `spec.credentials.source` — источник учётных данных (`Secret`, `Environment`, `Filesystem`, `InjectedIdentity` для IRSA/Workload Identity).
-* `spec.credentials.secretRef` — указание namespace/name/key Secret с данными.
 
 ```bash
 kubectl apply -f providerconfig.yaml
+# → providerconfig.kubernetes.crossplane.io/default created
+
 kubectl get providerconfig
 # → NAME      AGE
-# → default   10s
+# → default   12s
 ```
 
-### Сценарий 4: Создание Managed Resource (MR)
+*(Для удаленных bare-metal кластеров в поле `spec.credentials.source` указывается `Secret`, а в `secretRef` передается kubeconfig целевого кластера).*
 
-MR — минимальная единица управления облачным объектом. Пример бакета S3:
+---
+
+### Сценарий 4: Развертывание Managed Resource (MR)
+
+Создадим изолированное рабочее пространство (Namespace) с политикой квотирования через Managed Resource `Object`:
 
 ```yaml
-apiVersion: s3.aws.upbound.io/v1beta1
-kind: Bucket
+apiVersion: kubernetes.crossplane.io/v1alpha1
+kind: Object
 metadata:
-  name: my-bucket
+  name: tenant-billing-namespace
 spec:
-  forProvider:
-    region: eu-central-1
   providerConfigRef:
     name: default
   managementPolicies:
-    - Observe
     - Create
     - Update
+    - Observe
     - Delete
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: tenant-billing
+        labels:
+          environment: production
+          managed-by: crossplane
 ```
 
-Применение и проверка:
+Применение и проверка статуса сверки:
 
 ```bash
-kubectl apply -f bucket.yaml
-# → bucket.s3.aws.upbound.io/my-bucket created
+kubectl apply -f mr-namespace.yaml
+# → object.kubernetes.crossplane.io/tenant-billing-namespace created
 
-kubectl get bucket my-bucket
-# → NAME        READY  SYNCED  EXTERNAL-NAME  AGE
-# → my-bucket   True   True    my-bucket      45s
+kubectl get object tenant-billing-namespace
+# → NAME                       SYNCED   READY   AGE
+# → tenant-billing-namespace   True     True    18s
 
-kubectl get bucket my-bucket -o yaml
-# → status.conditions: [{type: Ready, status: "True"}, {type: Synced, status: "True"}]
-# → metadata.annotations: crossplane.io/external-name: my-bucket
+kubectl get namespace tenant-billing --show-labels
+# → NAME             STATUS   AGE   LABELS
+# → tenant-billing   Active   22s   environment=production,kubernetes.io/metadata.name=tenant-billing,managed-by=crossplane
 ```
 
-* `READY=True` — ресурс создан и готов к использованию.
-* `SYNCED=True` — желаемое состояние совпадает с облаком.
-* `crossplane.io/external-name` — идентификатор объекта в облаке.
+Проверка деталей объекта в кластере:
 
-Если `SYNCED=False` — смотреть `kubectl describe bucket my-bucket` (раздел Events) и логи провайдера.
+```bash
+kubectl get object tenant-billing-namespace -o jsonpath='{.status.conditions}' | jq .
+# → [
+#     {
+#       "lastTransitionTime": "2026-10-13T14:18:02Z",
+#       "reason": "Available",
+#       "status": "True",
+#       "type": "Ready"
+#     },
+#     {
+#       "lastTransitionTime": "2026-10-13T14:18:02Z",
+#       "reason": "ReconcileSuccess",
+#       "status": "True",
+#       "type": "Synced"
+#     }
+#   ]
+```
 
-### Сценарий 5: Композиция (XRD + Composition + Claim)
+---
 
-Построение высокоуровневого API "PostgreSQL-кластер" для разработчиков.
+### Сценарий 5: Построение Self-Service платформы (XRD + Composition Pipeline + Claim)
+
+Создадим абстрактный интерфейс заказа изолированного окружения разработчика (`XEnvironment`), автоматически разворачивающий Namespace и сетевую политику NetworkPolicy изоляции трафика.
+
+#### 1. Определение схемы API (XRD)
 
 ```yaml
-# 1. XRD — схема API (cluster-scoped XR + namespace-scoped Claim)
 apiVersion: apiextensions.crossplane.io/v1
 kind: CompositeResourceDefinition
 metadata:
-  name: xpostgresqls.example.org
+  name: xenvironments.platform.internal
 spec:
-  group: example.org
+  group: platform.internal
   names:
-    kind: XPostgreSQL
-    plural: xpostgresqls
+    kind: XEnvironment
+    plural: xenvironments
   claimNames:
-    kind: PostgreSQL
-    plural: postgresqls
+    kind: EnvironmentClaim
+    plural: environmentclaims
   versions:
-    - name: v1
+    - name: v1alpha1
       served: true
       referenceable: true
       schema:
@@ -337,126 +552,363 @@ spec:
             spec:
               type: object
               properties:
-                size:
+                teamName:
                   type: string
-                  default: small
-              required: [size]
----
-# 2. Composition — реализация через пайплайн функций (v2, mode: Pipeline)
+                  description: "Идентификатор проектной команды"
+                cpuQuota:
+                  type: string
+                  default: "4"
+                  description: "Лимит ядер CPU для окружения"
+              required:
+                - teamName
+```
+
+```bash
+kubectl apply -f xrd-env.yaml
+# → compositeresourcedefinition.apiextensions.crossplane.io/xenvironments.platform.internal created
+
+kubectl get xrd
+# → NAME                              ESTABLISHED   OFFERED   AGE
+# → xenvironments.platform.internal   True          True      15s
+```
+
+#### 2. Определение шаблона реализации (Composition с Pipeline Functions)
+
+```yaml
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
-  name: xpostgresql.example.org
+  name: xenvironment-standard
+  labels:
+    provider: internal-k8s
 spec:
   compositeTypeRef:
-    apiVersion: example.org/v1
-    kind: XPostgreSQL
+    apiVersion: platform.internal/v1alpha1
+    kind: XEnvironment
   mode: Pipeline
   pipeline:
-    - step: build
+    - step: patch-resources
       functionRef:
-        name: function-example-postgres
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: team-namespace
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha1
+              kind: Object
+              spec:
+                providerConfigRef:
+                  name: default
+                forProvider:
+                  manifest:
+                    apiVersion: v1
+                    kind: Namespace
+                    metadata:
+                      labels:
+                        platform-tier: team-sandbox
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.teamName
+                toFieldPath: spec.forProvider.manifest.metadata.name
+          - name: default-deny-networkpolicy
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha1
+              kind: Object
+              spec:
+                providerConfigRef:
+                  name: default
+                forProvider:
+                  manifest:
+                    apiVersion: networking.k8s.io/v1
+                    kind: NetworkPolicy
+                    metadata:
+                      name: default-deny-ingress
+                    spec:
+                      podSelector: {}
+                      policyTypes:
+                        - Ingress
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.teamName
+                toFieldPath: spec.forProvider.manifest.metadata.namespace
+    - step: automatically-detect-readiness
+      functionRef:
+        name: function-auto-ready
 ```
-
-Пользователь создаёт только Claim:
-
-```yaml
-apiVersion: example.org/v1
-kind: PostgreSQL
-metadata:
-  name: my-db
-  namespace: team-alpha
-spec:
-  size: small
-```
-
-Поток: `PostgreSQL` (Claim) → `XPostgreSQL` (XR) → MR (например, `RDSInstance`) через функцию `function-example-postgres`.
 
 ```bash
-kubectl -n team-alpha apply -f claim.yaml
-kubectl -n team-alpha get postgresql
-# → NAME     READY  CONNECTION-SECRET   AGE
-# → my-db    True   my-db-conn          1m
+kubectl apply -f composition-env.yaml
+# → composition.apiextensions.crossplane.io/xenvironment-standard created
 
-kubectl get composite
-# → (XR, созданный автоматически)
-
-crossplane beta trace xpostgresqls/<имя-xr>
-# → визуализация дерева: XPostgreSQL → RDSInstance (+ Secret)
+kubectl get compositions
+# → NAME                    XR-KIND        XR-APIVERSION               AGE
+# → xenvironment-standard   XEnvironment   platform.internal/v1alpha1   10s
 ```
 
-### Валидация и отладка
+#### 3. Пользовательская заявка (Claim) от команды разработчиков
 
-* Локальный рендеринг композиции без кластера: `crossplane render xr.yaml composition.yaml function.yaml`.
-* Проверка манифестов: `crossplane beta validate <файлы>`.
-* Граф композиции: `crossplane beta trace <xr>`.
-* Список всех MR: `kubectl get managed` (aggregated CRD Crossplane).
-* Список XR/Claim: `kubectl get composite`, `kubectl get claim`.
-* Логи провайдера: `kubectl -n crossplane-system logs -l pkg.crossplane.io/provider=<имя>`.
-* Проверка готовности к обновлению v1→v2: `crossplane beta upgrade check`.
+Прикладная команда создает простой манифест в своем пространстве имен (например, `team-dev`):
 
-### Устранение неполадок
+```yaml
+apiVersion: platform.internal/v1alpha1
+kind: EnvironmentClaim
+metadata:
+  name: payments-env
+  namespace: default
+spec:
+  teamName: payments-sandbox
+  cpuQuota: "8"
+```
 
-* **Provider в состоянии `False`/`PackagePullBackOff`:** в v2 требуется полностью квалифицированный URL образа; проверьте `spec.package` и доступность реестра (`kubectl describe provider <имя>`).
-* **MR завис в `Creating`/`Synced=False`:** причина — неверные учётные данные (ProviderConfig/Secret), отсутствие прав в облаке, превышение квот или несоответствие региона. Диагностика: `kubectl describe <mr>` (Events) и логи провайдера.
-* **"cannot resolve reference to Composition / Function not found":** функция не установлена (`kind: Function`) или `compositeTypeRef` не совпадает с XRD.
-* **Claim не создаёт XR:** отключён RBAC Manager либо нет прав на XRD/Composition — выдайте RBAC вручную.
-* **Слишком много CRD / нестабильный API-сервер:** используйте Provider Families и MRDs, ограничьте набор ресурсов.
-* **Дрейф не исправляется быстро:** сверка поллинговая; уменьшите poll interval через `DeploymentRuntimeConfig` (аргумент `--poll`), учитывая нагрузку на API облака.
-* **Превышение лимитов API облака:** снизите `--max-reconcile-rate` в `DeploymentRuntimeConfig`.
+```bash
+kubectl apply -f claim.yaml
+# → environmentclaim.platform.internal/payments-env created
 
-### Лучшие практики и очистка
+kubectl get claim payments-env
+# → NAME           SYNCED   READY   CONNECTION-SECRET   AGE
+# → payments-env   True     True                        25s
 
-* Устанавливайте провайдеры через **Provider Families / MRDs**, а не монолитные пакеты — меньше CRD, стабильнее control plane.
-* Всегда указывайте **полностью квалифицированный URL** пакета (требование v2).
-* Храните секреты вне Git: ESO + Vault, либо SOPS для шифрования манифестов `ProviderConfig` в репозитории.
-* Защищайте XRD/Composition через RBAC и политики OPA/Kyverno — ограничивайте допустимые значения параметров.
-* Используйте **namespaced XR/MR** для мультитенантности и изоляции команд.
-* Используйте **Composition Functions** вместо удалённой в v2 нативной patch-and-transform композиции.
-* Тюнинг производительности — через `DeploymentRuntimeConfig` (poll interval, reconcile rate).
+kubectl get composite
+# → NAME                      SYNCED   READY   COMPOSITION              AGE
+# → payments-env-2b89f        True     True    xenvironment-standard    30s
+```
 
-Очистка окружения:
-* Удаляйте ресурсы в порядке: Claim → XR (каскадом удаляет MR) → MR (удаляет облачный объект). Облачный ресурс удаляется, только если в `managementPolicies` есть `Delete` и `deletionPolicy` не `Orphan`.
-* Режим `ObserveOnly` (`managementPolicies: [Observe]`) позволяет импортировать существующую инфраструктуру без её удаления при удалении манифеста.
-* Удаление провайдера: `kubectl delete provider <имя>` (сначала удалите все его MR, иначе останутся осиротевшие облачные ресурсы).
+Трассировка созданной иерархии через Crossplane CLI:
 
-### Ограничения и пограничные случаи
+```bash
+crossplane beta trace environmentclaim/payments-env -n default
+# → NAME                                                  SYNCED   READY   STATUS
+# → EnvironmentClaim/payments-env (default)               True     True    Available
+# → └─ XEnvironment/payments-env-2b89f                    True     True    Available
+# →    ├─ Object/payments-env-2b89f-team-namespace        True     True    Available
+# →    └─ Object/payments-env-2b89f-default-deny-net...  True     True    Available
+```
 
-* **Breaking-изменения v2:** удалены нативная patch-and-transform композиция, `ControllerConfig`, external secret stores, нативные connection details у XR, default registry (см. раздел выше).
-* **Cluster-scoped MR/XR устарели:** в v2 legacy, будут удалены; новые ворклоады — namespaced.
-* **Operations — alpha:** функции операционных задач нестабильны, могут меняться.
-* **Поллинговая сверка:** дрейф обнаруживается с задержкой ≈ poll interval; нет гарантии мгновенной реакции без внешних событий.
-* **Нагрузка на API облака:** при большом числе MR возможны квоты API — требуется rate limiting.
-* **Масштаб CRD:** монолитные провайдеры (сотни–тысячи CRD) дестабилизируют control plane без Family/MRD.
+---
 
-### Подробные руководства
+## Операции и команды
 
-* Настройка провайдера для Yandex Cloud: [Настройка Yandex Cloud провайдера](./provider_yandex_cloud_setup.md)
-* Управление ресурсами внутри кластера: [Управление Kubernetes ресурсами](./provider_kubernetes_setup.md)
-* Интеграция с GitOps-инструментами: [Интеграция с GitOps](./gitops_integration.md)
-* Сравнение с альтернативами: [Сравнение с Terraform](./terraform_comparison.md)
+### Утилита crossplane CLI
 
-Управление ресурсами Yandex Cloud: [Yandex Resource Manager](../../Yandex/Resource_Manager/overview.md).
+Справочник команд Crossplane CLI (v2.x) для разработчиков платформ и SRE:
 
-### Смежные тематические разделы
+| Команда | Описание | Пример вызова |
+| :--- | :--- | :--- |
+| `crossplane render` | Локальный рендеринг и отладка композиций без кластера | `crossplane render xr.yaml comp.yaml funcs.yaml` |
+| `crossplane beta trace` | Построение дерева зависимостей (Claim → XR → MRs) | `crossplane beta trace xenvironments/my-env` |
+| `crossplane beta validate` | Валидация манифестов на соответствие схемам CRD и XRD | `crossplane beta validate schemas/ manifests/` |
+| `crossplane xpkg build` | Сборка OCI-пакета Configuration или Provider | `crossplane xpkg build --package-root=. -o pkg.xpkg` |
+| `crossplane xpkg push` | Публикация пакета во внутренний OCI-реестр | `crossplane xpkg push pkg.xpkg harbor.corp.local/cp/pkg:v1.0.0` |
 
-* [Composition Functions и EnvironmentConfig](./composition_functions.md) — pipeline функций, `functionConfig`, локальный `render`.
-* [Мультитенантность и OOO](./multi_tenancy.md) — изоляция команд, `onlyOneOf`/`ownerOnlyOrphan`, per-namespace RBAC.
-* [Защита зависимостей (Usage)](./usage_protection.md) — `Usage`/`ClusterUsage`, защита от каскадного удаления.
-* [Тестирование платформы](./testing_crossplane.md) — `crossplane composition render`/`validate`, envtest, CI.
-* [Обновление и миграция](./upgrade_migration.md) — ревизии пакетов, ломающие изменения v2, откат.
-* [Observability](./observability.md) — метрики `crossplane_managed_resource_*`, алерты, Grafana.
-* [Политики и Governance (Kyverno/OPA)](./policy_governance.md) — валидация Claim/XRD, защита удаления.
-* [Self-Service и IDP](./self_service.md) — Claims как self-service API, Backstage/Score, golden paths.
-* [Безопасность цепочки поставок](./package_security.md) — подписание/верификация пакетов (cosign), приватные реестры.
-* [Backup и Disaster Recovery control plane](./backup_dr.md) — etcd/Velero, Git как source of truth, восстановление.
+#### Пример локального тестирования композиции (crossplane render)
+
+```bash
+crossplane render xr.yaml composition.yaml functions.yaml
+# → ---
+# → apiVersion: kubernetes.crossplane.io/v1alpha1
+# → kind: Object
+# → metadata:
+# →   annotations:
+# →     crossplane.io/composition-resource-name: team-namespace
+# → spec:
+# →   forProvider:
+# →     manifest:
+# →       apiVersion: v1
+# →       kind: Namespace
+# →       metadata:
+# →         name: payments-sandbox
+```
+
+---
+
+### Эксплуатационные команды kubectl для SRE
+
+Агрегированные ресурсы и манипуляции с жизненным циклом в кластере:
+
+| Задача | Команда |
+| :--- | :--- |
+| Просмотр всех Managed Resources | `kubectl get managed` |
+| Просмотр всех Composite Resources | `kubectl get composite` |
+| Просмотр всех пользовательских заявок | `kubectl get claim --all-namespaces` |
+| Статус всех установленных провайдеров | `kubectl get providers -o wide` |
+| Статус функций композиции | `kubectl get functions` |
+| Поиск ресурсов с ошибкой сверки | `kubectl get managed -A -l '!crossplane.io/paused' -o json \| jq '.items[] \| select(.status.conditions[]? \| select(.type=="Synced" and .status=="False")) \| .metadata.name'` |
+| Экстренная заморозка сверки ресурса | `kubectl annotate managed <name> crossplane.io/paused="true" --overwrite` |
+| Разморозка сверки ресурса | `kubectl annotate managed <name> crossplane.io/paused-` |
+| Принудительный мгновенный reconcile | `kubectl annotate managed <name> crossplane.io/reconcile-time="$(date +%s)" --overwrite` |
+
+---
+
+## Диагностика и устранение неполадок
+
+### Сбои установки пакетов (PackagePullBackOff)
+
+**Симптом:** При установке `Provider` или `Function` статус остается `INSTALLED=False`, состояние `PackagePullBackOff`.
+
+**Причины:**
+1. Не указан FQDN реестра (нарушение стандарта Crossplane v2.x).
+2. Ошибка сетевого доступа к реестру из закрытого контура (Airgap).
+3. Отсутствуют секреты доступа к приватному OCI-реестру (`imagePullSecrets`).
+
+**Диагностика:**
+```bash
+kubectl describe provider <provider-name>
+# → Look at Events: Failed to pull package: ... 401 Unauthorized / dial tcp: i/o timeout
+```
+
+**Решение:**
+Настройте `packagePullSecrets` в манифесте `Provider`:
+```yaml
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-kubernetes
+spec:
+  package: harbor.corp.local/crossplane/provider-kubernetes:v1.3.0
+  packagePullSecrets:
+    - name: harbor-pull-secret
+```
+
+---
+
+### Анализ статусов: расхождение Synced vs Ready
+
+**Симптом:** Объект завис в состоянии `SYNCED=True, READY=False` или `SYNCED=False`.
+
+**Алгоритм локализации:**
+1. Проверить события Kubernetes:
+   ```bash
+   kubectl describe <kind> <resource-name>
+   # → Events: Type     Reason             Message
+   #           Warning  CannotObserve      ... dial tcp 192.168.10.50:6443: connect: connection refused
+   ```
+2. Если `SYNCED=False`: ошибка в учетных данных `ProviderConfig`, сетевом доступе к целевой системе или правах RBAC.
+3. Если `SYNCED=True`, но `READY=False`: целевой ресурс создан во внешней системе, но не прошел internal readiness check (например, целевой под ожидает PV, база данных инициализирует таблицы).
+4. Проверить логи пода конкретного провайдера:
+   ```bash
+   kubectl -n crossplane-system logs -l pkg.crossplane.io/provider=provider-kubernetes -c package-runtime --tail=100
+   ```
+
+---
+
+### Зависание удаления ресурсов и deadlock финалайзеров
+
+**Симптом:** Манифест MR или XR находится в статусе `Terminating` неограниченное время после команды `kubectl delete`.
+
+**Причина:** На ресурсе установлен системный финалайзер `finalizer.managedresource.crossplane.io`. Контроллер пытается удалить физический объект в целевой системе, но не может выполнить запрос (недоступен сетевой эндпоинт, удален секрет `ProviderConfig`, либо целевой ресурс защищен внешней блокировкой).
+
+**Безопасный алгоритм устранения deadlock:**
+1. Если физический ресурс уже удален во внешней системе вручную, либо его сохранение допустимо:
+   Смените политику удаления на `Orphan`:
+   ```bash
+   kubectl patch <kind> <name> --type='json' -p='[{"op": "replace", "path": "/spec/deletionPolicy", "value": "Orphan"}]'
+   # → patched
+   ```
+2. Если контроллер по-прежнему не снимает финалайзер из-за сбоя провайдера:
+   ```bash
+   kubectl patch <kind> <name> --type='json' -p='[{"op": "remove", "path": "/metadata/finalizers"}]'
+   # → patched
+   ```
+   *Внимание: Снятие финалайзера вручную оставляет физический ресурс во внешней системе без присмотра ("осиротевшим"). Убедитесь в его фактическом статусе во внешней инфраструктуре.*
+
+---
+
+### Деградация kube-apiserver и нагрузка на etcd
+
+**Симптом:** Рост времени ответа `kube-apiserver`, увеличение потребления памяти API-сервером, предупреждения о размере БД etcd (`etcdserver: mvcc: database space exceeded`).
+
+**Причины:**
+1. Установка монолитных провайдеров старых версий (сотни неиспользуемых CRD).
+2. Слишком частый опрос инфраструктуры (`--poll=10s`) при десятках тысяч управляемых объектов.
+3. Разрастание истории ревизий объектов.
+
+**Решение для SRE:**
+* Использовать раздельные модульные провайдеры (Family Providers) или избирательную регистрацию ресурсов (MRD — Managed Resource Definitions).
+* Увеличить интервал сверки через `DeploymentRuntimeConfig`: `--poll=10m`.
+* Настроить агрессивную очистку завершенных ревизий пакетов (`spec.revisionHistoryLimit: 1` в ресурсах `Provider` и `Configuration`).
+* Вынести тяжелые тенанты в архитектуру vcluster (Hard Multi-Tenancy).
+
+---
+
+### Ошибки в конвейере Composition Functions
+
+**Симптом:** При создании Claim составной ресурс получает статус `Synced=False` с ошибкой вида `cannot run composition pipeline: rpc error: code = Unavailable desc = connection error`.
+
+**Причины:**
+1. Под функции (`kind: Function`) аварийно завершился по OOM (`OOMKilled`).
+2. Сетевая изоляция (NetworkPolicy) в namespace `crossplane-system` блокирует gRPC-трафик между подом `crossplane` и подом функции.
+
+**Диагностика:**
+```bash
+kubectl -n crossplane-system get pods -l pkg.crossplane.io/function=function-patch-and-transform
+# → NAME                                                  READY   STATUS      RESTARTS   AGE
+# → function-patch-and-transform-6b45f-7f89b             0/1     OOMKilled   3          5m
+
+kubectl -n crossplane-system describe pod -l pkg.crossplane.io/function=function-patch-and-transform
+```
+
+**Решение:**
+Выделите функции адекватные ресурсы через `DeploymentRuntimeConfig` и проверьте сетевые политики в `crossplane-system`.
+
+---
+
+## Лучшие практики
+
+### Архитектурные требования и сайзинг кластера
+
+1. **Выделенный Control Plane:** Для крупных инфраструктур (>500 серверов/кластеров) Crossplane должен функционировать в выделенном инфраструктурном кластере Kubernetes, изолированном от пользовательских прикладных нагрузок.
+2. **Изоляция узлов:** Размещайте поды Crossplane и провайдеров на выделенных системных нодах (`nodeSelector: node-role.kubernetes.io/infra: "true"`, `tolerations`), защищенных от OOM-событий сторонних приложений.
+3. **Сайзинг etcd:** База данных etcd управляющего кластера должна размещаться на быстрых NVMe-накопителях с гарантированным fsync latency < 10ms. Лимит квоты etcd рекомендуется увеличивать до 8GB (`--quota-backend-bytes=8589934592`).
+
+---
+
+### Безопасность и модель наименьших привилегий
+
+1. **Запрет глобального cluster-admin для провайдеров:** Никогда не назначайте `ClusterRole/cluster-admin` сервисным аккаунтам провайдеров. Формируйте узконаправленные `ClusterRole` (Scoped RBAC) строго под управляемые API-группы.
+2. **Изоляция секретов через External Secrets Operator (ESO):** Храните мастер-пароли и учетные данные целевых систем в корпоративном HashiCorp Vault. Доставляйте секреты в `crossplane-system` через ESO непосредственно перед монтированием в `ProviderConfig`.
+3. **Валидация манифестов через политики:** Используйте ValidatingAdmissionPolicy (Kubernetes 1.30+) или Kyverno для принудительного контроля входных параметров в XRD/Claim, блокируя опасные конфигурации на этапе поступления в API-сервер. См. [Политики и Governance (Kyverno/OPA)](./policy_governance.md).
+
+---
+
+### Надежность и предотвращение потери данных (Disaster Prevention)
+
+1. **Политика Orphan для критических баз данных и хранилищ:** Для всех производственных ресурсов СХД и баз данных задавайте `spec.deletionPolicy: Orphan`. Это исключит уничтожение данных при случайном удалении пространства имен в GitOps.
+2. **Использование Usage CRD:** Блокируйте удаление нижележащих инфраструктурных компонентов при наличии зависимых сервисов через `kind: Usage`.
+3. **Регулярный бэкап метаданных:** Регулярно создавайте снимки etcd и резервные копии CRD/Secret через Velero. Подробный план аварийного восстановления описан в [Backup и Disaster Recovery control plane](./backup_dr.md).
+
+---
+
+### Эксплуатация в On-Premise и изоляция Control Plane
+
+1. **Приватные OCI-реестры:** В закрытых промышленных контурах (Airgap) зеркалируйте OCI-пакеты провайдеров и функций во внутренний Harbor. Всегда фиксируйте пакеты по неизменяемым тегам или sha256-дайджестам.
+2. **Namespaced XR для мультитенантности:** В Crossplane v2.x переходите на использование namespaced XR. Это позволяет прикладным командам работать внутри своих пространств имен, подчиняться локальным `ResourceQuota` и не иметь доступа к инфраструктуре соседних проектов. См. [Мультитенантность и изоляция](./multi_tenancy.md).
+
+---
 
 ## Дополнительная информация
 
-Общие принципы GitOps описаны в [GitOps Overview](../GitOps_overview.md), инструмент для GitOps-доставки — в [ArgoCD Overview](../ArgoCD/argocd_overview.md).
+### Связанные разделы базы знаний
 
-Внешние ресурсы:
+* [Управление Kubernetes ресурсами](./provider_kubernetes_setup.md) — детальная настройка `provider-kubernetes`, Server-Side Apply и управление внешними кластерами.
+* [Composition Functions и EnvironmentConfig](./composition_functions.md) — глубокое погружение в gRPC-конвейеры функций, KCL и контекст окружений.
+* [Интеграция с GitOps](./gitops_integration.md) — совместная работа Crossplane с Argo CD и Flux, настройка синхронизации и Health Checks.
+* [Мультитенантность и изоляция](./multi_tenancy.md) — архитектура Soft/Hard мультитенантности, namespaced XR и vcluster.
+* [Защита зависимостей (Usage)](./usage_protection.md) — блокировка каскадного удаления связанных ресурсов.
+* [Observability](./observability.md) — мониторинг Crossplane, метрики Prometheus, алерты и дашборды Grafana.
+* [Backup и Disaster Recovery control plane](./backup_dr.md) — защита etcd, резервное копирование Velero и сценарии восстановления.
+* [Тестирование платформы](./testing_crossplane.md) — модульное и интеграционное тестирование Composition (`crossplane render`, chainsaw).
+* [Обновление и миграция](./upgrade_migration.md) — регламент обновления версий ядра и миграции с v1.x на v2.x.
+* [Политики и Governance (Kyverno/OPA)](./policy_governance.md) — применение политик валидации к инфраструктурным объектам.
+* [Self-Service и IDP](./self_service.md) — построение внутренних платформ разработчика на базе Claims и Backstage.
+* [Безопасность пакетов](./package_security.md) — проверка подписей OCI-образов (Cosign) и работа в Airgap.
+* [Сравнение с Terraform](./terraform_comparison.md) — архитектурные различия Push и Pull моделей IaC.
+* [GitOps Overview](../GitOps_overview.md) — методологический обзор декларативного управления конфигурациями.
+* [ArgoCD Overview](../ArgoCD/argocd_overview.md) — архитектура и эксплуатация GitOps-оператора.
 
-* Официальная документация Crossplane: [docs.crossplane.io](https://docs.crossplane.io/)
-* Анонс перехода в CNCF Graduated: [Crossplane Graduation (CNCF, 6 ноября 2025)](https://www.cncf.io/announcements/2025/11/06/cloud-native-computing-foundation-announces-graduation-of-crossplane/)
-* Что нового в v2: [What's New in v2](https://docs.crossplane.io/latest/whats-new)
+### Внешние ресурсы
+
+* Официальная документация проекта: [Crossplane Documentation](https://docs.crossplane.io/)
+* CNCF проект: [Crossplane Graduation Announcement](https://www.cncf.io/announcements/2025/11/06/cloud-native-computing-foundation-announces-graduation-of-crossplane/)
+* Исходный код ядра: [GitHub crossplane/crossplane](https://github.com/crossplane/crossplane)

@@ -1,387 +1,660 @@
 # Управление жизненным циклом Deployment в Kubernetes
 
-Декларативные и императивные процессы контроля состояния приложения: от развертывания и масштабирования до отката и диагностики.
+**Актуально для:** Kubernetes 1.30–1.32+
+
+Декларативные и императивные процессы контроля состояния stateless-нагрузки: от архитектуры контроллера и математики ротации реплик до автоматизированных гейтов в CI/CD, безаварийного переключения трафика на bare-metal и процедур аварийного восстановления (SRE Runbooks).
 
 ## Предварительные требования (Prerequisites)
 
-- Рабочий кластер Kubernetes (v1.16+ для `apps/v1`) и доступ к нему.
-- Установленный и настроенный `kubectl`. Флаг `--record` удален в v1.24 — причину ревизии задавайте аннотацией `kubernetes.io/change-cause` (см. [Документирование изменений](#документирование-изменений-change-cause)).
-- RBAC-права на стороне оператора: `get`/`patch`/`update` на `deployments`, `replicasets`, `pods` и `events`. Команды `kubectl rollout ...` **не используют** отдельный субресурс `rollout` — они читают и изменяют сам объект Deployment (через standard API), поэтому права на `deployments` достаточно.
-- Понимание базовых объектов: [Pod](../Pod/pod_overview.md), [ReplicaSet](../replicaset.md), проб (`readinessProbe`/`livenessProbe`/`startupProbe` — [Пробы в Kubernetes](../probes.md)).
-- Общие концепции и описание полей манифеста см. в разделах:
-  - [Kubernetes Deployment: Обзор](./index.md)
-  - [Манифест и лучшие практики](./deployment_manifest.md)
+- **Рабочий кластер Kubernetes:** версии 1.30–1.32+ (на базе `kubeadm`, RKE2 или K3s на bare-metal / локальных виртуальных машинах). Стабильная группа API `apps/v1`.
+- **Утилиты командной строки:**
+  - `kubectl` актуальной версии (совпадающей с версией кластера ±1 minor). Флаг `--record` окончательно удален в v1.24; документирование причин изменений выполняется исключительно через аннотацию `kubernetes.io/change-cause`.
+  - `jq` (v1.6+) и стандартный POSIX-совместимый интерпретатор команд (`bash` v4.4+) для автоматизации сценариев развертывания и отката.
+- **RBAC-полномочия:**
+  - Минимальный набор прав для инженера и сервисного аккаунта CI/CD: глаголы `get`, `list`, `watch`, `update`, `patch` для ресурсов `deployments`, `replicasets`, `pods` в API-группе `apps/v1` и `core/v1`, а также доступ к чтению `events`.
+  - Команды семейства `kubectl rollout ...` **не используют** выделенный субресурс `rollout` — они считывают и мутируют спецификацию и аннотации самого объекта `Deployment` через стандартные эндпоинты Kubernetes API.
+- **Базовые знания архитектуры:**
+  - Понимание иерархии абстракций: [Deployment: Обзор](./index.md), [ReplicaSet](../replicaset.md), [Pod](../Pod/pod_overview.md).
+  - Спецификация полей и QoS-классы: [Манифест и лучшие практики](./deployment_manifest.md).
+  - Механика сетевых проверок: [Пробы жизнедеятельности в Kubernetes](../probes.md).
+
+---
 
 ## 1. Определения
 
-**Управление жизненным циклом (Lifecycle Management)** — совокупность процессов по контролю состояния приложения в Kubernetes. Оно охватывает этапы развертывания (Rollout), обновления конфигурации, мониторинга готовности, отката к предыдущим ревизиям (Rollback), а также оперативного управления (пауза, возобновление и принудительный перезапуск).
+- **Управление жизненным циклом (Lifecycle Management)** — замкнутый цикл процессов контроля желаемого и фактического состояний приложения: планирование развертывания, постепенная или монопольная ротация реплик, валидация прогресса через пробы, масштабирование, пакетное внесение изменений, откат к историческим версиям и аварийное дренирование.
+- **Deployment Controller** — управляющий контур (reconciliation loop) в составе демона `kube-controller-manager`, непрерывно сравнивающий декларативную спецификацию `spec` объекта `Deployment` с фактическим состоянием дочерних объектов `ReplicaSet` и статусом `status`.
+- **Rollout (Выкатка / Раскатка)** — процесс детерминированного перехода группы подов с одной версии шаблона (`spec.template`) на другую. В рамках стандартной стратегии `RollingUpdate` выполняется путем постепенного изменения желаемого числа реплик между старыми и новыми объектами `ReplicaSet`.
+- **Revision (Ревизия)** — зафиксированный в кластере моментальный снимок шаблона пода (`spec.template`), материализованный в виде отдельного объекта `ReplicaSet`. Порядковый номер ревизии сохраняется в аннотации `deployment.kubernetes.io/revision` (строковый целочисленный счетчик).
+- **pod-template-hash** — 32-битный FNV-1a хеш структуры `PodTemplateSpec`, вычисляемый контроллером и автоматически добавляемый в метки селектора `ReplicaSet` и подов (`pod-template-hash=<hash>`). Предотвращает коллизии селекторов между поколениями одного Deployment.
+- **Rollback (Откат)** — процедура восстановления конфигурации пода из выбранной исторической ревизии. В Kubernetes откат является направленным вперед процессом (**Rollout Forward**): контроллер не удаляет историю и не «перематывает время», а создает новую ревизию с шаблоном, скопированным из целевого `ReplicaSet`.
+- **Rollover (Перекрытие выкаток / Каскадная замена)** — состояние, когда новый запуск обновления (`spec.template`) поступает до того, как предыдущий rollout успел завершиться. Контроллер не ждет стабилизации промежуточной версии, а немедленно начинает ее сворачивание, форсируя развертывание последней целевой версии.
+- **Пропорциональное масштабирование (Proportional Scaling)** — внутренний алгоритм контроллера Deployment, делящий добавление или удаление реплик между всеми активными `ReplicaSet` пропорционально их текущему размеру, если масштабирование инициировано во время незавершенного или приостановленного rollout.
+- **Пауза (Pause)** — состояние `spec.paused: true`, при котором контроллер Deployment временно отключает запуск новых процессов ротации ReplicaSet при изменениях в `spec.template`, продолжая обслуживать текущие поды и обрабатывать изменение общего числа реплик (`spec.replicas`).
+- **Restart (Принудительный перезапуск)** — процедура инициирования нового rollout без изменения кода и конфигурации контейнеров путем внедрения временной метки `kubectl.kubernetes.io/restartedAt` в метаданные шаблона пода.
+- **Zero-Downtime Rollout** — процесс обновления сервиса без потери сетевых соединений и без возврата ошибок клиентам (502/504 Bad Gateway). Достигается синхронизацией времени готовности подов (`readinessProbe`), задержки стабилизации (`minReadySeconds`), переключения маршрутов в `EndpointSlice` и плавного завершения (`preStop` + `terminationGracePeriodSeconds`).
+- **Change Cause (Причина изменения)** — значение служебной аннотации `kubernetes.io/change-cause`, фиксирующее человекочитаемое описание релиза и отображаемое в выводе `kubectl rollout history`.
 
-- **Rollout (Выкатка)** — процесс перехода Deployment с одной версии шаблона пода на другую. Выполняется постепенной подменой подов в рамках стратегии `RollingUpdate` (или мгновенно — при стратегии `Recreate`).
-- **Ревизия (Revision)** — зафиксированный снимок шаблона пода (`spec.template`) в истории Deployment. Каждое изменение шаблона создает новую ревизию; именно ревизии позволяют выполнить откат. Номер ревизии хранится в аннотации `deployment.kubernetes.io/revision`.
-- **Откат (Rollback)** — возврат шаблона пода к одной из предыдущих ревизий. В Kubernetes откат — это новый rollout по старому шаблону, а не «перемотка времени» (история продолжает расти).
-- **Пропорциональное масштабирование (Proportional Scaling)** — алгоритм контроллера Deployment, распределяющий новые реплики между всеми активными ReplicaSet, когда масштабирование происходит во время незавершенного (или приостановленного) rollout.
-- **Пауза (Pause)** — установка `spec.paused: true`, после которой контроллер перестает реагировать на изменения шаблона пода (не запускает новые rollout), сохраняя работу текущих подов.
-- **Rollover (Перекрытие выкаток)** — ситуация, когда новое обновление приходит до завершения предыдущего; контроллер не ждет завершения старого rollout.
-- **Change-cause** — аннотация `kubernetes.io/change-cause`, документирующая причину изменения ревизии (видна в `kubectl rollout history`).
+---
 
-## 2. Базовые концепции
+## 2. Базовые концепции и архитектура
 
-### Иерархия объектов и механизм владения
+### Архитектура контроллера и цикл согласования
 
-Управление осуществляется по цепочке:
-`Deployment` → [`ReplicaSet`](../replicaset.md) → [`Pod`](../Pod/pod_overview.md)
+В Kubernetes `Deployment` не управляет подами напрямую. Он реализует двухуровневое дерево владения через ссылки `ownerReferences`:
 
-Deployment не создает поды напрямую. Он управляет наборами реплик (`ReplicaSet`), которые, в свою очередь, обеспечивают работу нужного количества подов. Механизм `ownerReferences` в метаданных ресурсов обеспечивает каскадное управление и автоматическое удаление зависимых объектов (Garbage Collection): удаление Deployment удаляет его ReplicaSet и поды.
+```text
+               Deployment Controller (kube-controller-manager)
+                                      │
+            ┌─────────────────────────┴─────────────────────────┐
+            ▼ (управляет spec.replicas)                         ▼ (управляет spec.replicas)
+     ReplicaSet (New: rev 3)                             ReplicaSet (Old: rev 2)
+   hash: 7d6b9f4b9c, replicas: 3                       hash: 58f8b88df8, replicas: 0
+            │                                                   │
+   ┌────────┴────────┐                                 (поды завершены)
+   ▼                 ▼
+Pod (v3)          Pod (v3)
+```
 
-### Механизм Rolling Update на уровне ReplicaSet
+1. **Deployment** управляет объектами **ReplicaSet** (создает новые, изменяет их `spec.replicas`, удаляет устаревшие по лимиту истории).
+2. **ReplicaSet Controller** управляет конкретными экземплярами **Pod** (создает их через API-сервер, отслеживает соответствие селекторам).
+3. **Kubelet** на рабочих узлах запускает контейнеры, исполняет проверки (`probes`) и исполняет хуки жизненного цикла (`preStop`).
+4. **EndpointSlice Controller** и **kube-proxy** связывают сетевой сервис (`Service`) с подами, перешедшими в состояние `Ready`.
 
-Процесс обновления (Rollout) не редактирует существующие поды. Вместо этого происходит постепенная подмена одного ReplicaSet другим:
+Каскадное удаление (Garbage Collection): при удалении объекта Deployment механизм `ownerReferences` удаляет все дочерние `ReplicaSet` и их поды (если не был явно передан флаг `--cascade=orphan`).
 
-1.  **Создание новой ревизии:** При изменении `spec.template` контроллер Deployment создает **новый** ReplicaSet с обновленным шаблоном пода и уникальным хешем в метке `pod-template-hash` (хеш вычисляется от PodTemplate; подробно — [ReplicaSet](../replicaset.md#метка-pod-template-hash)).
-2.  **Миграция реплик:** Начинается постепенное изменение количества реплик в старом и новом RS:
-    - Старый RS: N → N-1 → ... → 0
-    - Новый RS:  0 → 1   → ... → N
-3.  **Контроль шага:** Параметры `maxSurge` (дополнительные поды) и `maxUnavailable` (допустимая потеря мощности) определяют «размер шага» этой миграции. Удаление старого пода происходит **только** после того, как новый под прошел `readinessProbe` и стал `Ready`.
-4.  **Хранение истории:** Старый ReplicaSet сохраняется в системе, но масштабируется в 0 реплик. Это позволяет выполнить мгновенный откат (`rollout undo`), просто поменяв количество реплик между старым и новым RS (без перекачивания образов — шаблон уже известен контроллеру).
-5.  **Новая ревизия помечается аннотацией:** контроллер увеличивает `deployment.kubernetes.io/revision` — это монотонный счетчик, отражающий количество запущенных rollout.
+### Механизм генерации `pod-template-hash`
 
-Пока идет обновление, старые поды продолжают принимать трафик — новая версия поднимается «рядом» и проходит проверки готовности, прежде чем трафик будет переведен на нее.
+При каждом изменении `spec.template` контроллер Deployment:
+1. Берет полную структуру шаблона пода (`PodTemplateSpec`).
+2. Очищает из нее системные поля и саму метку `pod-template-hash`.
+3. Рассчитывает 32-битный FNV-1a хеш от сериализованной структуры.
+4. Добавляет вычисленный хеш в селектор меток создаваемого `ReplicaSet` и в шаблон меток пода:
+   ```yaml
+   labels:
+     app: payment-api
+     pod-template-hash: "6f8c7b8d4f"
+   ```
+Благодаря этому несколько `ReplicaSet`, имеющих одинаковые пользовательские метки `app: payment-api`, изолированы друг от друга и не захватывают чужие поды.
+
+### Триггеры запуска Rollout
+
+Обновление (новый Rollout и новая ревизия) инициируется **исключительно** при изменении содержимого шаблона пода (`spec.template`).
+
+| Область манифеста | Поля | Инициирует Rollout? | Создает новую ревизию? |
+| :--- | :--- | :---: | :---: |
+| **Спецификация контейнера** | `image`, `command`, `args`, `env`, `envFrom`, `resources`, `ports`, `securityContext` | **Да** | **Да** |
+| **Тома и монтирования** | `volumes`, `volumeMounts` | **Да** | **Да** |
+| **Проверки (Probes)** | `livenessProbe`, `readinessProbe`, `startupProbe` | **Да** | **Да** |
+| **Метаданные шаблона** | `spec.template.metadata.labels`, `spec.template.metadata.annotations` | **Да** | **Да** |
+| **Жизненный цикл пода** | `terminationGracePeriodSeconds`, `serviceAccountName`, `dnsPolicy`, `affinity` | **Да** | **Да** |
+| **Масштабирование** | `spec.replicas` | **Нет** | **Нет** (меняет размер текущего RS) |
+| **Параметры выкатки** | `spec.strategy`, `spec.minReadySeconds`, `spec.progressDeadlineSeconds` | **Нет** | **Нет** (применяется к текущему rollout) |
+| **Лимит истории** | `spec.revisionHistoryLimit` | **Нет** | **Нет** (удаляет лишние RS) |
+| **Метаданные Deployment** | `metadata.labels`, `metadata.annotations` (включая `change-cause`) | **Нет** | **Нет** |
+
+> [!IMPORTANT]
+> Изменение данных внутри `ConfigMap` или `Secret` само по себе **не изменяет** манифест Deployment и **не запускает** Rollout. Контейнеры продолжают работать со старыми конфигурациями, пока не будет вызван `kubectl rollout restart` либо не будет изменена аннотация с хешем конфигурации внутри `spec.template.metadata.annotations` (см. [Обновление и rollout ConfigMap](../ConfigMap/update_and_rollout.md)).
+
+---
+
+### Механика RollingUpdate: алгоритм пошаговой ротации
+
+При стандартной стратегии обновления (`type: RollingUpdate`) контроллер гарантирует выполнение двух инвариантов на каждом шаге цикла:
+
+1. **Верхний лимит мощности (Surge Limit):**
+   $$\text{MaxPods} = \text{spec.replicas} + \text{maxSurge}$$
+   Фактическое количество созданных подов во всех связанных `ReplicaSet` ни в какой момент времени не может превысить данное значение.
+2. **Нижний лимит доступности (Availability Floor):**
+   $$\text{MinAvailablePods} = \text{spec.replicas} - \text{maxUnavailable}$$
+   Фактическое количество подов в статусе `Available` (готовых к обслуживанию трафика) ни в какой момент не может опуститься ниже данного значения.
+
+#### Шаги перехода реплик:
+```text
+Начало:        RS-Old: 4 реплики (Ready) | RS-New: 0 реплик
+               (maxSurge: 1, maxUnavailable: 0, всего desired: 4)
+
+Шаг 1 (Surge): RS-Old: 4 реплики (Ready) | RS-New: 1 реплика (Creating/Starting)
+               Всего подов: 5 (не превышает 4 + 1)
+
+Шаг 2 (Ready): RS-New-1 прошел readinessProbe и выждал minReadySeconds → Available!
+               Доступно подов: 5. Допустимый минимум: 4.
+
+Шаг 3 (Drain): RS-Old уменьшается: 4 → 3 (один старый под получает SIGTERM).
+               RS-New увеличивается: 1 → 2.
+
+... цикл повторяется до полной ротации ...
+
+Итог:          RS-Old: 0 реплик          | RS-New: 4 реплики (Available)
+```
+
+---
+
+### Пропорциональное масштабирование (Proportional Scaling)
+
+Если во время активного или приостановленного (`paused`) процесса обновления администратор или HPA меняет значение `spec.replicas`, контроллер не может просто передать все новые реплики новому `ReplicaSet` — это сломало бы баланс готовности.
+
+Контроллер запускает алгоритм **пропорционального распределения**:
+1. Вычисляется суммарное текущее количество подов во всех активных `ReplicaSet` с `replicas > 0`.
+2. Каждому активному `ReplicaSet` выделяется доля от нового целевого размера по формуле:
+   $$\text{desired}_{RS} = \text{round}\left( \frac{\text{current}_{RS}}{\text{totalCurrent}} \times \text{newDeploymentReplicas} \right)$$
+3. **Обработка остатка:** Если из-за целочисленного округления сумма долей не совпадает с `newDeploymentReplicas`, разница добавляется к `ReplicaSet` с наибольшим количеством реплик.
+4. `ReplicaSet`, имеющие `replicas: 0`, **никогда не масштабируются вверх** при пропорциональном масштабировании.
+
+*Пример:*
+- Deployment разворачивается: `RS-Old` имеет 6 реплик, `RS-New` успел набрать 2 реплики (всего 8).
+- HPA увеличивает нагрузку до `replicas: 12`.
+- Прирост в 4 реплики распределяется пропорционально:
+  - `RS-Old`: $\frac{6}{8} \times 12 = 9$ реплик.
+  - `RS-New`: $\frac{2}{8} \times 12 = 3$ реплики.
+- После пропорционального изменения размеров контроллер продолжает обычный процесс RollingUpdate, перекачивая поды с `RS-Old` на `RS-New`.
+
+---
 
 ### Перекрывающиеся обновления (Rollover)
 
-Если новое обновление отправлено, когда предыдущий rollout еще не завершен, контроллер **не ждет** завершения старого:
+Когда разработчик или CI/CD выполняет выкатку версии `v3` в момент, когда выкатка `v2` поверх `v1` еще не завершена:
+1. Контроллер определяет `RS-v3` как целевой активный набор реплик.
+2. Промежуточный набор `RS-v2` немедленно понижается до статуса «старого» (устаревшего).
+3. Оба старых набора (`RS-v1` и `RS-v2`) синхронно масштабируются вниз до 0 по мере того, как поднимаются поды `RS-v3`.
+4. Выкатка `v2` прерывается без ожидания готовности ее подов.
 
-- Создается новый ReplicaSet под актуальный шаблон.
-- ReplicaSet, который только начал раскатываться, «понижается» в ранге до старого и начинает масштабироваться вниз.
-- Приоритет всегда отдается последнему желаемому состоянию — это важно для быстрых хотфиксов поверх незавершенного релиза.
+Это фундаментальное свойство позволяет оперативно выкатывать аварийные хотфиксы поверх зависших деплоев без ручной очистки промежуточных состояний.
 
-Пример из официальной документации: при rollout `nginx:1.14.2` → `nginx:1.16.1`, когда удалось создать только 3 из 5 подов, контроллер немедленно начинает убивать эти 3 пода и создавать поды `1.16.1`, не дожидаясь набора всех 5 старых. Из-за этого промежуточные состояния `kubectl rollout status` могут выглядеть «хаотично» (требования по таймаутам — см. [Автоматизация в CI/CD](#автоматизация-в-cicd-rollout-status-как-гейт)).
+---
 
-### Триггеры обновления (Rollout)
+### Архитектура Zero-Downtime и координация остановки пода
 
-Обновление (Rollout) инициируется **только** при изменении шаблона пода (`spec.template`).
+Стандартная ошибка на bare-metal инсталляциях: во время RollingUpdate клиенты получают спорадические ошибки `502 Bad Gateway` или `Connection Reset`, даже если `maxUnavailable: 0`.
 
-| Тип изменения | Инициирует Rollout? | Примеры |
-| :--- | :--- | :--- |
-| **Спецификация контейнера** | **Да** | Изменение `image`, `command`, `env`, `resources`, `ports` |
-| **Конфигурация томов** | **Да** | Изменение `volumes` или `volumeMounts` |
-| **Пробы (Probes)** | **Да** | Обновление `liveness`, `readiness` или `startup` проб |
-| **Масштабирование** | **Нет** | Изменение `spec.replicas` меняет только размер текущего RS |
-| **Метаданные Deployment** | **Нет** | Изменение `labels` или `annotations` самого Deployment |
-| **Метаданные шаблона** | **Да** | Изменение меток или аннотаций в `spec.template.metadata` |
+Причина кроется в асинхронной природе компонентов Kubernetes при выводе пода из эксплуатации:
 
-Следствие: `kubectl apply -f` с неизменным `spec.template` (например, поменялись только `labels` самого Deployment) **не создает** новой ревизии, даже если изменились другие поля `spec`. Это важное отличие от Docker Compose, где контейнеры пересоздаются при любом изменении.
+```text
+1. API-сервер: Pod помечен как Terminating (deletionTimestamp выставлен)
+          │
+          ├────────────────────────────────────────┬────────────────────────────────────────┐
+          ▼ (асинхронно)                           ▼ (асинхронно)                           ▼ (асинхронно)
+EndpointSlice Controller                  Kubelet на ноде                        Ingress / LB
+          │                                        │                                        │
+Исключает Pod IP из EndpointSlice         Запускает hook lifecycle.preStop         Продолжает слать трафик,
+          │                                        │                               пока не обновится
+iptables / IPVS на узлах обновляются      По завершении preStop                    локальный кеш эндпоинтов
+(задержка синхронизации: 1–3 сек)         посылает процессору SIGTERM              (задержка: 1–5 сек)
+```
 
-### Поведение ReplicaSet при масштабировании (Scaling)
+Если приложение перехватывает `SIGTERM` и мгновенно закрывает сокет, оно отклонит входящие TCP-соединения, которые Ingress-контроллер все еще отправляет по старому состоянию кеша.
 
-В отличие от Rollout, операция масштабирования (`kubectl scale` или изменение `spec.replicas`) не создает новую ревизию и не инициирует создание нового ReplicaSet.
+**Обязательное инженерное решение:**
+1. Внедрить задержку через `preStop`-хук:
+   ```yaml
+   lifecycle:
+     preStop:
+       exec:
+         command: ["/bin/sh", "-c", "sleep 10"]
+   ```
+2. Установить `terminationGracePeriodSeconds` больше, чем задержка `preStop` + время дообработки активных соединений (например, `sleep 10` + дренаж 15с $\rightarrow$ `terminationGracePeriodSeconds: 45`).
 
-- **Активный процесс:** Контроллер Deployment напрямую обновляет поле `replicas` в **текущем активном** ReplicaSet (том, который соответствует текущему `pod-template-hash`).
-- **Масштабирование во время обновления (пропорциональное):** Если масштабирование происходит в момент активного Rolling Update — в том числе когда rollout приостановлен (`paused`) — контроллер **пропорционально распределяет** новые реплики между всеми задействованными ReplicaSet, чтобы соблюсти ограничения `maxSurge` и `maxUnavailable`. Правила алгоритма:
-  - Большая доля реплик направляется в ReplicaSet с наибольшим текущим числом реплик, меньшая — в остальные.
-  - «Остаток» (leftover) от нецелого деления добавляется в RS с наибольшим числом реплик.
-  - ReplicaSet с нулем реплик не масштабируется вверх.
-  - Пример из официальной документации: 10 реплик, `maxSurge: 3`, `maxUnavailable: 2`, активный rollout; autoscaler увеличивает `replicas` до 15. Добавляемые 5 реплик распределяются между активными RS пропорционально их текущему числу — в примере документации 3 реплики получает RS с большим числом реплик и 2 — RS с меньшим. В итоге все реплики все равно переедут на новый RS по мере прохождения проверок готовности.
-- **Приоритет новому RS:** в базовом сценарии (без активного rollout) приоритет отдается самому новому ReplicaSet.
-- **Противодействие HPA:** Horizontal Pod Autoscaler масштабируется путем записи `spec.replicas` в объект Deployment. **Не изменяйте вручную `replicas`, если Deployment управляется HPA** — autoscaler постоянно сверяет и перезаписывает это значение. Взаимодействие HPA и RollingUpdate подробно: [HPA](../../Autoscaling/HPA/index.md).
+---
 
-### Параметры контроля стабильности и Zero-Downtime
+### Структура и хранение истории ревизий
 
-Для предотвращения деградации сервиса и обеспечения выката без потерь (Zero-Downtime) используются следующие параметры:
+История изменений хранится в объектах `ReplicaSet` в `etcd`.
+- Параметр `spec.revisionHistoryLimit` (по умолчанию `10`) задает, сколько неактивных объектов `ReplicaSet` с 0 реплик сохраняется контроллером.
+- **Алгоритм очистки:** При создании ревизии контроллер сортирует все связанные RS с нулевым числом реплик по возрастанию аннотации `deployment.kubernetes.io/revision` и удаляет самые старые, превышающие лимит.
+- Если `revisionHistoryLimit: 0`, контроллер немедленно удаляет старые RS. **Откат через `kubectl rollout undo` становится технически невозможен.**
 
-- **`maxUnavailable: 0` и `maxSurge: 1`**: При дефолтных настройках Deployment может вывести часть подов из строя до того, как поднимутся новые. Если сервис работает на пределе мощности, это вызовет перегрузку и ошибки 504. Установка `maxUnavailable: 0` гарантирует, что старые поды не будут удалены, пока новые не станут `Ready`.
-- **`minReadySeconds`**: Время ожидания после того, как под перешел в состояние `Ready` (согласно `readinessProbe`), прежде чем он будет считаться действительно рабочим (Available).
-  - **Назначение:** Позволяет приложению «прогреться» (Warm-up), накатить кеши или выявить ошибки, которые возникают не сразу после старта.
-- **`progressDeadlineSeconds`**: Время, в течение которого контроллер Deployment ожидает прогресса. Если за это время новый ReplicaSet не смог стать доступным, обновление помечается как проваленное (`Failed`). Подробный разбор «зависших» rollout — в [Устранение неполадок Deployment и RollingUpdate](./troubleshooting.md).
-- **`terminationGracePeriodSeconds`**: Должен быть больше суммы времени `preStop sleep` и реального времени дренажа запросов приложением.
-
-Дополнительные нюансы параметров (арифметика процентов, сочетание с ResourceQuota) — в [Манифест и лучшие практики](./deployment_manifest.md).
-
-#### Выбор Readiness Probe для Zero-Downtime
-
-Типовая ошибка — использование **TCP-пробы** вместо HTTP. TCP-сокет открывается ОС сразу при старте процесса, часто задолго до того, как приложение реально готово отвечать (прогреты пулы соединений, загружены кеши). Трафик идет на «холодный» под, что вызывает ошибки. Использование **HTTP-пробы** на эндпоинт (например, `/readyz`), который проверяет внутреннюю готовность, является обязательным для стабильного выката.
-
-### Структура ревизий и глубина истории
-
-Каждая новая ревизия — это отдельный ReplicaSet с уникальным `pod-template-hash`. Контроллер хранит старые ReplicaSet (даже с нулем реплик) для обеспечения отката:
-
-- **`revisionHistoryLimit`** (по умолчанию **10**) — сколько старых ReplicaSet сохранять. Превышение лимита: старые RS удаляются, откат к удаленным ревизиям становится **невозможен**.
-- **`revisionHistoryLimit: 0`** полностью отключает хранение истории и, как следствие, возможность `rollout undo`. Применять осознанно (например, для несущих окружений).
-- Рекомендация для продакшена: `3–5` ревизий — баланс между глубиной отката и нагрузкой на `etcd` (детальный разбор поля — в [Манифест и лучшие практики](./deployment_manifest.md)).
-- Удаленные из-за лимита ревизии **не восстанавливаются** — единственный способ вернуть такой шаблон — применить его повторно (манифест из Git/реестра).
-
-### Откат (Rollback): устройство механизма
-
-`kubectl rollout undo` восстанавливает шаблон пода из указанной (или предыдущей) ревизии:
-
-1.  Контроллер находит ReplicaSet, соответствующий целевой ревизии (по `pod-template-hash`).
-2.  Он масштабирует **текущий** (проблемный) RS вниз, а **целевой** — вверх, подчиняясь `maxSurge`/`maxUnavailable` — откат выполняется как обычный rollout.
-3.  Образы повторно не качаются: целевой RS уже содержит шаблон со всеми параметрами (тегами, env, томами) — откат лишь меняет число реплик.
-4.  **История продолжает расти:** откат не «перематывает» ревизии назад — создается новая ревизия с восстановленным шаблоном. Это позволяет в любой момент откатиться «назад к откату».
-
-Особенности отката:
-- Откат возможен **только для не-paused** Deployment: пока `spec.paused: true`, `kubectl rollout undo` не сработает (сначала `kubectl rollout resume`).
-- Если ревизия с номером `--to-revision=N` не найдена (удалена лимитом истории) — команда завершится с ошибкой `unable to rollback to specified revision`.
-- Если шаблон целевой ревизии **идентичен** текущему — откат является no-op: контроллер не создает новой ревизии и ничего не масштабирует (стоит проверить `kubectl rollout history --revision=N`, прежде чем считать откат неудавшимся).
-- Откат **не возвращает** данные (схему БД, мутировавшие тома, содержимое ConfigMap/Secret) — это операция над шаблоном пода. Совместимость схемы БД обеспечивается паттерном [Expand-Contract](../../../Databases/Concepts/migrations/expand_contract.md)-подобных миграций.
-
-### Пауза и возобновление: поведение контроллера
-
-`kubectl rollout pause` устанавливает `spec.paused: true`. Это режим «заморозки» **rollout-логики**, а не остановки приложения:
-
-| Действие | Поведение при paused |
-| :--- | :--- |
-| Работа существующих подов | Продолжает работу без изменений |
-| Изменение `spec.template` (image, env, probes) | Записывается, но **не применяется**, пока не выполнен `resume` |
-| Незавершенный rollout | Замораживается (масштабирование между RS не продолжается) |
-| Масштабирование (`spec.replicas`) | Применяется **немедленно** (не создавая новой ревизии) |
-| `kubectl rollout undo` | **Не работает** до `resume` |
-| `kubectl rollout restart` (изменение шаблона) | Ставится в очередь, применяется после `resume` |
-
-Технически пауза означает, что контроллер прекращает согласовывать (reconcile) изменения шаблона: условия Deployment принимают вид `Progressing: Unknown` с `reason: DeploymentPaused`. Проверить факт паузы можно только через `kubectl describe` (Conditions) или `kubectl get deploy <name> -o jsonpath='{.spec.paused}'` — колонки `kubectl get deploy` паузу не показывают.
-
-**Назначение:** внести серию связанных изменений (образ + ресурсы + env) одним «пакетом», применив их единым rollout после `resume`. Это экономит ресурсы и предотвращает создание промежуточных «битых» ревизий. Пока пауза активна, изменения копятся в очереди; при `resume` запускается ровно **один** rollout со всеми накопленными правками.
-
-### Перезапуск (Restart) как триггер rollout
-
-`kubectl rollout restart` добавляет в `spec.template.metadata.annotations` значение `kubectl.kubernetes.io/restartedAt` (текущее время) — это **изменение шаблона**, поэтому запускается новый rollout (новая ревизия), но без изменения образов и конфигурации.
-
-Применяется для:
-- Применения нового содержимого ConfigMap/Secret, подключенных через переменные окружения (`envFrom`/`valueFrom`) — изменение содержимого существующего объекта **не** инициирует rollout, поды продолжают работать со старой конфигурацией.
-- Сброса состояния при обнаружении утечек памяти.
-- Перечитывания внешних данных из томов при необходимости немедленной репликации.
-
-Работает для `Deployment`, `StatefulSet` и `DaemonSet` (с разной семантикой порядка обновления). Детальные сценарии и таблицы «какой ресурс как реагирует на изменение конфигурации» — в [pod_restarts.md](../Pod/pod_restarts.md), специфика конфигураций — в [Обновление и rollout ConfigMap](../ConfigMap/update_and_rollout.md).
+---
 
 ## 3. Практические сценарии
 
-### Основные команды управления
+### Сценарий 1: Производственный Zero-Downtime Rolling Update
 
-```bash
-# Обновление образа приложения
-kubectl set image deployment/nginx-deployment nginx=nginx:1.28.1-alpine
-# → deployment.apps/nginx-deployment image updated
+Эталонный манифест для stateless API-сервиса, разворачиваемого на bare-metal кластере с гарантией отсутствия даунтайма:
 
-# Точечное обновление с одновременной фиксацией причины (через аннотацию)
-kubectl annotate deployment/nginx-deployment kubernetes.io/change-cause="Обновление до 1.28.1-alpine"
-
-# Отслеживание статуса развертывания
-kubectl rollout status deployment/nginx-deployment
-# → Waiting for deployment "nginx-deployment" rollout to finish: 1 of 3 updated replicas are available...
-# → deployment "nginx-deployment" successfully rolled out
-
-# Тот же статус, но с ограничением времени ожидания (обязательно в скриптах/CI)
-kubectl rollout status deployment/nginx-deployment --timeout=5m
-
-# Мгновенный снимок состояния (без ожидания)
-kubectl rollout status deployment/nginx-deployment --watch=false
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: production
+  labels:
+    app.kubernetes.io/name: order-service
+    app.kubernetes.io/part-of: e-commerce
+  annotations:
+    kubernetes.io/change-cause: "Релиз 2.14.0: оптимизация пула соединений БД"
+spec:
+  replicas: 4
+  revisionHistoryLimit: 5
+  minReadySeconds: 15
+  progressDeadlineSeconds: 300
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: api
+          image: registry.internal/finance/order-service:v2.14.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 10"]
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
 ```
 
-Точные параметры команды `rollout status`: по умолчанию ждет бесконечно (`--timeout=0`), возвращает код `0` при успешном завершении rollout и ненулевой код при таймауте или сбое (например, `error: deployment "my-app" exceeded its progress deadline`).
-
-### Управление ревизиями и Rollback
-
-Каждый запуск Rollout создает новую ревизию в истории. Это важнейшая «сеть безопасности» (safety net) для производственных операций.
-
+Применение обновления и контроль процесса:
 ```bash
-# Просмотр истории изменений
-kubectl rollout history deployment/nginx-deployment
-# → REVISION  CHANGE-CAUSE
-# → 1         <none>
-# → 2         Обновление до v1.28.1-alpine
+# Применение манифеста
+kubectl apply -f order-service-deployment.yaml
+# → deployment.apps/order-service configured
 
-# Детальный просмотр конкретной ревизии (шаблон пода, причины)
-kubectl rollout history deployment/nginx-deployment --revision=2
-
-# Откат к предыдущей стабильной версии
-kubectl rollout undo deployment/nginx-deployment
-# → deployment.apps/nginx-deployment rolled back
-
-# Откат к определенной ревизии по номеру
-kubectl rollout undo deployment/nginx-deployment --to-revision=1
-
-# Пробный откат: посмотреть, какой объект получится, ничего не применяя
-kubectl rollout undo deployment/nginx-deployment --dry-run=server -o yaml | head -40
-
-# После отката — дождаться завершения (с таймаутом для CI)
-kubectl rollout status deployment/nginx-deployment --timeout=5m
+# Отслеживание ротации с выводом статуса
+kubectl rollout status deployment/order-service -n production --timeout=5m
+# → Waiting for deployment "order-service" rollout to finish: 1 of 4 updated replicas are available...
+# → Waiting for deployment "order-service" rollout to finish: 2 of 4 updated replicas are available...
+# → Waiting for deployment "order-service" rollout to finish: 3 of 4 updated replicas are available...
+# → deployment "order-service" successfully rolled out
 ```
 
-Предусловия успешного отката:
-- Deployment **не приостановлен** (`spec.paused != true`). Если он paused — сначала `kubectl rollout resume`.
-- Целевая ревизия **не удалена** из истории (`revisionHistoryLimit`). После отката завершите его rollout и контролируйте выход в строку `successfully rolled out`.
-- Откат выполняется как обычный rollout и подчиняется `maxSurge`/`maxUnavailable` — для мгновенного восстановления в аварийной ситуации это учтите (см. [Устранение неполадок Deployment и RollingUpdate](./troubleshooting.md)).
+---
 
-### Документирование изменений (change-cause)
+### Сценарий 2: Атомарное пакетное обновление через Pause / Resume
 
-Для того чтобы в истории ревизий вместо `<none>` отображалась причина, используйте аннотацию `kubernetes.io/change-cause`. Аннотация задается на Deployment **до или в момент** запуска rollout — она копируется в создаваемую ревизию и показывается в колонке `CHANGE-CAUSE`.
+Когда требуется синхронно изменить образ, лимиты ресурсов и переменные окружения, применение трех последовательных команд `kubectl set ...` вызовет создание трех последовательных ревизий и три тяжелых цикла пересоздания подов.
 
-- **Через манифест (лучшая практика):**
-  ```yaml
-  metadata:
-    annotations:
-      kubernetes.io/change-cause: "Обновление образа до 1.28.1-alpine"
-  ```
-- **Через CLI:**
-  ```bash
-  kubectl annotate deployment/nginx-deployment kubernetes.io/change-cause="Исправление лимитов памяти"
-  ```
-
-Флаг `--record` для `kubectl set image`/`kubectl apply` объявлен устаревшим и удален в kubectl v1.24 — используйте аннотацию. Она также помогает аудиту и автоматизации (напр., извлечение причины в CI-пайплайнах через `-o jsonpath`).
-
-### Оперативное управление: пауза и возобновление
-
-Классический сценарий «пакет правок»:
+Использование режима паузы объединяет все правки в единый rollout:
 
 ```bash
-# 1. Поставить rollout на паузу
-kubectl rollout pause deployment/nginx-deployment
-# → deployment.apps/nginx-deployment paused
+# 1. Замораживаем реакцию контроллера на изменение шаблона
+kubectl rollout pause deployment/order-service -n production
+# → deployment.apps/order-service paused
 
-# 2. Внести несколько изменений (каждое НЕ запускает rollout)
-kubectl set image deployment/nginx-deployment nginx=nginx:1.28.1-alpine
-kubectl set resources deployment/nginx-deployment --limits=cpu=500m,memory=512Mi
-kubectl set env deployment/nginx-deployment LOG_LEVEL=info
+# 2. Вносим пакет изменений в спецификацию (rollout не начинается)
+kubectl set image deployment/order-service api=registry.internal/finance/order-service:v2.14.1 -n production
+# → deployment.apps/order-service image updated
 
-# 3. Убедиться, что изменения накоплены, и возобновить — запустится ОДИН rollout
-kubectl rollout resume deployment/nginx-deployment
-# → deployment.apps/nginx-deployment resumed
+kubectl set resources deployment/order-service -c=api --requests=cpu=500m,memory=512Mi --limits=cpu=1500m,memory=1Gi -n production
+# → deployment.apps/order-service resource requirements updated
 
-# 4. Дождаться завершения
-kubectl rollout status deployment/nginx-deployment --timeout=5m
+kubectl set env deployment/order-service LOG_LEVEL=warn DB_POOL_SIZE=30 -n production
+# → deployment.apps/order-service env updated
+
+# 3. Документируем причину комплексного изменения
+kubectl annotate deployment/order-service kubernetes.io/change-cause="Пакетный апдейт v2.14.1: повышение пула и ресурсов" -n production --overwrite
+# → deployment.apps/order-service annotated
+
+# 4. Проверяем, что Deployment действительно находится на паузе
+kubectl get deployment order-service -n production -o jsonpath='{.spec.paused}'
+# → true
+
+# 5. Снимаем с паузы — стартует ровно ОДИН rollout, объединяющий все изменения
+kubectl rollout resume deployment/order-service -n production
+# → deployment.apps/order-service resumed
+
+# 6. Блокирующее ожидание успешной раскатки
+kubectl rollout status deployment/order-service -n production --timeout=5m
+# → deployment "order-service" successfully rolled out
 ```
 
-Контроль состояния: `kubectl describe deployment` → блок `Conditions` (при паузе `Progressing: Unknown` с `reason: DeploymentPaused`), либо `kubectl get deploy <name> -o jsonpath='{.spec.paused}'`.
+---
 
-Типичная ошибка — оставить Deployment на паузе после incident-разбора: следующие правки или restart «невидны». Следите за `spec.paused` после применения пакета.
+### Сценарий 3: CI/CD Deployment Gate со скриптованным откатом
 
-### Принудительный перезапуск (Restart)
-
-```bash
-# Пересоздание подов без изменения манифеста
-kubectl rollout restart deployment/nginx-deployment
-# → deployment.apps/nginx-deployment restarted
-
-# Вариант с ожиданием завершения в CI
-kubectl rollout restart deployment/nginx-deployment && \
-  kubectl rollout status deployment/nginx-deployment --timeout=5m
-```
-
-Команда добавляет аннотацию `kubectl.kubernetes.io/restartedAt: <timestamp>` в шаблон пода, создавая новую ревизию. Ограничение: если Deployment paused, перезапуск применится только после `rollout resume`. Сценарии использования (ConfigMap/Secret, утечки памяти) — в [pod_restarts.md](../Pod/pod_restarts.md).
-
-### Автоматизация в CI/CD: rollout status как гейт
-
-`kubectl rollout status` — стандартный «шлюз» (gate) пайплайна: команда выполняет блокирующее ожидание и завершается с кодом `0` при успешном rollout, `1+` при таймауте или сбое. Корректный паттерн в скриптах:
+Промышленный bash-скрипт для шага развертывания в GitLab CI / Woodpecker / Jenkins без внешних зависимостей. Обрабатывает таймауты, транзиентные сбои сети API и производит автоматический откат при нарушении условий готовности:
 
 ```bash
-# Деплой + контроль готовности + автоматический откат при сбое
-kubectl set image deployment/my-app my-app=my-app:$BUILD_TAG
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-if ! kubectl rollout status deployment/my-app --timeout=5m; then
-  echo "Rollout failed, rolling back"
-  kubectl rollout undo deployment/my-app
-  kubectl rollout status deployment/my-app --timeout=2m
+DEPLOYMENT_NAME="order-service"
+NAMESPACE="production"
+TARGET_IMAGE="registry.internal/finance/order-service:${CI_COMMIT_TAG:-latest}"
+ROLLOUT_TIMEOUT="300s"
+CHANGE_REASON="CI Release ${CI_COMMIT_SHORT_SHA:-manual} by ${GITLAB_USER_LOGIN:-cli}"
+
+echo "=== [1/4] Инициирование обновления ${DEPLOYMENT_NAME} ==="
+kubectl set image "deployment/${DEPLOYMENT_NAME}" \
+  "api=${TARGET_IMAGE}" \
+  -n "${NAMESPACE}"
+
+kubectl annotate "deployment/${DEPLOYMENT_NAME}" \
+  kubernetes.io/change-cause="${CHANGE_REASON}" \
+  --overwrite \
+  -n "${NAMESPACE}"
+
+echo "=== [2/4] Ожидание стабилизации Rollout (таймаут: ${ROLLOUT_TIMEOUT}) ==="
+if ! kubectl rollout status "deployment/${DEPLOYMENT_NAME}" \
+  -n "${NAMESPACE}" \
+  --timeout="${ROLLOUT_TIMEOUT}"; then
+
+  echo "!!! ОШИБКА: Rollout завершился сбоем или превысил лимит времени. Запуск аварийного отката..." >&2
+
+  # Вывод диагностических данных перед откатом для артефактов пайплайна
+  echo "--- Диагностика подов ---"
+  kubectl get pods -n "${NAMESPACE}" -l app="${DEPLOYMENT_NAME}" --show-labels || true
+  kubectl describe deployment "${DEPLOYMENT_NAME}" -n "${NAMESPACE}" | tail -n 25 || true
+
+  echo "=== [3/4] Выполнение kubectl rollout undo ==="
+  kubectl rollout undo "deployment/${DEPLOYMENT_NAME}" -n "${NAMESPACE}"
+
+  echo "=== [4/4] Ожидание завершения отката ==="
+  if kubectl rollout status "deployment/${DEPLOYMENT_NAME}" -n "${NAMESPACE}" --timeout=180s; then
+    echo ">>> Откат успешно завершен. Приложение стабилизировано на предыдущей версии." >&2
+  else
+    echo "!!! КРИТИЧЕСКИЙ СБОЙ: Откат не завершился вовремя. Требуется ручное вмешательство On-call!" >&2
+  fi
   exit 1
 fi
+
+echo "=== Выкатка успешно завершена ==="
 ```
 
-Полезные флаги:
-- `--timeout=...` — **обязательно**: без него команда ждет бесконечно, и пайплайн «зависнет» при застрявшем rollout.
-- `--watch=false` — мгновенный снимок состояния (для легких чеков).
-- `--revision=N` — проверять готовность конкретной ревизии (полезно при откатах и canary-подъемах; если новая ревизия обогнала указанную — команда завершится и вернет ненулевой код).
+---
 
-Ограничение для автоматики: `rollout status` зависит от устойчивого соединения с API-server (watch); при транзиентных сетевых сбоях возможен ложный отказ — закладывайте retry. Интеграция с алертингом и порядок incident-response: [Incident Response в CI/CD](../../../CI-CD/GitLab_CI/Advanced/incident_response_cicd.md), общие процедуры отката: [Проверки здоровья и откат](../../../CI-CD/Deployment_Strategies/deployment_health_checks_and_rollback.md).
+### Сценарий 4: Экстренная каскадная замена (Hotfix Rollover)
 
-### Масштабирование на практике
+Ситуация: Выкатка версии `v2.14.0` зависла (контейнеры падают с `CrashLoopBackOff` из-за ошибки в коде). Старые поды `v2.13.0` продолжают работать, но нужно срочно доставить исправление `v2.14.1`:
 
 ```bash
-# Ручное масштабирование
-kubectl scale deployment/nginx-deployment --replicas=5
-# → deployment.apps/nginx-deployment scaled
+# 1. Проверяем текущее зависшее состояние (новый RS не может подняться)
+kubectl get rs -n production -l app=order-service
+# → NAME                           DESIRED   CURRENT   READY   AGE
+# → order-service-6f8c7b8d4f       4         4         4       2d    (старый v2.13.0)
+# → order-service-7a9b1c2d3e       1         1         0       3m    (зависший v2.14.0)
 
-# Императивное изменение манифеста (аналог)
-kubectl patch deployment/nginx-deployment -p '{"spec":{"replicas":5}}'
+# 2. Не выполняя ручного удаления и отката, сразу применяем исправленный образ v2.14.1
+kubectl set image deployment/order-service api=registry.internal/finance/order-service:v2.14.1 -n production
+# → deployment.apps/order-service image updated
 
-# Масштабирование до и после плановых работ (например, перед drain узла)
-kubectl scale deployment/nginx-deployment --replicas=0   # остановка всех подов
-kubectl scale deployment/nginx-deployment --replicas=<прежнее>
+kubectl annotate deployment/order-service kubernetes.io/change-cause="HOTFIX: исправление NPE в обработчике платежей" -n production --overwrite
+# → deployment.apps/order-service annotated
 
-# Декларативная проверка согласованности (защита от перезаписи коллегами)
-kubectl patch deployment/nginx-deployment --type merge -p '{"spec":{"replicas":5}}' --subresource scale
+# 3. Контроллер автоматически переводит зависший RS в режим масштабирования вниз:
+kubectl get rs -n production -l app=order-service
+# → NAME                           DESIRED   CURRENT   READY   AGE
+# → order-service-6f8c7b8d4f       3         3         3       2d    (старый v2.13.0, сворачивается)
+# → order-service-7a9b1c2d3e       0         1         0       4m    (битый v2.14.0, принудительно в 0)
+# → order-service-8b5d6e7f1a       1         1         1       10s   (хотфикс v2.14.1, растет)
+
+# 4. Дожидаемся успешного завершения
+kubectl rollout status deployment/order-service -n production --timeout=3m
+# → deployment "order-service" successfully rolled out
 ```
 
-Правила и ограничения масштабирования см. в [Базовые концепции — Scaling](#поведение-replicaset-при-масштабировании-scaling). Актуально при HPA: не выполняйте `kubectl scale` для Deployment, которым управляет autoscaler — значение будет перезаписано. Автоматическое масштабирование: [HPA](../../Autoscaling/HPA/index.md).
+---
 
-### Анализ событий: Rollout против Scaling
+### Сценарий 5: Нативный Canary-релиз на двух Deployment без Service Mesh
 
-Различие между процессами можно отследить по системным событиям (`Events`):
+В среде без Istio/Linkerd канареечный релиз можно реализовать базовыми средствами ядра Kubernetes с помощью разделения общего Service:
 
-| Процесс | Основные события (Events) | Источник (Source) |
+```text
+                  Service: order-service (selector: app=order-service)
+                                          │
+            ┌─────────────────────────────┴─────────────────────────────┐
+            ▼ (90% трафика)                                             ▼ (10% трафика)
+Deployment: order-service-stable                            Deployment: order-service-canary
+replicas: 9, image: v2.13.0                                 replicas: 1, image: v2.14.0
+labels:                                                     labels:
+  app: order-service                                          app: order-service
+  track: stable                                               track: canary
+```
+
+1. **Создание канареечного Deployment:**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service-canary
+  namespace: production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: order-service
+        track: canary
+    spec:
+      containers:
+        - name: api
+          image: registry.internal/finance/order-service:v2.14.0
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+```
+
+2. **Процедура промоушена или отката:**
+```bash
+# В случае обнаружения всплеска 5xx на канарейке — мгновенный откат в 0 реплик:
+kubectl scale deployment/order-service-canary --replicas=0 -n production
+# → deployment.apps/order-service-canary scaled
+
+# В случае успешной валидации метрик:
+# 1. Обновляем основной stable deployment:
+kubectl set image deployment/order-service-stable api=registry.internal/finance/order-service:v2.14.0 -n production
+kubectl rollout status deployment/order-service-stable -n production
+
+# 2. Сворачиваем canary deployment:
+kubectl scale deployment/order-service-canary --replicas=0 -n production
+```
+
+---
+
+### Сценарий 6: Аварийный откат (SRE Break-Glass Runbook)
+
+Пошаговый регламент действий дежурного инженера при инциденте SEV-1 после релиза:
+
+```bash
+# Шаг 1: Оценка истории ревизий и определение стабильного номера
+kubectl rollout history deployment/order-service -n production
+# → REVISION  CHANGE-CAUSE
+# → 4         Релиз 2.13.0: базовая версия
+# → 5         Релиз 2.14.0: сбойная версия (вызывает 500 ISE)
+
+# Шаг 2: Проверка шаблона целевой ревизии перед откатом
+kubectl rollout history deployment/order-service --revision=4 -n production
+
+# Шаг 3: Проверка состояния паузы (откат не сработает, если Deployment paused)
+IS_PAUSED=$(kubectl get deployment order-service -n production -o jsonpath='{.spec.paused}')
+if [ "$IS_PAUSED" = "true" ]; then
+  echo "Снятие паузы перед откатом..."
+  kubectl rollout resume deployment/order-service -n production
+fi
+
+# Шаг 4: Выполнение отката к подтвержденной ревизии
+kubectl rollout undo deployment/order-service --to-revision=4 -n production
+# → deployment.apps/order-service rolled back
+
+# Шаг 5: Документирование аварийного действия
+kubectl annotate deployment/order-service kubernetes.io/change-cause="ROLLBACK: Аварийный откат к rev 4 в рамках INCIDENT-4029" -n production --overwrite
+
+# Шаг 6: Контроль восстановления доступности
+kubectl rollout status deployment/order-service -n production --timeout=3m
+```
+
+> [!CAUTION]
+> Откат Deployment возвращает только шаблон пода (`spec.template`). Он **не откатывает** изменения в схемах баз данных, миграциях и содержимом разделяемых сетевых хранилищ. При разработке обязательно использование архитектурного шаблона неломающих изменений схемы (Expand / Contract Pattern).
+
+---
+
+## 4. Операции и команды
+
+### Справочная таблица команд управления жизненным циклом
+
+| Операция | Команда | Назначение и параметры |
 | :--- | :--- | :--- |
-| **Scaling** | `ScalingReplicaSet`: Scaled down/up replica set <rs-name> to X | `deployment-controller` |
-| **Rollout** | `ScalingReplicaSet`: Scaled up replica set <new-rs> to Y<br>`ScalingReplicaSet`: Scaled down replica set <old-rs> to X | `deployment-controller` |
-| **Создание/удаление подов** | `SuccessfulCreate` / `SuccessfulDelete` | `replicaset-controller` |
+| **Статус выкатки** | `kubectl rollout status deployment/<name>` | Блокирующее ожидание завершения. Флаги: `--timeout=5m`, `--watch=false` (снимок состояния). |
+| **История ревизий** | `kubectl rollout history deployment/<name>` | Список всех сохраненных ревизий с их `CHANGE-CAUSE`. |
+| **Анализ ревизии** | `kubectl rollout history deployment/<name> --revision=N` | Детальный вывод YAML-шаблона пода для ревизии `N`. |
+| **Откат к предыдущей** | `kubectl rollout undo deployment/<name>` | Создает ревизию $N+1$ со спецификацией из ревизии $N-1$. |
+| **Откат к целевой** | `kubectl rollout undo deployment/<name> --to-revision=N` | Откат к конкретной исторической ревизии $N$. |
+| **Пробный откат** | `kubectl rollout undo deployment/<name> --dry-run=server -o yaml` | Проверка валидации на API-сервере без реального применения. |
+| **Пауза выкатки** | `kubectl rollout pause deployment/<name>` | Заморозка ротации подов для пакетирования изменений. |
+| **Снятие паузы** | `kubectl rollout resume deployment/<name>` | Запуск отложенного согласования накопленных изменений. |
+| **Перезапуск подов** | `kubectl rollout restart deployment/<name>` | Плавный перезапуск без изменения конфигурации (инъекция restartedAt). |
+| **Масштабирование** | `kubectl scale deployment/<name> --replicas=N` | Императивное изменение числа реплик активного RS. |
+| **Субресурс Scale** | `kubectl patch deployment/<name> --subresource scale -p '{"spec":{"replicas":N}}'` | Безопасное изменение реплик без конфликта манифестов. |
 
-При Rollout события всегда затрагивают как минимум два ReplicaSet (уменьшение старого и увеличение нового), тогда как при обычном масштабировании изменяется только текущий активный RS. Наличие в событиях только `SuccessfulCreate`/`SuccessfulDelete` от `replicaset-controller` при отсутствии `ScalingReplicaSet` от `deployment-controller` указывает на пересоздание пода вручную (например, `kubectl delete pod`), а не на rollout.
+---
 
-Фильтрация событий по объекту:
+### Примеры выполнения и ожидаемый вывод
+
 ```bash
-kubectl get events --field-selector involvedObject.name=nginx-deployment
+# 1. Просмотр истории с документированными причинами
+kubectl rollout history deployment/order-service -n production
+# → REVISION  CHANGE-CAUSE
+# → 1         Первичный деплой v1.0.0
+# → 2         Оптимизация пулов БД v2.0.0
+# → 3         Обновление runtime v2.1.0
+
+# 2. Принудительный перезапуск подов (rolling restart)
+kubectl rollout restart deployment/order-service -n production
+# → deployment.apps/order-service restarted
+
+# 3. Мониторинг процесса перезапуска с жестким таймаутом
+kubectl rollout status deployment/order-service -n production --timeout=120s
+# → Waiting for deployment "order-service" rollout to finish: 1 of 4 updated replicas are available...
+# → Waiting for deployment "order-service" rollout to finish: 2 of 4 updated replicas are available...
+# → Waiting for deployment "order-service" rollout to finish: 3 of 4 updated replicas are available...
+# → deployment "order-service" successfully rolled out
+
+# 4. Проверка системных событий, подтверждающих ротацию ReplicaSet
+kubectl get events -n production --field-selector involvedObject.name=order-service --sort-by='.metadata.creationTimestamp' | tail -n 6
+# → 2m   Normal   ScalingReplicaSet   deployment/order-service   Scaled up replica set order-service-7f8d6c to 1
+# → 95s  Normal   ScalingReplicaSet   deployment/order-service   Scaled down replica set order-service-5c4b3a to 3
+# → 95s  Normal   ScalingReplicaSet   deployment/order-service   Scaled up replica set order-service-7f8d6c to 2
+# → 40s  Normal   ScalingReplicaSet   deployment/order-service   Scaled down replica set order-service-5c4b3a to 0
 ```
 
-### Экспорт и очистка манифеста
+---
 
-При извлечении текущей конфигурации:
+## 5. Диагностика и устранение неполадок
+
+### Матрица типовых сбоев жизненного цикла (SRE Diagnostic Matrix)
+
+| Симптом | Корневая причина | Диагностическая команда | Быстрое решение (Remediation) |
+| :--- | :--- | :--- | :--- |
+| `rollout status` зависает; Condition `ProgressDeadlineExceeded` | Контейнеры нового RS падают при старте (`CrashLoopBackOff`, неверные env/тома) | `kubectl describe deployment <name>`<br>`kubectl logs -n <ns> -l app=<name> --previous` | 1. `kubectl rollout undo`<br>2. Исправить баг в коде / env |
+| Поды нового RS в статусе `Pending`; rollout заблокирован | На bare-metal узлах исчерпан CPU/RAM под `maxSurge` поды | `kubectl describe pod -n <ns> -l app=<name>` (смотрим Events: `FailedScheduling`) | 1. Снизить `maxSurge: 0, maxUnavailable: 1`<br>2. Очистить ресурсы узлов |
+| `rollout undo` возвращает `unable to rollback to specified revision` | Целевой `ReplicaSet` удален сборщиком мусора из-за `revisionHistoryLimit` | `kubectl get rs -n <ns> -l app=<name>` | Извлечь прошлый манифест из Git и выполнить `kubectl apply` |
+| Изменения применились через `kubectl apply`, но ничего не происходит | Объект забыли снять с паузы (`spec.paused: true`) | `kubectl get deploy <name> -o jsonpath='{.spec.paused}'` | `kubectl rollout resume deployment/<name>` |
+| Клиенты ловят 502 ошибки во время обычного RollingUpdate | Отсутствует `preStop sleep`; kubelet убивает под до обновления iptables/IPVS | `kubectl get events`<br>Логи Ingress: `connect() failed (111: Connection refused)` | Добавить `lifecycle.preStop.exec.command: ["sleep", "10"]` |
+| Поды застряли в `Ready 0/1`; старый RS не масштабируется вниз | `readinessProbe` возвращает 5xx или порт недоступен | `kubectl describe pod <pod-name>` (событие `Unhealthy`) | Проверить здоровье эндпоинта `/readyz` внутри пода через `curl` |
+| Масштабирование через `kubectl scale` мгновенно сбрасывается | Конфликт с контроллером Horizontal Pod Autoscaler (HPA) | `kubectl get hpa -n <ns>` | Изменять `minReplicas`/`maxReplicas` в манифесте HPA, а не в Deployment |
+
+---
+
+### Анализ условий развертывания (Deployment Conditions)
+
+Состояние объекта Deployment определяется тремя ключевыми условиями в секции `status.conditions`:
+
+1. **`type: Progressing`**:
+   - `status: "True"`, `reason: NewReplicaSetAvailable` — процесс идет успешно или завершен.
+   - `status: "False"`, `reason: ProgressDeadlineExceeded` — время ожидания превысило `progressDeadlineSeconds`. Контроллер **не предпринимает дальнейших шагов** по ротации, но продолжает попытки согласования.
+   - `status: "Unknown"`, `reason: DeploymentPaused` — Deployment находится на паузе.
+2. **`type: Available`**:
+   - `status: "True"`, `reason: MinimumReplicasAvailable` — количество доступных подов удовлетворяет требованиям.
+   - `status: "False"`, `reason: MinimumReplicasUnavailable` — доступных подов меньше, чем `spec.replicas - maxUnavailable`.
+3. **`type: ReplicaFailure`**:
+   - Появляется при невозможности создать поды на уровне ReplicaSet (превышение квоты `ResourceQuota`, отсутствие прав ServiceAccount, ошибки Admission Webhook).
+
+Команда для мгновенного извлечения условий:
 ```bash
-kubectl get deployment nginx-deployment -o yaml > deployment.yaml
+kubectl get deployment order-service -n production -o jsonpath='{range .status.conditions[*]}{.type}{"\t"}{.status}{"\t"}{.reason}{"\t"}{.message}{"\n"}{end}'
+# → Available       True    MinimumReplicasAvailable    Deployment has minimum availability.
+# → Progressing     True    NewReplicaSetAvailable      ReplicaSet "order-service-7f8d6c" has successfully progressed.
 ```
-**Важно:** Перед применением файла в другом окружении ОБЯЗАТЕЛЬНО удалите:
-- Поля `uid`, `resourceVersion`, `creationTimestamp` и `selfLink`.
-- Весь блок `status`, так как он генерируется кластером автоматически.
-- Системные аннотации (например, `kubectl.kubernetes.io/last-applied-configuration`).
 
-## 4. Диагностика при сбоях rollout
+---
 
-Если обновление «зависло», старые поды продолжают работать, пока новые не пройдут проверку готовности.
+## 6. Лучшие практики (Best Practices)
 
-**Быстрый алгоритм отладки:**
-1.  **События Deployment:** `kubectl describe deployment <name>` — смотрим блок `Conditions`. Ищите записи вида `ProgressDeadlineExceeded` или `ReplicaFailure`, а также проверьте `spec.paused` (пауза блокирует rollout).
-2.  **Анализ ReplicaSets:** `kubectl get rs` — проверяем, какой именно RS (обычно самый новый) не может набрать нужное количество реплик.
-3.  **Детализация пода:** `kubectl describe pod -l app=<label>` — ищем ошибки уровня контейнера (`ImagePullBackOff`, `CrashLoopBackOff`, неудачные пробы).
-4.  **Логи:** `kubectl logs <pod-name> --previous` — критически важно для анализа причин падения контейнера в `CrashLoopBackOff`.
+1. **Строгая неизменяемость тегов образов:**
+   - Категорически запрещено использовать теги `:latest`, `:master` или ветки.
+   - Используйте семантическое версионирование (`:v2.14.0`) или хеш коммита (`:git-4a8b1c3`). При использовании мутабельных тегов контроллер не сможет обнаружить изменение в `spec.template`, `pod-template-hash` не изменится, и история ревизий утратит возможность детерминированного отката.
+2. **Обязательное документирование ревизий:**
+   - Всегда сопровождайте выкатки аннотацией `kubernetes.io/change-cause`. Без описания причин диагностика в `kubectl rollout history` во время аварии становится неэффективной.
+3. **Безопасная конфигурация RollingUpdate для High-Load:**
+   - Для критичных API задавайте `maxUnavailable: 0` и `maxSurge: 1` (или 25%). Это гарантирует 100% сохранение вычислительной мощности во время релиза.
+   - Всегда проверяйте наличие запаса по CPU и памяти на узлах bare-metal кластера для размещения дополнительных surge-подов.
+4. **Защитный интервал стабилизации (`minReadySeconds`):**
+   - Устанавливайте `minReadySeconds: 15..30` для сервисов общего профиля и `30..60` для сервисов с отложенным прогревом JVM/кешей. Это заставляет контроллер выждать указанное время после перехода пода в статус `Ready`, прежде чем признать его `Available` и убить старую реплику.
+5. **Таймауты в CI/CD пайплайнах:**
+   - Любая автоматизация выкатки обязана содержать явный таймаут: `kubectl rollout status --timeout=5m`. Запуск без флага `--timeout` блокирует runner на неограниченное время при зависшем релизе.
+6. **Оптимизация глубины истории ревизий:**
+   - Задавайте `spec.revisionHistoryLimit: 3..5` вместо дефолтных 10. Десятки неактивных `ReplicaSet` создают паразитное число неиспользуемых объектов в `etcd` и замедляют листинг ресурсов контроллером.
+7. **Координация Graceful Shutdown:**
+   - Внедряйте связку `lifecycle.preStop: sleep 10` и `terminationGracePeriodSeconds: 30..60` для устранения 502 ошибок на стыке сетевой перемаршрутизации `EndpointSlice`.
+8. **Разделение выкатки кода и миграций базы данных:**
+   - Никогда не запускайте тяжелые DDL-миграции базы данных внутри контейнеров Deployment при старте. Используйте паттерн [Expand-Contract](../../../Databases/Concepts/migrations/expand_contract.md) и отдельные объекты `Job`.
 
-Полный системный алгоритм диагностики, разбор условий (`Progressing`/`Available`/`ReplicaFailure`), таблицы причин и реальные кейсы — в [Устранение неполадок Deployment и RollingUpdate](./troubleshooting.md) (данный файл не дублирует диагностику).
+---
 
-## 5. Дополнительная информация
+## 7. Дополнительная информация
 
-### Лучшие практики (Best Practices)
+### Ограничения и граничные случаи (Edge Cases)
 
-1.  **Иммутабельные теги и версии:** Используйте конкретные теги (`nginx:1.28.1-alpine`) или дайджесты, никогда `:latest` — иначе перепутаетесь в истории ревизий и откат «ничего не вернет».
-2.  **Change-cause для каждой ревизии:** Заполняйте `kubernetes.io/change-cause` — история без причин бесполезна при RCA.
-3.  **Zero-Downtime:** Для критичных сервисов `maxUnavailable: 0`, `maxSurge: 1` + HTTP-`readinessProbe`. Убедитесь, что в кластере есть запас ресурсов под surge.
-4.  **Глубина истории:** `revisionHistoryLimit: 3–5` вместо дефолтных 10 — баланс между откатом и нагрузкой на `etcd`.
-5.  **Таймауты в CI:** Всегда задавайте `kubectl rollout status --timeout=...` и при ненулевом коде выполняйте автоматический откат через `rollout undo` (см. [Автоматизация в CI/CD](#автоматизация-в-cicd-rollout-status-как-гейт)).
-6.  **Пакет правок через pause/resume:** Несколько связанных изменений конфигурации выполняйте через паузу — это снижает число ревизий и риск «битого» промежуточного состояния (не забывайте `resume`).
-7.  **Не вмешивайтесь в HPA:** Если Deployment управляется HPA — не меняйте `replicas` вручную; масштабируйте через autoscaler.
-8.  **`minReadySeconds` для «медленных» приложений:** Устанавливайте 30–60с для критических сервисов, чтобы выявлять отложенные отказы только после попадания в трафик.
-9.  **Откат данных ≠ откат кода:** Откат кода не вернет схему БД и содержимое ConfigMap/Secret — планируйте их совместный откат (см. [Обновление и rollout ConfigMap](../ConfigMap/update_and_rollout.md)).
+1. **Взаимодействие с Horizontal Pod Autoscaler (HPA):**
+   - Если Deployment управляется HPA, манифест в Git и команды оператора не должны жестко фиксировать `spec.replicas`. При конфликте HPA перезапишет ручные изменения. Во время RollingUpdate HPA вычисляет нагрузку по фактически готовым подам, что может вызвать внезапный всплеск масштабирования.
+2. **Server-Side Apply (SSA) и конфликты Field Management:**
+   - Если Deployment управляется декларативным CI/CD пайплайном через Server-Side Apply (`kubectl apply --server-side`), выполнение императивной команды `kubectl rollout undo` приведет к конфликту владения полями (`FieldManager conflict`). Для корректного разрешения GitOps-пайплайн должен использовать декларативный откат через `git revert`.
+3. **Мутирующие вебхуки (Mutating Admission Webhooks):**
+   - Если в кластере установлен сторонний admission-вебхук, модифицирующий аннотации или переменные пода «на лету», хеш шаблона (`pod-template-hash`) может рассчитываться до мутации. Убедитесь, что вебхуки идемпотентны и не вызывают бесконечной перегенерации ревизий.
+4. **Невосстановимость ревизий при лимите 0:**
+   - При `revisionHistoryLimit: 0` старые ReplicaSet удаляются сразу после сворачивания в 0. Команда `kubectl rollout undo` завершается с фатальной ошибкой `error: no rollout history found`.
+5. **No-Op Rollback:**
+   - Если шаблон целевой ревизии побайтово идентичен текущему шаблону (например, вы попытались откатиться к ревизии с тем же образом и env), контроллер игнорирует команду — создание новой ревизии не инициируется, поды не пересоздаются.
 
-### Ограничения и сложные случаи (Edge Cases)
-
-1.  **Rollover (параллельные обновления):** Контроллер не ждет завершения текущего rollout при поступлении нового — старые RS сворачиваются, приоритет последнему шаблону. Это корректно, но усложняет чтение `rollout status`.
-2.  **Откат приостановленного Deployment:** `kubectl rollout undo` не сработает для paused Deployment — сначала `rollout resume`.
-3.  **`revisionHistoryLimit: 0`:** откат невозможен; удаленные из-за лимита ревизии невосстановимы — только повторное применение манифеста.
-4.  **Откат к несуществующей ревизии:** `--to-revision` с номером вне истории → ошибка `unable to rollback to specified revision`.
-5.  **Откат при идентичном шаблоне:** если целевой шаблон совпадает с текущим — откат no-op (Kubernetes «считает» его ненужным); проверяйте различия через `kubectl rollout history --revision=N`.
-6.  **HPA против ручного масштабирования:** HPA перезаписывает вручную заданные `replicas`; при `maxUnavailable: 0` и нехватке узлов HPA и RollingUpdate конкурируют за ресурсы — следите за профицитом мощности.
-7.  **ConfigMap/Secret не инициируют rollout:** изменение содержимого уже существующего объекта не перезапускает поды; применение — `rollout restart` или хеш-аннотация в шаблоне (детали — в [deployment_manifest.md](./deployment_manifest.md) и [update_and_rollout.md](../ConfigMap/update_and_rollout.md)).
-8.  **Масштабирование во время rollout:** распределяется пропорционально между активными RS, а не всё в новый RS — ожидания «все реплики сразу в новой версии» при активном rollout неверны.
-9.  **`rollout status` в CI и сетевые разрывы:** блокирующее ожидание зависит от watch API; транзиентные сбои соединения дают ложный отказ — добавьте retry.
-10. **Мутабельные теги:** обновление `spec.template` с тем же тегом (`:latest`) не создает различаемого снимка — образ может быть другим при том же `pod-template-hash`-семействе; история деградирует.
-11. **Рестарт на paused:** `rollout restart` при `spec.paused: true` ставит изменение в очередь — поды пересоздадутся только после `resume`.
+---
 
 ### См. также
 
-- [Манифест и лучшие практики](./deployment_manifest.md)
-- [Устранение неполадок Deployment и RollingUpdate](./troubleshooting.md)
-- [Проверки состояния (Probes)](../probes.md)
+- [Манифест и лучшие практики Deployment](./deployment_manifest.md) — детальный разбор всех полей спецификации, QoS и конфигураций.
+- [Устранение неполадок Deployment и RollingUpdate](./troubleshooting.md) — углубленный траблшутинг зависаний, сбоев планировщика и циклических падений.
+- [Продвинутые стратегии отката Deployment](./advanced_rollback_strategies.md) — стратегии автоматического отката по метрикам, канареечные схемы и работа с БД.
+- [Мониторинг и наблюдаемость Deployment](./deployment_monitoring_observability.md) — метрики Prometheus, Alertmanager-правила и Grafana дашборды.
+- [Контроллер ReplicaSet](../replicaset.md) — устройство и жизненный цикл базового контроллера репликации.
+- [Пробы жизнедеятельности в Kubernetes](../probes.md) — настройка Startup, Liveness и Readiness проб.
+- [Жизненный цикл и состояния Pod](../Pod/pod_lifecycle_and_state.md) — фазы пода, Graceful Shutdown и сигналы завершения.
+- [Перезапуск подов в Kubernetes](../Pod/pod_restarts.md) — сравнение сценариев `rollout restart`, удаления подов и сбоев контейнеров.
+- [Обновление и rollout ConfigMap](../ConfigMap/update_and_rollout.md) — стратегии обновления конфигураций без простоев.

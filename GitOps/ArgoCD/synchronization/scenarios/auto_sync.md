@@ -69,6 +69,38 @@
 - **Progressive Sync:** При стратегии `RollingSync` ([Progressive Syncs](./progressive_sync.md)) автосинк для сгенерированных приложений принудительно отключается контроллером ApplicationSet (в логах applicationset-controller появляются предупреждения для спецификаций с `automated`). Для обычного ApplicationSet без RollingSync политика из шаблона работает штатно.
 - **Ignore Differences:** Если настроено [игнорирование различий](../ignore_differences.md), эти поля не влияют на вычисление diff. Чтобы синхронизация не перезаписывала их на этапе применения, включите `RespectIgnoreDifferences=true`.
 
+### Опасность петель синхронизации (Self-Heal Flapping и Event Storm)
+
+Включение `selfHeal: true` несет серьезный архитектурный риск в связке с контроллерами, мутирующими объекты в рантайме:
+1. **Механика сбоя (Flapping Loop):**
+   - Внешний актор (Mutating Admission Webhook, HPA, cert-manager, Istio sidecar-injector или Kyverno/Gatekeeper) изменяет ресурс в кластере (добавляет метку, меняет число реплик или инжектирует контейнер).
+   - Reconciler Argo CD фиксирует расхождение между Live State и Git Desired State (`OutOfSync`).
+   - По истечении интервала `self.heal.timeout.seconds` (по умолчанию **5 секунд** в `argocd-cm`) контроллер запускает автоматический Sync и перетирает изменения к исходному состоянию из Git.
+   - Внешний контроллер или вебхук немедленно мутирует ресурс повторно.
+   - Цикл замыкается, повторяясь каждые несколько секунд.
+2. **Последствия в Production:**
+   - Лавинообразный рост нагрузки на `kube-apiserver` и `etcd` (Event Storm / Write Amplification).
+   - Исчерпание процессорных лимитов и очередей `argocd-application-controller` (голодание остальных приложений).
+   - Постоянный перезапуск подов (если мутируются поля шаблона `spec.template`).
+3. **Методы предотвращения и устранения:**
+   - **Системное решение:** переход на `ServerSideApply=true` в связке с `managedFieldsManagers` в `ignoreDifferences` и флагом `RespectIgnoreDifferences=true`. В этом случае Argo CD игнорирует поля, принадлежащие стороннему менеджеру.
+   - **Тюнинг таймаута:** ключ `self.heal.timeout.seconds` в ConfigMap `argocd-cm` позволяет увеличить паузу перед самолечением.
+   - **Экстренная остановка петли:** снятие флага на лету через CLI `argocd app set <app> --self-heal=false` либо полная заморозка сверки через аннотацию `kubectl annotate app <app> argocd.argoproj.io/skip-reconcile="true"`.
+
+### Взаимодействие Pruning с Resource Tracking и защита от потери данных
+
+Механизм Pruning опирается на идентификацию владельца каждого объекта. В директории Argo CD эталонным документом по методам трекинга является **[Resource Tracking](../../argocd_resource_tracking.md)**.
+- **Методы отслеживания:**
+  - `label` (`app.kubernetes.io/instance`) — исторический режим. Опасен коллизиями со стандартными Helm-чартами, в которых метка захардкожена под релиз Helm.
+  - `annotation` (`argocd.argoproj.io/tracking-id`) — **рекомендуемый стандарт**. Исключает ограничение в 63 символа и не конфликтует с Helm.
+- **Очистка ресурсов:**
+  Argo CD удаляет объект из кластера при `prune: true` **только в том случае**, если tracking-идентификатор на объекте указывает на данное приложение, но объект пропал из репозитория. Если объект был создан вручную без tracking-метаданных, Argo CD его не удаляет (он классифицируется как внешний / orphaned).
+
+### Триггеры автоматической синхронизации: Webhook vs Polling
+
+- **Периодический опрос (Polling):** по умолчанию контроллер опрашивает Git каждые 120 секунд (+ jitter до 60 секунд, параметр `timeout.reconciliation`). В масштабных окружениях постоянный git fetch сотен приложений перегружает внутренний Git-сервер (GitLab/Gitea).
+- **Мгновенный триггер (Webhook):** производственный стандарт — настройка входящих вебхуков из GitLab/GitHub на эндпоинт `https://<argocd-server>/api/webhook`. Вебхук инвалидирует кэш репозитория в Redis и запускает синхронизацию за доли секунды. Детальная настройка описана в **[Сценарии настройки Webhook](../../synchronization.md#сценарий-7-настройка-webhook-от-корпоративного-gitlabgitea)**.
+
 ## Практические сценарии
 
 ### Сценарий 1: Эталонная конфигурация для Production
@@ -127,7 +159,30 @@ spec:
 ```
 
 **Дополнительная защита:**
-- Для критичных ресурсов (Namespace, PVC) используйте `Prune=confirm` / `Delete=confirm` — удаление требует ручного подтверждения в UI/CLI (`argocd app confirm-deletion`) или аннотации `argocd.argoproj.io/deletion-approved: <ISO-timestamp>`.
+- Для критичных ресурсов (Namespace, PVC, Secrets) используйте аннотацию `argocd.argoproj.io/sync-options: Prune=false` непосредственно в YAML-манифесте ресурса:
+  ```yaml
+  apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: postgres-data-pvc
+    namespace: database
+    annotations:
+      # Защита от удаления: ресурс НЕ будет удален из K8s, даже если манифест удалят из Git
+      argocd.argoproj.io/sync-options: Prune=false
+  spec:
+    accessModes: ["ReadWriteOnce"]
+    resources:
+      requests:
+        storage: 100Gi
+  ```
+- Для предотвращения захвата и перезаписи общих ресурсов другими приложениями включайте `FailOnSharedResource=true` в `syncOptions` приложения:
+  ```yaml
+  spec:
+    syncPolicy:
+      syncOptions:
+      - FailOnSharedResource=true # Падать с ошибкой, если ресурс уже управляется другим Application
+  ```
+- Для критичных ресурсов (Namespace, PVC) также доступен режим подтверждения `Prune=confirm` / `Delete=confirm` — удаление требует ручного подтверждения в UI/CLI (`argocd app confirm-deletion`) или аннотации `argocd.argoproj.io/deletion-approved: <ISO-timestamp>`.
 - Используйте `Sync Windows` для блокировки автоматической синхронизации в критические периоды.
 - Настройте нотификации для алертов при обнаружении массового удаления.
 

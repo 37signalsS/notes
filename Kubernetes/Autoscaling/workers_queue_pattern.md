@@ -1,639 +1,761 @@
-# Архитектурный паттерн «Воркеры + Очередь»
+# Архитектурный паттерн «Воркеры + Очередь» (Workers + Queue)
 
-Паттерн «Воркеры + Очередь» (Workers + Queue) является фундаментальным решением для реализации [событийно-ориентированной архитектуры (EDA)](../../Concepts/event-driven-architecture.md) в распределенных системах. Он позволяет изолировать (decouple) процесс генерации задач от процесса их выполнения, обеспечивая эластичность, отказоустойчивость и защиту системы от лавинообразных всплесков нагрузки (Thundering Herd).
+**Актуально для:** Kubernetes 1.28–1.35, KEDA 2.14–2.20+, RabbitMQ 3.12–4.x, Apache Kafka 3.x+
+
+Паттерн «Воркеры + Очередь» (Workers + Queue / Competing Consumers) — фундаментальный шаблон [событийно-ориентированной архитектуры (EDA)](../../Concepts/event-driven-architecture.md) и фоновой пакетной обработки в распределенных системах. Паттерн изолирует (decouples) процесс генерации задач (Producer) от процесса их фактического выполнения (Consumer / Worker), обеспечивая буферизацию пиковых всплесков нагрузки, устойчивость к сбоям downstream-инфраструктуры и эластичное динамическое масштабирование вычислительных мощностей.
 
 ## Определения
 
-*   **Workers + Queue** — архитектурный паттерн, в котором количество вычислительных узлов (воркеров) динамически масштабируется в зависимости от глубины (количества сообщений) очереди.
-*   **Producer (Производитель)** — сервис, генерирующий задачи и помещающий их в брокер сообщений.
-*   **Consumer (Потребитель / Worker)** — под (Pod) в Kubernetes, который извлекает сообщения из очереди, выполняет бизнес-логику и возвращает подтверждение (ACK).
-*   **Идемпотентность** — свойство операции, гарантирующее, что многократная обработка одной и той же задачи (например, из-за сетевого сбоя при ACK) не приведет к дублированию или искажению данных.
-*   **Dead Letter Queue (DLQ)** — специализированная "очередь мертвых писем", куда маршрутизируются сообщения, которые не удалось обработать после `N` попыток (Poison Pills).
-*   **Graceful Shutdown** — механизм перехвата сигнала завершения (`SIGTERM`), позволяющий воркеру закончить обработку текущей задачи и корректно освободить ресурсы перед физическим уничтожением контейнера.
-*   **Visibility Timeout** — время, в течение которого сообщение остается "невидимым" для других консьюмеров после извлечения одним из них. Если ACK не получен за это время, сообщение снова становится доступным для обработки.
-*   **Poison Pill (Отравленная таблетка)** — сообщение, которое стабильно вызывает ошибку при обработке (ошибка десериализации, нарушение контракта), блокируя обработку очереди.
+*   **Workers + Queue (Competing Consumers)** — архитектурный паттерн, в котором множество параллельных обработчиков (воркеров) конкурируют за получение сообщений из общей очереди задач, гарантируя обработку каждого сообщения одним консьюмером.
+*   **Producer (Производитель)** — сервис или API-шлюз, формирующий вычислительные задачи и публикующий их в брокер сообщений.
+*   **Consumer (Потребитель / Worker)** — вычислительный процесс (Pod или однократная Job в Kubernetes), извлекающий задачи из брокера, исполняющий бизнес-логику и подтверждающий успешное выполнение (ACK).
+*   **Идемпотентность (Idempotency)** — свойство операции, гарантирующее одинаковый результат состояния системы независимо от количества повторных выполнений одного и того же сообщения (критично при гарантиях доставки At-least-once).
+*   **Visibility Timeout / Consumer Lock** — интервал времени, в течение которого взятое консьюмером сообщение временно скрывается от других воркеров. Если за это время подтверждение (ACK) не получено, брокер возвращает сообщение в очередь (Requeue).
+*   **Prefetch Count (QoS Limit)** — максимальное число неподтвержденных (Unacknowledged) сообщений, которое брокер отправляет одному воркеру до получения ACK. Предотвращает захват всех сообщений одним подом и исчерпание памяти.
+*   **Poison Pill (Отравленная таблетка)** — дефектное сообщение (некорректный JSON, нарушенный контракт), вызывающее аварийное падение воркера при каждой попытке обработки и блокирующее очередь.
+*   **Dead Letter Queue (DLQ)** — выделенная очередь для изоляции сообщений, превысивших максимальный лимит попыток обработки (Delivery Limit / Max Retries).
+*   **Consumer Lag (Отставание консьюмера)** — разница между объемом опубликованных сообщений и объемом обработанных сообщений (глубина очереди в RabbitMQ или смещение offset в Kafka). Главная метрика для автоскейлинга.
+*   **Scale-to-Zero** — способность инфраструктуры уменьшать число реплик воркеров до 0 при отсутствии сообщений в очереди, высвобождая CPU и RAM узлов кластера.
+*   **Graceful Shutdown** — механизм перехвата сигнала завершения (`SIGTERM`), позволяющий воркеру корректно завершить текущую задачу, отправить ACK/NACK и закрыть соединения перед остановкой контейнера.
+*   **Backpressure (Обратное давление)** — совокупность механизмов ограничения входящей нагрузки при исчерпании емкости воркеров или downstream-ресурсов (БД, диски, внешние API).
 
-## Предварительные требования
+## Основные концепции и архитектура
 
-### Версии и компоненты
+### Назначение и решаемые задачи
 
-| Компонент | Минимальная версия | Рекомендуемая версия | Примечание |
-|:---|:---|:---|:---|
-| Kubernetes | 1.23+ | 1.28+ | Для стабильной работы KEDA и HPA v2 |
-| KEDA | 2.10+ | 2.12+ | Для ScaledObject и Scale-to-Zero |
-| Metrics Server | 0.6+ | 0.7+ | Для стандартного HPA (если используется) |
+1.  **Сглаживание пиковых нагрузок (Load Leveling / Buffering):** Очередь принимает лавинообразный трафик (Thundering Herd), позволяя пулу воркеров обрабатывать сообщения в стабильном темпе, защищая базы данных и внутренние сервисы от перегрузки.
+2.  **Асинхронность и отзывчивость API:** Синхронный HTTP-запрос не блокируется длительными операциями (генерация тяжелых отчетов, кодирование видео, отправка транзакционных рассылок). Producer мгновенно возвращает клиенту `202 Accepted` с идентификатором задачи.
+3.  **Эластичное масштабирование по событиям:** В отличие от стандартного масштабирования по CPU/памяти, где реакция запаздывает, воркеры масштабируются строго по глубине очереди (Consumer Lag) и могут опускаться в 0 при простое.
+4.  **Отказоустойчивость и семантика At-least-once:** В случае падения пода воркера (OOMKilled, падение ноды, сетевой сбой) неподтвержденное сообщение возвращается в брокер и переназначается здоровому поду.
 
-### Требования к окружению
+### Архитектурная модель: Producer ➔ Broker ➔ Consumer
 
-Перед внедрением паттерна убедитесь в наличии:
+```text
+[ Клиент / Браузер ]
+         │ HTTP POST /tasks
+         ▼
+[ API Service (Producer) ]
+         │ 1. Публикация задачи (Publish)
+         │ 2. Ответ: 202 Accepted {task_id}
+         ▼
+[ Брокер сообщений ] ── (Ready Queue: Consumer Lag) ──┐
+         │                                            │
+         │ Опрос метрик глубины (Polling)             │ Извлечение задач (Pull / Push)
+         ▼                                            ▼
+[ KEDA Operator ] ─── Scale ───► [ Worker Pod 1 ] [ Worker Pod 2 ] ... [ Worker Pod N ]
+         │                               │                │                    │
+         ▼                               └────────────────┼────────────────────┘
+[ HPA Controller ]                                        ▼
+                                             [ База данных / MinIO / S3 ]
+```
 
-1. **KEDA установлен в кластере:**
-   ```bash
-   kubectl get pods -n keda
-   # → keda-operator-xxx   1/1  Running
-   # → keda-operator-metrics-apiserver-xxx  1/1  Running
-   ```
+### Жизненный цикл сообщения (State Machine)
 
-2. **Брокер сообщений доступен из подов:**
-   ```bash
-   # Проверка доступности RabbitMQ
-   kubectl run -it --rm debug --image=alpine/curl --restart=Never -- \
-     curl -s http://rabbitmq-service:15672/api/healthchecks/memory
-   ```
+1.  **Enqueued (В очереди / Ready):** Сообщение находится в брокере и ожидает свободного консьюмера.
+2.  **In-Flight (В обработке / Unacknowledged):** Воркер забрал сообщение. Брокер скрывает его по Visibility Timeout или ожидает подтверждения по открытому TCP-каналу.
+3.  **Acknowledged (ACK):** Воркер успешно выполнил бизнес-логику и отправил сигнал подтверждения. Брокер навсегда удаляет сообщение из очереди.
+4.  **Negative Acknowledged (NACK / Reject with Requeue):** Произошел временный сбой (например, короткая недоступность БД). Воркер отвергает сообщение, брокер немедленно возвращает его в статус `Enqueued`.
+5.  **Dead-Lettered (Изоляция в DLQ):** Превышен лимит попыток доставки (`x-delivery-limit`) либо сообщение отвергнуто без повторной очереди (`requeue: false`). Сообщение маршрутизируется в DLQ для ручного разбора SRE.
 
-3. **ResourceQuota не блокирует создание подов:**
-   ```bash
-   kubectl describe resourcequota -n <namespace>
-   # Проверьте, что лимиты позволяют масштабирование до maxReplicaCount
-   ```
+### Модели параллелизма брокеров: RabbitMQ vs Apache Kafka vs Redis
 
-### Интеграция с ResourceQuota
+Выбор брокера определяет архитектурные возможности горизонтального масштабирования:
 
-При использовании KEDA с `minReplicaCount: 0` учитывайте:
+| Характеристика | RabbitMQ (AMQP / Quorum Queues) | Apache Kafka (Partition-based Log) | Redis (Lists / Streams) |
+| :--- | :--- | :--- | :--- |
+| **Модель доставки** | **Competing Consumers:** Воркеры разбирают одну очередь независимо. | **Partition Consumer:** Каждую партицию читает строго один воркер из Consumer Group. | **Competing Consumers:** Команды `BLPOP` / `XREADGROUP`. |
+| **Лимит параллелизма** | Ограничен только ресурсами брокера и числом воркеров. | **Жестко ограничен числом партиций.** Воркеры сверх числа партиций простаивают. | Ограничен однопоточностью Redis и пропускной способностью сети. |
+| **Обработка сбоев** | Гибкий NACK, встроенный DLQ на уровне очередей. | Смещение смещается только вперед; DLQ требует отдельного топика. | Требует явной обработки через вспомогательные структуры. |
+| **Применение** | Дискретные задачи разной длительности, сложная маршрутизация. | Высокопроизводительные потоки событий, строгий порядок по ключу. | Быстрые короткие задачи (вебхуки, кеш, время < 1 сек). |
 
-*   При масштабировании ResourceQuota с `request.cpu` и `request.memory` должна позволять запуск подов до `maxReplicaCount`.
-*   `LimitRange` может устанавливать дефолтные лимиты, которые могут конфликтовать с ресурсами воркеров.
+Подробнее о внутренних механизмах см. **[Принципы работы систем сообщений](../../Kafka/message_queues_principles.md)** и **[Сравнение RabbitMQ и Kafka](../../Kafka/rabbitmq_vs_kafka.md)**.
 
-## Основные концепции
+### Защита зависимых сервисов и обратное давление (Backpressure)
 
-### Задачи, решаемые паттерном
+Горизонтальное масштабирование воркеров несет скрытую угрозу для downstream-инфраструктуры (баз данных, внешних API):
 
-1.  **Сглаживание пиковых нагрузок (Buffering):** Очередь принимает на себя ударный трафик, позволяя воркерам разбирать его в предсказуемом темпе без перегрузки баз данных.
-2.  **Асинхронность:** Producer не ждет завершения тяжелой задачи (например, генерации отчета или транскодинга видео), а сразу отвечает клиенту `202 Accepted`.
-3.  **Эластичное масштабирование:** В ночные часы количество воркеров может падать до нуля (Scale-to-Zero), экономя ресурсы.
-4.  **Гарантированная обработка (At-least-once):** Если воркер падает (OOMKilled, Evicted), сообщение возвращается в очередь по таймауту (Visibility Timeout) и подхватывается другим подом.
-
-### Жизненный цикл задачи (State Machine)
-
-1.  **Enqueued** (В очереди) — сообщение ждет обработки.
-2.  **In-Flight** (В обработке) — воркер забрал сообщение. Оно становится "невидимым" для других на время таймаута (Visibility Timeout / Lock).
-3.  **Acknowledged (ACK)** — задача успешно выполнена, сообщение удаляется из брокера.
-4.  **Negative Acknowledged (NACK)** — воркер явно сообщил об ошибке (например, БД временно недоступна). Сообщение мгновенно возвращается в очередь (Enqueued).
-5.  **Dead-Lettered** — превышен лимит попыток обработки (Max Delivery Attempts). Сообщение перемещается в DLQ.
-
-### Проблематика и требования к Worker'ам
-
-| Проблема | Решение |
-| :--- | :--- |
-| **Poison Pill** (задача, вызывающая краш) | Обязательная настройка DLQ и лимита попыток (Max Retries). |
-| **Зомби-воркеры** (зависание процесса) | Внутренние Timeout в коде приложения + Liveness Probes. |
-| **Дублирование задач** | Идемпотентность логики + дедупликация на стороне брокера. |
-| **Потеря задач при деплое** | Обработка SIGTERM и настройка `terminationGracePeriodSeconds`. |
+*   **Исчерпание пула соединений БД:** Если `maxReplicaCount = 100`, а каждый под открывает пул из 20 соединений к PostgreSQL, суммарно потребуется 2000 соединений. Это приведет к отказу СУБД (`FATAL: remaining connection slots are reserved`).
+    *   *Решение SRE:* Внедрение connection pooler (PgBouncer) в режиме `transaction pooling`, жесткое ограничение `maxReplicaCount` на уровне KEDA и использование семафоров в коде воркера.
+*   **Лавинообразное накопление памяти (Unacked Flooding):** При высоком `Prefetch Count` один быстрый под может забрать 10 000 сообщений в локальную память и упасть по `OOMKilled`.
+    *   *Решение SRE:* Значение `prefetch_count = 1` для тяжелых задач длительностью > 1 секунды.
 
 ---
 
-## Интеграция с инфраструктурой Kubernetes
+## Практические сценарии и конфигурация
 
-Для надежной работы паттерна в K8s требуется комплексная настройка оркестрации:
+### Предварительные требования и системные зависимости
 
-*   **Автоскейлинг:** Используется **[KEDA (Kubernetes Event-driven Autoscaling)](./keda/keda_concepts.md)**, так как стандартный HPA плохо работает с внешними метриками (очередями) и не умеет масштабировать до нуля.
-*   **Отказоустойчивость:** [Pod Disruption Budget (PDB)](./pod_disruption_budget.md) защищает от потери всех воркеров при плановом обслуживании узлов.
-*   **Изоляция:** [Topology Spread Constraints](../Scheduling/affinity.md) размазывает воркеры по разным стойкам/зонам доступности.
-*   **Приоритизация:** Для критических воркеров (например, обработка платежей) используются [PriorityClasses](../Scheduling/qos_limit_and_requests.md), чтобы Cluster Autoscaler выселял менее важные поды при нехватке места.
+| Компонент | Минимальная версия | Рекомендуемая версия | Назначение |
+| :--- | :--- | :--- | :--- |
+| Kubernetes | 1.28+ | 1.30–1.35 | Стабильная поддержка HPA autoscaling/v2, PDB policy/v1 |
+| KEDA | 2.14+ | 2.16–2.20+ | Контроллер очередей, поддержка Scale-to-Zero, trigger authentication |
+| RabbitMQ | 3.12+ (Quorum) | 3.13–4.x | Поддержка кворумных очередей, `x-delivery-limit` и нативного Prometheus |
 
----
+Перед развертыванием воркеров проверьте готовность кластера:
 
-## Практические сценарии
+```bash
+# 1. Проверка оператора KEDA
+kubectl get pods -n keda -l app.kubernetes.io/name=keda-operator
+# → keda-operator-76c8c6f78f-v8m4b              1/1  Running   0  5d
+# → keda-operator-metrics-apiserver-85db976-7x   1/1  Running   0  5d
 
-### Сценарий 1: Корректное завершение (Graceful Shutdown)
+# 2. Проверка доступности брокера RabbitMQ из сети подов
+kubectl run -it --rm amqp-ping --image=curlimages/curl --restart=Never -- \
+  curl -s -u guest:guest http://rabbitmq.rabbitmq.svc.cluster.local:15672/api/healthchecks/node
+# → {"status":"ok"}
 
-Это **критически важный** манифест. Если воркер обрабатывает задачу 2 минуты, а K8s убьет его через стандартные 30 секунд, задача прервется и будет обрабатываться заново.
+# 3. Проверка квот неймспейса (чтобы maxReplicaCount помещался в лимиты)
+kubectl get resourcequota -n app
+# → NAME       AGE   REQUESTS-CPU   REQUESTS-MEMORY   PODS
+# → app-quota  12d   8/32           16Gi/64Gi         12/100
+```
+
+### Сценарий 1: Корректное завершение работы (Graceful Shutdown) и PDB
+
+Для воркеров долгоживущих задач корректное завершение критично: при деплое или выселении (Eviction) под не должен обрывать выполнение задачи.
+
+1.  Под получает `SIGTERM` от kubelet.
+2.  Воркер прекращает опрос очереди (отзывает регистрацию Consumer в брокере через `basic.cancel`).
+3.  Воркер завершает обработку уже взятых сообщений, отправляет `ACK` в брокер.
+4.  Воркер корректно закрывает соединения с брокером и СУБД, после чего процесс завершается (`exit 0`).
+5.  Если процесс не завершился за `terminationGracePeriodSeconds`, kubelet принудительно посылает `SIGKILL`.
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: heavy-report-worker
+  name: heavy-worker
+  namespace: app
+  labels:
+    app: heavy-worker
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: report-worker
+      app: heavy-worker
   template:
     metadata:
       labels:
-        app: report-worker
+        app: heavy-worker
     spec:
-      # ВАЖНО: Даем поду 5 минут на завершение текущей генерации отчета
-      terminationGracePeriodSeconds: 300 
+      # Запас времени: максимальная длительность задачи (4 мин) + 60 сек на закрытие ресурсов
+      terminationGracePeriodSeconds: 300
       containers:
         - name: worker
-          image: my-worker:1.2.0
-          # ВАЖНО: Приложение должно перехватывать SIGTERM и перестать 
-          # брать новые задачи из очереди, доделывая текущую.
+          image: internal-registry.local/workers/heavy-processor:v1.8.2
+          imagePullPolicy: IfNotPresent
           lifecycle:
             preStop:
               exec:
-                # Fallback, если приложение не умеет корректно обрабатывать SIGTERM
-                command: ["/bin/sh", "-c", "sleep 10 && ./stop-worker-gracefully.sh"]
+                # Сигнал приложению о начале дренажа задач до отправки SIGTERM (если рантайм требует)
+                command: ["/bin/sh", "-c", "touch /tmp/draining && sleep 5"]
+          env:
+            - name: WORKER_CONCURRENCY
+              value: "2"
+            - name: PREFETCH_COUNT
+              value: "2"
           resources:
             requests:
               cpu: "500m"
               memory: "1Gi"
-```
-
-**Важно:** `terminationGracePeriodSeconds` должен учитывать:
-*   Максимальное время обработки одной задачи
-*   Visibility Timeout брокера (чтобы задача не ушла другому консьюмеру до завершения текущего)
-*   Время на освобождение ресурсов (закрытие соединений с БД, запись чекпоинтов)
-
-### Сценарий 2: Эластичное масштабирование через KEDA (RabbitMQ)
-
-Рекомендуемый подход для микросервисов. Масштабирование происходит на основе длины очереди, а не нагрузки на CPU.
-
-```yaml
-# 1. Задаем лимиты и базовые настройки воркера
-apiVersion: apps/v1
-kind: Deployment
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+---
+# Защита от потери воркеров при обслуживании узлов кластера (drain)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
 metadata:
-  name: image-processor
+  name: heavy-worker-pdb
+  namespace: app
 spec:
-  replicas: 0 # Базовое значение, KEDA переопределит его
+  # При scale-to-zero PDB не должен блокировать сжатие: minAvailable 1 реплика при наличии нагрузки
+  maxUnavailable: 1
   selector:
     matchLabels:
-      app: image-processor
-  template:
-    metadata:
-      labels:
-        app: image-processor
-    spec:
-      containers:
-      - name: processor
-        image: image-processor:v2
+      app: heavy-worker
+```
+
+Подробнее о механизмах эвикции см. **[Pod Disruption Budget](./pod_disruption_budget.md)** и **[Жизненный цикл Pod](../Base/Pod/pod_lifecycle_and_state.md)**.
+
+### Сценарий 2: Горизонтальное масштабирование через KEDA ScaledObject (RabbitMQ)
+
+Масштабирование воркеров на базе `ScaledObject`. Масштабирование происходит от 0 до 50 реплик в зависимости от глубины очереди `tasks-queue`.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rabbitmq-credentials
+  namespace: app
+type: Opaque
+stringData:
+  amqp-host: amqp://app-user:ComplexPass123@rabbitmq.rabbitmq.svc.cluster.local:5672/app-vhost
 ---
-# 2. Настраиваем объект KEDA
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: rabbitmq-auth
+  namespace: app
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: rabbitmq-credentials
+      key: amqp-host
+---
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
-  name: rabbitmq-processor-scaler
+  name: worker-scaler
+  namespace: app
 spec:
   scaleTargetRef:
-    name: image-processor
-  pollingInterval: 15     # Как часто KEDA проверяет очередь
-  cooldownPeriod:  300    # Ждем 5 минут перед сжатием в 0
-  minReplicaCount: 0      # Scale-to-Zero (экономия ресурсов)
-  maxReplicaCount: 50     # Лимит масштабирования
+    apiVersion: apps/v1
+    kind: Deployment
+    name: heavy-worker
+  pollingInterval: 15     # Интервал опроса метрик брокера (секунды)
+  cooldownPeriod:  300    # Период стабилизации перед масштабированием в 0 (секунды)
+  minReplicaCount: 0      # Полный Scale-to-Zero при пустой очереди
+  maxReplicaCount: 50     # Жесткий гардрейл емкости кластера
+  fallback:
+    failureThreshold: 3   # Число сбоев опроса брокера подряд
+    replicas: 5           # Количество реплик в аварийном режиме
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300 # Защита от флаппинга при кратковременных просадках очереди
+          policies:
+            - type: Percent
+              value: 20
+              periodSeconds: 60
   triggers:
     - type: rabbitmq
       metadata:
-        queueName: process-images
-        mode: QueueLength
-        value: "20"       # 1 новый под на каждые 20 сообщений в очереди
-        hostFromEnv: RABBITMQ_URI # Берет URL из ENV пода
+        protocol: amqp
+        queueName: tasks-queue
+        mode: QueueLength     # Режим расчета по длине очереди
+        value: "10"           # 1 под на каждые 10 сообщений в очереди
+        activationValue: "1"  # Масштабировать из 0 в 1 при появлении хотя бы 1 сообщения
+      authenticationRef:
+        name: rabbitmq-auth
 ```
 
-**Проверка работы:**
+Проверка применения:
+
 ```bash
-# Проверить статус ScaledObject
-kubectl get scaledobject rabbitmq-processor-scaler
-# → NAME                           TARGET       TRIGGERS   AUTHENTICATION   READY   ACTIVE   FALLBACK   AGE
-# → rabbitmq-processor-scaler      Deployment   rabbitmq                    True    True                5m
-
-# Проверить текущее количество реплик
-kubectl get deployment image-processor
+kubectl get scaledobject worker-scaler -n app
+# → NAME            TARGET         TRIGGERS   AUTHENTICATION   READY   ACTIVE   FALLBACK   AGE
+# → worker-scaler   heavy-worker   rabbitmq   rabbitmq-auth    True    False               1m
 ```
 
-### Сценарий 3: ScaledJob для изолированных/длительных задач
+Подробнее о внутренней механике контроллера см. **[KEDA: Основные концепции](./keda/keda_concepts.md)**.
 
-Для задач, которые требуют жесткой изоляции (утечки памяти в legacy коде) или выполняются часами (рендер 3D), используется `ScaledJob` из арсенала KEDA. Одна задача = один Pod, который умирает после завершения.
+### Сценарий 3: Изолированная пакетная обработка через KEDA ScaledJob
+
+Если задача выполняется длительное время (от нескольких минут до часов), потребляет нестабильный объем памяти (риск утечек памяти в сторонних C-библиотеках типа FFmpeg) или требует жесткой изоляции — используется `ScaledJob`. KEDA создает однократный Kubernetes `Job` на каждое поступившее сообщение (или пачку сообщений).
+
+> [!IMPORTANT]
+> Для предотвращения засорения etcd кластера сотнями тысяч завершенных подов обязательно задавайте `successfulJobsHistoryLimit`, `failedJobsHistoryLimit` и `ttlSecondsAfterFinished`.
 
 ```yaml
 apiVersion: keda.sh/v1alpha1
 kind: ScaledJob
 metadata:
-  name: video-transcoder
+  name: media-transcoder-scaler
+  namespace: app
 spec:
   jobTargetRef:
     parallelism: 1
+    completions: 1
+    activeDeadlineSeconds: 1800       # Прерывание зависшей задачи через 30 минут
+    ttlSecondsAfterFinished: 300      # Автоматическое удаление Job через 5 минут после финиша
     template:
       spec:
+        restartPolicy: Never          # При падении не перезапускать pod внутри Job (сообщение вернется в брокер)
         containers:
-        - name: ffmpeg
-          image: transcoder:v4
-        restartPolicy: Never # В случае падения задача вернется в очередь по таймауту
+          - name: transcoder
+            image: internal-registry.local/media/ffmpeg-worker:v2.1.0
+            env:
+              - name: QUEUE_NAME
+                value: "transcode-jobs"
+            resources:
+              requests:
+                cpu: "1000m"
+                memory: "2Gi"
+              limits:
+                cpu: "4000m"
+                memory: "6Gi"
   pollingInterval: 30
-  successfulJobsHistoryLimit: 5 # Хранить 5 успешных логов
-  failedJobsHistoryLimit: 5     # Хранить 5 упавших логов
+  maxReplicaCount: 20                 # Максимум 20 параллельных Job в кластере!
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
   triggers:
-  - type: rabbitmq
-    metadata:
-      queueName: transcode-tasks
-      mode: QueueLength
-      value: "1" # Одна Job на каждое сообщение
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: transcode-jobs
+        mode: QueueLength
+        value: "1"                    # Ровно 1 Job на каждое сообщение
+      authenticationRef:
+        name: rabbitmq-auth
 ```
 
-### Сценарий 4: Долгая задача с уведомлением пользователя
+### Сценарий 4: Асинхронная обработка тяжелых задач с уведомлением пользователя
 
-Типовая ситуация: пользователь загружает файл (книгу, отчёт, датасет), а обработка занимает 10–15 минут. Синхронно отдать результат невозможно в принципе: HTTP-соединение рвётся по таймаутам балансировщиков и прокси (обычно 30–60 секунд), а заставлять пользователя обновлять страницу вручную (F5) — плохой UX и лишняя нагрузка.
-
-Решение: API принимает файл, ставит задачу в очередь и немедленно отвечает `202 Accepted` с идентификатором задачи. О готовности пользователь узнаёт через отдельный канал:
-
-*   **WebSocket / SSE** — если пользователь ждёт результат на странице: статус задачи пушится в браузер;
-*   **Email / push** — если результат забирают позже: ссылка на готовый файл в объектном хранилище;
-*   **Личный кабинет / список задач** — состояние проверяется повторным запросом `GET /tasks/{id}`.
-
-Итоговая композиция сервиса «текст → электронная книга» (обработка ~15 минут на книгу):
+Схема реализации долгих задач (1–15 минут) без обрыва HTTP-соединений через связку API, брокера, объектного хранилища MinIO/Ceph и воркеров:
 
 ```text
-Браузер ──> Веб-фронтенд + API (Producer)
-                │  файлы пользователя и результаты ──> S3
-                │  метаданные задач и учётные записи ──> БД
-                │  задача ──> Брокер сообщений ──> Воркеры (Consumer, тяжёлый процессинг)
-                └──> Сервис уведомлений (WebSocket/email) <── событие "задача готова"
+1. Клиент ── POST /reports ──► API Gateway (Producer)
+                                 │
+                                 ├─ Сохраняет метаданные задачи (Status: PENDING) ──► PostgreSQL
+                                 ├─ Публикует задачу {task_id, payload} ──► RabbitMQ
+                                 └─ Отвечает клиенту 202 Accepted {id: "task-99", status_url: "/reports/task-99"}
+
+2. Воркер (Consumer) ── Извлекает сообщение из RabbitMQ
+                          ├─ Обновляет статус: PROCESSING
+                          ├─ Генерирует отчет
+                          ├─ Загружает готовый файл ──► MinIO / Ceph (S3 API)
+                          ├─ Обновляет статус в БД: COMPLETED, s3_key: "reports/task-99.pdf"
+                          ├─ Отправляет событие "task-completed" ──► Notification Service
+                          └─ Отправляет ACK ──► RabbitMQ
+
+3. Уведомление: Клиент получает WebSocket-событие или опрашивает (Polling) GET /reports/task-99.
 ```
 
-Масштабирование воркеров — по глубине очереди через KEDA (см. Сценарий 2), для изоляции падучих задач — ScaledJob (см. Сценарий 3). Отказоустойчивость обеспечивается идемпотентностью обработки и возвратом задачи в очередь при падении воркера.
+Такая архитектура устраняет риск сбоев по таймаутам Ingress (`proxy_read_timeout 60s`) и позволяет масштабировать генерацию отчетов отдельно от веб-шлюза.
 
-### Сценарий 5: Обработка Poison Pills и настройка DLQ
+### Сценарий 5: Обработка сбойных сообщений (Poison Pills), DLQ и повторы (Retries)
 
-**Проблема:** Сообщение с невалидными данными вызывает ошибку при каждой попытке обработки. Без DLQ оно будет бесконечно возвращаться в очередь, блокируя обработку других сообщений.
-
-**Решение для RabbitMQ:**
+В распределенной системе сообщения с нарушенным форматом данных способны вызвать бесконечный цикл падений воркеров.
+Для RabbitMQ с кворумными очередями (Quorum Queues) настройка лимита повторных доставок (`x-delivery-limit`) и перенаправления в DLQ настраивается декларативно через манифест очереди:
 
 ```yaml
 apiVersion: rabbitmq.com/v1beta1
 kind: Queue
 metadata:
-  name: orders-processing
+  name: orders-main-queue
+  namespace: app
 spec:
-  name: orders-processing
+  name: orders-main-queue
   type: quorum
   durable: true
   arguments:
-    # Настройка DLQ
-    x-dead-letter-exchange: ""
-    x-dead-letter-routing-key: "orders-processing-dlq"
-    # Максимальное количество попыток до перемещения в DLQ
+    # При превышении лимита брокер направляет сообщение на обменник DLX
+    x-dead-letter-exchange: "dlx.direct"
+    x-dead-letter-routing-key: "orders-poison"
+    # Максимум 5 попыток обработки
     x-delivery-limit: 5
 ---
 apiVersion: rabbitmq.com/v1beta1
 kind: Queue
 metadata:
-  name: orders-processing-dlq
+  name: orders-dlq
+  namespace: app
 spec:
-  name: orders-processing-dlq
+  name: orders-dlq
   type: quorum
   durable: true
 ```
 
-**Мониторинг DLQ:**
-```bash
-# Проверка количества сообщений в DLQ
-kubectl exec -it rabbitmq-server-0 -- \
-  rabbitmqctl list_queues name messages | grep dlq
-# → orders-processing-dlq  15
+Стратегия повторной обработки с экспоненциальной задержкой (Exponential Backoff with Jitter):
 
-# Извлечение и анализ Poison Pill (без обработки)
-kubectl exec -it rabbitmq-server-0 -- \
-  rabbitmqctl get_queue orders-processing-dlq count=1 ackmode=requeue_true
+```python
+import time
+import random
+import logging
+
+def execute_with_retry(task_id, payload, max_retries=3):
+    attempt = 0
+    while attempt < max_retries:
+        try:
+            return process_business_logic(payload)
+        except TransientDatabaseError as err:
+            attempt += 1
+            if attempt >= max_retries:
+                logging.error(f"Task {task_id} exhausted retries: {err}")
+                raise  # Сообщение уйдет в NACK / DLQ
+            
+            # Экспоненциальная задержка: 2^attempt + случайный шум (Jitter)
+            sleep_sec = (2 ** attempt) + random.uniform(0.1, 1.0)
+            logging.warning(f"Retry {attempt}/{max_retries} for task {task_id} in {sleep_sec:.2f}s")
+            time.sleep(sleep_sec)
 ```
 
-**Рекомендации:**
-*   Настройте алерт при появлении сообщений в DLQ (`DLQ Message Count > 0`)
-*   Регулярно анализируйте содержимое DLQ для выявления системных проблем в коде
-*   При необходимости реализуйте "ручную обработку" — возможность повторно отправить сообщение из DLQ в основную очередь после исправления ошибки
+### Сценарий 6: Обеспечение идемпотентности обработки (Deduplication и Outbox)
 
-### Сценарий 6: Идемпотентность обработки
+Гарантия доставки брокеров `At-least-once` означает, что сообщение **может быть доставлено более одного раза** (например, воркер упал ровно в момент отправки ACK). Воркер обязан гарантировать идемпотентность.
 
-Поскольку гарантия доставки — at-least-once, задача может быть обработана несколько раз (при падении воркера до ACK, при сетевых сбоях). Реализация идемпотентности:
+#### Паттерн 1: Атомарная проверка уникальности в PostgreSQL (Transactional Inbox)
 
-**Подход 1: Дедупликация по ID сообщения**
+```sql
+-- Таблица входящих сообщений (Inbox Table)
+CREATE TABLE IF NOT EXISTS processed_messages (
+    message_id VARCHAR(64) PRIMARY KEY,
+    consumer_name VARCHAR(64) NOT NULL,
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Атомарная обработка в одной транзакции
+BEGIN;
+
+-- Попытка зафиксировать обработку сообщения
+INSERT INTO processed_messages (message_id, consumer_name)
+VALUES ('msg-uuid-9874', 'order-worker')
+ON CONFLICT (message_id) DO NOTHING;
+
+-- Проверяем, выполнилась ли вставка
+-- Если xmax != 0, значит запись уже существовала, прерываем выполнение
+SELECT (xmax = 0) AS is_new_message 
+FROM processed_messages 
+WHERE message_id = 'msg-uuid-9874';
+
+-- Если is_new_message == TRUE, выполняем бизнес-операцию:
+UPDATE accounts SET balance = balance - 100 WHERE id = 42;
+
+COMMIT;
+```
+
+#### Паттерн 2: Быстрая дедупликация через Redis
 
 ```python
 import redis
 
-redis_client = redis.Redis(host='redis-service', port=6379)
+r = redis.Redis(host='redis.app.svc.cluster.local', port=6379, decode_responses=True)
 
-def process_message(message_id, payload):
-    # Проверяем, была ли задача уже обработана
-    if redis_client.get(f"processed:{message_id}"):
-        print(f"Task {message_id} already processed, skipping")
-        return  # ACK будет отправлен, задача не вернется
+def handle_message(message_id: str, payload: dict):
+    lock_key = f"dedup:{message_id}"
     
-    # Обработка задачи
-    result = do_work(payload)
+    # Атомарная установка ключа с TTL 86400 (24 часа) только если его еще нет (NX)
+    is_acquired = r.set(name=lock_key, value="processing", nx=True, ex=86400)
     
-    # Сохраняем результат и помечаем как обработанное
-    redis_client.setex(
-        f"processed:{message_id}",
-        86400 * 7,  # TTL 7 дней
-        "done"
-    )
+    if not is_acquired:
+        # Сообщение уже в обработке или было обработано ранее
+        print(f"Duplicate message {message_id} detected. Skipping with ACK.")
+        return True
+        
+    try:
+        process_task(payload)
+        r.set(name=lock_key, value="completed", ex=86400)
+        return True
+    except Exception as exc:
+        # В случае сбоя удаляем ключ, чтобы дать возможность повтора
+        r.delete(lock_key)
+        raise exc
 ```
 
-**Подход 2: Идемпотентные операции в БД**
+### Сценарий 7: Проверки состояния (Health Checks) для фоновых воркеров
 
-```sql
--- INSERT с проверкой уникальности
-INSERT INTO orders (external_id, data, status)
-VALUES (%s, %s, 'processing')
-ON CONFLICT (external_id) DO NOTHING;
+Воркеры очередей не имеют входящего HTTP-трафика, поэтому типовая конфигурация проверок через `httpGet` неприменима. 
 
--- Проверка, была ли вставка
-SELECT xmax = 0 AS is_inserted FROM orders WHERE external_id = %s;
-```
+> [!CAUTION]
+> **Опасный антипаттерн SRE:** Проверка времени последней обработанной задачи (`time_since_last_task < 300s`). Если очередь пуста в течение 5 минут, воркер не обрабатывает задач и livenessProbe принудительно убивает здоровый под, загоняя Deployment в CrashLoopBackOff!
 
-### Сценарий 7: Health Checks для воркеров
-
-**Проблема:** Воркер "зав" (зомби-процесс), K8s не знает об этом и не перезапускает под.
-
-**Решение: Комбинация Liveness и Readiness Probes**
+Корректная реализация Health Check для воркера очередей:
+*   **Startup Probe:** Дает время на инициализацию соединений с брокером и СУБД.
+*   **Readiness Probe:** Проверяет активное состояние TCP-сессии с брокером сообщений и зависимой СУБД.
+*   **Liveness Probe:** Проверяет, что внутренний цикл событий (Event Loop / Heartbeat Thread) воркера жив и не завис в deadlock.
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: queue-worker
+  name: queue-consumer
+  namespace: app
 spec:
   template:
     spec:
       containers:
-      - name: worker
-        image: worker:latest
-        # Liveness: Перезапуск зависшего пода
-        livenessProbe:
-          exec:
-            command:
-            - /bin/sh
-            - -c
-            - "worker-healthcheck.sh"
-          initialDelaySeconds: 30
-          periodSeconds: 10
-          failureThreshold: 3
-        # Readiness: Не принимать сообщения, если БД недоступна
-        readinessProbe:
-          exec:
-            command:
-            - /bin/sh
-            - -c
-            - "check-db-connection.sh"
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        # Startup: Для медленного старта (загрузка моделей, миграции)
-        startupProbe:
-          exec:
-            command:
-            - /bin/sh
-            - -c
-            - "check-worker-ready.sh"
-          failureThreshold: 30
-          periodSeconds: 10
+        - name: consumer
+          image: internal-registry.local/app/consumer:v1.2.0
+          # Startup: До 60 секунд на инициализацию пулов и соединений
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "test -f /tmp/worker_started"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          # Readiness: Проверка доступности брокера и готовности потреблять
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "test -f /tmp/broker_connected && test ! -f /tmp/draining"
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          # Liveness: Проверка активности фонового heartbeat-треда
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  # Проверяем, что heartbeat обновлялся процессом не более 30 секунд назад
+                  LAST_BEAT=$(cat /tmp/worker_heartbeat 2>/dev/null || echo 0)
+                  NOW=$(date +%s)
+                  if [ $((NOW - LAST_BEAT)) -gt 30 ]; then
+                    exit 1
+                  fi
+                  exit 0
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
 ```
 
-**Скрипт healthcheck (`worker-healthcheck.sh`):**
-```bash
-#!/bin/sh
-# Проверяем, что воркер обрабатывает задачи (не завис)
-LAST_ACTIVITY=$(cat /tmp/last_activity_timestamp 2>/dev/null || echo 0)
-NOW=$(date +%s)
-DIFF=$((NOW - LAST_ACTIVITY))
+### Сценарий 8: Управление параллелизмом и лимитами выборки (Prefetch)
 
-# Если нет активности больше 10 минут — воркер завис
-if [ $DIFF -gt 600 ]; then
-  echo "Worker stuck, last activity: $LAST_ACTIVITY"
-  exit 1
-fi
-exit 0
-```
+Значение `Prefetch Count` (QoS) определяет, сколько сообщений брокер передает воркеру без подтверждения (ACK).
 
-### Сценарий 8: Backpressure и ограничение нагрузки
+*   **Для долгих и тяжелых задач (> 2–5 секунд):** Устанавливайте `prefetch = 1`. Это гарантирует равномерное распределение задач между подами. Если один под выполняет сложную задачу, брокер сразу отдаст следующую задачу параллельному поду, а не будет копить ее в буфере первого.
+*   **Для сверхбыстрых задач (< 50 мс):** Устанавливайте `prefetch = 20–100` для снижения задержки на сетевой round-trip (RTT) между брокером и воркером.
 
-**Проблема:** Воркер не справляется с нагрузкой, что приводит к:
-*   Исчерпанию соединений с БД
-*   Росту задержки обработки
-*   OOMKilled
-
-**Решение 1: Ограничение Prefetch (RabbitMQ)**
+Пример настройки на Python (Pika):
 
 ```python
 import pika
 
+connection = pika.BlockingConnection(pika.ConnectionParameters(host='rabbitmq.rabbitmq.svc.cluster.local'))
 channel = connection.channel()
-# Ограничиваем количество неподтвержденных сообщений
-channel.basic_qos(prefetch_count=10)
-```
 
-**Решение 2: Fallback в KEDA**
+# 1. Объявляем кворумную очередь
+channel.queue_declare(queue='heavy-tasks', durable=True, arguments={'x-queue-type': 'quorum'})
 
-```yaml
-apiVersion: keda.sh/v1alpha1
-kind: ScaledObject
-metadata:
-  name: safe-worker-scaler
-spec:
-  scaleTargetRef:
-    name: worker
-  minReplicaCount: 1
-  maxReplicaCount: 20
-  fallback:
-    failureThreshold: 3
-    replicas: 5  # При ошибке получения метрик держим минимум 5 реплик
-  triggers:
-    - type: rabbitmq
-      metadata:
-        queueName: tasks
-        mode: QueueLength
-        value: "20"
-```
+# 2. ВАЖНО: Устанавливаем prefetch_count ровно в 1 на консьюмера
+channel.basic_qos(prefetch_count=1)
 
-**Решение 3: Внутренняя очередь в воркере**
+def on_message(ch, method, properties, body):
+    try:
+        process_task(body)
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+    except Exception:
+        # При критической ошибке отправляем NACK с возвратом в очередь (requeue=True)
+        # или requeue=False для ухода в DLQ
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
-```python
-import asyncio
-
-# Ограничиваем параллельную обработку внутри одного пода
-semaphore = asyncio.Semaphore(5)  # Максимум 5 задач параллельно
-
-async def process_with_semaphore(message):
-    async with semaphore:
-        await process_message(message)
+channel.basic_consume(queue='heavy-tasks', on_message_callback=on_message)
+channel.start_consuming()
 ```
 
 ---
 
-## Мониторинг и метрики (SRE Опыт)
+## Операции и команды
 
-Для надежной работы паттерна необходимо настроить алерты по следующим метрикам:
+### Диагностика брокеров и очередей
 
-1.  **Consumer Lag / Queue Depth:** Основной индикатор здоровья. Если очередь растет, а `maxReplicaCount` достигнут, система не справляется (Under-provisioned).
-2.  **Processing Latency (Duration):** Время от взятия задачи до ACK (p95, p99). Рост задержки говорит о деградации БД или внешнего API.
-3.  **DLQ Message Count:** Метрика качества данных/кода. Рост DLQ означает появление задач, которые стабильно вызывают ошибки (Poison Pills).
-4.  **Worker Restart Rate:** Если поды часто перезапускаются (`OOMKilled`), это приводит к постоянным возвратам задач в очередь и дублированию усилий.
+```bash
+# 1. Проверка состояния очереди RabbitMQ (число сообщений, неacks, консьюмеры)
+kubectl exec -it rabbitmq-server-0 -n rabbitmq -- \
+  rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers --vhost app-vhost
+# → Timeout: 60.0 seconds ...
+# → Listing queues for vhost app-vhost ...
+# → name                 messages_ready  messages_unacknowledged  consumers
+# → tasks-queue          142             10                       10
+# → tasks-queue-dlq      3               0                        0
 
-### Пrometheus-метрики и алерты
+# 2. Проверка задержки и смещения потребителей в Apache Kafka
+kubectl exec -it kafka-cluster-kafka-0 -n kafka -- \
+  bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
+  --describe --group order-processors
+# → GROUP            TOPIC         PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG             CONSUMER-ID
+# → order-processors order-events  0          104523          104550          27              consumer-1-pod
+# → order-processors order-events  1          109812          109815          3               consumer-2-pod
+```
+
+### Мониторинг и управление объектами KEDA
+
+```bash
+# 1. Просмотр всех объектов автоскейлинга KEDA в кластере
+kubectl get scaledobject,scaledjob -A -o wide
+# → NAMESPACE   NAME            SCALETARGETKIND      SCALETARGETNAME   MIN   MAX   TRIGGERS   AUTHENTICATION   READY   ACTIVE   AGE
+# → app         worker-scaler   apps/v1.Deployment   heavy-worker      0     50    rabbitmq   rabbitmq-auth    True    True     4d
+
+# 2. Детальная диагностика триггеров и ошибок опроса
+kubectl describe scaledobject worker-scaler -n app
+# → Status:
+# →   Conditions:
+# →     Type:            Ready
+# →     Status:          True
+# →     Type:            Active
+# →     Status:          True
+# → Events:
+# →   Type    Reason             Age    From           Message
+# →   ----    ------             ----   ----           -------
+# →   Normal  KEDAScalersStarted 5m     keda-operator  Started scalers watch for heavy-worker
+# →   Normal  ScaledObjectReady  5m     keda-operator  ScaledObject is ready for target heavy-worker
+
+# 3. Проверка журналов KEDA Operator на предмет сетевых сбоев и ошибок авторизации
+kubectl logs -n keda deployment/keda-operator --tail=50 | grep -E "ERROR|warning"
+# → (Вывод пуст при штатной работе)
+```
+
+### Ручной возврат сообщений из DLQ (Reprocessing)
+
+Когда причина падений воркеров устранена (исправлен баг в коде или поднялась зависимая БД), сообщения из DLQ возвращаются в основную очередь:
+
+```bash
+# Использование плагина Shovel в RabbitMQ для перемещения всех сообщений из DLQ в рабочую очередь
+kubectl exec -it rabbitmq-server-0 -n rabbitmq -- rabbitmqctl set_parameter shovel move-from-dlq \
+  '{"src-uri": "amqp://", "src-queue": "tasks-queue-dlq", "dest-uri": "amqp://", "dest-queue": "tasks-queue"}'
+# → Setting runtime parameter "move-from-dlq" for component "shovel" ...
+# → success
+
+# Проверка опустошения DLQ
+kubectl exec -it rabbitmq-server-0 -n rabbitmq -- rabbitmqctl list_queues name messages --vhost app-vhost | grep dlq
+# → tasks-queue-dlq    0
+
+# Удаление конфигурации Shovel после перемещения сообщений
+kubectl exec -it rabbitmq-server-0 -n rabbitmq -- rabbitmqctl clear_parameter shovel move-from-dlq
+# → Clearing runtime parameter "move-from-dlq" for component "shovel" ...
+# → success
+```
+
+---
+
+## Мониторинг и метрики (SRE)
+
+### Ключевые метрики (Golden Signals для очередей)
+
+1.  **Queue Backlog / Consumer Lag (Traffic / Saturation):**
+    *   RabbitMQ: `rabbitmq_queue_messages_ready` (сообщения, ждущие обработки).
+    *   Kafka: `kafka_consumergroup_lag` (отставание по партициям).
+2.  **Processing Latency (Latency):**
+    *   Время нахождения задачи в очереди (Wait Time) + время исполнения консьюмером (Execution Duration p95 / p99).
+3.  **Unacknowledged Messages (Saturation / Hazard):**
+    *   `rabbitmq_queue_messages_unacknowledged`. Рост при стабильном числе консьюмеров сигнализирует о зависании процессов или утечке соединений.
+4.  **Error Rate & Dead Letter Activity (Errors):**
+    *   Скорость попадания сообщений в DLQ: `rate(rabbitmq_queue_messages_published_total{queue=~".*-dlq"}[5m])`.
+5.  **KEDA Autoscaling Saturation (Saturation):**
+    *   Отношение текущих реплик к максимуму: `keda_scaledobject_replicas / keda_scaledobject_max_replicas`.
+
+### Правила алертинга Prometheus
 
 ```yaml
-# Правила алертов
 groups:
   - name: workers_queue_alerts
     rules:
-      # Очередь растет, воркеры не справляются
-      - alert: QueueBacklogGrowing
-        expr: rate(rabbitmq_queue_messages[5m]) > 0 and keda_scaledobject_replicas == keda_scaledobject_max_replicas
+      # Очередь не разбирается, реплики уперлись в максимальный лимит
+      - alert: QueueBacklogAtMaxScale
+        expr: |
+          (rabbitmq_queue_messages_ready > 100)
+          and on(namespace, scaledobject)
+          (keda_scaledobject_replicas >= on(namespace, scaledobject) keda_scaledobject_max_replicas)
         for: 10m
         labels:
-          severity: warning
+          severity: critical
+          tier: autoscaling
         annotations:
-          summary: "Queue {{ $labels.queue }} backlog growing, max replicas reached"
-          
-      # Воркер уперся в maxReplicaCount
-      - alert: KEDAMaxReplicasReached
-        expr: keda_scaledobject_replicas >= keda_scaledobject_max_replicas
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "ScaledObject {{ $labels.scaledobject }} reached maxReplicaCount"
-          
-      # Появились сообщения в DLQ
+          summary: "Очередь {{ $labels.queue }} растет, пул воркеров достиг maxReplicaCount"
+          description: "Текущая глубина очереди {{ $value }}. Все реплики заняты. Риск срыва SLA."
+
+      # Появление сообщений в очереди Poison Pills (DLQ)
       - alert: DLQMessagesDetected
-        expr: rabbitmq_queue_messages{queue=~".*-dlq"} > 0
-        for: 1m
+        expr: rabbitmq_queue_messages_ready{queue=~".*-dlq"} > 0
+        for: 2m
         labels:
           severity: warning
+          tier: backend
         annotations:
-          summary: "Messages in DLQ {{ $labels.queue }}: {{ $value }}"
-          
-      # Высокий rate перезапусков подов
-      - alert: WorkerHighRestartRate
-        expr: rate(kube_pod_container_status_restarts_total{container="worker"}[15m]) > 0
+          summary: "Обнаружены сообщения в Dead Letter Queue {{ $labels.queue }}"
+          description: "В очереди {{ $labels.queue }} находится {{ $value }} необработанных сообщений."
+
+      # Воркеры зависли: растут Unacknowledged сообщения без роста завершенных
+      - alert: WorkerUnacknowledgedSpike
+        expr: |
+          deriv(rabbitmq_queue_messages_unacknowledged[5m]) > 5
+          and rate(rabbitmq_queue_messages_delivered_total[5m]) == 0
         for: 5m
         labels:
           severity: critical
+          tier: backend
         annotations:
-          summary: "Worker {{ $labels.pod }} restarting frequently"
+          summary: "Воркеры удерживают сообщения без отправки подтверждений (Unacked Spike)"
+          description: "Возможен deadlock, сетевой обрыв или исчерпание соединений к СУБД."
+
+      # Активация аварийного режима Fallback в KEDA
+      - alert: KEDAScalerFallbackActive
+        expr: keda_scaledobject_fallback_activity == 1
+        for: 3m
+        labels:
+          severity: warning
+          tier: platform
+        annotations:
+          summary: "KEDA ScaledObject {{ $labels.scaledobject }} перешел в аварийный Fallback-режим"
+          description: "Скейлер не может связаться с брокером сообщений. Активировано фиксированное число реплик."
 ```
 
-### Команды для диагностики
-
-```bash
-# Проверка текущей глубины очереди (RabbitMQ)
-kubectl exec -it rabbitmq-server-0 -- rabbitmqctl list_queues name messages consumers
-
-# Проверка статуса ScaledObject
-kubectl describe scaledobject <name> -n <namespace>
-# Обратить внимание на:
-# - Status.Ready
-# - Status.Active (если False — KEDA не может получить метрики)
-# - Events (ошибки скейлера)
-
-# Проверка логов KEDA
-kubectl logs -n keda deployment/keda-operator --tail=100 | grep ERROR
-
-# Проверка лагов Kafka (если используется)
-kubectl exec -it kafka-0 -- kafka-consumer-groups \
-  --bootstrap-server localhost:9092 \
-  --describe --group worker-group
-```
+Подробнее о мониторинге брокеров см. **[RabbitMQ: Мониторинг и алерты](../../rabbitmq/monitoring_and_alerting.md)** и **[Метрики и алертинг Kubernetes Autoscaling](./alerting_monitoring.md)**.
 
 ---
 
-## Типичные ошибки и их решения
+## Диагностика и устранение неполадок
 
-### Ошибка 1: Задачи теряются при деплое
+### Матрица типовых неисправностей
 
-**Симптом:** При обновлении Deployment задачи, которые обрабатывались в момент деплоя, не возвращаются в очередь.
+| Симптом | Вероятная причина | Инструмент диагностики | Метод устранения |
+| :--- | :--- | :--- | :--- |
+| **Задачи обрываются при деплое воркеров** | `terminationGracePeriodSeconds` меньше времени исполнения задачи; отсутствие перехвата `SIGTERM`. | `kubectl get events`, логи воркера | Увеличить `terminationGracePeriodSeconds`, перехватывать `SIGTERM`, добавить `PDB`. |
+| **Дублирование обработки задач** | Длительность выполнения задачи превышает `Visibility Timeout`; сетевые разрывы до ACK. | Логи с таймингами выполнения, метрики БД | Увеличить `Visibility Timeout`, настроить `Prefetch = 1`, внедрить идемпотентность (Inbox). |
+| **KEDA ScaledObject: READY=False** | Неверные реквизиты в `TriggerAuthentication`, брокер недоступен по DNS или заблокирован `NetworkPolicy`. | `kubectl describe scaledobject`, логи `keda-operator` | Проверить сетевой доступ к порту брокера (5672/15672), скорректировать Secret. |
+| **Утечки завершенных подов в etcd** | В `ScaledJob` не заданы параметры ротации истории выполненных задач. | `kubectl get jobs,pods -n app` | Задать `successfulJobsHistoryLimit: 3`, `ttlSecondsAfterFinished: 300`. |
+| **Падение воркеров по OOMKilled** | Высокий `Prefetch Count`, воркер выкачивает тысячи сообщений в оперативную память. | `kubectl describe pod` (`OOMKilled`) | Уменьшить `prefetch_count` до 1–5, увеличить `resources.limits.memory`. |
+| **СУБД отклоняет подключения** | Лавинообразное масштабирование воркеров исчерпало пул соединений СУБД. | Логи PostgreSQL (`remaining connection slots`) | Ограничить `maxReplicaCount`, внедрить PgBouncer, уменьшить размер пула в воркере. |
 
-**Причины:**
-*   `terminationGracePeriodSeconds` слишком мал
-*   Приложение не перехватывает SIGTERM
-*   Visibility Timeout меньше времени Graceful Shutdown
+### Разбор критических инцидентов
 
-**Решение:**
-```yaml
-# Увеличить terminationGracePeriodSeconds
-terminationGracePeriodSeconds: 600  # 10 минут
+#### Инцидент 1: Thundering Herd и лавина переотправки при падении воркера
 
-# Добавить preStop hook для надежности
-lifecycle:
-  preStop:
-    exec:
-      command: ["/bin/sh", "-c", "kill -TERM 1 && sleep 30"]
-```
+*   **Контекст:** Воркер с настройкой `prefetch_count: 5000` вычитал из брокера 5000 задач. При обработке 45-й задачи под падает по OOMKilled.
+*   **Следствие:** Брокер фиксирует разрыв TCP-соединения и мгновенно возвращает все 4955 необработанных сообщений обратно в очередь со статусом `Ready`. Новый запущенный под снова выкачивает всю пачку, падает по OOMKilled, вызывая бесконечный шторм.
+*   **Решение:**
+    1. Немедленно снизить `prefetch_count` до `10` (или `1` для тяжелых задач) в коде приложения или конфигурации консьюмера.
+    2. Установить в брокере лимит памяти для очередей и настроить кворумную очередь с `x-delivery-limit`.
 
-### Ошибка 2: Дублирование обработки
+#### Инцидент 2: Зависание воркеров из-за отсутствия сетевых таймаутов
 
-**Симптом:** Одна задача обрабатывается несколько раз.
+*   **Контекст:** Воркер забирает задачу и обращается к внешней СУБД. Происходит тихий разрыв соединения (drop пакетов файрволом без RST/FIN).
+*   **Следствие:** Поток воркера навечно блокируется на операции `socket.read()`. Так как процесс формально жив, Kubernetes Liveness Probe не срабатывает. Сообщение висит в статусе `Unacknowledged`, воркер не берет новых задач и не освобождает ресурсы.
+*   **Решение:**
+    1. Обязательная настройка `socket_timeout`, `connect_timeout` и TCP Keepalive во всех клиентских библиотеках БД и брокеров.
+    2. Внедрение независимого Heartbeat-потока в воркере, сигнализирующего о зависании основного цикла обработки для Liveness Probe.
 
-**Причины:**
-*   Сетевой сбой между обработкой и ACK
-*   Воркер упал после обработки, но до ACK
-*   Visibility Timeout истек до завершения обработки
+---
 
-**Решение:**
-1. Реализовать идемпотентность обработки (см. Сценарий 6)
-2. Настроить Visibility Timeout > максимальное время обработки
-3. Использовать транзакционную обработку (Outbox Pattern)
+## Лучшие практики (Best Practices)
 
-### Ошибка 3: KEDA не масштабирует
-
-**Симптом:** `ScaledObject` в статусе `READY=False` или `ACTIVE=False`.
-
-**Диагностика:**
-```bash
-kubectl describe scaledobject <name>
-# Проверить Events на ошибки подключения к брокеру
-```
-
-**Возможные причины:**
-*   Неверные credentials для брокера
-*   Брокер недоступен из подов KEDA
-*   NetworkPolicy блокирует доступ
-
-**Решение:**
-```yaml
-# Проверить triggerAuthentication
-apiVersion: keda.sh/v1alpha1
-kind: TriggerAuthentication
-metadata:
-  name: rabbitmq-auth
-spec:
-  secretTargetRef:
-    - parameter: host
-      name: rabbitmq-secret
-      key: amqp-url
-```
-
-### Ошибка 4: Зомби-воркеры
-
-**Симптом:** Под "жив" по Liveness Probe, но не обрабатывает сообщения.
-
-**Причины:**
-*   Зависшие потоки в приложении
-*   Таймауты соединений с внешними сервисами
-*   Deadlock в коде
-
-**Решение:**
-1. Реализовать внутренние таймауты в коде
-2. Добавить health check на основе активности (см. Сценарий 7)
-3. Мониторить Processing Latency
+1.  **Декларативное ограничение емкости (Guardrails):**
+    Ни один `ScaledObject` или `ScaledJob` не должен разворачиваться в production без явно заданного `maxReplicaCount`. Лимит должен быть рассчитан исходя из емкости downstream-хранилищ (IOPS дисков, соединений СУБД, пропускной способности сети).
+2.  **Защита от флаппинга при сжатии (Scale-Down Stabilization):**
+    Всегда настраивайте `advanced.horizontalPodAutoscalerConfig.behavior.scaleDown.stabilizationWindowSeconds` (минимум 300 секунд). Это предотвращает постоянные циклы убийства и создания подов при волнообразном поступлении пачек сообщений.
+3.  **Изоляция и отказоустойчивость планирования (Scheduling):**
+    Воркеры должны распределяться по разным физическим нодам и зонам доступности через `topologySpreadConstraints` или `podAntiAffinity`. Для критичных очередей назначайте `priorityClassName`, предотвращающий выселение воркеров планировщиком при нехватке ресурсов.
+4.  **Синхронизация таймаутов:**
+    Должно строго соблюдаться правило неравенства:
+    $$\text{Socket Timeout} < \text{Task Max Duration} < \text{Visibility Timeout} < \text{terminationGracePeriodSeconds}$$
+5.  **Архитектура очередей Quorum:**
+    В RabbitMQ используйте только Quorum Queues (`type: quorum`) для production-очередей. Они реплицируются через алгоритм Raft, устойчивы к сетевым разделениям (Network Partition) и аппаратно поддерживают `x-delivery-limit`.
+6.  **Надежность Scale-to-Zero:**
+    Используйте `minReplicaCount: 0` только если бизнес-процесс толерантен к задержке «холодного старта» (10–30 секунд на создание пода, выделение IP в CNI и инициализацию библиотек). Для околореального времени (near real-time) задавайте `minReplicaCount: 1` или `2`.
+7.  **Настройка аварийного режима (Fallback):**
+    Всегда указывайте блок `fallback` в `ScaledObject`. Если брокер сообщений испытывает проблемы с сетью или перегружен, KEDA не должна сжимать воркеры в 0: fallback-реплики позволят продолжить обработку локально буферизованных задач.
 
 ---
 
 ## Дополнительная информация
 
-### Выбор брокера сообщений
-
-Выбор брокера определяет архитектуру консьюмеров:
-*   **RabbitMQ:** Классические очереди. Идеален для `Competing Consumers` (множество воркеров разбирают одну очередь балансируя нагрузку). Поддерживает DLQ из коробки.
-*   **Apache Kafka:** Потоковая лог-система. Ограничивает параллелизм количеством партиций (Partitions). Масштабировать воркеры свыше количества партиций бессмысленно (лишние поды будут простаивать). Подробнее: **[Принципы работы систем сообщений](../../Kafka/message_queues_principles.md)**.
-*   **Redis (Bull/RQ):** Простое in-memory решение для быстрых задач (веб-хуки, email).
-
-### Сравнение ScaledObject vs ScaledJob
-
-| Характеристика | ScaledObject | ScaledJob |
-|:---|:---|:---|
-| Ресурс Kubernetes | Deployment/StatefulSet | Job |
-| Время жизни пода | Длительное (пока есть задачи) | Доолнительное (одна задача = один Pod) |
-| Изоляция | Общая среда | Полная изоляция |
-| Утечки памяти | Накопление | Не накапливаются |
-| Подходит для | Короткие задачи, потоковая обработка | Длительные задачи, legacy с утечками |
-| Параллелизм | Много задач на один Pod | Строго одна задача на Pod |
-
-### Ссылки
-*   **[KEDA: Основные концепции](./keda/keda_concepts.md)** — архитектура и конфигурация KEDA.
-*   **[KEDA: Практические сценарии](./keda/practical_scenarios.md)** — глубокое погружение в настройку триггеров.
-*   **[Жизненный цикл Pod](../Base/Pod/pod_lifecycle_and_state.md)** — теория Graceful Shutdown и фаз пода.
-*   **[Шардирование в Kubernetes](./sharding.md)** — как разделить очереди на приоритетные (Premium/Free).
-*   **[Cluster Autoscaler](./cluster_autoscaler_detailed.md)** — добавление физических узлов под растущее количество воркеров.
-*   **[PDB — Pod Disruption Budget](./pod_disruption_budget.md)** — защита воркеров при обслуживании узлов.
+*   **[KEDA: Основные концепции](./keda/keda_concepts.md)** — архитектура KEDA, компоненты оператора и метрик-сервера.
+*   **[KEDA: Практические сценарии](./keda/practical_scenarios.md)** — глубокая настройка скейлеров для RabbitMQ, Kafka, PostgreSQL.
+*   **[KEDA: Эксплуатация и траблшутинг](./keda/keda-operations.md)** — операционные чек-листы и устранение сбоев KEDA.
+*   **[KEDA: Оптимизация затрат (FinOps)](./keda/keda-finops.md)** — предотвращение перерасхода ресурсов при автомасштабировании.
+*   **[RabbitMQ: Архитектурные паттерны](../../rabbitmq/message_patterns.md)** — топологии обмена сообщениями, AMQP-маршрутизация.
+*   **[RabbitMQ: Мониторинг и алерты](../../rabbitmq/monitoring_and_alerting.md)** — метрики экспортера, PromQL и правила оповещений.
+*   **[RabbitMQ: Руководство по устранению неполадок](../../rabbitmq/troubleshooting.md)** — диагностика очередей, сплит-брейнов и нехватки памяти.
+*   **[Kafka: Принципы систем сообщений](../../Kafka/message_queues_principles.md)** — сравнительный анализ моделей брокеров.
+*   **[Kafka: Гарантии доставки](../../Kafka/delivery_guarantees.md)** — семантика At-least-once, Exactly-once и дедупликация.
+*   **[Pod Disruption Budget (PDB)](./pod_disruption_budget.md)** — защита воркеров от выселения при обслуживании нод.
+*   **[Жизненный цикл Pod](../Base/Pod/pod_lifecycle_and_state.md)** — фазы Pod, сигналы завершения и хуки жизненного цикла.
+*   **[Шардирование очередей и воркеров](./sharding.md)** — разделение пулов обработчиков по классам приоритетов.

@@ -1,95 +1,143 @@
 # Crossplane: Интеграция с GitOps
 
+**Актуально для:** Crossplane v1.18+ / v2.x (актуально v2.4); Argo CD v2.12+ / v3.5+; Flux v2.x; on-premise / bare-metal
+
 ## Определения
 
-**GitOps для инфраструктуры** — операционная модель, при которой Git-репозиторий является единственным источником правды для всей декларативной конфигурации инфраструктуры. Crossplane выступает в роли исполнительного механизма — **control plane** (плоскости управления), предоставляя Kubernetes-native API для облачных ресурсов, а GitOps-инструменты (Argo CD, Flux) обеспечивают автоматическую доставку и синхронизацию этого состояния в кластер.
+- **GitOps для инфраструктуры** — операционная модель управления ИТ-инфраструктурой, при которой Git-репозиторий выступает единственным источником правды (Single Source of Truth, SSoT) для декларативного описания целевого состояния систем. Доставка изменений выполняется автоматизированными pull-контроллерами внутри кластера.
+- **Crossplane Control Plane** — управляющий кластер Kubernetes с установленным ядром Crossplane и набором провайдеров, функционирующий как центральная плоскость управления корпоративной инфраструктурой (on-premise серверами, гипервизорами, базами данных, хранилищами и сетевыми сервисами).
+- **Двухконтурная сверка (Two-Loop Reconciliation)** — архитектурный паттерн совместной работы GitOps-контроллера и Crossplane:
+  1. *GitOps-контур* (Argo CD / Flux) опрашивает Git-репозиторий и приводит манифесты в кластере в соответствие с коммитами (`selfHeal` / `prune`).
+  2. *Crossplane-контур* непрерывно сверяет состояние физических и логических ресурсов инфраструктуры (СУБД, бакеты, виртуальные машины, сетевые сегменты) с манифестами в Kubernetes API и ликвидирует дрейф параметров (drift detection).
+- **Managed Resource (MR)** — низкоуровневый Kubernetes-ресурс (CRD), представляющий конкретную сущность целевой системы (например, база данных `Database` или роль `Role` в `provider-sql`, объект в `provider-kubernetes`, виртуальная машина в `provider-proxmox`).
+- **CompositeResourceDefinition (XRD)** — кластерная схема пользовательского API платформы, определяющая абстрактный интерфейс сервиса (например, `XPostgreSQLInstance`), его входные параметры и схему валидации.
+- **Composition** — реализация XRD, связывающая абстрактный ресурс с набором конкретных Managed Resources через конвейер Composition Functions (`mode: Pipeline`).
+- **CompositeResourceClaim (Claim)** — namespace-scoped запрос разработчика на предоставление инфраструктурного сервиса, связанный с жизненным циклом пространства имен приложения.
+- **ProviderConfig** — декларативная конфигурация подключения провайдера к целевой инфраструктуре (адрес эндпоинта, таймауты, пулы соединений, ссылки на секреты с аутентификационными данными).
+- **OCI Configuration Package** — стандартизированный OCI-образ (распространяемый через локальный реестр, например Harbor), содержащий упакованные XRD и Compositions платформы с поддержкой версионирования и контроля целостности.
 
-Ключевой принцип связки: желаемое состояние описывается один раз в Git и доставляется в кластер **pull-моделью** (контроллеры сами опрашивают источник), а не push-моделью (CI запускает `kubectl apply`). При этом действуют **два независимых контура непрерывного согласования (reconciliation)**:
-
-1. **GitOps-контур** сверяет манифесты в кластере с тем, что лежит в Git (при расхождении — возвращает к эталону, `selfHeal`/`prune`).
-2. **Crossplane-контур** сверяет ресурсы в облаке с тем, что описано в манифестах (при расхождении — возвращает параметры облака к YAML).
-
-В 2026 году эта связка является стандартом для построения **Internal Developer Platforms (IDP)**: разработчики запрашивают инфраструктуру через абстрактные `Claim`, не имея прямого доступа к облачным консолям и не работая с низкоуровневыми Terraform/CLI облака.
+---
 
 ## Базовые концепции
 
 ### Разделение ответственности: два слоя GitOps
 
-Эффективная интеграция строится на разделении репозиториев по ролям (Separation of Concerns). Важно понимать, что Crossplane сам по себе — тоже часть инфраструктуры, которую нужно доставить в кластер. Поэтому выделяют два слоя:
+Устойчивая архитектура GitOps на базе Crossplane исключает смешивание платформенного кода и запросов прикладных команд в едином монолитном репозитории. Архитектура разделяется на два независимых слоя:
 
-**Слой 1 — Платформенный (Bootstrap / Platform repo):**
-*   **Содержимое:** сам Crossplane (Core), пакеты провайдеров (`Provider`/`Configuration` из OCI), `CompositeResourceDefinitions` (XRD), `Compositions` (или Composition Functions), настройки провайдеров (`ProviderConfig`), `ClusterSecretStore`/SOPS-ключи.
-*   **Владелец:** Команда платформы (SRE/Platform Engineers).
-*   **Задача:** Определение корпоративных стандартов и «золотых путей» (Golden Paths) инфраструктуры, управление жизненным циклом самого Crossplane.
-*   **Доставляется:** GitOps-инструментом как любой другой манифест (Helm/Kustomize).
+```text
+┌────────────────────────────────────────────────────────────────────────┐
+│ Слой 1: Платформенный репозиторий (Platform / Bootstrap Git Repo)      │
+│ Владелец: SRE / Platform Engineers                                     │
+│ Содержимое:                                                            │
+│  - Установка Crossplane Core, Helm-чарты провайдеров и функций         │
+│  - Пакеты провайдеров (provider-sql, provider-kubernetes, etc.)        │
+│  - ProviderConfig, ClusterSecretStore (Vault), SOPS-ключи              │
+│  - Платформенные OCI Configuration, XRD и Compositions (Golden Paths)  │
+│ Доставка: Argo CD / Flux (синхронизация в namespace crossplane-system) │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │ Предоставляет платформенный API
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ Слой 2: Прикладной репозиторий (Application / Claims Git Repo)         │
+│ Владелец: Команды разработки / DevOps продуктов                        │
+│ Содержимое:                                                            │
+│  - Запросы на ресурсы: CompositeResourceClaim (БД, S3-бакеты, очереди) │
+│  - Нативные манифесты приложений (Deployment, Service, Ingress)        │
+│  - Ссылки на генерируемые Connection Secrets                           │
+│ Доставка: Argo CD / Flux (синхронизация в продуктовые namespaces)      │
+│ Ограничение: Прямые учетные данные инфраструктуры сюда НЕ попадают     │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
-**Слой 2 — Потребительский (Application / Claims repo):**
-*   **Содержимое:** `CompositeResourceClaims` (Claims) — запросы на конкретные ресурсы (БД, S3, очереди), а также манифесты самих приложений.
-*   **Владелец:** Команды разработки.
-*   **Задача:** Использование инфраструктуры как зависимости приложения через высокоуровневый API, определённый платформой.
-*   **Доставляется:** GitOps-инструментом; низкоуровневые учётные данные облака здесь **никогда не хранятся**.
+Такое разделение гарантирует:
+- Разработчики не имеют доступа к учетным записям администраторов СУБД, гипервизоров или сетевых коммутаторов.
+- Изменение реализации платформенного сервиса (например, переход с отдельного экземпляра PostgreSQL на HA-кластер Patroni) происходит в Слое 1 без изменения прикладных манифестов в Слое 2.
 
 ### Архитектура и схема взаимодействия
 
 ```text
-┌───────────────────────┐         ┌──────────────────┐        ┌──────────────────────┐
-│  Git (Platform repo)  │         │  GitOps Tool     │        │  Management Cluster  │
-│  XRD/Composition/     │         │  Argo CD / Flux  │        │  (Crossplane Core +  │
-│  Provider/Config      │────────▶│  Sync & Prune    │──────▶ │   Provider, reconcile)│
-└───────────────────────┘         └──────────────────┘        └──────────┬───────────┘
-                                                                          │ 3. Создание MR
-┌───────────────────────┐         ┌──────────────────┐                   │
-│  Git (Claims repo)    │         │  GitOps Tool     │                   ▼
-│  CompositeResourceClaim│────────▶│  Sync & Prune    │────────▶   ┌──────────────────┐
-└───────────────────────┘         └──────────────────┘        │  Облако (API)    │
-                                                              │  Managed Resource│
-                                                              └──────────────────┘
-        Поток данных (упрощлённо):
-        Claims repo ──▶ Claim в кластере ──▶ Crossplane создаёт XR ──▶
-        Composition разворачивает MR ──▶ Provider вызывает облачный API ──▶ ресурс готов
+┌────────────────────────┐         ┌──────────────────────┐        ┌─────────────────────────┐
+│ Git (Platform Repo)    │         │  GitOps-контроллер   │        │  Management Cluster     │
+│ XRD / Composition /    │────────▶│   (Argo CD / Flux)   │───────▶│  Crossplane Core +      │
+│ Provider / Functions   │         │    Sync & Prune      │        │  Провайдеры (Reconcile) │
+└────────────────────────┘         └──────────────────────┘        └───────────┬─────────────┘
+                                                                               │ 3. Создание MR
+┌────────────────────────┐         ┌──────────────────────┐                    │
+│ Git (App Claims Repo)  │         │  GitOps-контроллер   │                    ▼
+│ CompositeResourceClaim │────────▶│   (Argo CD / Flux)   │─────────▶  ┌─────────────────────────┐
+│ (запрос на БД / S3)    │         │    Sync & Self-Heal  │            │ Локальная инфраструктура│
+└────────────────────────┘         └──────────────────────┘            │ Bare-Metal / K8s Fleet /│
+                                                                       │ Patroni / Ceph / Vault  │
+Поток данных и жизненный цикл:                                         └─────────────────────────┘
+1. Коммит Claim в Git прикладного репозитория.
+2. GitOps-контроллер обнаруживает коммит и применяет Claim в продуктовый namespace кластера.
+3. Crossplane связывает Claim с кластерным Composite Resource (XR).
+4. Composition Pipeline разворачивает набор Managed Resources (MR).
+5. Провайдер подключается по внутренней сети к целевой системе и выполняет настройку.
+6. Провайдер генерирует Connection Secret в namespace приложения; статус поднимается до Claim (`Ready: True`).
 ```
-
-Шаги на схеме:
-1. Коммит Claim (или XRD/Composition) в соответствующий Git-репозиторий.
-2. GitOps-инструмент обнаруживает изменение и применяет манифест в кластер (`kubectl apply` под капотом).
-3. Контроллер Crossplane замечает новый объект и начинает цикл сверки: для Claim создаётся XR, по Composition — набор MR, провайдер вызывает API облака.
-4. Облачный ресурс provisioning'ится; статус поднимается по цепочке MR → XR → Claim (`status.conditions[].type: Ready`).
 
 ### Роли: Crossplane против GitOps-инструмента
 
-Инструменты не конкурируют, а дополняют друг друга, разделяя ответственность:
+Инструменты дополняют друг друга, решая непересекающиеся задачи:
 
-*   **GitOps-инструмент** отвечает только за *доставку* объектов в Kubernetes (из Git/OCI в кластер) и защиту от ручных правок манифестов в кластере. Он не знает семантики Crossplane и не взаимодействует с облаком.
-*   **Crossplane** отвечает за *приведение облака* в соответствие с манифестами и поддержание этого состояния (reconcile, drift detection на стороне облака). Он не доставляет манифесты из Git.
-
-Crossplane при этом **GitOps-агностичен**: в качестве доставщика манифестов подходит любой pull-based контроллер (Argo CD, Flux,甚至 простой `kubectl apply` в CI — но тогда теряется self-heal/prune).
-
-### Поддерживаемые инструменты
-
-| Инструмент | Преимущества в связке с Crossplane | Рекомендация |
+| Критерий | GitOps-контроллер (Argo CD / Flux) | Crossplane |
 | :--- | :--- | :--- |
-| **Argo CD** | Отличная визуализация иерархии ресурсов (Claim → XR → MR) в UI и дереве приложения. Нативная поддержка `ApplicationSet` для мульти-окружений и мульти-кластеров. Кастомные Lua health checks для CRD Crossplane. | Для централизованных Control Plane с UI, multi-tenant и сложными политиками. |
-| **Flux** | Нативная поддержка OCI-репозиториев (Crossplane Packages доставляются как OCI-артефакты). Встроенное прозрачное расшифровывание **SOPS**. Лучшее масштабирование на распределённые системы и Edge-кластеры (контроллеры шардируются). | Для распределённых систем, edge, «gitless» GitOps через OCI, когда UI не критичен. |
+| **Зона ответственности** | Доставка манифестов из Git/OCI в Kubernetes API | Приведение внешней инфраструктуры к состоянию манифестов K8s |
+| **Управление дрейфом** | Сверяет состояние объектов в etcd кластера с Git | Сверяет реальные объекты в инфраструктуре с состоянием в etcd |
+| **Реакция на вмешательство** | Перезаписывает измененный манифест в кластере (`selfHeal`) | Перенастраивает параметры целевого сервиса по сети |
+| **Осведомленность о сервисах**| Не знает семантики СУБД, бакетов или гипервизоров | Реализует протоколы конкретных провайдеров (SQL, S3 API, SSH/API) |
 
-Оба инструмента используют идентичную pull-модель и корректно работают с CRD Crossplane (включая owner references, по которым удаляются зависимые MR при удалении Claim).
+Crossplane **GitOps-агностичен**: в качестве доставщика манифестов подходит любой pull-контроллер. Доставка через CI (`kubectl apply` в push-модели) не рекомендуется, так как лишает платформу автоматического восстановления при дрейфе (`selfHeal`) и очистки удаленных ресурсов (`prune`).
 
-## Управление секретами
+### Сравнение GitOps-контроллеров: Argo CD и Flux в On-Premise
 
-В GitOps-процессе секреты (пароли БД, ключи доступа облака) не должны храниться в Git в открытом виде. Для Crossplane типичны две задачи: (а) как **безопасно передать облачные креды в `ProviderConfig`** и (б) как **распространить сгенерированные Crossplane connection-секреты** дальше по платформе.
+| Параметр | Argo CD | Flux |
+| :--- | :--- | :--- |
+| **Визуализация и UI** | Наглядное дерево зависимостей `Application` (Claim → XR → MR). Визуализация статусов условий готовности (`Ready`, `Synced`). | UI отсутствует из коробки (сторонний Weave GitOps). Управление преимущественно через CLI `flux`. |
+| **Мультикластерность** | `ApplicationSet` с генераторами `cluster`, `git`, `list`, `pullRequest` для централизованного управления парком кластеров. | Архитектура pull-агентов на каждом кластере (`flux-system`), высокая автономность edge-узлов. |
+| **Работа с OCI** | Поддержка Helm-чартов и Kustomize из OCI-реестров. | Нативная поддержка OCI-артефактов первого класса (`OCIRepository`), идеальная связка с пакетами Crossplane. |
+| **Расшифровка секретов** | Требует настройки Config Management Plugins (CMP) или интеграции с внешними операторами (ESO). | Встроенное нативное расшифровывание **SOPS** без внешних плагинов (`decryption.provider: sops`). |
+| **Кастомные Health Checks** | Поддержка Lua-скриптов в `argocd-cm` для вычисления статуса здоровья CRD Crossplane. | Встроенная поддержка `healthChecks` по стандартным условиям `Ready` в объектах Kustomization. |
+| **Рекомендация для On-Premise** | Корпоративные Control Plane кластеры с выделенной командой SRE и многопользовательским доступом. | Изолированные, распределенные или air-gapped кластеры без центрального UI. |
 
-Общую настройку SOPS/ESO см. в [Шифрование секретов в GitOps](../secrets_encryption.md).
+### Управление секретами: ESO и SOPS в изолированном контуре
 
-### External Secrets Operator (ESO) + HashiCorp Vault
+В GitOps-процессе пароли и токены подключения к инфраструктуре запрещено хранить в Git в открытом виде. В контексте Crossplane решаются две задачи:
+1. **Безопасная доставка реквизитов подключения к инфраструктуре в `ProviderConfig`** (входные секреты).
+2. **Маршрутизация сгенерированных Crossplane реквизитов доступа к созданным базам и сервисам** (выходные Connection Secrets).
 
-ESO предоставляет два направления синхронизации, и их важно не путать:
+Общую теорию и методы ротации см. в [GitOps: Управление секретами и шифрование](../secrets_encryption.md).
 
-**Паттерн A — `ExternalSecret` (pull, «внутрь»):** облачные креды хранятся в Vault, ESO вытягивает их в Kubernetes Secret, на который ссылается `ProviderConfig`. Это исключает коммит ключей облака в Git.
+#### Паттерн 1: External Secrets Operator (ESO) + HashiCorp Vault
+
+Рекомендуемый подход для корпоративной on-premise инфраструктуры:
+- **Входные креды:** Административные пароли СУБД, токены гипервизоров и сервисных аккаунтов хранятся в корпоративном Vault. ESO через `ClusterSecretStore` доставляет их в Secret неймспейса `crossplane-system`, откуда их читает `ProviderConfig`.
+- **Выходные креды:** Crossplane сохраняет созданные пароли в локальный Secret через `writeConnectionSecretToRef`. Объект `PushSecret` оператора ESO переносит эти данные обратно в Vault (путь `secret/data/apps/<app-name>/db`), откуда их могут забирать внешние системы или другие кластеры.
 
 ```yaml
 apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: vault-backend
+spec:
+  provider:
+    vault:
+      server: "https://vault.internal.corp:8200"
+      path: "secret"
+      version: "v2"
+      auth:
+        kubernetes:
+          mountPath: "kubernetes"
+          role: "crossplane-provider"
+          serviceAccountRef:
+            name: crossplane-provider-sa
+            namespace: crossplane-system
+---
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: yc-provider-creds
+  name: postgres-admin-credentials
   namespace: crossplane-system
 spec:
   refreshInterval: 1h
@@ -97,204 +145,327 @@ spec:
     name: vault-backend
     kind: ClusterSecretStore
   target:
-    name: yc-creds
+    name: postgres-admin-creds
     creationPolicy: Owner
   data:
-    - secretKey: credentials
+    - secretKey: password
       remoteRef:
-        key: secret/data/crossplane/yandex
-        property: credentials   # поле в Vault, содержащее JSON сервисного аккаунта
+        key: infrastructure/database/patroni
+        property: superuser_password
+```
+
+#### Паттерн 2: Mozilla SOPS с асимметричными ключами age
+
+Для контуров без выделенного Vault применяется шифрование файлов манифестов перед коммитом в Git с помощью утилиты `sops` и открытых ключей `age`.
+- Приватный ключ `age` монтируется в контроллер GitOps (Flux Kustomize Controller или плагин Argo CD repo-server).
+- Контроллер расшифровывает манифест в оперативной памяти перед отправкой в Kubernetes API; в etcd и Git секреты хранятся в защищенном виде.
+
+### Жизненный цикл и политики удаления: Delete против Orphan
+
+Критический аспект SRE-эксплуатации Crossplane через GitOps — управление удалением ресурсов при удалении манифестов из репозитория:
+
+- **`deletionPolicy: Delete` (по умолчанию)** — при удалении манифеста Claim или MR из Git, GitOps-инструмент удаляет объект из кластера, после чего контроллер провайдера выполняет физическое удаление ресурса на внешнем сервере (`DROP DATABASE`, удаление виртуальной машины или бакета).
+- **`deletionPolicy: Orphan`** — при удалении объекта из кластера Crossplane снимает финализаторы и удаляет объект из Kubernetes API, но оставляет физический ресурс на внешнем сервере нетронутым.
+
+> [!WARNING]
+> В продуктивных средах для stateful-ресурсов (базы данных, дисковые тома, постоянные хранилища) в Compositions **обязательно** задается `deletionPolicy: Orphan` либо в Argo CD включается аннотация `argocd.argoproj.io/sync-options: Prune=false`. Случайный коммит с удалением файла Claim или удаление ветки в Git не должны приводить к физическому уничтожению корпоративных данных.
+
+Для поэтапного подключения существующей инфраструктуры в Crossplane v2.x используется `managementPolicies`:
+- `["ObserveOnly"]` — Crossplane только считывает текущие параметры ресурса, не изменяя их и не удаляя при очистке.
+- `["Create", "Update", "Observe"]` — создание и поддержка без возможности удаления внешнего объекта.
+- `["*"]` — полный контроль жизненного цикла.
+
 ---
-apiVersion: yandex.cloud/v1alpha1
-kind: ProviderConfig
-metadata:
-  name: default
-spec:
-  credentials:
-    source: Secret
-    secretRef:
-      namespace: crossplane-system
-      name: yc-creds
-      key: credentials
-```
-
-**Паттерн B — `PushSecret` (push, «наружу»):** когда Crossplane создаёт БД, он пишет учётные данные в Kubernetes Secret через `writeConnectionSecretToRef`. `PushSecret` переносит этот секрет в Vault, чтобы другие приложения/команды могли забрать его оттуда централизованно.
-
-```yaml
-apiVersion: external-secrets.io/v1alpha1
-kind: PushSecret
-metadata:
-  name: db-conn-to-vault
-  namespace: production
-spec:
-  refreshInterval: 10s
-  secretStoreRefs:
-    - name: vault-backend
-      kind: ClusterSecretStore
-  selector:
-    secret:
-      name: db-conn-secret   # создан Crossplane через writeConnectionSecretToRef у Claim
-  data:
-    - match:
-        remoteRef:
-          remoteKey: secret/data/apps/inventory-db
-          property: password
-```
-
-*Плюс подхода:* централизованное хранение, ротация и аудит секретов в Vault; Git остаётся свободным от кредов.
-
-### Mozilla SOPS
-
-Конфиденциальные манифесты (например, `ProviderConfig` с API-ключами, либо сам `ExternalSecret`/`Secret` с ключом) шифруются в Git, а контроллер расшифровывает их «на лету» перед применением.
-
-*   **Flux:** поддерживает SOPS нативно. Нужен age-ключ в Secret `sops-age` в неймспейсе Flux, и блок `decryption: { provider: sops }` в `Kustomization` (пример — в Сценарии 5).
-*   **Argo CD:** нативного расшифровывания нет; используется Config Management Plugin (CMP) с `helm-secrets`/`kustomize-sops` либо [kustomize](https://github.com/bitnami-labs/sealed-secrets) в связке с `argocd-cm`. Ключ SOPS монтируется в `argocd-repo-server`.
-
-```yaml
-# providerconfig-yc-encrypted.yaml — этот файл лежит в Git уже зашифрованным (sops)
-apiVersion: yandex.cloud/v1alpha1
-kind: ProviderConfig
-metadata:
-  name: default
-spec:
-  credentials:
-    source: Secret
-    secretRef:
-      namespace: crossplane-system
-      name: yc-creds
-      key: credentials
-```
-
-*Плюс:* простота, секреты хранятся рядом с кодом в зашифрованном виде, проверяются в CI тем же ключом.
 
 ## Практические сценарии
 
 ### Предварительные требования
 
-*   Kubernetes-кластер (Management Cluster), к которому есть доступ через `kubectl`.
-*   **Crossplane v2.x** (актуально на 2026 год — v2.4), установленный в неймспейсе `crossplane-system`. Установку и концепции см. в [Crossplane: Обзор](./overview.md).
-*   Установленный провайдер (например, [Yandex Cloud](./provider_yandex_cloud_setup.md)) с готовым `ProviderConfig`.
-*   GitOps-инструмент: **Argo CD v2.12+ (или v3.x)** либо **Flux v2.x** (OCI/SOPS — GA).
-*   CLI: `crossplane` (для `render`/`validate`), `kubectl`, `kubeconform` (опционально для CI).
-*   Git-репозитории: платформенный (XRD/Composition/ProviderConfig) и потребительский (Claims).
+Перед началом работы убедитесь в готовности компонентов:
 
-> Замечание: XRD `PostgreSQLInstance` и соответствующая `Composition` с метками `provider: yandex-cloud, tier: production` из Сценария 1 должны уже быть применены из платформенного репозитория, иначе Claim останется `unknown`.
+| Компонент | Минимальная версия | Назначение в On-Premise инфраструктуре |
+| :--- | :--- | :--- |
+| **Kubernetes** | v1.28–v1.32+ | Управляющий кластер (Management Cluster, bare-metal / VM) |
+| **Crossplane** | v2.4+ (ветка v2.x) | Ядро Control Plane ([Crossplane: Обзор](./overview.md)) |
+| **Провайдеры** | `provider-sql` v0.9+, `provider-kubernetes` v1.3+ | Управление СУБД ([provider-kubernetes](./provider_kubernetes_setup.md)) |
+| **GitOps-инструмент** | Argo CD v2.12+ / v3.5+ или Flux v2.x | Контроллер непрерывной доставки из Git |
+| **Хранилище секретов** | HashiCorp Vault v1.15+ или SOPS (age) | Безопасная передача учетных данных |
+| **OCI-реестр** | Harbor v2.8+ / GitLab Registry | Локальный реестр для пакетов провайдеров и Configuration |
+| **CLI-утилиты** | `crossplane`, `kubectl`, `argocd`, `flux` | Управление и локальное тестирование манифестов |
 
-### Сценарий 1: Argo CD + Crossplane Claim (рекомендуемый подход)
+### Сценарий 1: Argo CD + Crossplane Claim для корпоративной СУБД (provider-sql)
 
-Вместо управления низкоуровневыми ресурсами разработчики коммитят абстрактный `Claim`.
+Разработчики описывают абстрактный запрос на базу данных PostgreSQL, размещенную на существующем корпоративном HA-кластере Patroni / PostgreSQL.
 
-1.  **Создание Claim в Git (App repo):**
-
-    ```yaml
-    apiVersion: database.example.org/v1alpha1
-    kind: PostgreSQLInstance
-    metadata:
-      name: inventory-db
-      namespace: production
-    spec:
-      parameters:
-        storageGB: 20
-        version: "15"
-      compositionSelector:
-        matchLabels:
-          provider: yandex-cloud
-          tier: production
-      writeConnectionSecretToRef:
-        name: db-conn-secret
-    ```
-
-2.  **Настройка Argo CD Application:**
-
-    ```yaml
-    apiVersion: argoproj.io/v1alpha1
-    kind: Application
-    metadata:
-      name: app-infrastructure
-      namespace: argocd
-    spec:
-      project: default
-      source:
-        repoURL: https://github.com/org/app-infra-gitops.git
-        targetRevision: main
-        path: infrastructure/production
-      destination:
-        server: https://kubernetes.default.svc
-        namespace: production
-      syncPolicy:
-        automated:
-          prune: true
-          selfHeal: true   # автоматическое исправление дрейфа в кластере
-    ```
-
-3.  **Проверка результата:**
-
-    ```bash
-    kubectl get claim,inventorydb.postgresql.example.org -n production
-    # → NAME                                  READY  CONNECTION-SECRET
-    #   postgresqlinstance.database.inventory-db  True   db-conn-secret
-
-    kubectl get compositeresourcedefinition,xr,managed -n production 2>/dev/null | head
-    # → иерархия Claim -> XR -> (набор) MR
-
-    argocd app get app-infrastructure
-    # → STATUS: Healthy | SYNC STATUS: Synced
-    ```
-
-### Сценарий 2: Масштабирование через ApplicationSet
-
-Для управления множеством окружений (dev, staging, prod) или кластеров используются генераторы `ApplicationSet`. `list` — самый простой; в проде чаще применяют `cluster` (по секретам кластеров в Argo CD) или `git`/`scmProvider` (по структуре репозитория).
+#### 1. Платформенный слой: ProviderConfig для подключения к СУБД
 
 ```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: ApplicationSet
+# platform/providers/postgres-providerconfig.yaml
+apiVersion: postgresql.sql.crossplane.io/v1alpha1
+kind: ProviderConfig
 metadata:
-  name: platform-stacks
-  namespace: argocd
+  name: patroni-ha-cluster
 spec:
-  generators:
-    - list:
-        elements:
-          - env: dev
-            cluster: https://kubernetes.default.svc
-          - env: prod
-            cluster: https://prod-cluster.example.com
-  template:
-    metadata:
-      name: '{{env}}-stack'
-    spec:
-      project: default
-      source:
-        repoURL: https://github.com/org/platform-manifests.git
-        targetRevision: main
-        path: 'stacks/{{env}}'
-      destination:
-        server: '{{cluster}}'
-        namespace: crossplane-system
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: postgres-admin-creds
+      key: password
+  sslMode: require
+  endpoint: patroni-pooler.internal.corp
+  port: 5432
+  database: postgres
+  username: postgres_admin
 ```
 
-### Сценарий 3: Динамические окружения (Review Apps)
-
-Связка ApplicationSet + Crossplane позволяет автоматически создавать полные стеки (приложение + БД + S3) для каждой ветки разработчика. Подробное пошаговое руководство с GitLab CI и `scmProvider`-генератором: **[Argo CD: Динамические окружения с Crossplane](../ArgoCD/dynamic_environments_crossplane.md)**.
-
-### Сценарий 4: Bootstrap — установка Crossplane и провайдеров через GitOps
-
-Прежде чем применять Claims, сам Crossplane и провайдеры должны попасть в кластер. Их тоже доставляет GitOps, причём провайдеры/конфигурации — как OCI-пакеты.
-
-**Вариант A — Argo CD (Helm + Kustomize):**
+#### 2. Платформенный слой: XRD и Composition (PostgreSQL Database)
 
 ```yaml
+# platform/definitions/xrd-postgres.yaml
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xpostgresqlinstances.database.internal.corp
+spec:
+  group: database.internal.corp
+  names:
+    kind: XPostgreSQLInstance
+    plural: xpostgresqlinstances
+  claimNames:
+    kind: PostgreSQLInstance
+    plural: postgresqlinstances
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                parameters:
+                  type: object
+                  properties:
+                    databaseName:
+                      type: string
+                    encoding:
+                      type: string
+                      default: "UTF8"
+                  required:
+                    - databaseName
+              required:
+                - parameters
+---
+# platform/compositions/composition-postgres.yaml
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: postgres-database-patroni
+  labels:
+    provider: sql
+    engine: postgres
+spec:
+  compositeTypeRef:
+    apiVersion: database.internal.corp/v1alpha1
+    kind: XPostgreSQLInstance
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-auto-ready
+    - step: create-database
+      functionRef:
+        name: function-kcl
+      input:
+        apiVersion: kcl.fn.crossplane.io/v1beta1
+        kind: KCLInput
+        spec:
+          source: |
+            oxr = option("params").oxr
+            dxr = option("params").dxr
+            db_name = oxr.spec.parameters.databaseName
+            
+            items = [
+              {
+                apiVersion = "postgresql.sql.crossplane.io/v1alpha1"
+                kind = "Database"
+                metadata = {
+                  name = db_name
+                  annotations = {
+                    "crossplane.io/external-name" = db_name
+                  }
+                }
+                spec = {
+                  deletionPolicy = "Orphan"
+                  forProvider = {
+                    encoding = oxr.spec.parameters.encoding
+                  }
+                  providerConfigRef = {
+                    name = "patroni-ha-cluster"
+                  }
+                }
+              }
+            ]
+```
+
+#### 3. Прикладной слой: Claim в Git-репозитории команды разработки
+
+```yaml
+# app-repo/infrastructure/production/database-claim.yaml
+apiVersion: database.internal.corp/v1alpha1
+kind: PostgreSQLInstance
+metadata:
+  name: billing-db
+  namespace: billing-production
+spec:
+  parameters:
+    databaseName: billing_prod
+    encoding: "UTF8"
+  compositionSelector:
+    matchLabels:
+      provider: sql
+      engine: postgres
+  writeConnectionSecretToRef:
+    name: billing-db-conn
+```
+
+#### 4. Настройка Argo CD Application
+
+```yaml
+# platform/argocd/apps/billing-infrastructure.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: crossplane-platform
+  name: billing-infrastructure
   namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:
-    repoURL: https://github.com/org/platform-repo.git
+    repoURL: https://gitlab.internal.corp/apps/billing-service.git
     targetRevision: main
-    path: crossplane
+    path: infrastructure/production
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: billing-production
+  syncPolicy:
+    automated:
+      prune: false              # Защита от случайного удаления stateful-ресурсов
+      selfHeal: true           # Автоисправление локального дрейфа в K8s
+    syncOptions:
+      - CreateNamespace=true
+      - RespectIgnoreDifferences=true
+```
+
+#### 5. Проверка состояния
+
+```bash
+kubectl get claim,xpostgresqlinstances,database.postgresql.sql.crossplane.io -n billing-production
+# → NAME                                                   READY   CONNECTION-SECRET   AGE
+#   postgresqlinstance.database.internal.corp/billing-db   True    billing-db-conn     42s
+#   
+#   NAME                                                    READY   COMPOSITION                  AGE
+#   xpostgresqlinstance.database.internal.corp/billing-db   True    postgres-database-patroni    45s
+#   
+#   NAME                                                    READY   SYNCED   AGE
+#   database.postgresql.sql.crossplane.io/billing_prod      True    True     38s
+
+argocd app get billing-infrastructure
+# → Name:               argocd/billing-infrastructure
+#   Project:            default
+#   Server:             https://kubernetes.default.svc
+#   Namespace:          billing-production
+#   Status:             Healthy
+#   Health:             Healthy
+```
+
+---
+
+### Сценарий 2: Мультикластерное масштабирование через ApplicationSet (On-Premise Fleet)
+
+Для развертывания типовых наборов инфраструктурных компонентов и провайдеров Crossplane по всему парку внутренних кластеров используется `ApplicationSet` с кластерным генератором:
+
+```yaml
+# platform/argocd/applicationsets/fleet-crossplane-providers.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: fleet-crossplane-providers
+  namespace: argocd
+spec:
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            environment: production
+            managed-by: platform-team
+  template:
+    metadata:
+      name: 'crossplane-providers-{{name}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://gitlab.internal.corp/platform/fleet-configuration.git
+        targetRevision: main
+        path: bundles/core-providers
+      destination:
+        server: '{{server}}'
+        namespace: crossplane-system
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - ServerSideApply=true
+```
+
+Каждый целевой кластер получает идентичный набор проверенных пакетов провайдеров (`provider-kubernetes`, `provider-sql`), а параметры подключения передаются через аннотации секрета кластера в Argo CD.
+
+---
+
+### Сценарий 3: Динамические окружения (Review Apps) с локальными ресурсами
+
+Паттерн автоматического выделения временных баз данных, схем и пространств имен для каждого Merge Request в GitLab CI:
+- Генератор ApplicationSet `pullRequest` опрашивает локальный GitLab.
+- Создается namespace `preview-mr-<id>`, куда доставляется Claim на выделенную базу данных.
+- Crossplane через `provider-sql` создает изолированную БД за 2–3 секунды на существующем Patroni-кластере без развертывания тяжелых виртуальных машин.
+- При закрытии MR ветка удаляется, ApplicationSet удаляет приложение, а финализатор Crossplane корректно освобождает базу данных.
+
+Подробное пошаговое руководство с GitLab CI, скриптами очистки и сетевыми политиками см. в [Argo CD: Динамические окружения с Crossplane](../ArgoCD/dynamic_environments_crossplane.md).
+
+---
+
+### Сценарий 4: Bootstrap платформы — установка Crossplane, провайдеров и функций через GitOps
+
+Для развертывания Control Plane с нуля используется фазирование через GitOps:
+
+#### Вариант A: Развертывание через Argo CD с использованием Sync Waves
+
+Манифесты платформенного репозитория организуются с аннотациями `argocd.argoproj.io/sync-wave`:
+
+```yaml
+# 1. Волна -1: HelmRelease Crossplane Core
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crossplane-core
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  source:
+    repoURL: https://charts.crossplane.io/stable
+    chart: crossplane
+    targetRevision: 2.4.0
+    helm:
+      values: |
+        args:
+          - --enable-composition-functions
   destination:
     server: https://kubernetes.default.svc
     namespace: crossplane-system
@@ -302,23 +473,47 @@ spec:
     automated:
       prune: true
       selfHeal: true
-```
-
-В `platform-repo/crossplane/` лежат: `Provider` (тянут пакет из OCI) и `Configuration` (композиции упакованы в OCI) + `ProviderConfig`.
-
-```yaml
-# crossplane/provider-yandex.yaml — установка провайдера как OCI-пакета
+---
+# 2. Волна 0: Провайдеры и функции из локального OCI Harbor
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
-  name: provider-yandex-cloud
+  name: provider-sql
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
 spec:
-  package: xpkg.upbound.io/yandexcloud/crossplane-provider-yc:v0.14.1
-  # packagePullSecrets:                # если реестр приватный
-  #   - name: registry-pull-secret
+  package: harbor.internal.corp/crossplane/provider-sql:v0.9.0
+  packagePullSecrets:
+    - name: harbor-pull-secret
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-kcl
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  package: harbor.internal.corp/crossplane/function-kcl:v0.9.0
+  packagePullSecrets:
+    - name: harbor-pull-secret
+---
+# 3. Волна 1: ProviderConfig и ClusterSecretStore (применяются после регистрации CRD провайдером)
+apiVersion: postgresql.sql.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: patroni-ha-cluster
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: postgres-admin-creds
+      key: password
 ```
 
-**Вариант B — Flux (HelmRepository + HelmRelease + Kustomization):**
+#### Вариант B: Развертывание через Flux с графом зависимостей `dependsOn`
 
 ```yaml
 apiVersion: source.toolkit.fluxcd.io/v1
@@ -327,7 +522,7 @@ metadata:
   name: crossplane-stable
   namespace: flux-system
 spec:
-  interval: 1h
+  interval: 2h
   url: https://charts.crossplane.io/stable
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
@@ -336,7 +531,7 @@ metadata:
   name: crossplane
   namespace: flux-system
 spec:
-  interval: 30m
+  interval: 1h
   chart:
     spec:
       chart: crossplane
@@ -348,56 +543,61 @@ spec:
   install:
     createNamespace: true
   values:
-    args: ["--enable-composition-functions"]
+    args:
+      - --enable-composition-functions
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: crossplane-platform
+  name: crossplane-providers
   namespace: flux-system
 spec:
   interval: 10m
-  path: "./platform/crossplane"
+  path: "./platform/providers"
   prune: true
   sourceRef:
     kind: GitRepository
     name: cluster-config
   dependsOn:
-    - name: crossplane          # сначала поднимается Crossplane, затем платформенные манифесты
+    - name: crossplane
+  healthChecks:
+    - apiVersion: pkg.crossplane.io/v1
+      kind: Provider
+      name: provider-sql
 ```
-
-Применение и проверка:
 
 ```bash
-flux get kustomization crossplane-platform
-# → NAME                  READY  STATUS
-#   crossplane-platform   True   Applied revision main@sha1...
+flux get kustomization crossplane-providers
+# → NAME                 READY   STATUS
+#   crossplane-providers True    Applied revision: main@sha1:e3f19c4d...
 
-kubectl get providers
-# → NAME                    INSTALLED  HEALTHY  PACKAGE
-#   provider-yandex-cloud   True       True     xpkg.crossplane.io/.../v0.11.0
+kubectl get providers.pkg.crossplane.io
+# → NAME                 INSTALLED   HEALTHY   PACKAGE                                           AGE
+#   provider-sql         True        True      harbor.internal.corp/crossplane/provider-sql:v0.9.0 3m
 ```
 
-### Сценарий 5: Flux + Crossplane — OCI-пакеты, SOPS и Kustomization
+---
 
-Полный пример потребительского слоя на Flux: Claims доставляются из Git с прозрачной расшифровкой SOPS, а платформенные композиции — как OCI Configuration-пакет.
+### Сценарий 5: Flux + Crossplane — OCI-артефакты, SOPS и Kustomization
+
+В закрытых корпоративных сетях (air-gapped) манифесты Claim шифруются утилитой SOPS, а платформенные Compositions упаковываются в OCI Configuration:
 
 ```yaml
-# 1) Платформа ссылается на Configuration-пакет в OCI (XRD/Composition внутри образа)
+# 1. Платформа ссылается на локальный OCI Configuration
 apiVersion: pkg.crossplane.io/v1
 kind: Configuration
 metadata:
-  name: platform-postgres
+  name: platform-onprem-database
 spec:
-  package: oci://ghcr.io/org/crossplane-platform:v1.2.3
-  # packagePullSecrets:
-  #   - name: registry-pull
+  package: harbor.internal.corp/crossplane-configurations/postgres:v1.4.0
+  packagePullSecrets:
+    - name: harbor-pull-secret
 ---
-# 2) Kustomization доставляет Claims и расшифровывает SOPS
+# 2. Kustomization доставляет зашифрованные Claim
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: app-claims
+  name: billing-claims
   namespace: flux-system
 spec:
   interval: 5m
@@ -406,175 +606,291 @@ spec:
   decryption:
     provider: sops
     secretRef:
-      name: sops-age          # age-ключ SOPS в неймспейсе flux-system
+      name: sops-age-key
   sourceRef:
     kind: GitRepository
-    name: app-config
-  healthChecks:              # Flux дождётся готовности CRD Crossplane
-    - apiVersion: database.example.org/v1alpha1
+    name: billing-infra-repo
+  healthChecks:
+    - apiVersion: database.internal.corp/v1alpha1
       kind: PostgreSQLInstance
-      name: inventory-db
-      namespace: production
+      name: billing-db
+      namespace: billing-production
 ```
 
 ```bash
-flux get kustomization app-claims
-# → NAME         READY  STATUS
-#   app-claims    True   Applied revision main@sha1...
+flux reconcile kustomization billing-claims --with-source
+# → ► fetching secret: flux-system/sops-age-key
+#   ► decrypting 1 file(s) using sops
+#   ✔ Kustomization reconciled successfully
 
-kubectl get postgresqlinstance -n production
-# → NAME           READY  CONNECTION-SECRET
-#   inventory-db   True   db-conn-secret
+kubectl get postgresqlinstances.database.internal.corp -n billing-production
+# → NAME         READY   CONNECTION-SECRET   AGE
+#   billing-db   True    billing-db-conn     1m
 ```
 
-> Альтернатива «gitless» GitOps: упакуйте сами манифесты Claims/Kustomization в OCI (`flux push artifact oci://...`) и применяйте через `OCIRepository` + `Kustomization` с `sourceRef.kind: OCIRepository`. Подробнее: Flux OCI cheatsheet (ссылка в «Внешних ресурсах»).
+---
 
-### Сценарий 6: Публикация Configuration-пакета в OCI-реестр
+### Сценарий 6: Сборка и публикация Configuration-пакета в локальный OCI-реестр (Harbor)
 
-Вместо хранения сырых YAML-файлов композиций в Git, их упаковывают в **Crossplane Configuration Package** и публикуют в OCI-реестр. Это даёт версионирование инфраструктурных модулей, как у Helm-чартов, и позволяет Flux/Argo CD отслеживать новые версии.
+Платформенные инженеры версионируют Compositions и XRD как OCI-образы. Структура директории `platform-pkg/`:
+- `crossplane.yaml` — метаданные пакета и зависимости от провайдеров.
+- `definition.yaml` — XRD.
+- `composition.yaml` — Composition Pipeline.
 
 ```bash
-# 1) Сборка пакета (требуется crossplane CLI; корень — crossplane.yaml + Composition/XRD)
-crossplane xpkg build --package-root ./platform --package-file platform.xpkg
-# → built package platform.xpkg
+# 1. Сборка пакета с помощью Crossplane CLI
+crossplane xpkg build \
+  --package-root ./platform-pkg \
+  --package-file postgres-package.xpkg
+# → built package postgres-package.xpkg
 
-# 2) Публикация в реестр (пакет — это OCI-образ)
-crossplane xpkg push platform.xpkg oci://ghcr.io/org/crossplane-platform:v1.2.3
-# → pushed ghcr.io/org/crossplane-platform:v1.2.3
+# 2. Аутентификация и публикация в корпоративный Harbor
+docker login harbor.internal.corp -u platform-bot -p $HARBOR_ROBOT_SECRET
+# → Login Succeeded
 
-# 3) В кластере Configuration ссылается на тег; при появлении новой версии Crossplane
-#    создаёт новую ревизию и (по revisionActivationPolicy) активирует её
-kubectl get configurationrevisions
-# → NAME                            HEALTHY  REVISION  IMAGE
-#   platform-postgres-v1.2.3        True     1         ghcr.io/org/crossplane-platform:v1.2.3
+crossplane xpkg push \
+  postgres-package.xpkg \
+  harbor.internal.corp/crossplane-configurations/postgres:v1.4.0
+# → pushed harbor.internal.corp/crossplane-configurations/postgres:v1.4.0
+
+# 3. Проверка активации ревизии в кластере
+kubectl get configurationrevisions.pkg.crossplane.io
+# → NAME                                HEALTHY   REVISION   IMAGE
+#   platform-onprem-database-a7b4c81    True      1          harbor.internal.corp/crossplane-configurations/postgres:v1.4.0
 ```
 
-Для приватного реестра создайте `packagePullSecrets` (Secret типа `dockerconfigjson`) в неймспейсе Crossplane и укажите его в `spec.packagePullSecrets` объекта `Configuration`/`Provider`.
+---
 
-## Передовые практики (2026)
+## Операции и команды
 
-### Валидация в CI (Pre-flight checks)
+Сводка команд для повседневной эксплуатации и диагностики связки Crossplane и GitOps-контроллеров:
 
-Перед синхронизацией манифестов в кластер их проверяют локально, чтобы не ломать прод через невалидную композицию:
+| Область | Команда | Назначение |
+| :--- | :--- | :--- |
+| **Crossplane CLI** | `crossplane render <claim.yaml> <comp.yaml> <funcs.yaml>` | Локальный пре-рендер Composition без обращения к кластеру K8s |
+| **Crossplane CLI** | `crossplane beta validate <xrd.yaml> <comp.yaml>` | Проверка валидности схем XRD и связей Compositions |
+| **Crossplane CLI** | `crossplane beta trace <claim-kind> <name> -n <ns>` | Построение полного дерева от Claim до XR и всех дочерних MR |
+| **Argo CD CLI** | `argocd app diff <app-name>` | Проверка расхождения манифестов в кластере с Git |
+| **Argo CD CLI** | `argocd app sync <app-name> --force --prune` | Принудительная ручная синхронизация приложения |
+| **Flux CLI** | `flux reconcile kustomization <name> --with-source` | Немедленный опрос Git и повторное применение Kustomization |
+| **Flux CLI** | `flux trace <resource-kind> <name> -n <ns>` | Трассировка источника доставки объекта в кластер |
+| **Kubectl** | `kubectl get claim,composite,managed -A` | Общий просмотр всех ресурсов Crossplane во всех namespaces |
+| **Kubectl** | `kubectl describe providerconfig <name>` | Диагностика статуса соединения провайдера с целевой инфраструктурой |
+
+### Практические примеры выполнения команд
 
 ```bash
-# Локальный рендер композиции — что именно создаст Crossplane из Claim
-crossplane render --xrd ../xrd.yaml --composition ../composition.yaml --resources ./claim.yaml
-# → вывод итоговых Managed Resources (MR), включая projected connection secret
+# Трассировка графа ресурсов для проблемного Claim
+crossplane beta trace postgresqlinstance billing-db -n billing-production
+# → NAME                                                  SYNCED   READY   STATUS
+#   PostgreSQLInstance/billing-db (billing-production)   True     True    Available
+#   └─ XPostgreSQLInstance/billing-db-7d84f               True     True    Available
+#      └─ Database/billing_prod                           True     True    Available
 
-# Валидация по схемам CRD и политикам (если подключён провайдер политик)
-crossplane beta validate --xrd ../xrd.yaml --composition ../composition.yaml --resources ./claim.yaml
-# → VALID: Composition is valid
+# Проверка расхождения (дрейфа) манифестов в Argo CD
+argocd app diff billing-infrastructure
+# → ===== postgresql.sql.crossplane.io/Database billing-production/billing_prod ======
+#   < unchanged >
 
-# Валидация всего Kustomize/YAML перед синком (без кластера)
-kubectl kustomize ./infra | kubeconform -strict -summary
-# → Summary: 12 resources validated
+# Проверка состояния провайдеров и их готовности
+kubectl get providers.pkg.crossplane.io
+# → NAME                  INSTALLED   HEALTHY   PACKAGE                                             AGE
+#   provider-kubernetes   True        True      harbor.internal.corp/crossplane/provider-k8s:v1.3.0  2d
+#   provider-sql          True        True      harbor.internal.corp/crossplane/provider-sql:v0.9.0  2d
 
-# Server-side dry-run (требует доступа к кластеру; ловит конфликты API)
-kubectl apply --dry-run=server -k ./infra
-# → configured / unchanged
+# Диагностика ProviderConfig
+kubectl describe providerconfig.postgresql.sql.crossplane.io patroni-ha-cluster
+# → Name:         patroni-ha-cluster
+#   API Version:  postgresql.sql.crossplane.io/v1alpha1
+#   Kind:         ProviderConfig
+#   Spec:
+#     Endpoint:  patroni-pooler.internal.corp
+#     Port:      5432
+#     Ssl Mode:  require
+#   Events:      <none>
 ```
 
-Дополнительно в CI применяют интеграционные тесты (kuttl) на ephemeral-кластере и `conftest`/Kyverno для политик (см. [Управление политиками через GitOps](../Concepts/gitops-policy-management.md)).
+---
 
-### Настройка Health Checks в Argo CD
+## Устранение неполадок
 
-Argo CD не имеет встроенных health-проверок для CRD Crossplane, поэтому Claim/XR будут вечно `Progressing`, пока не добавлена кастомная Lua-проверка. Её кладут в `resource.customizations.health.<group>_<kind>` ConfigMap `argocd-cm`:
+| Симптом | Вероятная причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| **Claim вечно в `Progressing` / `Unknown`** | Отсутствует подходящая `Composition` или не совпали метки `compositionSelector`. | `kubectl describe claim <name> -n <ns>` (искать `cannot find composite resource: no matching composition`). | Проверить соответствие `matchLabels` в Claim и меток в объектах `Composition`; применить манифесты Слоя 1. |
+| **Argo CD показывает постоянный `OutOfSync`** | Дрейф по системным полям `status.*`, аннотациям или late-initialized полям провайдера. | `argocd app diff <app-name>` покажет расхождения в поле `status` или `metadata`. | Настроить секцию `ignoreDifferences` в спецификации `Application` (см. «Лучшие практики»). |
+| **Ошибка синхронизации `SyncFailed` при первичном деплое** | Гонка зависимостей: Claim применился раньше, чем провайдер зарегистрировал CRD в API-сервере. | Логи Argo CD: `the server could not find the requested resource`. | Использовать Sync Waves (`sync-wave: "0"` для провайдеров, `sync-wave: "2"` для Claim) или Flux `dependsOn`. |
+| **Провайдер сообщает `connection refused` / `timeout`** | Сетевая изоляция: нет доступа из подов `crossplane-system` до эндпоинта СУБД/хоста. | `kubectl logs -n crossplane-system -l pkg.crossplane.io/provider=provider-sql --tail=50`. | Проверить NetworkPolicy, внутренние firewall-правила и DNS-резолвинг из кластера K8s до целевого сервиса. |
+| **Удаление Claim или Namespace зависает** | Финализатор Crossplane не может завершить очистку из-за недоступности внешней СУБД. | `kubectl get claim <name> -n <ns> -o yaml` (проверить блок `metadata.finalizers`). | Если сервис выведен из эксплуатации: переключить `spec.deletionPolicy: Orphan`, либо вручную очистить `finalizers` через `kubectl edit`. |
+| **Flux не расшифровывает SOPS-манифест** | Отсутствует Secret с age-ключом в неймспейсе `flux-system` или неверный публичный ключ. | `flux get kustomization <name>` (ошибка `age: no identity matched any of the recipients`). | Проверить наличие `sops-age-key` в `flux-system` и соответствие открытого ключа в файле `.sops.yaml`. |
+| **Пакет провайдера в статусе `Healthy: False`** | Ошибка авторизации в корпоративном реестре (Harbor) при скачивании OCI-образа. | `kubectl describe provider <name>` (искать `ImagePullBackOff` или `401 Unauthorized`). | Создать `Secret` с `dockerconfigjson` в `crossplane-system` и прописать его в `spec.packagePullSecrets` объекта `Provider`. |
+
+### Диагностика зависших финализаторов
+
+Когда внешний инфраструктурный сервер недоступен, а пространство имен приложения удаляется через GitOps, удаление блокируется финализатором Crossplane (`finalizer.managedresource.crossplane.io`):
+
+```bash
+# 1. Поиск зависшего Managed Resource
+kubectl get managed -n billing-production 2>/dev/null
+# → NAME                                               READY   SYNCED   AGE
+#   database.postgresql.sql.crossplane.io/billing_prod False   False    15m
+
+# 2. Просмотр причин сбоя очистки
+kubectl describe database.postgresql.sql.crossplane.io/billing_prod | grep -A 5 Events
+# → Events:
+#   Type     Reason               Message
+#   Warning  CannotDeleteExternal dial tcp 10.10.20.15:5432: i/o timeout
+
+# 3. Безопасный перевод в Orphan (отказ от физического удаления при сбое сети)
+kubectl patch database.postgresql.sql.crossplane.io/billing_prod \
+  --type='json' -p='[{"op": "replace", "path": "/spec/deletionPolicy", "value": "Orphan"}]'
+# → patched
+
+# 4. Если объект необходимо удалить принудительно:
+kubectl patch database.postgresql.sql.crossplane.io/billing_prod \
+  --type='merge' -p='{"metadata":{"finalizers":[]}}'
+# → patched
+```
+
+---
+
+## Лучшие практики
+
+### Фазирование развертывания через Sync Waves в Argo CD
+
+Для предотвращения ошибок первичного развертывания платформа должна инициализироваться строго упорядоченно. Рекомендуемая схема Sync Waves:
+
+| Волна (`sync-wave`) | Развертываемые компоненты |
+| :---: | :--- |
+| **-2** | Namespace `crossplane-system`, ServiceAccounts, RBAC, секреты доступа к Harbor (`packagePullSecrets`) |
+| **-1** | Crossplane Core HelmRelease, Custom Controller Settings |
+| **0** | Пакеты провайдеров (`Provider`) и функции композиции (`Function`) |
+| **1** | Секреты учетных данных (ESO ExternalSecret / SOPS), `ProviderConfig`, `ClusterSecretStore` |
+| **2** | Платформенные абстракции: CompositeResourceDefinitions (XRD) и Compositions |
+| **3** | Прикладные манифесты: CompositeResourceClaims (Claim) и клиентские рабочие нагрузки |
+
+### Настройка ignoreDifferences для CRD Crossplane
+
+Поскольку контроллеры Crossplane непрерывно обновляют блок `status`, а некоторые провайдеры модифицируют метаданные, Argo CD без должной настройки входит в бесконечный цикл синхронизации. Добавьте в спецификацию `Application` или глобально в ConfigMap `argocd-cm`:
 
 ```yaml
-resource.customizations.health.database.example.org_PostgreSQLInstance: |
-  hs = {}
-  if obj.status ~= nil and obj.status.conditions ~= nil then
-    for i, condition in ipairs(obj.status.conditions) do
-      if condition.type == "Ready" and condition.status == "True" then
-        hs.status = "Healthy"
-        hs.message = condition.message
-        return hs
-      end
-    end
-  end
-  hs.status = "Progressing"
-  hs.message = "Waiting for resource to be ready"
-  return hs
-```
-
-*   Для группы провайдеров удобен wildcard: `resource.customizations.health."*.aws.crossplane.io/*"` (через ключ `resource.customizations`, а не `...health.<g>_<k>`).
-*   Аналогично настраиваются проверки для XR (`composite...`) и MR (`*.yandex.cloud/*`), чтобы дерево приложения корректно отображало готовность.
-
-### ignoreDifferences для Crossplane
-
-Crossplane постоянно пишет в `status.*` (conditions, observed, connection details), а некоторые провайдеры возвращают поздно-инициализированные (late-initialized) поля в `spec.forProvider`. Argo CD будет показывать вечный `OutOfSync`. Исключите эти поля:
-
-```yaml
+# В спецификации Application:
 spec:
   ignoreDifferences:
+    # Игнорирование статусов и аннотаций конфигурации у всех Claims
     - group: "*.crossplane.io"
-      kind: CompositeResourceClaim
+      kind: "*"
       jsonPointers:
         - /status
-        - /metadata/annotations/last-applied-configuration
-    - group: "*.yandex.cloud"
+        - /metadata/annotations/kubectl.kubernetes.io~1last-applied-configuration
+    # Игнорирование полей статуса и late-initialized свойств Managed Resources
+    - group: "*.sql.crossplane.io"
+      kind: "*"
+      jsonPointers:
+        - /status
+    - group: "*.kubernetes.crossplane.io"
       kind: "*"
       jsonPointers:
         - /status
 ```
 
-### Политики удаления (Deletion Policy) и managementPolicies
-
-Явно определяйте поведение при удалении манифеста из Git:
-*   `DeletionPolicy: Delete` (по умолчанию) — физическое удаление ресурса в облаке вместе с объектом Kubernetes.
-*   `DeletionPolicy: Orphan` — удаляется только объект в Kubernetes, облачный ресурс остаётся. Рекомендуется для критических БД в Prod, чтобы ошибка в GitOps-пайплайне не уничтожила данные.
+Глобальная настройка в `argocd-cm`:
 
 ```yaml
-# на уровне MR (в Composition) или Claim
-spec:
-  deletionPolicy: Orphan
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  resource.customizations.ignoreDifferences.all: |
+    jsonPointers:
+      - /status
 ```
 
-Для безопасного подключения существующей инфраструктуры используйте `managementPolicies` (v2): `ObserveOnly` позволяет Crossplane только читать облако без изменений, `*` (все действия) — поведение по умолчанию. Finalizers Crossplane гарантируют корректный очистной цикл в облаке перед удалением объекта.
+Подробнее о механизмах diffing см. в [ignoreDifferences в Argo CD](../ArgoCD/synchronization/ignore_differences.md).
 
-### Доставка через OCI-артефакты
+### Кастомные Lua Health Checks в Argo CD
 
-Хранение композиций в Configuration Package (Сценарий 6) обеспечивает версионирование инфраструктурных модулей аналогично Helm-чартам; Flux/Argo CD отслеживают новые теги и обновляют ресурс `Configuration`. Это особенно удобно для air-gapped сред и централизованного распространения модулей между кластерами.
+По умолчанию Argo CD не распознает состояние готовности пользовательских CRD Crossplane (Claim и XR), считая их постоянно находящимися в статусе `Progressing`. Для отображения реального состояния здоровья добавьте Lua-скрипт в ConfigMap `argocd-cm`:
 
-## Исправление дрейфа (Drift Detection)
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  resource.customizations.health.database.internal.corp_PostgreSQLInstance: |
+    hs = {}
+    if obj.status ~= nil and obj.status.conditions ~= nil then
+      for i, condition in ipairs(obj.status.conditions) do
+        if condition.type == "Ready" and condition.status == "True" then
+          hs.status = "Healthy"
+          hs.message = condition.message or "Resource is Ready"
+          return hs
+        end
+        if condition.type == "Synced" and condition.status == "False" then
+          hs.status = "Degraded"
+          hs.message = condition.message or "Resource synchronization failed"
+          return hs
+        end
+      end
+    end
+    hs.status = "Progressing"
+    hs.message = "Waiting for Crossplane resource to become Ready"
+    return hs
+```
 
-Связка Crossplane + GitOps обеспечивает двухуровневую защиту от ручных изменений:
+### Валидация манифестов и Pre-flight проверки в CI/CD
 
-1.  **Уровень GitOps (Argo CD/Flux):** если кто-то изменил манифест Crossplane в кластере через `kubectl edit`, GitOps-инструмент обнаружит расхождение с Git (`OutOfSync`) и вернёт манифест к эталону (`selfHeal` / Flux reconcile). Flux проверяется командой `flux get kustomization <name>`; Argo CD — `argocd app diff <name>`.
-2.  **Уровень Crossplane:** если параметры ресурса изменены напрямую в консоли облака, контроллер Crossplane в ходе очередного цикла сверки обнаружит расхождение с `spec.forProvider` и вернёт параметры облака к описанным в YAML (зависит от `managementPolicies`).
+Ошибки в синтаксисе Composition или несоответствие полей OpenAPI-схеме XRD должны выявляться на этапе Merge Request до попадания в GitOps-пайплайн:
 
 ```bash
-# Диагностика расхождения на стороне Crossplane
-crossplane alpha trace claim postgresqlinstance inventory-db -n production
-# → дерево Claim → XR → MR с текущим и желаемым состоянием
+# 1. Локальный рендер ресурсов из Claim через Composition
+crossplane render \
+  ./claims/database-claim.yaml \
+  ./compositions/composition-postgres.yaml \
+  ./functions/function-kcl.yaml > rendered-resources.yaml
+# → Managed Resources успешно сгенерированы
 
-kubectl describe mr <имя-mr> -n production | grep -A5 "Events\|Last Transition"
-# → события reconcile: Observed, Created, Ready
+# 2. Строгая валидация сгенерированных манифестов по JSON-схемам CRD
+kubeconform -strict -summary rendered-resources.yaml
+# → Summary: 1 resource valid, 0 invalid, 0 errors
+
+# 3. Server-side dry-run в тестовом кластере (проверка прав RBAC и конфликтов полей)
+kubectl apply --dry-run=server -k ./platform/definitions
+# → compositeresourcedefinition.apiextensions.crossplane.io/xpostgresqlinstances.database.internal.corp configured (server dry run)
 ```
 
-**Ограничения:** Crossplane отслеживает дрейф только по полям, которыми он управляет (`spec.forProvider` и связанные), и с периодичностью poll-интервала провайдера — мгновенного webhook-детекта нет. Поля, не входящие в схему провайдера, Crossplane не увидит. Для pure-drift-наблюдения без правок используйте `managementPolicies: ["ObserveOnly"]`.
+### Сетевая безопасность и изоляция учетных данных провайдеров
 
-## Устранение неполадок
+1. **Принцип минимальных привилегий для провайдеров:**
+   - Не используйте учетную запись суперпользователя СУБД (`postgres`) для всех операций. Создайте сервисного пользователя `crossplane_provisioner` с правами `CREATEDB` и `CREATEROLE`, ограниченного доступом только к базам данных приложений.
+2. **Изоляция сетевого периметра:**
+   - Ограничьте egress-трафик из пространства имен `crossplane-system` через `NetworkPolicy`. Поды провайдеров должны иметь сетевой доступ только к корпоративному Vault, целевым пулерам баз данных (PgBouncer/Patroni) и K8s API.
+3. **Шифрование транзитного трафика:**
+   - Обязательно используйте `sslMode: require` или `verify-full` в `ProviderConfig` с указанием доверенного корпоративного корневого сертификата (`CABundle`).
 
-| Симптом | Вероятная причина | Решение |
-| :--- | :--- | :--- |
-| Claim вечно `Unknown`/`Progressing` | Нет подходящей Composition (метки `compositionSelector` не совпали) или XRD ещё не применён | `kubectl get xrd,composition`; сверить метки; применить платформенный манифест из Сценария 4 |
-| Argo CD вечный `OutOfSync` на Claim | Дрейф по `status.*` / late-initialized полям | Добавить `ignoreDifferences` (раздел выше) |
-| `ProviderConfig` не `Healthy` | Неверный Secret/creds или нет сети до облака | `kubectl describe providerconfig`, проверить `ExternalSecret`/SOPS и логи провайдера |
-| MR не создаётся | Ошибка в Composition (ссылка на несуществующее поле XRD) | `crossplane render` + `crossplane beta validate` в CI; `kubectl describe xr` |
-| Удаление Claim «висит» | Finalizer ждёт очистки в облаке / `DeletionPolicy` | `kubectl get events` провайдера; при необходимости `Orphan` для критичных БД |
-| Flux не расшифровывает SOPS | Нет Secret `sops-age` или блок `decryption` | Создать age-ключ в `flux-system`, добавить `decryption.provider: sops` в Kustomization |
+---
 
 ## Дополнительная информация
 
-*   Обзор Crossplane и жизненный цикл MR: [Crossplane Overview](./overview.md)
-*   Настройка провайдеров: [Yandex Cloud Setup](./provider_yandex_cloud_setup.md), [Kubernetes Setup](./provider_kubernetes_setup.md)
-*   Динамические окружения: [Argo CD: Динамические окружения с Crossplane](../ArgoCD/dynamic_environments_crossplane.md)
-*   Шифрование секретов (SOPS/ESO): [Шифрование секретов в GitOps](../secrets_encryption.md)
-*   Тематические разделы: [Composition Functions](./composition_functions.md), [Мультитенантность](./multi_tenancy.md), [Usage](./usage_protection.md), [Тестирование](./testing_crossplane.md), [Обновление/миграция](./upgrade_migration.md), [Observability](./observability.md), [Политики](./policy_governance.md), [Self-Service/IDP](./self_service.md), [Безопасность цепочки поставок](./package_security.md), [Backup/DR](./backup_dr.md)
+### Внутренние ссылки
 
-Внешние ресурсы:
-* [Crossplane: Configurations (OCI-пакеты)](https://docs.crossplane.io/latest/packages/configurations/)
-* [Argo CD: Custom Resource Health](https://argo-cd.readthedocs.io/en/stable/operator-manual/health/)
-* [Flux: OCI Artifacts cheatsheet](https://fluxcd.io/flux/cheatsheets/oci-artifacts/)
+- [Crossplane: Обзор](./overview.md) — фундаментальные концепции, архитектура и жизненный цикл Managed Resources.
+- [Crossplane: Управление ресурсами Kubernetes](./provider_kubernetes_setup.md) — детальная настройка `provider-kubernetes` для мультикластерной оркестрации.
+- [Argo CD: Динамические окружения с Crossplane](../ArgoCD/dynamic_environments_crossplane.md) — практическое руководство по Review Apps и интеграции с GitLab CI.
+- [ignoreDifferences в Argo CD](../ArgoCD/synchronization/ignore_differences.md) — подавление ложного дрейфа и нормализация манифестов.
+- [GitOps: Управление секретами и шифрование](../secrets_encryption.md) — настройка HashiCorp Vault, External Secrets Operator и Mozilla SOPS.
+- [Composition Functions](./composition_functions.md) — разработка конвейеров композиции на KCL, Python и Go.
+- [Резервное копирование и DR](./backup_dr.md) — стратегии резервного копирования и восстановления Control Plane через Velero.
+- [Сравнение с Terraform и OpenTofu](./terraform_comparison.md) — детальный анализ pull-модели Crossplane против классического IaC.
+- [Мультитенантность](./multi_tenancy.md) — изоляция команд разработчиков в Control Plane.
+- [Usage Protection](./usage_protection.md) — защита зависимых ресурсов от случайного удаления через CRD `Usage`.
+
+### Внешние ресурсы
+
+- [Crossplane Official Documentation](https://docs.crossplane.io/latest/) — официальное руководство по архитектуре и пакетам Crossplane.
+- [Argo CD Custom Resource Health Checks](https://argo-cd.readthedocs.io/en/stable/operator-manual/health/) — документация по написанию Lua-скриптов для кастомных CRD.
+- [Flux OCI Artifacts Documentation](https://fluxcd.io/flux/cheatsheets/oci-artifacts/) — работа с OCI-репозиториями в GitOps-пайплайнах Flux.
+- [External Secrets Operator Documentation](https://external-secrets.io/latest/) — интеграция Kubernetes с HashiCorp Vault.

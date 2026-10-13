@@ -1,849 +1,1291 @@
 # Способы использования ConfigMap в подах
 
+**Актуально для:** Kubernetes 1.28–1.32+
+
 ## Определения
 
-**ConfigMap** — объект API Kubernetes, предназначенный для предоставления неконфиденциальных данных контейнерам внутри пода (Pod). Он служит мостом между абстрактной конфигурацией и конкретной средой выполнения, реализуя принцип **Separation of Concerns** (разделение ответственности) и обеспечивая переносимость (Portability) образов.
+**ConfigMap** — объект API Kubernetes (`kind: ConfigMap`), предназначенный для хранения неконфиденциальных параметров конфигурации в виде пар ключ-значение. Реализует принцип разделения исполняемого кода и конфигурации (12-Factor App), обеспечивая переносимость контейнерных образов между средами без пересборки.
 
-## Основные концепции
+**Volume Mount (Монтирование тома)** — механизм подключения содержимого ConfigMap к файловой системе контейнера через спецификацию `spec.volumes[*].configMap` и `spec.containers[*].volumeMounts`. Каждый ключ ConfigMap проецируется в отдельный файл, а значение ключа становится содержимым файла.
 
-### Механизмы доставки данных
+**Atomic Symlink Swap (Атомарная замена символических ссылок)** — низкоуровневый механизм Kubelet Volume Manager, обеспечивающий атомарное обновление файлов смонтированного тома на диске узла. Заключается в создании новой директории данных с таймштампом и мгновенном переключении символической ссылки `..data` через системный вызов `renameat`, что предотвращает чтение частично записанных файлов.
 
-Существует три основных механизма передачи данных из ConfigMap в приложение:
+**`subPath` / `subPathExpr`** — директива `volumeMounts`, позволяющая смонтировать один конкретный файл или поддиректорию из тома напрямую в путь внутри контейнера без перекрытия родительского каталога. В ядре Linux реализуется через отдельный bind mount на конкретный inode, что блокирует механизм Atomic Symlink Swap и отключает автоматическое обновление файла (Hot Reload).
 
-1.  **Переменные окружения (`env`, `envFrom`):**
-    *   Данные считываются Kubelet и передаются процессу при его старте.
-    *   `env` позволяет точечно выбрать конкретный ключ через `valueFrom.configMapKeyRef`.
-    *   `envFrom` загружает **все** ключи источника сразу; с помощью `prefix` к именам переменных можно добавить единый префикс.
-    *   **Ограничение:** Изменения в ConfigMap не отражаются в уже запущенных процессах. Требуется перезапуск пода (Rollout) для применения новых значений.
-2.  **Смонтированные тома (`volumes`):**
-    *   ConfigMap монтируется как директория, где каждый ключ становится файлом, а значение — содержимым файла.
-    *   **Преимущество:** Поддерживается автоматическое обновление данных без перезапуска пода (Hot Reload).
-    *   Поле `items` позволяет выбрать отдельные ключи и переименовать файлы, `defaultMode` задает права доступа.
-3.  **Аргументы командной строки (`$(VAR_NAME)` в `command`/`args`):**
-    *   Строго говоря, это не самостоятельный механизм, а производная от переменных окружения: Kubelet раскрывает конструкцию `$(VAR_NAME)` из **полного** окружения контейнера перед запуском процесса.
-    *   Позволяет передавать значения из ConfigMap в команду запуска без использования shell.
+**`env` / `envFrom`** — механизмы инъекции ключей ConfigMap в переменные окружения процесса контейнера. `env` выполняет точечную передачу через `valueFrom.configMapKeyRef`, а `envFrom` импортирует все допустимые ключи объекта с возможностью добавления префикса (`prefix`).
 
-Дополнительно данные из ConfigMap можно объединять с другими источниками (Secret, Downward API) в **projected volumes** — см. [Projected Volumes](../Pod/volume_types/projected_volumes.md).
+**`defaultMode`** — поле спецификации тома ConfigMap, задающее права доступа (POSIX file permissions) в восьмеричном формате (например, `0440`, `0644`) для всех проецируемых файлов. По умолчанию равно `0644` (десятичное `420`).
 
-### Техническая реализация обновлений (Atomic Symlink Swap)
+**`Kubelet Volume Manager`** — внутренний управляющий контур Kubelet, отвечающий за сверку желаемого состояния томов (DesiredStateOfWorld) с фактическим состоянием на узле (ActualStateOfWorld), монтирование каталогов и фоновую синхронизацию содержимого.
 
-При монтировании ConfigMap как тома Kubelet использует механизм символических ссылок для обеспечения атомарности:
-1.  Создается новая директория с данными (например, `..2024_08_05_12_00_00.123456789`).
-2.  Обновляется символическая ссылка `..data`, указывающая на актуальную директорию.
-3.  Файлы в корне монтирования являются ссылками на файлы внутри `..data`.
-Это гарантирует, что приложение не прочитает "частично обновленный" файл. Задержка обновления в контейнере обычно составляет от 60 до 90 секунд — это период синхронизации подов `syncFrequency` (по умолчанию 60 с) плюс случайный «джиттер» (коэффициент 0.5). При стратегии `Cache` к этому добавляется `cacheTTL`; при `Watch` содержимое уже находится в локальном кэше kubelet, однако сама пересборка тома все равно привязана к циклу синхронизации пода (подробнее — в разделе о стратегиях ниже).
+**`syncFrequency` и `configMapAndSecretChangeDetectionStrategy`** — параметры конфигурации Kubelet (`KubeletConfiguration`), регулирующие частоту цикла периодической синхронизации подов (по умолчанию 60 секунд) и стратегию отслеживания изменений в API-сервере (`Watch`, `Get`, `Cache`).
 
-**Практическая проверка механизма:**
+**Projected Volume** — специализированный тип тома Kubernetes, объединяющий проекцию нескольких разнородных источников (ConfigMap, Secret, Downward API, ServiceAccountToken) в единое дерево каталогов контейнера.
 
-```bash
-# Внутри контейнера видна ссылка ..data и файлы-связки
-kubectl exec <pod-name> -- ls -la /etc/config
-# → lrwxrwxrwx 1 root root 31 ..data -> ..2024_08_05_12_00_00.123456789
-# → drwxr-xr-x 2 root root  6 ..2024_08_05_12_00_00.123456789
-# → lrwxrwxrwx 1 root root 17 config.yaml -> ..data/config.yaml
+---
 
-# Чтение «актуального» содержимого через ссылку ..data
-kubectl exec <pod-name> -- cat /etc/config/..data/config.yaml
+## Архитектура и принципы работы
+
+### Механизмы передачи данных в Pod
+
+Kubernetes предоставляет три фундаментальных способа потребления данных ConfigMap контейнерами:
+
+```
+                                 ┌─────────────────────────┐
+                                 │   ConfigMap (etcd)      │
+                                 └────────────┬────────────┘
+                                              │
+                      ┌───────────────────────┼───────────────────────┐
+                      ▼                       ▼                       ▼
+           ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐
+           │ Переменные env      │ │ Том Volume Mount    │ │ Аргументы command   │
+           │ (env / envFrom)     │ │ (директория / файлы)│ │ ($(VAR) в args)     │
+           └──────────┬──────────┘ └──────────┬──────────┘ └──────────┬──────────┘
+                      │                       │                       │
+                      ▼                       ▼                       ▼
+            Старт процесса          Файловая система узла   Разворачивание Kubelet
+            (не обновляется         (Atomic Symlink Swap,   до старта процесса
+             без рестарта)           Hot Reload доступен)    (статично)
 ```
 
-После изменения ConfigMap и очередного цикла синхронизации рядом появляется **новая** директория с отметкой времени, а `..data` переключается на нее. Процессы, которые уже открыли файл, продолжат читать старую версию до повторного открытия файла (файловый дескриптор указывает на старый inode).
+1. **Переменные окружения (`env`, `envFrom`):**
+   - Значения считываются Kubelet при подготовке контейнера и передаются в процесс при запуске (в Linux-структуру `environ`).
+   - `env` подключает конкретные ключи через `valueFrom.configMapKeyRef`.
+   - `envFrom` импортирует все ключи ConfigMap через `configMapRef`.
+   - **Ограничение:** Переменные окружения процесса в ОС Linux фиксируются при вызове `execve()`. Изменение объекта ConfigMap в кластере **не отражается** в работающих контейнерах. Для применения требуется полный перезапуск пода.
 
-### Ограничения и область видимости
+2. **Смонтированные тома (`volumes` и `volumeMounts`):**
+   - ConfigMap монтируется как директория на файловой системе контейнера.
+   - Поддерживает автоматическое обновление данных без перезапуска пода (Hot Reload).
+   - Поле `items` позволяет проецировать только выбранные ключи и менять имена целевых файлов; поле `defaultMode` управляет POSIX-маской прав доступа.
 
-*   **Namespace:** ConfigMap и Pod должны находиться в одном и том же пространстве имен. Межnamespace-доступ не поддерживается — для использования в другом namespace объект нужно скопировать.
-*   **Состояние запуска:** Если ConfigMap помечен как обязательный (по умолчанию), отсутствие ресурса переведет под в состояние `CreateContainerConfigError`. Диагностика — в разделе [Troubleshooting](../../Troubleshooting/Common_Errors/CreateContainerConfigError/configmap_issues.md).
-*   **Размер:** Общий размер объекта ограничен **1 MiB** (лимит etcd, ошибка `RequestEntityTooLarge`). Для больших конфигураций используйте PersistentVolume или разбивайте данные на несколько ConfigMap.
-*   **Хранение на узле:** Данные тома ConfigMap размещаются в локальной файловой системе узла (`/var/lib/kubelet/pods/<pod>/volumes/...`), а не на tmpfs, поэтому не занимают оперативную память узла. Доступ к файлам имеют только контейнеры пода и процессы на узле.
-*   **Кэширование на узле:** данные кэшируются на узле. Если удалить ConfigMap, смонтированный в работающий под, под продолжит работать с закэшированной копией до перезапуска (после перезапуска последует `FailedMount`). Для переменных окружения аналогично — новые поды уже не запустятся (`CreateContainerConfigError`).
+3. **Аргументы командной строки (`$(VAR_NAME)` в `command`/`args`):**
+   - Kubelet выполняет макроподстановку `$(VAR_NAME)` на основе сформированного списка переменных окружения контейнера до старта процесса.
+   - Позволяет передавать конфигурационные флаги напрямую в бинарный файл без участия командного интерпретатора (`/bin/sh`).
 
-### Детали механизма синхронизации Kubelet
+4. **Проекция томов (Projected Volumes):**
+   - Объединяет несколько ConfigMap, Secret и Downward API в единую файловую структуру без ограничений `subPath`. Подробно разобран в [Projected Volumes](../Pod/volume_types/projected_volumes.md).
 
-Kubelet отвечает за синхронизацию данных ConfigMap с файловой системой пода. Механизм работы зависит от способа потребления данных:
+---
 
-**Для томов (Volumes):**
-1.  Менеджер ConfigMap в kubelet отслеживает изменения объекта (способ обнаружения настраивается, см. раздел ниже)
-2.  При обновлении ConfigMap в API-сервере менеджер получает актуальное содержимое
-3.  На очередном цикле синхронизации пода (`syncFrequency`, по умолчанию 60 с + джиттер) kubelet создает временную директорию (например, `..2024_08_05_12_00_00.123456789`)
-4.  Символическая ссылка `..data` атомарно переключается на новую директорию
-5.  Приложение видит обновленные файлы без перезапуска
+### Архитектура Kubelet Volume Manager и механизм Atomic Symlink Swap
 
-**Для переменных окружения (env):**
-1.  Kubelet читает данные ConfigMap при запуске контейнера
-2.  Значения передаются процессу через переменные окружения
-3.  При изменении ConfigMap переменные **не обновляются** в работающем процессе
-4.  Требуется перезапуск пода для применения изменений
+При монтировании тома ConfigMap процесс `kubelet` не копирует файлы напрямую в корень контейнера. Для предотвращения состояния гонки (Race Condition), когда приложение считывает файл в момент неполной записи на диск, ядро Kubelet использует каскадную структуру символических ссылок:
 
-> **Важно:** стратегия обнаружения изменений управляет лишь тем, **как** kubelet получает актуальное содержимое объекта. Сама пересборка тома выполняется в цикле синхронизации пода, поэтому задержка в 60–90 секунд сохраняется даже в режиме `Watch`. Доставка конфигурации в поды при активном управлении жизненным циклом рассмотрена в [Обновление и Rollout](./update_and_rollout.md).
+```
+/var/lib/kubelet/pods/<pod-uid>/volumes/kubernetes.io~configmap/<volume-name>/
+├── ..2026_10_13_16_00_00.123456789/          <-- Фактическая директория с данными
+│   ├── app.conf
+│   └── database.json
+├── ..data -> ..2026_10_13_16_00_00.123456789  <-- Промежуточная симлинк (атомарный swap)
+├── app.conf -> ..data/app.conf                <-- Стабильная симлинк для контейнера
+└── database.json -> ..data/database.json      <-- Стабильная симлинк для контейнера
+```
 
-### Стратегии обнаружения изменений (configMapAndSecretChangeDetectionStrategy)
+#### Алгоритм обновления тома Kubelet
 
-Kubelet поддерживает три стратегии обнаружения изменений ConfigMap и Secret. Поле задается в `KubeletConfiguration`:
+1. **Создание теневой директории:** Kubelet получает новую версию ConfigMap от API-сервера и создает в каталоге тома на узле директорию с временной меткой: `..<timestamp>` (например, `..2026_10_13_16_05_00.987654321`).
+2. **Запись данных:** Внутри созданной директории формируются файлы, соответствующие ключам ConfigMap, и выставляются права доступа согласно `defaultMode`.
+3. **Создание временной ссылки:** Создается вспомогательная символическая ссылка `..data_tmp`, указывающая на новую директорию `..<timestamp>`.
+4. **Атомарный системный вызов:** Выполняется системный вызов ядра Linux `renameat(..., "..data_tmp", ..., "..data")`. В рамках POSIX этот вызов является строго атомарным: ссылка `..data` мгновенно переключается на новую директорию.
+5. **Очистка старых данных:** Предыдущая директория `..<old_timestamp>` удаляется асинхронно после завершения переключения.
 
-| Стратегия | Описание | Нагрузка на API | Характерная задержка доставки |
+#### Низкоуровневые нюансы Linux VFS и Inode
+
+* **Кеширование открытых файловых дескрипторов (File Descriptors):**
+  Если приложение открыло файл (`fd = open("/etc/config/app.conf", O_RDONLY)`) и удерживает дескриптор, системные вызовы `read(fd, ...)` продолжают обращаться к **старому inode** на диске, даже если `..data` переключилась на новую директорию. Файл физически не удаляется из файловой системы, пока счетчик ссылок (inode link count) или открытых дескрипторов не станет равен нулю. Приложение увидит обновленный файл только после вызова `close(fd)` и повторного `open()`.
+* **Специфика Linux `inotify`:**
+  Приложение, установившее inotify-watch непосредственно на файл `/etc/config/app.conf`, при переключении ссылки `..data` получит событие `IN_DELETE_SELF` или `IN_MOVE_SELF`, после чего дескриптор наблюдения перестает отслеживать новый файл!
+  **Решение для разработчиков и SRE:** Отслеживать inotify-события родительской директории (`/etc/config`) на события `IN_CREATE` или `IN_MOVED_TO` относительно ссылки `..data`, либо использовать готовые sidecar-релоадеры.
+
+---
+
+### Анатомия ограничения subPath (Linux bind mount semantics)
+
+Директива `subPath` решает задачу монтирования отдельного файла из ConfigMap в существующую директорию без затирания остальных файлов каталога:
+
+```yaml
+volumeMounts:
+- name: config-volume
+  mountPath: /etc/nginx/nginx.conf
+  subPath: nginx.conf
+```
+
+#### Почему subPath блокирует Hot Reload
+
+1. **Семантика Bind Mount ядра Linux:**
+   Когда Kubelet выполняет монтирование с `subPath`, он разыменовывает путь до целевого файла на хосте и вызывает системный вызов ядра `mount(source_path, target_path, NULL, MS_BIND, NULL)`.
+2. **Привязка к Inode:**
+   В отличие от монтирования каталога целиком (где контейнер видит симлинки и разрешает их при каждом открытии), `MS_BIND` связывает точку монтирования контейнера **напрямую с физическим inode** исходного файла в директории `..<timestamp>`.
+3. **Разрыв цепочки симлинков:**
+   Когда Kubelet позже выполняет Atomic Symlink Swap и переключает `..data`, точка bind mount внутри контейнера остается привязанной к старому inode. Контейнер изолирован в своем mount namespace и никогда не увидит изменений без полного перезапуска пода.
+
+```
+Монтирование каталога (Hot Reload работает):
+Контейнер -> /etc/config/app.conf -> ..data/app.conf -> ..<new_timestamp>/app.conf (Inode 2002)
+
+Монтирование subPath (Hot Reload заблокирован):
+Контейнер -> /etc/nginx/nginx.conf ──[Linux Bind Mount]──► Inode 1001 (Заморожен навсегда)
+```
+
+> **SRE-правило:** Никогда не используйте `subPath` для конфигурационных файлов, которые должны обновляться без перезапуска пода. Для подмены одиночных файлов без потери автообновления используйте Projected Volumes либо генерируйте результирующий конфиг через Init/Sidecar контейнеры.
+
+---
+
+### Механизм синхронизации Kubelet и задержки доставки
+
+Синхронизация данных между Control Plane (`etcd` / `kube-apiserver`) и рабочей нодой выполняется демоном `kubelet`.
+
+```
+kube-apiserver ◄───[ Watch / Get / Cache ]───► Kubelet ConfigMap Manager
+                                                       │
+                                            Обновление локального кеша
+                                                       │
+                                         Период syncFrequency (60s + jitter)
+                                                       │
+                                                       ▼
+                                            Volume Manager (Pod Worker)
+                                                       │
+                                            Atomic Symlink Swap на диске
+                                                       ▼
+                                            Файловая система контейнера
+```
+
+#### Стратегии обнаружения изменений (`configMapAndSecretChangeDetectionStrategy`)
+
+Параметр задается в файле конфигурации Kubelet (`/var/lib/kubelet/config.yaml`):
+
+| Стратегия | Описание механизма | Нагрузка на kube-apiserver / etcd | Скорость реакции на узле |
 | :--- | :--- | :--- | :--- |
-| `Watch` | Kubelet устанавливает постоянный Watch на каждый используемый объект и всегда имеет актуальную локальную копию | Высокая (соединение на каждый объект на каждом узле) | Низкая (данные уже локальны) |
-| `Get` | Kubelet выполняет обычный GET-запрос к API-серверу каждый раз, когда ему нужны данные | Средняя (запрос по требованию) | Зависит от цикла синхронизации пода |
-| `Cache` | Kubelet опрашивает API-сервер и кэширует результат на `cacheTTL` (по умолчанию 1 минута) | Низкая (кэш с TTL) | До TTL + цикл синхронизации пода |
+| `Watch` (по умолчанию) | Kubelet устанавливает постоянное HTTP/2 gRPC Watch-соединение на каждый используемый ConfigMap | Высокая (пропорциональна количеству уникальных ConfigMap * число узлов) | Мгновенная доставка в локальный кеш Kubelet |
+| `Cache` | Kubelet кэширует ответы API-сервера в памяти на период `cacheTTL` (по умолчанию 1 минута) | Низкая (фиксированные периодические GET-запросы) | Добавляет задержку `cacheTTL` к обновлению |
+| `Get` | Kubelet запрашивает актуальный объект у API-сервера при каждом вызове синхронизации | Средняя (запросы по требованию без длинных соединений) | Зависит от момента срабатывания pod sync worker |
 
-**Поведение по умолчанию:**
-*   По умолчанию используется `Watch` — оптимальный баланс между скоростью обнаружения изменений и нагрузкой; рекомендуется для большинства кластеров.
-*   `Cache` применяют в кластерах с очень большим количеством подов/ConfigMap на узле, где тысячи Watch-соединений создают чрезмерную нагрузку на API-сервер и etcd.
-*   `Get` — компромисс без длинных соединений и без кэширования потенциально устаревших данных.
+#### Результирующая задержка доставки (60–90 секунд)
 
-**Пример настройки:**
-```bash
-# В конфигурации kubelet (--config flag)
-apiVersion: kubelet.config.k8s.io/v1beta1
-kind: KubeletConfiguration
-configMapAndSecretChangeDetectionStrategy: "Watch"
-# cacheTTL: 1m   # параметр кэша, релевантен только для стратегии Cache
+Даже при стратегии `Watch`, когда Kubelet узнает об изменении ConfigMap за доли секунды, файлы на диске обновляются не сразу:
+1. Физическая пересборка тома привязана к периодическому циклу `syncFrequency` рабочего воркера пода (по умолчанию `60s`).
+2. Для предотвращения синхронного шторма дискового ввода-вывода (Thundering Herd) Kubelet добавляет к периоду псевдослучайный джиттер с коэффициентом до 0.5.
+3. Суммарная типовая задержка между выполнением `kubectl apply` и появлением новых файлов в контейнере составляет **от 60 до 90 секунд**.
+
+---
+
+### Правила разрешения и приоритеты переменных окружения
+
+При формировании окружения контейнера действуют строгие приоритеты разрешения коллизий:
+
+```
+[Системные переменные K8s] 
+           │
+           ▼
+[envFrom: источники по порядку] ◄─── Поздний источник переопределяет ранний
+           │
+           ▼
+[env: явные переменные]          ◄─── ВСЕГДА переопределяют значения из envFrom
 ```
 
-> **Важно:** стратегия влияет только на скорость получения содержимого менеджером ConfigMap. Момент фактического применения данных к томам определяется циклом синхронизации пода (`syncFrequency`), а переменные окружения вообще не обновляются «на лету» ни при одной стратегии.
+1. **Явные `env` имеют наивысший приоритет:** Если ключ определен и в `envFrom`, и в блоке `env` (включая `valueFrom.configMapKeyRef`), значение из `env` гарантированно переопределяет `envFrom`.
+2. **Порядок следования `envFrom`:** Если несколько ConfigMap/Secret в `envFrom` содержат одинаковые ключи, итоговым значением станет значение из **последнего** объявленного источника в списке.
+3. **Параметр `prefix`:** Добавляет префикс ко всем ключам конкретного `configMapRef`. Предотвращает случайные коллизии (например, `prefix: "DB_"` трансформирует ключ `PORT` в переменную `DB_PORT`).
+
+#### Валидация имен переменных окружения
+
+* **Стандарт POSIX:** Имена переменных окружения должны соответствовать регулярному выражению `^[A-Za-z_][A-Za-z0-9_]*$`.
+* **Поведение `envFrom`:** Ключи ConfigMap, содержащие дефисы (`-`), точки (`.`) или начинающиеся с цифр (например, `app-config.yaml`, `service.port`), **молча пропускаются Kubelet**. Процесс запускается, но переменные в окружение не попадают!
+* **Kubernetes 1.32+ (`RelaxedEnvironmentVariableValidation`):** Функция ослабленной валидации разрешает почти все печатные ASCII-символы кроме `=`. Однако стандартные оболочки Linux (`/bin/sh`, `/bin/bash`) все равно не могут корректно адресовать переменные с точками и дефисами через синтаксис `$VAR`.
+* **Правило SRE:** Для использования с `envFrom` именуйте ключи ConfigMap только в стиле `SCREAMING_SNAKE_CASE` или `lower_snake_case`. Ключи с точками и расширениями файлов предназначены исключительно для монтирования томов (`volumes`).
+
+#### Подстановка `$(VAR)` в command и args
+
+* Kubelet выполняет замену выражений `$(VAR_NAME)` в полях `command` и `args` на основе переменных, определенных в контейнере.
+* **Строгий порядок зависимостей:** Переменная, используемая в `$(VAR)`, должна быть объявлена в списке `env` **выше** строки, где она используется.
+* **Неопределенные переменные:** Если переменная отсутствует, Kubelet не заменяет ее на пустую строку, а оставляет литерал `$(UNKNOWN_VAR)`. Это частая причина сбоев запуска бинарных файлов.
+* **Экранирование (`$$`):** Для передачи литерального знака доллара (актуально для регулярных выражений, переменных shell-скрипта или синтаксиса `$((...))`) необходимо использовать двойной знак: `$$(MY_LITERAL)`.
+
+---
+
+### Безопасность, права доступа и Linux UID/GID
+
+По умолчанию Kubelet создает смонтированные файлы тома ConfigMap с правами доступа `0644` (`-rw-r--r--`) и владельцем `root:root` (`uid=0, gid=0`).
+
+#### Взаимодействие с непривилегированными контейнерами (Non-Root)
+
+Если контейнер запускается от непривилегированного пользователя согласно Best Practices безопасности:
+
+```yaml
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+```
+
+* **Чтение файлов:** При стандартном `defaultMode: 0644` процесс с `uid=10001` успешно читает файлы через права `Others` (`r--`).
+* **Ловушка с `defaultMode: 0400` / `0440`:** Если администратор задает ужесточенные права `0400` (только владелец) без настройки групп, процесс с `uid=10001` получит ошибку `Permission denied`, так как владелец файла на диске узла — `root` (`uid=0`).
+* **Решение через `fsGroup`:** При указании `pod.spec.securityContext.fsGroup: 10001` Kubelet монтирует том с групповым владением `gid=10001`. В сочетании с `defaultMode: 0440` непривилегированный процесс безопасно читает конфигурацию.
+
+---
 
 ### Поведение флага optional
 
-Флаг `optional: true` в секциях `env`, `envFrom` и `volumes` определяет поведение при отсутствии ConfigMap:
+Флаг `optional: true` управляет отказоустойчивостью старта пода при отсутствии ConfigMap или конкретного ключа:
 
-**Для `env` и `envFrom`:**
+| Место использования | `optional: false` (по умолчанию) | `optional: true` |
+| :--- | :--- | :--- |
+| `env.valueFrom.configMapKeyRef` | Под зависает в `CreateContainerConfigError`, если нет ConfigMap или ключа | Переменная пропускается, под успешно стартует |
+| `envFrom.configMapRef` | Под зависает в `CreateContainerConfigError`, если ConfigMap отсутствует | Ни одна переменная не добавляется, под успешно стартует |
+| `volumes.configMap` | Ошибка монтирования `FailedMount`, контейнеры не создаются | Создается пустая директория тома, под успешно стартует |
+| `volumes.configMap.items` | `FailedMount`, если хотя бы один ключ из `items` отсутствует в ConfigMap | Ключи, которых нет в объекте, просто не создаются на диске тома |
+
+---
+
+### Системные ограничения платформы
+
+* **Лимит размера в 1 MiB:** Размер объекта ConfigMap в etcd жестко ограничен 1 MiB (`RequestEntityTooLarge`). Для конфигураций свыше 1 MiB используйте сжатие `binaryData` или внешние тома (подробно: [Работа с большими конфигурациями](./large_configs.md)).
+* **Изоляция пространств имен (Namespaces):** ConfigMap и потребляющий его Pod обязаны находиться в одном Namespace. Межпространственные ссылки не поддерживаются ядром Kubernetes.
+* **Размещение на диске узла:** Тома ConfigMap размещаются в локальной файловой системе хоста по пути `/var/lib/kubelet/pods/<pod-uid>/volumes/kubernetes.io~configmap/<volume-name>/`. Они потребляют дисковое пространство и inodes раздела `/var/lib/kubelet`, а не оперативную память (tmpfs не используется).
+
+---
+
+## Практические сценарии
+
+### Сценарий 1: Базовая передача переменных окружения (`env`, `configMapKeyRef`, `optional`)
+
+**Контекст:** Передача скалярных настроек приложения (порт, режим отладки) с защитой от сбоя при отсутствии второстепенных параметров.
+
+#### Манифест ConfigMap и Pod
+
 ```yaml
-env:
-- name: MY_CONFIG
-  valueFrom:
-    configMapKeyRef:
-      name: my-config
-      key: my-key
-      optional: true  # Под запустится без ошибки
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-scalar-config
+  namespace: default
+data:
+  APP_PORT: "8080"
+  LOG_LEVEL: "info"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scalar-env-pod
+  namespace: default
+spec:
+  restartPolicy: Never
+  containers:
+  - name: backend
+    image: alpine:3.20
+    command: ["/bin/sh", "-c", "env | grep -E 'APP_PORT|LOG_LEVEL|FEATURE_FLAG'; sleep 3600"]
+    env:
+    - name: APP_PORT
+      valueFrom:
+        configMapKeyRef:
+          name: app-scalar-config
+          key: APP_PORT
+    - name: LOG_LEVEL
+      valueFrom:
+        configMapKeyRef:
+          name: app-scalar-config
+          key: LOG_LEVEL
+    - name: FEATURE_FLAG
+      valueFrom:
+        configMapKeyRef:
+          name: app-scalar-config
+          key: NON_EXISTENT_KEY
+          optional: true # Предотвращает CreateContainerConfigError
 ```
 
-**Для `volumes`:**
+#### Проверка выполнения
+
+```bash
+# Применение манифестов
+kubectl apply -f app-scalar-config.yaml
+# → configmap/app-scalar-config created
+# → pod/scalar-env-pod created
+
+# Проверка переменных внутри контейнера
+kubectl exec scalar-env-pod -c backend -- env | grep -E 'APP_PORT|LOG_LEVEL|FEATURE_FLAG'
+# → APP_PORT=8080
+# → LOG_LEVEL=info
+```
+
+---
+
+### Сценарий 2: Массовая инъекция через envFrom с префиксом и разрешением коллизий
+
+**Контекст:** Импорт базовых настроек и функциональных флагов с исключением пересечения имен переменных через префиксы и переопределение значений.
+
+#### Манифест
+
 ```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: base-system-config
+  namespace: default
+data:
+  HTTP_TIMEOUT: "30s"
+  MAX_RETRIES: "3"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feature-flags-config
+  namespace: default
+data:
+  NEW_CHECKOUT: "true"
+  BETA_DASHBOARD: "false"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: envfrom-collision-pod
+  namespace: default
+spec:
+  restartPolicy: Never
+  containers:
+  - name: app
+    image: alpine:3.20
+    command: ["/bin/sh", "-c", "env | grep -E 'HTTP_TIMEOUT|MAX_RETRIES|FF_'; sleep 3600"]
+    envFrom:
+    - configMapRef:
+        name: base-system-config
+    - configMapRef:
+        name: feature-flags-config
+      prefix: "FF_" # Добавит префикс ко всем ключам этого ConfigMap
+    env:
+    - name: HTTP_TIMEOUT # Явный env переопределяет значение из base-system-config
+      value: "60s"
+```
+
+#### Проверка выполнения
+
+```bash
+kubectl apply -f envfrom-pod.yaml
+# → configmap/base-system-config created
+# → configmap/feature-flags-config created
+# → pod/envfrom-collision-pod created
+
+kubectl exec envfrom-collision-pod -- env | grep -E 'HTTP_TIMEOUT|MAX_RETRIES|FF_' | sort
+# → FF_BETA_DASHBOARD=false
+# → FF_NEW_CHECKOUT=true
+# → HTTP_TIMEOUT=60s
+# → MAX_RETRIES=3
+```
+
+---
+
+### Сценарий 3: Передача конфигурации в command и args контейнера с экранированием
+
+**Контекст:** Запуск процесса утилиты с аргументами CLI, сформированными из ConfigMap, и передача сложных строковых шаблонов с символом `$`.
+
+#### Манифест
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: job-runtime-config
+  namespace: default
+data:
+  TARGET_HOST: "database.internal.local"
+  METRIC_PORT: "9100"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: args-expansion-pod
+  namespace: default
+spec:
+  restartPolicy: Never
+  containers:
+  - name: worker
+    image: alpine:3.20
+    command: ["/bin/sh", "-c"]
+    # $$(LITERAL) экранируется в $(LITERAL), $(TARGET_HOST) раскрывается Kubelet
+    args:
+    - 'echo "Connecting to $(TARGET_HOST):$(METRIC_PORT) with template: $$(PID_EXPR)" && sleep 3600'
+    env:
+    - name: TARGET_HOST
+      valueFrom:
+        configMapKeyRef:
+          name: job-runtime-config
+          key: TARGET_HOST
+    - name: METRIC_PORT
+      valueFrom:
+        configMapKeyRef:
+          name: job-runtime-config
+          key: METRIC_PORT
+```
+
+#### Проверка выполнения
+
+```bash
+kubectl apply -f args-expansion-pod.yaml
+# → configmap/job-runtime-config created
+# → pod/args-expansion-pod created
+
+kubectl logs args-expansion-pod
+# → Connecting to database.internal.local:9100 with template: $(PID_EXPR)
+```
+
+---
+
+### Сценарий 4: Монтирование тома с выборочной проекцией ключей (items) и правами (defaultMode)
+
+**Контекст:** Монтирование сложного конфигурационного файла в `/etc/nginx/conf.d` с переименованием ключа в валидное имя файла и строгими правами доступа `0440`.
+
+#### Манифест
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-vhost-config
+  namespace: default
+data:
+  raw_vhost_template: |
+    server {
+        listen 8080;
+        server_name localhost;
+        location /healthz {
+            return 200 'OK';
+        }
+    }
+  unused_notes.txt: "Вспомогательные заметки разработчика"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-custom-volume-pod
+  namespace: default
+spec:
+  containers:
+  - name: web
+    image: nginx:1.27-alpine
+    ports:
+    - containerPort: 8080
+    volumeMounts:
+    - name: conf-volume
+      mountPath: /etc/nginx/conf.d
+      readOnly: true
+  volumes:
+  - name: conf-volume
+    configMap:
+      name: nginx-vhost-config
+      defaultMode: 0440 # Read-only для владельца и группы
+      items:
+      - key: raw_vhost_template
+        path: default.conf # Переименование ключа в имя файла на диске
+```
+
+#### Проверка выполнения
+
+```bash
+kubectl apply -f nginx-volume.yaml
+# → configmap/nginx-vhost-config created
+# → pod/nginx-custom-volume-pod created
+
+# Проверка файлов в директории монтирования
+kubectl exec nginx-custom-volume-pod -- ls -la /etc/nginx/conf.d
+# → lrwxrwxrwx 1 root root 19 Oct 13 16:10 ..data -> ..2026_10_13_16_10_00.111111111
+# → lrwxrwxrwx 1 root root 19 Oct 13 16:10 default.conf -> ..data/default.conf
+
+# Проверка прав доступа к конечному файлу (0440 = -r--r-----)
+kubectl exec nginx-custom-volume-pod -- ls -la /etc/nginx/conf.d/..data/default.conf
+# → -r--r----- 1 root root 120 Oct 13 16:10 /etc/nginx/conf.d/..data/default.conf
+```
+
+---
+
+### Сценарий 5: Монтирование в контейнер с непривилегированным пользователем (Non-Root, fsGroup)
+
+**Контекст:** Запуск процесса с жесткими ограничениями безопасности (`runAsNonRoot: true`, `readOnlyRootFilesystem: true`) с сохранением возможности чтения конфигурации процессом с `uid=10001`.
+
+#### Манифест
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: secure-app-config
+  namespace: default
+data:
+  appsettings.json: |
+    {
+      "Environment": "Production",
+      "CacheTtlSeconds": 300
+    }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nonroot-secure-pod
+  namespace: default
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001 # Kubelet передаст владение томом группе 10001
+  containers:
+  - name: secure-service
+    image: alpine:3.20
+    command: ["/bin/sh", "-c", "cat /etc/app/appsettings.json && sleep 3600"]
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+    volumeMounts:
+    - name: config-vol
+      mountPath: /etc/app
+      readOnly: true
+  volumes:
+  - name: config-vol
+    configMap:
+      name: secure-app-config
+      defaultMode: 0440 # Владелец и fsGroup могут читать
+```
+
+#### Проверка выполнения
+
+```bash
+kubectl apply -f nonroot-secure-pod.yaml
+# → configmap/secure-app-config created
+# → pod/nonroot-secure-pod created
+
+# Проверка чтения файла процессом
+kubectl logs nonroot-secure-pod
+# → {
+# →   "Environment": "Production",
+# →   "CacheTtlSeconds": 300
+# → }
+
+# Проверка UID/GID владельца на диске
+kubectl exec nonroot-secure-pod -- ls -ld /etc/app/..data
+# → drwxr-xr-x 2 root 10001 4096 Oct 13 16:15 /etc/app/..data
+```
+
+---
+
+### Сценарий 6: Монтирование одиночного файла без затирания каталога (subPath vs Projected Volume)
+
+**Контекст:** Внедрение одного конфигурационного файла в каталог `/etc/pam.d/` или `/etc/`, где уже находятся критические системные файлы контейнера, без их уничтожения.
+
+#### Вариант A: subPath (Статичный файл, Hot Reload НЕ требуется)
+
+```yaml
+volumeMounts:
+- name: single-config-volume
+  mountPath: /etc/custom_daemon.conf
+  subPath: custom_daemon.conf # Не затирает /etc, но замораживает inode
 volumes:
-- name: config-volume
+- name: single-config-volume
   configMap:
-    name: my-config
-    items:
-    - key: app.yaml
-      path: config.yaml
-    optional: true  # Том будет пустым, под запустится
+    name: daemon-config
 ```
 
-**Поведение:**
-- `optional: false` (по умолчанию): Под не запустится, если ConfigMap отсутствует
-- `optional: true`: Под запустится, даже если ConfigMap отсутствует
-- **Важно:** При `optional: true` и отсутствии ConfigMap:
-  - Для `env`: переменная не будет установлена, под запустится без ошибки
-  - Для `envFrom`: ни одна переменная не будет добавлена, под запустится
-  - Для `volumes`: том будет пустой директорией
-- **Детали с `items`:** если ConfigMap существует, но в нем нет ключа из `items`, и `optional: true` — соответствующий **путь просто не будет создан**, под запустится. Если `optional: false` — под не запустится.
-- Флаг `optional` в `configMapKeyRef` распространяется и на отсутствие ключа: при `optional: true` переменная молча пропускается, если нет ни объекта, ни требуемого ключа.
+#### Вариант B: Обход ловушки subPath через Projected Volume + Симлинк при старте
 
-### Правила разрешения переменных окружения (envFrom, prefix и $(VAR))
-
-При одновременном использовании нескольких источников переменных действуют строгие правила приоритета:
-
-**Порядок приоритета:**
-1.  Явные `env` (включая `valueFrom.configMapKeyRef`) **переопределяют** одноименные ключи из `envFrom`.
-2.  Несколько блоков `envFrom`: при дублировании ключа побеждает источник, указанный **позже** в списке.
-3.  `envFrom` загружает все ключи; поле `prefix` добавляет префикс к имени каждой переменной.
-
-**Пример:**
-```yaml
-envFrom:
-- configMapRef:
-    name: base-config
-- configMapRef:
-    name: feature-flags
-  prefix: FF_          # Все ключи из feature-flags получат префикс FF_
-- secretRef:
-    name: app-secrets  # envFrom работает и с Secret
-env:
-- name: LOG_LEVEL      # env переопределяет значение из base-config
-  valueFrom:
-    configMapKeyRef:
-      name: base-config
-      key: log_level
-```
-
-**Невалидные имена переменных:**
-Ключи ConfigMap, недопустимые как имена переменных окружения (например, `my.key`, `my-key` или начинающиеся с цифры), через `envFrom` **молча пропускаются** — под запускается, но такие переменные отсутствуют. На старых версиях факт пропуска фиксировался событием `InvalidEnvironmentVariableNames` в Events пода. После GA флага `RelaxedEnvironmentVariableValidation` (Kubernetes 1.35+) допустимы почти все печатные ASCII-символы, кроме `=`, однако **POSIX-совместимые оболочки** все равно могут не отображать подобные переменные.
-
-**Практический вывод:** если планируется `envFrom`, используйте в ключах только `[A-Za-z0-9_]` (без точек и дефисов). Для ключей с точками/дефисами применяйте `configMapKeyRef` с явным `name` либо монтируйте ConfigMap как тома (в именах файлов точки и дефисы допустимы).
-
-**Подстановка `$(VAR)` в command/args:**
-*   Kubelet разворачивает `$(VAR_NAME)` из полного окружения контейнера (включая переменные из ConfigMap). Ссылка на переменную обязана идти **после** ее определения в списке `env`.
-*   Если переменная не определена, `$(VAR_NAME)` остается литералом (не превращается в пустую строку) — это частая причина неожиданного поведения команд.
-*   Для передачи литерала `$(VAR_NAME)` используйте экранирование `$$(VAR_NAME)` (синтаксис в стиле make: каждая `$$` сворачивается в один `$`). Крайне актуально для shell-скриптов в `args`, где `$$` в heredoc и арифметике `$((...))` некорректно поглощается Kubernetes.
-
-**Пример экранирования:**
-```yaml
-command: ["/bin/sh", "-c"]
-args:
-- "echo literal: $$(NOT_A_VAR) and expanded: $(REAL_VAR)"
-env:
-- name: REAL_VAR
-  valueFrom:
-    configMapKeyRef:
-      name: job-config
-      key: task_type
-```
-
-*Примечание: правила приоритета env/envFrom едины для ConfigMap и Secret.*
-
-### Взаимодействие с Downward API
-
-ConfigMap может комбинироваться с Downward API для передачи метаданных Pod вместе с конфигурацией:
+Если файлу требуется автообновление, но каталог контейнера нельзя перезаписывать целиком:
 
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: app-with-metadata
+  name: safe-reloadable-mount-pod
+  namespace: default
 spec:
   containers:
   - name: app
-    image: my-app:latest
-    env:
-    - name: POD_NAME
-      valueFrom:
-        fieldRef:
-          fieldPath: metadata.name
-    - name: APP_CONFIG
-      valueFrom:
-        configMapKeyRef:
-          name: app-config
-          key: config.yaml
+    image: alpine:3.20
+    command:
+    - /bin/sh
+    - -c
+    - |
+      # Создаем симлинк на файл из изолированного тома в целевую директорию
+      ln -sfn /var/run/configs/app.conf /etc/app.conf
+      while true; do
+        cat /etc/app.conf
+        sleep 10
+      done
     volumeMounts:
-    - name: pod-metadata
-      mountPath: /etc/podinfo
+    - name: isolated-config-vol
+      mountPath: /var/run/configs # Изолированная директория (Hot Reload работает)
       readOnly: true
   volumes:
-  - name: pod-metadata
-    downwardAPI:
-      items:
-      - path: "labels"
-        fieldRef:
-          fieldPath: metadata.labels
+  - name: isolated-config-vol
+    configMap:
+      name: app-live-config
 ```
 
-## Практические сценарии
+---
 
-### Сценарий 1: Переменные окружения и флаг необязательности
+### Сценарий 7: Реализация Hot Reload конфигурации через inotify/SIGHUP без перезапуска пода
 
-Используется для простых параметров (порты, уровни логирования).
+**Контекст:** Процесс Nginx или Prometheus должен перечитывать измененные правила конфигурации при срабатывании фонового триггера без рестарта контейнера.
 
-```yaml
-spec:
-  containers:
-    - name: app
-      image: my-app:1.0
-      env:
-        # Инъекция конкретного ключа
-        - name: LOG_LEVEL
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: log_level
-              optional: true # Позволяет поду запуститься, если CM или ключ отсутствуют
-      # Массовая инъекция всех ключей
-      envFrom:
-        - configMapRef:
-            name: feature-flags
-            # prefix: "FF_"  # Добавляет префикс FF_ ко всем ключам feature-flags
-```
-
-### Сценарий 2: Монтирование файлов и управление правами
-
-Используется для сложных конфигов (nginx, prometheus). Поле `items` позволяет выбрать конкретные ключи и переименовать их.
+#### Манифест с Sidecar-релоадером на базе inotify
 
 ```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dynamic-nginx-conf
+  namespace: default
+data:
+  nginx.conf: |
+    events { worker_connections 1024; }
+    http {
+        server {
+            listen 80;
+            location / { return 200 "Version 1\n"; }
+        }
+    }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hot-reload-nginx-pod
+  namespace: default
 spec:
+  shareProcessNamespace: true # Позволяет sidecar отправлять сигналы основному контейнеру
   containers:
-    - name: nginx
-      image: nginx:1.25
-      volumeMounts:
-        - name: config-volume
-          mountPath: /etc/nginx/conf.d
-          readOnly: true
+  - name: nginx
+    image: nginx:1.27-alpine
+    volumeMounts:
+    - name: config-dir
+      mountPath: /etc/nginx
+      readOnly: true
+  - name: config-watcher
+    image: alpine:3.20
+    command:
+    - /bin/sh
+    - -c
+    - |
+      apk add --no-cache inotify-tools procps
+      echo "Monitoring /etc/nginx for changes..."
+      # Отслеживаем смену ссылки ..data в родительской директории
+      while inotifywait -e create,moved_to /etc/nginx; do
+        echo "Detected ConfigMap rotation! Sending SIGHUP to nginx..."
+        pkill -HUP nginx || true
+      done
+    volumeMounts:
+    - name: config-dir
+      mountPath: /etc/nginx
+      readOnly: true
   volumes:
-    - name: config-volume
-      configMap:
-        name: nginx-config
-        defaultMode: 0440 # Права доступа в восьмеричном формате
-        items:
-          - key: "vhost.conf"
-            path: "mysite.conf" # Файл будет доступен как /etc/nginx/conf.d/mysite.conf
+  - name: config-dir
+    configMap:
+      name: dynamic-nginx-conf
 ```
 
-### Сценарий 3: Использование в командной строке (command/args)
+#### Проверка Hot Reload
 
-Значения из ConfigMap могут определять логику запуска контейнера.
+```bash
+# 1. Запуск пода и проверка ответа
+kubectl apply -f hot-reload-nginx.yaml
+kubectl exec hot-reload-nginx-pod -c nginx -- wget -qO- http://localhost:80
+# → Version 1
 
-```yaml
-spec:
-  containers:
-    - name: batch-job
-      image: alpine
-      command: ["/bin/sh", "-c"]
-      args: ["echo Starting task: $(TASK_NAME)"] # Значение берется из env
-      env:
-        - name: TASK_NAME
-          valueFrom:
-            configMapKeyRef:
-              name: job-config
-              key: task_type
+# 2. Обновление ConfigMap
+kubectl patch configmap dynamic-nginx-conf --type merge \
+  -p '{"data":{"nginx.conf":"events { worker_connections 1024; } http { server { listen 80; location / { return 200 \"Version 2\\n\"; } } }"}}'
+# → configmap/dynamic-nginx-conf patched
+
+# 3. Ожидание цикла syncFrequency (60-90 сек) и проверка логов watcher
+kubectl logs hot-reload-nginx-pod -c config-watcher
+# → Detected ConfigMap rotation! Sending SIGHUP to nginx...
+
+# 4. Проверка нового ответа Nginx без рестарта пода
+kubectl exec hot-reload-nginx-pod -c nginx -- wget -qO- http://localhost:80
+# → Version 2
 ```
 
-### Сценарий 4: Native Sidecars (Kubernetes 1.29+)
+---
 
-Нативные sidecar-контейнеры (init-контейнеры с `restartPolicy: Always`) могут использовать ConfigMap для подготовки окружения или предоставления прокси-сервисов до запуска основного приложения.
+### Сценарий 8: Конфигурация Native Sidecar (restartPolicy: Always) и Init-контейнеров
+
+**Контекст:** Подготовка конфигурационных файлов в `initContainers` и запуск нативного проксирующего sidecar-контейнера (Kubernetes 1.29+) до старта основного сервиса.
+
+#### Манифест
 
 ```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipeline-config
+  namespace: default
+data:
+  proxy.conf: "upstream_host=127.0.0.1:9000"
+  schema_validation.json: '{"version": 2}'
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: native-sidecar-pod
+  namespace: default
 spec:
   initContainers:
-    - name: auth-proxy
-      image: oauth2-proxy:v7.0
-      restartPolicy: Always
-      envFrom:
-        - configMapRef:
-            name: proxy-settings
-  containers:
-    - name: main-app
-      image: app:v2
-```
-
-### Сценарий 5: Множественные контейнеры с общей конфигурацией
-
-Один ConfigMap может использоваться несколькими контейнерами в Pod с разными уровнями доступа:
-
-```yaml
-spec:
-  containers:
-  - name: web-server
-    image: nginx:1.25
+  # 1. Одноразовый init-контейнер для проверки конфига
+  - name: validate-config
+    image: alpine:3.20
+    command: ["/bin/sh", "-c", "test -s /etc/schema/schema_validation.json && echo Config OK"]
     volumeMounts:
-    - name: shared-config
-      mountPath: /etc/nginx/conf.d
-      readOnly: true
-  - name: log-collector
-    image: fluentd:latest
+    - name: cfg-vol
+      mountPath: /etc/schema
+  # 2. Native Sidecar: запускается до основного контейнера и работает параллельно
+  - name: local-proxy
+    image: alpine:3.20
+    restartPolicy: Always # Kubernetes 1.29+ Native Sidecar
+    command: ["/bin/sh", "-c", "cat /etc/proxy/proxy.conf && sleep 3600"]
     volumeMounts:
-    - name: shared-config
-      mountPath: /etc/fluent/config
-      readOnly: true
+    - name: cfg-vol
+      mountPath: /etc/proxy
+  containers:
+  - name: main-application
+    image: alpine:3.20
+    command: ["/bin/sh", "-c", "echo Main app running; sleep 3600"]
   volumes:
-  - name: shared-config
+  - name: cfg-vol
     configMap:
-      name: app-config
-      defaultMode: 0440
+      name: pipeline-config
 ```
 
-### Сценарий 6: ConfigMap с Init-контейнерами
+#### Проверка выполнения
 
-Init-контейнеры могут использовать ConfigMap для подготовки данных перед запуском основного приложения:
+```bash
+kubectl apply -f native-sidecar-pod.yaml
+# → pod/native-sidecar-pod created
 
-```yaml
-spec:
-  initContainers:
-  - name: config-validator
-    image: busybox
-    command: ['sh', '-c', 'cat /etc/config/app.yaml | grep -q "valid: true"']
-    volumeMounts:
-    - name: config-volume
-      mountPath: /etc/config
-  containers:
-  - name: app
-    image: my-app:latest
-    volumeMounts:
-    - name: config-volume
-      mountPath: /etc/config
-      readOnly: true
-  volumes:
-  - name: config-volume
-    configMap:
-      name: app-config
+# Проверка статуса контейнеров пода
+kubectl get pod native-sidecar-pod -o jsonpath='{range .status.initContainerStatuses[*]}{.name}: ready={.ready}{"\n"}{end}'
+# → validate-config: ready=false
+# → local-proxy: ready=true
 ```
 
-### Сценарий 7: ConfigMap в DaemonSet
+---
 
-DaemonSet автоматически создает Pod на каждом узле, используя ConfigMap для узловой конфигурации:
+### Сценарий 9: Общий ConfigMap для нескольких контейнеров в поде с разделением прав
+
+**Контекст:** Основной контейнер и сборщик логов монтируют один и тот же ConfigMap в разные каталоги файловой системы с различными правами доступа.
+
+#### Манифест
 
 ```yaml
-apiVersion: apps/v1
-kind: DaemonSet
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: node-exporter
-spec:
-  selector:
-    matchLabels:
-      app: node-exporter
-  template:
-    metadata:
-      labels:
-        app: node-exporter
-    spec:
-      containers:
-      - name: exporter
-        image: prom/node-exporter:latest
-        volumeMounts:
-        - name: node-config
-          mountPath: /etc/node-exporter
-          readOnly: true
-      volumes:
-      - name: node-config
-        configMap:
-          name: node-exporter-config
-```
-
-### Сценарий 8: ConfigMap в StatefulSet
-
-StatefulSet обеспечивает стабильные имена и хранилище для Pod, используя ConfigMap для конфигурации:
-
-```yaml
-apiVersion: apps/v1
-kind: StatefulSet
+  name: multi-container-config
+  namespace: default
+data:
+  app.yaml: "service: payment-gateway"
+  fluent_forward.conf: "forward_port: 24224"
+---
+apiVersion: v1
+kind: Pod
 metadata:
-  name: postgres
-spec:
-  serviceName: postgres
-  replicas: 3
-  selector:
-    matchLabels:
-      app: postgres
-  template:
-    metadata:
-      labels:
-        app: postgres
-    spec:
-      containers:
-      - name: postgres
-        image: postgres:16
-        env:
-        - name: POSTGRES_DB
-          valueFrom:
-            configMapKeyRef:
-              name: postgres-config
-              key: database
-        volumeMounts:
-        - name: postgres-data
-          mountPath: /var/lib/postgresql/data
-  volumeClaimTemplates:
-  - metadata:
-      name: postgres-data
-    spec:
-      accessModes: ["ReadWriteOnce"]
-      resources:
-        requests:
-          storage: 10Gi
-```
-
-### Сценарий 9: Projected Volumes с ConfigMap
-
-Projected volumes позволяют объединить ConfigMap с другими источниками (Secret, Downward API) в одной директории:
-
-```yaml
+  name: shared-cm-pod
+  namespace: default
 spec:
   containers:
   - name: app
-    image: my-app:latest
+    image: alpine:3.20
+    command: ["/bin/sh", "-c", "cat /etc/app/app.yaml && sleep 3600"]
     volumeMounts:
-    - name: combined-config
+    - name: shared-storage
       mountPath: /etc/app
       readOnly: true
+  - name: logger
+    image: alpine:3.20
+    command: ["/bin/sh", "-c", "cat /etc/fluent/fluent_forward.conf && sleep 3600"]
+    volumeMounts:
+    - name: shared-storage
+      mountPath: /etc/fluent
+      readOnly: true
   volumes:
-  - name: combined-config
+  - name: shared-storage
+    configMap:
+      name: multi-container-config
+      defaultMode: 0444
+```
+
+#### Проверка выполнения
+
+```bash
+kubectl apply -f shared-cm-pod.yaml
+# → pod/shared-cm-pod created
+
+kubectl exec shared-cm-pod -c app -- cat /etc/app/app.yaml
+# → service: payment-gateway
+
+kubectl exec shared-cm-pod -c logger -- cat /etc/fluent/fluent_forward.conf
+# → forward_port: 24224
+```
+
+---
+
+### Сценарий 10: Агрегация источников конфигурации в единый каталог через Projected Volumes
+
+**Контекст:** Объединение открытых настроек (ConfigMap), учетных данных (Secret) и метаданных кластера (Downward API) в одну директорию `/etc/unified/`.
+
+#### Манифест
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: public-settings
+  namespace: default
+data:
+  cluster_name: "prod-dc1-k8s"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: private-keys
+  namespace: default
+stringData:
+  api_token: "secret-token-9988"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: projected-unification-pod
+  namespace: default
+spec:
+  containers:
+  - name: service
+    image: alpine:3.20
+    command: ["/bin/sh", "-c", "ls -la /etc/unified && sleep 3600"]
+    volumeMounts:
+    - name: unified-volume
+      mountPath: /etc/unified
+      readOnly: true
+  volumes:
+  - name: unified-volume
     projected:
+      defaultMode: 0400
       sources:
       - configMap:
-          name: app-config
+          name: public-settings
           items:
-          - key: "config.yaml"
-            path: "config.yaml"
+          - key: cluster_name
+            path: env/cluster.txt
       - secret:
-          name: app-secrets
+          name: private-keys
           items:
-          - key: "db-password"
-            path: "secrets/db-pass"
+          - key: api_token
+            path: auth/token.key
       - downwardAPI:
           items:
-          - path: "metadata/labels"
+          - path: pod_labels
             fieldRef:
               fieldPath: metadata.labels
 ```
 
-### Сценарий 10: Проверка актуальности и атомарности смонтированных файлов
-
-Практическая задача SRE — убедиться, что в под доставлена именно нужная версия конфига и что механизм симлинков работает.
+#### Проверка выполнения
 
 ```bash
-# 1. Проверка структуры тома (ссылка ..data и файлы-связки)
-kubectl exec <pod-name> -- ls -la /etc/config
+kubectl apply -f projected-pod.yaml
+# → pod/projected-unification-pod created
 
-# 2. Целевой путь, на который указывает ..data (актуальная ревизия данных)
-kubectl exec <pod-name> -- readlink /etc/config/..data
-
-# 3. Фактическое содержимое «живого» файла через ссылку ..data
-kubectl exec <pod-name> -- cat /etc/config/..data/config.yaml
-
-# 4. Контрольная сумма файла (сравните до и после обновления ConfigMap)
-kubectl exec <pod-name> -- sha256sum /etc/config/config.yaml
+kubectl exec projected-unification-pod -- find /etc/unified -type f -exec ls -la {} +
+# → -r-------- 1 root root 15 Oct 13 16:30 /etc/unified/..data/auth/token.key
+# → -r-------- 1 root root 12 Oct 13 16:30 /etc/unified/..data/env/cluster.txt
+# → -r-------- 1 root root 32 Oct 13 16:30 /etc/unified/..data/pod_labels
 ```
 
-**Интерпретация результата:**
-*   Если в каталоге присутствует `..data` и несколько директорий `..<timestamp>`, а приложение не перечитало конфиг после обновления — файлы доставлены корректно, проблема в отсутствии Hot Reload либо в невалидности нового конфига (приложение откатилось на старый).
-*   Если `..data` отсутствует, а файлы лежат напрямую — том смонтирован через `subPath` (автообновление не работает) либо на узле старый kubelet.
+---
 
-### Сценарий 11: Императивная инъекция переменных окружения (kubectl set env)
+### Сценарий 11: Анализ структуры тома, проверка симлинков и аудит inodes
 
-Удобный способ для ad-hoc операций, отладки и прототипирования без правки YAML:
+**Контекст:** Задача SRE/Sysadmin — проверить доставку ревизии конфигурации на уровне ядра Linux и убедиться в атомарной ротации inodes.
+
+#### Команды аудита
 
 ```bash
-# Импорт ВСЕХ ключей ConfigMap как переменных в Deployment
-kubectl set env deployment/my-app --from=configmap/app-config
+# 1. Просмотр структуры каталога и проверка целевого каталога ..data
+kubectl exec scalar-env-pod -- ls -la /etc/config 2>/dev/null || \
+kubectl exec nginx-custom-volume-pod -- ls -la /etc/nginx/conf.d
+# → lrwxrwxrwx 1 root root 31 Oct 13 16:10 ..data -> ..2026_10_13_16_10_00.111111111
+# → lrwxrwxrwx 1 root root 20 Oct 13 16:10 default.conf -> ..data/default.conf
 
-# Импорт с префиксом (аналог envFrom.prefix)
-kubectl set env deployment/my-app --from=configmap/app-config --prefix=APP_
+# 2. Вывод текущего Inode физического файла
+kubectl exec nginx-custom-volume-pod -- stat -c "File: %n, Inode: %i, Links: %h" /etc/nginx/conf.d/default.conf
+# → File: /etc/nginx/conf.d/default.conf, Inode: 1045231, Links: 1
 
-# Импорт только отдельного ключа
-kubectl set env deployment/my-app --keys=log_level --from=configmap/app-config
-
-# Просмотр результирующего манифеста без применения (dry-run)
-kubectl set env deployment/my-app --from=configmap/app-config -o yaml --dry-run=client
-
-# Просмотр текущих переменных, включая ссылки на ConfigMap/Secret
-kubectl set env deployment/my-app --list
-
-# Удаление переменной
-kubectl set env deployment/my-app LOG_LEVEL-
+# 3. Проверка контрольной суммы до и после обновления
+kubectl exec nginx-custom-volume-pod -- sha256sum /etc/nginx/conf.d/default.conf
+# → a1b2c3d4e5...  /etc/nginx/conf.d/default.conf
 ```
 
-**Внимание:** команда изменяет шаблон пода, что триггерит Rolling Update. Для production-процессов предпочитайте декларативные манифесты (GitOps); `kubectl set env` удобен для отладки и разовых операций.
+---
+
+### Сценарий 12: Императивное управление переменными через kubectl set env
+
+**Контекст:** Ad-hoc отладка и быстрое тестирование в dev/stage окружении без ручного редактирования Deployment манифестов.
+
+#### Команды
+
+```bash
+# 1. Добавление всех ключей ConfigMap как переменных в Deployment с dry-run
+kubectl set env deployment/payment-api --from=configmap/app-scalar-config --dry-run=client -o yaml
+# → deployment.apps/payment-api configured (dry run)
+
+# 2. Реальное применение импорта с префиксом
+kubectl set env deployment/payment-api --from=configmap/app-scalar-config --prefix=SVC_
+# → deployment.apps/payment-api env updated
+
+# 3. Просмотр текущих настроенных переменных окружения в объекте
+kubectl set env deployment/payment-api --list
+# → # deployments/payment-api, container payment-api
+# → # app-scalar-config from configmap (prefix 'SVC_')
+
+# 4. Удаление инжектированной переменной
+kubectl set env deployment/payment-api SVC_LOG_LEVEL-
+# → deployment.apps/payment-api env updated
+```
+
+---
+
+## Операции и команды
+
+### Сводная таблица команд управления и диагностики
+
+| Операция | Команда | Назначение / Описание |
+| :--- | :--- | :--- |
+| **Поиск потребителей томов** | `kubectl get pods -A -o jsonpath='{...}'` | Найти все поды, монтирующие указанный ConfigMap как Volume |
+| **Поиск потребителей env** | `kubectl get pods -A -o jsonpath='{...}'` | Найти все поды, использующие ConfigMap в блоке `env` или `envFrom` |
+| **Инспекция структуры тома** | `kubectl exec <pod> -- ls -la <mountPath>` | Проверить симлинки `..data` и структуру файлов в контейнере |
+| **Проверка ссылки ..data** | `kubectl exec <pod> -- readlink <mountPath>/..data` | Вывести имя актуальной временной директории данных |
+| **Аудит переменных окружения** | `kubectl exec <pod> -- env \| sort` | Вывести фактические переменные процесса контейнера |
+| **Императивный импорт env** | `kubectl set env deploy/<name> --from=cm/<cm>` | Добавить все ключи ConfigMap в Deployment |
+| **Проверка директории на хосте** | `ls -la /var/lib/kubelet/pods/<uid>/volumes/...` | (Sysadmin на ноде) Проверить физическое состояние тома Kubelet |
+| **Логи Volume Manager** | `journalctl -u kubelet -g "kubernetes.io~configmap"` | (Sysadmin на ноде) Проверить синхронизацию томов Kubelet |
+
+### Практические команды с ожидаемым выводом
+
+```bash
+# 1. Поиск всех подов в Namespace, монтирующих ConfigMap 'nginx-vhost-config' как том
+kubectl get pods -n default -o json | jq -r \
+  '.items[] | select(.spec.volumes[]?.configMap.name == "nginx-vhost-config") | .metadata.name'
+# → nginx-custom-volume-pod
+
+# 2. Поиск подов, ссылающихся на ConfigMap через env или envFrom
+kubectl get pods -n default -o json | jq -r \
+  '.items[] | select(
+    (.spec.containers[].env[]?.valueFrom.configMapKeyRef.name == "app-scalar-config") or
+    (.spec.containers[].envFrom[]?.configMapRef.name == "app-scalar-config")
+  ) | .metadata.name'
+# → scalar-env-pod
+
+# 3. Проверка фактической ссылки ..data внутри контейнера
+kubectl exec nginx-custom-volume-pod -- readlink /etc/nginx/conf.d/..data
+# → ..2026_10_13_16_10_00.111111111
+
+# 4. Проверка событий Kubelet, связанных с ошибками монтирования томов
+kubectl get events --field-selector reason=FailedMount --sort-by='.lastTimestamp'
+# → LAST SEEN   TYPE      REASON        OBJECT            MESSAGE
+# → 45s         Warning   FailedMount   pod/broken-pod    MountVolume.SetUp failed for volume "cfg": configmap "missing-cm" not found
+
+# 5. Проверка директории тома на узле кластера (для администраторов узла / SSH)
+# Получаем UID пода:
+POD_UID=$(kubectl get pod nginx-custom-volume-pod -o jsonpath='{.metadata.uid}')
+# На рабочей ноде:
+ls -la /var/lib/kubelet/pods/${POD_UID}/volumes/kubernetes.io~configmap/conf-volume/
+# → drwxr-xr-x 3 root root 4096 Oct 13 16:10 .
+# → drwxr-xr-x 3 root root 4096 Oct 13 16:10 ..
+# → drwxr-xr-x 2 root root 4096 Oct 13 16:10 ..2026_10_13_16_10_00.111111111
+# → lrwxrwxrwx 1 root root   31 Oct 13 16:10 ..data -> ..2026_10_13_16_10_00.111111111
+# → lrwxrwxrwx 1 root root   19 Oct 13 16:10 default.conf -> ..data/default.conf
+```
+
+---
+
+## Диагностика и устранение неполадок
+
+### Алгоритм локализации проблем
+
+```
+                         Проблема при использовании ConfigMap в Pod
+                                            │
+               ┌────────────────────────────┴────────────────────────────┐
+               ▼                                                         ▼
+      Под не запускается                                      Под запущен, но конфиг не тот
+               │                                                         │
+       ┌───────┴───────┐                                         ┌───────┴───────┐
+       ▼               ▼                                         ▼               ▼
+CreateContainer   FailedMount                              Способ доставки?  Права доступа?
+  ConfigError          │                                         │               │
+       │         Том не найден /                           ┌─────┴─────┐   Permission denied
+       │         неверный ключ                             ▼           ▼         │
+ Отсутствует CM        │                                  env        volume  Проверить fsGroup
+ или ключ в env   Проверить имя                         Нужен      Проверить и defaultMode
+                  ConfigMap в volumes                  Rollout     subPath /
+                                                                   inode кэш
+```
+
+---
+
+### Анализ типовых неисправностей
+
+#### Ошибка 1: `CreateContainerConfigError` при старте пода
+
+**Симптомы:** Под находится в статусе `CreateContainerConfigError`, контейнеры не создаются.
+
+```bash
+kubectl describe pod <pod-name>
+# → Events:
+# → Error: configmap "app-config" not found
+# → Error: couldn't find key APP_PORT in ConfigMap default/app-scalar-config
+```
+
+**Причина:** В блоке `env` или `envFrom` указан несуществующий ConfigMap или отсутствующий ключ при `optional: false` (по умолчанию).
+
+**Диагностика и решение:**
+```bash
+# 1. Проверяем наличие ConfigMap в том же Namespace
+kubectl get configmap <cm-name> -n <namespace>
+
+# 2. Проверяем точный состав ключей в объекте
+kubectl get configmap <cm-name> -n <namespace> -o jsonpath='{.data}' | jq 'keys'
+
+# 3. Если параметр необязателен — добавьте флаг optional: true в манифест пода:
+# valueFrom:
+#   configMapKeyRef:
+#     name: app-config
+#     key: APP_PORT
+#     optional: true
+```
+
+---
+
+#### Ошибка 2: Файлы в томе обновились на диске, но приложение использует старую конфигурацию
+
+**Симптомы:** `cat /etc/config/app.conf` в контейнере показывает актуальные данные, но приложение продолжает работать по старым правилам.
+
+**Причина:**
+1. Приложение не поддерживает Hot Reload (конфигурация считывается только один раз при старте процесса).
+2. Приложение удерживает открытый файловый дескриптор (кеширование inode ядра Linux).
+3. inotify-вотчер приложения упал из-за `IN_DELETE_SELF` при смене симлинка `..data`.
+
+**Диагностика и решение:**
+```bash
+# 1. Проверяем, какой inode открыт процессом (через lsof/procfs)
+kubectl exec <pod-name> -- ls -l /proc/1/fd/
+# Если дескриптор указывает на (deleted) или старый путь ..<old_timestamp> — процесс не закрывал файл
+
+# 2. Решение:
+# А) Если процесс поддерживает сигнал (SIGHUP) — отправить сигнал (например, pkill -HUP <process>)
+# Б) Если процесс не поддерживает Hot Reload — выполнить рестарт пода:
+kubectl rollout restart deployment/<deployment-name>
+```
+
+---
+
+#### Ошибка 3: Файл тома не обновляется при изменении ConfigMap (ловушка subPath)
+
+**Симптомы:** ConfigMap обновлен в кластере, прошло более 10 минут, но файл внутри контейнера остается старым, а в директории отсутствует ссылка `..data`.
+
+**Причина:** Файл смонтирован с использованием директивы `subPath`. Созданный Linux `bind mount` жестко зафиксировал первоначальный inode.
+
+**Диагностика и решение:**
+```bash
+# 1. Проверяем манифест пода на наличие subPath
+kubectl get pod <pod-name> -o yaml | grep -B 2 -A 5 "subPath"
+# → volumeMounts:
+# → - mountPath: /etc/nginx/nginx.conf
+# →   name: conf
+# →   subPath: nginx.conf
+
+# 2. Решение:
+# Убрать subPath и смонтировать директорию целиком, либо вынести файл в изолированный каталог
+# и создать симлинк при старте контейнера (см. Сценарий 6).
+```
+
+---
+
+#### Ошибка 4: `CrashLoopBackOff` из-за нераскрытых `$(VAR)` переменных в command/args
+
+**Симптомы:** Контейнер падает при старте, в логах ошибка вида: `Error: cannot connect to host $(DB_HOST)`.
+
+**Причина:**
+1. Имя переменной в `$(VAR)` объявлено **ниже** по списку `env`, чем место ее вызова.
+2. Имя переменной написано с опечаткой (регистрозависимо).
+3. Использован одиночный символ `$` в shell-скрипте, и Kubelet попытался развернуть его как несуществующую переменную.
+
+**Диагностика и решение:**
+```bash
+# 1. Проверяем итоговую команду контейнера
+kubectl get pod <pod-name> -o json | jq '.spec.containers[0].command, .spec.containers[0].args'
+
+# 2. Решение:
+# Переместите определение env выше в списке.
+# Для литералов shell замените $ на $$ (например, $$(PID) вместо $(PID)).
+```
+
+---
+
+#### Ошибка 5: `Permission denied` при чтении файлов в non-root контейнере
+
+**Симптомы:** Приложение завершается с ошибкой `open /etc/config/app.json: permission denied`.
+
+**Причина:** Контейнер запускается от `runAsUser: 10001`, а том смонтирован со слишком строгими правами (например, `defaultMode: 0400`), из-за чего доступ имеет только `root`.
+
+**Диагностика и решение:**
+```bash
+# 1. Проверяем права на файлы в контейнере
+kubectl exec <pod-name> -- ls -la /etc/config/..data
+
+# 2. Решение:
+# Установите defaultMode: 0440 или 0444 в спецификации тома:
+# volumes:
+# - name: config-vol
+#   configMap:
+#     name: app-config
+#     defaultMode: 0444
+# Либо настройте fsGroup в securityContext пода (см. Сценарий 5).
+```
+
+---
+
+#### Ошибка 6: Переменные из envFrom молча отсутствуют в контейнере
+
+**Симптомы:** ConfigMap подключен через `envFrom`, но `env` внутри контейнера не содержит ожидаемых ключей.
+
+**Причина:** Ключи в ConfigMap содержат недопустимые символы для имен переменных окружения в стандарте POSIX: точки (`.`) или дефисы (`-`) (например, `database.url` или `service-port`). Kubelet молча игнорирует такие ключи при импорте через `envFrom`.
+
+**Диагностика и решение:**
+```bash
+# 1. Выводим список ключей объекта ConfigMap
+kubectl get configmap <cm-name> -o jsonpath='{.data}' | jq 'keys'
+
+# 2. Решение:
+# А) Переименовать ключи в формат C-идентификаторов (DATABASE_URL, SERVICE_PORT).
+# Б) Либо использовать явную привязку через env[].valueFrom.configMapKeyRef с валидным name.
+```
+
+---
+
+#### Ошибка 7: Затирание существующего содержимого целевого каталога
+
+**Симптомы:** При монтировании тома в `/etc/nginx` исчезли стандартные файлы (`mime.types`, `fastcgi_params`), сервис не запускается.
+
+**Причина:** Монтирование тома на существующую директорию файловой системы контейнера полностью перекрывает (shadowing) исходное содержимое каталога.
+
+**Диагностика и решение:**
+- Монтируйте тома в выделенные подкаталоги (например, `/etc/nginx/conf.d/` вместо `/etc/nginx/`).
+- Либо используйте Projected Volumes / Init-контейнеры.
+
+---
+
+#### Ошибка 8: Ошибка `FailedMount` при удалении или повреждении ConfigMap
+
+**Симптомы:** Под не может перезапуститься после падения ноды или рестарта контейнера со статусом `FailedMount`.
+
+```bash
+kubectl describe pod <pod-name>
+# → Warning FailedMount 12s kubelet MountVolume.SetUp failed for volume "cfg": configmap "deleted-cm" not found
+```
+
+**Причина:** Объект ConfigMap был удален из кластера, пока под работал. Работающий под продолжал использовать закешированную версию, но при перезапуске Kubelet не смог смонтировать том.
+
+**Решение:**
+- Восстановить ConfigMap из GitOps-репозитория.
+- Настроить мониторинг удаления критических объектов через метрику `kube_configmap_created`.
+
+---
+
+## Рекомендации и лучшие практики
+
+### Чек-лист выбора метода доставки конфигурации
+
+| Критерий / Требование | Рекомендуемый метод | Обоснование |
+| :--- | :--- | :--- |
+| **Простые скалярные значения** (порты, флаги отладки) | `env` / `envFrom` | Минимальный оверхед, нативная поддержка во всех фреймворках |
+| **Сложные конфигурации** (YAML, JSON, XML, Nginx vhost) | `volumes` (каталог целиком) | Поддержка Atomic Symlink Swap, Hot Reload без перезапуска |
+| **Агрегация нескольких источников** (CM + Secret + Token) | `projected` volumes | Единый каталог без накладных расходов множественных томов |
+| **Подмена одного файла в заполненном каталоге** | Изолированный том + symlink | Обход ловушки `subPath` с сохранением автообновления |
+| **Статичные неизменяемые конфигурации** | `volumes` + `immutable: true` | Снятие Watch-нагрузки с `kube-apiserver` и etcd |
+
+---
+
+### Безопасность и минимизация привилегий (Least Privilege)
+
+1. **Защита от записи (`readOnly: true`):**
+   Всегда указывайте `readOnly: true` в блоке `volumeMounts`. Контейнеры никогда не должны иметь права на запись в смонтированный том конфигурации.
+2. **Ограничение прав доступа (`defaultMode`):**
+   Устанавливайте минимально необходимые права на файлы тома:
+   - `0440` — для работы в связке с `fsGroup` непривилегированного пользователя.
+   - `0400` — если чтение требуется только UID владельца процесса.
+   - Избегайте использования прав по умолчанию `0644`, если в конфигурациях содержатся закрытые инфраструктурные схемы.
+3. **Запрет конфиденциальных данных в ConfigMap:**
+   ConfigMap хранится в etcd в открытом виде и не шифруется механизмом Encryption at Rest (если он не настроен для всех ресурсов). Токены, пароли, приватные ключи и сертификаты должны размещаться исключительно в [Secret](../secrets/secrets_basics.md).
+4. **Запуск от непривилегированного пользователя:**
+   Всегда используйте `securityContext.runAsNonRoot: true` и `securityContext.fsGroup` для корректного доступа к томам ConfigMap без повышения привилегий до `root`.
+
+---
+
+### Отказоустойчивость и непрерывность
+
+1. **Принцип Fail-Fast (`optional: false`):**
+   Оставляйте `optional: false` для всех критических конфигураций. Если ConfigMap отсутствует, под должен гарантированно упасть в `CreateContainerConfigError` на этапе развертывания, а не начать работу с некорректными дефолтными значениями в продакшене.
+2. **Контроль целостности через GitOps:**
+   Любое изменение ConfigMap должно проходить через Git-репозиторий и CI-валидацию (схемы `kubeconform` / `conftest`). Ручные правки через `kubectl edit configmap` в production-кластерах категорически запрещены.
+3. **Хеширование имен конфигураций при Rollout:**
+   Для приложений, не поддерживающих Hot Reload, используйте версионирование имен ConfigMap (например, через Kustomize `configMapGenerator` или Helm `checksum/config`). Это обеспечивает гарантированный Rolling Update подов и исключает рассинхронизацию между репликами. Подробно разобрано в [Обновление и Rollout](./update_and_rollout.md).
+
+---
 
 ## Дополнительная информация
 
-### Сравнение способов подключения
-
-| Аспект | Переменные окружения (`env`) | Тома (`volumes`) |
-| :--- | :--- | :--- |
-| **Обновление** | Требует перезапуска (Rollout) | Автоматически (Hot Reload) |
-| **Размер данных** | Ограничен лимитами ОС на env | До 1 MiB (лимит etcd) |
-| **Сложные структуры** | Неудобно (только плоские ключи) | Идеально (вложенные файлы) |
-| **subPath** | N/A | Блокирует Hot Reload |
-| **Производительность** | Быстрый доступ при старте | Небольшая задержка синхронизации |
-| **Безопасность** | Виден в `/proc/<pid>/environ` | Файлы на диске с правами доступа |
-
-### Типичные ошибки и диагностика
-
-#### Ошибка 1: `CreateContainerConfigError`
-
-**Причина:** ConfigMap не найден или отсутствует ключ.
-
-**Диагностика:**
-```bash
-# Проверка существования ConfigMap
-kubectl get configmap <configmap-name> -n <namespace>
-
-# Проверка ключей в ConfigMap
-kubectl get configmap <configmap-name> -o jsonpath='{.data}' | jq 'keys'
-
-# Проверка событий пода
-kubectl describe pod <pod-name> | grep -A 10 "Events:"
-```
-
-**Решение:**
-```bash
-# Убедитесь, что ConfigMap существует
-kubectl get configmap <configmap-name> -n <namespace>
-
-# Проверьте правильность имени и ключа в манифесте
-```
-
-#### Ошибка 2: `FailedMount` при монтировании
-
-**Причина:** Конфликт путей монтирования или неправильные права доступа.
-
-**Диагностика:**
-```bash
-# Проверьте, не используется ли subPath
-kubectl get pod <pod-name> -o jsonpath='{.spec.volumes[*].configMap}'
-
-# Проверьте права доступа к файлам
-kubectl exec <pod-name> -- ls -la /etc/config
-```
-
-**Решение:**
-```yaml
-# Правильное монтирование с указанием прав
-volumeMounts:
-- name: config-volume
-  mountPath: /etc/config
-  readOnly: true
-volumes:
-- name: config-volume
-  configMap:
-    name: my-config
-    defaultMode: 0440
-```
-
-#### Ошибка 3: Данные не обновляются
-
-**Причина:** Используется `subPath` или переменные окружения.
-
-**Диагностика:**
-```bash
-# Проверьте, используется ли subPath
-kubectl get pod <pod-name> -o json | jq '.spec.volumes[].configMap'
-
-# Проверьте, используется ли env вместо volumes
-kubectl get pod <pod-name> -o json | jq '.spec.containers[].env'
-```
-
-**Решение:**
-```yaml
-# Используйте volumes вместо subPath для Hot Reload
-volumeMounts:
-- name: config-volume
-  mountPath: /etc/config
-  # НЕ используйте subPath для обновляемых данных
-```
-
-#### Ошибка 4: `optional: true` не работает
-
-**Причина:** ConfigMap существует, но ключ отсутствует.
-
-**Диагностика:**
-```bash
-# Проверьте все ключи в ConfigMap
-kubectl get configmap <configmap-name> -o jsonpath='{.data}' | jq 'keys'
-
-# Проверьте, какой ключ ожидается в манифесте
-kubectl get pod <pod-name> -o json | jq '.spec.containers[].env[].valueFrom.configMapKeyRef.key'
-```
-
-**Решение:**
-```bash
-# Добавьте недостающий ключ в ConfigMap
-kubectl edit configmap <configmap-name>
-# или
-kubectl patch configmap <configmap-name> --type merge -p '{"data":{"my-key":"my-value"}}'
-```
-
-#### Ошибка 5: Переменные из envFrom не появились в контейнере
-
-**Причина:** Ключи ConfigMap содержат символы, недопустимые для имен переменных окружения (точки, дефисы, начало с цифры) — такие ключи молча пропускаются, под запускается.
-
-**Диагностика:**
-```bash
-# Проверка ключей ConfigMap
-kubectl get configmap <cm-name> -o jsonpath='{.data}' | jq 'keys'
-
-# Проверка событий пода на предмет InvalidEnvironmentVariableNames (старые версии)
-kubectl get events --field-selector involvedObject.name=<pod-name> | grep -i invalid
-
-# Список переменных, реально попавших в контейнер
-kubectl exec <pod-name> -- env | sort
-```
-
-**Решение:**
-- Переименуйте ключи в underscore-стиле (`log_level` вместо `log.level`)
-- Либо переключитесь на явный `env[].valueFrom.configMapKeyRef`, где имя переменной задается отдельно
-- Либо монтируйте ConfigMap как тома — в именах файлов точки и дефисы допустимы
-
-#### Ошибка 6: `$(VAR)` в command/args не подставился
-
-**Причина:** Переменная не определена к моменту развертывания, ссылка расположена **раньше** определения в списке `env`, либо используется одиночный `$` вместо `$$` для передачи литерала.
-
-**Диагностика:**
-```bash
-# Команда, которая реально будет выполнена (до подстановки)
-kubectl get pod <pod-name> -o json | jq '.spec.containers[0].command, .spec.containers[0].args'
-
-# Наличие переменной в окружении контейнера
-kubectl exec <pod-name> -- env | grep <VAR>
-```
-
-**Решение:**
-```bash
-# Напишите имя переменной ТОЧНО как в env (с учетом регистра)
-kubectl get configmap <cm-name> -o jsonpath='{.data.<key>}'
-# Для литерала $(...) используйте $$(...), а не $...
-```
-
-### Диагностические команды
-
-```bash
-# Просмотр всех ConfigMap в Namespace
-kubectl get configmap -n <namespace>
-
-# Просмотр содержимого ConfigMap
-kubectl get configmap <configmap-name> -o yaml
-
-# Проверка, какие Pod используют ConfigMap
-kubectl get pods -n <namespace> -o json | jq '.items[] | select(.spec.volumes[]?.configMap.name == "<configmap-name>") | .metadata.name'
-
-# Проверка переменных окружения в Pod
-kubectl exec <pod-name> -- env | grep <CONFIG_NAME>
-
-# Просмотр событий Pod
-kubectl get events --field-selector involvedObject.name=<pod-name> --sort-by='.lastTimestamp'
-
-# Проверка использования ConfigMap в env
-kubectl get pods -n <namespace> -o json | jq '.items[] | select(.spec.containers[].env[].valueFrom.configMapKeyRef.name == "<configmap-name>") | .metadata.name'
-
-# Ссылки на ConfigMap в шаблоне Deployment (env, envFrom, volumes)
-kubectl get deploy <app> -n <namespace> -o json | \
-  jq '.spec.template.spec.containers[0] | {env: .env, envFrom: .envFrom}'
-
-# Структура смонтированного тома (проверка ..data)
-kubectl exec <pod-name> -- ls -la /etc/config
-
-# Реальные переменные окружения внутри контейнера
-kubectl exec <pod-name> -- env | sort
-
-# Список переменных, объявленных через refs, в шаблоне пода
-kubectl set env deploy/<app> --list
-```
-
-### Производительность и оптимизация
-
-**Влияние на производительность:**
-- В режиме `Watch` каждый узел с подами, потребляющими ConfigMap, устанавливает Watch-соединение на **каждый** используемый объект (не по одному на ConfigMap в целом, а на уровне kubelet узла)
-- В больших кластерах (тысячи узлов и объектов) это создает значительную нагрузку на API-сервер и etcd
-- Используйте `immutable: true` для статических конфигураций — Kubelet выполняет одноразовый GET и не держит Watch; подробнее см. [Неизменяемые ConfigMap](./immutable.md)
-- Для узлов с очень большим числом подов/ConfigMap можно перевести kubelet в стратегию `Cache` или `Get` (компромисс скорости и нагрузки)
-
-**Оптимизации:**
-```yaml
-# Используйте неизменяемые ConfigMap для статических данных
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: static-config
-immutable: true
-data:
-  config.yaml: |
-    # Статическая конфигурация
-```
-
-**Мониторинг:**
-Отслеживать изменения ConfigMap по метрикам kube-state-metrics следует аккуратно: `kube_configmap_info` — это статичная метрика-маркер (значение всегда 1, состав меток: namespace, name, immutable, labels), поэтому выражение `changes(kube_configmap_info[...])` **не сработает**. Корректные сигналы:
-
-*   **Удаление/пересоздание объекта:** метрика `kube_configmap_created` несет время создания (.Value). Сравнение интервалов выявляет удаленные ConfigMap:
-    ```yaml
-    # Срабатывает, если ConfigMap, существовавший 10 минут назад, теперь отсутствует
-    - alert: ConfigMapDeleted
-      expr: |
-        (kube_configmap_created offset 10m) unless kube_configmap_created
-      for: 0m
-      labels:
-        severity: warning
-      annotations:
-        summary: "ConfigMap {{ $labels.namespace }}/{{ $labels.name }} удален"
-    ```
-*   **Изменение содержимого:** kube-state-metrics не экспортирует значения `data`, поэтому полагайтесь на GitOps-конвейер (diff в CI/CD), Watch-события API или метрики sidecar-reloader'а (например, `configmap_reload_success_total` у `configmap-reload`).
-*   **Hot Reload приложений:** контролируйте метрики reloader'а и частоту пересборок томов через события пода (`kubectl get events --watch`).
-
-### Безопасность при использовании
-
-**RBAC-ограничения:**
-```yaml
-# Role для ограничения доступа к ConfigMap
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: configmap-reader
-rules:
-- apiGroups: [""]
-  resources: ["configmaps"]
-  verbs: ["get", "list", "watch"]
-  resourceNames: ["allowed-configmap"]  # Ограничьте конкретными именами
-```
-
-**Практические меры:**
-*   **Неизменяемость:** Для стабильных конфигураций используйте `immutable: true`. Это отключает Watch со стороны Kubelet, существенно снижая нагрузку на API-сервер, и защищает от случайных ручных правок. Подробнее см. [Неизменяемые ConfigMap](./immutable.md).
-*   **Валидация в CI:** Используйте `kubeconform` или `conftest` для проверки манифестов перед применением (размер, обязательные поля, `readOnly`).
-*   **Мониторинг:** Настройте алерты на удаление критических ConfigMap (через `kube_configmap_created`) и на деградацию reloader-ов (Prometheus).
-*   **Секреты:** ConfigMap не шифруется и доступен любому субъекту с правами чтения в namespace. Пароли, токены и ключи храните исключительно в [Secret](../secrets/secrets_basics.md).
-
-> Подробнее о readOnly, defaultMode, fsGroup и Admission Control: [Лучшие практики ConfigMap](./best_practices.md)
-
-### Интеграция с инструментами
-
-**Helm:**
-```yaml
-# templates/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "myapp.fullname" . }}-config
-data:
-  config.yaml: |
-    {{- .Files.Get "configs/config.yaml" | nindent 4 }}
-```
-
-**Kustomize:**
-```yaml
-# kustomization.yaml
-configMapGenerator:
-- name: app-config
-  files:
-    - configs/config.yaml
-  options:
-    immutable: true
-```
-
-**ArgoCD/Flux:**
-```yaml
-# Автоматическое обновление при изменении ConfigMap
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-spec:
-  syncPolicy:
-    automated:
-      prune: true
-```
-
-**Автоматические перезапуски при изменении конфигурации** подробно рассмотрены в [Helm: перезапуск при изменении конфига](../../ToolsUtilities/Helm/templating/scenarios/restart_on_change.md) и [Reloader (оператор перезапусков)](../../ToolsUtilities/reloader/reloader_overview.md).
-
-### ConfigMap и HorizontalPodAutoscaler (HPA)
-
-HPA **не использует ConfigMap напрямую** для своей конфигурации — спецификация HPA определяется полностью в её собственном CRD-манифесте. Однако есть важные пересечения:
-
-1. **GitOps-конфликт:** HPA управляет `spec.replicas` Deployment, а ArgoCD/Flux управляет манифестом из Git. Без настройки `ignoreDifferences` ArgoCD будет постоянно откатывать количество реплик. Решение: в ArgoCD укажите `jsonPointers: ["/spec/replicas"]` в `ignoreDifferences`.
-
-2. **Cluster Autoscaler + ConfigMap:** Cluster Autoscaler использует ConfigMap `cluster-autoscaler-priority-expander` для определения приоритетов node group при масштабировании, которое запускается, когда HPA создаёт поды без возможности размещения.
-
-3. **Ресурсные лимиты:** При `autoscaling.enabled=true` в Helm, `replicas` в Deployment опускается, а управление количеством реплик передаётся HPA. Убедитесь, что `minReplicas` в HPA >= `minAvailable` в PDB.
-
-> Подробнее: [HPA](../../Autoscaling/HPA/index.md), [HPAAdvanced](../../Autoscaling/HPA/hpa_advanced.md), [HPA scenarios](../../Autoscaling/HPA/hpa_scenarios.md)
-
-### ConfigMap и Service Mesh (Istio/Envoy)
-
-Istio **не использует ConfigMap** для своей основной конфигурации. Конфигурация Istio управляется через CRDs:
-
-| CRD | Назначение | Аналогия |
-|---|---|---|
-| `Sidecar` | Управление scope envoy sidecar | Фильтрация доступа к сервисам |
-| `PeerAuthentication` | mTLS политики | Security context |
-| `AuthorizationPolicy` | L4/L7 авторизация | Network Policy |
-| `VirtualService` | Маршрутизация трафика | Ingress rules |
-| `DestinationRule` | Circuit breaking,负载均衡 | Connection policy |
-| `Telemetry` | Метрики, логи, трейсы | Monitoring config |
-
-**Единственное пересечение ConfigMap + Service Mesh:** Stakater Reloader может следить за ConfigMap, используемым для sidecar-конфигурации (например, кастомный envoy bootstrap), и инициировать rollout при изменении:
-
-```yaml
-annotations:
-  configmap.reloader.stakater.com/reload: "envoy-sidecar-config"
-```
-
-> Подробнее: [Service Mesh concepts](../../../../Service_Mesh/service_mesh_concepts.md), [Istio architecture](../../../../Service_Mesh/istio_architecture.md), [Proxy sidecar](../../../../Service_Mesh/proxy_sidecar.md)
-
-**См. также:**
-
-* [Создание ConfigMap](./creation.md) — декларативные и императивные подходы.
-* [Неизменяемые ConfigMap](./immutable.md) — оптимизация производительности.
-* [Обновление и Rollout](./update_and_rollout.md) — стратегии обновления конфигураций.
-* [Projected Volumes](../Pod/volume_types/projected_volumes.md) — агрегация данных из нескольких источников.
-* [Работа с большими конфигурациями](./large_configs.md) — обход лимита 1 MiB.
-* [Готовые шаблоны ConfigMap](./practical_templates.md) — шаблоны для Nginx, Prometheus, Postgres.
+### Сводное сравнение способов потребления ConfigMap
+
+| Характеристика | Переменные окружения (`env`) | Массовый импорт (`envFrom`) | Тома (`volumes`) | subPath тома |
+| :--- | :--- | :--- | :--- | :--- |
+| **Hot Reload (автообновление)** | Нет (нужен рестарт) | Нет (нужен рестарт) | **Да** (симлинки 60-90 с) | **Нет** (bind mount freeze) |
+| **Ограничение по размеру** | Лимит окружения ОС (ARG_MAX) | Лимит окружения ОС | До 1 MiB (лимит etcd) | До 1 MiB |
+| **Сложные древовидные конфиги** | Не поддерживаются | Не поддерживаются | **Идеально** | Поддерживаются |
+| **Влияние на FS контейнера** | Отсутствует | Отсутствует | Перекрывает целевой каталог | Заменяет одиночный файл |
+| **Видимость в `/proc`** | Видны в `/proc/<pid>/environ` | Видны в `/proc/<pid>/environ` | Только в виде файлов на диске | Только в виде файла |
+| **Валидация имен ключей** | Любое имя для `name` | Только POSIX `[A-Za-z0-9_]` | Любые имена файлов | Любые имена файлов |
+
+---
+
+### Интеграция со смежными инструментами экосистемы
+
+* **Stakater Reloader:**
+  Контроллер Kubernetes, отслеживающий изменения в ConfigMap/Secret и автоматически инициирующий скользящий перезапуск (`rollout restart`) зависимых Deployment/StatefulSet через аннотации:
+  ```yaml
+  metadata:
+    annotations:
+      reloader.stakater.com/auto: "true"
+  ```
+  Подробнее: [Reloader (оператор перезапусков)](../../ToolsUtilities/reloader/reloader_overview.md).
+
+* **Helm и шаблонизация:**
+  Автоматический перезапуск подов при изменении содержимого ConfigMap с помощью аннотации SHA256-хеша:
+  ```yaml
+  kind: Deployment
+  spec:
+    template:
+      metadata:
+        annotations:
+          checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+  ```
+  Подробнее: [Helm: перезапуск при изменении конфига](../../ToolsUtilities/Helm/templating/scenarios/restart_on_change.md).
+
+* **Service Mesh (Istio / Envoy):**
+  Хотя конфигурация Service Mesh в основном управляется через CRD (`VirtualService`, `DestinationRule`), кастомные параметры bootstrap-инициализации прокси-контейнеров Envoy инжектируются через ConfigMap с последующим отслеживанием через операторы перезапуска. Детали архитектуры прокси: [Service Mesh concepts](../../../Service_Mesh/service_mesh_concepts.md).
+
+---
+
+### Связанные документы базы знаний
+
+* [Создание ConfigMap](./creation.md) — декларативные и императивные подходы к созданию объектов.
+* [Неизменяемые ConfigMap](./immutable.md) — оптимизация нагрузки на API-сервер через `immutable: true`.
+* [Обновление и Rollout](./update_and_rollout.md) — детальный анализ Config Skew Window и стратегий выкатки.
+* [Работа с большими конфигурациями](./large_configs.md) — паттерны обхода лимита 1 MiB в etcd.
+* [Готовые шаблоны ConfigMap](./practical_templates.md) — продакшен-шаблоны для Nginx, Prometheus, Redis.
+* [Лучшие практики ConfigMap](./best_practices.md) — архитектурные стандарты и рекомендации CNCF.
+* [Projected Volumes](../Pod/volume_types/projected_volumes.md) — агрегация источников конфигурации в один том.
+* [Диагностика ошибок ConfigMap](../../Troubleshooting/Common_Errors/CreateContainerConfigError/configmap_issues.md) — углубленный траблшутинг `CreateContainerConfigError`.

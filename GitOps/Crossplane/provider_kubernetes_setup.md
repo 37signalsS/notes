@@ -1,146 +1,264 @@
-# Crossplane: Управление ресурсами Kubernetes
+# Crossplane: Управление ресурсами Kubernetes (provider-kubernetes)
+
+**Актуально для:** Crossplane v2.x / provider-kubernetes v1.3.x; Kubernetes 1.28–1.32+; On-Premise / Bare-Metal
+
+---
 
 ## Определения
 
-**provider-kubernetes** — это специализированный провайдер Crossplane для управления нативными объектами Kubernetes (Namespaces, ConfigMaps, Deployments, CRD, любыми ресурсами через `Object`) как внутри текущего кластера, так и в удаленных кластерах. Он позволяет использовать декларативный подход Crossplane для оркестрации самих ресурсов Kubernetes, обеспечивая единый интерфейс управления инфраструктурой и приложениями из одного control plane.
+**provider-kubernetes** — специализированный провайдер Crossplane (пакет `xpkg.upbound.io/crossplane-contrib/provider-kubernetes`), предназначенный для декларативного управления нативными и кастомными объектами Kubernetes (Namespaces, ConfigMaps, Secrets, Deployments, StatefulSets, CRD, Custom Resources) как внутри управляющего кластера (Control Plane), так и во внешних целевых кластерах через общий декларативный интерфейс.
 
-В 2026 году провайдер полностью интегрирован с архитектурой **Crossplane v2.x** и выпущен в версии **v1.3.0** (август 2026). С v1.0.0 провайдер совместим с Crossplane v2: поддерживает Namespaced Managed Resources, Server-Side Apply (SSA) для бесконфликтной синхронизации, а также новые API-группы `kubernetes.m.crossplane.io` (namespace-scoped MR и `ClusterProviderConfig`) наряду с классическими cluster-scoped `kubernetes.crossplane.io`. В v1.0.0 также была **удалена поддержка External Secret Store (ESS)** — креденшелы теперь только через `Secret` (см. раздел «Безопасность»).
+**Object** — низкоуровневый управляемый ресурс (Managed Resource, MR) провайдера, инкапсулирующий произвольный манифест целевого объекта Kubernetes внутри поля `spec.forProvider.manifest`. Доступен в двух вариантах: кластерном (`kubernetes.crossplane.io/v1alpha1`) и пространствозависимом (`kubernetes.m.crossplane.io/v1beta1`).
 
-## Базовые концепции
+**ProviderConfig** — конфигурационный ресурс провайдера (`kind: ProviderConfig`), определяющий сетевой эндпоинт целевого кластера, способ аутентификации (встроенный сервисный аккаунт `InjectedIdentity` либо ссылка на Kubernetes Secret с `kubeconfig`) и параметры взаимодействия с API-сервером.
 
-### Ключевые сценарии использования
+**ClusterProviderConfig** — кластерный ресурс Crossplane v2 (`kind: ClusterProviderConfig`, API-группа `kubernetes.m.crossplane.io`), позволяющий пространствозависимым ресурсам `Object` ссылаться на единую общекластерную точку подключения без дублирования секретов по пространствам имен.
 
-- **Мультикластерная оркестрация (Fleet Management):** Централизованное управление парком кластеров из одной точки (Control Plane) — создание Namespace, ConfigMap, RBAC, операторов в десятках кластеров по одному манифесту.
-- **Композиция приложений:** Создание высокоуровневых абстракций (XRD), объединяющих облачную инфраструктуру (например, Yandex PostgreSQL) и ресурсы K8s (Secrets, ConfigMaps, Deployments) в единый заявленный ресурс.
-- **Импорт существующих ресурсов:** Использование режима `Observe`/`ObserveOnly` для отслеживания ресурсов, созданных вне Crossplane (системные Namespace, Ingress-контроллеры), без их изменения.
-- **Соблюдение стандартов:** Гарантированное развертывание обязательных системных компонентов (мониторинг, агенты безопасности, NetworkPolicy, LimitRange) во всех новых кластерах.
+**Server-Side Apply (SSA)** — механизм применения конфигураций Kubernetes API (начиная с Kubernetes 1.18+), при котором вычисление различий, слияние полей и трекинг владения (Field Management) производятся на стороне `kube-apiserver`. Провайдер выступает менеджером полей с идентификатором `provider-kubernetes`.
 
-### Режимы управления (Management Policies)
+**Management Policies (`spec.managementPolicies`)** — гранулярный перечень атомарных операций (`Create`, `Update`, `Delete`, `Observe`, `LateInitialize`), разрешенных контроллеру Crossplane над целевым ресурсом. Позволяет организовать безопасный импорт инфраструктуры, режим аудита (`ObserveOnly`) или предотвратить физическое удаление критичных ресурсов.
 
-Каждый `Object` управляется через `spec.managementPolicies` — список действий, которые Crossplane выполняет над ресурсом. Это ключевое отличие от классического «владения» ресурсом:
+**DeletionPropagationPolicy (`spec.forProvider.deletionPropagationPolicy`)** — директива управления каскадным удалением зависимых дочерних ресурсов в целевом кластере (`Background`, `Foreground`, `Orphan`) при удалении объекта `Object`.
 
-| Политика | Действие Crossplane |
+**Readiness Checks (`spec.readinessChecks`)** — декларативные правила оценки готовности целевого ресурса на основе анализа значений его `status`-полей (`MatchString`, `MatchCondition`, `MatchTrue`, `MatchFalse`, `NonEmpty`), транслируемые в условие `Ready` манифеста `Object`.
+
+**ObservedObjectCollection** — ресурс провайдера (`kind: ObservedObjectCollection`), выполняющий пакетный сбор и агрегацию состояния набора однотипных объектов в целевом кластере в режиме только для чтения (инвентаризация и аудит).
+
+**InjectedIdentity** — режим авторизации провайдера, при котором контроллер использует права собственного ServiceAccount внутри управляющего кластера через монтируемый проецируемый токен (TokenRequest API).
+
+---
+
+## Базовые концепции и архитектура
+
+### Назначение и мультикластерная топология (Fleet Management)
+
+В архитектуре корпоративной инфраструктуры без облачных провайдеров управляющий кластер Kubernetes (Management Cluster / Control Plane) выполняет роль единого центра оркестрации платформенных сервисов для парка рабочих кластеров (Fleet / Downstream Clusters — Bare-Metal, тестовые стенды, DMZ, Edge):
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                    MANAGEMENT CONTROL PLANE (KUBERNETES)                        │
+│                                                                                 │
+│   GitOps (Argo CD / Flux) ────▶ kube-apiserver                                  │
+│                                       │                                         │
+│                      ┌────────────────┴────────────────┐                        │
+│                      ▼                                 ▼                        │
+│             Composite Resource (XR)        ProviderConfig / Secret              │
+│                      │                       (kubeconfig / token)               │
+│                      ▼                                 │                        │
+│             Composition Pipeline                       │                        │
+│                      │                                 │                        │
+│                      ▼                                 ▼                        │
+│             Object (Namespace, RBAC) ──▶ provider-kubernetes Controller        │
+└──────────────────────────────────────────────────┬──────────────────────────────┘
+                                                   │
+                ┌──────────────────────────────────┴──────────────────┐
+                │ gRPC / REST API (mTLS, Bearer Token)                │
+                ▼                                                     ▼
+┌───────────────────────────────────────────────┐ ┌───────────────────────────────┐
+│           LOCAL CONTROL PLANE                 │ │      TARGET ON-PREM CLUSTER   │
+│  (In-Cluster via InjectedIdentity)            │ │  (Downstream Cluster / Edge)  │
+│                                               │ │                               │
+│  - System Namespaces                          │ │  - Ingress Controllers        │
+│  - ClusterRoles & Bindings                    │ │  - Monitoring Agents          │
+│  - Local Platform CRDs                        │ │  - NetworkPolicies, Quotas    │
+└───────────────────────────────────────────────┘ └───────────────────────────────┘
+```
+
+Ключевые сценарии использования:
+- **Централизованное управление парком кластеров (Fleet Orchestration):** Декларативное развертывание базового платформенного стека (NetworkPolicy, LimitRange, ResourceQuota, DaemonSet агентов логирования и мониторинга, операторы) во все целевые кластеры из единого репозитория GitOps.
+- **Инфраструктурные композиции платформы:** Включение инфраструктурных примитивов Kubernetes (базы данных операторов, служебные секреты, сервисные аккаунты) в состав Composite Resource Definitions (XRD) наряду с физическими серверами, сетевыми коммутаторами и хранилищами.
+- **Импорт и инвентаризация без риска разрушения:** Подключение существующих системных кластеров в режиме `Observe` для отслеживания конфигурационного дрейфа без риска несанкционированной модификации или удаления ресурсов.
+
+### Архитектура и цикл реконсиляции (Reconciliation Loop)
+
+`provider-kubernetes` развертывается как Deployment в пространстве имен `crossplane-system`. Контроллер реализует непрерывный цикл реконсиляции:
+
+1. **Обнаружение и чтение спецификации:** Информер контроллера отслеживает создание и модификацию ресурсов `Object`.
+2. **Разрешение учетных данных:** Контроллер считывает `ProviderConfig`, на который ссылается `spec.providerConfigRef`. При источнике `InjectedIdentity` используются локальные учетные данные пода; при `Secret` — извлекается и валидируется `kubeconfig` целевого кластера.
+3. **Инициализация динамического клиента:** Контроллер строит динамический REST-клиент и discovery-клиент Kubernetes к целевому API-серверу с поддержкой динамического кэширования схем OpenAPI и CRD.
+4. **Server-Side Apply (SSA):** Контроллер отправляет вложенный манифест (`spec.forProvider.manifest`) на целевой API-сервер методом `PATCH` с заголовком `Content-Type: application/apply-patch+yaml` и параметром `fieldManager=provider-kubernetes`. Если обнаружен конфликт владения полями, контроллер может форсировать владение (`force=true`), если это задано политикой.
+5. **Сбор статуса и оценка готовности:** Фактическое состояние целевого ресурса считывается и записывается в `status.atProvider.manifest`. Если в ресурсе объявлен блок `spec.readinessChecks`, контроллер выполняет инспекцию указанных полей и транслирует результат в статус `Ready=True/False`.
+
+### Аутентификация и источники учетных данных
+
+Провайдер поддерживает два механизма аутентификации (`spec.credentials.source`):
+
+1. **`InjectedIdentity` (локальный кластер):**
+   - Провайдер использует ServiceAccount собственного пода.
+   - Взаимодействие осуществляется через стандартный projected volume (`/var/run/secrets/kubernetes.io/serviceaccount/token`).
+   - Требует настройки локальных `ClusterRole` и `ClusterRoleBinding` для сервисного аккаунта провайдера.
+2. **`Secret` (внешние и удаленные кластеры):**
+   - Учетные данные считываются из Kubernetes Secret в управляющем кластере (`spec.credentials.secretRef`).
+   - Значением секрета является валидный файл `kubeconfig` со статическим bearer-токеном сервисного аккаунта удаленного кластера либо с взаимными TLS-сертификатами (client-certificate-data и client-key-data).
+   - **Важное архитектурное ограничение:** Контейнер `provider-kubernetes` работает в минималистичном изолированном окружении. Любые динамические CLI-плагины аутентификации (`exec`-секция в `kubeconfig`) **не поддерживаются**, так как соответствующие бинарные файлы отсутствуют в образе. Для подключения к удаленным кластерам следует использовать долгоживущие ServiceAccount-токены или автоматизировать ротацию статичных kubeconfig через External Secrets Operator и HashiCorp Vault.
+
+### Области видимости и API-группы (Crossplane v2)
+
+Архитектура Crossplane v2 разделяет API провайдера на два взаимодополняющих контура:
+
+| Характеристика | Классический контур (Cluster-scoped) | Контур Crossplane v2 (Namespace-scoped MR) |
+| --- | --- | --- |
+| API-группа | `kubernetes.crossplane.io/v1alpha1` | `kubernetes.m.crossplane.io/v1beta1` |
+| Область видимости `Object` | Кластерная (Cluster-wide) | Пространство имен (`Namespace-scoped`) |
+| Назначение | Общесистемные ресурсы платформы, глобальный RBAC | Мультитенантная изоляция команд и сред |
+| Конфигурация подключения | `ProviderConfig.kubernetes.crossplane.io` | `ProviderConfig` (в том же NS) или `ClusterProviderConfig` |
+| Разрешение по умолчанию | `ProviderConfig/default` | `ClusterProviderConfig/default` |
+
+### Политики управления жизненным циклом (Management Policies)
+
+Управление ресурсом через `spec.managementPolicies` заменяет бинарную модель владения гибким списком атомарных привилегий контроллера:
+
+| Политика | Действие контроллера `provider-kubernetes` |
 | --- | --- |
-| `All` (или `*`) | Полное управление: Create, Update, Delete, Observe, LateInitialize (значение по умолчанию) |
-| `Create` | Создаёт ресурс, если его нет |
-| `Update` | Применяет изменения из манифеста |
-| `Delete` | Удаляет ресурс при удалении `Object` |
-| `Observe` | Только читает состояние, не изменяет |
-| `LateInitialize` | Дозаполняет `status` значениями, заданными облаком/кластером по умолчанию |
+| `All` (или `*`) | Полный жизненный цикл: Create, Update, Delete, Observe, LateInitialize (по умолчанию) |
+| `Create` | Создание ресурса в целевом кластере при его отсутствии |
+| `Update` | Синхронизация полей манифеста при обнаружении расхождений |
+| `Delete` | Физическое удаление ресурса из целевого кластера при удалении `Object` |
+| `Observe` | Периодическое чтение состояния ресурса без внесения изменений |
+| `LateInitialize` | Дозаполнение неуказанных полей манифеста значениями, назначенными admission-контроллерами целевого кластера |
 
-Комбинация `["Create","Update","Observe"]` означает «создай и поддерживай, но не удаляй» — ресурс останется в кластере после удаления `Object` из Git.
+Политика `["Create", "Update", "Observe"]` позволяет создавать и непрерывно поддерживать ресурс, гарантируя, что случайное удаление CRD `Object` в управляющем кластере не приведет к удалению критически важного Namespace или базы данных в целевом окружении.
 
-### API-группы и область видимости (Crossplane v2)
+Политика `["Observe"]` реализует режим аудита (Observe-Only), гарантируя нулевое вмешательство в целевой кластер при постоянном мониторинге дрейфа.
 
-Провайдер предоставляет два набора API:
+### Политики каскадного удаления (DeletionPropagationPolicy)
 
-- **Классический (cluster-scoped):** `kubernetes.crossplane.io/v1alpha1` — `ProviderConfig`, `Object` видны во всём кластере. Простейший вариант, используется в большинстве примеров ниже.
-- **Crossplane v2 (namespace-scoped):** `kubernetes.m.crossplane.io/v1beta1` — `Object` создаются в конкретном Namespace (изоляция команд/тенантов), а `ProviderConfig` становится namespace-scoped; добавлен cluster-scoped `ClusterProviderConfig.kubernetes.m.crossplane.io`. Если `spec.providerConfigRef.kind` не указан, по умолчанию берётся `ClusterProviderConfig` с именем `default`.
+Директива `spec.forProvider.deletionPropagationPolicy` определяет стратегию API-сервера целевого кластера при удалении составных объектов (Namespaces, Deployments, ReplicaSets):
 
-## Архитектура и принцип работы
+- `Background` (по умолчанию): Объект удаляется немедленно, а фоновый Garbage Collector API-сервера асинхронно удаляет зависимые дочерние ресурсы.
+- `Foreground`: Объект переводится в состояние удаления (`deletionTimestamp`), но физически не удаляется до тех пор, пока все дочерние ресурсы с блокирующими финализаторами не будут полностью уничтожены.
+- `Orphan`: Объект удаляется, но все его дочерние ресурсы остаются нетронутыми в кластере (становятся сиротами).
 
-Провайдер — это Deployment в `crossplane-system`, который реконсилирует `Object`:
+---
 
-1. Контроллер читает `Object`, получает `ProviderConfig` (через `spec.providerConfigRef`) и учётные данные из него.
-2. Через динамический Kubernetes-клиент он применяет вложенный манифест (`spec.forProvider.manifest`) к целевому кластеру.
-3. Применение использует **Server-Side Apply** с field manager `provider-kubernetes`, поэтому конфликтуют только те поля, которые явно заданы в манифесте (остальные управляются другими контроллерами — ArgoCD, HPA, операторами).
-4. Состояние ресурса копируется в `status.atProvider` `Object`; готовность определяется `readinessChecks`.
-
-Два источника идентификации (`spec.credentials.source`):
-- **InjectedIdentity** — провайдер использует собственный ServiceAccount-токен (projected token через TokenRequest). RBAC всё равно нужно выдать этому SA (см. ниже).
-- **Secret** — креденшелы (kubeconfig или токен) читаются из `Secret`, на который ссылается `secretRef`. Используется для удалённых кластеров.
-
-## Практические сценарии
+## Практические сценарии и конфигурация
 
 ### Предварительные требования
 
-- **Управляющий кластер:** Kubernetes v1.28+ с установленным Crossplane v2.x (инструкция: [Настройка Crossplane](./overview.md)).
-- **Пакетный менеджер:** Helm v3.10+ (с поддержкой OCI).
-- **Доступ:** Права `cluster-admin` для первичной настройки связи и RBAC провайдера (временно — позже сузить до scoped RBAC, см. раздел «Безопасность»).
+- **Управляющий кластер (Management Cluster):** Kubernetes v1.28–1.32+ с развернутым ядром Crossplane v2.x (инструкция: [Обзор Crossplane](./overview.md)).
+- **Пакетный менеджер:** Helm v3.12+ с включенной поддержкой OCI-реестров.
+- **Сетевая связность:** Прямой сетевой доступ (L3/L4) из подов пространства имен `crossplane-system` управляющего кластера к API-серверам целевых кластеров (порт 6443 или балансировщик API).
+- **Права доступа:** Начальные привилегии `cluster-admin` в управляющем и целевых кластерах для развертывания провайдера и первичной генерации сервисных учетных записей.
 
-### Установка провайдера
+### Установка провайдера и настройка рантайма (DeploymentRuntimeConfig)
 
-Рекомендуется использовать актуальную версию провайдера (август 2026 — **v1.3.0**):
+Для промышленной эксплуатации провайдера в SRE-практике обязательно создание `DeploymentRuntimeConfig`. Это позволяет зафиксировать лимиты памяти, политику планирования подов и настроить производительность цикла реконсиляции (`--max-reconcile-rate`):
 
 ```yaml
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: kubernetes-provider-runtime
+spec:
+  deploymentTemplate:
+    spec:
+      replicas: 1
+      template:
+        spec:
+          containers:
+            - name: package-runtime
+              args:
+                - --debug
+                - --max-reconcile-rate=100
+                - --poll=1m
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 1000m
+                  memory: 1Gi
+---
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
   name: provider-kubernetes
 spec:
   package: xpkg.upbound.io/crossplane-contrib/provider-kubernetes:v1.3.0
+  runtimeConfigRef:
+    name: kubernetes-provider-runtime
 ```
+
+Применение манифеста:
 
 ```bash
 kubectl apply -f provider.yaml
+# → deploymentruntimeconfig.pkg.crossplane.io/kubernetes-provider-runtime created
 # → provider.pkg.crossplane.io/provider-kubernetes created
 ```
 
-Проверка успешной установки и здоровья провайдера:
+Проверка статуса установки и ревизии провайдера:
 
 ```bash
 kubectl get providers
-# → NAME                 INSTALLED  HEALTHY  PACKAGE
-#   provider-kubernetes  True       True     xpkg.upbound.io/crossplane-contrib/provider-kubernetes:v1.3.0
+# → NAME                 INSTALLED  HEALTHY  PACKAGE                                                         AGE
+#   provider-kubernetes  True       True     xpkg.upbound.io/crossplane-contrib/provider-kubernetes:v1.3.0   45s
 
 kubectl get providerrevisions
-# → детали активной ревизии пакета (при HEALTHY=False см. kubectl describe providerrevisions)
+# → NAME                            HEALTHY   REVISION   IMAGE                                                           STATE    AGE
+#   provider-kubernetes-a1b2c3d4e5   True      1          xpkg.upbound.io/crossplane-contrib/provider-kubernetes:v1.3.0   Active   48s
 
-kubectl -n crossplane-system get deploy -l pkg.crossplane.io/provider=provider-kubernetes
-# → проверка, что под провайдера поднялся
+kubectl -n crossplane-system get pods -l pkg.crossplane.io/provider=provider-kubernetes
+# → NAME                                   READY   STATUS    RESTARTS   AGE
+#   provider-kubernetes-a1b2c3d4e5-79b8f   1/1     Running   0          52s
 ```
 
-> В v1.3.0 провайдер также экспонирует health (`/healthz`) и readiness (`/readyz`) пробы, а также поддерживает настраиваемую `DeletionPropagationPolicy` для `Object`.
+### Сценарий 1: Локальное управление ресурсами (In-Cluster) с минимальными привилегиями
 
-### Конфигурация для локального кластера (In-Cluster)
+Для управления ресурсами внутри того же кластера, где работает Crossplane, категорически не рекомендуется использовать неизбирательный `cluster-admin`. Настроим ограниченную роль (Principle of Least Privilege).
 
-Для управления ресурсами в том же кластере, где запущен Crossplane.
-
-**1. Настройка RBAC:**
-Провайдеру необходимы права для управления объектами. Создайте `ClusterRoleBinding` для ServiceAccount провайдера (имя SA генерируется автоматически):
+**Шаг 1: Определение имени ServiceAccount провайдера и выпуск scoped RBAC:**
 
 ```bash
-# Получение имени ServiceAccount провайдера
 SA_NAME=$(kubectl -n crossplane-system get sa -o jsonpath='{.items[?(@.metadata.annotations.pkg\.crossplane\.io/package=="provider-kubernetes")].metadata.name}')
-
-kubectl create clusterrolebinding provider-kubernetes-admin-binding \
-  --clusterrole cluster-admin \
-  --serviceaccount="crossplane-system:${SA_NAME}"
+echo "ServiceAccount провайдера: ${SA_NAME}"
+# → ServiceAccount провайдера: provider-kubernetes-a1b2c3d4e5
 ```
 
-**Принцип наименьших привилегий (рекомендуется вместо cluster-admin):** выдавайте провайдеру только те API-группы/ресурсы, которыми он реально управляет. Пример scoped `ClusterRole` (создаёт/обновляет/удаляет namespaces, configmaps, deployments, а читает всё для Observe):
+Создание целевой `ClusterRole` и `ClusterRoleBinding`:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: provider-kubernetes-scoped
+  name: crossplane-provider-kubernetes-scoped
 rules:
   - apiGroups: [""]
-    resources: ["namespaces", "configmaps", "secrets", "serviceaccounts"]
+    resources: ["namespaces", "configmaps", "secrets", "serviceaccounts", "resourcequotas", "limitranges"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies", "ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["*"]
     resources: ["*"]
-    verbs: ["get", "list", "watch"]   # только чтение для режимов Observe/ObserveOnly
+    verbs: ["get", "list", "watch"] # Только чтение для режима Observe
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: provider-kubernetes-scoped-binding
+  name: crossplane-provider-kubernetes-scoped-binding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: provider-kubernetes-scoped
+  name: crossplane-provider-kubernetes-scoped
 subjects:
   - kind: ServiceAccount
-    name: <SA_NAME>
+    name: provider-kubernetes-a1b2c3d4e5
     namespace: crossplane-system
 ```
 
-**2. Создание ProviderConfig:**
+Применение RBAC:
+
+```bash
+kubectl apply -f in-cluster-rbac.yaml
+# → clusterrole.rbac.authorization.k8s.io/crossplane-provider-kubernetes-scoped created
+# → clusterrolebinding.rbac.authorization.k8s.io/crossplane-provider-kubernetes-scoped-binding created
+```
+
+**Шаг 2: Создание локального ProviderConfig:**
 
 ```yaml
 apiVersion: kubernetes.crossplane.io/v1alpha1
@@ -152,257 +270,546 @@ spec:
     source: InjectedIdentity
 ```
 
-### Конфигурация для внешнего кластера (Multi-cluster)
-
-Управление удаленным кластером через `kubeconfig`.
-
-**1. Создание секрета с учетными данными:**
-
 ```bash
-kubectl -n crossplane-system create secret generic remote-cluster-kubeconfig \
-  --from-file=kubeconfig=/path/to/remote/kubeconfig
+kubectl apply -f providerconfig-default.yaml
+# → providerconfig.kubernetes.crossplane.io/default created
 ```
 
-> **Важно:** провайдер читает `kubeconfig` как статичные креденшелы. Kubeconfig с `exec`-плагином аутентификации (например, `aws eks get-token`, `gcloud`, Teleport `tbot`) **не сработает внутри пода провайдера**, так как в нём нет соответствующих бинарей/переменных окружения. Используйте статичный токен/клиентский сертификат или ServiceAccount-токен целевого кластера, либо вынесите получение кредов в External Secrets Operator (см. [GitOps Integration](./gitops_integration.md)).
+### Сценарий 2: Мультикластерное управление парком on-premise кластеров (Multi-Cluster)
 
-**2. Создание ProviderConfig для удаленного кластера:**
+Настройка управления удаленным downstream-кластером (например, `worker-dc1`).
+
+**Шаг 1: Создание ServiceAccount и выпуск токена в целевом удаленном кластере:**
+
+На стороне удаленного целевого кластера:
+
+```bash
+# Создание сервисного аккаунта управления
+kubectl create namespace platform-system
+kubectl -n platform-system create serviceaccount crossplane-agent
+
+# Привязка роли администратора платформы (или аналогичной scoped роли)
+kubectl create clusterrolebinding crossplane-agent-binding \
+  --clusterrole=cluster-admin \
+  --serviceaccount=platform-system:crossplane-agent
+
+# Создание статичного секрета с сервисным токеном
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: crossplane-agent-token
+  namespace: platform-system
+  annotations:
+    kubernetes.io/service-account.name: crossplane-agent
+type: kubernetes.io/service-account-token
+EOF
+# → secret/crossplane-agent-token created
+```
+
+**Шаг 2: Сборка статического kubeconfig без плагинов:**
+
+```bash
+TARGET_API="https://k8s-worker-dc1.corp.internal:6443"
+CA_DATA=$(kubectl -n platform-system get secret crossplane-agent-token -o jsonpath='{.data.ca\.crt}')
+TOKEN_DATA=$(kubectl -n platform-system get secret crossplane-agent-token -o jsonpath='{.data.token}' | base64 --decode)
+
+cat <<EOF > kubeconfig-worker-dc1.yaml
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    certificate-authority-data: ${CA_DATA}
+    server: ${TARGET_API}
+  name: worker-dc1
+contexts:
+- context:
+    cluster: worker-dc1
+    user: crossplane-agent
+  name: worker-dc1
+current-context: worker-dc1
+users:
+- name: crossplane-agent
+  user:
+    token: ${TOKEN_DATA}
+EOF
+```
+
+**Шаг 3: Сохранение секрета и настройка ProviderConfig в управляющем кластере:**
+
+В управляющем кластере (Control Plane):
+
+```bash
+kubectl -n crossplane-system create secret generic cluster-worker-dc1-creds \
+  --from-file=kubeconfig=kubeconfig-worker-dc1.yaml
+# → secret/cluster-worker-dc1-creds created
+
+rm -f kubeconfig-worker-dc1.yaml
+```
+
+Создание `ProviderConfig` для удаленного кластера:
 
 ```yaml
 apiVersion: kubernetes.crossplane.io/v1alpha1
 kind: ProviderConfig
 metadata:
-  name: remote-cluster-config
+  name: worker-dc1
 spec:
   credentials:
     source: Secret
     secretRef:
       namespace: crossplane-system
-      name: remote-cluster-kubeconfig
+      name: cluster-worker-dc1-creds
       key: kubeconfig
 ```
 
-### Управление объектами (Resource Management)
+```bash
+kubectl apply -f providerconfig-worker-dc1.yaml
+# → providerconfig.kubernetes.crossplane.io/worker-dc1 created
+```
 
-Основной тип ресурса — `Object`. В 2026 году рекомендуется использовать **Management Policies** для точного контроля жизненного цикла.
+### Сценарий 3: Декларативное развертывание платформенных объектов (Object)
 
-**Пример: Создание Namespace с политикой «не удалять в облаке»:**
+Создание изолированного пространства имен с квотами и тестовым приложением на удаленном кластере `worker-dc1`.
 
 ```yaml
 apiVersion: kubernetes.crossplane.io/v1alpha1
 kind: Object
 metadata:
-  name: staging-namespace
+  name: prod-billing-ns
 spec:
-  managementPolicies: ["Create", "Update", "Observe"] # Ресурс останется в K8s при удалении Object в Crossplane
+  # Запрет на физическое удаление пространства имен при удалении манифеста Object
+  managementPolicies: ["Create", "Update", "Observe"]
   forProvider:
     manifest:
       apiVersion: v1
       kind: Namespace
       metadata:
-        name: staging-app
+        name: prod-billing
         labels:
+          environment: production
+          tier: platform
           managed-by: crossplane
   providerConfigRef:
-    name: remote-cluster-config
+    name: worker-dc1
+---
+apiVersion: kubernetes.crossplane.io/v1alpha1
+kind: Object
+metadata:
+  name: prod-billing-quota
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: ResourceQuota
+      metadata:
+        name: compute-quota
+        namespace: prod-billing
+      spec:
+        hard:
+          requests.cpu: "4"
+          requests.memory: 8Gi
+          limits.cpu: "8"
+          limits.memory: 16Gi
+          pods: "20"
+  providerConfigRef:
+    name: worker-dc1
+---
+apiVersion: kubernetes.crossplane.io/v1alpha1
+kind: Object
+metadata:
+  name: prod-billing-nginx
+spec:
+  forProvider:
+    deletionPropagationPolicy: Foreground
+    manifest:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: billing-proxy
+        namespace: prod-billing
+        labels:
+          app: billing-proxy
+      spec:
+        replicas: 2
+        selector:
+          matchLabels:
+            app: billing-proxy
+        template:
+          metadata:
+            labels:
+              app: billing-proxy
+          spec:
+            containers:
+              - name: nginx
+                image: harbor.corp.internal/library/nginx:1.26.2
+                resources:
+                  requests:
+                    cpu: 100m
+                    memory: 128Mi
+                  limits:
+                    cpu: 500m
+                    memory: 256Mi
+                ports:
+                  - containerPort: 80
+  providerConfigRef:
+    name: worker-dc1
 ```
 
-**Пример: реальный рабочий объект (ConfigMap + Deployment) в удалённом кластере:**
+Применение и валидация статуса объектов:
+
+```bash
+kubectl apply -f platform-workloads.yaml
+# → object.kubernetes.crossplane.io/prod-billing-ns created
+# → object.kubernetes.crossplane.io/prod-billing-quota created
+# → object.kubernetes.crossplane.io/prod-billing-nginx created
+
+kubectl get objects
+# → NAME                 SYNCED   READY   AGE
+#   prod-billing-ns      True     True    12s
+#   prod-billing-quota   True     True    11s
+#   prod-billing-nginx   True     True    10s
+```
+
+### Сценарий 4: Совместная работа с GitOps (Server-Side Apply и разрешение конфликтов)
+
+При совместном использовании Crossplane и GitOps-операторов (Argo CD, Flux) возникает потенциальный конфликт реконсиляции, если оба инструмента пытаются изменять одни и те же поля одного ресурса.
+
+**Архитектурное решение через SSA:**
+1. Провайдер применяет патчи через SSA с `fieldManager=provider-kubernetes`.
+2. Если манифест `Object` задает только поля `spec.template.spec.containers[0].image` и лейблы, а HPA или Argo CD управляет `spec.replicas`, конфликта не возникает: `kube-apiserver` хранит раздельные списки владельцев полей в `metadata.managedFields`.
+3. Если Argo CD пытается перезаписать поле, владельцем которого является `provider-kubernetes`, поведение зависит от настроек:
+   - В Argo CD рекомендуется исключать ресурсы, находящиеся под управлением Crossplane (`resource.exclusions`), либо синхронизировать только сам манифест `Object`, а не дочерние объекты на целевых кластерах.
+   - Проверка структуры владения полями в целевом кластере:
+
+```bash
+kubectl --kubeconfig=kubeconfig-worker-dc1.yaml -n prod-billing get deployment billing-proxy -o jsonpath='{.metadata.managedFields}' | jq .
+# → [
+#     {
+#       "manager": "provider-kubernetes",
+#       "operation": "Apply",
+#       "apiVersion": "apps/v1",
+#       "fieldsType": "FieldsV1",
+#       "fieldsV1": { ... }
+#     }
+#   ]
+```
+
+### Сценарий 5: Настройка проверок готовности (Readiness Checks)
+
+По умолчанию `Object` переходит в состояние `Ready=True`, как только целевой API-сервер подтвердил применение манифеста (HTTP 200/201). Для сложных контроллеров (Deployments, StatefulSets, Job, CRD) факт создания манифеста не означает готовность полезной нагрузки.
+
+Блок `readinessChecks` позволяет задать точные критерии готовности:
 
 ```yaml
 apiVersion: kubernetes.crossplane.io/v1alpha1
 kind: Object
 metadata:
-  name: app-configmap
+  name: internal-valkey-cluster
 spec:
-  forProvider:
-    manifest:
-      apiVersion: v1
-      kind: ConfigMap
-      metadata:
-        name: app-config
-        namespace: staging-app
-      data:
-        LOG_LEVEL: info
-  providerConfigRef:
-    name: remote-cluster-config
----
-apiVersion: kubernetes.crossplane.io/v1alpha1
-kind: Object
-metadata:
-  name: app-deployment
-spec:
+  readinessChecks:
+    # Проверка доступности необходимого числа реплик
+    - type: MatchString
+      fieldPath: "status.availableReplicas"
+      matchString: "3"
+    # Проверка условий контроллера в status.conditions
+    - type: MatchCondition
+      matchCondition:
+        type: Available
+        status: "True"
   forProvider:
     manifest:
       apiVersion: apps/v1
       kind: Deployment
       metadata:
-        name: web
-        namespace: staging-app
+        name: valkey
+        namespace: prod-billing
       spec:
-        replicas: 2
+        replicas: 3
         selector:
-          matchLabels: { app: web }
+          matchLabels:
+            app: valkey
         template:
           metadata:
-            labels: { app: web }
+            labels:
+              app: valkey
           spec:
             containers:
-              - name: web
-                image: nginx:1.27
+              - name: valkey
+                image: harbor.corp.internal/library/valkey:7.2.5
+                ports:
+                  - containerPort: 6379
   providerConfigRef:
-    name: remote-cluster-config
+    name: worker-dc1
 ```
 
-**Политика удаления (DeletionPropagationPolicy, v1.3.0+):** управляет тем, как Kubernetes удаляет объект при удалении `Object` из Crossplane (`spec.forProvider.deletionPropagationPolicy`): `Background` (по умолчанию — зависимые удаляются асинхронно), `Foreground` (сначала зависимые, потом объект), `Orphan` (оставить зависимые).
+Поддерживаемые типы проверок:
+- `MatchString`: прямое сравнение строкового значения произвольного поля `fieldPath`.
+- `MatchCondition`: поиск объекта условия в массиве условий (`status.conditions`) по типу `type` и значению `status`.
+- `MatchTrue` / `MatchFalse`: проверка логического типа `boolean` в целевом поле.
+- `NonEmpty`: подтверждение того, что поле существует и содержит непустое значение (удобно для ожидания генерации IP-адресов, токенов или сертификатов).
+- `None`: ресурс считается готовым сразу после успешного применения.
+
+### Сценарий 6: Интеграция в конвейер функций композиции (Composition Functions Pipeline)
+
+В Crossplane v2 композиции строятся через конвейер вызова Composition Functions (`mode: Pipeline`). Фрагмент шаблона композиции на базе `function-patch-and-transform`, генерирующий локальный ServiceAccount и Secret с реквизитами доступа к внутренней СУБД:
 
 ```yaml
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: onprem-app-environment
 spec:
-  forProvider:
-    deletionPropagationPolicy: Foreground
-    manifest:
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: staging-app
+  compositeTypeRef:
+    apiVersion: platform.corp.internal/v1alpha1
+    kind: XAppEnvironment
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: target-namespace
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha1
+              kind: Object
+              spec:
+                forProvider:
+                  manifest:
+                    apiVersion: v1
+                    kind: Namespace
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: "spec.parameters.environmentName"
+                toFieldPath: "spec.forProvider.manifest.metadata.name"
+          - name: db-connection-secret
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha1
+              kind: Object
+              spec:
+                forProvider:
+                  manifest:
+                    apiVersion: v1
+                    kind: Secret
+                    type: Opaque
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: "spec.parameters.environmentName"
+                toFieldPath: "spec.forProvider.manifest.metadata.namespace"
+              - type: FromCompositeFieldPath
+                fromFieldPath: "spec.parameters.secretName"
+                toFieldPath: "spec.forProvider.manifest.metadata.name"
+              - type: FromCompositeFieldPath
+                fromFieldPath: "status.databaseCredentials.host"
+                toFieldPath: "spec.forProvider.manifest.data.DB_HOST"
+                transforms:
+                  - type: string
+                    string:
+                      type: Convert
+                      convert: ToBase64
 ```
 
-Полная проверка жизненного цикла — см. раздел «Отладка».
+### Сценарий 7: Мультитенантность и пространствозависимые объекты (Namespaced MR)
 
-## Продвинутые возможности
+В мультикомандных окружениях платформенные инженеры делегируют создание ресурсов прикладным командам без выдачи кластерных прав. Использование `kubernetes.m.crossplane.io/v1beta1`:
 
-### Server-Side Apply (SSA)
-Для предотвращения конфликтов с другими контроллерами (например, ArgoCD или HPA) провайдер использует SSA. Это позволяет Crossplane управлять только теми полями, которые явно указаны в манифесте `Object`. При конфликте владения полем provider-kubernetes принудительно забирает владение (force conflicts). Подробнее: [SSA в provider-kubernetes](https://github.com/crossplane-contrib/provider-kubernetes/blob/main/docs/server-side-apply.md).
-
-### Readiness Checks (Проверки готовности)
-Вы можете определить, когда ресурс считается готовым, на основе полей вложенного объекта:
+**Шаг 1: Создание ClusterProviderConfig платформенными администраторами:**
 
 ```yaml
+apiVersion: kubernetes.m.crossplane.io/v1beta1
+kind: ClusterProviderConfig
+metadata:
+  name: shared-worker-dc1
 spec:
-  readinessChecks:
-    - type: MatchString
-      fieldPath: "status.phase"
-      matchString: "Active"
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: cluster-worker-dc1-creds
+      key: kubeconfig
 ```
 
-Другие типы: `MatchCondition` (проверка условия по `status.conditions`), `MatchTrue`/`MatchFalse`, `NonEmpty`, `None`.
-
-### Передача данных (Patching в композициях)
-Передача учетных данных из облачных ресурсов в ресурсы Kubernetes:
-
-```yaml
-# Фрагмент Composition (v2.x)
-- name: kubernetes-secret
-  base:
-    apiVersion: kubernetes.crossplane.io/v1alpha1
-    kind: Object
-    spec:
-      forProvider:
-        manifest:
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            namespace: default
-  patches:
-    - fromFieldPath: "status.atProvider.connectionString"
-      toFieldPath: "spec.forProvider.manifest.data.DB_URL"
-      transforms:
-        - type: string
-          string:
-            type: Convert
-            convert: ToBase64
+```bash
+kubectl apply -f clusterproviderconfig.yaml
+# → clusterproviderconfig.kubernetes.m.crossplane.io/shared-worker-dc1 created
 ```
 
-### Namespace-scoped MR и ClusterProviderConfig (Crossplane v2)
-Изоляция тенантов: `Object` в неймспейсе + `ProviderConfig` в том же неймспейсе, либо cluster-scoped `ClusterProviderConfig`:
+**Шаг 2: Создание ресурса Object прикладной командой внутри своего Namespace (`team-payments`):**
 
 ```yaml
 apiVersion: kubernetes.m.crossplane.io/v1beta1
 kind: Object
 metadata:
-  name: tenant-namespace
-  namespace: team-a
+  name: payments-config
+  namespace: team-payments
 spec:
   providerConfigRef:
-    name: cluster-default      # ссылается на ClusterProviderConfig
+    name: shared-worker-dc1
     kind: ClusterProviderConfig
   forProvider:
     manifest:
       apiVersion: v1
-      kind: Namespace
+      kind: ConfigMap
       metadata:
-        name: team-a-apps
+        name: service-runtime-cfg
+        namespace: default
+      data:
+        LOG_LEVEL: debug
+        CACHE_ENABLED: "true"
 ```
 
-### ObservedObjectCollection (только чтение)
-Новый тип для агрегации состояния нескольких объектов без управления ими (read-only инвентаризация кластеров):
+```bash
+kubectl apply -f team-payments-object.yaml
+# → object.kubernetes.m.crossplane.io/payments-config created
+
+kubectl -n team-payments get objects.kubernetes.m.crossplane.io
+# → NAME              SYNCED   READY   AGE
+#   payments-config   True     True    14s
+```
+
+### Сценарий 8: Инвентаризация и аудит кластеров (ObservedObjectCollection и ObserveOnly)
+
+Для проведения непрерывного соответствия стандартам (Compliance Audit) и инвентаризации конфигураций downstream-кластеров используется `ObservedObjectCollection`. Ресурс непрерывно агрегирует состояние внешних объектов без попытки их создания или модификации:
 
 ```yaml
 apiVersion: kubernetes.crossplane.io/v1alpha1
 kind: ObservedObjectCollection
 metadata:
-  name: cluster-inventory
+  name: audit-worker-dc1-namespaces
 spec:
   providerConfigRef:
-    name: remote-cluster-config
+    name: worker-dc1
   apiVersion: v1
   kind: Namespace
 ```
 
-## Безопасность и отладка
+```bash
+kubectl apply -f audit-namespaces.yaml
+# → observedobjectcollection.kubernetes.crossplane.io/audit-worker-dc1-namespaces created
 
-### Безопасность
-- **Принцип наименьших привилегий:** Избегайте `cluster-admin`. Создавайте специфичные `ClusterRole`/`Role` для провайдера, ограниченные нужными API-группами (пример выше).
-- **Namespace-scoped изоляция:** В Crossplane v2 создавайте `Object` в конкретных Namespace (`kubernetes.m.crossplane.io`) для изоляции команд и лимитов ресурсов.
-- **Креденшелы только через Secret:** ESS (External Secret Store) в provider-kubernetes удалён с v1.0.0. Источником кредов может быть только `Secret` (локально — `InjectedIdentity`, для удалённых кластеров — `kubeconfig`/`token` в Secret). Для безопасной доставки кредов используйте External Secrets Operator + Vault или SOPS (см. [управление секретами в GitOps](../secrets_encryption.md) и [GitOps Integration](./gitops_integration.md)).
-- **Не коммитьте kubeconfig в Git:** храните `remote-cluster-kubeconfig` вне репозитория; в GitOps-сценариях генерируйте его через ESO или шифруйте SOPS.
+kubectl describe observedobjectcollection audit-worker-dc1-namespaces
+# → Status:
+#     At Provider:
+#       Objects:
+#         - Api Version:  v1
+#           Kind:         Namespace
+#           Metadata:
+#             Name:       default
+#             Status:     Active
+#         - Api Version:  v1
+#           Kind:         Namespace
+#           Metadata:
+#             Name:       kube-system
+#             Status:     Active
+```
 
-### Отладка
-Просмотр состояния всех управляемых объектов:
+---
+
+## Диагностика и устранение неполадок (Troubleshooting)
+
+### Команды диагностики и трассировки
+
+Просмотр общего статуса и синхронизации управляемых объектов:
+
 ```bash
 kubectl get objects
+# → NAME                 SYNCED   READY   STATUS    AGE
+#   prod-billing-ns      True     True    Active    5m
+#   prod-billing-nginx   False    False   Pending   45s
 ```
 
-Детальный анализ конкретного ресурса и событий (Events):
+Детальный анализ событий жизненного цикла ресурса и ошибок API-сервера:
+
 ```bash
-kubectl describe object <name>
+kubectl describe object prod-billing-nginx
 ```
 
-Проверка логов провайдера (критично при ошибках доступа в удаленные кластеры):
+Сквозная трассировка графа реконсиляции через утилиту Crossplane CLI:
+
 ```bash
-kubectl -n crossplane-system logs -l pkg.crossplane.io/provider=provider-kubernetes -c provider-kubernetes
+crossplane alpha trace object prod-billing-nginx
+# → NAME                                     SYNCED   READY   STATUS
+#   Object/prod-billing-nginx (default)      False    False   ReconcileError
+#   └─ Deployment/billing-proxy (worker-dc1) -        -       ImagePullBackOff
 ```
 
-Состояние и события ProviderConfig и самого провайдера:
+Анализ логов пода провайдера в режиме отладки (фильтрация по подсистеме реконсиляции):
+
 ```bash
-kubectl get providerconfig
-kubectl describe providerconfig <name>
-kubectl describe provider provider-kubernetes
+kubectl -n crossplane-system logs -l pkg.crossplane.io/provider=provider-kubernetes -c package-runtime --tail=100 -f
 ```
 
-Трассировка цепочки реконсиляции (входит ли ресурс в желаемое состояние):
+Проверка состояния и условий ревизии пакета провайдера:
+
 ```bash
-crossplane alpha trace object <name>
+kubectl describe providerrevision -l pkg.crossplane.io/provider=provider-kubernetes
 ```
 
-### Troubleshooting
+### Типовые проблемы и способы решения
 
-| Симптом | Вероятная причина | Диагностика / решение |
-| --- | --- | --- |
-| `Object` в `Creating` вечно | Неверный `ProviderConfig`/креденшелы или нет RBAC | `kubectl describe providerconfig`, `kubectl -n crossplane-system get secret`, проверить RBAC SA, логи провайдера |
-| `Synced=False`, ошибка `forbidden` | Недостаточно прав у SA провайдера | Расширить scoped `ClusterRole` под нужные API-группы/ресурсы |
-| Удалённый кластер недоступен | `exec`-плагин в kubeconfig / нет сети | Заменить kubeconfig на статичные креды; проверить сеть из пода провайдера |
-| Конфликт полей с ArgoCD | Оба контроллера пишут одно поле | SSA: оставить поле только в одном источнике или использовать `force` со стороны provider-kubernetes |
-| `HEALTHY=False` у провайдера | Проблема ревизии пакета | `kubectl describe providerrevisions`, проверить `package` и совместимость с Crossplane v2 |
-| Ресурс не удаляется при удалении `Object` | `managementPolicies` без `Delete` (или `DeletionPropagationPolicy`) | Добавить `Delete` в `managementPolicies` либо удалить ресурс вручную |
-| `ObservedGeneration` не меняется | `ObserveOnly`/`Observe` — режим только чтения | Ожидаемо; перейти на `All` для управления |
+| Симптом | Вероятная причина | Диагностика | Решение |
+| --- | --- | --- | --- |
+| `Object` зависает в `Synced=False` с ошибкой `cannot apply object: ... forbidden` | Недостаточно прав у ServiceAccount в локальном или удаленном кластере | `kubectl describe object <name>` в секции `Events` содержит конкретный недостающий RBAC verb/resource | Добавить недостающие API-группы и ресурсы в `ClusterRole` сервисного аккаунта агента (обязательно проверить verb `patch` для SSA) |
+| Ошибка `dial tcp ... connect: connection refused` или `i/o timeout` | Сетевая изоляция между управляющим кластером и API-сервером удаленного кластера | Проверить сетевую доступность из пода провайдера: `kubectl -n crossplane-system exec -it <pod> -- nc -zv <target-ip> 6443` | Настроить маршрутизацию, правила сетевых экранов (Firewall/Security Groups) или проверить работу балансировщика Kubernetes API |
+| Постоянный дрейф и конфликт полей с Argo CD / Flux (`apply conflict`) | Контроллер GitOps и `provider-kubernetes` одновременно пытаются управлять одним и тем же полем манифеста | Выполнить `kubectl get <resource> -o yaml` и проанализировать блок `metadata.managedFields` | Разделить зоны ответственности: исключить дочерние ресурсы из синхронизации GitOps, либо убрать конфликтующие поля из манифеста `Object` |
+| Ошибка `exec: executable not found in $PATH` при попытке подключения | В `kubeconfig` указан динамический плагин авторизации (`exec`-секция) | Проверить манифест секрета: `kubectl -n crossplane-system get secret <name> -o jsonpath='{.data.kubeconfig}' \| base64 -d` | Сгенерировать статичный `kubeconfig` с долгоживущим ServiceAccount-токеном или TLS-сертификатом без внешних утилит |
+| `Object` зависает в `Ready=False` при успешном `Synced=True` | Не выполняются условия блока `readinessChecks` (например, поды падают в CrashLoopBackOff) | Проверить статус ресурса в целевом кластере: `kubectl describe deployment <name>` | Устранить причину сбоя целевой рабочей нагрузки (исправить конфигурацию контейнера, Secret, ConfigMap) или скорректировать правила `readinessChecks` |
+| Удаление `Object` зависает бесконечно | Зависший финализатор (`crossplane.io/external-resource-evaluator`) из-за недоступности целевого кластера | `kubectl get object <name> -o jsonpath='{.metadata.finalizers}'` | Восстановить сетевой доступ к целевому кластеру. При аварийном выводе кластера из эксплуатации: снять финализатор вручную через `kubectl patch object <name> -p '{"metadata":{"finalizers":null}}' --type=merge` |
+| Ошибка `cannot parse manifest: no matches for kind ... in version ...` | В целевом кластере отсутствуют необходимые CRD на момент создания ресурса `Object` | Проверить наличие CRD в целевом кластере: `kubectl get crd <crd-name>` | Убедиться, что оператор или CRD развернуты в целевом кластере до создания экземпляров кастомных ресурсов |
+| Высокая утилизация памяти и OOMKilled пода провайдера | Большое количество управляемых объектов (>1000) при стандартных лимитах памяти | `kubectl -n crossplane-system describe pod -l pkg.crossplane.io/provider=provider-kubernetes` фиксирует статус `OOMKilled` | Увеличить `resources.limits.memory` до 2–4Gi в `DeploymentRuntimeConfig` и оптимизировать интервал опроса `--poll` |
+
+---
+
+## Рекомендации и лучшие практики (Best Practices)
+
+### Безопасность и разграничение прав доступа (RBAC)
+
+1. **Отказ от неизбирательного `cluster-admin`:** Для локального управления используйте узконаправленные `ClusterRole`, включающие только разрешенные API-группы инфраструктуры платформы. Запрещайте провайдеру доступ к узлам (`nodes`), сертификатам кластера (`certificates.k8s.io`) и системным пространствам имен (`kube-system`).
+2. **Пространствозависимая изоляция (Namespaced Scope):** В мультиарендных платформах переводите команды разработки на пространствозависимый API `kubernetes.m.crossplane.io/v1beta1`. Это исключает возможность случайного воздействия одной команды на манифесты другой команды на уровне управляющего кластера.
+3. **Аудит сетевого периметра:** Для удаленных downstream-кластеров минимизируйте число открытых эндпоинтов API-серверов. Разрешайте подключения к API только с фиксированных egress IP-адресов нод управляющего кластера.
+
+### Производительность и тюнинг контроллеров (SRE & Scale)
+
+1. **Тюнинг темпа реконсиляции (`--max-reconcile-rate`):** По умолчанию контроллер обрабатывает ограниченное количество очередей в секунду. При управлении сотнями объектов увеличьте этот параметр до `50–100` через `DeploymentRuntimeConfig`, чтобы избежать задержек распространения изменений.
+2. **Настройка интервала опроса (`--poll`):** Стандартный интервал сверки составляет 1 минуту (`--poll=1m`). Если парк кластеров превышает десятки инстансов, увеличьте интервал до `3m` или `5m`, чтобы снизить нагрузку на целевые etcd-кластеры и предотвратить троттлинг со стороны API-серверов.
+3. **Горизонтальное шардирование:** Для распределения нагрузки между сотнями кластеров развертывайте отдельные экземпляры `ProviderConfig` с привязкой к разным репликам провайдера или выделенным управляющим контурам.
+
+### Гигиена Server-Side Apply и GitOps
+
+1. **Разделение зон ответственности:** Никогда не управляйте одними и теми же скалярными полями ресурса из двух разных систем автоматизации. Если Crossplane создает базовый манифест Deployment, отдайте управление количеством реплик (`spec.replicas`) исключительно Horizontal Pod Autoscaler (HPA), исключив `spec.replicas` из манифеста `Object` после инициализации.
+2. **Фиксация версий API:** Всегда указывайте точную и актуальную версию `apiVersion` во вложенных манифестах `spec.forProvider.manifest`. Избегайте устаревших версий API (например, `extensions/v1beta1`), чтобы не создавать избыточную нагрузку на конверсионные вебхуки API-сервера.
+
+### Управление секретами и жизненный цикл kubeconfig
+
+1. **Запрет хранения секретов в открытом виде в Git:** Манифесты Kubernetes Secret, содержащие `kubeconfig` удаленных кластеров, ни при каких условиях не должны попадать в репозитории в незашифрованном виде. Используйте HashiCorp Vault в связке с External Secrets Operator (ESO) для автоматической генерации и инъекции секретов в пространство имен `crossplane-system`.
+2. **Плановая ротация токенов:** Включайте процедуру периодической ротации сервисных токенов удаленных кластеров без простоя. Новые токены выпускаются параллельно со старыми, обновляются в Secret через ESO, после чего старый токен аннулируется.
+
+### Безопасный вывод из эксплуатации (Cleanup)
+
+1. **Защита критичных данных от удаления:** Для инфраструктурных компонентов, содержащих состояние (PersistentVolumeClaims, StatefulSets, системные Namespaces), всегда устанавливайте политику:
+   ```yaml
+   spec:
+     managementPolicies: ["Create", "Update", "Observe"]
+   ```
+   Это гарантирует, что при удалении манифеста `Object` из GitOps физические данные и тома в целевом кластере сохранятся.
+2. **Корректный порядок вывода:** При плановом выводе кластера из управления сначала переведите все зависимые ресурсы `Object` в режим `managementPolicies: ["Observe"]`, затем удалите `ProviderConfig`, и только после этого отзывайте сервисные токены и сетевые доступы.
+
+---
 
 ## Дополнительная информация
 
-- [Crossplane Overview](./overview.md) — фундаментальные концепции.
-- [GitOps Integration](./gitops_integration.md) — совместная работа с ArgoCD и Flux, безопасная доставка кредов (ESO/SOPS).
-- [Yandex Cloud Provider](./provider_yandex_cloud_setup.md) — пример настройки облачного провайдера.
+Внутренние разделы базы знаний:
+- [Обзор Crossplane](./overview.md) — фундаментальные концепции, архитектура Composition Functions и рантайм провайдеров.
+- [Интеграция с GitOps](./gitops_integration.md) — архитектура совместной работы с Argo CD и Flux, управление секретами и Server-Side Apply.
+- [Мультитенантность в Crossplane](./multi_tenancy.md) — проектирование изолированных платформ на базе namespace-scoped MR и ClusterProviderConfig.
+- [Observability и мониторинг Crossplane](./observability.md) — метрики Prometheus, мониторинг очередей контроллеров и алертинг.
+- [Backup и Disaster Recovery Crossplane](./backup_dr.md) — резервное копирование etcd, стратегии защиты от каскадного удаления и аварийное восстановление.
+- [Управление секретами в GitOps](../secrets_encryption.md) — организация безопасного хранения kubeconfig и учетных данных через SOPS и External Secrets Operator.
 
-Внешние ресурсы:
-- [Provider Kubernetes Docs](https://docs.crossplane.io/latest/packages/providers/)
-- [GitHub: provider-kubernetes](https://github.com/crossplane-contrib/provider-kubernetes)
-- [Server-Side Apply в provider-kubernetes](https://github.com/crossplane-contrib/provider-kubernetes/blob/main/docs/server-side-apply.md)
+Официальные внешние ресурсы:
+- [Документация provider-kubernetes](https://github.com/crossplane-contrib/provider-kubernetes) — официальный репозиторий проекта и документация пакета.
+- [Server-Side Apply в provider-kubernetes](https://github.com/crossplane-contrib/provider-kubernetes/blob/main/docs/server-side-apply.md) — спецификация механизма слияния полей и управления конфликтами.
+- [Руководство по Crossplane v2](https://docs.crossplane.io/) — официальная документация архитектуры Crossplane v2.

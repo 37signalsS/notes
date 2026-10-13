@@ -1,151 +1,210 @@
 # GitOps: Уведомления о статусе развертываний
 
-Уведомления являются неотъемлемой частью GitOps-пайплайна (Infrastructure as Code). Они обеспечивают проактивный мониторинг состояния инфраструктуры и приложений, позволяя командам получать оперативную информацию о результатах синхронизации и изменениях состояния системы без необходимости ручного контроля консоли или интерфейса инструментов.
+**Актуально для:** Flux v2.9.x (notification-controller v1.9.x), Argo CD v3.5+, Kubernetes 1.28–1.32+ (on-premise / bare-metal)
 
-## Предварительные требования
+Уведомления являются неотъемлемой частью GitOps-пайплайна (Infrastructure as Code). Они обеспечивают проактивный мониторинг состояния инфраструктуры и сервисов, позволяя командам эксплуатации и разработки получать оперативную информацию о результатах реконсиляции, дрейфе конфигурации и сбоях развертываний без необходимости непрерывного ручного контроля консоли или дашбордов.
 
-Для воспроизведения практических сценариев из этого документа необходимы:
-
-| Компонент | Требование | Проверка |
-| :--- | :--- | :--- |
-| Kubernetes | Кластер версии 1.28+ с правами администратора (создание CRD, RBAC, Ingress) | `kubectl version --short` |
-| Flux | Установленный Flux v2.7+ (актуальная ветка v2.9, в составе которой notification-controller v1.9.x) | `flux check` |
-| ArgoCD | Версия 3.x для сценария 2 (в v2.x уведомления требуют отдельного deployment) | `argocd version` |
-| Мессенджер | Slack workspace / Telegram bot / другой провайдер с правами на создание вебхуков или ботов | Тестовый POST-запрос к API |
-| Инструменты | `flux` CLI, `kubectl`, `curl` для проверки входящих вебхуков | `flux --version` |
-
-Исходное состояние окружения: контроллеры запущены и здоровы (`flux check` завершается строкой `✔ all checks passed`), namespace `flux-system` существует, исходные манифесты хранятся в Git-репозитории, синхронизируемом через `Kustomization` (рекомендуется хранить конфигурацию уведомлений там же — тогда она проходит через code review и версионирована).
+---
 
 ## Определения
 
-- **Уведомление (Notification)**: Автоматическое сообщение о событии в жизненном цикле ресурсов (Sync Succeeded, Failed, Degraded), отправляемое во внешние системы (Slack, Telegram, MS Teams, Email).
-- **Вебхук (Webhook)**: Метод взаимодействия систем через HTTP POST-запросы. GitOps-контроллер отправляет JSON-пакет с деталями события на URL-адрес приемника (receiver).
-- **Исходящий вебхук (Outbound)**: Уведомление о событии, отправляемое контроллером во внешнюю систему (направление «кластер -> мессенджер»). Во Flux реализуется связкой `Provider` + `Alert`.
-- **Входящий вебхук (Inbound)**: Прием внешних HTTP-событий для триггера реконсиляции (направление «CI/форк -> кластер»). Во Flux реализуется ресурсом `Receiver`.
-- **CDEvents**: Открытая спецификация Continuous Delivery Foundation (CDF) для описания событий в процессах Continuous Delivery (`dev.cdevents.service.deployed`, `dev.cdevents.change.merged` и т. д.), построенная на базе CloudEvents. Актуальная версия спецификации — v0.5.0. Обеспечивает интероперабельность между различными инструментами CI/CD/GitOps.
-- **Статус здоровья (Health Status)**: Состояние ресурса в Kubernetes после применения манифестов (Healthy, Progressing, Degraded, Suspended).
-- **Контроллер уведомлений (Notification Controller)**: Специализированный компонент GitOps-инструментария (например, в Flux или ArgoCD), отвечающий за фильтрацию событий, формирование сообщений по шаблонам и их доставку провайдерам.
-- **Обогащение событий (Event Metadata)**: Добавление контекстной информации (имя кластера, регион, окружение, ссылка на dashboard) к телу события перед доставкой — позволяет отличать алерты из разных кластеров в одном общем канале.
+- **Уведомление (Notification)**: Автоматическое сообщение о событии в жизненном цикле объектов Kubernetes (Sync Succeeded, Failed, Degraded, Drift Detected), отправляемое во внешние системы связи (Mattermost, Telegram, Slack, Webhooks, корпоративная почта).
+- **Вебхук (Webhook)**: Метод межсистемного взаимодействия по протоколу HTTP (обычно запросы `POST` с телом JSON). При возникновении события контроллер направляет данные на эндпоинт приемника.
+- **Исходящее уведомление (Outbound Notification)**: Оповещение о событиях в кластере, отправляемое контроллером во внешнюю среду («кластер → мессенджер/шина»). Во Flux реализуется связкой `Provider` + `Alert`, в Argo CD — контроллером `argocd-notifications-controller`.
+- **Входящий вебхук (Inbound Webhook Receiver)**: Прием внешних HTTP-сигналов для немедленного запуска цикла реконсиляции («CI/реестр контейнеров → кластер») без ожидания планового интервала опроса. Во Flux реализуется ресурсом `Receiver`.
+- **Контроллер уведомлений (Notification Controller)**: Специализированный контроллер GitOps-инструментария (например, `notification-controller` во Flux или `argocd-notifications-controller` в Argo CD), отвечающий за перехват событий, фильтрацию, шаблонизацию и доставку сообщений.
+- **Обогащение событий (Event Metadata)**: Добавление контекстных атрибутов (имя кластера, дата-центр, окружение, ссылка на Runbook) к телу события перед отправкой для однозначной идентификации источника в мультикластерной среде.
+- **Дрейф конфигурации (Drift / OutOfSync)**: Расхождение между эталонным декларативным состоянием в Git-репозитории и фактическим состоянием объектов в кластере Kubernetes.
+- **Дедупликация и троттлинг (Deduplication & Rate Limiting)**: Механизмы подавления повторных идентичных сообщений и ограничения частоты исходящих запросов для предотвращения блокировок со стороны API приемников (HTTP 429 Too Many Requests).
+- **Дребезг событий (Flapping)**: Высокочастотное циклическое переключение статуса ресурса (например, между Healthy и Degraded при CrashLoopBackOff), порождающее лавину однотипных уведомлений (Alert Storm).
+- **CDEvents**: Открытая спецификация Continuous Delivery Foundation (CDF) на базе спецификации CloudEvents (CNCF), стандартизирующая схему метаданных событий непрерывной доставки (`dev.cdevents.service.deployed`, `dev.cdevents.change.merged`) для интероперабельности между гетерогенными CI/CD-системами.
+- **Common Expression Language (CEL)**: Декларативный язык вычисления выражений, используемый в Kubernetes и современных версиях Flux/Argo CD для гранулярной фильтрации событий и полей ресурсов без накладных расходов на полноценный скриптинг.
+- **Взаимный TLS (mTLS)**: Протокол двусторонней криптографической аутентификации клиента и сервера по сертификатам X.509, применяемый для безопасной передачи вебхуков в изолированных корпоративных контурах.
 
-## Базовые концепции
+---
 
-### Цели внедрения алертинга
+## Архитектура и базовые концепции
 
-- **Сокращение MTTR (Mean Time To Recovery)**: Мгновенное оповещение о сбоях в продуктивных окружениях.
-- **Прозрачность изменений**: Формирование ленты событий ("Audit Trail") в командных чатах для отслеживания того, кто, когда и какое изменение инициировал.
-- **Интеграция с ChatOps**: Возможность не только получать уведомления, но и взаимодействовать с кластером через команды в мессенджерах (при использовании дополнительных ботов).
+### Цели внедрения алертинга в GitOps
 
-### Ключевые события и уровни важности
+1. **Сокращение MTTR (Mean Time To Recovery)**: Немедленная доставка контекста инцидента (стек ошибки Kustomize, сбой pre-install хука Helm, конфликт Server-Side Apply) дежурному инженеру.
+2. **Прозрачность изменений (Audit Trail)**: Автоматическая публикация журнала синхронизаций в командных каналах с указанием автора коммита, SHA-хеша и измененных манифестов.
+3. **Обратная связь для CI/CD-пайплайнов**: Информирование сборочных конвейеров о завершении выкатки в кластер для запуска интеграционных и нагрузочных тестов.
+4. **Интеграция с ChatOps**: Предоставление дежурным первичных ссылок на логи, метрики и команды отката непосредственно из сообщения в чате.
 
-Системы уведомлений обычно классифицируют события по уровням:
-- **Info**: Успешная синхронизация, начало процесса обновления образа.
-- **Warning**: Дрифт конфигурации (OutOfSync), задержка в достижении состояния Healthy.
-- **Error**: Ошибка применения манифеста, ошибка аутентификации в Git-репозитории, переход ресурса в статус Degraded.
+### Классификация событий и матрица критичности
 
-Соответствие уровней конфигурации инструментов:
+GitOps-контроллеры генерируют события Kubernetes (Events), которые категоризируются по уровням:
 
-| Уровень | Flux (`eventSeverity`) | ArgoCD (триггеры) |
+| Уровень важности | Flux Toolkit (`eventSeverity`) | Argo CD (состояния триггеров) | Типовые сценарии | Канал назначения |
+| :--- | :--- | :--- | :--- | :--- |
+| **Info** | `info` (включает успешные и информационные события) | `on-deployed`, `on-sync-running`, `on-sync-succeeded` | Успешная реконсиляция, скачивание нового артефакта Git/OCI, плановый опрос | Архивный аудит-канал, SIEM, брокер метрик |
+| **Warning** | Фильтруется через `exclusionList` / CEL-выражения | `on-sync-status-unknown`, предупреждения валидации | Дрейф конфигурации, задержка готовности подов (Progressing) | Инженерный чат команды сервиса |
+| **Error** | `error` (только сбои и ошибки) | `on-sync-failed`, `on-health-degraded` | Ошибка парсинга YAML, откат HelmRelease, CrashLoopBackOff контроллеров | Основной дежурный канал (On-Call SRE), пейджер |
+
+> **Правило SRE:** В каналы с включенными звуковыми оповещениями (дежурные смены) направляются исключительно события уровня `Error`. Информационный поток (`Info`) направляется в немой канал аудита или централизованную шину сообщений.
+
+### Сравнение архитектурных моделей: Flux vs Argo CD
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                        АРХИТЕКТУРНЫЕ МОДЕЛИ УВЕДОМЛЕНИЙ В GITOPS                       │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                        │
+│  [ FLUX TOOLKIT: ДЕКЛАРАТИВНЫЕ CRD ]          [ ARGO CD: CONFIGMAP + АННОТАЦИИ ]       │
+│                                                                                        │
+│  ┌───────────────────────────────┐            ┌─────────────────────────────────────┐  │
+│  │ Kustomization / HelmRelease   │            │ Application CR                      │  │
+│  └───────────────┬───────────────┘            └──────────────────┬──────────────────┘  │
+│                  │ K8s Event                                     │ Watch status        │
+│                  ▼                                               ▼                     │
+│  ┌───────────────────────────────┐            ┌─────────────────────────────────────┐  │
+│  │ notification-controller       │            │ argocd-notifications-controller     │  │
+│  │  - Alert CR (фильтрация)      │            │  - argocd-notifications-cm (логика) │  │
+│  │  - Provider CR (транспорт)    │            │  - argocd-notifications-secret (auth│  │
+│  │  - Receiver CR (входящие хуки)│            │  - Аннотации подписки на Application│  │
+│  └───────────────┬───────────────┘            └──────────────────┬──────────────────┘  │
+│                  │                                               │                     │
+│                  └───────────────────────┬───────────────────────┘                     │
+│                                          │ Outbound HTTP POST                          │
+│                                          ▼                                             │
+│                     ┌─────────────────────────────────────────┐                        │
+│                     │ Корпоративные сервисы доставки          │                        │
+│                     │ • Mattermost / Slack / Telegram Bot     │                        │
+│                     │ • On-Premise Event Bus (NATS / Kafka)   │                        │
+│                     │ • Prometheus Alertmanager Webhook       │                        │
+│                     └─────────────────────────────────────────┘                        │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+| Критерий | Flux (`notification-controller`) | Argo CD (`argocd-notifications-controller`) |
 | :--- | :--- | :--- |
-| Info | `info` (все события, включая ошибки) | `on-sync-running`, `on-deployed` |
-| Warning | Нет отдельного уровня — фильтруется через `inclusionList`/`exclusionList` по тексту сообщения | `on-sync-status-unknown`, кастомные триггеры |
-| Error | `error` (только события с ошибками) | `on-sync-failed`, `on-health-degraded` |
+| **Единица конфигурации** | Нативные Kubernetes CRD (`Provider`, `Alert`, `Receiver`) | Централизованный ConfigMap (`argocd-notifications-cm`) и аннотации на `Application` |
+| **Управление правами (RBAC)** | Стандартный RBAC Kubernetes на уровне namespace для каждого CRD | Доступ к ConfigMap в namespace `argocd` или режим Self-service в namespaces |
+| **Входящие вебхуки** | Нативный ресурс `Receiver` (мгновенный триггер реконсиляции) | Встроенный Webhook-сервер `argocd-server` (`/api/webhook`) |
+| **Язык шаблонизации** | Фиксированные шаблоны провайдеров с обогащением через `eventMetadata` | Мощный Go-шаблонизатор (`text/template`) со Sprig-функциями |
+| **Локальная шина событий** | Нативная поддержка провайдера `nats` | Вебхуки в локальные HTTP-адаптеры / брокеры |
 
-Практическое правило: в production-каналы отправляют только `error`, а `info`-поток выводят в архивный канал или систему аудита, чтобы не размывать внимание дежурных.
+### Архитектурные паттерны доставки
 
-### Архитектурные паттерны
+1. **Прямая интеграция (Direct Push)**: Контроллер напрямую выполняет исходящий HTTP-запрос к API сервиса связи (Telegram Bot API, Mattermost Incoming Webhook, корпоративный SMTP). Оптимально для небольших и средних сред (до 5 кластеров).
+2. **Шина событий (Event Bus Pattern)**: Контроллеры публикуют события в локальный отказоустойчивый брокер сообщений (NATS JetStream, Apache Kafka). Потребители (боты, аналитика DORA, SIEM) подписываются на топики брокера. Устраняет зависимость кластера от доступности внешних чат-платформ.
+3. **Агрегация через Webhook-шлюз**: Отправка событий в локальный Prometheus Alertmanager или корпоративный оркестратор автоматизации (n8n, локальный webhook-сервер) для сложной группировки, дедупликации и маршрутизации по расписанию дежурств.
 
-1.  **Прямая интеграция**: Контроллер напрямую общается с API мессенджера (например, Telegram Bot API).
-2.  **Шина событий (Event Bus)**: Контроллер отправляет события в NATS или Kafka, откуда их забирают различные потребители (consumers). Во Flux для этого есть нативный тип провайдера `nats`, а также `googlepubsub` и `azureeventhub` для облачных шин.
-3.  **Агрегация через Webhook**: Использование промежуточных сервисов (Alertmanager, Zapier, n8n) для сложной маршрутизации и трансформации уведомлений.
+### Жизненный цикл события
 
-Выбор паттерна зависит от масштаба: прямая интеграция достаточна для 1–5 кластеров и одного мессенджера; при росте числа кластеров и каналов доставки (мессенджеры, PagerDuty, SIEM, DORA-аналитика) централизованная шина снижает связность и позволяет менять потребителей без переконфигурации кластеров.
+1. **Генерация события**: Внутренний контроллер (`kustomize-controller`, `helm-controller`, `argocd-application-controller`) завершает итерацию реконсиляции и публикует Kubernetes Event в API-сервер.
+2. **Перехват**: Контроллер уведомлений, подписанный на поток событий, считывает объект через Informer-кэш.
+3. **Фильтрация и сопоставление**:
+   - Во Flux: сопоставление источника (`eventSources`), уровня (`eventSeverity`) и регулярных выражений (`inclusionList` / `exclusionList`).
+   - В Argo CD: вычисление булевых предикатов триггеров на языке `expr`.
+4. **Дедупликация и проверка дребезга**: Сверка хэша события или ревизии коммита с кэшем последних доставок во избежание повторной отправки идентичных сообщений.
+5. **Обогащение и рендеринг**: Формирование тела сообщения, внедрение глобальных метаданных (`cluster`, `dc`, `env`, ссылки на документацию).
+6. **Сетевая доставка**: Выполнение HTTP POST с экспортом метрик времени задержки и кодов ответа. При временных сбоях (сеть, HTTP 5xx) срабатывает повтор с экспоненциальной задержкой (exponential backoff).
 
-### Жизненный цикл уведомления
+### Стратегии борьбы с шумом и Alert Fatigue
 
-Типовой путь события от возникновения до доставки (справедливо и для Flux, и для ArgoCD):
+- **Regex-фильтрация во Flux**: Использование `exclusionList` для отсечения регулярных информационных сообщений (например, `.*no changes.*`, `.*reconciliation skipped.*`).
+- **Спецификаторы `oncePer` в Argo CD**: Ограничение срабатывания триггера строгим изменением ревизии коммита (`sync.revision`), предотвращающее отправку алертов при каждом плановом цикле сверки.
+- **Временное отключение (`suspend: true`)**: Флаг в манифестах `Alert` и `Receiver` во Flux, позволяющий заморозить генерацию уведомлений на период регламентных работ без удаления конфигурации.
+- **Разделение каналов по окружениям**: Разделение потоков production, staging и dev по независимым чатам и топикам.
 
-1.  **Генерация**: Контроллер реконсиляции (например, `kustomize-controller` или `argocd-application-controller`) эмитит Kubernetes Event о результате операции.
-2.  **Перехват**: Notification controller подписан на поток событий кластера и получает копию.
-3.  **Фильтрация**: Событие сверяется с правилами подписки (во Flux — `Alert.eventSources` + `eventSeverity`, в ArgoCD — условия триггеров). Не подошедшие события отбрасываются.
-4.  **Формирование**: Сообщение собирается по шаблону с подстановкой переменных (имя объекта, сообщение об ошибке, метаданные).
-5.  **Доставка**: HTTP-запрос к API провайдера. При сбое выполняются повторные попытки (retry с backoff); недоставленное событие фиксируется в логах контроллера.
-6.  **Дедупликация/кеширование**: Идентификаторы уже отправленных уведомлений сохраняются (в ArgoCD — в аннотациях приложения), чтобы повторные идентичные события не порождали дублей сообщений.
+---
 
-### Стратегии борьбы с "шумом"
+## Практические сценарии и конфигурация
 
-- **Дедупликация**: Группировка событий по объекту (Involved Object). Если Deployment падает 10 раз подряд, в чат уходит одно сообщение с обновленным счетчиком.
-- **Маршрутизация по окружениям**: Алерты из `production` уходят с тегом `@here` в основной канал, а из `dev` — в архивный канал без звуковых уведомлений.
-- **Mute Timings**: Подавление уведомлений во время плановых технических работ или в нерабочее время (для некритичных систем).
-- **Фильтрация по регулярным выражениям**: Во Flux поля `inclusionList` (пропускать только совпадающие имена объектов) и `exclusionList` (отбрасывать события по шаблону текста, например регулярно повторяющийся `no artifacts changes`) позволяют отсекать заведомо нерелевантные события еще на стороне контроллера.
-- **Временное отключение**: Поле `suspend: true` у `Alert`/`Receiver` (Flux) останавливает обработку без удаления конфигурации — удобно на время массовых миграций, когда поток событий прогнозируемо велик.
+### Предварительные требования
 
-## Практические сценарии
+Перед развертыванием практических конфигураций убедитесь в доступности инфраструктурных компонентов:
 
-### Сценарий 1: Уведомления в Flux (GitOps Toolkit)
+| Компонент | Минимальная версия | Назначение | Команда проверки |
+| :--- | :--- | :--- | :--- |
+| **Kubernetes** | 1.28+ (on-premise / bare-metal) | Среда исполнения GitOps-операторов | `kubectl version --short` |
+| **Flux** | v2.7+ (рекомендуется v2.9.x) | GitOps-контроллеры и notification-controller | `flux check` |
+| **Argo CD** | v3.4+ / v3.5+ | GitOps-платформа (для сценария 2) | `kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-notifications-controller` |
+| **Mattermost / Telegram** | Актуальный API | Приемники входящих сообщений | `curl -sS -X POST <webhook-url> -d '{"text":"test"}'` |
+| **NATS** | v2.10+ (self-hosted) | Локальный брокер шины сообщений | `nats server ping --server nats.msg-broker.svc:4222` |
 
-Flux использует модульную архитектуру, где за уведомления отвечает `notification-controller`.
+Исходное состояние: пространство имен `flux-system` инициализировано, утилиты `kubectl` и `flux` настроены с административным доступом к кластеру.
 
-**Компоненты конфигурации:**
-1.  **Provider**: Описывает "куда" отправлять (Slack, Telegram, MS Teams, Discord, NATS, Azure Event Hub, Google Pub/Sub, DataDog, Sentry, PagerDuty, generic webhook и другие — полный список типов в спецификации `v1beta3`).
-2.  **Alert**: Описывает "что" и "откуда" (Kustomization, HelmRelease, GitRepository), с какой важностью (`info`/`error`) и с каким обогащением метаданных.
-3.  **Receiver**: Входящий вебхук для триггера реконсиляции ресурсов из внешних систем (см. подраздел ниже).
+---
 
-#### Пример настройки Slack
+### Сценарий 1: Уведомления и алертинг во Flux (GitOps Toolkit)
+
+Flux использует модульную архитектуру GitOps Toolkit, в которой нотификации обслуживаются оператором `notification-controller`. Конфигурация состоит из трех типов ресурсов:
+1. `Provider` — точка интеграции с внешней платформой (адрес, учетные данные, прокси, сертификаты).
+2. `Alert` — правила маршрутизации событий (какие ресурсы слушать, с какой важностью и куда отправлять).
+3. `Receiver` — входящий вебхук для немедленной инициализации реконсиляции по внешнему сигналу.
+
+#### 1.1 Интеграция с корпоративным Mattermost / Slack (Исходящие уведомления)
+
+Провайдер типа `slack` во Flux полностью совместим с self-hosted платформой Mattermost (поддерживающей Incoming Webhooks) и корпоративными серверами Slack.
 
 ```yaml
-# 1. Секрет с токеном/вебхуком
+# 1. Секрет с вебхуком Mattermost / Slack
 apiVersion: v1
 kind: Secret
 metadata:
-  name: slack-url
+  name: mattermost-webhook-url
   namespace: flux-system
+type: Opaque
 stringData:
-  address: "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXX" # Incoming Webhook из настроек Slack App
+  address: "https://mattermost.corp.internal/hooks/xxxx-incoming-webhook-key-xxxx"
 ---
-# 2. Провайдер
+# 2. Провайдер доставки
 apiVersion: notification.toolkit.fluxcd.io/v1beta3
 kind: Provider
 metadata:
-  name: slack-provider
+  name: mattermost-provider
   namespace: flux-system
 spec:
   type: slack
-  channel: flux-alerts # канал назначения (можно переопределить из секрета)
+  channel: gitops-alerts
+  username: Flux-Bot
   secretRef:
-    name: slack-url
+    name: mattermost-webhook-url
 ---
-# 3. Алерт
+# 3. Алерт только для критических сбоев Kustomization и HelmRelease
 apiVersion: notification.toolkit.fluxcd.io/v1beta3
 kind: Alert
 metadata:
-  name: critical-alerts
+  name: critical-workload-alerts
   namespace: flux-system
 spec:
   providerRef:
-    name: slack-provider
-  eventSeverity: error # Только ошибки
+    name: mattermost-provider
+  eventSeverity: error
   eventSources:
     - kind: Kustomization
       name: '*'
     - kind: HelmRelease
       name: '*'
+  eventMetadata:
+    cluster: k8s-prod-dc1
+    dc: dc-msk-01
+    env: production
+    runbook: "https://wiki.corp.internal/runbooks/gitops-failures"
+  exclusionList:
+    - ".*reconciliation skipped.*"
+    - ".*no changes.*"
 ```
 
-После применения манифестов объекты `Alert` и `Provider` являются статическими конфигурациями — они не имеют собственного статуса готовности: созданный объект считается рабочим. Факт работы проверяется только реальным событием (см. «Проверка работоспособности» ниже).
+#### 1.2 Интеграция с Telegram Bot API с разделением потоков
 
-#### Пример настройки Telegram
+Для взаимодействия с Telegram создается бот через `@BotFather` и извлекается идентификатор канала или группы (`channel`).
 
 ```yaml
-# 1. Секрет с токеном бота (токен выдает @BotFather)
+# 1. Секрет с токеном Telegram бота
 apiVersion: v1
 kind: Secret
 metadata:
-  name: telegram-bot
+  name: telegram-bot-token
   namespace: flux-system
+type: Opaque
 stringData:
-  token: "123456789:AAF..." # токен Telegram Bot API
+  token: "7123456789:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 ---
-# 2. Провайдер
+# 2. Провайдер Telegram
 apiVersion: notification.toolkit.fluxcd.io/v1beta3
 kind: Provider
 metadata:
@@ -153,305 +212,490 @@ metadata:
   namespace: flux-system
 spec:
   type: telegram
-  channel: "-1001234567890" # ID чата/канала (для публичных каналов допустимо @channelname)
-  # address: https://api.telegram.org # переопределяется только для self-hosted Bot API Server
+  channel: "-1001987654321" # ID супергруппы или закрытого канала
   secretRef:
-    name: telegram-bot
+    name: telegram-bot-token
 ---
-# 3. Алерт: весь info-поток в архивный канал
+# 3. Алерт для общего информационного аудита (Info-поток)
 apiVersion: notification.toolkit.fluxcd.io/v1beta3
 kind: Alert
 metadata:
-  name: info-feed
+  name: audit-feed-alerts
   namespace: flux-system
 spec:
   providerRef:
     name: telegram-provider
-  eventSeverity: info # все события, включая ошибки
+  eventSeverity: info
   eventSources:
     - kind: Kustomization
+      name: "infra-*"
+    - kind: GitRepository
       name: '*'
+  eventMetadata:
+    cluster: k8s-prod-dc1
+    environment: production
 ```
 
-Чтобы бот мог писать в канал, добавьте его администратором канала. ID приватного чата получают через Bot API: отправьте сообщение боту и откройте `https://api.telegram.org/bot<TOKEN>/getUpdates` — поле `result[].message.chat.id`.
+> **Важно:** Бот должен быть предварительно добавлен в канал администратором с правом публикации сообщений. Для получения `channel_id` отправьте тестовое сообщение в группу с ботом и выполните `curl -s https://api.telegram.org/bot<TOKEN>/getUpdates | jq '.result[].message.chat.id'`.
 
-#### Обогащение событий (eventMetadata)
+#### 1.3 Входящие вебхуки (Receiver): Мгновенная реконсиляция по Push-событиям
 
-Без обогащения невозможно понять, какому кластеру принадлежит алерт в общем канале. Источники метаданных (в порядке возрастания приоритета):
-
-1.  Аннотации на самих Flux-объектах с префиксом `event.toolkit.fluxcd.io/`;
-2.  Поле `Alert.spec.eventMetadata`;
-3.  Поле `Alert.spec.summary` (устарело — используйте `eventMetadata.summary`);
-4.  Метаданные, добавляемые самим контроллером в payload события.
+По умолчанию Flux опрашивает Git-репозитории с интервалом `spec.interval` (например, раз в 5–10 минут). Ресурс `Receiver` открывает защищенный HTTP-эндпоинт, при обращении к которому `source-controller` немедленно скачивает свежий коммит.
 
 ```yaml
-apiVersion: notification.toolkit.fluxcd.io/v1beta3
-kind: Alert
-metadata:
-  name: enriched-alerts
-  namespace: flux-system
-spec:
-  providerRef:
-    name: slack-provider
-  eventSeverity: error
-  eventSources:
-    - kind: HelmRelease
-      name: '*'
-  eventMetadata: # статическое обогащение на уровне кластера
-    cluster: prod-eu-central-1
-    env: production
-    region: eu-central-1
-    runbook_url: https://runbooks.example.com/gitops
-  inclusionList: # обрабатывать только эти объекты по имени (regex)
-    - ".*platform.*"
-  exclusionList: # отсекать шумные сообщения по тексту (regex)
-    - "no objects changed"
-    - "reconciliation skipped"
-```
-
-При конфликте ключей побеждает источник с более высоким приоритетом, а факт перезаписи фиксируется предупреждением в логах контроллера.
-
-#### Входящие вебхуки (Receiver): триггер реконсиляции извне
-
-`Receiver` решает обратную задачу: внешняя система (CI, Git-хостинг, соседний пайплайн) инициирует немедленную реконсиляцию Flux-ресурсов, не дожидаясь планового интервала. Это вторая половина паттерна «Webhooks» из архитектуры GitOps: исходящие `Alert` информируют мир, входящие `Receiver` получают сигналы от мира.
-
-```yaml
-# 1. Секрет с токеном — он же генератор секретного пути вебхука
+# 1. Секрет с HMAC-токеном авторизации вебхука
 apiVersion: v1
 kind: Secret
 metadata:
-  name: webhook-token
+  name: gitlab-webhook-secret
   namespace: flux-system
+type: Opaque
 stringData:
-  token: "long-random-string"
+  token: "9f82c4e1a6b8d7e3f2c5a1b4d8e7f9a2b3c4d5e6f7a8b9c0"
 ---
-# 2. Receiver: push в GitHub триггерит реконсиляцию GitRepository
+# 2. Определение входящего вебхука для on-premise GitLab / Gitea
 apiVersion: notification.toolkit.fluxcd.io/v1
 kind: Receiver
 metadata:
-  name: webapp-receiver
+  name: gitlab-receiver
   namespace: flux-system
 spec:
-  type: github # также: gitlab, bitbucket, harbor, dockerhub, quay, nexus, azuredevops, gcr, generic, generic-hmac
-  events: ["ping", "push"] # какие события вебхука принимать
+  type: gitlab # Доступны: gitlab, github, gitea, bitbucket, harbor, generic, generic-hmac, cdevents
+  events:
+    - "Push Hook"
+    - "Tag Push Hook"
   secretRef:
-    name: webhook-token
+    name: gitlab-webhook-secret
   resources:
     - apiVersion: source.toolkit.fluxcd.io/v1
       kind: GitRepository
-      name: webapp
+      name: fleet-infra
       namespace: flux-system
 ```
 
-Адрес вебхука формируется из SHA256-хеша токена: `<external-url-of-notification-controller>/hook/<sha256(token)>`. Стандартно контроллер публикуется через Ingress на хост вида `hook.<cluster-domain>`; внутренний адрес — `http://notification-controller.flux-system.svc.cluster.local./hook/<id>`. Для систем без поддержки подписи HMAC используется тип `generic-hmac`; начиная с notification-controller v1.9 доступен тип `generic-oidc`, где вызывающий аутентифицируется OIDC ID-токеном вместо общего секрета (бесшовная интеграция с платформами, поддерживающими OIDC; см. также [Flux: Обзор и Ключевые Концепции](./flux.md)).
+После применения манифеста `notification-controller` генерирует секретный путь, основанный на SHA256-хэше переданного токена.
 
-Настройка со стороны Git-хостинга: создайте webhook репозитория на URL из шага выше, content-type `application/json`, secret — тот же `token`. Flux проверит подпись `X-Hub-Signature-256` каждого запроса.
-
-#### Новое в notification-controller (2025–2026)
-
-Версионирование контроллера уведомлений независимо от версий Flux (например, Flux v2.9 включает notification-controller v1.9.x). Ключевые изменения последних релизов:
-
-- **notification-controller v1.8**: **PR Comments** — автоматическое комментирование Pull/Merge Request в GitHub/GitLab о статусе проверки манифестов; **mTLS** — поддержка двустороннего TLS для транспорта событий и связи с GitHub App.
-- **notification-controller v1.9**: тип Receiver `generic-oidc` — аутентификация вызывающего по OIDC ID-токену вместо общего HMAC-секрета, фильтрация ресурсов CEL-выражениями; поле `Provider.spec.proxySecretRef` для проксирования исходящих событий (старые поля `.spec.proxy` объявлены устаревшими); из состава CRD удалена API-версия `v1beta2` — манифесты на ней перестают применяться.
-- Безопасность: GCR-Receiver'ы требуют полей `email` и `audience` в Secret (исправление CVE-2026-40109) — проверьте существующие Receivers после обновления.
-
-#### Проверка работоспособности
-
-```bash
-# 1. Убедиться, что объекты созданы и CRD зарегистрированы
-kubectl get providers.notification.toolkit.fluxcd.io \
-  alerts.notification.toolkit.fluxcd.io \
-  receivers.notification.toolkit.fluxcd.io -n flux-system
-# → NAME              AGE
-# → slack-provider    30s
-# → critical-alerts   25s
-# → webapp-receiver   20s
-
-# 2. Проверить здоровье самого контроллера
-flux check
-# → ✔ notification-controller is healthy
-
-# 3. Спровоцировать тестовое событие: аннотация запрашивает внеплановую реконсиляцию
-flux reconcile kustomization flux-system --with-source
-# → ► annotating Kustomization flux-system in flux-system namespace
-# → ◎ waiting for Kustomization reconciliation
-# → ✔ reconciled successfully
-
-# 4. Наблюдать за обработкой события контроллером
-kubectl logs -n flux-system deploy/notification-controller --tail=50 | grep -i "slack\|alert"
-# → {"level":"info","ts":"...","logger":"event-server","msg":"dispatching event", ...}
-```
-
-Если шаг 4 показывает `dispatching event`, а сообщение в мессенджере не появилось — проблема на стороне провайдера (см. таблицу типовых проблем ниже).
-
-#### Типовые проблемы (Flux)
-
-| Симптом | Вероятная причина | Решение |
-| :--- | :--- | :--- |
-| Сообщения не приходят, в логах нет `dispatching event` | Событие отфильтровано: `eventSeverity: error`, а происходит успешная синхронизация | Отправлять `info`-поток или спровоцировать ошибку (сломать манифест намеренно) для проверки |
-| `429 Too Many Requests` от Telegram/Slack API | Rate limit мессенджера при массовом применении (например, bootstrap нового кластера) | Разделить потоки: error-канал отдельно от info; добавить `exclusionList`; временно `suspend: true` у info-алерта |
-| `401 Unauthorized` / `403 Forbidden` в логах контроллера | Невалидный токен в Secret, истекший Incoming Webhook, бот исключен из канала | Перевыпустить токен/вебхук, обновить Secret, проверить права бота в канале |
-| Сообщение приходит, но непонятно из какого кластера | Нет обогащения `eventMetadata` | Добавить `cluster`/`env`/`region` в `Alert.spec.eventMetadata` или аннотации объектов |
-| Вебхук Receiver отвечает `404` | Неправильный путь: хеш токена не совпадает с URL в настройках Git-хостинга | Взять точный путь из `.status.webhookPath` ресурса Receiver и пересверить с URL вебхука |
-| Вебхук Receiver отвечает `403` | Подпись HMAC не совпадает (secret в Git-хостинге отличается от `token` в Secret) | Синхронизировать значение токена; проверить, что Git-хостинг шлет подпись (не отключена ли она) |
-| После обновления Flux объекты `Alert`/`Provider` не применяются | Манифесты на удаленной версии API (`v1beta1`/`v1beta2` исключены из CRD) | Выполнить `flux migrate` — перепишет `apiVersion` в манифестах Git и переведет объекты в кластере (см. [Flux: Обзор](./flux.md)) |
-
-### Сценарий 2: Уведомления в ArgoCD
-
-ArgoCD Notifications интегрированы в основной контроллер (начиная с v3.x), что упрощает управление.
-
-**Основные настройки:**
-- **Triggers**: Условия отправки (например, `on-deployed`, `on-health-degraded`).
-- **Templates**: Шаблоны сообщений с поддержкой переменных (`{{.app.metadata.name}}`).
-- **Subscriptions**: Подписка конкретных приложений через аннотации.
-
-Модель отличается от Flux: вместо отдельных CRD используется ConfigMap (`argocd-notifications-cm`) для триггеров/шаблонов и Secret (`argocd-notifications-secret`) для учетных данных сервисов. Готовые встроенные триггеры покрывают большинство потребностей; подписка приложения выглядит как аннотация `notifications.argoproj.io/subscribe.on-sync-failed.slack: ops-channel`.
-
-Для выбора между инструментами полезно сравнение моделей конфигурации и триггеров двух контроллеров — таблица приведена в разделе «Сравнение с Flux notification-controller» детального руководства.
-
-> **Детальное руководство по настройке:** см. **[ArgoCD Notifications: Настройка уведомлений](./ArgoCD/argocd_notifications.md)**.
-
-### Сценарий 3: Использование CDEvents для мультиинструментальных сред
-
-Если в организации используются одновременно ArgoCD, Flux и Tekton, целесообразно использовать стандарт CDEvents.
-
-- **Workflow**: Каждый инструмент отправляет события в формате CloudEvents на центральный брокер.
-- **Результат**: Единый формат уведомлений и возможность строить аналитику (DORA metrics) на основе стандартизированных данных.
-
-**Роли инструментов (по состоянию на 2026):**
-
-| Инструмент | Роль в экосистеме CDEvents |
-| :--- | :--- |
-| Tekton | Нативный producer (pipeline/task события) |
-| Jenkins | Producer через плагин |
-| Spinnaker | Producer (deployment события) |
-| ArgoCD | Producer (события sync и деплоя приложений) |
-| Flux | Producer через notification-controller (события реконсиляции и деплоя) |
-| Keptn | Producer и consumer (lifecycle-наблюдаемость) |
-
-#### Практическая схема: единая лента событий через брокер
-
-Целевая топология: каждый кластер публикует события в центральный брокер (NATS/Kafka/Knative Eventing), потребители (мессенджер-роутер, SIEM, DORA-коллектор) читают из брокера один стандартизированный поток.
+**Публикация Receiver через Ingress (on-premise):**
 
 ```yaml
-# Flux -> NATS: публикация событий реконсиляции в шину
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flux-receiver-ingress
+  namespace: flux-system
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/proxy-body-size: "5m"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: flux-webhook.corp.internal
+      http:
+        paths:
+          - path: /hook/
+            pathType: Prefix
+            backend:
+              service:
+                name: notification-controller
+                port:
+                  number: 80
+```
+
+#### 1.4 Корпоративная безопасность: Корпоративный Forward Proxy и собственный PKI
+
+В изолированных дата-центрах (on-premise) прямой доступ из подов в интернет запрещен. Доставка во внешние сервисы (например, Telegram API) должна маршрутизироваться через корпоративный Forward Proxy, а обращения к внутренним системам (Mattermost, GitLab) — валидироваться корпоративным корневым CA.
+
+Начиная с `notification-controller` v1.9 (Flux v2.9), настройка прокси и сертификатов вынесена в декларативные поля спецификации `Provider`:
+
+```yaml
+# 1. Секрет с параметрами корпоративного HTTP(S) прокси
+apiVersion: v1
+kind: Secret
+metadata:
+  name: corp-proxy-credentials
+  namespace: flux-system
+type: Opaque
+stringData:
+  http_proxy: "http://proxy-user:ProxyPass123@proxy.corp.internal:3128"
+  https_proxy: "http://proxy-user:ProxyPass123@proxy.corp.internal:3128"
+  no_proxy: ".corp.internal,.cluster.local,10.0.0.0/8"
+---
+# 2. Секрет с корпоративным корневым сертификатом (Root CA)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: internal-root-ca
+  namespace: flux-system
+type: Opaque
+stringData:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIEAzCCAuugAwIBAgIUWxxxxCorporateInternalRootCAxxxx
+    -----END CERTIFICATE-----
+---
+# 3. Provider с привязкой прокси и сертификатов
 apiVersion: notification.toolkit.fluxcd.io/v1beta3
 kind: Provider
 metadata:
-  name: nats-bus
+  name: corp-secured-provider
+  namespace: flux-system
+spec:
+  type: slack
+  channel: gitops-alerts
+  secretRef:
+    name: mattermost-webhook-url
+  proxySecretRef:
+    name: corp-proxy-credentials
+  certSecretRef:
+    name: internal-root-ca
+```
+
+---
+
+### Сценарий 2: Архитектура уведомлений в Argo CD и интеграция
+
+В Argo CD подсистема оповещений реализована через встроенный компонент `argocd-notifications-controller` (входит в стандартную поставку версий v3.x).
+
+В отличие от модели CRD во Flux, архитектура Argo CD базируется на централизованном ConfigMap `argocd-notifications-cm` и подписках через аннотации:
+- **Triggers**: Логические условия отправки, описанные на синтаксисе библиотеки `antonmedv/expr`.
+- **Templates**: Go-шаблоны оформления сообщений с поддержкой markdown-разметки и блоков параметров.
+- **Services**: Конфигурации адаптеров доставки (Telegram, Slack, Webhook, SMTP).
+- **Subscriptions**: Декларативная привязка триггеров к приложениям через аннотации ресурса `Application`.
+
+Пример аннотации подписки на ресурс `Application`:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: billing-service
+  namespace: argocd
+  annotations:
+    # Подписка на ошибку синхронизации в Mattermost/Slack
+    notifications.argoproj.io/subscribe.on-sync-failed.mattermost: "sre-alerts-channel"
+    # Подписка на деградацию здоровья пода в Telegram
+    notifications.argoproj.io/subscribe.on-health-degraded.telegram: "-1001987654321"
+spec:
+  project: default
+  source:
+    repoURL: 'https://gitlab.corp.internal/apps/billing.git'
+    targetRevision: HEAD
+    path: deploy
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: billing
+```
+
+> **Единый источник истины по Argo CD:** Детальная настройка сервисов, контекста, синтаксиса триггеров и Go-шаблонов приведена в профильном документе: **[ArgoCD Notifications: Настройка уведомлений](./ArgoCD/argocd_notifications.md)**.
+
+---
+
+### Сценарий 3: Мультиинструментальная интеграция через локальную шину NATS и CDEvents
+
+В гетерогенных enterprise-инфраструктурах, где одновременно функционируют Flux, Argo CD и автоматизированные пайплайны сборки, прямая интеграция каждого инструмента с чатами порождает хаос. Целевая топология — публикация событий в единую on-premise шину сообщений (NATS) в стандартизированном формате CDEvents.
+
+#### 3.1 Публикация событий Flux в шину NATS
+
+```yaml
+# 1. Секрет аутентификации в кластере NATS
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nats-cluster-auth
+  namespace: flux-system
+type: Opaque
+stringData:
+  token: "NatsSecretClientToken98765"
+---
+# 2. Провайдер NATS
+apiVersion: notification.toolkit.fluxcd.io/v1beta3
+kind: Provider
+metadata:
+  name: nats-event-bus
   namespace: flux-system
 spec:
   type: nats
-  address: nats://nats.example.com:4222
+  address: "nats://nats.msg-broker.svc.cluster.local:4222"
+  channel: "gitops.events.flux" # Тема (subject) в NATS
   secretRef:
-    name: nats-credentials # user/password или токен
-  channel: cd.events # subject NATS, на который публикуются события
+    name: nats-cluster-auth
 ---
+# 3. Алерт для экспорта всех событий реконсиляции в шину
 apiVersion: notification.toolkit.fluxcd.io/v1beta3
 kind: Alert
 metadata:
-  name: bus-events
+  name: stream-all-to-bus
   namespace: flux-system
 spec:
   providerRef:
-    name: nats-bus
-  eventSeverity: info # в шину уходят все события — фильтрацию делают потребители
+    name: nats-event-bus
+  eventSeverity: info
   eventSources:
     - kind: Kustomization
+      name: '*'
+    - kind: HelmRelease
       name: '*'
     - kind: OCIRepository
       name: '*'
 ```
 
-Обратное направление — реакция Flux на события из конвейера (например, мердж PR должен запустить реконсиляцию) — реализуется Receiver'ом с типом `cdevents`, который принимает валидные CDEvents и триггерит ресурсы:
+#### 3.2 Входящий Receiver стандарта CDEvents
+
+Flux поддерживает прием CDEvents (спецификация Continuous Delivery Foundation) через отдельный тип ресивера `cdevents`. При публикации события о завершении пайплайна в формате CloudEvents ресивер валидирует сигнатуру и инициирует синхронизацию:
 
 ```yaml
 apiVersion: notification.toolkit.fluxcd.io/v1
 kind: Receiver
 metadata:
-  name: cdevents-receiver
+  name: cdevents-pipeline-receiver
   namespace: flux-system
 spec:
   type: cdevents
   events:
-    - "dev.cdevents.change.merged" # реагировать только на мердж изменений
+    - "dev.cdevents.change.merged"
+    - "dev.cdevents.artifact.published"
   secretRef:
-    name: receiver-token # HMAC-проверка отправителя
+    name: gitlab-webhook-secret
   resources:
     - apiVersion: source.toolkit.fluxcd.io/v1
       kind: GitRepository
-      name: webapp
+      name: fleet-infra
       namespace: flux-system
 ```
 
-**Проверка сквозного сценария:**
+---
+
+## Эксплуатация и регламентные операции
+
+### 1. Верификация состояния подсистемы уведомлений
+
 ```bash
-# 1. Отправить тестовый CDEvent в URL Receiver'а (payload по схеме CloudEvents envelope)
-curl -si -X POST "https://hook.example.com/hook/<sha256-token>" \
-  -H "Content-Type: application/cloudevents+json" \
-  -d '{"specversion":"1.0","type":"dev.cdevents.change.merged",
-       "source":"https://git.example.com/webapp","id":"'"$(uuidgen)"'",
-       "time":"2026-08-24T10:00:00Z"}'
-# → HTTP/2 200
+# 1. Проверка регистрации CRD и статуса контроллера Flux
+flux check --components=notification-controller
+# → ✔ notification-controller: deployment/notification-controller is healthy
+# → ✔ all checks passed
 
-# 2. Убедиться, что реконсиляция была запущена именно вебхуком:
-#    поле .status.lastHandledReconcileAt изменилось одновременно с запросом
-kubectl get gitrepository webapp -n flux-system \
-  -o jsonpath='{.status.lastHandledReconcileAt}'; echo
+# 2. Проверка состояния объектов Provider, Alert и Receiver
+kubectl get providers.notification.toolkit.fluxcd.io,alerts.notification.toolkit.fluxcd.io,receivers.notification.toolkit.fluxcd.io -n flux-system
+# → NAME                                                   READY   STATUS   AGE
+# → provider.notification.toolkit.fluxcd.io/mattermost     True    Ready    5m
+# → alert.notification.toolkit.fluxcd.io/critical-workloads True   Ready    5m
+# → receiver.notification.toolkit.fluxcd.io/gitlab-receiver True   Ready    5m
 
-# 3. На стороне брокера убедиться в публикации:
-nats sub cd.events --server nats://nats.example.com:4222
-# → [#1] received on "cd.events"
+# 3. Извлечение сгенерированного адреса вебхука для настройки в GitLab / CI
+kubectl get receiver gitlab-receiver -n flux-system -o jsonpath='{.status.webhookPath}'
+# → /hook/c8f2b3e8a71d4e0b5f12a3456789abcdef0123456789abcdef0123456789abcd
 ```
 
-Такой контур закрывает обе задачи: операционные уведомления людям (через потребителей брокера, маршрутизующих в Slack/Telegram) и машинную интеграцию инструментов между собой, включая расчет DORA-метрик (частота деплоя, lead time, MTTR, failure rate) по стандартизированным событиям, а не по парсингу разнородных логов.
+### 2. Тестирование сквозной доставки сообщений
 
-## Мониторинг самой системы уведомлений
+Для проверки доставки без внесения деструктивных изменений в репозитории спровоцируйте внеплановую реконсиляцию с аннотацией:
 
-Система уведомлений — тоже критический компонент: ее молчаливый отказ означает отсутствие сигналов о реальных инцидентах. Минимальный набор контроля:
+```bash
+# Спровоцировать реконсиляцию Kustomization
+flux reconcile kustomization flux-system --with-source
+# → ► annotating Kustomization flux-system in flux-system namespace
+# → ◎ waiting for Kustomization reconciliation
+# → ✔ reconciled successfully
 
-- **Метрики контроллера** (порт `:8080` notification-controller, стандартное семейство `gotk_*`): `gotk_reconcile_condition{kind="Receiver",...}` — успех последней реконсиляции объектов уведомлений; `gotk_suspend_status` — обнаружение случайно suspended алертов; `gotk_last_reconciled_timestamp` — свежесть обработки.
-- **Heartbeat-алерт**: синтетическая проверка «канал жив»: периодическая задача отправляет тестовое событие через Provider и фиксирует доставку; отсутствие heartbeat дольше N часов само является алертом (правило «alert if no alerts»).
-- **Логи**: ошибки доставки провайдеров пишутся в лог notification-controller — их стоит собирать централизованно (Loki/ELK) и алертить по росту частоты `failed to` в контексте event-server.
+# Просмотр логов диспетчеризации событий контроллером
+kubectl logs -n flux-system deploy/notification-controller --tail=50 | grep -i "dispatching"
+# → {"level":"info","ts":"2026-10-13T15:20:11.102Z","logger":"event-server","msg":"dispatching event","provider":"mattermost-provider","eventSeverity":"info"}
+```
+
+Тестирование входящего эндпоинта Receiver через `curl`:
+
+```bash
+# Тестовый запрос вебхука (GitLab Push Event)
+curl -sS -X POST "https://flux-webhook.corp.internal/hook/c8f2b3e8a71d4e0b5f12a3456789abcdef0123456789abcdef0123456789abcd" \
+  -H "Content-Type: application/json" \
+  -H "X-Gitlab-Token: 9f82c4e1a6b8d7e3f2c5a1b4d8e7f9a2b3c4d5e6f7a8b9c0" \
+  -H "X-Gitlab-Event: Push Hook" \
+  -d '{"ref":"refs/heads/main","after":"7a9c3b8f1e2d4c5a6b7e8f9a0b1c2d3e4f5a6b7c"}'
+# → {"status":"reconciliation requested"}
+
+# Проверка фиксации времени обработки в GitRepository
+kubectl get gitrepository fleet-infra -n flux-system -o jsonpath='{.status.lastHandledReconcileAt}'
+# → 2026-10-13T15:21:04.421Z
+```
+
+### 3. Регламентное управление рассылкой (Mute / Unmute)
+
+При проведении плановых работ или массовых миграциях во избежание лавины сообщений рассылка приостанавливается декларативно либо через CLI:
+
+```bash
+# Приостановка отправки уведомлений
+flux suspend alert critical-workload-alerts -n flux-system
+# → ► suspending alert critical-workload-alerts in flux-system namespace
+# → ✔ alert suspended
+
+# Проверка флага приостановки
+kubectl get alert critical-workload-alerts -n flux-system -o jsonpath='{.spec.suspend}'
+# → true
+
+# Возобновление отправки после завершения работ
+flux resume alert critical-workload-alerts -n flux-system
+# → ► resuming alert critical-workload-alerts in flux-system namespace
+# → ✔ alert resumed
+```
+
+### 4. Ротация токенов и секретов вебхуков
+
+Для ротации токена входящего вебхука без прерывания обслуживания:
+1. Подготовьте новый секрет в Kubernetes с новым токеном.
+2. Обновите поле `spec.secretRef.name` в манифесте `Receiver`.
+3. Зафиксируйте новый путь из `.status.webhookPath` и добавьте его в настройках GitLab Webhooks.
+4. После подтверждения поступления запросов удалите старый вебхук в GitLab.
+
+---
+
+## Диагностика и устранение неисправностей
+
+| Симптом / Ошибка | Первопричина | Методика диагностики | Способ устранения |
+| :--- | :--- | :--- | :--- |
+| **Уведомления не приходят при успешных операциях** | В `Alert.spec.eventSeverity` задан уровень `error`, отсекающий статус `info` | Проверить манифест: `kubectl get alert <name> -n flux-system -o yaml` | Для информационных лент сменить значение на `eventSeverity: info`; для ошибок оставить `error`. |
+| **HTTP 429 Too Many Requests в логах контроллера** | Превышение лимитов API мессенджера (Rate Limit: в Telegram ~30 сообщ/сек, в Slack burst limit) | В логах контроллера: `grep "429 Too Many Requests"` | 1. Настроить `exclusionList` для отсечения шума.<br>2. Разделить алерты по независимым каналам.<br>3. Выставить `spec.suspend: true` на время bulk-миграций. |
+| **HTTP 401 Unauthorized / HTTP 403 Forbidden** | Истек срок действия вебхука, отозван токен бота или бот не добавлен в закрытый чат/канал | В логах контроллера: `grep "failed to send event"` | 1. Проверить права бота администратором в канале Telegram.<br>2. Перегенерировать вебхук/токен и обновить Secret.<br>3. Проверить корректность префикса chat ID (`-100...`). |
+| **Receiver отвечает HTTP 404 Not Found** | URL вебхука в GitLab/CI не совпадает с SHA256-хэшем токена из Secret | Сравнить URL запроса с полем `.status.webhookPath` ресурса `Receiver` | Скопировать точный путь из `kubectl get receiver <name> -n flux-system -o jsonpath='{.status.webhookPath}'` в настройки вебхука GitLab. |
+| **Receiver отвечает HTTP 403 Forbidden** | Не совпадает подпись HMAC (секретный токен в GitLab отличается от значения в Secret) | `kubectl logs deploy/notification-controller -n flux-system \| grep "signature validation failed"` | Убедиться, что токен в `X-Gitlab-Token` / `X-Hub-Signature-256` совпадает со значением в `Secret.stringData.token`. |
+| **Сетевые таймауты i/o timeout к Telegram / Webhook** | Трафик блокируется корпоративным сетевым экраном дата-центра; нет маршрутизации в интернет | Проверить логи: `dial tcp ... i/o timeout` | 1. Настроить `proxySecretRef` в объекте `Provider`.<br>2. Проверить открытие egress-трафика в NetworkPolicy кластера. |
+| **x509: certificate signed by unknown authority** | Внутренний сервер Mattermost / GitLab использует корпоративный CA, отсутствующий в доверенных | Ошибка в логах контроллера при отправке вебхука | Добавить корпоративный сертификат в `certSecretRef` объекта `Provider`. |
+| **Объекты Alert/Provider не применяются после обновления Flux** | Использование устаревших версий CRD API (`v1beta1` или `v1beta2`, удаленных из состава контроллера) | Ошибка валидации Kubernetes API: `no matches for kind Provider in version .../v1beta1` | Выполнить команду `flux migrate`, автоматически обновляющую `apiVersion` до `notification.toolkit.fluxcd.io/v1beta3`. |
+| **Лавина сообщений при Flapping (CrashLoopBackOff)** | При циклическом падении пода контроллер шлет алерт на каждый рестарт | Анализ частоты сообщений в канале связи | Добавить фильтр по паттерну в `exclusionList` либо повысить порог ожидания стабильности в HelmRelease (`spec.timeout` / `spec.rollback`). |
+
+---
+
+## Мониторинг системы уведомлений
+
+Сбой в работе контроллера уведомлений создает эффект «молчаливого инцидента» (Silent Failure): сбои приложений не доходят до дежурных. Необходим непрерывный мониторинг состояния самого контроллера.
+
+### Ключевые метрики Prometheus
+
+`notification-controller` экспортирует метрики на порту `:8080` (эндпоинт `/metrics`):
+
+- `gotk_reconcile_condition{kind="Receiver", type="Ready", status="True|False"}` — готовность входящих вебхуков.
+- `gotk_suspend_status{kind="Alert"}` — флаг приостановки отправки уведомлений (защита от забытого `suspend: true`).
+- `event_server_events_total` — счетчик входящих событий от других контроллеров.
+- `event_server_dispatch_duration_seconds` — гистограмма времени доставки сообщений провайдерам.
+- `event_server_dispatch_errors_total` — счетчик ошибок доставки во внешние сервисы.
+
+### Правила PrometheusRule для обнаружения деградации
 
 ```yaml
-# Пример PrometheusRule: контроллер уведомлений не справляется с реконсиляцией
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: flux-notification-alerts
+  name: gitops-notifications-monitoring
   namespace: flux-system
+  labels:
+    role: alert-rules
 spec:
   groups:
-    - name: flux-notification
+    - name: gitops-notification-controller.rules
       rules:
-        - alert: NotificationControllerReconcileFailing
-          expr: |
-            gotk_reconcile_condition{kind="Receiver", status="False", type="Ready"} == 1
-          for: 15m
+        # Алерт: Сбой реконсиляции объектов Receiver
+        - alert: GitOpsReceiverNotReady
+          expr: gotk_reconcile_condition{kind="Receiver", status="False", type="Ready"} == 1
+          for: 10m
           labels:
             severity: warning
+            team: sre
           annotations:
-            summary: "Receiver {{ $labels.name }} не реконцилируется более 15 минут"
+            summary: "Receiver {{ $labels.name }} в namespace {{ $labels.namespace }} не готов"
+            description: "Входящий вебхук {{ $labels.name }} недоступен более 10 минут. Автоматическая реконсиляция по push-событиям не работает."
+
+        # Алерт: Оповещения долгое время находятся в режиме suspend
+        - alert: GitOpsAlertsSuspendedTooLong
+          expr: gotk_suspend_status{kind="Alert"} == 1
+          for: 4h
+          labels:
+            severity: warning
+            team: sre
+          annotations:
+            summary: "Алерт {{ $labels.name }} приостановлен более 4 часов"
+            description: "Объект Alert {{ $labels.name }} находится в статусе suspend: true. Возможна потеря сигналов об авариях после регламентных работ."
+
+        # Алерт: Рост числа ошибок доставки уведомлений
+        - alert: GitOpsNotificationDeliveryFailures
+          expr: rate(event_server_dispatch_errors_total[5m]) > 0.1
+          for: 5m
+          labels:
+            severity: critical
+            team: sre
+          annotations:
+            summary: "Высокая частота ошибок доставки уведомлений GitOps"
+            description: "Контроллер уведомлений фиксирует сбои при отправке сообщений внешним провайдерам (rate > 0.1 ош/сек)."
 ```
+
+---
+
+## Лучшие практики
+
+### 1. Безопасность и управление секретами
+- **Никогда не коммитьте токены в открытом виде**: Токены мессенджеров, пароли прокси и HMAC-ключи должны шифроваться в Git через [SOPS / Sealed Secrets](./secrets_encryption.md) либо доставляться через External Secrets Operator из HashiCorp Vault.
+- **Обязательная валидация HMAC / OIDC для Receiver**: Никогда не публикуйте входящие вебхуки без секретного токена. Неавторизованный эндпоинт открывает возможность DoS-атаки на API-сервер Kubernetes путем непрерывной инициализации реконсиляции.
+- **Сетевая изоляция (NetworkPolicy)**: Ограничивайте доступ к эндпоинту Receiver на уровне Kubernetes NetworkPolicy, разрешая входящий трафик только с IP-адресов корпоративных Ingress-контроллеров или внутренних подсетей GitLab.
+
+### 2. Организация каналов и борьба с шумом
+- **Трехуровневая модель каналов (Channel Tiering)**:
+  - **Tier 1 (Incident / Pager)**: Только `eventSeverity: error` от критических сервисов (`production`). Включены звуковые пуш-уведомления дежурной смены.
+  - **Tier 2 (Engineering Updates)**: События `error` и ключевые `info` из `staging`/`dev` контуров.
+  - **Tier 3 (Audit Feed / Silent)**: Все события `info` (успешные реконсиляции, обновления образов). Без звука, с настроенной автоочисткой истории через 30 дней.
+- **Структурированное обогащение (`eventMetadata`)**: Всегда указывайте имя кластера (`cluster`), площадку/ЦОД (`dc`), контур (`env`) и ссылку на регламент реагирования (`runbook`). Без этих данных алерт в общем канале дезориентирует инженера.
+
+### 3. Отказоустойчивость в On-Premise инфраструктуре
+- **Локальные приемники**: Используйте self-hosted Mattermost или локальные брокеры NATS вместо облачных сервисов для исключения влияния внешних сетевых сбоев.
+- **Настройка Egress Proxy**: Все внешние вызовы (Telegram API) должны быть строго централизованы через корпоративный прокси с авторизацией и аудитом.
+- **Мониторинг Dead Man's Switch**: Настройте периодическую генерацию тестового события (например, раз в сутки) для валидации сквозной цепочки доставки.
+
+### 4. Регламент очистки тестовых ресурсов
+
+Для удаления объектов, созданных в рамках практических сценариев:
+
+```bash
+# 1. Удаление ресурсов Flux Notification
+kubectl delete alert critical-workload-alerts audit-feed-alerts stream-all-to-bus -n flux-system
+# → alert.notification.toolkit.fluxcd.io "critical-workload-alerts" deleted
+# → alert.notification.toolkit.fluxcd.io "audit-feed-alerts" deleted
+# → alert.notification.toolkit.fluxcd.io "stream-all-to-bus" deleted
+
+kubectl delete provider mattermost-provider telegram-provider corp-secured-provider nats-event-bus -n flux-system
+# → provider.notification.toolkit.fluxcd.io "mattermost-provider" deleted
+# → provider.notification.toolkit.fluxcd.io "telegram-provider" deleted
+# → provider.notification.toolkit.fluxcd.io "corp-secured-provider" deleted
+# → provider.notification.toolkit.fluxcd.io "nats-event-bus" deleted
+
+kubectl delete receiver gitlab-receiver cdevents-pipeline-receiver -n flux-system
+# → receiver.notification.toolkit.fluxcd.io "gitlab-receiver" deleted
+# → receiver.notification.toolkit.fluxcd.io "cdevents-pipeline-receiver" deleted
+
+# 2. Удаление секретов и Ingress
+kubectl delete secret mattermost-webhook-url telegram-bot-token gitlab-webhook-secret corp-proxy-credentials internal-root-ca nats-cluster-auth -n flux-system
+# → secret "mattermost-webhook-url" deleted
+# → secret "telegram-bot-token" deleted
+# → secret "gitlab-webhook-secret" deleted
+# → secret "corp-proxy-credentials" deleted
+# → secret "internal-root-ca" deleted
+# → secret "nats-cluster-auth" deleted
+
+kubectl delete ingress flux-receiver-ingress -n flux-system
+# → ingress.networking.k8s.io "flux-receiver-ingress" deleted
+```
+
+---
 
 ## Дополнительная информация
 
-**Связанные документы:**
-- [ArgoCD Notifications: детальное руководство](./ArgoCD/argocd_notifications.md) — полное руководство по настройке ArgoCD.
-- [Flux: Обзор и Ключевые Концепции](./flux.md) — общая архитектура Flux.
-- [Интеграция Grafana с Telegram](../Grafana/alerting/telegram-integration.md) — примеры шаблонов для Telegram.
+**Связанные документы в базе знаний:**
+- [Flux: Обзор и Ключевые Концепции](./flux.md) — общая архитектура GitOps Toolkit и жизненный цикл контроллеров.
+- [ArgoCD Notifications: Настройка уведомлений](./ArgoCD/argocd_notifications.md) — единый источник истины (SSoT) по настройке триггеров, шаблонов и сервисов в Argo CD.
+- [GitOps: Управление секретами и шифрование](./secrets_encryption.md) — безопасное хранение учетных данных вебхуков и токенов в Git (SOPS, Sealed Secrets).
+- [Аудит событий и логирование в GitOps](./Concepts/audit_logs.md) — экспорт событий реконсиляции в централизованные системы аудита и SIEM.
+- [DORA-метрики в GitOps](./Concepts/dora_metrics_gitops.md) — расчет метрик частоты развертываний и MTTR на основе потоков событий.
+- [Интеграция Grafana с Telegram](../Grafana/alerting/telegram-integration.md) — примеры настройки контактных точек и шаблонов сообщений для Telegram Bot API.
 
-**Рекомендации:**
-1. **Безопасность**: Никогда не храните токены ботов и URL вебхуков в открытом виде в Git. Используйте [Sealed Secrets](./secrets_encryption.md) или External Secrets. Для входящих вебхуков всегда используйте проверку подписи (HMAC-типы Receiver, OIDC для платформ с поддержкой) — открытый endpoint без проверки превращает реконсиляцию в примитив для DoS.
-2. **Шаблонизация**: Включайте в уведомления ссылки на логи (Grafana/Kibana) и на сам ресурс в UI ArgoCD/Flux для ускорения диагностики. Добавляйте `eventMetadata` (кластер, регион, окружение) — общий канал без этой информации бесполезен при нескольких кластерах.
-3. **Версионность**: При обновлении контроллеров всегда проверяйте API-версии ресурсов `Provider`, `Alert` и `Receiver` (актуально: `v1beta3` для Provider/Alert, `v1` для Receiver; версии ниже `v1beta3` удалены из состава CRD). Используйте команду `flux migrate` для автоматической миграции манифестов.
-4. **Rate limiting**: Помните об ограничениях API мессенджеров: Telegram — ~30 сообщений/сек на бота и ~20/мин в один канал, Slack — burst-лимиты на метод posting. Массовые операции (bootstrap, bulk-миграции) легко исчерпывают лимиты; разделяйте error/info потоки и применяйте `suspend` на время таких операций.
-5. **Очистка окружения** (откат сценария 1):
-   ```bash
-   kubectl delete alert/critical-alerts alert/info-feed alert/enriched-alerts -n flux-system
-   kubectl delete provider/slack-provider provider/telegram-provider -n flux-system
-   kubectl delete receiver/webapp-receiver receiver/cdevents-receiver -n flux-system
-   kubectl delete secret/slack-url secret/telegram-bot secret/webhook-token -n flux-system
-   ```
-   Также удалите вебхук из настроек Git-репозитория и Ingress-маршрут хоста `hook.<domain>`, если он больше не нужен.
+**Официальная документация:**
+- [Flux Notification Controller Documentation](https://fluxcd.io/flux/components/notification/)
+- [Argo CD Notifications Documentation](https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/)
+- [CDEvents Specification (Continuous Delivery Foundation)](https://cdevents.dev/)

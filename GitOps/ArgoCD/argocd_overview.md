@@ -682,13 +682,18 @@ argocd app delete smoke-test-app --cascade --yes
 
 ### Интеграция с Argo Rollouts
 
-Argo CD нативно дополняется контроллером **Argo Rollouts** для реализации прогрессивной доставки:
+Argo CD нативно дополняется контроллером **Argo Rollouts** для реализации прогрессивной доставки (подробное руководство см. в [Прогрессивная доставка в GitOps: Argo Rollouts и Flagger](../Concepts/progressive_delivery_gitops.md)):
 - **Canary:** Постепенное перенаправление процента трафика через Ingress-контроллер (NGINX / Envoy) на новую версию с автоматическим анализом метрик Prometheus и самооткатом при росте HTTP 5xx.
 - **Blue/Green:** Развертывание новой версии параллельно со старой и мгновенное переключение сервиса после ручного подтверждения или успешных smoke-тестов.
 
 ### Справочные руководства базы знаний
 
 - [Установка и настройка Argo CD](./argocd_installation_and_setup.md) — пошаговое руководство по развертыванию Standalone и HA-контуров.
+- [Паттерн App of Apps и структура GitOps-репозиториев](./argocd_app_of_apps.md) — иерархическое управление приложениями, бутстрап кластера и защита от каскадного удаления.
+- [Интеграция с Kustomize](./kustomize_integration.md) — оверлеи, Components, флаги сборки LoadRestrictionsNone и рендеринг Helm-чартов.
+- [Интеграция с Helm](./helm_integration.md) — особенности работы с Helm-чартами и OCI-репозиториями.
+- [Прогрессивная доставка в GitOps: Argo Rollouts](../Concepts/progressive_delivery_gitops.md) — канареечные релизы, Blue/Green и анализ метрик через AnalysisTemplate.
+- [Управление секретами и шифрование в GitOps](../secrets_encryption.md) — безопасное хранение секретов через SOPS, age, Sealed Secrets и ESO.
 - [Диагностика и мониторинг](./argocd_troubleshooting_and_monitoring.md) — поиск неисправностей, алертинг Prometheus, разбор логов.
 - [Синхронизация и политики](./synchronization.md) — архитектура Sync Waves, фаз выполнения и хуков жизненного цикла.
 - [ApplicationSet — генераторы приложений](./argocd_applicationsets.md) — шаблонизация, генераторы List/Git/Cluster/Matrix, Progressive Sync.
@@ -700,17 +705,27 @@ Argo CD нативно дополняется контроллером **Argo Ro
 - [Disaster Recovery](./argocd_disaster_recovery.md) — процедуры резервного копирования, восстановление etcd и экспорт `argocd-util`.
 - [Безопасность и hardening](./argocd_security_hardening.md) — NetworkPolicies, GPG-подписи коммитов, изоляция подов.
 - [Мультитенантность](./argocd_multi_tenancy.md) — паттерны разделения кластеров и команд в крупных инфраструктурах.
-- [Интеграция с Helm](./helm_integration.md) — особенности работы с Helm-чартами и OCI-репозиториями.
 - [Настройка уведомлений](./argocd_notifications.md) — алерты в Telegram, Slack, Webhook через Notifications Controller.
 - [Настройка SSO через GitLab](./argocd_sso_gitlab.md) — интеграция Dex с корпоративным GitLab.
 - [Custom Tooling и CMP](./argocd_custom_tooling.md) — плагины генерации манифестов Sidecar v2.
 - [Argo CD Image Updater](./argocd_image_updater.md) — автоматизация обновления тегов образов из Harbor/Docker Registry.
 - [Автоматизация через API и Ansible](./argocd_api_automation.md) — программное управление через REST/gRPC API.
 - [Сравнение Argo CD и Flux](../argo_vs_flux_manifests.md) — сопоставление подходов и практических сценариев.
-- [Sealed Secrets](../../Kubernetes/Security/sealed_secrets_overview.md) — шифрование секретов для безопасного хранения в Git.
-- [SOPS](../../Security/Tools/sops_overview.md) — управление зашифрованными YAML-манифестами.
 
 ## Вопросы для собеседования
+
+### В чем разница между паттерном App of Apps и ApplicationSet и когда что выбирать?
+- **App of Apps** оперирует статическими манифестами `Application` в Git. Он обеспечивает максимальную гетерогенность (каждое приложение может использовать свой репозиторий, чарт, Kustomize-оверлей или CMP-плагин) и позволяет задавать строгую очередность развертывания через Sync Waves на манифестах `Application`. Основное назначение — первичный бутстрап кластера и развертывание разнородной инфраструктуры.
+- **ApplicationSet** — динамический контроллер-генератор, создающий множество однотипных `Application` по единым шаблонам на основе внешних источников (список каталогов Git, метки кластеров, pull requests). Идеален для массовой доставки микросервисов по десяткам кластеров, но требует единообразия структуры приложений.
+
+### Что произойдет при удалении корневого приложения в App of Apps и как защитить кластер?
+Если на корневом приложении (`Root Application`) установлен финалайзер `resources-finalizer.argocd.argoproj.io`, команда `kubectl delete app root-app` вызовет немедленное каскадное удаление всех дочерних приложений и всех связанных с ними ресурсов во всем кластере.  
+Для защиты production-окружений финалайзер на корневое приложение **никогда не устанавливается** (защищаются только дочерние приложения), а удаление при необходимости выполняется строго с флагом `--cascade=false`.
+
+### Kustomize падает в Argo CD с ошибкой "security; file is not in or below current directory". В чем причина и как исправить?
+По умолчанию Kustomize v5 запрещает загрузку манифестов и баз, расположенных выше директории оверлея (`../../base`), руководствуясь политикой безопасности `LoadRestrictionsRoot`.  
+Для исправления в глобальном ConfigMap `argocd-cm` прописывается флаг:
+`kustomize.buildOptions: "--load-restrictor LoadRestrictionsNone"`, после чего перезапускается под `argocd-repo-server`.
 
 ### Чем Server-Side Apply превосходит Client-Side Apply в GitOps и в каких случаях он критичен?
 Client-Side Apply (CSA) вычисляет diff на клиенте (`kubectl`) и сохраняет полный снимок манифеста в аннотации `kubectl.kubernetes.io/last-applied-configuration`. Это создает две критические проблемы: ограничение размера аннотации (~262 Кб), что приводит к сбоям при деплое крупных CRD (например, операторов баз данных или систем мониторинга), и постоянные конфликты с контроллерами, мутирующими те же поля (HPA меняет `replicas`, вебхуки инжектируют sidecar-контейнеры).  
@@ -723,6 +738,7 @@ Server-Side Apply (SSA) переносит вычисление diff на сто
 ### Какие методы Resource Tracking существуют и почему режим annotation предпочтителен для Helm?
 Исторически Argo CD отслеживал принадлежность ресурсов через метку `app.kubernetes.io/instance: <app-name>`. Однако этот подход имеет два существенных недостатка: ограничение K8s на длину значения метки (не более 63 символов), что часто ломает деплой при длинных именах приложений, и конфликт с Helm-чартами, где метка `app.kubernetes.io/instance` по соглашению Helm зарезервирована под имя релиза чарта.  
 Режим отслеживания по аннотации (`argocd.argoproj.io/tracking-id`) решает обе проблемы: аннотации не имеют ограничения в 63 символа, безопасно содержат полную иерархию `<app-name>:<group>/<kind>:<ns>/<name>` и не конфликтуют с механизмами Helm. В on-premise инфраструктурах режим `annotation` является стандартом.
+
 
 ### Как масштабировать контроллер Argo CD для управления тысячами приложений в крупном on-prem кластере?
 Масштабирование контрольной плоскости выполняется по следующим направлениям:

@@ -1,285 +1,410 @@
 # Вертикальное авто-масштабирование подов (Vertical Pod Autoscaler — VPA)
 
+**Актуально для:** Kubernetes 1.33+ (Beta In-Place Resize) / 1.35+ (GA) / Vertical Pod Autoscaler 1.2+ / 1.3+ (autoscaling.k8s.io/v1)
+
+---
+
 ## Определения
 
-**Vertical Pod Autoscaler (VPA)** — механизм Kubernetes для автоматического управления ресурсами контейнеров (`requests` и `limits` CPU и памяти) на основе анализа истории их реального потребления. В отличие от HPA, который изменяет количество реплик, VPA оптимизирует «размер» самих подов.
-
-**In-Place Pod Resize** — технология (GA с версии 1.35), позволяющая изменять ресурсы запущенного контейнера без перезапуска пода. VPA активно использует этот механизм для минимизации простоев.
-
-**Overprovisioning** — выделение ресурсов сверх реальной необходимости, что ведет к неэффективному использованию кластера и росту затрат.
-
-**Underprovisioning** — нехватка ресурсов, приводящая к троттлингу (CPU throttling) или аварийному завершению (OOMKilled).
-
-**VPA Recommendation** — набор расчетных значений (Target, LowerBound, UpperBound), генерируемых компонентом Recommender для конкретной рабочей нагрузки.
-
-**Recommender** — компонент VPA, который опрашивает Metrics Server, агрегирует историю потребления и вычисляет оптимальные значения ресурсов.
-
-**Updater** — компонент VPA, который отслеживает отклонения фактического потребления от границ рекомендаций и инициирует применение новых ресурсов.
-
-**Admission Controller (VPA Admission)** — мутирующий вебхук, который подставляет рекомендованные значения `requests`/`limits` в спецификацию пода в момент его создания.
-
-**uncappedTarget** — рекомендация, рассчитанная Recommender без учета ограничений `minAllowed`/`maxAllowed`. Полезна для выявления скрытого дефицита ресурсов.
-
-**controlledValues** — параметр VPA, определяющий, какие поля ресурсов изменять: только `Requests`, только `Limits` или оба сразу (`RequestsAndLimits`).
+* **Vertical Pod Autoscaler (VPA)** — контроллер Kubernetes (`autoscaling.k8s.io/v1`), выполняющий автоматический подбор и корректировку вычислительных ресурсов (`requests` и `limits` CPU и оперативной памяти) контейнеров на основе непрерывного анализа истории их фактического потребления. В отличие от HPA, изменяющего количество реплик, VPA оптимизирует размер единичного пода.
+* **In-Place Pod Resize (KEP-1287)** — встроенный механизм ядра Kubernetes, позволяющий модифицировать `requests` и `limits` работающего контейнера на лету через обновление контроллеров `cgroups v2` без пересоздания пода и без перезапуска процесса PID 1.
+* **VPA Recommender** — компонент VPA, опрашивающий источник метрик (Metrics Server или Prometheus), агрегирующий временные ряды в логарифмические гистограммы с экспоненциальным затуханием весов и рассчитывающий оптимальные границы ресурсов.
+* **VPA Updater** — фоновый контроллер, отслеживающий соответствие фактических ресурсов запущенных подов вычисленным рекомендациям. При выходе за границы допустимого диапазона инициирует обновление через подресурс `/resize` (In-Place) или через Eviction API с учетом Pod Disruption Budget (PDB).
+* **VPA Admission Controller** — мутирующий вебхук (`MutatingWebhookConfiguration`), перехватывающий запросы создания подов (`CREATE`) и подставляющий актуальные рекомендованные значения ресурсов в манифест до планирования пода на узел.
+* **VerticalPodAutoscalerCheckpoint** — вспомогательный CRD (`autoscaling.k8s.io/v1`), в котором Recommender периодически сохраняет агрегированные гистограммы потребления подов в etcd, предотвращая потерю накопленной аналитики при перезапуске контроллера.
+* **Target** — целевое рекомендованное значение ресурса, рассчитанное Recommender (95-й перцентиль для CPU, 99-й перцентиль для RAM плюс буфер безопасности).
+* **LowerBound / UpperBound** — нижняя и верхняя границы допустимого диапазона ресурсов. Если текущие `requests` пода находятся между `lowerBound` и `upperBound`, Updater считает конфигурацию корректной и не предпринимает действий.
+* **uncappedTarget** — расчетное целевое значение ресурсов без наложения ограничений `minAllowed`/`maxAllowed`. Позволяет SRE выявлять скрытый дефицит ресурсов, искусственно сдерживаемый политикой.
+* **controlledValues** — директива политики масштабирования, определяющая целевые поля контейнера: `RequestsAndLimits` (пропорциональное масштабирование обоих параметров) или `RequestsOnly` (изменение только запросов с сохранением фиксированных лимитов).
+* **OOM Bump** — алгоритмическая реакция Recommender на событие аварийного завершения контейнера по нехватке памяти (`OOMKilled`), мгновенно повышающая рекомендацию памяти с мультипликатором без ожидания накопления статистики.
+* **Decay Half-Life** — период полураспада весов измерений в гистограмме Recommender (по умолчанию 24 часа), определяющий скорость устаревания исторических данных в пользу недавних всплесков нагрузки.
 
 ---
 
-## Предварительные требования
+## Архитектура и принцип работы
 
-### Требования к кластеру
+### Компоненты системы
 
-- **Kubernetes:** версия 1.27+ (Beta In-Place Resize), 1.35+ (GA In-Place Resize)
-- **Kubelet:** флаги `--kube-reserved` и `--system-reserved` настроены для корректного расчета `Node Allocatable`
-- **Container Runtime:** containerd 1.7+ или CRI-O 1.26+ с поддержкой cgroups v2
-- **Cgroup v2:** обязателен для корректной работы изменения лимитов памяти без сбоев
-- **Metrics Server:** установлен и функционирует (обязателен для Recommender)
+Пакет VPA состоит из трех слабосвязанных независимых микросервисов, развертываемых внутри кластера (как правило, в пространстве имен `kube-system`):
 
-### Инструменты
+| Компонент | Роль в кластере | Порт метрик / Health | Основные флаги запуска |
+| :--- | :--- | :--- | :--- |
+| **`vpa-recommender`** | Опрос метрик, расчет перцентилей, генерация рекомендаций, запись чекпоинтов в etcd. | `:8942` (`/metrics`, `/healthz`) | `--recommender-interval=1m`<br>`--metric-storage=metrics-server`<br>`--cpu-histogram-decay-half-life=24h`<br>`--storage=checkpoint` |
+| **`vpa-updater`** | Мониторинг отклонений ресурсов подов, вызов In-Place Resize или эвикция с учетом PDB. | `:8943` (`/metrics`, `/healthz`) | `--updater-interval=1m`<br>`--min-replicas=2`<br>`--eviction-tolerance=0.5`<br>`--eviction-rate-limit=-1` |
+| **`vpa-admission-controller`** | Мутирующий вебхук перехвата `Pod/CREATE`, подстановка `requests`/`limits`. | `:8944` (`/metrics`, `/healthz`) | `--webhook-port=8000`<br>`--tls-cert-file=/etc/tls-certs/tls.crt`<br>`--register-webhook=true` |
 
-- **kubectl:** версия 1.27+
-- **Helm:** версия 3.0+ (рекомендуется для установки VPA)
-- **Prometheus + kube-state-metrics:** для мониторинга событий VPA и алертинга
+### Сквозной поток данных (Data Flow)
 
-### Проверка готовности
+```
+[Ядро Linux / cgroups v2]
+         │
+         ▼ (Чтение cAdvisor внутри Kubelet: 10250)
+[Metrics Server] (или долгосрочный Prometheus)
+         │
+         ▼ (HTTP polling каждые 60с)
+┌─────────────────────────────────────────────────────────────┐
+│                      vpa-recommender                        │
+│ 1. Сбор временных рядов CPU/RAM                             │
+│ 2. Экспоненциальное затухание весов (half-life = 24h)       │
+│ 3. Расчет: 95% CPU, 99% RAM + 15% буфер                     │
+│ 4. Запись чекпоинтов (CRD VerticalPodAutoscalerCheckpoint)  │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+            ┌──────────────────┴──────────────────┐
+            ▼                                     ▼
+     (Обновление CRD)                      (Обновление CRD)
+   .status.recommendation                .status.recommendation
+            │                                     │
+            ▼                                     ▼
+┌───────────────────────────────┐   ┌────────────────────────────────┐
+│          vpa-updater          │   │    vpa-admission-controller    │
+│ 1. Периодический цикл (1m)    │   │ 1. Перехват события Pod CREATE │
+│ 2. Сверка ресурсов пода       │   │ 2. Проверка селектора VPA      │
+│ 3. Если вне [Lower, Upper]:   │   │ 3. Мутация requests/limits     │
+│    - K8s 1.33+: PATCH /resize │   └───────────────┬────────────────┘
+│    - Fallback: Eviction (PDB) │                   │
+└───────────────┬───────────────┘                   │
+                │                                   │
+                ▼                                   ▼
+        [API-Server /resize]              [Kubelet Pod Schedule]
+                │                                   │
+                ▼                                   ▼
+       [Kubelet Node Cgroup]               [Запуск контейнера]
+```
+
+### Механизм чекпоинтов (VerticalPodAutoscalerCheckpoint)
+
+Для исключения проблемы «холодного старта» при перезапуске `vpa-recommender` данные не теряются. Recommender формирует объекты `VerticalPodAutoscalerCheckpoint` для каждого контейнера в пространстве имен целевого сервиса:
 
 ```bash
-# Проверка версии Kubernetes
-kubectl version --short
-# → Client: v1.35.0
-# → Server: v1.35.0
-
-# Проверка Metrics Server
-kubectl top nodes
-# → NAME   CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%
-# → node1  250m         12%    2048Mi          51%
-
-# Проверка cgroups версии
-stat -fc %T /sys/fs/cgroup/
-# → cgroup2fs
-
-# Проверка наличия VPA компонентов
-kubectl get pods -n kube-system -l app=vpa
-# → NAME                             READY   STATUS
-# → vpa-recommender-xxx              1/1     Running
-# → vpa-updater-xxx                  1/1     Running
-# → vpa-admission-controller-xxx     1/1     Running
-
-# Проверка Admission Webhook
-kubectl get validatingwebhookconfiguration vpa-webhook-config
-# → NAME                WEBHOOKS   AGE
-# → vpa-webhook-config  1          2d
+# Просмотр созданных чекпоинтов VPA
+kubectl get verticalpodautoscalercheckpoints -n default
+# → NAME                      AGE
+# → api-vpa-app               3d
 ```
 
-### Начальное состояние
+Структура чекпоинта содержит состояние гистограмм, временные границы и суммарное количество обработанных сэмплов:
 
-- Кластер запущен и доступен через `kubectl`
-- Metrics Server установлен и возвращает метрики через `kubectl top`
-- Имеется как минимум один рабочий узел (worker node)
-- Пользователь имеет права на создание Deployment, StatefulSet, VPA в целевом Namespace
+```bash
+kubectl get verticalpodautoscalercheckpoint api-vpa-app -n default -o yaml
+```
+```yaml
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscalerCheckpoint
+metadata:
+  name: api-vpa-app
+  namespace: default
+spec:
+  containerName: app
+  vpaObjectName: api-vpa
+status:
+  firstSampleStart: "2026-03-01T08:00:00Z"
+  lastSampleStart: "2026-03-04T12:00:00Z"
+  totalSamplesCount: 4320
+  version: "v1"
+```
 
----
+### Математический алгоритм и формулы расчета
 
-## Основные концепции
+1. **Гистограммы с логарифмическими корзинами (Buckets):**
+   * Recommender разбивает диапазон потребления на логарифмически возрастающие интервалы.
+   * Для CPU базовый шаг составляет `10m` с коэффициентом роста `1.05`.
+   * Для памяти шаг составляет `10Mi` с мультипликатором роста `1.05`.
+2. **Экспоненциальное сглаживание (Exponential Weight Decay):**
+   * Вес измерения $w(t)$ затухает со временем по закону:
+     $$w(t) = w_0 \cdot 2^{-\frac{\Delta t}{T_{decay}}}$$
+     где $T_{decay}$ задается флагом `--cpu-histogram-decay-half-life` (по умолчанию 24 часа). Сэмпл, полученный сутки назад, имеет вдвое меньший вес, чем текущий.
+3. **Расчет перцентилей и запаса безопасности:**
+   * **CPU:** вычисляется 95-й перцентиль взвешенного распределения и умножается на буфер безопасности $1.15$ (коэффициент запаса 15%).
+   * **RAM:** вычисляется 99-й перцентиль пиковых значений (Working Set Size) за скользящее окно (по умолчанию 8 дней) плюс запас безопасности $1.15$.
+4. **Реакция на OOMKilled:**
+   * При получении события ядра `OOMKilled` Recommender не ожидает накопления истории.
+   * Новая рекомендация рассчитывается мгновенно:
+     $$\text{Target}_{\text{RAM}} = \max(\text{RAM}_{\text{observed}}, \text{Limit}_{\text{RAM}}) \times 1.20$$
+     Минимальный прирост составляет не менее `400Mi` для быстрого вывода сервиса из аварийного состояния.
 
-### Назначение и преимущества
-
-1.  **Right-sizing:** Автоматическое приведение `requests` к значениям, максимально близким к реальному потреблению.
-2.  **Защита от OOM:** Проактивное увеличение лимитов памяти при обнаружении признаков нехватки ресурсов.
-3.  **Снижение операционных затрат:** Оптимизация лимитов позволяет Cluster Autoscaler и Karpenter более плотно упаковывать поды на узлах (bin packing).
-4.  **Улучшение стабильности:** Предотвращение троттлинга CPU, который может приводить к росту задержек (latency).
-
-### Архитектура и компоненты
-
-VPA состоит из трех независимых компонентов, развернутых в кластере:
-
-| Компонент | Техническая роль | Развертывание |
-| :--- | :--- | :--- |
-| **VPA Recommender** | Опрашивает Metrics Server, собирает историю (по умолчанию за 8 дней) и рассчитывает рекомендации. Использует экспоненциальное сглаживание. | Deployment |
-| **VPA Updater** | Мониторит запущенные поды. Если ресурсы пода выходят за рамки `LowerBound`/`UpperBound`, инициирует обновление через In-Place Resize или перезапуск. | Deployment |
-| **VPA Admission Controller** | Мутирующий вебхук, который подставляет рекомендованные значения ресурсов в спецификацию пода в момент его создания. | Deployment + ValidatingWebhookConfiguration |
-
-### Поток данных (Data Flow)
+### Смысл расчетных полей статуса
 
 ```
-Container (cgroups)
-    ↓ (cAdvisor через Kubelet)
-Metrics Server (Resource Metrics API)
-    ↓ (HTTP polling каждые ~1min)
-VPA Recommender → (хранит историю, считает перцентили)
-    ↓ (обновляет CRD VerticalPodAutoscaler)
-VPA Updater / Admission Controller
-    ↓ (PATCH / Mutation)
-Pod (spec.containers[].resources)
+[0] ────────── [lowerBound] ────────── [target] ────────── [upperBound] ────────── [maxAllowed]
+      Зона              Зона стабильной            Зона
+   недогруза               работы               перегруза
+ (Downscale)            (Бездействует)          (Upscale)
 ```
+
+* **`lowerBound`**: порог, ниже которого под считается критически переразмеренным (Overprovisioned). Если текущий `request` пода выше `upperBound` или ниже `lowerBound`, Updater инициирует изменение.
+* **`target`**: расчетный оптимум ресурсов, передаваемый в `spec.containers[].resources`.
+* **`upperBound`**: порог, превышение которого свидетельствует о нехватке ресурсов (Underprovisioned).
+* **`uncappedTarget`**: целевое значение без учета ограничений `minAllowed`/`maxAllowed`. Если `uncappedTarget > maxAllowed`, сервис уперся в искусственную границу, заданную инженером, и требует пересмотра квот.
 
 ### Режимы работы (`updateMode`)
 
-| Режим | Поведение | Сценарий использования |
-| :--- | :--- | :--- |
-| **`Off`** | Только расчет рекомендаций без применения. | Аудит ресурсов, подготовка к внедрению, критические БД. |
-| **`Initial`** | Применение ресурсов только при создании пода. | Плавное внедрение, приложения с долгим прогревом. |
-| **`Recreate`** | Всегда перезапускает под для применения новых ресурсов. | Устаревшие кластеры (< 1.35) или несовместимые приложения. |
-| **`InPlaceOrRecreate`** | **Стандарт 2026 года**. Приоритетно использует In-Place Resize, при невозможности — перезапуск. | Большинство современных нагрузок. |
-| **`InPlace`** | Только неразрушающее обновление. Если места на узле нет — ждет. | Тяжелые Stateful-приложения (Elasticsearch, Kafka). |
+| Режим | Поведение контроллера | Риск простоя | Сценарий применения |
+| :--- | :--- | :--- | :--- |
+| **`Off`** | Только расчет и публикация рекомендаций в CRD. Модификация подов не выполняется. | Нулевой | Аудит ресурсов, capacity planning, Git Write-Back, критические базы данных. |
+| **`Initial`** | Мутация `requests`/`limits` через вебхук только в момент создания нового пода. Работающие поды не перезапускаются. | Нулевой для live | Постепенное внедрение, приложения с длительным прогревом кэшей. |
+| **`Recreate`** | Принудительное выселение пода через Eviction API для применения новых ресурсов при старте. | Умеренный (зависит от PDB) | Кластеры без поддержки In-Place Resize, пакетные задачи. |
+| **`InPlaceOrRecreate`** | **Основной стандарт Kubernetes 1.33+/1.35+**. Приоритетная модификация cgroups на лету через `/resize`. Если ресурсов на узле нет — выселение по PDB. | Минимальный | Микросервисы, HTTP API, распределенные базы данных. |
+| **`InPlace`** | Строго модификация cgroups без перезапуска. Если узел переполнен (`Infeasible`), обновление откладывается до появления емкости. | Нулевой | Stateful-приложения (PostgreSQL, Redis, ClickHouse), где эвикция недопустима. |
 
-### controlledValues
+### Директивы управления ресурсами
 
-Параметр определяет, какие поля ресурсов изменять:
-
-- **`Requests`**: VPA изменяет только `requests`. Полезно, если `limits` заданы фиксированно.
-- **`Limits`**: VPA изменяет только `limits`. Полезно для защиты от OOM без изменения планирования.
-- **`RequestsAndLimits`**: VPA изменяет оба поля синхронно. Стандартный режим для полного right-sizing.
+* **`controlledValues`**:
+  * `RequestsAndLimits`: VPA модифицирует и `requests`, и `limits`, сохраняя исходное соотношение (burstable ratio) между ними.
+  * `RequestsOnly`: VPA управляет исключительно `requests`, оставляя `limits` фиксированными (или отсутствующими для устранения троттлинга CPU).
+* **`controlledResources`**:
+  * Массив `["cpu", "memory"]`. Позволяет ограничить воздействие VPA только одним ресурсом (например, поручить VPA только оперативную память, а CPU масштабировать горизонтально через HPA).
 
 ---
 
-## Технический алгоритм и формулы
+## Установка и практические сценарии
 
-### Алгоритм Recommender
+### Предварительные требования к инфраструктуре кластера
 
-Recommender использует **95-й перцентиль** для CPU и **99-й перцентиль** для памяти.
+Для надежного функционирования VPA на Bare Metal и виртуализированных узлах (On-Premise) требуются следующие настройки хостов и рантаймов:
 
-1.  **Окно наблюдения:** По умолчанию анализируются данные за последние 8 дней (`--recommender-interval`).
-2.  **Веса данных:** Используется экспоненциальный распад весов — недавние всплески нагрузки имеют больший вес, чем старые данные.
-3.  **OOM-коррекция:** При получении события `OOMKilled`, VPA моментально устанавливает новую рекомендацию как `max(текущее_потребление, лимит) * 1.2`. Исторические данные при этом игнорируются для быстрого восстановления.
-4.  **Min/Max Constraints:** Рекомендации всегда ограничиваются значениями из `resourcePolicy`.
+1. **Cgroups v2:** обязателен объединенный контроллер (`cgroup2fs`). Проверка на узле:
+   ```bash
+   stat -fc %T /sys/fs/cgroup/
+   # → cgroup2fs
+   ```
+2. **Containerd:** в `/etc/containerd/config.toml` включен системный драйвер cgroups:
+   ```toml
+   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+     SystemdCgroup = true
+   ```
+3. **Kubelet:** корректный расчет доступной емкости узла (`NodeAllocatable`):
+   ```bash
+   # Проверка резервов kubelet
+   kubectl get node node1.corp.local -o jsonpath='{.status.allocatable.memory}'
+   # → 65780120Ki
+   ```
+4. **Metrics Server:** сервис установлен и стабильно отдает метрики:
+   ```bash
+   kubectl top nodes
+   # → NAME                CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%
+   # → node1.corp.local    420m         5%     8192Mi          12%
+   ```
 
-### Секция статуса VPA
+### Установка VPA в On-Premise кластере
 
--   **`lowerBound`**: Порог, ниже которого VPA считает под критически недогруженным и инициирует обновление.
--   **`target`**: Целевое значение, к которому стремится VPA.
--   **`upperBound`**: Порог, выше которого под считается перегруженным (overprovisioned).
--   **`uncappedTarget`**: Рекомендация без учета ограничений `minAllowed`/`maxAllowed` в объекте VPA. Полезно для выявления скрытого дефицита.
+#### Вариант А: Установка через манифесты и генерация TLS для Admission Controller
 
-### Взаимодействие с Kubernetes API
+Admission Controller требует валидного TLS-сертификата, доверенного API-сервером Kubernetes.
 
 ```bash
-# Проверка статуса рекомендаций VPA
-kubectl describe vpa my-app-vpa
+# 1. Клонирование официального репозитория autoscaler
+git clone https://github.com/kubernetes/autoscaler.git
+cd autoscaler/vertical-pod-autoscaler
+
+# 2. Запуск скрипта генерации сертификатов и регистрации вебхука
+./hack/vpa-up.sh
+# → customresourcedefinition.apiextensions.k8s.io/verticalpodautoscalers.autoscaling.k8s.io created
+# → customresourcedefinition.apiextensions.k8s.io/verticalpodautoscalercheckpoints.autoscaling.k8s.io created
+# → deployment.apps/vpa-recommender created
+# → deployment.apps/vpa-updater created
+# → deployment.apps/vpa-admission-controller created
+# → mutatingwebhookconfiguration.admissionregistration.k8s.io/vpa-webhook-config created
 ```
 
-Пример вывода:
-```
-Name:          my-app-vpa
-Namespace:     default
-Labels:        <none>
-Annotations:   <none>
-CreationTimestamp:  2026-01-15T10:00:00Z
-Reference:          Deployment/my-app
-Conditions:
-  Type           Status  Reason
-  ----           ------  ------
-  RecommendationProvided   True   RecommenderProvided
-Events:
-  Type    Reason           Age   From           Message
-  ----    ------           ----  ----           -------
-  Normal  CalculationDone  2m    vpa-recommender  Recommendation generated successfully
+#### Вариант Б: Интеграция с cert-manager для промышленного выпуска сертификатов
 
-Recommendation:
-  Container Recommendations:
-    Container Name:  app
-    Lower Bound:     CPU: 50m, Memory: 128Mi
-    Target:         CPU: 120m, Memory: 300Mi
-    Upper Bound:     CPU: 500m, Memory: 1Gi
-    Uncapped Target: CPU: 120m, Memory: 300Mi
+В production-средах рекомендуется делегировать выпуск и ротацию сертификата вебхука оператору `cert-manager`:
+
+```yaml
+# vpa-webhook-cert.yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: vpa-webhook-tls
+  namespace: kube-system
+spec:
+  secretName: vpa-webhook-tls-secret
+  duration: 8760h # 1 год
+  renewBefore: 720h # 30 дней
+  issuerRef:
+    name: cluster-internal-ca
+    kind: ClusterIssuer
+  commonName: vpa-webhook.kube-system.svc
+  dnsNames:
+    - vpa-webhook
+    - vpa-webhook.kube-system
+    - vpa-webhook.kube-system.svc
+    - vpa-webhook.kube-system.svc.cluster.local
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: vpa-webhook-config
+  annotations:
+    cert-manager.io/inject-ca-from: kube-system/vpa-webhook-tls
+webhooks:
+  - name: vpa.k8s.io
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+    clientConfig:
+      service:
+        name: vpa-webhook
+        namespace: kube-system
+        port: 443
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Ignore # КРИТИЧНО: Ignore предотвращает блокировку создания подов при сбое вебхука
 ```
 
 ---
 
-## Практические сценарии
+### Сценарий 1: Аудит и Right-sizing в режиме Off (Capacity Planning)
 
-### Сценарий 1: Тонкая настройка политики (resourcePolicy)
-
-Пример для приложения с сайдкаром, где мы хотим масштабировать только основной контейнер.
+Базовый сценарий для профилирования продакшен-нагрузок перед выделением фиксированных ресурсов или настройкой квот.
 
 ```yaml
+# vpa-audit.yaml
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
 metadata:
-  name: api-vpa
+  name: billing-api-vpa
+  namespace: finance
 spec:
   targetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: my-api
+    name: billing-api
   updatePolicy:
-    updateMode: "InPlaceOrRecreate"
+    updateMode: "Off"
   resourcePolicy:
     containerPolicies:
-      - containerName: "app"
-        minAllowed:
-          cpu: 250m
-          memory: 512Mi
-        maxAllowed:
-          cpu: "4"
-          memory: "8Gi"
+      - containerName: "billing-service"
         controlledValues: RequestsAndLimits
-      - containerName: "istio-proxy"
-        # Сайдкары обычно имеют предсказуемое потребление
-        mode: "Off"
 ```
 
-### Сценарий 2: VPA + In-Place Resize для StatefulSet
+Применение манифеста и инспекция сформированных рекомендаций:
 
-Обеспечение стабильности базы данных без разрыва соединений при изменении ресурсов.
+```bash
+kubectl apply -f vpa-audit.yaml
+# → verticalpodautoscaler.autoscaling.k8s.io/billing-api-vpa created
+
+# Проверка статуса через 24 часа сбора метрик
+kubectl get vpa billing-api-vpa -n finance -o yaml
+```
+```yaml
+status:
+  conditions:
+  - lastTransitionTime: "2026-03-04T10:00:00Z"
+    status: "True"
+    type: RecommendationProvided
+  recommendation:
+    containerRecommendations:
+    - containerName: billing-service
+      lowerBound:
+        cpu: 180m
+        memory: 380Mi
+      target:
+        cpu: 350m
+        memory: 512Mi
+      uncappedTarget:
+        cpu: 350m
+        memory: 512Mi
+      upperBound:
+        cpu: 850m
+        memory: 1200Mi
+```
+
+---
+
+### Сценарий 2: Production StatefulSet (PostgreSQL) с In-Place Resize и PDB
+
+Масштабирование оперативной памяти и ядер СУБД без разрыва соединений клиентов и перезапуска реплик.
 
 ```yaml
+# postgres-vpa.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgres-pdb
+  namespace: databases
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: postgres
+---
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
 metadata:
   name: postgres-vpa
+  namespace: databases
 spec:
   targetRef:
     apiVersion: apps/v1
     kind: StatefulSet
     name: postgres
   updatePolicy:
-    updateMode: "InPlace" # Только без перезапуска
+    updateMode: "InPlace" # Строго без рестарта контейнеров
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "postgresql"
+        minAllowed:
+          cpu: "1"
+          memory: 4Gi
+        maxAllowed:
+          cpu: "8"
+          memory: 32Gi
+        controlledValues: RequestsAndLimits
 ```
 
-### Сценарий 3: Использование Goldilocks для визуализации
+Проверка применения ресурсов на лету:
 
-Goldilocks использует VPA в режиме `Off` для создания удобного Dashboard с рекомендациями.
+```bash
+# Проверка текущих ресурсов контейнера в Pod
+kubectl get pod postgres-0 -n databases -o jsonpath='{.status.containerStatuses[0].resources}'
+# → {"limits":{"cpu":"4","memory":"16Gi"},"requests":{"cpu":"4","memory":"16Gi"}}
+```
 
-1.  Установите VPA в кластер.
-2.  Установите Goldilocks.
-3.  Добавьте лейбл на Namespace: `kubectl label ns my-app goldilocks.fairwinds.com/enabled=true`.
-4.  Откройте Dashboard для просмотра рекомендаций по всем подам в Namespace.
+---
 
-### Сценарий 4: VPA + HPA по разным метрикам
+### Сценарий 3: Гибридное автоскейлирование — совместная работа VPA и HPA
 
-Корректная комбинация вертикального и горизонтального масштабирования без конфликтов.
+Совместное использование HPA и VPA по одним и тем же метрикам (CPU/Memory) запрещено, так как приводит к конфликту регуляторов. Допустимая промышленная схема: HPA управляет количеством реплик по бизнес-метрике (RPS), а VPA управляет исключительно оперативной памятью контейнеров.
 
 ```yaml
-# VPA — только для right-sizing ресурсов
+# vpa-hpa-hybrid.yaml
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
 metadata:
-  name: api-vpa
+  name: edge-gateway-vpa
+  namespace: production
 spec:
   targetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: my-api
+    name: edge-gateway
   updatePolicy:
-    updateMode: "Off" # Только рекомендации, не применяем автоматически
+    updateMode: "InPlaceOrRecreate"
   resourcePolicy:
     containerPolicies:
-      - containerName: "app"
-        controlledValues: RequestsAndLimits
-
+      - containerName: "gateway"
+        controlledResources: ["memory"] # VPA управляет ТОЛЬКО памятью
+        minAllowed:
+          memory: 256Mi
+        maxAllowed:
+          memory: 2Gi
 ---
-# HPA — по RPS (кастомная метрика), не по CPU/Memory
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: api-hpa
+  name: edge-gateway-hpa
+  namespace: production
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: my-api
-  minReplicas: 2
-  maxReplicas: 20
+    name: edge-gateway
+  minReplicas: 3
+  maxReplicas: 25
   metrics:
     - type: Pods
       pods:
@@ -287,419 +412,359 @@ spec:
           name: http_requests_per_second
         target:
           type: AverageValue
-          averageValue: "100"
+          averageValue: "350"
   behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 60
-      policies:
-        - type: Percent
-          value: 100
-          periodSeconds: 15
     scaleDown:
       stabilizationWindowSeconds: 300
-      policies:
-        - type: Percent
-          value: 10
-          periodSeconds: 60
 ```
-
-### Сценарий 5: VPA + Cluster Autoscaler / Karpenter в On-prem окружении
-
-Сценарий для кластера на bare metal, где при изменении ресурсов под может потребоваться переезд на узел с большей емкостью.
-
-```yaml
-# VPA с политикой, учитывающей ограничения узлов
-apiVersion: autoscaling.k8s.io/v1
-kind: VerticalPodAutoscaler
-metadata:
-  name: batch-worker-vpa
-spec:
-  targetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: batch-worker
-  updatePolicy:
-    updateMode: "InPlaceOrRecreate"
-  resourcePolicy:
-    containerPolicies:
-      - containerName: "worker"
-        minAllowed:
-          cpu: 500m
-          memory: "1Gi"
-        maxAllowed:
-          cpu: "4"
-          memory: "16Gi"
-        controlledValues: RequestsAndLimits
-```
-
-**Ожидаемое поведение:**
-1.  VPARecommender вычисляет, что поду требуется `cpu: 2`, `memory: 8Gi`.
-2.  VPAUpdater пытается применить In-Place Resize.
-3.  Если на текущем узле нет 2 ядер и 8Gi свободной памяти (учитывая `requests` других подов), Kubelet возвращает `Infeasible`.
-4.  VPAUpdater эвиктирует под (с учетом PDB).
-5.  Cluster Autoscaler (или Karpenter) добавляет новый узел или перемещает под на узел с достаточной емкостью.
-
-### Сценарий 6: VPA для StatefulSet с Pod Disruption Budget
-
-Сценарий для баз данных, где необходимо ограничить количество одновременно перезапускаемых подов.
-
-```yaml
-# Pod Disruption Budget — защита от одновременного перезапуска всех реплик
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: postgres-pdb
-spec:
-  minAvailable: 2
-  selector:
-    matchLabels:
-      app: postgres
 
 ---
-# VPA для StatefulSet
-apiVersion: autoscaling.k8s.io/v1
-kind: VerticalPodAutoscaler
-metadata:
-  name: postgres-vpa
-spec:
-  targetRef:
-    apiVersion: apps/v1
-    kind: StatefulSet
-    name: postgres
-  updatePolicy:
-    updateMode: "InPlaceOrRecreate"
-  resourcePolicy:
-    containerPolicies:
-      - containerName: "postgres"
-        minAllowed:
-          cpu: 500m
-          memory: "2Gi"
-        maxAllowed:
-          cpu: "4"
-          memory: "16Gi"
-        controlledValues: RequestsAndLimits
-```
 
-### Сценарий 7: Поэтапное внедрение VPA в Production
+### Сценарий 4: Тонкая настройка resourcePolicy для подов с сайдкарами
 
-Стратегия внедрения с минимальным риском для работающей системы.
-
-```bash
-# Шаг 1: Установите VPA в режиме Off для всего namespace
-kubectl apply -f - <<EOF
-apiVersion: autoscaling.k8s.io/v1
-kind: VerticalPodAutoscaler
-metadata:
-  name: audit-vpa
-spec:
-  targetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: my-api
-  updatePolicy:
-    updateMode: "Off"
-EOF
-
-# Шаг 2: Соберите рекомендации в течение 24-48 часов
-kubectl describe vpa audit-vpa
-
-# Шаг 3: Проверьте рекомендации в тестовом окружении
-# Примените рекомендации вручную к манифесту Deployment
-
-# Шаг 4: Включите Initial mode для новых подов
-kubectl patch vpa audit-vpa --type='merge' -p '{"spec":{"updatePolicy":{"updateMode":"Initial"}}}'
-
-# Шаг 5: Мониторьте в течение недели
-kubectl get events --field-selector involvedObject.name=audit-vpa
-
-# Шаг 6: Переключитесь на InPlaceOrRecreate
-kubectl patch vpa audit-vpa --type='merge' -p '{"spec":{"updatePolicy":{"updateMode":"InPlaceOrRecreate"}}}'
-```
-
-### Сценарий 8: VPA для приложений с нативными сайдкарами (Native Sidecars, K8s 1.29+)
+Изоляция служебных контейнеров (логирование, proxy) от изменений VPA.
 
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: app-with-sidecar
-spec:
-  template:
-    spec:
-      initContainers:
-      - name: init
-        image: init-image:latest
-      containers:
-      - name: app
-        image: app-image:latest
-        resources:
-          requests:
-            cpu: 100m
-            memory: 256Mi
-          limits:
-            cpu: 500m
-            memory: 512Mi
-      - name: sidecar
-        image: sidecar-image:latest
-        resources:
-          requests:
-            cpu: 50m
-            memory: 128Mi
-          limits:
-            cpu: 200m
-            memory: 256Mi
----
+# sidecar-workload-vpa.yaml
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
 metadata:
-  name: app-with-sidecar-vpa
+  name: orders-service-vpa
+  namespace: production
 spec:
   targetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: app-with-sidecar
+    name: orders-service
   updatePolicy:
     updateMode: "InPlaceOrRecreate"
   resourcePolicy:
     containerPolicies:
       - containerName: "app"
+        minAllowed:
+          cpu: 200m
+          memory: 512Mi
+        maxAllowed:
+          cpu: "4"
+          memory: 8Gi
         controlledValues: RequestsAndLimits
-      - containerName: "sidecar"
-        mode: "Off" # Исключаем сайдкар из авто-масштабирования
+      - containerName: "vector-agent"
+        mode: "Off" # Сайдкар исключен из автоскейлинга
+      - containerName: "envoy-proxy"
+        mode: "Off" # Фиксированные ресурсы сети
 ```
 
 ---
 
-## Интеграция с компонентами Kubernetes
+### Сценарий 5: VPA с долгосрочным хранилищем метрик в Prometheus
 
-### VPA + HPA
+Metrics Server хранит данные только в RAM за последние минуты. Для точного расчета недельных сезонных циклов Recommender переключается на чтение метрик из кластерного Prometheus.
 
-Никогда не используйте оба по CPU/Memory одновременно.
+Конфигурация Deployment `vpa-recommender`:
 
-**Правильно:**
-- HPA по RPS + VPA по ресурсам (VPA в `Off` или `Initial`).
-- HPA по ресурсам + VPA в режиме `Off` (для аналитики, ручное применение рекомендаций).
+```yaml
+# vpa-recommender-prometheus.yaml (фрагмент spec.template.spec)
+containers:
+  - name: recommender
+    image: registry.k8s.io/autoscaling/vpa-recommender:1.3.0
+    args:
+      - --recommender-interval=1m
+      - --metric-storage=prometheus
+      - --prometheus-address=http://prometheus-k8s.monitoring.svc.cluster.local:9090
+      - --prometheus-cadvisor-job-name=cadvisor
+      - --history-length=14d # Анализ двухнедельного окна потребления
+      - --cpu-histogram-decay-half-life=48h
+      - --storage=checkpoint
+```
 
-**Неправильно:**
-- HPA по CPU + VPA с `updateMode: InPlaceOrRecreate` по CPU. Это создаст «гонку масштабирования»: VPA увеличит лимиты, HPA посчитает, что утилизация упала, и уменьшит реплики, и наоборот.
+Проверка подключения Recommender к Prometheus:
 
-### VPA + Cluster Autoscaler / Karpenter
+```bash
+kubectl logs -n kube-system deployment/vpa-recommender | grep -i prometheus
+# → I0304 10:15:20.123 recommender.go:88] Initializing Prometheus client with address: http://prometheus-k8s.monitoring.svc.cluster.local:9090
+# → I0304 10:15:21.450 prometheus.go:142] Successfully fetched 1250 cAdvisor metric samples
+```
 
-- VPA изменяет `requests` подов, что может привести к тому, что поды перестанут влезать на текущие узлы.
-- **Cluster Autoscaler** реагирует на `Pending` поды и добавляет узлы в Node Group.
-- **Karpenter** создает новые узлы подходящего размера на основе потребностей подов.
-- В on-prem окружении без CA/Karpenter, VPA с `InPlaceOrRecreate` может эвиктировать под, который не влезает на текущий узел, и планировщик разместит его на другом узле с достаточной емкостью.
+---
 
-### VPA + Pod Disruption Budget (PDB)
+### Сценарий 6: Оптимизация профилей сред выполнения (Java JVM, Go, Node.js)
 
-- VPA Updater эвиктирует поды перед обновлением ресурсов.
-- Если PDB слишком жесткий (например, `minAvailable: 100%`), VPA не сможет обновить под, и рекомендации не будут применяться.
-- **Рекомендация:** `minAvailable` или `maxUnavailable` должны быть установлены с запасом (например, `maxUnavailable: 1` для приложений с 3+ репликами).
+При динамическом ресайзе памяти через VPA рантаймы приложений должны своевременно реагировать на изменение лимитов контейнера:
 
-### VPA + Metrics Server
+1. **Java (OpenJDK 17+/21+):**
+   * Запрещено указывать жесткие флаги `-Xmx` / `-Xms`.
+   * Использовать процентные ограничения от cgroup:
+     ```bash
+     JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:MinRAMPercentage=50.0 -XX:+UseG1GC"
+     ```
+2. **Go (Golang 1.19+):**
+   * Задавать мягкий лимит кучи через переменную окружения `GOMEMLIMIT`:
+     ```yaml
+     env:
+       - name: GOMEMLIMIT
+         valueFrom:
+           resourceFieldRef:
+             resource: limits.memory
+             divisor: "1Mi"
+     ```
+   * Либо в скрипте запуска резервировать 10% под стек и системные аллокации: `export GOMEMLIMIT=90%`.
+3. **Node.js (V8):**
+   * V8 не подхватывает изменение лимитов на лету без перезапуска. Для Node.js в `spec.containers[].resizePolicy` указывается:
+     ```yaml
+     resizePolicy:
+       - resourceName: cpu
+         restartPolicy: NotRequired
+       - resourceName: memory
+         restartPolicy: RestartContainer # Безопасный рестарт для пересчета heap size
+     ```
 
-- Recommender опрашивает Metrics Server с периодом, определяемым флагом `--recommender-interval` (по умолчанию 1 минута).
-- При сбоях Metrics Server рекомендации перестают обновляться.
-- В on-prem окружении убедитесь, что Metrics Server имеет достаточные права на чтение метрик с всех узлов и что kubelet доступен по безопасному соединению (или настроен `--kubelet-insecure-tls` для bare metal).
+---
 
-### VPA + Admission Controllers
+### Сценарий 7: Интеграция с GitOps (ArgoCD / Flux) без конфликтов дрейфа
 
-- VPA Admission Controller работает как мутирующий вебхук.
-- Если в кластере есть другие мутирующие вебхуки (например, Istio, Kyverno), убедитесь, что они не конфликтуют с VPA.
-- Порядок вебхуков важен: VPA должен применять ресурсы после любых вебхуков, которые могут изменять спецификацию пода.
+Когда VPA мутирует `requests`/`limits` в кластере, GitOps-контроллеры фиксируют расхождение с Git-репозиторием и откатывают изменения (State Churn).
+
+#### Решение 1: ArgoCD ignoreDifferences с RespectIgnoreDifferences
+
+```yaml
+# application-argocd.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: payment-service
+  namespace: argocd
+spec:
+  syncPolicy:
+    syncOptions:
+      - RespectIgnoreDifferences=true # КРИТИЧНО: не затирать live-значения при sync
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: payment-service
+      jqPathExpressions:
+        - .spec.template.spec.containers[].resources.requests
+        - .spec.template.spec.containers[].resources.limits
+```
+
+#### Решение 2: Паттерн Git Write-Back (SRE Best Practice)
+
+Для критических инфраструктур VPA эксплуатируется в режиме `updateMode: "Off"`. Специализированный CronJob или CI-скрипт еженедельно считывает `.status.recommendation.containerRecommendations.target` и создает Pull Request с обновленными ресурсами в Git-репозиторий проекта.
+
+---
+
+### Сценарий 8: Стратегия поэтапного внедрения (Rollout) VPA в кластере
+
+```bash
+# Этап 1: Создание объекта в режиме Off для сбора аналитики
+kubectl apply -f - <<EOF
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: core-api-vpa
+  namespace: default
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: core-api
+  updatePolicy:
+    updateMode: "Off"
+EOF
+# → verticalpodautoscaler.autoscaling.k8s.io/core-api-vpa created
+
+# Этап 2: Анализ рекомендаций через 7 суток (недельный цикл)
+kubectl describe vpa core-api-vpa -n default
+# → Target: CPU: 420m, Memory: 1200Mi
+
+# Этап 3: Переключение на Initial mode (проверка на вновь создаваемых подах)
+kubectl patch vpa core-api-vpa -n default --type='merge' -p '{"spec":{"updatePolicy":{"updateMode":"Initial"}}}'
+# → verticalpodautoscaler.autoscaling.k8s.io/core-api-vpa patched
+
+# Этап 4: Активация промышленного режима InPlaceOrRecreate
+kubectl patch vpa core-api-vpa -n default --type='merge' -p '{"spec":{"updatePolicy":{"updateMode":"InPlaceOrRecreate"}}}'
+# → verticalpodautoscaler.autoscaling.k8s.io/core-api-vpa patched
+```
+
+---
+
+## Операции и команды
+
+### Администрирование и аудит VPA через kubectl
+
+```bash
+# Список всех объектов VPA во всех пространствах имен
+kubectl get vpa -A
+# → NAMESPACE    NAME               MODE                CPU    MEM      PROVIDED   AGE
+# → default      core-api-vpa       InPlaceOrRecreate   420m   1200Mi   True       8d
+# → finance      billing-api-vpa    Off                 350m   512Mi    True       2d
+
+# Детальная инспекция статуса рекомендаций и условий
+kubectl describe vpa core-api-vpa
+# → Reference:          Deployment/core-api
+# → Target:             CPU: 420m, Memory: 1200Mi
+# → Lower Bound:        CPU: 200m, Memory: 600Mi
+# → Upper Bound:        CPU: 1200m, Memory: 3200Mi
+# → Uncapped Target:    CPU: 420m, Memory: 1200Mi
+
+# Просмотр событий изменения ресурсов и эвикции
+kubectl get events -n default --field-selector involvedObject.kind=VerticalPodAutoscaler
+# → 5m   Normal   CalculationDone   verticalpodautoscaler/core-api-vpa   Recommendation generated successfully
+
+# Инспекция реальных cgroup-лимитов на узле через kubelet pod status
+kubectl get pod core-api-7b89f8d9b-w9z4x -o jsonpath='{.status.containerStatuses[0].allocatedResources}'
+# → {"cpu":"420m","memory":"1200Mi"}
+
+# Проверка Pod Conditions ресайза в Kubernetes 1.33+
+kubectl get pod core-api-7b89f8d9b-w9z4x -o jsonpath='{.status.conditions[?(@.type=="PodResizePending")]}'
+# → (пусто при завершенном ресайзе)
+```
 
 ---
 
 ## Мониторинг и алертинг
 
-### Ключевые метрики Prometheus
+### Встроенные метрики компонентов VPA
 
-VPA не экспортирует метрики по умолчанию, но их можно получить через kube-state-metrics и логи.
+Каждый компонент VPA экспортирует метрики в формате Prometheus на выделенных портах:
 
-| Метрика | Источник | Описание |
-| :--- | :--- | :--- |
-| `kube_pod_status_phase` | kube-state-metrics | Отслеживание подов в `Pending` после эвикции VPA |
-| `container_cpu_usage_seconds_total` | cAdvisor/Metrics Server | Фактическое потребление CPU |
-| `container_memory_working_set_bytes` | cAdvisor/Metrics Server | Фактическое потребление памяти |
-| `kube_event` | kube-eventer | События `UpdatedResoure` или `Infeasible` от VPA |
-| `vpa_admission_controller_mutation_total` | custom metrics | Количество мутаций (если настроен экспорт) |
+| Компонент | Метрика Prometheus | Тип | Назначение |
+| :--- | :--- | :--- | :--- |
+| `recommender` | `vpa_recommender_recommendation_latency_seconds` | Histogram | Задержка цикла вычисления рекомендаций. |
+| `recommender` | `vpa_recommender_aggregate_container_states_count` | Gauge | Количество агрегированных состояний контейнеров в памяти. |
+| `updater` | `vpa_updater_evicted_pods_total` | Counter | Количество подов, выселенных апдейтером. |
+| `updater` | `vpa_updater_eviction_attempts_total` | Counter | Общее количество попыток эвикции (включая заблокированные PDB). |
+| `admission` | `vpa_admission_controller_admission_latency_seconds` | Histogram | Задержка мутирующего вебхука при создании подов. |
+| `admission` | `vpa_admission_controller_mutated_pods_total` | Counter | Количество подов, модифицированных вебхуком. |
 
-### Пример алертов Prometheus / Alertmanager
+### Правила алертинга Prometheus / Alertmanager
 
 ```yaml
+# vpa-alerting-rules.yaml
 groups:
-  - name: vpa_alerts
+  - name: vpa_sre_alerts
     rules:
-      - alert: VPARecommendationStale
-        expr: time() - max_over_time(kube_event{reason="UpdatedResource"}[2h]) > 7200
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "VPA не обновляет рекомендации"
-          description: "Последнее обновление рекомендации VPA было более 2 часов назад."
-
-      - alert: VPAInfeasibleResize
-        expr: kube_event{reason="Infeasible"} > 0
+      - alert: VPARecommenderDown
+        expr: up{job="vpa-recommender"} == 0
         for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "VPA не может применить рекомендацию"
-          description: "VPA возвращает Infeasible для {{ $labels.involved_object_name }}."
-
-      - alert: OOMKilledAfterVPA
-        expr: increase(kube_event{reason="OOMKilled"}[1h]) > 0
-        for: 0m
         labels:
           severity: critical
         annotations:
-          summary: "Под завершился с OOMKilled после применения VPA"
-          description: "Под {{ $labels.involved_object_name }} был убит из-за нехватки памяти."
-```
+          summary: "VPA Recommender недоступен"
+          description: "Экземпляр vpa-recommender на узле {{ $labels.instance }} не отвечает более 5 минут."
 
-### Команды для мониторинга
+      - alert: VPAAdmissionWebhookHighLatency
+        expr: histogram_quantile(0.99, rate(vpa_admission_controller_admission_latency_seconds_bucket[5m])) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокая задержка VPA Admission Webhook"
+          description: "P99 задержки вебхука превышает 500мс, что замедляет запуск подов в кластере."
 
-```bash
-# Просмотр событий VPA за последний час
-kubectl get events --all-namespaces --field-selector reason=UpdatedResource --sort-by='.lastTimestamp'
+      - alert: VPAEvictionBlockedByPDB
+        expr: rate(vpa_updater_eviction_attempts_total{result="eviction_blocked_by_pdb"}[10m]) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Эвикции VPA заблокированы политикой PDB"
+          description: "Updater не может применить рекомендации для {{ $labels.target_ref }} из-за ограничений PodDisruptionBudget."
 
-# Проверка статуса resize для конкретного пода
-kubectl get pod my-app-0 -o jsonpath='{.status.containerStatuses[0].allocatedResources}'
-
-# Сравнение desired vs allocated ресурсов
-kubectl get pod my-app-0 -o jsonpath='{.spec.containers[0].resources}' && \
-kubectl get pod my-app-0 -o jsonpath='{.status.containerStatuses[0].allocatedResources}'
-```
-
----
-
-## Траблшутинг и диагностика
-
-### Типовые проблемы
-
-1.  **VPA не обновляет поды:**
-    -   Проверьте `updateMode`. Если он `Off` или `Initial`, работающие поды не изменятся.
-    -   Проверьте наличие [PDB (Pod Disruption Budget)](./pod_disruption_budget.md). VPA не выселит под, если это нарушит PDB.
-    -   Проверьте лимиты `resourcePolicy`. Если `target` выше `maxAllowed`, обновление не произойдет.
-    -   Проверьте статус `status.resize` пода. Если `Infeasible` — на узле нет ресурсов.
-
-2.  **Бесконечные перезапуски (Churn):**
-    -   Слишком узкий диапазон между `lowerBound` и `upperBound`.
-    -   Приложение потребляет ресурсы короткими, но мощными всплесками. Решение: увеличить окно наблюдения или выставить `minAllowed`.
-    -   Конфликт с HPA по тем же метрикам (CPU/Memory).
-
-3.  **Admission Controller Timeout:**
-    -   Высокая нагрузка на API-сервер. Проверьте логи пода `vpa-admission-controller`.
-    -   Проверьте время отклика API-сервера: `kubectl get --raw /healthz`.
-
-4.  **Infeasible Resize (статус Infeasible):**
-    -   VPA запросил увеличение `requests`, но на текущем узле нет свободного CPU/RAM.
-    -   Проверьте `kubectl describe node <node-name>` на предмет доступных ресурсов.
-    -   Убедитесь, что `requests` других подов на узле не занимают всю доступную емкость.
-
-5.  **Recommender не обновляет рекомендации:**
-    -   Проверьте доступность Metrics Server: `kubectl top pods`.
-    -   Проверьте логи Recommender: `kubectl logs -n kube-system deployment/vpa-recommender`.
-    -   Убедитесь, что поды имеют `resources.requests` (без них Recommender не может собрать данные).
-
-6.  **Сайдкары блокируют масштабирование:**
-    -   Если у сайдкара не заданы `requests`, HPA (и частично VPA) не может рассчитать утилизацию.
-    -   Используйте `containerPolicies` с `mode: "Off"` для сайдкаров.
-
-### Полезные команды
-
-```bash
-# Просмотр рекомендаций для конкретного VPA
-kubectl describe vpa my-app-vpa
-
-# Просмотр логов Recommender для анализа логики расчета
-kubectl logs -n kube-system deployment/vpa-recommender
-
-# Проверка событий мутации
-kubectl get events --field-selector involvedObject.kind=VerticalPodAutoscaler
-
-# Проверка статуса resize пода
-kubectl get pod my-app-0 -o jsonpath='{.status.containerStatuses[0].allocatedResources}'
-
-# Просмотр логов Admission Controller
-kubectl logs -n kube-system deployment/vpa-admission-controller
-
-# Проверка событий эвикции
-kubectl get events --field-selector reason=Killing --sort-by='.lastTimestamp'
+      - alert: VPAUncappedTargetExceedsMaxAllowed
+        expr: kube_customresource_verticalpodautoscaler_status_recommendation_containerrecommendations_uncappedtarget{resource="memory"} > kube_customresource_verticalpodautoscaler_spec_resourcepolicy_containerpolicies_maxallowed{resource="memory"}
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "Рекомендация VPA уперлась в лимит maxAllowed"
+          description: "Нагрузка {{ $labels.verticalpodautoscaler }} требует больше памяти, чем разрешено политикой maxAllowed."
 ```
 
 ---
 
-## Лучшие практики
+## Диагностика и устранение неполадок (Troubleshooting)
 
-1.  **VPA + HPA:** Никогда не используйте оба по CPU/Memory одновременно.
-    -   **Правильно:** HPA по RPS + VPA по ресурсам.
-    -   **Правильно:** HPA по ресурсам + VPA в режиме `Off` (для аналитики).
-2.  **Специфика языков (Java/Go):**
-    -   Для **Java** (JVM) используйте `-XX:MaxRAMPercentage` вместо фиксированного `-Xmx`, чтобы приложение видело изменения лимитов VPA.
-    -   Для **Go** используйте `GOMEMLIMIT` (доступно с Go 1.19+), чтобы рантайм корректно работал с памятью в условиях динамических лимитов.
-    -   Для **Node.js** передавайте флаг `--max-old-space-size`. V8 не умеет менять его динамически, но увеличение лимита спасет от `Fatal error: heap out of memory` на уровне ядра.
-3.  **Мониторинг `uncappedTarget`:** Если это значение постоянно выше вашего `maxAllowed`, значит приложению требуется больше ресурсов, чем вы разрешили в политике.
-4.  **Cgroup v2:** Убедитесь, что ваши узлы используют Cgroup v2 для полноценной поддержки In-Place Resize.
-5.  **Pod Disruption Budget:** Всегда настраивайте PDB для StatefulSet и критических Deployment, чтобы VPA не эвиктировал все реплики одновременно.
-6.  **Requests без Limits (Bursting):** Для приложений с переменной нагрузкой можно задавать `requests` на уровне среднего потребления, а `limits` — с запасом под пики. VPA поможет оптимизировать оба значения.
-7.  **RBAC и изоляция:** Развертывайте VPA с минимально необходимыми правами. Используйте отдельный ServiceAccount для каждого компонента VPA.
-8.  **Мультитенантность:** Для shared-кластеров разворачивайте VPA в каждом namespace отдельно или используйте ограничения `resourcePolicy` для предотвращения конфликтов между командами.
+### Сводная матрица типовых неисправностей
+
+| Симптом / Ошибка | Первопричина | Метод проверки | Действие по устранению |
+| :--- | :--- | :--- | :--- |
+| **VPA не формирует рекомендации** (секция `status.recommendation` пуста). | 1. Metrics Server не работает.<br>2. У контейнеров в Pod spec отсутствуют `requests`.<br>3. Контейнер работает меньше 5 минут. | `kubectl top pods -n <ns>`<br>`kubectl logs -n kube-system deploy/vpa-recommender` | 1. Восстановить Metrics Server.<br>2. Задать базовые `requests` в Deployment.<br>3. Дождаться накопления минимальной выборки метрик. |
+| **Поды не обновляются при активном VPA**. | 1. `updateMode` установлен в `Off` или `Initial`.<br>2. Текущие ресурсы внутри диапазона `[lowerBound, upperBound]`.<br>3. PDB запрещает эвикцию. | `kubectl get vpa <name> -o yaml`<br>`kubectl get pdb -n <ns>` | 1. Переключить в `InPlaceOrRecreate`.<br>2. Скорректировать PDB (`maxUnavailable: 1`). |
+| **Сбой создания подов: `failed calling webhook "vpa.k8s.io"`**. | Истек или не валиден TLS-сертификат вебхука; `vpa-admission-controller` недоступен. | `kubectl get events`<br>`curl -k -v https://vpa-webhook.kube-system:443` | 1. Обновить сертификат через cert-manager / `./hack/vpa-up.sh`.<br>2. Временно выставить `failurePolicy: Ignore` в MutatingWebhookConfiguration. |
+| **Статус ресайза `Infeasible`**. | На узле не хватает свободного `NodeAllocatable` CPU/RAM для удовлетворения запроса In-Place. | `kubectl describe pod <name> \| grep -A5 Conditions` | 1. Перевести под в `InPlaceOrRecreate` (сработает эвикция на более свободный узел).<br>2. Оптимизировать плотность размещения через [Descheduler](./descheduler.md). |
+| **Бесконечный рестарт подов (Thrashing / Eviction Churn)**. | 1. Конфликт VPA и HPA по одинаковым метрикам.<br>2. Всплесковая нагрузка при узком интервале `[lower, upper]`. | `kubectl get events --field-selector reason=EvictedByVPA`<br>`kubectl get hpa` | 1. Разделить метрики VPA и HPA.<br>2. Зафиксировать `minAllowed` на уровне пиковых значений.<br>3. Увеличить `--eviction-tolerance` до `0.7` в Updater. |
+| **GitOps петля (ArgoCD / Flux вечный `OutOfSync`)**. | GitOps-агент перезаписывает мутированные поля ресурсов манифестом из Git. | `argocd app diff <app>` | Настроить `ignoreDifferences` с `RespectIgnoreDifferences=true` в ArgoCD. |
+| **Java-приложение падает по OOMKilled после масштабирования**. | В JVM жестко задан `-Xmx`, приложение не видит добавленной оперативной памяти. | `kubectl logs <pod> \| grep -i maxheapsize` | Заменить `-Xmx` на процентные директивы `-XX:MaxRAMPercentage=75.0`. |
+
+### Диагностические команды SRE
+
+```bash
+# 1. Проверка работоспособности Admission Webhook
+kubectl get mutatingwebhookconfigurations vpa-webhook-config -o yaml
+# → Проверить корректность caBundle и failurePolicy
+
+# 2. Поиск событий выселения подов контроллером VPA
+kubectl get events -A --field-selector reason=EvictedByVPA --sort-by='.lastTimestamp'
+# → default   3m   EvictedByVPA   pod/core-api-7b89f8d9b-w9z4x   Pod was evicted by VPA Updater to apply recommendations
+
+# 3. Инспекция логов Recommender на предмет ошибок расчета
+kubectl logs -n kube-system -l app=vpa-recommender --tail=100
+# → I0304 10:20:00.001 recommender.go:210] Cluster architecture: 4 nodes, 85 monitored containers
+
+# 4. Проверка состояния In-Place Resize на уровне Kubelet
+kubectl get pod postgres-0 -n databases -o jsonpath='{.status.conditions[?(@.type=="PodResizePending")].reason}'
+# → Infeasible (если на узле нет свободной памяти)
+```
+
+---
+
+## Рекомендации и лучшие практики (Best Practices)
+
+1. **Всегда задавать защитные границы (Guardrails):**
+   * Никогда не развертывать VPA в продакшене без блока `resourcePolicy`.
+   * Обязательно указывать `minAllowed` (защита от деградации сервиса при отсутствии трафика) и `maxAllowed` (защита от исчерпания бюджета емкости кластера).
+2. **Обязательная настройка Pod Disruption Budget:**
+   * Для всех сервисов под управлением `updateMode: Recreate` или `InPlaceOrRecreate` должен быть объявлен PDB с `maxUnavailable: 1` или `minAvailable: N-1`. Это гарантирует сохранение доступности при эвикциях.
+3. **Разграничение сфер влияния VPA и HPA:**
+   * Категорически запрещено одновременное автоматическое управление по CPU/Memory.
+   * Оптимальный шаблон: **HPA по внешним метрикам (RPS, Queue Length)** + **VPA в режиме `controlledResources: ["memory"]`** или **VPA в режиме `Off`**.
+4. **Конфигурация failurePolicy для Webhook:**
+   * В манифесте `MutatingWebhookConfiguration` для `vpa-webhook-config` устанавливайте `failurePolicy: Ignore`. Это гарантирует, что временный сбой пода вебхука не заблокирует развертывание релизов и запуск новых подов в кластере.
+5. **Использование Prometheus для долгосрочного профилирования:**
+   * Для сезонных нагрузок с циклом «неделя / месяц» переключайте `vpa-recommender` на чтение метрик из Prometheus (`--metric-storage=prometheus`). Это устраняет искажения, вызванные кратковременными всплесками.
+6. **Настройка рантаймов (JVM / Go):**
+   * Всегда используйте динамические переменные (`-XX:MaxRAMPercentage`, `GOMEMLIMIT`) для сред с динамическим размером памяти.
+7. **Изоляция ServiceAccount и RBAC:**
+   * Компоненты VPA должны запускаться под строго изолированными ServiceAccount с минимальными правами доступа (принцип наименьших привилегий).
 
 ---
 
 ## Дополнительная информация
 
-### Взаимодействие с Karpenter
+### Взаимодействие со смежными компонентами кластера
 
-Karpenter использует рекомендации VPA для точного подбора размера узлов. Если VPA оптимизирует `requests` подов, Karpenter может выбрать узел минимально достаточного размера, экономя ресурсы.
+* **[In-Place Pod Resize](./in_place_pod_resize.md):** базовый механизм ядра K8s, через который VPA в режиме `InPlaceOrRecreate` модифицирует cgroups контейнеров без прерывания соединений.
+* **[Pod Disruption Budget](./pod_disruption_budget.md):** механизм контроля доступности, предотвращающий одновременный перезапуск реплик апдейтером VPA.
+* **[Descheduler](./descheduler.md):** дополняет VPA в On-Premise среде. Если VPA увеличил ресурсы подов, вызвав неравномерную утилизацию узлов, Descheduler безопасно перебалансирует нагрузку между серверами.
+* **[QoS классы и управление ресурсами](../Scheduling/qos_limit_and_requests.md):** VPA изменяет `requests` и `limits`, что напрямую влияет на класс обслуживания пода (Guaranteed, Burstable) и его `oom_score_adj` на уровне ядра Linux.
+* **ResourceQuota и LimitRange:** рекомендации VPA не могут превышать лимиты пространства имен. Если VPA Admission Controller пытается подставить ресурсы, превышающие квоту пространства имен, API-сервер отклонит создание пода.
+* **[GitOps для автоскейлинга](./gitops_autoscaling.md):** регламент синхронизации ресурсов между Git-репозиториями (ArgoCD/Flux) и динамическими мутациями VPA.
 
-```yaml
-# Karpenter NodePool с учетом рекомендаций VPA
-apiVersion: karpenter.sh/v1beta1
-kind: NodePool
-metadata:
-  name: default
-spec:
-  template:
-    spec:
-      nodeClassRef:
-        group: karpenter.k8s.aws
-        kind: EC2NodeClass
-        name: default
-      requirements:
-        - key: karpenter.k8s.aws/instance-cpu
-          operator: In
-          values: ["2", "4", "8"]
-  limits:
-    cpu: 100
-  disruption:
-    consolidationPolicy: WhenEmpty
-```
+### Ограничения технологии
 
-### Влияние на различные типы приложений
-
-| Тип приложения | Влияние | Рекомендации |
-| :--- | :--- | :--- |
-| **Stateless API (Go/Rust)** | Минимальное | Идеально для In-Place Resize. Безопасно применять с `NotRequired`. |
-| **Stateful (СУБД, Cache)** | Высокое | Критически полезно для вертикального масштабирования (Scale-Up) кэша или БД без потери кворума и разрыва пула коннектов. |
-| **Legacy (Java 8)** | Блокирующее | Использовать только `resizePolicy: RestartContainer`. |
-| **Batch-задачи** | Положительное | Позволяет поднять CPU Limit только на время тяжелого этапа вычислений. |
-
-### Ограничения
-
-- **Batch Workloads:** Плохо подходит для короткоживущих задач (Jobs/CronJobs), так как VPA не успевает собрать репрезентативные данные.
-- **Зависимость от метрик:** При сбоях Metrics Server или Prometheus рекомендации перестают обновляться.
-- **GPU и Extended Resources:** VPA не поддерживает автоматическое масштабирование GPU, HugePages или других расширенных ресурсов.
-- **Ephemeral Storage:** VPA не управляет `ephemeral-storage`.
+* **Короткоживущие задачи (Jobs / CronJobs):** VPA не эффективен для кратковременных задач, так как Recommender не успевает собрать статистически значимую выборку метрик.
+* **Дисковые ресурсы:** VPA управляет исключительно CPU и оперативной памятью. Управление `ephemeral-storage` и постоянными томами (Persistent Volumes) не поддерживается.
+* **Extended Resources (Расширенные ресурсы):** VPA не поддерживает автоматическое масштабирование HugePages, аппаратных сопроцессоров и иных пользовательских ресурсов узла (`spec.containers[].resources.limits`).
 
 ### Ссылки
--   [Goldilocks Documentation](../ToolsUtilities/goldilocks.md) — визуализация рекомендаций VPA.
--   [In-Place Pod Resize](./in_place_pod_resize.md) — детальный разбор технологии.
--   [Metrics Server](../MonitoringLogging/metrics-server.md) — основной источник данных для VPA.
--   **[Обзор автоскейлинга в K8s](./overview_concepts.md)** — иерархия методов масштабирования.
--   **[QoS классы и лимиты](../Scheduling/qos_limit_and_requests.md)** — влияние VPA на приоритетность подов.
--   **[Устранение неполадок HPA](../Troubleshooting/Common_Errors/hpa_troubleshooting.md)** — конфликты HPA и VPA.
--   **[Cluster Autoscaler](./cluster_autoscaler_detailed.md)** — взаимодействие с инфраструктурным масштабированием.
--   **[Karpenter: Обзор](./Karpenter/overview.md)** — альтернативный подход к инфраструктурному масштабированию.
+
+* [In-Place Pod Resize](./in_place_pod_resize.md) — детальный архитектурный разбор механизма изменения ресурсов без перезапуска.
+* [Обзор автоскейлинга в Kubernetes](./overview_concepts.md) — классификация и иерархия горизонтального, вертикального и инфраструктурного масштабирования.
+* [Pod Disruption Budget](./pod_disruption_budget.md) — обеспечение непрерывной доступности при плановых выселениях подов.
+* [Автомасштабирование StatefulSet](./statefulset_autoscaling.md) — специфика вертикального масштабирования баз данных и очередей сообщений.
+* [Масштабирование в On-Premise инфраструктуре](./on_premise_autoscaling.md) — специфика автоскейлинга на физических серверах и локальной виртуализации.
+* [Metrics Server](../MonitoringLogging/metrics-server.md) — установка, конфигурация и диагностика источника метрик.
+* [Goldilocks](../ToolsUtilities/goldilocks.md) — визуализация и практическое применение рекомендаций VPA.
+* [Устранение неполадок HPA](../Troubleshooting/Common_Errors/hpa_troubleshooting.md) — разрешение конфликтов регуляторов масштабирования.
+* [Кластерный планировщик Descheduler](./descheduler.md) — вторичная балансировка и дефрагментация ресурсов узлов.
+* [QoS классы и лимиты](../Scheduling/qos_limit_and_requests.md) — глубокое погружение в requests, limits и планирование подов.

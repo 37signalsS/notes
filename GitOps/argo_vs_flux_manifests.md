@@ -1,205 +1,346 @@
-# Сравнение ArgoCD и Flux: архитектура и манифесты
+# Сравнение Argo CD и Flux: архитектура, манифесты и эксплуатация
 
-**ArgoCD** и **Flux** — два ведущих GitOps-инструмента в экосистеме CNCF, реализующие свои задачи с разной философией. Данное сравнение фокусируется на ключевых архитектурных различиях, особенностях безопасности и их отражении в структуре манифестов.
+**Актуально для:** Argo CD v3.5+ / Flux v2.9.x (Kubernetes 1.34–1.36; on-premise / bare-metal)
+
+**Argo CD** и **Flux** — два ведущих GitOps-инструмента в экосистеме CNCF (оба имеют статус Graduated), реализующие непрерывную доставку манифестов в Kubernetes на базе противоположных архитектурных парадигм. Argo CD ориентирован на централизованное управление (Hub-and-Spoke), развитый графический интерфейс и комплексную абстракцию проектов. Flux следует классическому принципу Unix-way: он состоит из независимых микроконтроллеров (GitOps Toolkit), управляется исключительно через нативные примитивы Kubernetes API и ориентирован на децентрализованное развертывание в каждом кластере.
+
+---
 
 ## Определения
 
-- **ArgoCD**: Централизованный GitOps-инструмент с упором на принцип «все-в-одном». Обладает мощным графическим интерфейсом и встроенными функциями мультикластерного управления. Основной ресурс — `Application`, объединяющий источник и назначение.
-- **Flux**: Набор (toolkit) декомпозированных, независимых контроллеров. Философия Flux следует принципу Unix-way — каждый инструмент выполняет одну задачу. Ответственность разделена между несколькими кастомными ресурсами (CRD), такими как `GitRepository`, `OCIRepository` и `Kustomization`.
-- **GitOps Toolkit**: Набор специализированных контроллеров Flux (source-, kustomize-, helm-, notification-controller), взаимодействующих исключительно через Kubernetes API — один контроллер читает статус артефакта другого, без прямых сетевых вызовов между ними.
-- **AppProject**: CRD в ArgoCD, задающий логическую границу для команды: разрешенные репозитории источников, целевые кластеры и неймспейсы, типы ресурсов. Аналог во Flux строится из стандартных примитивов Kubernetes (ServiceAccount + RoleBinding + impersonation).
-- **HelmRelease**: CRD во Flux (`helm-controller`), описывающий управляемый Helm-релиз декларативно: источник чарта, диапазон версий, values, стратегия поведения при сбое upgrade.
+- **Argo CD**: Декларативный инструмент непрерывной доставки (CD) по методологии GitOps, выполненный в виде монолитной контрольной плоскости с собственным API-сервером, Web UI, кэшем состояний в Redis и ролевой моделью доступа (RBAC).
+- **Flux**: Модульный набор независимых контроллеров (GitOps Toolkit), взаимодействующих через Kubernetes API. Не имеет собственного API-сервера или обязательного Web UI, функционирует как «чистый» оператор Kubernetes.
+- **GitOps Toolkit (GOTK)**: Композиция специализированных контроллеров Flux (`source-controller`, `kustomize-controller`, `helm-controller`, `notification-controller`, `image-reflector-controller`, `image-automation-controller`), взаимодействующих через артефакты в локальном хранилище и статусы CRD.
+- **Application**: Основной кастомный ресурс Argo CD (`argoproj.io/v1alpha1`), связывающий в единой декларации источник манифестов (Git, Helm, OCI), целевой кластер, пространство имен и политики синхронизации.
+- **AppProject**: Кастомный ресурс Argo CD, задающий логический периметр изоляции для команд: список доверенных репозиториев, разрешенных кластеров/неймспейсов, белые/черные списки видов ресурсов (Kinds) и локальные роли с OIDC-маппингом.
+- **Kustomization (Flux)**: Кастомный ресурс Flux (`kustomize.toolkit.fluxcd.io/v1`), определяющий конвейер сборки и применения манифестов из артефакта источника с поддержкой Server-Side Apply, валидации здоровья (Health Checks), подстановки переменных и расшифровки секретов.
+- **HelmRelease**: Кастомный ресурс Flux (`helm.toolkit.fluxcd.io/v2`), декларативно описывающий жизненный цикл Helm-релиза: источник чарта, semver-диапазоны версий, переопределения values, тесты и автоматический откат при сбое.
+- **Server-Side Apply (SSA)**: Механизм Kubernetes API для отслеживания владения отдельными полями объектов через структуры `managedFields`. Предотвращает конфликты между несколькими контроллерами и является стандартом применения манифестов в обоих инструментах.
+- **Детекция и коррекция дрейфа (Drift Detection & Correction)**: Процесс выявления несоответствия между эталонным состоянием в Git/OCI и фактическим состоянием объектов в etcd. Коррекция восстанавливает эталонную конфигурацию при несанкционированных ручных изменениях (`kubectl edit`).
+- **Resource Tracking**: Механизм Argo CD для однозначной идентификации ресурсов, порожденных конкретным `Application`, с помощью аннотаций (`argocd.argoproj.io/tracking-id`) или меток (`app.kubernetes.io/instance`).
+- **ServiceAccount Impersonation**: Механизм Kubernetes API, позволяющий контроллеру выполнять операции от имени другого сервисного аккаунта с ограниченными правами. Базовый метод изоляции тенантов во Flux.
+- **OCI-артефакт (OCI Artifact)**: Неизменяемый образ спецификации Open Container Initiative, используемый для упаковки и распространения манифестов Kubernetes или Helm-чартов через реестр контейнеров (например, Harbor) вместо прямого обращения к Git.
 
-## Предварительные требования
+---
 
-Для воспроизведения сценариев сравнения необходимы:
+## Архитектура и основные концепции
 
-| Компонент | ArgoCD | Flux |
+### 1. Архитектурная топология и потребление ресурсов
+
+| Характеристика | Argo CD (v3.5+) | Flux (v2.9.x) |
 | :--- | :--- | :--- |
-| Версия инструмента | Линейка v3.x (SSA — опционально, OCI-нативность с v3.1+) | Линейка v2.9.x (GA v2.9.0 — июнь 2026; поддерживаются Kubernetes 1.34–1.36, ветка v2.6 EOL) |
-| CLI | `argocd` CLI той же минорной версии, что и сервер | `flux` CLI версии устанавливаемого релиза (например, v2.9.4): `brew install fluxcd/tap/flux` |
-| Кластер | Kubernetes с правами на установку в namespace `argocd` | Kubernetes 1.34–1.36; проверка готовности `flux check --pre` |
-| Доступ к Git | PAT или deploy key на чтение GitOps-репозитория | PAT со scope `repo` (GitHub) либо эквивалент; bootstrap сам создает deploy key |
+| **Архитектурный стиль** | Монолитная плоскость управления (Application Controller, Repo Server, API Server, Dex, Redis) | Модульный набор микроконтроллеров (GitOps Toolkit на контроллерах `controller-runtime`) |
+| **Топология развертывания** | Hub-and-Spoke (один центральный кластер управляет сотнями целевых) либо Standalone | In-Cluster Agent (независимый агент в каждом кластере, децентрализованная топология) |
+| **Потребление памяти (RAM)** | Высокое: кэширует в Redis полное дерево ресурсов всех управляемых кластеров для UI и diff | Низкое: контроллеры кэшируют только свои CRD и сжатые tar-артефакты в ephemeral storage |
+| **Потребление CPU** | Скачкообразное: частые пересборки шаблонов на `repo-server` при массовых вебхуках | Равномерное: конвейер разбит на независимые воркеры (`source` скачивает, `kustomize` применяет) |
+| **Сетевые требования** | Требует прямого доступа от Hub-кластера к API-серверам всех управляемых кластеров | Требует только исходящего доступа из кластера к Git-серверу и OCI-реестру (без входящих портов) |
+| **Шардирование** | Шардирование `argocd-application-controller` по алгоритму round-robin между репликами | Шардирование реконсиляции через контроллер Flux Operator (`FluxInstance`) или раздельные инстансы |
+| **Хранилище состояния** | Redis (кэш манифестов, сессий, токенов и дерева ресурсов) | etcd кластера (исключительно через CRD и аннотации объектов) |
 
-Исходное состояние: рабочий кластер Kubernetes, доступ к тестовому Git-репозиторию с манифестами приложения (структура `apps/billing/base` + `apps/billing/overlays/prod`).
+```
+ARGO CD АРХИТЕКТУРА (Hub-and-Spoke):
++---------------------------------------------------------------------------------+
+| Hub-кластер                                                                     |
+|  [Web UI / CLI] ---> [argocd-server] ---> [Redis Cache]                         |
+|                             |                   ^                               |
+|                             v                   |                               |
+|                     [argocd-repo-server] <------+                               |
+|                             |                                                   |
+|                             v                                                   |
+|               [application-controller]                                          |
+|                    /        |        \                                          |
++-------------------/---------|---------\-----------------------------------------+
+                   /          |          \  (Прямой сетевой доступ к k8s API)
+                  v           v           v
+          [Кластер Dev]  [Кластер Stage]  [Кластер Prod]
 
-## Основные концепции
+FLUX АРХИТЕКТУРА (In-Cluster Agent, Unix-way):
++---------------------------------------------------------------------------------+
+| Локальный кластер (Dev / Stage / Prod)                                          |
+|                                                                                 |
+|   [Git / OCI Репозиторий]                                                       |
+|             |                                                                   |
+|             v (pull артефактов)                                                 |
+|     [source-controller] -----> локальный tar-архив (/data)                      |
+|                                         |                                       |
+|                  +----------------------+----------------------+                |
+|                  |                                             |                |
+|                  v                                             v                |
+|        [kustomize-controller]                        [helm-controller]          |
+|                  | (Server-Side Apply)                         | (Helm SDK)     |
+|                  +----------------------+----------------------+                |
+|                                         |                                       |
+|                                         v                                       |
+|                                 [kube-apiserver]                                |
++---------------------------------------------------------------------------------+
+```
 
-### 1. Архитектура и потребление ресурсов
+### 2. Модель конфигурации и цикл сверки
 
-| Аспект | ArgoCD | Flux |
-| :--- | :--- | :--- |
-| **Архитектура** | Монолитная (API server, repository server, controller, Redis) | Модульная (GitOps Toolkit на независимых контроллерах) |
-| **Управление** | Централизованное (Hub-and-Spoke) | Децентрализованное (агент в каждом кластере) |
-| **Потребление ресурсов** | Выше (из-за UI и кэширования графа ресурсов в памяти) | Ниже (минималистичные контроллеры на Go) |
-| **Масштабируемость** | Шардирование контроллера приложений для крупных сред | Естественное масштабирование через распределение |
-| **Хранение состояния** | Хранит состояние всех ресурсов кластера для визуализации | Контроллеры отслеживают только свои CRD |
-| **Связанность компонентов** | Внутренние вызовы между компонентами монолита (gRPC/Redis-кэш) | Контроллеры общаются только через Kubernetes API (статусы артефактов) — компоненты заменяемы независимо |
-| **Установка самого инструмента** | Helm-чарт / манифесты / оператор | `flux bootstrap` коммитит манифесты установки в Git — кластер «управляет сам собой» |
-| **Управление инстансами Flux** | Неприменимо (единый монолит) | Flux Operator: декларативная версия и состав контроллеров (`FluxInstance`), шардирование реконсиляции, несколько инстансов в одном кластере |
+- **Argo CD: Подход «Все в одном» (Application)**. Все параметры развертывания сосредоточены в одном объекте `Application`. Контроллер регулярно (по умолчанию каждые 3 минуты) или по входящему вебхуку обращается к `repo-server`, который выполняет `git clone` / `git fetch`, рендерит манифесты (через Kustomize, Helm или CMP-плагин) и возвращает готовый список объектов. Контроллер сравнивает их с состоянием в etcd целевого кластера и формирует статус синхронизации.
+- **Flux: Разделение ответственности (Source + Reconciler)**. Развертывание разделено на два независимых этапа:
+  1. `source-controller` периодически проверяет Git-репозиторий или OCI-реестр (`GitRepository`, `OCIRepository`). При обнаружении нового коммита он упаковывает исходники в неизменяемый tar-архив, сохраняет его во внутреннем веб-хранилище и выставляет статус с хэшем артефакта.
+  2. `kustomize-controller` или `helm-controller` подписывается на событие изменения источника (`sourceRef`), скачивает сжатый архив по внутренней сети кластера, собирает манифесты и применяет их в API-сервер.
 
-Следствие модульности Flux: можно установить подмножество контроллеров (например, только `source-controller` + `kustomize-controller` без image-automation) и независимо обновлять каждый. Следствие монолитности ArgoCD: единая точка конфигурации (`argocd-cm`) и единая модель обновления всего стека сразу, зато согласованные версии компонентов гарантированы.
+Это разделение позволяет:
+- Опрашивать Git-репозиторий один раз для десятков микросервисов, разделяя пути (`path`) в разных `Kustomization`.
+- Настраивать независимые интервалы: опрос источника раз в 10 минут, реконсиляция состояния в кластере — раз в 1 час.
 
-### 2. Модель конфигурации и синхронизации
+### 3. Механика обнаружения дрейфа и самовосстановления
 
-- **ArgoCD**: Использует единый ресурс `Application`. В нем объединены источник (Git/Helm), целевой кластер и политики синхронизации (`syncPolicy`). Начиная с линейки v3.x стандартом является **Server-Side Apply (SSA)**, что минимизирует конфликты при работе с мутирующими вебхуками и большими манифестами.
-- **Flux**: Разделяет обязанности. `Source`-контроллер отвечает за получение артефактов (`GitRepository`, `OCIRepository`), а `Kustomize`- и `Helm`-контроллеры — за их применение. Это позволяет использовать один источник для множества независимых развертываний в разных неймспейсах с разными интервалами сверки.
+Разница в обработке несанкционированных ручных правок в кластере (`kubectl edit`, `kubectl scale`) является фундаментальной:
 
-Дополнительные различия модели:
-
-- **Применение изменений**: Flux применяет манипресты через Server-Side Apply с field manager вида `kustomize-controller`; опция `ServerSideApply=true` в ArgoCD фиксирует тот же механизм явно (в v3.x он уже включен по умолчанию).
-- **Зависимости**: Flux выстраивает порядок через `dependsOn` между `Kustomization` (родитель считается выполненным при `Ready=True` после healthChecks); ArgoCD использует sync waves и хуки внутри одного `Application`.
-- **Триггеры реконсиляции**: оба инструмента работают по интервалу плюс вебхуки от Git-хостинга; во Flux дополнительный ручной триггер — команда `flux reconcile kustomization <name>`, в ArgoCD — `argocd app sync` (императивное применение) или `--refresh`.
-
-### 3. Интерфейс и отладка
-
-- **ArgoCD**: Поставляется с развитым Web UI, который визуализирует иерархию ресурсов, позволяет сравнивать различия (diff), просматривать логи и выполнять откат. Отладка расхождения выполняется командой `argocd app diff <app> --server-side-generate` — она показывает, какие поля и каким менеджером изменены, что критично при диагностике конфликтов владения полями SSA.
-- **Flux**: Не имеет официального встроенного графического интерфейса. Основное взаимодействие происходит через CLI `flux`: `flux get kustomizations` (статус), `flux describe kustomization <name>` (детали последней реконсиляции, примененная ревизия), `flux events` (события контроллеров). Отладка выполняется через инспекцию статусов CRD (`kubectl describe kustomization`) и логов контроллеров. Для визуализации используются сторонние решения: FreeLens (вкладка со всеми ресурсами Flux), Weave GitOps (ограниченно развивается после закрытия Weaveworks в 2024) и веб-дашборд в составе Flux Operator.
-
-Практическое следствие: в ArgoCD первичный интерфейс — визуальный (быстрый онбординг команды, разбор инцидентов глазами не-engineers), во Flux — терминальный и декларативный (легче автоматизировать, меньше кликов, но выше порог входа). Столбец *Applied Revision* в GUI-инструментах для Flux показывает хэш примененного коммита — быстрая проверка того, что кластер получил последнюю версию.
+1. **Argo CD: Разделение статуса и коррекции**.
+   - По умолчанию Argo CD **только обнаруживает** дрейф: статус переходит в `OutOfSync`, в UI подсвечиваются измененные поля, но объекты в кластере не перезаписываются.
+   - Для принудительного отката ручных правок необходимо явно активировать флаг `syncPolicy.automated.selfHeal: true`. При его наличии контроллер запускает внеочередную синхронизацию и возвращает эталонное состояние.
+   - Игнорирование полей (например, `spec.replicas` при использовании HPA) настраивается через блок `ignoreDifferences` в манифесте `Application` или глобально в `argocd-cm`.
+2. **Flux: Непрерывная принудительная коррекция (Continuous Reconciliation)**.
+   - Во Flux коррекция дрейфа — это неотъемлемая часть каждого цикла реконсиляции. `kustomize-controller` выполняет Server-Side Apply каждые `spec.interval` (или при получении события).
+   - Любые ручные правки в кластере перезаписываются эталонными значениями из Git при следующем цикле.
+   - Для сосуществования с внешними операторами (HPA, cert-manager) во Flux v2.9+ используются правила `spec.ignore` и `DriftIgnoreRules`, где явно объявляются пути JSONPointer или менеджеры полей, которые контроллер обязан пропускать.
 
 ### 4. Безопасность и мультитенантность
 
-| Функция | ArgoCD | Flux |
-| :--- | :--- | :--- |
-| **Изоляция (Multi-tenancy)** | Нативная через `AppProject` (ограничение репозиториев, кластеров, ресурсов) | Изоляция через ServiceAccount Impersonation для каждой `Kustomization` |
-| **Доступ (RBAC)** | Детализированный встроенный RBAC с поддержкой SSO (OIDC, SAML); с v3.0+ права на sync/update/delete разделены | Нативный Kubernetes RBAC (контроллер работает от имени ServiceAccount) |
-| **Секреты** | Внешние операторы (ESO) или плагины расшифровки (AVP) | Глубокая нативная интеграция с Mozilla SOPS (KMS, age) |
-| **Управление флотом** | Централизованные политики безопасности для всех кластеров | Индивидуальные настройки безопасности в каждом кластере |
-| **Верификация источников** | Source Integrity (v3.5): блокировка синхронизации коммитов без доверенной GPG-подписи | `spec.verify` в `GitRepository`/`OCIRepository`: Cosign/GPG-подписи; SSH-подписи коммитов с v2.9 |
-| **Операции от имени пользователя** | Impersonation (beta с v3.5): операции сервера выполняются от имени запросившего пользователя | Базовый принцип архитектуры: каждая `Kustomization` может работать от своего ServiceAccount |
+- **Argo CD: Прикладная изоляция через AppProject**.
+  - Argo CD предоставляет собственную абстракцию мультитенантности `AppProject`. Проект изолирует команды на уровне Argo CD: какие Git-репозитории разрешено использовать, в какие кластеры и неймспейсы разрешен деплой, какие ресурсы разрешено/запрещено создавать (например, запрет создания `ClusterRoleBinding` или правки `ResourceQuota`).
+  - Встроенный механизм RBAC позволяет интегрироваться с корпоративными OIDC/SAML провайдерами (Keycloak, GitLab) и выдавать гранулярные права на просмотр, ручную синхронизацию или удаление приложений отдельным группам пользователей.
+- **Flux: Нативная изоляция через Kubernetes RBAC и Impersonation**.
+  - Flux не создает дополнительных слоев авторизации. Граница изоляции тенанта формируется средствами самого Kubernetes API.
+  - Каждая `Kustomization` и `HelmRelease` может содержать поле `spec.serviceAccountName`. При применении манифестов `kustomize-controller` выполняет запрос с имперсонацией (`impersonate`) указанного ServiceAccount.
+  - Если манифест разработчика попытается создать ресурс в чужом неймспейсе или запросить несанкционированные привилегии, API-сервер Kubernetes отклонит запрос с кодом `403 Forbidden`.
 
-Важное уточнение про подписи: верификация источников в обоих инструментах — **опциональная, настраиваемая функция**, а не включенное по умолчанию требование. Контроллер блокирует применение неподписанного артефакта только если в манифесте источника сконфигурировано поле проверки (`spec.verify` во Flux, политика подписей в ArgoCD). Рекомендация для production-цепочки поставок: настроить верификацию для всех внешних источников и сочетать её с политиками admission (Kyverno/Gatekeeper) на уровне образов — см. [Жизненный цикл образов](./Concepts/containerization_and_image_storage.md).
+### 5. Управление секретами в контуре
 
-### Семантика дрейфа и самовосстановления
+Хранение открытых паролей и токенов в Git недопустимо. Оба инструмента решают эту задачу в on-premise инфраструктуре без применения облачных сервисов:
 
-Ключевое практическое различие, часто вызывающее неожиданности при переходе между инструментами:
+- **Flux (Нативная поддержка Mozilla SOPS)**: `kustomize-controller` содержит встроенную библиотеку расшифровки SOPS. Зашифрованные файлы (с использованием асимметричных ключей `age` или приватного экземпляра HashiCorp Vault) коммитятся в Git в зашифрованном виде. Применение манифестов происходит в памяти контроллера — расшифрованные данные никогда не сохраняются на диск.
+- **Argo CD (Внешние операторы или CMP-плагины)**: В базовой поставке Argo CD не умеет расшифровывать SOPS нативно. Типовые архитектурные решения:
+  1. Использование **External Secrets Operator (ESO)**: в Git хранятся только ссылки `ExternalSecret`, а оператор забирает секреты из корпоративного HashiCorp Vault. Это эталонный паттерн для SRE.
+  2. Использование Sidecar-плагина KSOPS на `argocd-repo-server`: манифесты расшифровываются при сборке перед отправкой в Application Controller.
 
-- **ArgoCD** разделяет понятия *OutOfSync* (обнаружено расхождение) и *коррекция*: без `automated.selfHeal: true` контроллер покажет статус OutOfSync, но не будет перезаписывать ручные изменения (`kubectl edit`). С selfHeal любое отклонение исправляется в течение интервала реконсиляции.
-- **Flux** корректирует дрейф всегда: каждая итерация реконсиляции заново применяет желаемое состояние (это часть цикла, а не отдельная опция). Ручные правки переживают максимум один интервал. Управление «мягкостью» достигается не отключением коррекции, а правилами игнорирования полей: `Kustomization.spec.ignore` и структурированные DriftIgnoreRules (v2.9+) позволяют оставить поле под владением другого контроллера (классика — `spec.replicas` у HPA).
-- **Приостановка**: `spec.suspend: true` (или `flux suspend ks <name>`) останавливает и применение, и коррекцию дрейфа — ручные правки сохраняются до возобновления. Эквивалент в ArgoCD — отключение auto-sync у приложения.
+### 6. Отслеживание ресурсов и Server-Side Apply
 
-Это означает: миграция с ArgoCD без selfHeal на Flux меняет поведение кластера — все «безопасные» ручные хотфиксы начнут откатываться. Перед миграцией инвентаризируйте такие правки и перенесите их в Git.
+Для удаления устаревших ресурсов (`pruning`) контроллер должен точно знать, какие объекты в кластере принадлежат конкретному приложению:
+
+- **Argo CD**: Применяет трекинг ресурсов. Метод по умолчанию — аннотация `argocd.argoproj.io/tracking-id: <app-name>:<group>/<kind>:<namespace>/<name>`. Дополнительно поддерживается маркировка меткой `app.kubernetes.io/instance`. В версии v3.5+ Server-Side Apply включен по умолчанию, что позволяет регистрировать менеджер полей `argocd-controller` в `metadata.managedFields`.
+- **Flux**: Полностью опирается на Server-Side Apply Kubernetes API. При применении манифестов `kustomize-controller` регистрируется как field manager (по умолчанию `kustomize-controller`). Для отслеживания состава набора ресурсов контроллер сохраняет список примененных GVK (Group/Version/Kind) и имен в статусе `Kustomization` в виде инвентаря (`spec.inventory`). Ресурсы, пропавшие из инвентаря в новой ревизии, немедленно удаляются (если включен `prune: true`).
+
+---
 
 ## Практические сценарии
 
-### Сценарий 1: Развертывание приложения через Kustomize
+### Предварительные требования
 
-#### Подход ArgoCD (единый манифест)
+Для воспроизведения сценариев в тестовом on-premise контуре необходимы:
+
+1. Кластер Kubernetes версии 1.34–1.36 с поддержкой RBAC и Server-Side Apply.
+2. Локальный или корпоративный Git-сервер (GitLab, Gitea) с доступом по SSH/HTTPS.
+3. Локальный OCI-реестр (Harbor) для хранения артефактов и Helm-чартов.
+4. Установленные утилиты администрирования:
+   - `kubectl` v1.34+
+   - `argocd` CLI v3.5+
+   - `flux` CLI v2.9+
+   - `sops` v3.9+ и `age-keygen`
+
+Проверка готовности среды:
+
+```bash
+# Проверка версии Kubernetes API
+kubectl version --short
+# → Client Version: v1.35.0
+# → Server Version: v1.35.0
+
+# Проверка готовности кластера к установке Flux
+flux check --pre
+# → ► checking prerequisites
+# → ✔ Kubernetes 1.35.0 >=1.34.0
+# → ✔ prerequisites checks passed
+```
+
+---
+
+### Сценарий 1: Первичная установка и bootstrap инструментов
+
+Различие в процессе установки иллюстрирует философию платформ: Flux устанавливает сам себя через коммит манифестов в Git, а Argo CD развертывается как классический инфраструктурный сервис через Helm.
+
+#### Вариант А: Bootstrap Flux (самоуправление через Git)
+
+Команда `flux bootstrap` подключается к Git-серверу, генерирует SSH-ключ развертывания (deploy key), клонирует репозиторий, генерирует манифесты контроллеров, коммитит их в ветку и запускает первичную синхронизацию:
+
+```bash
+flux bootstrap git \
+  --url=ssh://git@git.internal.corp:2222/infra/fleet-gitops.git \
+  --branch=main \
+  --path=clusters/production \
+  --components-extra=image-reflector-controller,image-automation-controller \
+  --read-write-key
+# → ► connecting to ssh://git@git.internal.corp:2222/infra/fleet-gitops.git
+# → ✔ cloned repository
+# → ✔ generated manifests
+# → ✔ committed and pushed components manifests
+# → ✔ deployed components to flux-system
+# → ✔ verified components health
+# → ✔ bootstrap finished
+```
+
+После выполнения команды конфигурация самого Flux зафиксирована в Git по пути `clusters/production/flux-system/`. Любые изменения (обновление версии, добавление флагов контроллеров) выполняются стандартным Git-коммитом.
+
+#### Вариант Б: Установка Argo CD (через Helm на on-premise кластер)
+
+Argo CD устанавливается централизованно через Helm-чарт с тюнингом под on-premise инфраструктуру (включение Server-Side Apply, отключение открытых портов наружу, выпуск сертификатов через cert-manager):
+
+```bash
+# Добавление официального репозитория
+helm repo add argo https://argoproj.github.io/argo-helm
+helm repo update
+
+# Установка с кастомными параметрами высокой доступности (HA)
+helm upgrade --install argocd argo/argo-cd \
+  --namespace argocd \
+  --create-namespace \
+  --version 7.8.2 \
+  --set server.extraArgs="{--insecure}" \
+  --set configs.params."server\.insecure"=true \
+  --set configs.cm."timeout\.reconciliation"="180s" \
+  --set redis-ha.enabled=true \
+  --set controller.replicas=2
+# → Release "argocd" has been upgraded. Happy Helming!
+# → STATUS: deployed
+```
+
+Проверка состояния компонентов:
+
+```bash
+kubectl get pods -n argocd -l app.kubernetes.io/part-of=argocd
+# → NAME                                             READY   STATUS    RESTARTS   AGE
+# → argocd-application-controller-0                  1/1     Running   0          2m
+# → argocd-application-controller-1                  1/1     Running   0          2m
+# → argocd-repo-server-6789b9d-abcd1                 1/1     Running   0          2m
+# → argocd-server-54d9c79f8-efgh2                    1/1     Running   0          2m
+# → argocd-redis-ha-server-0                         3/3     Running   0          2m
+```
+
+---
+
+### Сценарий 2: Развертывание приложения через Kustomize
+
+#### Подход Argo CD: Единый манифест Application
+
+Манифест объединяет определение источника, оверлея Kustomize, целевого кластера, политик автосинхронизации и включения Server-Side Apply:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: billing-api
+  name: payment-service
   namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
-  project: finance-team
+  project: default
   source:
-    repoURL: https://github.com/org/infra-gitops.git
-    path: apps/billing/overlays/prod
-    targetRevision: HEAD
+    repoURL: https://git.internal.corp/apps/payment-service.git
+    targetRevision: main
+    path: deploy/overlays/production
   destination:
     server: https://kubernetes.default.svc
-    namespace: billing
+    namespace: payments
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
+      - CreateNamespace=true
       - ServerSideApply=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
 ```
 
-Проверка применения:
+Проверка состояния и запуск синхронизации:
 
 ```bash
-argocd app get billing-api --refresh
-# → Name:               billing-api
-# → Status:             Synced
-# → Health:             Healthy
-# → Sync Policy:        Automated (Prune, SelfHeal)
+argocd app sync payment-service --prune
+# → TIMESTAMP                  GROUP        KIND   NAMESPACE                  NAME    STATUS    HEALTH        HOOK  MESSAGE
+# → 2026-10-13T17:15:00+03:00  apps   Deployment    payments       payment-service    Synced   Healthy              deployment.apps/payment-service reconciled
+# → 2026-10-13T17:15:00+03:00                 Service    payments       payment-service    Synced   Healthy              service/payment-service reconciled
 
-kubectl get deploy -n billing
-# → NAME          READY   UP-TO-DATE   AVAILABLE
-# → billing-api   2/2     2            2
+argocd app get payment-service
+# → Name:               argocd/payment-service
+# → Project:            default
+# → Server:             https://kubernetes.default.svc
+# → Namespace:          payments
+# → URL:                https://argocd.internal.corp/applications/payment-service
+# → Repo:               https://git.internal.corp/apps/payment-service.git
+# → Target:             main
+# → Path:               deploy/overlays/production
+# → Sync Window:        Sync Allowed
+# → Sync Status:        Synced to main (a1b2c3d)
+# → Health Status:      Healthy
 ```
 
-#### Подход Flux (разделение ресурсов)
+#### Подход Flux: Композиция GitRepository и Kustomization
+
+Разделение на получение артефакта и его реконсиляцию через Kustomize с привязкой к сервисному аккаунту:
 
 ```yaml
-# 1. Определение источника (Source)
 apiVersion: source.toolkit.fluxcd.io/v1
-kind: OCIRepository
+kind: GitRepository
 metadata:
-  name: billing-manifests
+  name: payment-repo
   namespace: flux-system
 spec:
-  interval: 10m
-  url: oci://ghcr.io/org/manifests/billing
+  interval: 5m
+  url: https://git.internal.corp/apps/payment-service.git
   ref:
-    tag: v1.2.0
+    branch: main
+  secretRef:
+    name: internal-git-credentials
+  timeout: 30s
 ---
-# 2. Определение применения (Reconciliation)
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: billing-api
+  name: payment-service
   namespace: flux-system
 spec:
-  serviceAccountName: billing-reconciler
-  interval: 1h
-  path: ./overlays/prod
+  targetNamespace: payments
+  serviceAccountName: payments-reconciler
+  interval: 30m
+  retryInterval: 2m
+  timeout: 5m
   prune: true
+  wait: true
   sourceRef:
-    kind: OCIRepository
-    name: billing-manifests
-  targetNamespace: billing
+    kind: GitRepository
+    name: payment-repo
+  path: ./deploy/overlays/production
+  force: false
 ```
 
-Проверка применения:
+Проверка состояния через CLI `flux`:
 
 ```bash
-flux get sources oci billing-manifests
-# → NAME              REVISION        SUSPENDED   READY   MESSAGE
-# → billing-manifests sha256:a1b2c3d     False     True    stored artifact for digest
+flux get sources git payment-repo
+# → NAME         REVISION            SUSPENDED  READY  MESSAGE
+# → payment-repo main@sha1:a1b2c3d   False      True   stored artifact for revision 'main@sha1:a1b2c3d'
 
-flux get kustomizations billing-api
-# → NAME          REVISION       SUSPENDED   READY   MESSAGE
-# → billing-api   v1.2.0/<sha>   False       True    Apply succeeded
+flux get kustomizations payment-service
+# → NAME             REVISION            SUSPENDED  READY  MESSAGE
+# → payment-service  main@sha1:a1b2c3d   False      True   Applied revision: main@sha1:a1b2c3d
 ```
 
-Обратите внимание на распределение интервалов: источник опрашивается каждые 10 минут, применение выполняется ежечасно. Во Flux эти тайминги независимы — частая сверка дешевого артефакта (локальный tar) отделена от дорогой реконсиляции (вызовы API-сервера). В ArgoCD эквивалент настраивается парой параметров `timeout.reconciliation` и webhook'ами глобально, без разбивки на источник/применение.
-
-### Сценарий 2: Первичная установка (bootstrap) инструментов
-
-Сама установка демонстрирует философскую разницу:
-
-```bash
-# Flux: установка = коммит манифестов контроллеров в GitOps-репозиторий
-flux bootstrap github \
-  --owner=my-org \
-  --repository=fleet-infra \
-  --branch=main \
-  --path=clusters/production
-# ► connecting to github.com
-# ✔ repository created
-# ✔ component source-controller deployed
-# ✔ kustomization flux-system reconciled
-# → далее изменения состава Flux вносятся правкой манифестов в Git, а не командами
-
-# ArgoCD: установка через Helm (или нативные манифесты)
-helm repo add argo https://argoproj.github.io/argo-helm
-helm install argocd argo/argo-cd --namespace argocd --create-namespace
-# → NAME: argocd ... STATUS: deployed
-# → установка императивна: чтобы она стала GitOps-управляемой,
-#   состояние ArgoCD впоследствии описывают Application/AppProject в Git
-```
-
-Bootstrap во Flux идемпотентен и повторно безопасен: запуск на существующем кластере приведет манифесты к нужной версии. Для управления версиями и составом компонентов Flux в десятках кластеров рекомендуется [Flux Operator](./flux.md) — конфигурация `FluxInstance` сама живет в Git.
+---
 
 ### Сценарий 3: Развертывание Helm-приложения
 
-#### Подход ArgoCD (источник-чарт в Application)
+#### Подход Argo CD: Рендеринг чарта внутри Application
+
+В Argo CD Helm-чарт выкачивается `repo-server`, шаблонизируется на стороне сервера (`helm template`) и применяется в кластер как набор плоских манифестов Kubernetes.
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -208,15 +349,20 @@ metadata:
   name: ingress-nginx
   namespace: argocd
 spec:
-  project: platform
+  project: default
   source:
-    repoURL: registry-1.docker.io/bitnamicharts # OCI-реестр как источник (нативно с v3.1+)
-    chart: nginx
-    targetRevision: 20.3.1                     # пиннинг конкретной версии чарта
+    repoURL: oci://harbor.internal.corp/charts
+    chart: ingress-nginx
+    targetRevision: 4.11.2
     helm:
+      releaseName: ingress-nginx
       valuesObject:
         controller:
           replicaCount: 3
+          metrics:
+            enabled: true
+            serviceMonitor:
+              enabled: true
   destination:
     server: https://kubernetes.default.svc
     namespace: ingress-nginx
@@ -224,20 +370,27 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
 ```
 
-#### Подход Flux (HelmRelease)
+#### Подход Flux: Нативный жизненный цикл через HelmRepository и HelmRelease
+
+В отличие от Argo CD, Flux использует официальный Go SDK Helm внутри `helm-controller`. Это означает создание реальных записей Helm Release в secrets кластера, поддержку Helm lifecycle hooks, тестов (`helm test`) и автоматического отката (`rollback`):
 
 ```yaml
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
-  name: bitnami
+  name: internal-harbor
   namespace: flux-system
 spec:
   type: oci
-  url: oci://registry-1.docker.io/bitnamicharts
-  interval: 30m
+  url: oci://harbor.internal.corp/charts
+  interval: 1h
+  secretRef:
+    name: harbor-robot-creds
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -245,223 +398,534 @@ metadata:
   name: ingress-nginx
   namespace: flux-system
 spec:
-  interval: 1h
+  interval: 30m
+  targetNamespace: ingress-nginx
   chartRef:
     kind: HelmRepository
-    name: bitnami
-    chart: nginx
-    version: ">=20.0.0 <21.0.0"   # диапазон semver вместо жесткого пина
+    name: internal-harbor
+    chart: ingress-nginx
+    version: ">=4.11.0 <4.12.0" # Поддержка semver-диапазонов для автоматических патчей
   install:
-    crds: CreateReplace
+    remediation:
+      retries: 3
+    createNamespace: true
+  upgrade:
+    remediation:
+      retries: 3
+      strategy: rollback # Автоматический откат к предыдущей успешной ревизии при сбое
   values:
     controller:
       replicaCount: 3
+      metrics:
+        enabled: true
+        serviceMonitor:
+          enabled: true
 ```
 
-Разница в семантике версионирования: `targetRevision` у ArgoCD требует явного bump'а при каждом обновлении (что идеально ложится на PR-процесс promotion), а диапазон `version` у HelmRelease позволяет контроллеру самому подтягивать новые патчи в границах диапазона (удобно для автообновлений, но снижает контроль — компенсируется политиками и уведомлениями). При неудачном upgrade helm-controller автоматически откатывает релиз к предыдущей рабочей ревизии (`strategy: rollback`); в ArgoCD аналогичную защиту дают health-check'и + откат вручную или через Argo Rollouts.
+Проверка состояния Helm-релиза:
 
-### Сценарий 4: Шифрование секретов
+```bash
+flux get helmreleases -n flux-system ingress-nginx
+# → NAME           REVISION  SUSPENDED  READY  MESSAGE
+# → ingress-nginx  4.11.2    False      True   Helm upgrade succeeded for release ingress-nginx/ingress-nginx.v3 with chart ingress-nginx@4.11.2
+```
 
-#### Подход Flux (нативная расшифровка SOPS)
+---
+
+### Сценарий 4: Доставка и шифрование секретов
+
+#### Подход Flux: Нативная расшифровка SOPS с ключом age
+
+1. Генерация ключа шифрования `age` на рабочей станции администратора:
+
+```bash
+age-keygen -o age.agekey
+# → Public key: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
+```
+
+2. Сохранение приватного ключа в namespace `flux-system` кластера:
+
+```bash
+cat age.agekey | kubectl create secret generic sops-age \
+  --namespace=flux-system \
+  --from-file=age.agekey=/dev/stdin
+# → secret/sops-age created
+```
+
+3. Конфигурация файла `.sops.yaml` в корне GitOps-репозитория:
+
+```yaml
+creation_rules:
+  - path_regex: .*/secrets/.*\.yaml$
+    encrypted_regex: '^(data|stringData)$'
+    age: 'age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p'
+```
+
+4. Шифрование манифеста секрета перед коммитом в Git:
+
+```bash
+sops --encrypt --in-place deploy/overlays/production/secrets/db-credentials.yaml
+# → Файл зашифрован. Открытые пароли заменены на блоки ENC[AES256_GCM,data:...]
+```
+
+5. Манифест Flux Kustomization с декларацией провайдера расшифровки:
 
 ```yaml
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: billing-secrets
+  name: payment-secrets
   namespace: flux-system
 spec:
   interval: 1h
-  path: ./apps/billing/secrets
+  path: ./deploy/overlays/production/secrets
   prune: true
   sourceRef:
     kind: GitRepository
-    name: infra-gitops
+    name: payment-repo
+  targetNamespace: payments
   decryption:
     provider: sops
     secretRef:
-      name: sops-age   # Secret с приватным ключом age в flux-system
+      name: sops-age
 ```
 
-Рабочий процесс: `.sops.yaml` в репозитории определяет правила шифрования; файлы шифруются локально (`sops --encrypt --in-place secret.yaml`) и коммитятся — в Git лежит только шифротекст, приватный ключ age существует исключительно в кластере. Расшифровка происходит на лету при сборке kustomize-controller'ом.
+`kustomize-controller` считывает секрет `sops-age`, расшифровывает payload секрета в памяти и создает нативный объект `Secret` в пространстве имен `payments`.
 
-#### Подход ArgoCD (плагин или внешний оператор)
+#### Подход Argo CD: Синхронизация через External Secrets Operator (ESO) и HashiCorp Vault
 
-ArgoCD не умеет расшифровывать SOPS нативно — типовые пути:
+В Argo CD наиболее надежный on-premise паттерн для SRE — хранение секрета в локальном HashiCorp Vault и синхронизация через External Secrets Operator. В Git коммитится декларативный объект `ExternalSecret`:
 
 ```yaml
-# Вариант А: KSOPS/Kustomize плагин (расшифровка на стороне ArgoCD)
-apiVersion: argoproj.io/v1alpha1
-kind: Application
+apiVersion: external-secrets.io/v1
+kind: SecretStore
 metadata:
-  name: billing-secrets
-  namespace: argocd
+  name: vault-backend
+  namespace: payments
 spec:
-  project: finance-team
-  source:
-    repoURL: https://github.com/org/infra-gitops.git
-    path: apps/billing/secrets   # содержит *.enc.yaml, расшифровываются KSOPS-плагином
-    targetRevision: HEAD
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: billing
-```
-
-```yaml
-# Вариант B: External Secrets Operator — секреты вообще не проходят через Git
+  provider:
+    vault:
+      server: "https://vault.internal.corp:8200"
+      path: "secret"
+      version: "v2"
+      auth:
+        kubernetes:
+          mountPath: "kubernetes"
+          role: "payments-workload"
+          serviceAccountRef:
+            name: payment-service-sa
+---
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: billing-db
-  namespace: billing
+  name: db-credentials
+  namespace: payments
 spec:
   refreshInterval: 1h
   secretStoreRef:
     name: vault-backend
-    kind: ClusterSecretStore
+    kind: SecretStore
   target:
-    name: db-credentials
+    name: payment-db-secret # Имя целевого Kubernetes Secret
+    creationPolicy: Owner
   data:
-    - secretKey: password
+    - secretKey: DB_PASSWORD
       remoteRef:
-        key: billing/db
+        key: payments/production/database
+        property: password
 ```
 
-Подробности и сравнение подходов — в [Шифрование секретов](./secrets_encryption.md). Практический вывод: во Flux путь SOPS встроен в контроллер (меньше движущихся частей), в ArgoCD выбор между плагином (нужно обслуживать кастомный образ repo-server) и ESO (больше инфраструктуры, но секреты не попадают даже в зашифрованном виде в Git).
+Манифест `ExternalSecret` коммитится в Git как обычный ресурс приложения и синхронизируется Argo CD без необходимости передавать ключи расшифровки в `argocd-repo-server`.
 
-### Сценарий 5: Изоляция команд (мультитенантность)
+---
 
-#### Подход ArgoCD (AppProject)
+### Сценарий 5: Мультитенантность и изоляция прав команд
+
+#### Подход Argo CD: AppProject с белыми списками и OIDC-группами
+
+Администратор платформы описывает проект, ограничивающий права команды `payments`:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: finance-team
+  name: payments-team
   namespace: argocd
 spec:
-  description: Приложения финансовой команды
+  description: "Проект сервисов платежного шлюза"
   sourceRepos:
-    - https://github.com/org/infra-gitops.git
-    - oci://ghcr.io/org/charts
+    - "https://git.internal.corp/apps/payment-*.git"
+    - "oci://harbor.internal.corp/charts/*"
   destinations:
-    - server: https://kubernetes.default.svc
-      namespace: billing
-    - server: https://kubernetes.default.svc
-      namespace: finance-staging
-  clusterResourceWhitelist: []           # командам запрещены cluster-scoped ресурсы
+    - server: "https://kubernetes.default.svc"
+      namespace: "payments"
+    - server: "https://kubernetes.default.svc"
+      namespace: "payments-staging"
+  clusterResourceWhitelist: [] # Запрет создания кластерных ресурсов (ClusterRole, CRD, PV)
   namespaceResourceBlacklist:
     - group: ""
-      kind: ResourceQuota               # нельзя менять собственные квоты
+      kind: ResourceQuota      # Запрет изменения собственных квот
+    - group: ""
+      kind: LimitRange
   roles:
-    - name: deployer
+    - name: developer
+      description: "Права на просмотр и ручную синхронизацию"
       policies:
-        - p, proj:finance-team:deployer, applications, sync, finance-team/*, allow
+        - p, proj:payments-team:developer, applications, get, payments-team/*, allow
+        - p, proj:payments-team:developer, applications, sync, payments-team/*, allow
       groups:
-        - idp:finance-devs              # маппинг группы из SSO/OIDC
+        - "keycloak:developers-payments" # Привязка к группе корпоративного Keycloak/LDAP
 ```
 
-Все `Application` команды обязаны ссылаться на проект (`project: finance-team`), и RBAC ArgoCD ограничивает действия рамками проекта.
+Разработчик создает `Application` с указанием `project: payments-team`. Попытка указать репозиторий вне маски `payment-*.git` или выполнить деплой в namespace `monitoring` будет заблокирована admission-валидатором Argo CD.
 
-#### Подход Flux (impersonation)
+#### Подход Flux: ServiceAccount Impersonation и RBAC Kubernetes
+
+В модели Flux изоляция строится стандартными манифестами Kubernetes без участия сторонних абстракций:
+
+1. Создание изолированного сервисного аккаунта и ограничение его роли:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: payments-reconciler
+  namespace: payments
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: payments-reconciler-role
+  namespace: payments
+rules:
+  - apiGroups: ["", "apps", "batch"]
+    resources: ["services", "configmaps", "secrets", "deployments", "cronjobs"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: payments-reconciler-binding
+  namespace: payments
+subjects:
+  - kind: ServiceAccount
+    name: payments-reconciler
+    namespace: payments
+roleRef:
+  kind: Role
+  name: payments-reconciler-role
+  apiGroup: rbac.authorization.k8s.io
+```
+
+2. В манифесте `Kustomization` указывается созданный аккаунт:
+
+```yaml
+spec:
+  serviceAccountName: payments-reconciler
+  targetNamespace: payments
+```
+
+Если манифест в GitOps-репозитории содержит объект `ClusterRole` или ресурс в пространстве имен `kube-system`, запрос `kustomize-controller` к API-серверу завершится ошибкой:
+`User "system:serviceaccount:payments:payments-reconciler" cannot create resource "clusterroles" at the cluster scope`.
+
+---
+
+### Сценарий 6: Управление дрейфом, откат версий и аварийная приостановка
+
+#### Стратегия отката 1: Канонический GitOps (`git revert`)
+
+Является эталонным способом для обоих инструментов. Сохраняет непрерывность истории Git и не вызывает конфликтов с контроллерами:
 
 ```bash
-# 1. ServiceAccount команды в целевом неймспейсе
-kubectl create sa billing-reconciler -n billing
-# → serviceaccount/billing-reconciler created
+cd fleet-gitops
+git log -n 3 --oneline
+# → a1b2c3d (HEAD -> main) feat(payments): upgrade image to v2.4.0
+# → 9876fed chore: update configmap
+# → 1234abc fix: rollback candidate
 
-# 2. RoleBinding — права ТОЛЬКО в своем неймспейсе
-kubectl create rolebinding billing-reconciler-admin \
-  --serviceaccount=billing:billing-reconciler \
-  --clusterrole=admin -n billing
-# → rolebinding.rbac.authorization.k8s.io/billing-reconciler-admin created
-
-# 3. Отсутствие прав в flux-system гарантирует, что контроллер,
-#    действуя от имени billing-reconciler, не сможет тронуть чужие неймспейсы
+git revert a1b2c3d --no-edit
+git push origin main
+# → Argo CD и Flux автоматически фиксируют коммит отката и возвращают старое состояние
 ```
 
-Далее `serviceAccountName: billing-reconciler` в `Kustomization` (как в Сценарии 1) заставляет kustomize-controller применять манифесты от имени ограниченного аккаунта: попытка создать cluster-scoped объект или ресурс в чужом неймспейсе упадет с `forbidden` и будет видна в статусе объекта. Различие моделей: AppProject — централизованная надстройка над всеми приложениями проекта (одна точка аудита), impersonation — композиция стандартных механизмов Kubernetes (нет собственного слоя абстракции, зато вся логика видна обычным kubectl и работает одинаково для людей и контроллера).
+#### Стратегия отката 2: Оперативный откат через CLI при инциденте
 
-### Сценарий 6: Откат развертывания
+В условиях production-аварии ожидание CI/CD-пайплайна может быть недопустимо. Специфика поведения инструментов:
+
+**В Argo CD:**
+```bash
+# 1. При наличии auto-sync откат через CLI будет немедленно перезаписан!
+# Сначала обязательно временно отключаем automated sync:
+argocd app set payment-service --sync-policy none
+# → application 'payment-service' updated
+
+# 2. Проверяем историю ревизий и выполняем откат на целевой ID:
+argocd app history payment-service
+# → ID  DATE                           REVISION
+# → 1   2026-10-13 14:00:00 +0300 MSK  main (1234abc)
+# → 2   2026-10-13 17:00:00 +0300 MSK  main (a1b2c3d)
+
+argocd app rollback payment-service 1
+# → Application 'payment-service' rolled back to revision 1
+
+# 3. После устранения инцидента выполняется git revert и возвращается auto-sync:
+argocd app set payment-service --sync-policy automated --auto-prune --self-heal
+```
+
+**Во Flux:**
+Во Flux команда `rollback` отсутствует для обычных манифестов (так как контроллер сразу перезапишет состояние). Процедура аварийной заморозки:
 
 ```bash
-# === Общий принцип для обоих инструментов: откат = git revert ===
-cd infra-gitops && git revert <commit-sha> && git push
-# → ArgoCD/Flux обнаружат возврат версии и сами вернут прежнее состояние кластера
+# 1. Замораживаем цикл реконсиляции (останавливается детекция и коррекция дрейфа):
+flux suspend kustomization payment-service
+# → ► suspending kustomization payment-service in flux-system namespace
+# → ✔ kustomization suspended
 
-# === Специфика ArgoCD ===
-argocd app history billing-api
-# → ID  REVISION
-# → 3   HEAD (abc123def)   ← текущая
-# → 2   HEAD (987654fed)   ← предыдущая
-argocd app rollback billing-api 2
-# ВНИМАНИЕ: при включенном auto-sync следующая реконсиляция отменит ручной откат —
-# сначала отключите: argocd app set billing-api --sync-policy none
-# штатный путь — всегда git revert
+# 2. Теперь SRE-инженер может вручную применить временный hotfix через kubectl:
+kubectl set image deployment/payment-service payment-api=payment-api:v2.3.9 -n payments
+# → deployment.apps/payment-service image updated
 
-# === Специфика Flux ===
-flux suspend kustomization billing-api   # заморозить, если нужно время на разбор
-# → ► suspending kustomization billing-api in flux-system namespace
-#     ✔ kustomization suspended
-flux resume kustomization billing-api    # после git revert — возобновить
-# Помните: suspended-объект НЕ корректирует дрейф; список подвисших стоит аудировать:
-flux get kustomizations | grep True   # столбец SUSPENDED
+# 3. После оформления коммита в Git возобновляем реконсиляцию:
+flux resume kustomization payment-service
+# → ► resuming kustomization payment-service in flux-system namespace
+# → ✔ kustomization resumed
+
+# 4. Принудительно запускаем немедленную сверку:
+flux reconcile kustomization payment-service --with-source
+# → ► annotating Kustomization payment-service
+# → ✔ Kustomization reconciled
 ```
 
-Во Flux дополнительно работает защита уровня Helm-релиза: при неудачном upgrade `HelmRelease` со `strategy: rollback` helm-controller сам возвращается к последней успешной ревизии — до вмешательства человека. В ArgoCD эквивалентная автоматизация достигается связкой с Argo Rollouts (см. ниже).
+---
+
+## Эксплуатация и команды
+
+### Сравнительная таблица ежедневных команд SRE/DevOps
+
+| Операция SRE | Команда Argo CD CLI | Команда Flux CLI |
+| :--- | :--- | :--- |
+| **Проверка статуса объектов** | `argocd app list`<br>`argocd app get <app>` | `flux get sources git`<br>`flux get kustomizations`<br>`flux get helmreleases -A` |
+| **Детальное описание объекта** | `argocd app get <app> --show-params` | `flux describe kustomization <name>`<br>`flux describe helmrelease <name>` |
+| **Принудительная реконсиляция** | `argocd app sync <app>`<br>`argocd app sync <app> --force` | `flux reconcile source git <name>`<br>`flux reconcile kustomization <name> --with-source` |
+| **Анализ расхождений (Diff)** | `argocd app diff <app> --server-side-generate` | `flux diff kustomization <name> --path ./overlays/prod` |
+| **Аварийная приостановка** | `argocd app set <app> --sync-policy none` | `flux suspend kustomization <name>`<br>`flux suspend helmrelease <name>` |
+| **Возобновление синхронизации** | `argocd app set <app> --sync-policy automated` | `flux resume kustomization <name>`<br>`flux resume helmrelease <name>` |
+| **Просмотр логов контроллеров** | `kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller -f` | `flux logs --level=error --all-namespaces`<br>`flux logs -f --kind=Kustomization --name=<name>` |
+| **Просмотр событий (Events)** | `kubectl get events -n argocd --sort-by='.lastTimestamp'` | `flux events --for Kustomization/<name>` |
+| **Инспекция экспортируемых метрик** | `curl -s http://argocd-metrics:8082/metrics` | `curl -s http://kustomize-controller:8080/metrics` |
+
+### Практические примеры вызова команд
+
+1. **Анализ различий перед применением (Dry-run Diff)**:
+
+```bash
+# Argo CD (сравнение желаемого состояния из Git с Live-состоянием API-сервера)
+argocd app diff payment-service --server-side-generate
+# → ===== apps/Deployment payments/payment-service ======
+# → 23c23
+# → <   replicas: 2
+# → ---
+# → >   replicas: 4
+
+# Flux (сравнение артефакта с состоянием кластера)
+flux diff kustomization payment-service --path ./deploy/overlays/production
+# → ► calculating diff for payment-service
+# → --- payments/Deployment/payment-service
+# → +++ payments/Deployment/payment-service
+# → @@ -23,1 +23,1 @@
+# → -  replicas: 2
+# → +  replicas: 4
+```
+
+2. **Диагностика ошибок через события**:
+
+```bash
+# Flux: просмотр журнала событий конкретного объекта
+flux events --for Kustomization/payment-service
+# → 2026-10-13T17:20:00Z  Normal   Progressing  Kustomization/payment-service  Processing source revision: main@sha1:a1b2c3d
+# → 2026-10-13T17:20:02Z  Warning  Failed       Kustomization/payment-service  Service/payment-service dry-run failed: port 8080 already in use
+```
+
+---
+
+## Диагностика и устранение неполадок
+
+### Сводная матрица типовых инцидентов
+
+| Симптом | Инструмент | Корневая причина | Диагностика и решение |
+| :--- | :--- | :--- | :--- |
+| **Ручные правки откатываются каждые N минут** | Flux | Непрерывная коррекция дрейфа Server-Side Apply по расписанию | Если поле должно управляться другим контроллером (HPA), добавьте JSON-путь в `spec.ignore` либо исключите поле в `DriftIgnoreRules`. Проверьте менеджера полей: `kubectl get deploy <name> -o yaml \| grep -A5 managedFields`. |
+| **Статус `OutOfSync`, но изменения не вносятся** | Argo CD | В манифесте `Application` отключен блок `automated.selfHeal` | Включите автоисправление: `argocd app set <app> --auto-prune --self-heal` либо запустите синхронизацию вручную `argocd app sync <app>`. |
+| **Ошибка `403 Forbidden` при реконсиляции** | Flux | Указанный в `spec.serviceAccountName` аккаунт не имеет прав | Изучите статус: `kubectl describe kustomization <name>`. Расширьте `Role` / `RoleBinding` в целевом namespace. Убедитесь, что манифест не создает `ClusterRole` без `ClusterRoleBinding`. |
+| **Репозиторий не найден (`not permitted`)** | Argo CD | URL репозитория отсутствует в белом списке `AppProject` | Добавьте URL репозитория в поле `spec.sourceRepos` ресурса `AppProject`, к которому привязано приложение. |
+| **«Мигание» реплик Deployment (борьба с HPA)** | Оба | Конфликт владения полем `spec.replicas` между GitOps и HPA | **Argo CD:** добавить `ignoreDifferences` для `Deployment` по пути `/spec/replicas`.<br>**Flux:** добавить `spec.ignore: [{path: "/spec/replicas"}]` в манифест `Kustomization`. |
+| **Зависание реконсиляции без сообщений об ошибках** | Flux | Объект переведен в статус `suspend: true` | Проверьте состояние: `flux get kustomizations` (столбец `SUSPENDED`). Разморозьте контроллер: `flux resume kustomization <name>`. |
+| **Ошибка валидации x509 при обращении к Git/OCI** | Оба | Самоподписанный корпоративный TLS-сертификат CA не доверен | **Argo CD:** смонтировать сертификат CA в `argocd-repo-server` и `argocd-server` (`argocd-tls-certs-cm`).<br>**Flux:** передать CA через поле `spec.certSecretRef` в манифесте `GitRepository` или `HelmRepository`. |
+| **Высокая задержка синхронизации в монорепозитории** | Оба | Полное клонирование объемной истории Git при каждом цикле | **Argo CD:** включить Shallow Cloning в `argocd-cm` (`git.shallow.clone: "true"`).<br>**Flux:** использовать OCI-артефакты (`OCIRepository`) вместо прямого клонирования Git. |
+
+### Детальные сценарии устранения неисправностей
+
+#### Сценарий А: Разрешение конфликта владения полями Server-Side Apply (Flapping с HPA)
+
+При использовании Horizontal Pod Autoscaler и фиксации числа реплик в Git контроллер GitOps и HPA начинают попеременно перезаписывать поле `spec.replicas`.
+
+**Диагностика:**
+```bash
+# Проверка менеджеров полей объекта
+kubectl get deployment payment-service -n payments -o jsonpath='{.metadata.managedFields}' | jq .
+# → Видны две конфликтующие записи:
+# → "manager": "kustomize-controller", "fieldsV1": {"f:spec": {"f:replicas": {}}}
+# → "manager": "kube-controller-manager", "subresource": "scale", "fieldsV1": {"f:spec": {"f:replicas": {}}}
+```
+
+**Решение для Argo CD:**
+```yaml
+spec:
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: payment-service
+      jsonPointers:
+        - /spec/replicas
+```
+
+**Решение для Flux (v2.9+):**
+```yaml
+spec:
+  ignore:
+    - paths:
+        - /spec/replicas
+      target:
+        kind: Deployment
+        name: payment-service
+```
+
+#### Сценарий Б: Сбой и зависание HelmRelease в состоянии `pending-upgrade`
+
+При аварийном завершении пода во время обновления Helm-релиз во Flux может зависнуть в статусе блокировки.
+
+**Диагностика:**
+```bash
+flux describe helmrelease ingress-nginx -n flux-system
+# → Status:
+# →   Conditions:
+# →     Message: another operation (install/upgrade/rollback) is in progress
+# →     Reason: UpgradeFailed
+# →     Status: False
+# →     Type: Ready
+```
+
+**Решение:**
+1. Принудительно очистить блокировку Helm Secrets:
+```bash
+# Поиск секрета текущей заблокированной ревизии
+kubectl get secrets -n ingress-nginx -l owner=helm,status=pending-upgrade
+# → sh.helm.release.v1.ingress-nginx.v4
+
+# Смена статуса на failed для разблокировки механизма remediation
+kubectl patch secret sh.helm.release.v1.ingress-nginx.v4 -n ingress-nginx \
+  --type=merge -p '{"metadata":{"labels":{"status":"failed"}}}'
+# → secret/sh.helm.release.v1.ingress-nginx.v4 patched
+```
+2. Повторная реконсиляция:
+```bash
+flux reconcile helmrelease ingress-nginx -n flux-system --force
+# → ✔ HelmRelease ingress-nginx reconciled
+```
+
+---
+
+## Лучшие практики
+
+### Рекомендации SRE и системных администраторов для On-Premise инфраструктуры
+
+1. **Архитектурная организация репозиториев**:
+   - Разделяйте репозитории исходного кода приложений и GitOps-репозитории конфигураций.
+   - Используйте двухуровневую структуру каталогов: `infrastructure/` (CRD, ingress-контроллеры, cert-manager, драйверы CSI, сетевые плагины) и `apps/` (бизнес-сервисы по окружениям `base/`, `overlays/prod`, `overlays/stage`).
+   - Системную инфраструктуру развертывайте с приоритетом Sync Waves (в Argo CD) или цепочками `dependsOn` (во Flux), гарантируя готовность операторов перед деплоем рабочих нагрузок.
+
+2. **Оптимизация нагрузки на `kube-apiserver`**:
+   - Избегайте сверхкоротких интервалов опроса Git (менее 1 минуты). В крупных кластерах с сотнями приложений одновременный опрос создает лавинообразную нагрузку на Git-сервер и API Kubernetes.
+   - Настройте отправку входящих Webhook-уведомлений от локального Git-сервера (GitLab/Gitea) на контроллеры:
+     - Для Argo CD: endpoint `/api/webhook` на `argocd-server`.
+     - Для Flux: endpoint `notification-controller` с типом ресурса `Receiver`.
+   - Увеличьте интервалы фоновой проверки дрейфа до 30–60 минут, полагаясь на мгновенную реакцию через вебхуки.
+
+3. **Hardening контроллеров и принцип наименьших привилегий**:
+   - Никогда не запускайте контроллеры GitOps от привилегированного пользователя (`root`). Используйте строгий `securityContext`:
+     ```yaml
+     securityContext:
+       runAsNonRoot: true
+       runAsUser: 10001
+       readOnlyRootFilesystem: true
+       allowPrivilegeEscalation: false
+       capabilities:
+         drop: ["ALL"]
+     ```
+   - Ограничивайте сетевой периметр с помощью `NetworkPolicy`: запретите входящий трафик к контроллерам из пространств имен приложений, разрешите только egress к `kube-apiserver` (порт 6443), корпоративному Git-серверу и OCI-реестру.
+
+4. **Аварийное восстановление (Disaster Recovery)**:
+   - При соблюдении принципов GitOps полный бэкап etcd кластера не является критически необходимым для восстановления сервисов: вся конфигурация сохранена в Git.
+   - Для Argo CD: регулярно выполняйте экспорт конфигурации в отдельное резервное хранилище утилитой `argocd-util export > argocd-backup.yaml` (сохраняет сущности `Application`, `AppProject`, настройки SSO и историю ревизий).
+   - Для Flux: при полной потере кластера достаточно запустить процедуру bootstrap на новом чистом кластере (`flux bootstrap git ...`), указав тот же репозиторий и путь. Контроллеры автоматически скачают манифесты и поднимут всю инфраструктуру с нуля.
+
+5. **Мониторинг ключевых метрик (SLO/SLI контрольной плоскости)**:
+   - В стеке Prometheus настройте сбор метрик контроллеров:
+     - **Argo CD**: `argocd_app_sync_total` (счетчик синхронизаций), `argocd_app_reconcile_count` (интенсивность сверок), `argocd_git_request_duration_seconds` (задержка обращения к Git-серверу).
+     - **Flux**: `gotk_reconcile_condition` (состояние Ready контроллеров), `gotk_reconcile_duration_seconds` (время выполнения цикла сверки).
+   - Настройте критический алерт на зависание очереди реконсиляции: если `argocd_app_reconcile_count` падает до нуля при наличии расхождений или `gotk_reconcile_condition{status="False"} > 0` в течение более 15 минут.
+
+---
 
 ## Дополнительная информация
 
-### Функциональное сравнение
+### Сводная матрица архитектурных и функциональных различий
 
-| Функция | ArgoCD | Flux |
+| Критерий | Argo CD (v3.5+) | Flux (v2.9.x) |
 | :--- | :--- | :--- |
-| **Работа с Helm** | Нативная поддержка (рендеринг на стороне сервера) | Через специализированный Helm Controller |
-| **OCI-артефакты** | Поддержка OCI как источников манифестов и чартов (нативно с v3.1+) | OCI является приоритетным транспортом (`flux push artifact`, высокая скорость, версионирование) |
-| **Автоматизация образов** | Аддон ArgoCD Image Updater (v1.x: декларативный CRD, запись в Git опциональна; аннотации — legacy) | Контроллеры Image Reflector и Automation (правка Git через маркеры) |
-| **Прогрессивный деплой** | Argo Rollouts (анализ метрик, Canary) | Flagger (интеграция с Service Mesh); рабочие конфигурации обоих — [Прогрессивная доставка в GitOps](./Concepts/progressive_delivery_gitops.md) |
-| **Уведомления** | Интегрированы в контроллер (ConfigMap `argocd-notifications-cm`, аннотации подписки на приложениях) | Отдельный notification-controller с CRD (`Provider`/`Alert`/`Receiver`) |
-| **Монорепозитории** | Shallow Git Cloning (v3.3+) ускоряет клонирование больших репозиториев | source-watcher/ArtifactGenerator (v2.9): составные артефакты из нескольких источников, меньше пересборок |
-| **Отслеживание ресурсов** | Настраиваемые методы tracking (label/annotation, configmap) в `argocd-cm` | Владение полями через SSA field managers, правила игнорирования полей |
-| **Расширяемость** | Плагины рендеринга (config management plugins), кастомные health checks | Контроллер можно заменить своим (архитектура toolkit), postBuild-подстановки |
+| **Философия** | Централизованная платформа «все-в-одном» | Модульный инструментарий (Unix-way Toolkit) |
+| **Графический интерфейс** | Полнофункциональный Web UI (diff, логи, история, синхронизация) | Отсутствует в ядре (используются CLI, k9s, FreeLens или Flux Operator UI) |
+| **Helm поддержка** | Рендеринг `helm template` на стороне сервера (без создания Helm secrets) | Нативный Helm Go SDK с сохранением состояния релиза в Secrets, `helm test`, `rollback` |
+| **OCI-артефакты** | Поддерживаются как источник чартов и манифестов (v3.1+) | OCI является базовым транспортом (`flux push artifact`, кэширование, Cosign) |
+| **Автоматизация образов** | Дополнительный контроллер Argo CD Image Updater | Встроенные контроллеры `image-reflector` и `image-automation` (коммитят теги в Git) |
+| **Уведомления** | Встроенный модуль `argocd-notifications` (ConfigMap + аннотации) | Выделенный контроллер `notification-controller` (`Provider`, `Alert`, `Receiver`) |
+| **Работа с монорепозиториями** | Shallow Clone (`git.shallow.clone: "true"`), выборочная генерация манифестов | `source-controller` с поддержкой `.sourceignore` и составных OCI-артефактов |
+| **Прогрессивная доставка** | Интеграция с Argo Rollouts (Canary, Blue-Green, AnalysisTemplate) | Интеграция с Flagger (Canary, A/B Testing, интеграция с Ingress-контроллерами) |
 
-### Актуальное состояние (август 2026)
+### Критерии выбора инструмента для On-Premise инфраструктуры
 
-*   **Управляемые сервисы:** Amazon EKS Capability for Argo CD (запуск в конце 2025) предоставляет полностью управляемый Argo CD, работающий вне кластеров в сервисных аккаунтах AWS: масштабирование, обновления, кросс-аккаунтные подключения через EKS Access Entries, SSO через IAM Identity Center, нативные интеграции с ECR/Secrets Manager/CodeConnections; с августа 2026 поддерживается тонкая настройка через стандартный `argocd-cm`. Со стороны Azure исторически доступно управляемое расширение Flux для AKS, а с марта 2026 в public preview вышло и расширение Argo CD для AKS/Azure Arc (Workload Identity к ACR/Azure DevOps, SSO через Entra ID, сборки на Azure Linux). Итог: обе облачные платформы теперь предлагают управляемыми ОБА инструмента, что снимает последний аргумент «операционной сложности» при выборе.
-*   **OCI-ориентированность:** Оба инструмента окончательно перешли на OCI-репозитории как основной способ доставки манифестов, что снизило нагрузку на Git-серверы в крупных организациях. Во Flux это выражается приоритетом `OCIRepository` и командой `flux push artifact`; в ArgoCD — нативными OCI-источниками чартов и манифестов (v3.1+).
-*   **Безопасность цепочки поставок:** Верификация подписей стала штатной частью конвейера, но остается настраиваемой: во Flux — поле `spec.verify` (Cosign-подписи OCI-артефактов, GPG/SSH-подписи Git-коммитов; image-automation-controller умеет подписывать собственные коммиты); в ArgoCD — Source Integrity (v3.5) блокирует синхронизацию коммитов без доверенной GPG-подписи, добавлен взаимный mTLS между внутренними компонентами. Политики admission (Kyverno/Gatekeeper) дополняют картину на уровне образов.
-*   **Эксплуатация крупных флотов:** ArgoCD развивает шардирование application-controller и Progressive Sync в ApplicationSet; Flux отвечает Flux Operator'ом — декларативное управление инстансами (`FluxInstance`), шардирование реконсиляции, шаблонизация наборов ресурсов (`ResourceSet`).
-
-### Типовые проблемы и их решение
-
-| Симптом | Инструмент | Причина | Решение |
-| :--- | :--- | :--- | :--- |
-| Ручные правки исчезают каждые N минут | Flux | Коррекция дрейфа — часть каждого цикла реконсиляции | Перенести изменение в Git либо добавить поле в `spec.ignore`; проверить владельца поля: `kubectl get deploy -n billing -o yaml \| grep -A5 managedFields` |
-| Статус OutOfSync, но ничего не происходит | ArgoCD | Auto-sync/selfHeal не включены | Включить `automated.selfHeal` в `syncPolicy` либо синхронизировать вручную `argocd app sync` |
-| `forbidden` в статусе `Kustomization` | Flux | Impersonated ServiceAccount не имеет прав на целевые ресурсы | Расширить RoleBinding в рамках политики; убедиться, что манифесты не создают cluster-scoped объекты без прав |
-| `Application` не видит репозиторий | ArgoCD | Репозиторий не входит в `sourceRepos` проекта | Добавить URL в `AppProject.spec.sourceRepos` или сменить проект |
-| Реконсиляция не идет, статус Ready=False без ошибок | Flux | `spec.suspend: true` | `flux get kustomizations` (столбец SUSPENDED), затем `flux resume` |
-| Откат через CLI отменяется сам собой | Оба | Автосинхронизация возвращает состояние из Git | Единственный устойчивый откат — `git revert`; CLI-откат допустим только с временной приостановкой автосинхронизации |
-| Конфликт полей с HPA (replicas мигает) | Оба | Два менеджера борются за одно поле | ArgoCD: `ignoreDifferences` в Application; Flux: `spec.ignore`/DriftIgnoreRules с привязкой к field manager |
-| Медленная обработка большого монорепозитория | ArgoCD / Flux | Полное клонирование Git / пересборка артефактов | ArgoCD: Shallow Cloning (v3.3+); Flux: source-watcher с составными артефактами (v2.9) |
-
-### Критерии выбора
-
-| Ситуация | Рекомендация | Обоснование |
+| Ситуация и профиль команды | Рекомендуемый инструмент | Обоснование выбора |
 | :--- | :--- | :--- |
-| Команда с сильной визуальной культурой, платформа для разработчиков | ArgoCD | Web UI снижает порог входа, diff и история видны без терминала |
-| Минимальный след в кластере, edge/multi-tenant кластеры | Flux | Контроллеры потребляют мало ресурсов, ставится подмножество компонентов |
-| Жесткие требования к мультитенантности с централизованным аудитом | ArgoCD | AppProject дает единую точку контроля проектов и встроенный RBAC с SSO |
-| Нативная работа с SOPS и «чистым» Kubernetes-RBAC | Flux | Расшифровка встроена в kustomize-controller; изоляция через impersonation без собственных абстракций |
-| Fleet из десятков кластеров на одной облаке | Управляемый сервис | EKS Capability for Argo CD / расширения AKS снимают эксплуатацию control plane |
-| Автоматические автообновления патчей чартов в заданном диапазоне | Flux | Диапазон semver в HelmRelease + автоматический rollback helm-controller |
-| Строгий PR-процесс продвижения версий между средами | Любой / ArgoCD чуть удобнее | Явный `targetRevision` в Application естественно проходит code review |
+| **Платформенная команда обслуживает сотни прикладных разработчиков** | **Argo CD** | Наличие интуитивного Web UI резко снижает порог входа, позволяет разработчикам самостоятельно отслеживать статус развертывания, анализировать diff и смотреть логи без выдачи прямого доступа к `kubectl`. |
+| **Строгие требования к потреблению ресурсов, Edge-кластеры, bare-metal узлы** | **Flux** | Минимальный footprint контроллеров (от 150 МБ RAM на весь стек против 1.5–3 ГБ у Argo CD с Redis и UI), отсутствие внешних зависимостей. |
+| **Жесткие регламенты мультитенантности и корпоративного аудита** | **Argo CD** | `AppProject` предоставляет готовую консолидированную матрицу прав доступа, белые списки ресурсов и прямую привязку к группам корпоративного OIDC (Keycloak). |
+| **Команда со зрелой культурой Kubernetes и терминального администрирования** | **Flux** | Полная декларативность через стандартные CRD и `kubectl`, прозрачная интеграция с ServiceAccount impersonation, отсутствие скрытых абстракций. |
+| **Глубокое использование Helm со сложными lifecycle hooks и автооткатом** | **Flux** | `helm-controller` обеспечивает 100% совместимость с оригинальным поведением Helm CLI, включая автоматический rollback при сбое тестов или health-check. |
+| **Необходимость нативного шифрования секретов в Git без внешних операторов** | **Flux** | Встроенный модуль расшифровки Mozilla SOPS в `kustomize-controller` исключает необходимость обслуживания дополнительных операторов. |
 
-Инструменты не взаимоисключающие: распространена гибридная схема — ArgoCD в центральном hub-кластере для прикладных команд, Flux в периферийных/edge-кластерах для системных компонентов. Общая методология описана в [Обзоре методологии GitOps](./GitOps_overview.md).
+**Гибридный подход:** В крупных корпоративных средах часто применяется комбинированная архитектура:
+- **Flux** используется системными инженерами как фундамент кластера для развертывания системных сервисов (CSI, CNI, ingress-nginx, cert-manager, мониторинг) сразу после создания кластера через bootstrap.
+- **Argo CD** развертывается поверх кластера как портал самообслуживания (Developer Platform) для продуктовых команд и микросервисов.
 
-**Связанные документы:**
-- [Обзор методологии GitOps](./GitOps_overview.md) — фундаментальные принципы.
-- [Обзор ArgoCD](./ArgoCD/argocd_overview.md) — детальная архитектура.
-- [Обзор Flux](./flux.md) — модульный подход и контроллеры.
+---
 
-**Официальные ресурсы:** [Argo Project](https://argoproj.github.io/), [Flux Community](https://fluxcd.io/).
+### Связанные документы
+
+- [Обзор методологии GitOps](./GitOps_overview.md) — фундаментальные принципы декларативной инфраструктуры, pull-модели и контроля дрейфа.
+- [Обзор Flux](./flux.md) — детальное руководство по архитектуре GitOps Toolkit, контроллерам и спецификациям CRD.
+- [Обзор Argo CD](./ArgoCD/argocd_overview.md) — архитектура компонентов, жизненный цикл синхронизации и управление приложениями.
+- [Управление мультитенантностью в Argo CD](./ArgoCD/argocd_multi_tenancy.md) — детальная настройка AppProject, ролей и OIDC-маппинга.
+- [Диагностика и мониторинг Argo CD](./ArgoCD/argocd_troubleshooting_and_monitoring.md) — сбор метрик Prometheus, трассировка и отладка компонентов.
+- [Синхронизация и хуки в Argo CD](./ArgoCD/synchronization.md) — волновой деплой (Sync Waves), хуки жизненного цикла и Server-Side Apply.
+- [Управление секретами в GitOps](./secrets_encryption.md) — подробное сравнение SOPS, Sealed Secrets и External Secrets Operator.
+- [Организация монорепозиториев во Flux](./Concepts/flux_monorepo_organization.md) — структуры каталогов, пути Kustomization и оптимизация сборки.
+- [Прогрессивная доставка в GitOps](./Concepts/progressive_delivery_gitops.md) — канареечные релизы через Argo Rollouts и Flagger.
+- [Мультикластерные паттерны](./Concepts/multi_cluster_patterns.md) — архитектура распределения приложений по нескольким кластерам.
+- [Оповещения в GitOps](./gitops_notifications.md) — настройка webhook-уведомлений в мессенджеры и корпоративные чаты.
+
+### Официальные ресурсы
+
+- [Документация Argo CD](https://argo-cd.readthedocs.io/)
+- [Документация Flux Community](https://fluxcd.io/docs/)
+- [Спецификация Open Container Initiative (OCI)](https://opencontainers.org/)
+- [Репозиторий Mozilla SOPS](https://github.com/getsops/sops)
