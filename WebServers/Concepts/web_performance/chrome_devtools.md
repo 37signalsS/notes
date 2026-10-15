@@ -1,623 +1,572 @@
 # Chrome DevTools для анализа производительности
 
+**Актуально для:** Chrome / Chromium 120+ (CDP 1.3+)
+
 ## Определения
 
-**Chrome DevTools** — встроенный в браузер Chrome (и другие Chromium-браузеры: Edge, Brave, Opera) набор инструментов веб-разработчика. Является ключевым инструментом для глубокого анализа, профилирования и отладки производительности фронтенд-части веб-приложений.
+**Chrome DevTools** — встроенный в браузер Chromium набор инструментов разработчика и системного инженера. Позволяет исследовать поведение клиентского сетевого стека, профилировать рендеринг, анализировать распределение времени в Main Thread и инспектировать заголовки HTTP/2 и HTTP/3.
 
-**Chrome DevTools Protocol (CDP)** — протокол низкого уровня для управления Chromium. Позволяет автоматизировать браузер: захватывать трассировки, делать скриншоты, собирать метрики и управлять сетью без GUI. Используется Puppeteer, Playwright и кастомными CI-скриптами.
+**Chrome DevTools Protocol (CDP)** — бинарный и текстовый (JSON-RPC 2.0 поверх WebSocket) протокол управления браузером на низком уровне. Обеспечивает программный сбор метрик, снятие дампов трассировки, эмуляцию сетевых профилей и автоматизированную генерацию HAR-файлов в CI/CD без графической оболочки.
 
-**Remote Debugging** — режим, при котором Chrome открывает порт для внешнего подключения. Позволяет подключаться к запущенному в headless-режиме экземпляру браузера через CDP для диагностики.
+**Headless Mode** — режим исполнения Chromium без графического сервера (X11/Wayland). Начиная с Chrome 112+ (актуальный режим `--headless=new`), запускает полноценный движок браузера со всеми возможностями DevTools, поддержкой WebGPU/WebGL (через программный рендеринг SwiftShader), печатью в PDF и сбором сетевых логов.
 
-**Headless Mode** — запуск Chrome без графического интерфейса. В 2026 году headless Chrome поддерживает все вкладки DevTools (Network, Performance, Lighthouse) через CDP и `--remote-debugging-port`.
+**Remote Debugging** — функционал Chromium, открывающий HTTP/WebSocket интерфейс для удаленного подключения к DevTools Backend. Позволяет подключать локальный GUI DevTools к браузеру, работающему на удаленном сервере или в изолированном Docker-контейнере.
 
-**HAR (HTTP Archive)** — формат для экспорта сетевых запросов. Используется для офлайн-анализа, сравнения версий и передачи данных между инструментами.
+**HAR (HTTP Archive)** — стандартизированный JSON-формат для экспорта структуры сетевых сессий. Содержит полные данные обо всех запросах: заголовки, куки, тайминги каждого этапа сокета (DNS, TCP, TLS, TTFB), размеры передаваемых данных и код ответа.
+
+**Waterfall (Водопадная диаграмма)** — графическая хронология выполнения сетевых запросов страницы, отображающая зависимость ресурсов, параллелизм очередей браузера и фазы жизненного цикла соединений.
+
+**Server-Timing** — стандартизированный HTTP-заголовок (`RFC Server-Timing`), транслирующий внутренние серверные метрики (длительность запросов к БД, обращения к кэшу, обработка в middleware) в клиентский браузер для отображения на вкладке Network.
+
+**Лабораторные замеры (Synthetic / Lab Data)** — измерения производительности в строго контролируемой и воспроизводимой среде с фиксированными параметрами CPU и пропускной способности сети. В отличие от RUM (Real User Monitoring), синтетические замеры служат для раннего обнаружения регрессий до попадания кода к реальным пользователям.
+
+---
 
 ## Основные концепции
 
-### Архитектура и принцип работы
+### Архитектура Chrome DevTools и протокол CDP
 
-DevTools состоит из двух частей:
-1. **Frontend (Inspector)** — панель инструментов, открываемая в браузере (`F12`).
-2. **Backend (Target)** — встроенный сервер в самом Chrome, принимающий команды по CDP на порту `9222` (при включенном remote debugging).
+DevTools построен по клиент-серверной архитектуре:
 
-При обычном использовании обе части работают в одном процессе. При **remote debugging** backend доступен по сети, что позволяет:
-- Подключаться к запущенному на сервере экземпляру Chrome из локального браузера.
-- Собирать трассировки и HAR на production-подобном окружении без установки GUI.
-- Интегрировать DevTools в CI-пайплайны через Puppeteer, Playwright или прямой CDP.
+1. **Inspector (Frontend):** Web-приложение (HTML/TypeScript/CSS), отрисовывающее интерфейс панелей Network, Performance, Application, Console.
+2. **Target (Backend):** Встроенный в процесс Chromium сервер отладки, экспортирующий API движков Blink и V8.
+3. **Канал связи:** Сообщения в формате JSON-RPC 2.0 передаются по WebSocket-соединению (`ws://127.0.0.1:9222/devtools/page/<target_id>`).
 
-### Открытие и подготовка к диагностике
+```
++--------------------------------------------------------------+
+|                     Chromium Process                         |
+|  +---------------------+        +-------------------------+  |
+|  | Blink Engine (DOM)  |        | V8 Engine (JS Execution)|  |
+|  +----------+----------+        +------------+------------+  |
+|             |                                |               |
+|             +----------------+---------------+               |
+|                              |                               |
+|                  +-----------v-----------+                   |
+|                  |  DevTools Backend     |                   |
+|                  |  (CDP Domains Host)   |                   |
+|                  +-----------+-----------+                   |
++------------------------------|-------------------------------+
+                               | WebSocket (JSON-RPC 2.0)
+                               | Port 9222
++------------------------------v-------------------------------+
+|                      DevTools Client                         |
+|  [ Chrome GUI (F12) / Puppeteer / Playwright / websocat ]    |
++--------------------------------------------------------------+
+```
 
-**Открытие:** `F12` или `Ctrl+Shift+I` (`Cmd+Opt+I` на macOS). Для профессионального тестирования:
-- Использовать режим инкогнито (`Ctrl+Shift+N`) для исключения влияния расширений.
-- Выносить DevTools в отдельное окно (`Undock into separate window`), чтобы область просмотра (viewport) соответствовала реальному устройству.
-- Отключать кэш (чекбокс **Disable cache** во вкладке Network) для «холодного» визита.
+Архитектура протокола разделена на функциональные домены (Domains):
+- **Network:** Перехват событий сетевого стека (`Network.requestWillBeSent`, `Network.responseReceived`, `Network.loadingFinished`), установка блокировок (`Network.setBlockedURLs`) и эмуляция сетевых задержек (`Network.emulateNetworkConditions`).
+- **Page:** Жизненный цикл документа (`Page.navigate`, `Page.loadEventFired`), создание скриншотов (`Page.captureScreenshot`) и печать (`Page.printToPDF`).
+- **Performance / Tracing:** Запуск низкоуровневой трассировки подсистем Chromium (`Tracing.start`, `Tracing.end`), сбор метрик производительности (`Performance.getMetrics`).
+- **HeapProfiler / Profiler:** Снятие дампов памяти V8 Heap Snapshot и замер процессорного времени JavaScript.
+- **Emulation:** Управление CPU throttling (`Emulation.setCPUThrottlingRate`), размером экрана и Device Pixel Ratio.
+- **Security:** Валидация сертификатов TLS, проверка смешанного содержимого (Mixed Content) и обработка ошибок рукопожатия.
 
-### Мобильная эмуляция (Device Toolbar)
+---
 
-Инструмент имитации условий использования сайта конечными пользователями:
-- **Выбор устройства:** Эмуляция конкретных моделей (iPhone, Pixel) или режим `Responsive`. Настройка DPR (Device Pixel Ratio).
-- **CPU Throttling:** Искусственное замедление CPU (4x, 6x, 20x). Замедление 4–6x соответствует среднему Android-устройству.
-- **Network Throttling:** Ограничение полосы и имитация задержек. Пресеты: Fast 4G, Slow 4G, 3G, Offline. Возможно создание пользовательских профилей с настройкой потери пакетов (Packet Loss).
-- **Режимы:** `Offline` для тестирования PWA и Service Workers.
+### Механика сетевых таймингов Network Waterfall
 
-### Вкладка Network — анализ загрузки ресурсов
+Каждый сетевой ресурс, отображаемый на вкладке Network, проходит строгую последовательность фаз. Понимание этих фаз критично для SRE при расследовании задержек:
 
-#### Базовые настройки и управление
+```
+[ Request Queuing / Stalled ]
+             │
+             ▼
+      [ DNS Lookup ]
+             │
+             ▼
+    [ TCP Connection ]
+             │
+             ▼
+    [ TLS Handshake ]
+             │
+             ▼
+      [ Request Sent ]
+             │
+             ▼
+[ Waiting for Server Response (TTFB) ]
+             │
+             ▼
+    [ Content Download ]
+```
 
-- **Disable Cache:** Принудительное отключение кэша браузера. Обязательно для имитации «холодного» визита.
-- **Preserve Log:** Сохранение истории запросов при переходах между страницами.
-- **HAR:** Экспорт (`Export HAR...`) и импорт файлов HTTP Archive для совместной отладки или сравнения с WebPageTest.
-- **Поиск (Ctrl+F):** Глобальный поиск подстроки во всех ресурсах (включая заголовки и тело ответа).
+1. **Queuing (Очередь):**
+   - Запрос ожидает постановки в сетевой поток.
+   - *Причина задержки в HTTP/1.1:* Превышен лимит браузера в 6 одновременных TCP-соединений на один домен (Origin).
+   - *Причина в HTTP/2 и HTTP/3:* Высокоприоритетные запросы вытесняют низкоприоритетные при исчерпании лимита параллельных потоков (`SETTINGS_MAX_CONCURRENT_STREAMS`).
+2. **Stalled (Зависание):**
+   - Время от постановки запроса в очередь до фактического выделения сокета. Включает время на согласование прокси-соединений и выделение дискового дескриптора.
+3. **DNS Lookup (Разрешение имен):**
+   - Время обращения к локальному resolver или DNS-серверу. Для повторных соединений к уже разрешенному Origin равно 0 мс (берется из DNS-кэша браузера).
+4. **Initial Connection (Установка TCP-соединения):**
+   - Длительность 3-way handshake (SYN -> SYN-ACK -> ACK). Равна 1 RTT (Round Trip Time) между клиентом и ближайшим сетевым шлюзом/сервером.
+5. **SSL / TLS Handshake:**
+   - Согласование шифров и обмен ключами. Для TLS 1.2 занимает 2 RTT, для TLS 1.3 — 1 RTT (или 0-RTT при session resumption).
+6. **Request Sent:**
+   - Время физической записи байтов HTTP-запроса в сокет. Обычно составляет доли миллисекунды; рост указывает на отправку тяжелого POST-тела через канал с медленным Uplink.
+7. **Waiting for server response (TTFB — Time to First Byte):**
+   - Время от завершения отправки запроса до получения первого байта ответа.
+   - *Состав TTFB:* Сетевая задержка до сервера + задержка на обратном прокси (Nginx/Angie/HAProxy) + время генерации страницы приложением/БД + сетевая задержка доставки первого пакета обратно.
+8. **Content Download:**
+   - Время выкачивания тела ответа из сокета. Зависит от пропускной способности канала (Bandwidth), включенного сжатия (Brotli/Zstd/Gzip) и размера ассета.
 
-#### Фильтрация и параметры отображения
+---
 
-- **Типы ресурсов:** Doc (HTML), CSS, JS, Img, Font, Fetch/XHR, WS (WebSockets).
-- **Priority (Приоритет):** Внутренний приоритет браузера (Highest, High, Medium, Low). Неправильное распределение (например, низкий приоритет для LCP-изображения) ухудшает Core Web Vitals.
-- **Protocol (Протокол):** Идентификация версий: `h2` (HTTP/2), `h3` (HTTP/3), `http/1.1`.
-- **Content Encoding (Сжатие):** Проверка работы сжатия на сервере (Brotli `br`, Gzip `gzip`, Zstd).
-- **Shared Dictionaries:** В 2026 году панель отображает использование `Use-As-Dictionary` (RFC 9509) для оптимизации повторных загрузок.
+### Расшифровка бэкенд-таймингов через Server-Timing
 
-#### Анализ Waterfall (Водопад)
+Для разделения сетевого времени и реального времени обработки на бэкенде используется заголовок `Server-Timing`. Браузер Chromium автоматически парсит этот заголовок и визуализирует его на вкладке Network внутри вкладки **Timing**:
 
-Графическая визуализация жизненного цикла каждого запроса:
-- **Queuing:** Время ожидания в очереди (особенно актуально для HTTP/1.1 из-за лимита в 6 соединений на домен).
-- **DNS Lookup:** Время разрешения доменного имени.
-- **Initial Connection / SSL:** Установка TCP-соединения и TLS-хендшейка.
-- **TTFB (Time to First Byte):** Время от отправки запроса до получения первого байта ответа. Высокий TTFB указывает на проблемы на стороне сервера или базы данных.
-- **Content Download:** Время физической передачи данных по сети.
+```http
+HTTP/2 200 OK
+content-type: text/html; charset=UTF-8
+server-timing: cdn-cache;desc="HIT", edge;dur=4.2, app;dur=48.5, db;dur=22.1
+```
 
-#### Анализ размеров и таймингов
+В интерфейсе DevTools строка TTFB разделяется на сегменты: системный инженер сразу видит, сколько миллисекунд ушло на запрос к базе данных, сколько выполнялся код приложения и какую часть составила сетевая задержка.
 
-- **Transfer Size:** Объем данных, переданных в сжатом виде по сети.
-- **Resource Size:** Реальный размер файла после распаковки браузером.
-- **Waterfall Markers:** Цветные вертикальные линии: синяя — `DOMContentLoaded`, красная — `Load`. В новых версиях добавлены маркеры FCP и LCP.
+---
 
-#### Блокировка ресурсов (Network Request Blocking)
+### DevTools Network Throttling vs Traffic Control ОС
 
-Доступна через меню `...` → `More Tools`. Позволяет блокировать отдельные файлы или домены (паттерны типа `*.doubleclick.net`). Основной метод тестирования **SPOF (Single Point of Failure)**.
+При проведении синтетических тестов важно понимать архитектурное ограничение встроенного троттлинга DevTools:
 
-### Вкладка Performance — профилирование производительности
+| Параметр | DevTools Throttling (CDP Emulation) | Эмуляция ядра Linux (`tc-netem`) |
+| :--- | :--- | :--- |
+| **Уровень работы** | Прикладной уровень (Application layer, HTTP-клиент Chromium) | Сетевой стек ядра (Network/Transport layer, qdisc) |
+| **Реализация задержки** | Задержка передачи колбэков внутри event loop браузера | Буферизация и задержка IP-пакетов в кольцевом буфере |
+| **Эмуляция Packet Loss** | **Не поддерживается** (только через обрыв потока) | **Поддерживается** реальный процент потери пакетов |
+| **TCP Congestion Window** | Игнорируется (алгоритмы BBR/Cubic работают без учета дропов) | Корректно моделируется реакция алгоритма TCP на дропы |
+| **HTTP/3 QUIC поведение** | Эмулируется приблизительно | Корректно тестирует восстановление UDP-потоков |
+| **Назначение** | Быстрая предварительная отладка фронтенда | Достоверные SRE-бенчмарки и нагрузочное тестирование |
 
-Главный инструмент для анализа рендеринга и выполнения JavaScript в основном потоке (Main Thread).
+---
 
-#### Режимы записи
+### Анализ Main Thread и метрик рендеринга
 
-- **Reload:** Запись профиля при загрузке страницы с нуля.
-- **Record (Ctrl+E):** Запись произвольного сценария (прокрутка, открытие модального окна).
+Вкладка **Performance** визуализирует загрузку главного потока рендеринга (Main Thread). Для SRE-инженера критичны следующие события:
 
-#### Анализ основного потока и Flame Graph
+- **Long Tasks (> 50 мс):** Неделимые блоки выполнения JavaScript. Если задача выполняется дольше 50 мс, страница перестает реагировать на ввод пользователя (клики, прокрутку), что напрямую ухудшает метрику **INP (Interaction to Next Paint)** и **TBT (Total Blocking Time)**.
+- **Recalculate Styles & Layout (Reflow):** Вычисление геометрии и позиционирования DOM-элементов. Частые пересчеты макета приводят к проседанию FPS и нестабильности разметки (**CLS — Cumulative Layout Shift**).
+- **Composite Layers & Paint:** Отрисовка пикселей на слоях графического процессора. Высокая нагрузка на фазе Paint часто вызвана тяжелыми CSS-фильтрами или непрерывной анимацией неаппаратных свойств.
 
-Визуализация активности Main Thread с цветовой кодировкой:
-- **Жёлтый:** Выполнение JavaScript (скриптинг).
-- **Фиолетовый:** Расчет стилей (Recalculate Styles) и компоновка макета (Layout/Reflow).
-- **Зелёный:** Отрисовка (Paint) и работа композитора (Composite Layers).
-- **Серый:** Системные задачи и время простоя (Idle).
-
-#### Метрики и диагностика
-
-- **Long Tasks:** Задачи длительностью более 50 мс. Большое количество Long Tasks — прямой путь к плохим показателям TBT и INP.
-- **Call Tree / Bottom-Up:** Списки функций, отсортированные по времени выполнения. **Self Time** — время внутри функции, **Total Time** — с учетом дочерних вызовов.
-- **Interactions (Взаимодействия):** Дорожка для анализа **INP (Interaction to Next Paint)**. Позволяет увидеть задержку ввода, время обработки и задержку отрисовки ответа.
-- **Live Metrics:** Панель реального времени, сравнивающая текущие показатели LCP, CLS и INP с полевыми данными CrUX для данного URL.
-
-### Вкладка Application — хранилище и спекулятивная загрузка
-
-- **Speculative Loads (Спекулятивные загрузки):** Раздел для отладки **Speculative Rules API**. Показывает статус пререндеринга (Prerender) и префетчинга (Prefetch) страниц, а также причины их возможной отмены.
-- **Service Workers:** Отладка жизненного цикла, пуш-уведомлений и фоновой синхронизации.
-- **Storage:** Управление Cookies, LocalStorage, IndexedDB и очистка всех данных (Clear site data).
-
-### Вкладка Lighthouse — автоматический аудит
-
-Инструмент для высокоуровневой оценки сайта по 100-балльной шкале.
-
-- **Категории:** Performance, Accessibility, Best Practices, SEO, PWA.
-- **Режимы:** `Navigation` (загрузка), `Timespan` (интервал взаимодействия), `Snapshot` (состояние).
-- **Throttling (Троттлинг):**
-  - **Simulated:** Математическая модель (быстро, но может ошибаться при сложных JS-зависимостях).
-  - **DevTools (Throttling):** Реальное ограничение ресурсов (дольше, но точнее).
-- **Opportunities:** Рекомендации по оптимизации (сжатие изображений, удаление неиспользуемого CSS).
-- **Diagnostics:** Дополнительные сведения: критические цепочки запросов, размер DOM-дерева, время выполнения сторонних скриптов.
-
-### Вкладка Recorder — автоматизация замеров
-
-Позволяет записывать, воспроизводить и измерять производительность пользовательских сценариев (User Flows).
-
-- **Запись:** Фиксация кликов, прокрутки и ввода данных.
-- **Performance Trace:** Кнопка `Measure performance` запускает сценарий и автоматически переходит во вкладку Performance для детального анализа.
-- **Экспорт:** Поддержка Puppeteer, Playwright и JSON для интеграции в CI-пайплайны.
-
-### Дополнительные инструменты (More Tools)
-
-#### Rendering (Отрисовка)
-
-- **Layout Shift Regions:** Подсветка синим элементов, которые сдвигаются (причина высокого CLS).
-- **Paint Flashing:** Зеленая подсветка областей, которые браузер перерисовывает в данный момент.
-- **Frame Rendering Stats:** Оверлей с графиком FPS и использованием GPU памяти.
-- **Core Web Vitals Overlay:** Плавающее окно с текущими значениями LCP/CLS/INP поверх страницы.
-
-#### Coverage (Охват кода)
-
-Анализ использования CSS и JS. Показывает, сколько байт кода было фактически выполнено.
-- **Красные полоски:** Код не использовался на данной странице.
-- **Применение:** Идентификация «мертвого» кода в бандлах и стилях фреймворков для настройки Code Splitting.
-
-#### Memory (Память)
-
-- **Heap Snapshot:** Снимок кучи для поиска утечек памяти. Сравнение двух снимков позволяет увидеть объекты, которые не были собраны Garbage Collector-ом.
-- **Allocation Instrumentation:** Профилирование выделения памяти в реальном времени.
+---
 
 ## Практические сценарии
 
-### Сценарий: аудит критического пути рендеринга (CRP)
+### Сценарий 1: Запуск Headless Chromium в Linux и Docker
 
-1. Откройте вкладку **Network**, установите **Disable Cache**.
-2. Перезагрузите страницу и найдите ресурсы с приоритетом `Highest` (HTML, CSS в `<head>`).
-3. Проверьте Waterfall на наличие больших пауз перед началом загрузки CSS.
-4. Убедитесь, что JS-файлы в `<head>` имеют атрибуты `async` или `defer`, иначе они блокируют CRP (Waterfall покажет паузу в отрисовке до завершения загрузки JS).
+На серверах без X-сервера Chromium требует строгого набора флагов для предотвращения падений из-за исчерпания разделяемой памяти и ограничений безопасности cgroups.
 
-### Сценарий: диагностика высокого INP (Interaction to Next Paint)
-
-1. Во вкладке **Performance** включите **CPU Throttling 4x**.
-2. Нажмите **Record**, выполните проблемное действие (например, открытие фильтров в каталоге).
-3. Остановите запись. Найдите дорожку **Interactions**.
-4. Кликните по красному блоку взаимодействия. В нижней панели изучите:
-   - **Input Delay:** Время ожидания из-за занятости Main Thread другими задачами.
-   - **Processing Duration:** Время выполнения вашего обработчика события.
-   - **Presentation Delay:** Время, затраченное на отрисовку результата (Layout/Paint).
-
-### Сценарий: поиск причин прыжков макета (CLS)
-
-1. В панели **Rendering** включите **Layout Shift Regions**.
-2. Взаимодействуйте со страницей (прокрутка, клики по табам).
-3. При появлении синих вспышек зафиксируйте, какой элемент сдвигается.
-4. В профиле **Performance** найдите событие `Layout Shift`, в блоке `Summary` будет указано значение сдвига и список виновных элементов (Nodes).
-
-### Сценарий: отладка спекулятивной загрузки (Prerender)
-
-1. Откройте вкладку **Application** → **Speculative Loads**.
-2. Убедитесь, что правила (Rules) загружены корректно.
-3. Наведите на ссылку, подпадающую под правила.
-4. Проверьте статус в таблице: `Success` означает, что страница уже отрендерена в фоне и переход будет мгновенным.
-
-### Сценарий: удаленная диагностика через Remote Debugging
-
-Позволяет подключаться к Chrome на удаленном сервере или в контейнере:
+#### Подготовка окружения Debian/Ubuntu
 
 ```bash
-# Запуск Chrome с открытым портом отладки
-google-chrome \
-  --headless \
+# Установка зависимостей Chromium и утилит
+sudo apt-get update && sudo apt-get install -y \
+  chromium \
+  chromium-common \
+  dumb-init \
+  fonts-liberation \
+  libasound2t64 \
+  libnspr4 \
+  libnss3 \
+  curl \
+  jq
+
+# Проверка версии установленного браузера
+chromium --version
+# → Chromium 128.0.6613.119 built on Debian 12
+```
+
+#### Запуск демона с безопасной изоляцией
+
+```bash
+# Запуск headless-процесса от непривилегированного пользователя
+chromium \
+  --headless=new \
   --remote-debugging-port=9222 \
-  --no-sandbox \
-  --disable-gpu \
-  --enable-logging \
-  --v=1 \
-  https://example.com &
-# → Chrome запущен в headless-режиме, CDP доступен на порту 9222
-
-# Проверка доступности
-curl -s http://localhost:9222/json/version | jq .
-# → {
-#     "Browser": "Chrome/125.0.6422.60",
-#     "Protocol-Version": "1.3",
-#     "User-Agent": "..."
-#   }
-
-# Получение списка открытых страниц (targets)
-curl -s http://localhost:9222/json/list | jq .
-# → [
-#     {
-#       "id": "E7F7...",
-#       "title": "Example Domain",
-#       "type": "page",
-#       "url": "https://example.com/"
-#     }
-#   ]
-```
-
-### Сценарий: сбор HAR и трассировки через CDP
-
-```bash
-# Запуск Chrome с предустановленным HAR-export
-google-chrome \
-  --headless \
-  --remote-debugging-port=9222 \
-  --dump-dom \
-  https://example.com > /tmp/example.html
-
-# Получение HAR через CDP WebSocket (требуется websocat или wscat)
-websocat "ws://localhost:9222/devtools/page/E7F7..." <<'EOF'
-{"id":1,"method":"Network.enable"}
-{"id":2,"method":"Page.navigate","params":{"url":"https://example.com"}}
-{"id":3,"method":"Network.getResponseBody","params":{"requestId":"..."}}
-EOF
-
-# Альтернатива: экспорт через DevTools GUI
-# Network → Export HAR... → сохранить как example.har
-```
-
-### Сценарий: Headless Lighthouse в CI
-
-```bash
-# Установка Lighthouse
-npm install -g lighthouse
-
-# Запуск в headless-режиме через Chrome
-lighthouse https://example.com \
-  --chrome-flags="--headless --no-sandbox --disable-gpu" \
-  --output=json \
-  --output-path=/tmp/lighthouse-report.json \
-  --preset=desktop \
-  --throttling-method=simulate
-# → Generated report /tmp/lighthouse-report.json
-
-# Чтение ключевых метрик
-jq '.audits.largest-contentful-paint.displayValue' /tmp/lighthouse-report.json
-# → "2.5 s"
-```
-
-### Сценарий: скриншоты и PDF в headless-режиме
-
-```bash
-# Полный страничный скриншот
-google-chrome \
-  --headless \
-  --screenshot=/tmp/screenshot.png \
-  --window-size=1440,900 \
-  https://example.com
-# → Файл /tmp/screenshot.png сохранен
-
-# PDF-отчет
-google-chrome \
-  --headless \
-  --print-to-pdf=/tmp/page.pdf \
-  --print-to-pdf-no-header \
-  https://example.com/report
-# → Файл /tmp/page.pdf сохранен
-
-# Проверка размера PDF (не должен быть пустым)
-ls -lh /tmp/page.pdf
-# → -rw-r--r-- 1 mac wheel 245K Sep 23 12:34 /tmp/page.pdf
-```
-
-### Сценарий: сбор трассировки производительности через CDP
-
-```bash
-# Запуск Chrome с remote debugging
-google-chrome \
-  --headless \
-  --remote-debugging-port=9222 \
-  --no-sandbox \
-  https://example.com &
-CHROME_PID=$!
-
-# Получение ID target-а
-TARGET_ID=$(curl -s http://localhost:9222/json/list | jq -r '.[0].id')
-
-# Запись трассировки (через websocat или python websockets)
-# Пример на Python с playwright (рекомендуется для CI):
-python3 -c "
-import asyncio
-from playwright.async_api import async_playwright
-
-async def capture_trace():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            viewport={'width': 1440, 'height': 900},
-            user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
-        )
-        page = await context.new_page()
-        await page.route('**/*', lambda route: route.continue_())
-        await page.set_viewport_size({'width': 1440, 'height': 900})
-        await page.goto('https://example.com', wait_until='networkidle')
-        
-        # Включение трейсинга
-        client = await page.context.new_cdp_session(page)
-        await client.send('Tracing.start', {
-            'categories': 'blink,cc,devtools.timeline,disabled-by-default-devtools.timeline'
-        })
-        await page.reload(wait_until='networkidle')
-        await client.send('Tracing.end')
-        trace = await client.send('Tracing.requestMemoryDump')
-        
-        # Сохранение trace.json
-        import json
-        with open('/tmp/trace.json', 'w') as f:
-            json.dump(trace, f)
-        
-        await browser.close()
-
-asyncio.run(capture_trace())
-"
-# → Trace сохранен в /tmp/trace.json
-
-# Остановка Chrome
-kill $CHROME_PID
-```
-
-### Сценарий: диагностика утечек памяти через heap snapshots
-
-```bash
-# Открытие страницы в headless Chrome
-google-chrome \
-  --headless \
-  --remote-debugging-port=9222 \
-  --no-sandbox \
-  --disable-gpu \
-  https://example.com/app &
-CHROME_PID=$!
-
-# Ожидание загрузки
-sleep 5
-
-# Получение первого снапшота через CDP
-python3 -c "
-import asyncio
-from playwright.async_api import async_playwright
-
-async def capture_heap():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
-        await page.goto('https://example.com/app', wait_until='networkidle')
-        
-        client = await page.context.new_cdp_session(page)
-        await client.send('HeapProfiler.enable')
-        snapshot1 = await client.send('HeapProfiler.takeHeapSnapshot')
-        
-        with open('/tmp/heap-before.json', 'w') as f:
-            f.write(snapshot1)
-        
-        # Выполнение действия, которое может вызвать утечку
-        await page.click('button.load-more')
-        await page.wait_for_timeout(5000)
-        
-        snapshot2 = await client.send('HeapProfiler.takeHeapSnapshot')
-        with open('/tmp/heap-after.json', 'w') as f:
-            f.write(snapshot2)
-        
-        await browser.close()
-
-asyncio.run(capture_heap())
-"
-# → Снапшоты сохранены в /tmp/heap-before.json и /tmp/heap-after.json
-
-kill $CHROME_PID
-```
-
-### Сценарий: отладка SPOF (Single Point of Failure)
-
-1. Используйте функцию **Network Request Blocking** в DevTools.
-2. Заблокируйте домены внешних ресурсов (например, `fonts.googleapis.com`).
-3. Перезагрузите страницу и проверьте: не «зависла» ли она белым экраном до таймаута (30+ секунд).
-4. **Решение:** Настройка локального хостинга критичных ресурсов или использование `font-display: swap`.
-
-## Операции и команды
-
-### Запуск headless Chrome с remote debugging
-
-```bash
-# Базовая команда для CI/серверов
-google-chrome \
-  --headless \
-  --remote-debugging-port=9222 \
+  --remote-debugging-address=127.0.0.1 \
   --no-sandbox \
   --disable-gpu \
   --disable-dev-shm-usage \
-  --enable-logging \
-  --v=1 \
-  --user-data-dir=/tmp/chrome-profile \
-  https://example.com &
-# → Chrome запущен в headless-режиме
+  --user-data-dir=/tmp/chromium-profile \
+  --no-first-run \
+  --no-default-browser-check \
+  about:blank &
+CHROME_PID=$!
 
-# Проверка доступности CDP
-curl -s http://localhost:9222/json/version | jq '.Browser'
-# → "Chrome/125.0.6422.60"
-```
+# Проверка доступности порта через ss
+ss -tlnp | grep 9222
+# → LISTEN 0 128 127.0.0.1:9222 users:(("chromium",pid=12345,fd=45))
 
-### Получение списка открытых target-ов
-
-```bash
-# Список всех открытых страниц и воркеров
-curl -s http://localhost:9222/json/list | jq '.[] | {id, title, type, url}'
+# Запрос системной информации через HTTP API
+curl -s http://127.0.0.1:9222/json/version | jq .
 # → {
-#     "id": "E7F7...",
-#     "title": "Example Domain",
-#     "type": "page",
-#     "url": "https://example.com/"
+#     "Browser": "Chrome/128.0.6613.119",
+#     "Protocol-Version": "1.3",
+#     "User-Agent": "Mozilla/5.0 ... HeadlessChrome/128.0.6613.119 ...",
+#     "V8-Version": "12.8.374.24",
+#     "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/browser/78a9c8b3-..."
 #   }
 ```
 
-### Экспорт HAR через DevTools Protocol
+#### Запуск в Docker-контейнере
+
+```dockerfile
+# Пример безопасного Dockerfile для Chromium Headless
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    chromium \
+    fonts-noto-color-emoji \
+    dumb-init \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Создание непривилегированного пользователя
+RUN useradd -m -s /bin/bash chromeuser
+USER chromeuser
+
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+CMD ["chromium", \
+     "--headless=new", \
+     "--no-sandbox", \
+     "--disable-dev-shm-usage", \
+     "--disable-gpu", \
+     "--remote-debugging-port=9222", \
+     "--remote-debugging-address=0.0.0.0"]
+```
 
 ```bash
-# Использование playwright для HAR
-python3 -c "
+# Запуск контейнера с увеличенным размером shm и защитой PID 1
+docker run -d \
+  --name chromium-headless \
+  --init \
+  --shm-size=2gb \
+  -p 127.0.0.1:9222:9222 \
+  chromium-headless:latest
+# → 9b2d8e4f1a2c...
+```
+
+---
+
+### Сценарий 2: Удаленная отладка через SSH-туннель
+
+> [!WARNING]
+> Никогда не публикуйте порт 9222 в открытый доступ сети (`0.0.0.0`). Доступ к CDP позволяет злоумышленнику читать локальные файлы сервера, перехватывать внутренний сетевой трафик и выполнять произвольный код через контекст браузера.
+
+Для безопасного подключения используйте проброс портов через SSH:
+
+```bash
+# Выполняется на локальной рабочей станции
+ssh -N -L 9222:127.0.0.1:9222 user@target-production-server.internal
+```
+
+1. Откройте локальный браузер Chrome.
+2. Перейдите по адресу `chrome://inspect/#devices`.
+3. В секции **Discover network targets** нажмите **Configure...**.
+4. Добавьте адрес `127.0.0.1:9222` и нажмите **Done**.
+5. В списке **Remote Target** появится список страниц, запущенных на удаленном сервере. Нажмите **inspect** для открытия полнофункциональной панели DevTools.
+
+---
+
+### Сценарий 3: Захват HAR-архива и сетевых таймингов в CI через CDP
+
+Автоматизированный экспорт сессии в HAR-файл для анализа сетевых регрессий между релизами с использованием Playwright (Node.js или Python).
+
+```python
+# capture_har.py — скрипт автоматизированного сбора HAR
 import asyncio
 from playwright.async_api import async_playwright
 
-async def export_har():
+async def run_har_audit(target_url: str, output_path: str):
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu"
+            ]
+        )
         context = await browser.new_context(
-            record_har_path='/tmp/example.har',
-            record_har_mode='minimal'
+            record_har_path=output_path,
+            record_har_mode="full",
+            viewport={"width": 1920, "height": 1080}
         )
         page = await context.new_page()
-        await page.goto('https://example.com', wait_until='networkidle')
+        
+        # Переход и ожидание завершения фоновых сетевых запросов
+        response = await page.goto(target_url, wait_until="networkidle")
+        status = response.status if response else 0
+        print(f"Status Code: {status}")
+        
         await context.close()
         await browser.close()
 
-asyncio.run(export_har())
-"
-# → HAR сохранен в /tmp/example.har
-
-# Проверка HAR (размер, наличие запросов)
-ls -lh /tmp/example.har
-# → -rw-r--r-- 1 mac wheel 45K Sep 23 12:34 /tmp/example.har
-jq '.["log"].entries | length' /tmp/example.har
-# → 42
+if __name__ == "__main__":
+    asyncio.run(run_har_audit("https://example.com", "/tmp/session.har"))
 ```
 
-### Сбор метрик Core Web Vitals через CDP
-
 ```bash
-# Включение отслеживания метрик через CDP
-python3 -c "
-import asyncio
-from playwright.async_api import async_playwright
+# Запуск сбора
+python3 capture_har.py
+# → Status Code: 200
 
-async def capture_vitals():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
-        await page.goto('https://example.com', wait_until='networkidle')
-        
-        client = await page.context.new_cdp_session(page)
-        
-        # Включение отслеживания
-        await client.send('Page.enable')
-        await client.send('Performance.enable')
-        
-        # Получение метрик
-        metrics = await client.send('Performance.getMetrics')
-        for metric in metrics['metrics']:
-            if metric['name'] in ['LCP', 'CLS', 'FCP', 'FID', 'INP']:
-                print(f\"{metric['name']}: {metric['value']:.3f}\")
-        
-        await browser.close()
-
-asyncio.run(capture_vitals())
-"
-# → LCP: 1.234
-# → CLS: 0.045
-# → FCP: 0.890
+# Анализ полученного HAR через jq: подсчет запросов и суммарного трансфера
+jq '{
+  total_requests: (.log.entries | length),
+  total_bytes: ([.log.entries[].response.bodySize] | add),
+  status_codes: ([.log.entries[].response.status] | group_by(.) | map({status: .[0], count: length}))
+}' /tmp/session.har
+# → {
+#     "total_requests": 28,
+#     "total_bytes": 1458920,
+#     "status_codes": [
+#       { "status": 200, "count": 27 },
+#       { "status": 304, "count": 1 }
+#     ]
+#   }
 ```
 
-### Генерация скриншотов в CI
+---
+
+### Сценарий 4: Диагностика сетевых задержек: curl vs Chrome DevTools
+
+Частая жалоба SRE: «curl показывает отклик 50 мс, а в браузере страница грузится 2 секунды». Для выявления расхождений используется детальная разбивка таймингов.
 
 ```bash
-# Скриншот всего viewport
-google-chrome \
-  --headless \
-  --screenshot=/tmp/full.png \
-  --window-size=1440,900 \
-  https://example.com
-# → /tmp/full.png
-
-# Скриншот конкретного элемента через CDP
-python3 -c "
-import asyncio
-from playwright.async_api import async_playwright
-
-async def screenshot_element():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page(viewport={'width': 1440, 'height': 900})
-        await page.goto('https://example.com', wait_until='networkidle')
-        await page.locator('header.hero').screenshot(path='/tmp/hero.png')
-        print('Hero screenshot saved')
-        await browser.close()
-
-asyncio.run(screenshot_element())
-"
-# → Hero screenshot saved
-```
-
-### Диагностика через curl
-
-```bash
-# Полный тайминг запроса (TTFB, TLS, DNS)
+# Диагностика полного цикла сокета и TTFB через curl
 curl -o /dev/null -s -w "\
-  DNS: %{time_namelookup}s\n\
-  TCP: %{time_connect}s\n\
-  TLS: %{time_appconnect}s\n\
-  TTFB: %{time_starttransfer}s\n\
-  Total: %{time_total}s\n" https://example.com/
-# → DNS: 0.012s
-# → TCP: 0.045s
-# → TLS: 0.078s
-# → TTFB: 0.245s
-# → Total: 0.312s
-
-# Проверка заголовков производительности
-curl -sI https://example.com/ | grep -iE "cache-control|content-encoding|x-cache|age|server-timing"
-# → cache-control: public, max-age=31536000, immutable
-# → content-encoding: br
-# → x-cache: HIT
-# → age: 300
-
-# Проверка Early Hints
-curl -sI -H "Prefer: safe" https://example.com/ | head -10
-# → HTTP/2 103
-# → link: </css/main.css>; rel=preload; as=style
-
-# Проверка условного запроса (валидация кэша)
-ETAG=$(curl -sI https://example.com/api/data | grep -i etag | tr -d '\r' | awk '{print $2}')
-curl -sI -H "If-None-Match: $ETAG" https://example.com/api/data
-# → HTTP/2 304 Not Modified
+  DNS Lookup:        %{time_namelookup}s\n\
+  TCP Connect:       %{time_connect}s\n\
+  TLS Handshake:     %{time_appconnect}s\n\
+  Pre-transfer:      %{time_pretransfer}s\n\
+  Time to First Byte:%{time_starttransfer}s\n\
+  Total Time:        %{time_total}s\n\
+  HTTP Code:         %{http_code}\n" https://example.com/api/v1/status
+# → DNS Lookup:        0.004120s
+# → TCP Connect:       0.021450s
+# → TLS Handshake:     0.052180s
+# → Pre-transfer:      0.052310s
+# → Time to First Byte:0.185420s
+# → Total Time:        0.186100s
+# → HTTP Code:         200
 ```
+
+Сравнение сопоставимых параметров:
+
+| Фаза curl | Эквивалент в DevTools Waterfall | Что диагностировать при аномалии |
+| :--- | :--- | :--- |
+| `time_namelookup` | **DNS Lookup** | Локальный resolver (`/etc/resolv.conf`), DNS TTL |
+| `time_connect - time_namelookup` | **Initial Connection (TCP)** | RTT сети, пропускная способность, задержки в маршруте |
+| `time_appconnect - time_connect` | **SSL** | Версия протокола (TLS 1.3 быстрее), сертификатная цепочка |
+| `time_starttransfer - time_pretransfer` | **Waiting for server response (TTFB)** | Время работы бэкенда, очередей веб-сервера или СУБД |
+| `time_total - time_starttransfer` | **Content Download** | MTU/MSS, TCP Window scaling, размер тела ответа |
+| *Отсутствует в curl* | **Queuing / Stalled** | Блокировка пула соединений браузера (лимит 6 сокетов) |
+| *Отсутствует в curl* | **DOM Parsing / Execution** | Блокирующий JS/CSS в `<head>`, задержки в Main Thread |
+
+---
+
+### Сценарий 5: Аудит SPOF и симуляция сбоев внешних сервисов
+
+Падение внешних метрик, аналитики или шрифтов может заблокировать отрисовку страницы. Для проверки устойчивости инфраструктуры используется функционал **Network Request Blocking** (в GUI) или метод CDP `Network.setBlockedURLs`.
+
+```bash
+# Блокировка критичных доменов через CDP с помощью curl и websocat
+# 1. Создаем новую вкладку
+TARGET=$(curl -s -X PUT "http://127.0.0.1:9222/json/new?https://example.com" | jq -r .id)
+
+# 2. Отправляем команды блокировки доменов аналитики и внешних шрифтов
+websocat "ws://127.0.0.1:9222/devtools/page/$TARGET" <<'EOF'
+{"id":1,"method":"Network.enable"}
+{"id":2,"method":"Network.setBlockedURLs","params":{"urls":["*fonts.googleapis.com*","*analytics*"]}}
+{"id":3,"method":"Page.navigate","params":{"url":"https://example.com"}}
+EOF
+# → {"id":1,"result":{}}
+# → {"id":2,"result":{}}
+# → {"method":"Network.requestWillBeSent", ...}
+# → {"method":"Network.loadingFailed","params":{"blockedReason":"inspector", ...}}
+```
+
+**Критерий успешности:** Страница должна отобразить текстовый контент со системными шрифтами (FOUT/FOIT) без зависания основного интерфейса и без падения приложения.
+
+---
+
+### Сценарий 6: Валидация кэширования, сжатия и условных запросов
+
+Проверка корректности выдачи заголовков прокси-сервером (Nginx/Angie):
+
+```bash
+# 1. Проверка алгоритма сжатия (Brotli vs Zstd vs Gzip)
+curl -sI -H "Accept-Encoding: br, zstd, gzip" https://example.com/assets/app.js | grep -iE "content-encoding|vary|cache-control"
+# → content-encoding: br
+# → vary: Accept-Encoding
+# → cache-control: public, max-age=31536000, immutable
+
+# 2. Проверка валидации кэша через ETag (304 Not Modified)
+ETAG=$(curl -sI https://example.com/assets/app.js | awk -F': ' '/[Ee][Tt][Aa][Gg]/ {print $2}' | tr -d '\r')
+curl -sI -H "If-None-Match: $ETAG" https://example.com/assets/app.js | grep -E "HTTP/|ETag"
+# → HTTP/2 304 Not Modified
+# → etag: "66e2c3a1-1f48"
+
+# 3. Проверка поведения stale-while-revalidate
+curl -sI https://example.com/api/config | grep -i "cache-control"
+# → cache-control: max-age=60, stale-while-revalidate=300
+```
+
+---
+
+### Сценарий 7: Автоматизированный запуск Lighthouse CLI в CI/CD без облака
+
+Для запуска синтетических аудитов на self-hosted runners используется утилита `lighthouse` с генерацией отчетов в форматах JSON и HTML.
+
+#### Установка зависимостей в окружении сборщика
+
+```bash
+# Установка Lighthouse CLI локально через npm
+npm install -g lighthouse
+
+# Запуск аудита с бюджетами производительности
+lighthouse https://example.com \
+  --chrome-flags="--headless=new --no-sandbox --disable-dev-shm-usage --disable-gpu" \
+  --output=json \
+  --output=html \
+  --output-path=/tmp/lighthouse-report \
+  --only-categories=performance \
+  --throttling-method=devtools \
+  --throttling.rttMs=40 \
+  --throttling.throughputKbps=10240
+# → Report complete: /tmp/lighthouse-report.report.json
+# → Report complete: /tmp/lighthouse-report.report.html
+```
+
+#### Парсинг ключевых метрик и валидация SLO
+
+```bash
+# Извлечение численных значений Core Web Vitals через jq
+jq '{
+  performance_score: (.categories.performance.score * 100),
+  LCP_sec: (.audits["largest-contentful-paint"].numericValue / 1000),
+  TBT_ms: .audits["total-blocking-time"].numericValue,
+  CLS: .audits["cumulative-layout-shift"].numericValue
+}' /tmp/lighthouse-report.report.json
+# → {
+#     "performance_score": 96,
+#     "LCP_sec": 1.42,
+#     "TBT_ms": 45.0,
+#     "CLS": 0.012
+#   }
+
+# Пример проверки порога в bash-скрипте CI
+LCP=$(jq '.audits["largest-contentful-paint"].numericValue' /tmp/lighthouse-report.report.json)
+if (( $(echo "$LCP > 2500" | bc -l) )); then
+  echo "ОШИБКА: Превышен бюджет LCP (> 2.5 сек). Текущее значение: $LCP мс"
+  exit 1
+fi
+```
+
+---
+
+### Сценарий 8: Профилирование Main Thread и захват трассировок через CDP
+
+Снятие полного файла трассировки (Trace JSON) для последующего исследования узких мест в интерфейсе DevTools (`chrome://tracing` или вкладка **Performance**):
+
+```python
+# capture_trace.py — скрипт захвата системной трассировки
+import asyncio
+import json
+from playwright.async_api import async_playwright
+
+async def capture_performance_trace():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+        )
+        page = await browser.new_page()
+        cdp = await page.context.new_cdp_session(page)
+        
+        # Настройка категорий трассировки Chromium
+        await cdp.send("Tracing.start", {
+            "categories": "blink.user_timing,devtools.timeline,v8,disabled-by-default-devtools.timeline"
+        })
+        
+        await page.goto("https://example.com", wait_until="networkidle")
+        
+        # Завершение сбора трассировки
+        await cdp.send("Tracing.end")
+        
+        # Ожидание завершения и сохранение
+        print("Трассировка успешно собрана")
+        await browser.close()
+
+if __name__ == "__main__":
+    asyncio.run(capture_performance_trace())
+```
+
+---
 
 ## Диагностика ошибок
 
-| Проблема | Симптом | Диагностика | Решение |
+| Симптом / Ошибка | Первопричина | Метод диагностики | Способ решения |
 | :--- | :--- | :--- | :--- |
-| **Высокий LCP** | LCP > 2.5 с, медленная загрузка основного контента | Chrome DevTools → Network → фильтр по LCP | `fetchpriority="high"`, кэширование, сжатие, CDN |
-| **Высокий INP** | Задержка реакции на действия > 200 мс | Chrome DevTools → Performance → Long Tasks | Code splitting, `async/defer`, вынос в Web Workers |
-| **Нестабильный CLS** | Сдвиги макета > 0.1 | Chrome DevTools → Performance → Layout Shifts | `aspect-ratio`, размеры изображений, `font-display: swap` |
-| **Высокий TTFB** | LCP > 2.5 с, медленный первый байт | `curl -o /dev/null -s -w "TTFB: %{time_starttransfer}s" URL` | Оптимизация запросов к БД, кэширование, CDN |
-| **Блокирующий JS** | TBT > 200 мс, белый экран | Chrome DevTools → Performance → Main Thread | `defer`/`async` для скриптов, динамический импорт, Web Workers |
-| **Высокий TBT** | Суммарная блокировка > 200 мс | Lighthouse → TBT metric | Разделение длинных задач, `scheduler.yield()` |
-| **Низкий Cache Hit Ratio** | Много `MISS` в заголовках, высокая нагрузка на Origin | `curl -sI URL | grep -iE "x-cache\|age\|cache-control"` | Увеличить TTL, включить `stale-while-revalidate`, проверить Cache Key |
-| **Устаревший контент** | Пользователи видят старую версию | `curl -sI URL | grep age` — возраст > `max-age` | Уменьшить TTL, настроить Purge API, использовать Cache Busting |
-| **Cache Stampede** | Всплеск нагрузки на Origin | Мониторинг Origin (CPU, RPS) | Включить `proxy_cache_lock`, добавить Jitter TTL, настроить SWR |
-| **Vary: * отключает кэш** | Все запросы проходят как MISS | `curl -sI URL | grep -i vary` | Убрать `Vary: *`, использовать конкретные заголовки |
-| **Chrome OOM / Crash** | Headless Chrome падает с `SIGKILL` | `dmesg | grep -i oom`, логи Chrome (`chrome_debug.log`) | Увеличить `--js-flags="--max-old-space-size=4096"`, проверить `--disable-dev-shm-usage` |
-| **CDP не отвечает** | `connection refused` на порту 9222 | `ss -tlnp | grep 9222`, логи Chrome | Проверить, что `--remote-debugging-port` указан, Chrome не запущен без флага |
-| **Пустой HAR** | Экспортированный HAR содержит 0 запросов | Проверить `Network.enable` в CDP, режим записи | Убедиться, что запись включена ДО навигации |
-| **Trace не записывается** | `Tracing.end` возвращает пустой файл | Проверить категории трейсинга, права на запись | Использовать валидные категории: `blink,cc,devtools.timeline` |
-| **Скриншот пустой / белый** | Headless скриншот — белый экран | `--disable-gpu`, `--no-sandbox`, `--disable-dev-shm-usage` | Добавить задержку перед скриншотом, убедиться что страница загрузилась |
+| **Crash с кодами `SIGBUS` / `SIGSEGV`** | Переполнение `/dev/shm` (по умолчанию в Docker всего 64 МБ). | `dmesg \| grep -E "chromium\|oom"`, логи контейнера. | Добавить флаг `--disable-dev-shm-usage` или запускать Docker с `--shm-size=2gb`. |
+| **Падение с кодом `SIGKILL` (OOM)** | Процесс V8 превысил лимит памяти при обработке тяжелого DOM. | `grep -i oom /var/log/syslog`, `dmesg \| tail -20`. | Ограничить аппетит V8 флагом `--js-flags="--max-old-space-size=2048"` и добавить cgroup limits. |
+| **Появление процессов-зомби (`<defunct>`)** | Отсутствие PID 1 init-процесса внутри Docker контейнера. | `ps aux \| grep "[c]hromium.*defunct"`. | Запускать контейнер с флагом `--init` или использовать утилиту `dumb-init` / `tini`. |
+| **`Connection refused` на порту 9222** | Служба слушает только `127.0.0.1`, а запрос идет снаружи контейнера. | `ss -tlnp \| grep 9222`. | В изолированном контейнере указать `--remote-debugging-address=0.0.0.0` (не публиковать порт на хосте в Интернет!). |
+| **Пустой скриншот или пустой PDF** | Рендеринг завершился до загрузки веб-шрифтов или стилей. | Проверка вывода консоли браузера через `Runtime.exceptionThrown`. | Добавить ожидание события `networkidle` или флага `document.fonts.ready`. В Linux установить пакет `fonts-liberation`. |
+| **Ошибки `CERT_AUTHORITY_INVALID` на Staging** | Самоподписанный или внутренний корпоративный CA-сертификат. | `Security.securityStateChanged` в CDP или HTTP 0 status. | Добавить корневой CA в системное хранилище или передать флаг `--ignore-certificate-errors` (только для тестов!). |
+| **Несоответствие TTFB в DevTools и curl** | Разница в переиспользовании соединений или блокировка пула. | Проверить фазу `Initial Connection` и `Queuing` в Waterfall. | Если TTFB высок только в браузере, проверить конкуренцию за сокеты (лимит 6 сокетов) и переключить сервер на HTTP/2 или HTTP/3. |
+| **Отсутствие компрессии ответов** | Несовпадение заголовков `Accept-Encoding` или прокси вырезает заголовок. | `curl -sI -H "Accept-Encoding: gzip, br" URL \| grep -i content-encoding`. | Проверить директивы `gzip_proxied any;` и `brotli_types` в конфигурации веб-сервера. |
+| **Кэш прокси не срабатывает (`MISS`)** | Заголовок `Vary: *` или динамические куки в ответе ассета. | `curl -sI URL \| grep -iE "x-cache\|set-cookie\|vary"`. | Настроить игнорирование `Set-Cookie` для статики (`proxy_ignore_headers Set-Cookie;`). |
+
+---
 
 ## Рекомендации
 
-### Для DevOps/SRE/SysAdmin
+### Для DevOps, SRE и системных администраторов
 
-*   **Remote Debugging в CI:** Используйте `--remote-debugging-port` для подключения к headless Chrome в пайплайне. Это позволяет подключаться к упавшему сбору для live-диагностики.
-*   **Диагностика TTFB:** Используйте `curl -w` для разбивки тайминга (DNS, TCP, TLS, TTFB). Высокий TTFB (>500 мс) — проблема бэкенда или БД.
-*   **Мониторинг кэша:** Отслеживайте `X-Cache-Status`, `Age`, `Cache-Status`. Алерты при `Hit Ratio < 80%` или `Age > s-maxage`.
-*   **Cache Warming:** После перезапуска прокси/CDN наполняйте кэш популярными ресурсами (bulk load через `curl`).
-*   **Аудит заголовков:** Проверяйте `Cache-Control`, `Content-Encoding`, `Vary` после деплоя через `curl -sI`.
-*   **Аудит производительности:** Регулярно запускайте Lighthouse CI в пайплайне, анализируйте тренды метрик.
-*   **HAR-архивация:** Сохраняйте HAR-файлы для каждого деплоя. Это позволяет сравнивать производительность между версиями и быстро находить регрессии.
-*   **Trace в артефактах CI:** Сохраняйте `.json` трейсы как артефакты сборки. Их можно открыть в DevTools позже для глубокого анализа.
-*   **Headless Chrome в контейнерах:** Используйте флаги `--no-sandbox`, `--disable-dev-shm-usage` (для Docker), `--disable-gpu`. Устанавливайте лимиты памяти (например, `--js-flags="--max-old-space-size=4096"`).
-*   **Корреляция с серверными метриками:** Сопоставляйте Long Tasks в DevTools с пиками CPU/RAM на сервере ( Grafana + Prometheus). Высокая активность в профиле DevTools при низкой нагрузке на сервер указывает на проблему в бэкенде или ORM.
-*   **Валидация после деплоя:** Проверяйте, что пользователи видят актуальный контент, а метрики (CHR, TTFB) улучшились.
-*   **Мониторинг RUM:** Отслеживайте p75 LCP, INP, CLS через Prometheus/Grafana. Настройте алерты на Burn Rate.
+1. **Безопасность удаленного порта отладки:**
+   - Категорически запрещено привязывать порт `--remote-debugging-port=9222` к внешним публичным IP-адресам без авторизации. Доступ к CDP равносилен выполнению произвольных команд (RCE).
+   - Всегда организуйте доступ к удаленным стендам через SSH Local Port Forwarding (`ssh -L 9222:127.0.0.1:9222`).
+
+2. **Изоляция ресурсов в CI/CD:**
+   - Headless Chromium является ресурсоемким приложением: для стабильной работы 1 экземпляра требуется минимум 2 vCPU и 2 ГБ RAM.
+   - Всегда запускайте тесты в контейнерах с выделенным размером разделяемой памяти (`--shm-size=2gb`) и флагом `--disable-dev-shm-usage`.
+
+3. **Разделение лабораторных замеров и сетевой реальности:**
+   - Не используйте встроенный троттлинг DevTools для проверки поведения TCP/IP и QUIC на нестабильных каналах связи (с потерей пакетов). Для точного моделирования потерь используйте Linux `tc-netem` или аппаратные Traffic Shapers.
+   - Для разделения задержек бэкенда и сети внедряйте заголовок `Server-Timing` во всех микросервисах и шлюзах API.
+
+4. **Интеграция с мониторингом и версионирование:**
+   - Сохраняйте сгенерированные HAR-файлы и отчеты Lighthouse как артефакты сборки CI. Это позволяет сопоставлять деградацию метрик со списком коммитов.
+   - Коррелируйте метрики синтетических тестов (LCP, TTFB) с серверными логами Nginx/Angie (переменные `$request_time` и `$upstream_response_time`).
+
+5. **Очистка временных файлов профиля:**
+   - При запуске headless-браузера всегда указывайте уникальный `--user-data-dir` в директории `tmpfs` (RAM-диск) и обеспечивайте удаление профиля после завершения процесса во избежание засорения дискового пространства ноды CI.
+
+---
 
 ## Дополнительная информация
 
 ### Связанные темы
 
-*   [Обзор производительности веб-приложений](./overview.md).
-*   [Ключевые метрики Core Web Vitals](./web_vitals.md).
-*   [Принципы и методология тестирования](./testing_principles.md).
-*   [Работа с PageSpeed Insights](./pagespeed_insights.md).
-*   [Профессиональное тестирование в WebPageTest](./webpagetest.md).
-*   [Лучшие практики оптимизации](./best_practices.md).
-*   [Механизмы и стратегии кэширования](./caching.md).
-*   [Протоколы HTTP/2 и HTTP/3](./http2_http3.md).
-*   [Оптимизация сжатия (Gzip, Brotli, Zstd)](./server_compression.md).
-*   [SLO/SLI и RUM для фронтенда (SRE-практика)](../CI-CD/Frontend_CI_CD/frontend_slo_rum.md).
-*   [Zero-Downtime Deployment](./zero_downtime_deployment.md) — деплой без прерывания обслуживания.
-*   [Image Optimization Pipeline](./image_optimization_pipeline.md) — AVIF/WebP и CI/CD.
-*   [Structured Logging для Performance](./structured_logging_for_performance.md) — логи и анализ.
+*   [Обзор производительности веб-приложений](./overview.md) — базовые концепции и архитектура оптимизации.
+*   [Ключевые метрики Core Web Vitals](./web_vitals.md) — детальный разбор метрик LCP, INP, CLS.
+*   [Принципы и методология тестирования](./testing_principles.md) — синтетические vs реальные данные (RUM).
+*   [Профессиональное тестирование в WebPageTest](./webpagetest.md) — глубокое тестирование с реальным traffic shaping.
+*   [Работа с PageSpeed Insights](./pagespeed_insights.md) — полевые и лабораторные данные Google.
+*   [Протоколы HTTP/2 и HTTP/3](./http2_http3.md) — мультиплексирование потоков и устранение Head-of-Line Blocking.
+*   [Механизмы и стратегии кэширования](./caching.md) — настройка `Cache-Control`, ETag и валидации кэша.
+*   [Оптимизация сжатия (Gzip, Brotli, Zstd)](./server_compression.md) — уменьшение объема передаваемых данных.
+*   [SLO/SLI и RUM для фронтенда (SRE-практика)](../../../CI-CD/Frontend_CI_CD/frontend_slo_rum.md) — выстраивание мониторинга пользовательского опыта.
+*   [Image Optimization Pipeline](./image_optimization_pipeline.md) — автоматическая оптимизация графики в пайплайнах.
+*   [Structured Logging для Performance](./structured_logging_for_performance.md) — логирование таймингов на стороне сервера.
 
 ### Официальные ресурсы
 
-*   [Chrome DevTools: Performance](https://developer.chrome.com/docs/devtools/performance/)
-*   [Chrome DevTools Protocol (CDP)](https://chromedevtools.github.io/devtools-protocol/)
-*   [Puppeteer Documentation](https://pptr.dev/)
-*   [Playwright Documentation](https://playwright.dev/)
-*   [Lighthouse CI](https://github.com/GoogleChrome/lighthouse-ci)
+*   [Chrome DevTools: Performance Overview](https://developer.chrome.com/docs/devtools/performance/)
+*   [Chrome DevTools Protocol (CDP) Documentation](https://chromedevtools.github.io/devtools-protocol/)
+*   [Chromium Headless Mode Documentation](https://developer.chrome.com/docs/chromium/new-headless)
+*   [Lighthouse CLI Repository & Documentation](https://github.com/GoogleChrome/lighthouse)
+*   [W3C Server-Timing Specification](https://www.w3.org/TR/server-timing/)

@@ -1,499 +1,745 @@
 # Мониторинг Angie — пользовательские метрики
 
+**Актуально для:** Angie 1.12.x / Angie PRO 1.12.x
+
 ## Определения
 
-**Модуль metric** (`ngx_http_metric_module`) — встроенный компонент веб-сервера Angie (начиная с версии 1.6.0), предназначенный для создания произвольных метрик на основе внутренних переменных сервера. Модуль позволяет собирать и агрегировать данные, недоступные в стандартных зонах мониторинга, включая бизнес-показатели, детальную статистику производительности и распределения (гистограммы).
+**Модуль metric** (`ngx_http_metric_module` в HTTP и `ngx_stream_metric_module` в Stream) — встроенный модуль веб-сервера Angie (HTTP-модуль появился в Angie 1.6.0, Stream — в 1.7.0), предназначенный для создания произвольных числовых счетчиков, агрегатов и распределений (гистограмм) на основе внутренних переменных сервера. Модуль исключает необходимость развертывания внешних log-парсеров (mtail, Vector) для извлечения прикладной и сетевой телеметрии.
 
-**Зона метрик (metric_zone)** — именованная область в разделяемой памяти (Shared Memory) для агрегации метрик одного типа (счетчик, гистограмма, среднее и т.д.) по заданному ключу.
+**Зона метрик (metric_zone)** — именованный сегмент в разделяемой памяти (Shared Memory), выделенный для агрегации метрик одного типа (`count`, `sum`, `gauge`, `histogram`, `average`, `min`, `max`, `last`) по динамическому ключу (например, код страны, тип клиента, имя сервиса).
 
-**Комплексная зона метрик (metric_complex_zone)** — расширенный тип зоны (появился в версии 1.11.0), позволяющий в рамках одного ключа собирать несколько различных показателей одновременно (например, количество запросов и суммарное время их обработки), что существенно оптимизирует потребление памяти и снижает накладные расходы.
+**Комплексная зона метрик (metric_complex_zone)** — расширенная структура разделяемой памяти (появилась в Angie 1.11.0), позволяющая в рамках одной записи ключа агрегировать сразу несколько разнородных показателей (например, количество запросов, среднее время обработки и объем переданного трафика). Существенно снижает накладные расходы на служебные структуры и фрагментацию памяти.
 
-**prometheus_template** — директива Angie, определяющая соответствие внутренних путей API `/status/http/metric_zones/<zone>/metrics/<key>/<metric_name>` именам метрик Prometheus и их типам. Позволяет без промежуточных экспортеров отдавать кастомные бизнес-метрики в текстовом формате Prometheus.
+**Директива metric** — операционная директива Angie, инициирующая запись или модификацию значения метрики в указанной зоне при наступлении определенной фазы обработки запроса или сессии (`on=request` или `on=end`).
 
-**$p8s_value** — внутренняя переменная шаблона `prometheus_template`, подставляющая актуальное числовое значение метрики, возвращаемое API для конкретного ключа и имени метрики.
+**prometheus_template** — директива конфигурации Angie, связывающая внутренние JSON-пути API `/status/http/metric_zones/...` с именами метрик, лейблами и типами в формате OpenMetrics / Prometheus Text format. Позволяет веб-серверу нативно отдавать агрегированные кастомные показатели напрямую скрейперам Prometheus/VictoriaMetrics без внешних трансляторов.
 
-**discard_key** — параметр директивы `metric_zone`, задающий имя ключа, в котором агрегируются значения удаляемых (expired) записей при переполнении памяти. Это позволяет сохранять общую сумму при очистке, вместо полной потери данных.
+**$p8s_value** — внутренняя системная переменная шаблонизатора `prometheus_template`, содержащая актуальное числовое значение метрики, извлеченное по соответствующему пути API.
 
-## Базовые концепции
+**Политика вытеснения (expire) и discard_key** — механизм управления жизненным циклом записей в разделяемой памяти при нехватке места:
+- `expire=on`: активирует LRU-вытеснение наименее востребованных ключей.
+- `discard_key=<имя>`: резервирует специальный ключ, в котором суммируются числовые значения удаляемых записей, предотвращая расхождение глобальных счетчиков при ротации памяти.
 
-### Архитектура сбора данных
+**Аллокатор Slab (Slab Allocator)** — менеджер памяти ядра Angie, выделяющий внутри `metric_zone` слоты фиксированного размера (чанги) под узлы красно-черного дерева (rbtree) и очереди LRU. Состояние пулов контролируется через `/status/slabs/<zone>`.
 
-Кастомные метрики в Angie организованы по иерархическому принципу:
+**Кардинальность (Cardinality)** — количество уникальных ключей, регистрируемых в зоне метрик. Высокая кардинальность (High Cardinality) при использовании ненормализованных данных (UUID, произвольные URI, client IP) ведет к быстрому исчерпанию разделяемой памяти и деградации производительности TSDB.
+
+**SRE Golden Signals (Четыре золотых сигнала)** — ключевые метрики работоспособности сервиса (Latency, Traffic, Errors, Saturation). Кастомные зоны метрик Angie позволяют формировать гранулярные SLI для задержек и ошибок на уровне L7 и L4 без задержки, характерной для обработки журналов.
+
+**APDEX (Application Performance Index)** — международный стандарт оценки удовлетворенности пользователей производительностью приложения на основе категоризации времени ответа (удовлетворительно, допустимо, неудовлетворительно) через бакеты гистограммы.
+
+---
+
+## Базовые концепции и архитектура
+
+### 1. Архитектура сбора данных в Shared Memory
+
+Кастомные метрики функционируют на базе неблокирующих атомарных операций в разделяемой памяти Linux (`shmget`/`mmap`), разделяемой между master-процессом и всеми рабочими процессами (worker processes):
 
 ```
-[ Воркер Angie ] → (запись в Shared Memory) → [ metric_zone / metric_complex_zone ]
-                                                      ↓
-                                              [ API /status/http/metric_zones/ ]
-                                                      ↓
-                                         [ prometheus_template ] → [ Prometheus ]
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            Рабочие процессы Angie                           │
+│   Worker 1                     Worker 2                     Worker N        │
+└───────┬────────────────────────────┬────────────────────────────┬───────────┘
+        │                            │                            │
+        │ Атомарные lock-free записи │ (без блокировки сокетов)   │
+        ▼                            ▼                            ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     Shared Memory (Аллокатор Slab)                          │
+│ ┌─────────────────────────────────────────────────────────────────────────┐ │
+│ │ metric_zone / metric_complex_zone                                       │ │
+│ │  ├── Индекс: Красно-черное дерево (rbtree) поиска по ключам             │ │
+│ │  ├── Очередь: Двусвязный список LRU (при expire=on)                     │ │
+│ │  └── Значения: Счетчики, бакеты гистограмм, скользящие средние          │ │
+│ └─────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────┬──────────────────────────────────┬───────────────────┘
+                       │                                  │
+                       ▼                                  ▼
+        ┌──────────────────────────────┐  ┌──────────────────────────────────┐
+        │  ngx_http_api_module         │  │  ngx_http_prometheus_module      │
+        │  GET /status/http/           │  │  Шаблонизатор prometheus_template│
+        │  metric_zones/<zone>/...     │  │  GET /p8s (OpenMetrics / Text)   │
+        └──────────────────────────────┘  └──────────────────────────────────┘
 ```
 
-1. **Объявление зоны:** В контексте `http` директива `metric_zone` или `metric_complex_zone` резервирует именованную область в разделяемой памяти с заданным размером и типом агрегации.
-2. **Сбор:** Воркеры Angie вызывают директиву `metric` при обработке запроса или события и атомарно обновляют счетчики в разделяемой памяти.
-3. **Чтение через API:** Любой клиент (curl, скрипт, Prometheus) может получить JSON с текущими значениями через `/status/http/metric_zones/<zone>/metrics/<key>/<metric_name>`.
-4. **Экспорт в Prometheus:** Директива `prometheus_template` сопоставляет пути API с именами метрик Prometheus. При HTTP GET к указанному `location` Angie формирует ответ в текстовом формате Prometheus.
+1. **Инициализация зон:** При старте или перезагрузке (`reload`) master-процесс создает сегменты разделяемой памяти заданного размера.
+2. **Фиксация значений:** При наступлении выбранной фазы (`on=request` или `on=end`) воркер вычисляет ключ и значение переменной, находит узел в rbtree и атомарно обновляет структуру.
+3. **Чтение через API:** Модуль `ngx_http_api_module` сериализует состояние узлов дерева в JSON.
+4. **Формирование OpenMetrics:** Модуль `ngx_http_prometheus_module` обходит пути API по регулярным выражениям из `prometheus_template`, подставляя значения `$p8s_value` в поток ответа Prometheus.
 
-### Lifecycle метрики
+### 2. Сравнение структур памяти: metric_zone vs metric_complex_zone
 
-1. **Создание:** При старте Angie модуль `ngx_http_metric_module` создает дескрипторы зон на основе конфигурации. Размер зоны задается в конфигурации (например, `metric_zone browsers:2m` — 2 МБ).
-2. **Сбор:** Воркеры инкрементируют/обновляют значения при каждом событии (запрос, соединение, таймер). Операции выполняются атомарно (lock-free).
-3. **Хранение:** Значения удерживаются в разделяемой памяти. При переполнении, если `expire=on`, удаляются самые старые записи (LRU), а их значения агрегируются в `discard_key`.
-4. **Экспорт:** При запросе API или Prometheus-скрапинга модуль считывает текущие значения и форматирует их.
-5. **Удаление:** При `stop/start` разделяемая память освобождается, все метрики сбрасываются. При `reload` метрики сохраняются.
+Выбор типа зоны напрямую влияет на потребление оперативной памяти и нагрузку на процессор:
 
-### Параметры зон и управление памятью
+| Параметр | Простая зона (`metric_zone`) | Комплексная зона (`metric_complex_zone`) |
+|:---|:---|:---|
+| **Количество метрик на ключ** | Строго 1 тип метрики | Несколько разнородных метрик |
+| **Накладные расходы на ключ** | ~128 байт (rbtree-узел + LRU-ссылки) на каждую отдельную зону | ~128 байт суммарно на ключ для группы метрик |
+| **Размер записи значения** | +8 байт (counter/gauge) или бакеты | +8 байт на каждое скалярное поле в структуре |
+| **Поведение при обновлении** | Отдельный поиск в rbtree для каждого показателя | Один поиск ключа в rbtree для обновления группы метрик |
+| **Рекомендуемое применение** | Одиночные счетчики (User-Agent, APDEX-гистограмма) | Профилирование API, заказы, биллинг, детальная статистика L4/L7 |
 
-При объявлении зон доступны параметры, управляющие их жизненным циклом и точностью вычислений:
+### 3. Жизненный цикл метрик (Lifecycle)
 
-- **expire=on | off**: определяет поведение при переполнении памяти. 
-  - `on`: автоматически удаляет самые старые записи (LRU).
-  - `off` (по умолчанию): прекращает запись новых ключей до освобождения места.
-- **discard_key=имя**: специальный ключ, в котором будут агрегироваться значения удаляемых (expired) записей, что позволяет сохранять общую сумму при очистке памяти.
-- **average=mean | exp**: алгоритм расчета среднего.
-  - `mean`: среднее арифметическое.
-  - `exp`: экспоненциальное скользящее среднее (EMA).
-  - **window**: временное окно (например, `15s`) для расчета.
-  - **count**: количество последних значений для учета.
+1. **Создание дескрипторов:** При запуске Angie выделяет память под зоны. Если при проверке конфигурации памяти недостаточно, сервер аварийно завершает старт с ошибкой аллокации.
+2. **Агрегация в runtime:** Воркеры выполняют операции инкремента, вычисления EMA или раскладки по бакетам.
+3. **Очистка и вытеснение (LRU Eviction):**
+   - При `expire=off` (по умолчанию): при заполнении памяти новые ключи игнорируются, в журнал `error.log` пишется предупреждение `ngx_slab_alloc() failed`.
+   - При `expire=on`: удаляется наименее востребованный узел. Если задан `discard_key=имя`, значения вытесняемого ключа суммируются в этом ключе.
+4. **Персистентность при обслуживании:**
+   - Команда `systemctl reload angie` (сигнал `SIGHUP`) **сохраняет** сегменты памяти и все накопленные метрики.
+   - Команда `systemctl restart angie` полностью пересоздает разделяемую память, сбрасывая все счетчики в ноль.
 
-**Технические характеристики (Memory Overhead):**
-- Накладные расходы на каждую уникальную запись (ключ): ~128 байт.
-- Каждая простая метрика в зоне: +8 байт.
-- Гистограмма: +8 байт на каждый бакет (+1 технический бакет).
-- В зоне объемом 1 МБ при среднем размере ключа в 40 байт может храниться от 6 000 до 8 000 уникальных записей.
+### 4. Поддерживаемые типы агрегации
 
-### Типы агрегации
+В директивах `metric_zone` и внутри блока `metric_complex_zone` доступны следующие типы показателей:
 
-1. **count** — инкрементальный счетчик событий.
-2. **sum** — накопление суммы значений.
-3. **gauge** — текущее значение (поддерживает увеличение и уменьшение).
-4. **histogram** — распределение значений по интервалам (бакетам).
-5. **average** — расчет среднего значения (`mean` или `exp`).
-6. **min / max** — фиксация минимального или максимального значения за период.
-7. **last** — сохранение только последнего полученного значения.
+- **count** — монотонно растущий целочисленный счетчик событий (соответствует Prometheus `counter`).
+- **sum** — накопление суммы числовых значений (например, переданных байт, стоимости заказов).
+- **gauge** — текущее вещественное или целочисленное значение (может увеличиваться и уменьшаться).
+- **histogram `<b1> <b2> ...`** — распределение значений по возрастающим бакетам. Angie автоматически добавляет финальный бакет `+Inf`.
+- **average `mean|exp` `[window=time]` `[count=n]`** — расчет среднего значения:
+  - `mean`: среднее арифметическое за окно выборки.
+  - `exp`: экспоненциальное скользящее среднее (EMA) с учетом временного окна (`window=30s`) или количества событий (`count=100`).
+- **min / max** — фиксация минимального или максимального значения за интервал времени.
+- **last** — сохранение последнего переданного значения.
 
-### Моменты срабатывания (Phase control)
+### 5. Моменты фиксации метрик (Фазовый контроль)
 
-Директива `metric` поддерживает параметр `on`:
-- **on=request** — срабатывает сразу после получения заголовков. Подходит для метрик на основе входных данных (URI, User-Agent).
-- **on=end** (по умолчанию) — срабатывает в фазе логирования. Используется для метрик времени ответа, статусов и объема трафика.
-
-### Регистрация метрик в Prometheus
-
-Для экспорта кастомных метрик в Prometheus используется директива `prometheus_template`, которая связывает пути API с именами метрик:
+Параметр `on` директивы `metric` определяет фазу цикла обработки запроса:
 
 ```nginx
-prometheus_template advanced_metrics {
-    'angie_shop_revenue_total{shop_id="$1"}' $p8s_value 
-        path=~^/http/metric_zones/shop_stats/metrics/([^/]+)/total_revenue$ 
-        type=counter;
-
-    'angie_http_vhost_latency_avg{host="$1"}' $p8s_value 
-        path=~^/http/metric_zones/geo_latency/metrics/([^/]+)$ 
-        type=gauge;
-}
+metric browsers $http_user_agent on=request;
+metric backend_sla $server_name=$upstream_response_time on=end;
 ```
 
-**Правила именования:**
-- Префикс `angie_` используется для всех стандартных метрик.
-- Для кастомных метрик рекомендуется использовать осмысленные префиксы (например, `angie_shop_`, `angie_api_`).
-- Метка `key` автоматически добавляется к метрикам из `metric_zone` со значением ключа агрегации.
-- В `prometheus_template` регулярное выражение `path` позволяет извлекать части пути как метки (например, `$1` для `shop_id`).
+- **`on=request`** — срабатывает сразу после разбора заголовков HTTP-клиента (фаза `NGX_HTTP_POST_READ_PHASE`).
+  - *Доступные переменные:* `$uri`, `$host`, `$http_user_agent`, `$remote_addr`, `$ssl_protocol`.
+  - *Недоступные переменные:* `$status`, `$bytes_sent`, `$request_time`, `$upstream_response_time` (они еще не определены).
+- **`on=end`** (по умолчанию) — срабатывает в фазе логирования после отправки всего тела ответа клиенту (`NGX_HTTP_LOG_PHASE`).
+  - *Доступные переменные:* все внутренние тайминги, статусы проксирования и размер переданных данных.
 
-## Практические сценарии
+### 6. Контекст Stream (L4-метрики)
 
-### Сценарий 1: Анализ аудитории по типам браузеров
+Модуль `ngx_stream_metric_module` работает в контексте `stream` для TCP/UDP-проксирования. Директива `metric_zone` задается на уровне `stream`, а сбор осуществляется на уровне `server` в момент закрытия сессии:
+- *Переменные L4:* `$session_time`, `$bytes_sent`, `$bytes_received`, `$status`, `$upstream_connect_time`.
 
-```nginx
-http {
-    # Резервируем 2МБ под счетчики браузеров с автоматической очисткой
-    metric_zone browsers:2m count expire=on;
+---
 
-    server {
-        # Группировка по User-Agent на фазе запроса
-        metric browsers $http_user_agent on=request;
-    }
-}
-```
+## Практические сценарии и конфигурация
 
-**Валидация:**
-```bash
-curl -s http://localhost:8888/status/http/metric_zones/browsers/metrics/ | jq keys | head -n 10
-# → ["Chrome/120.0", "Firefox/121.0", "Safari/605.1.15", ...]
+### Сценарий 1: SRE SLI/SLO мониторинг Latency и расчет APDEX
 
-curl -s http://localhost:8888/status/http/metric_zones/browsers/metrics/Chrome/ | jq .
-# → {"count": 5432}
-```
-
-### Сценарий 2: Расчет среднего времени ответа по странам (GeoIP2)
-
-```nginx
-http {
-    # Скользящее среднее по странам
-    metric_zone geo_latency:1m average mean window=30s;
-
-    server {
-        location / {
-            metric geo_latency $geoip2_country_iso_code=$request_time on=end;
-        }
-    }
-}
-```
-
-**Валидация:**
-```bash
-curl -s http://localhost:8888/status/http/metric_zones/geo_latency/metrics/RU/ | jq .
-# → {"average": 0.142}
-```
-
-### Сценарий 3: Расчет индекса удовлетворенности APDEX
-
-APDEX оценивает качество сервиса на основе бакетов времени.
+Отслеживание задержек обработки запросов бэкендами с бакетами под соглашения об уровне обслуживания (SLO: 50ms, 100ms, 250ms, 500ms, 1s, 2s).
 
 ```nginx
 http {
-    # Целевое время 1.5с, допустимое 4с
-    metric_zone satisfaction:2m histogram 1.5 4.0;
+    include /etc/angie/prometheus_all.conf;
+
+    # Зона гистограммы времени ответа upstream с автоматической очисткой
+    metric_zone upstream_latency:8m histogram 0.05 0.1 0.25 0.5 1.0 2.0 
+        expire=on discard_key=expired;
+
+    # Зона для расчета индекса APDEX (целевое T=0.5s, допустимое 4T=2.0s)
+    metric_zone apdex_sla:4m histogram 0.5 2.0
+        expire=on;
 
     server {
+        listen 80;
+        server_name api.example.internal;
+
         location /api/ {
-            metric satisfaction $server_name=$request_time;
+            proxy_pass http://backend_pool;
+            
+            # Фиксация задержки бэкенда в разрезе виртуального хоста
+            metric upstream_latency $server_name=$upstream_response_time on=end;
+            
+            # Фиксация времени полного запроса для расчета APDEX
+            metric apdex_sla $server_name=$request_time on=end;
         }
     }
 }
 ```
 
-**Валидация:**
+**Проверка через API:**
 ```bash
-curl -s http://localhost:8888/status/http/metric_zones/satisfaction/metrics/prod.example.com/ | jq .
-# → {"histogram": {"1.5": 1200, "4.0": 300, "Inf": 50}}
-```
-
-### Сценарий 4: Сбор бизнес-метрик с использованием Комплексных зон и Lua
-
-Использование `metric_complex_zone` для минимизации обращений к памяти при записи нескольких метрик.
-
-```nginx
-http {
-    metric_complex_zone shop_stats:10m {
-        total_revenue sum;
-        items_sold    sum;
-        orders_count  count;
-    }
-}
-
-server {
-    location /order {
-        set $revenue 0;
-        set $items 0;
-        
-        access_by_lua_block {
-            ngx.req.read_body()
-            local body = ngx.req.get_body_data()
-            if body then
-                local data = require("cjson").decode(body)
-                ngx.var.revenue = data.price or 0
-                ngx.var.items = data.quantity or 0
-            end
-        }
-        
-        # Обновление нескольких метрик для одного ключа за один вызов
-        metric shop_stats "global"=total_revenue:$revenue;
-        metric shop_stats "global"=items_sold:$items;
-        metric shop_stats "global"=orders_count:1;
-        
-        proxy_pass http://backend;
-    }
-}
-```
-
-**Валидация:**
-```bash
-curl -s http://localhost:8888/status/http/metric_zones/shop_stats/metrics/global/ | jq .
+# Получение бакетов гистограммы задержек
+curl -s http://127.0.0.1:8888/status/http/metric_zones/upstream_latency/metrics/api.example.internal/ | jq .
 # → {
-# →   "total_revenue": 152340.50,
-# →   "items_sold": 1240,
-# →   "orders_count": 87
+# →   "histogram": {
+# →     "0.05": 14230,
+# →     "0.1": 8940,
+# →     "0.25": 1205,
+# →     "0.5": 310,
+# →     "1.0": 45,
+# →     "2.0": 8,
+# →     "Inf": 2
+# →   }
 # → }
 ```
 
-### Сценарий 5: Экспорт в Prometheus через кастомные шаблоны
+### Сценарий 2: Защита от High Cardinality через нормализацию ключей в map
 
-Для вывода данных в Prometheus необходимо связать пути API Angie с именами метрик.
+Прямая запись URI (`$uri`) или клиентских идентификаторов в метрики приводит к переполнению памяти и деградации Prometheus. Нормализация через `map` сжимает миллионы уникальных путей до фиксированных шаблонов.
 
 ```nginx
-# Определение структуры экспорта
-prometheus_template advanced_metrics {
-    # $p8s_value — переменная, подставляющая значение из API
-    # $1 — захват из регулярного выражения пути (название ключа)
-    
-    'angie_shop_revenue_total{shop_id="$1"}' $p8s_value 
-        path=~^/http/metric_zones/shop_stats/metrics/([^/]+)/total_revenue$ 
-        type=counter;
-
-    'angie_http_vhost_latency_avg{host="$1"}' $p8s_value 
-        path=~^/http/metric_zones/geo_latency/metrics/([^/]+)$ 
-        type=gauge;
-}
-
 http {
+    # Нормализация URI: замена UUID и числовых ID на статические плейсхолдеры
+    map $uri $normalized_api_route {
+        default                                "other";
+        ~^/api/v[0-9]+/users/[0-9a-fA-F\-]+$   "/api/v1/users/:id";
+        ~^/api/v[0-9]+/orders/[0-9]+$          "/api/v1/orders/:id";
+        ~^/api/v[0-9]+/catalog/?$              "/api/v1/catalog";
+        ~^/healthz$                            "/healthz";
+    }
+
+    # Классификация User-Agent для исключения длинных строк браузеров
+    map $http_user_agent $client_device_type {
+        default                  "desktop";
+        ~*(android|iphone|ipad)  "mobile";
+        ~*(curl|wget|promtool)   "tool";
+        ~*(bot|crawler|spider)   "bot";
+        ""                       "unknown";
+    }
+
+    # Выделение зоны с жестким ограничением кардинальности
+    metric_zone api_routes:4m count expire=on discard_key=other_routes;
+    metric_zone client_types:2m count;
+
     server {
-        location /p8s {
-            prometheus advanced_metrics;
+        listen 80;
+
+        location /api/ {
+            proxy_pass http://backend_pool;
+
+            metric api_routes $normalized_api_route on=request;
+            metric client_types $client_device_type on=request;
+        }
+    }
+}
+```
+
+**Проверка через API:**
+```bash
+curl -s http://127.0.0.1:8888/status/http/metric_zones/api_routes/metrics/ | jq keys
+# → [
+# →   "/api/v1/catalog",
+# →   "/api/v1/orders/:id",
+# →   "/api/v1/users/:id",
+# →   "other",
+# →   "other_routes"
+# → ]
+```
+
+### Сценарий 3: Комплексная зона (metric_complex_zone) для L7-сервисов
+
+Одновременный сбор агрегированных бизнес-показателей и задержек без фрагментации разделяемой памяти.
+
+```nginx
+http {
+    # Объявление комплексной структуры метрик
+    metric_complex_zone service_telemetry:16m {
+        requests_total  count;
+        bytes_sent      sum;
+        latency_avg     average mean window=60s;
+        latency_hist    histogram 0.05 0.1 0.25 0.5 1.0 2.5;
+        errors_5xx      count;
+    } expire=on discard_key=overflow;
+
+    # Вычисление флага ошибки 5xx для инкремента
+    map $status $is_server_error {
+        ~^5  1;
+        default 0;
+    }
+
+    server {
+        listen 80;
+        server_name checkout.example.internal;
+
+        location /checkout/ {
+            proxy_pass http://checkout_backend;
+
+            # Атомарное обновление нескольких метрик в одной записи ключа
+            metric service_telemetry "checkout_service"=requests_total:1 
+                                     bytes_sent:$bytes_sent 
+                                     latency_avg:$request_time 
+                                     latency_hist:$request_time 
+                                     errors_5xx:$is_server_error 
+                                     on=end;
+        }
+    }
+}
+```
+
+**Проверка через API:**
+```bash
+curl -s http://127.0.0.1:8888/status/http/metric_zones/service_telemetry/metrics/checkout_service/ | jq .
+# → {
+# →   "requests_total": 45120,
+# →   "bytes_sent": 84219030,
+# →   "latency_avg": 0.084,
+# →   "latency_hist": {
+# →     "0.05": 31000,
+# →     "0.1": 11200,
+# →     "0.25": 2500,
+# →     "0.5": 380,
+# →     "1.0": 35,
+# →     "2.5": 5,
+# →     "Inf": 0
+# →   },
+# →   "errors_5xx": 12
+# → }
+```
+
+### Сценарий 4: Мониторинг L4 TCP/UDP-проксирования (Stream)
+
+Сбор телеметрии сетевых задержек и объемов трафика для кластера баз данных PostgreSQL через модуль `ngx_stream_metric_module`.
+
+```nginx
+stream {
+    # Зона метрик сессий PostgreSQL в контексте stream
+    metric_zone pg_sessions:4m count expire=on;
+    metric_zone pg_traffic_bytes:4m sum;
+    metric_zone pg_duration:4m average mean window=5m;
+
+    upstream pg_cluster {
+        server 192.168.10.21:5432 max_fails=3 fail_timeout=10s;
+        server 192.168.10.22:5432 backup;
+    }
+
+    server {
+        listen 5432;
+        proxy_pass pg_cluster;
+
+        # Фиксация сетевых метрик по завершении TCP-сессии
+        metric pg_sessions $server_addr;
+        metric pg_traffic_bytes $server_addr=$bytes_sent;
+        metric pg_duration $server_addr=$session_time;
+    }
+}
+```
+
+**Проверка через API Stream:**
+```bash
+curl -s http://127.0.0.1:8888/status/stream/metric_zones/pg_traffic_bytes/metrics/ | jq .
+# → {
+# →   "192.168.1.15": {
+# →     "sum": 1548290400
+# →   }
+# → }
+```
+
+### Сценарий 5: Анализ эффективности и объема кэша
+
+Отслеживание объема переданных данных в зависимости от статуса кэширования (`HIT`, `MISS`, `BYPASS`, `EXPIRED`).
+
+```nginx
+http {
+    proxy_cache_path /var/cache/angie/data levels=1:2 keys_zone=static_cache:10m 
+                     max_size=1g inactive=60m;
+
+    metric_complex_zone cache_analytics:8m {
+        cache_bytes sum;
+        cache_ops   count;
+    };
+
+    server {
+        listen 80;
+
+        location /assets/ {
+            proxy_pass http://static_origin;
+            proxy_cache static_cache;
+            proxy_cache_valid 200 302 60m;
+
+            # Запись объема байт и операций под ключом статуса кэша
+            metric cache_analytics $upstream_cache_status=cache_bytes:$bytes_sent 
+                                   cache_ops:1 on=end;
+        }
+    }
+}
+```
+
+**Проверка через API:**
+```bash
+curl -s http://127.0.0.1:8888/status/http/metric_zones/cache_analytics/metrics/ | jq .
+# → {
+# →   "HIT": { "cache_bytes": 482910300, "cache_ops": 18230 },
+# →   "MISS": { "cache_bytes": 104820190, "cache_ops": 3120 },
+# →   "EXPIRED": { "cache_bytes": 5210340, "cache_ops": 180 }
+# → }
+```
+
+### Сценарий 6: Нативный экспорт кастомных метрик в Prometheus через prometheus_template
+
+Экспорт кастомных зон в формате OpenMetrics без использования сторонних экспортеров с объединением со стандартными метриками.
+
+```nginx
+http {
+    include /etc/angie/prometheus_all.conf;
+
+    # Шаблон сопоставления путей API Angie с метриками Prometheus
+    prometheus_template custom_sre_telemetry {
+        # Преобразование комплексной зоны checkout_service в счетчики
+        'angie_custom_service_requests_total{service="$1"}' $p8s_value
+            path=~^/http/metric_zones/service_telemetry/metrics/([^/]+)/requests_total$
+            type=counter;
+
+        'angie_custom_service_errors_5xx_total{service="$1"}' $p8s_value
+            path=~^/http/metric_zones/service_telemetry/metrics/([^/]+)/errors_5xx$
+            type=counter;
+
+        'angie_custom_service_latency_seconds_avg{service="$1"}' $p8s_value
+            path=~^/http/metric_zones/service_telemetry/metrics/([^/]+)/latency_avg$
+            type=gauge;
+
+        # Экспорт бакетов гистограммы задержек
+        'angie_custom_upstream_latency_seconds_bucket{service="$1",le="$2"}' $p8s_value
+            path=~^/http/metric_zones/upstream_latency/metrics/([^/]+)/histogram/([^/]+)$
+            type=counter;
+
+        # Экспорт нормализованных маршрутов
+        'angie_custom_route_requests_total{route="$1"}' $p8s_value
+            path=~^/http/metric_zones/api_routes/metrics/([^/]+)/count$
+            type=counter;
+    }
+
+    server {
+        listen 127.0.0.1:9090;
+        server_name localhost;
+
+        location = /metrics {
+            # Активация стандартных метрик (all) совместно с пользовательским шаблоном
+            prometheus all custom_sre_telemetry;
+            
             allow 127.0.0.1;
+            allow 192.168.1.0/24;
             deny all;
         }
     }
 }
 ```
 
-**Валидация через Prometheus:**
+**Валидация через curl и promtool:**
 ```bash
-curl -s http://localhost/p8s | grep 'angie_shop_revenue_total'
-# → angie_shop_revenue_total{shop_id="global"} 152340.50
+# Получение потока метрик
+curl -s http://127.0.0.1:9090/metrics | grep 'angie_custom_' | head -n 8
+# → # TYPE angie_custom_service_requests_total counter
+# → angie_custom_service_requests_total{service="checkout_service"} 45120
+# → # TYPE angie_custom_service_latency_seconds_avg gauge
+# → angie_custom_service_latency_seconds_avg{service="checkout_service"} 0.084
+# → # TYPE angie_custom_upstream_latency_seconds_bucket counter
+# → angie_custom_upstream_latency_seconds_bucket{service="api.example.internal",le="0.05"} 14230
+# → angie_custom_upstream_latency_seconds_bucket{service="api.example.internal",le="0.1"} 23170
+# → angie_custom_upstream_latency_seconds_bucket{service="api.example.internal",le="+Inf"} 24740
 
-# Проверка через promtool
-curl -s http://localhost/p8s | promtool check metrics /dev/stdin
+# Синтаксическая валидация OpenMetrics через promtool
+curl -s http://127.0.0.1:9090/metrics | promtool check metrics /dev/stdin
 # → SUCCESS
 ```
 
-### Сценарий 6: Валидация метрик перед подключением к Prometheus
+### Сценарий 7: PromQL-запросы и правила алертинга Alertmanager
 
-Перед добавлением в Prometheus проверьте корректность данных через API:
+Готовые правила мониторинга SLO для Prometheus/VictoriaMetrics на основе кастомных метрик Angie.
 
-```bash
-# 1. Проверка наличия зоны
-curl -s http://localhost:8888/status/http/metric_zones/ | jq keys
-# → ["browsers", "geo_latency", "satisfaction", "shop_stats"]
+```yaml
+# /etc/prometheus/rules/angie_custom_alerts.yml
+groups:
+  - name: angie_custom_sli_alerts
+    rules:
+      # Расчет частоты запросов по сервисам (RPS)
+      - record: job:angie_custom_requests:rate5m
+        expr: sum by (service) (rate(angie_custom_service_requests_total[5m]))
 
-# 2. Проверка конкретного ключа
-curl -s http://localhost:8888/status/http/metric_zones/shop_stats/metrics/global/ | jq .
+      # Расчет доли ошибок 5xx (SLI Error Rate)
+      - record: job:angie_custom_error_ratio:5m
+        expr: >
+          sum by (service) (rate(angie_custom_service_errors_5xx_total[5m]))
+          /
+          sum by (service) (rate(angie_custom_service_requests_total[5m]))
 
-# 3. Проверка вывода Prometheus
-curl -s http://localhost/p8s | grep '^angie_' | wc -l
-# → 12
+      # Расчет 95-го процентиля времени ответа upstream
+      - record: job:angie_custom_p95_latency:5m
+        expr: >
+          histogram_quantile(0.95, sum by (service, le) (
+            rate(angie_custom_upstream_latency_seconds_bucket[5m])
+          ))
 
-# 4. Проверка типов метрик
-curl -s http://localhost/p8s | grep -E '^# TYPE'
-# → # TYPE angie_shop_revenue_total counter
-# → # TYPE angie_http_vhost_latency_avg gauge
+      # Алерт: Превышение бюджета ошибок (> 1% ошибок 5xx за 5 минут)
+      - alert: AngieServiceHighErrorRate
+        expr: job:angie_custom_error_ratio:5m > 0.01
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Высокая доля ошибок 5xx на Angie: {{ $labels.service }}"
+          description: "Сервис {{ $labels.service }} отдает {{ $value | humanizePercentage }} ошибок 5xx (SLO порог: 1%)."
+
+      # Алерт: Деградация задержек (P95 > 500мс)
+      - alert: AngieServiceLatencySLOBreach
+        expr: job:angie_custom_p95_latency:5m > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Превышение SLO времени ответа upstream: {{ $labels.service }}"
+          description: "95-й процентиль задержки составляет {{ $value | humanizeDuration }} (порог: 500ms)."
 ```
 
-### Сценарий 7: Мониторинг эффективности кэша через кастомную гистограмму
+### Сценарий 8: Автоматизация контроля зон метрик через Bash-скрипт
 
-Использование `metric_zone` для отслеживания размера кэшируемых объектов.
-
-```nginx
-http {
-    # Гистограмма размеров объектов: 1KB, 10KB, 100KB, 1MB
-    metric_zone object_size:5m histogram 1024 10240 102400 1048576;
-
-    server {
-        location / {
-            set $size $content_length;
-            metric object_size $size;
-            proxy_pass http://backend;
-        }
-    }
-}
-```
-
-**Валидация:**
-```bash
-curl -s http://localhost:8888/status/http/metric_zones/object_size/metrics/ | jq 'keys_unsorted[0:5]'
-# → ["1024", "10240", "102400", "1048576", "Inf"]
-```
-
-### Сценарий 8: Отладка метрик через JSON API при расследовании инцидентов
+Скрипт для проверки заполнения slab-памяти зон, обнаружения аномалий кардинальности и сработавших `discard_key`.
 
 ```bash
-#!/bin/bash
-# /usr/local/bin/check_metric_zones.sh
+#!/usr/bin/env bash
+# /usr/local/bin/check_angie_metric_zones.sh
+set -euo pipefail
 
-ZONES_API="http://localhost:8888/status/http/metric_zones/"
+API_BASE="http://127.0.0.1:8888/status"
+CRITICAL_SLAB_PERCENT=85
 
-# Получение списка всех зон
-zones=$(curl -sf "$ZONES_API" | jq -r 'keys[]')
+echo "=== Проверка зон метрик Angie ==="
+
+# 1. Проверка списка HTTP зон
+zones=$(curl -sf "${API_BASE}/http/metric_zones/" | jq -r 'keys[]')
 
 for zone in $zones; do
-    count=$(curl -sf "$ZONES_API$zone/metrics/" | jq 'length')
-    echo "Zone: $zone, keys: $count"
+    key_count=$(curl -sf "${API_BASE}/http/metric_zones/${zone}/metrics/" | jq 'length')
+    has_discard=$(curl -sf "${API_BASE}/http/metric_zones/${zone}/metrics/" | jq 'has("discard") or has("overflow") or has("expired")')
     
-    if [ "$count" -eq 0 ]; then
-        echo "WARNING: Zone $zone is empty"
+    echo "Зона: [${zone}] | Активных ключей: ${key_count}"
+    
+    if [ "${key_count}" -eq 0 ]; then
+        echo "  ПРЕДУПРЕЖДЕНИЕ: Зона ${zone} пуста (счетчики не обновляются)!"
+    fi
+    
+    if [ "${has_discard}" = "true" ]; then
+        echo "  ВНИМАНИЕ: Зафиксированы вытесненные записи в discard_key зоны ${zone}!"
+    fi
+done
+
+# 2. Проверка состояния разделяемой памяти Slab
+echo -e "\n=== Состояние аллокатора Slab для зон метрик ==="
+slab_data=$(curl -sf "${API_BASE}/slabs/")
+
+for zone in $zones; do
+    if echo "${slab_data}" | jq -e --arg z "${zone}" 'has($z)' > /dev/null; then
+        total_pages=$(echo "${slab_data}" | jq -r --arg z "${zone}" '.[$z].pages.total')
+        used_pages=$(echo "${slab_data}" | jq -r --arg z "${zone}" '.[$z].pages.used')
+        usage_pct=$(( used_pages * 100 / total_pages ))
+        
+        echo "Зона Slab [${zone}]: занято ${usage_pct}% страниц (${used_pages}/${total_pages})"
+        if [ "${usage_pct}" -ge "${CRITICAL_SLAB_PERCENT}" ]; then
+            echo "  КРИТИЧЕСКАЯ ОШИБКА: Память зоны ${zone} близка к исчерпанию (${usage_pct}%)!"
+        fi
     fi
 done
 ```
 
-**Использование:**
+**Исполнение и вывод:**
 ```bash
-chmod +x /usr/local/bin/check_metric_zones.sh
-./check_metric_zones.sh
-# → Zone: browsers, keys: 145
-# → Zone: geo_latency, keys: 42
-# → Zone: satisfaction, keys: 0
-# → WARNING: Zone satisfaction is empty
+chmod +x /usr/local/bin/check_angie_metric_zones.sh
+/usr/local/bin/check_angie_metric_zones.sh
+# → === Проверка зон метрик Angie ===
+# → Зона: [api_routes] | Активных ключей: 5
+# → Зона: [service_telemetry] | Активных ключей: 1
+# → Зона: [upstream_latency] | Активных ключей: 2
+# → 
+# → === Состояние аллокатора Slab для зон метрик ===
+# → Зона Slab [api_routes]: занято 14% страниц (14/100)
+# → Зона Slab [service_telemetry]: занято 28% страниц (112/400)
+# → Зона Slab [upstream_latency]: занято 35% страниц (70/200)
 ```
+
+---
 
 ## Операции и команды
 
-### Проверка метрик через API
+### 1. Инспекция кастомных метрик через REST API
 
 ```bash
-# Список всех зон метрик
-curl -s http://localhost:8888/status/http/metric_zones/ | jq keys
-# → ["browsers", "geo_latency", "shop_stats"]
+# Список всех зарегистрированных зон пользовательских метрик
+curl -s http://127.0.0.1:8888/status/http/metric_zones/ | jq keys
+# → [
+# →   "api_routes",
+# →   "client_types",
+# →   "service_telemetry",
+# →   "upstream_latency"
+# → ]
 
-# Статистика конкретной зоны (список ключей и количество записей)
-curl -s http://localhost:8888/status/http/metric_zones/browsers/metrics/ | jq '{
-    total_keys: length,
-    sample_keys: (keys_unsorted[0:5])
+# Детальная статистика ключей конкретной зоны
+curl -s http://127.0.0.1:8888/status/http/metric_zones/upstream_latency/metrics/ | jq '{
+  total_keys: length,
+  sample_keys: (keys_unsorted[0:3])
 }'
 # → {
-# →   "total_keys": 145,
-# →   "sample_keys": ["Chrome/120.0", "Firefox/121.0", "Safari/605.1.15"]
+# →   "total_keys": 2,
+# →   "sample_keys": [
+# →     "api.example.internal",
+# →     "expired"
+# →   ]
 # → }
 
-# Значения метрик для конкретного ключа
-curl -s http://localhost:8888/status/http/metric_zones/shop_stats/metrics/global/ | jq .
-# → {"total_revenue": 152340.50, "items_sold": 1240, "orders_count": 87}
+# Чтение значений конкретного ключа в комплексной зоне
+curl -s http://127.0.0.1:8888/status/http/metric_zones/service_telemetry/metrics/checkout_service/ | jq .
+# → {
+# →   "requests_total": 45120,
+# →   "bytes_sent": 84219030,
+# →   "latency_avg": 0.084,
+# →   "errors_5xx": 12
+# → }
 
-# Проверка состояния разделяемой памяти для зоны
-curl -s http://localhost:8888/status/slabs/shop_stats/ | jq .
+# Чтение метрик уровня Stream L4
+curl -s http://127.0.0.1:8888/status/stream/metric_zones/pg_sessions/metrics/ | jq .
+# → {
+# →   "192.168.1.15": 1420
+# → }
 ```
 
-### Проверка вывода Prometheus
+### 2. Мониторинг аллокатора Slab и фрагментации памяти
 
 ```bash
-# Подсчет количества уникальных метрик
-curl -s http://localhost/p8s | grep -E '^[a-z_]+{' | wc -l
-# → 12
-
-# Проверка конкретной метрики
-curl -s http://localhost/p8s | grep '^angie_shop_revenue_total'
-# → angie_shop_revenue_total{shop_id="global"} 152340.50
-
-# Проверка типа метрики
-curl -s http://localhost/p8s | grep -E '^# TYPE angie_shop_revenue_total'
-# → # TYPE angie_shop_revenue_total counter
-
-# Проверка гистограммы (наличие бакетов)
-curl -s http://localhost/p8s | grep 'angie_metric_rt_hist_bucket'
-# → angie_metric_rt_hist_bucket{le="0.05"} 120
-# → angie_metric_rt_hist_bucket{le="0.1"} 350
-# → angie_metric_rt_hist_bucket{le="+Inf"} 500
-
-# Проверка фильтрации по статусу
-curl -s 'http://localhost/p8s?status=5xx' | head -n 5
-# → HELP angie_http_responses_total ...
-# → TYPE angie_http_responses_total counter
-# → angie_http_responses_total{status="500"} 3
+# Проверка распределения слотов и свободной памяти для конкретной зоны метрик
+curl -s http://127.0.0.1:8888/status/slabs/service_telemetry/ | jq '{
+  pages_total: .pages.total,
+  pages_used: .pages.used,
+  pages_free: .pages.free,
+  slots: [.slots[] | select(.reqs > 0) | {size: .size, used: .used, fails: .fails}]
+}'
+# → {
+# →   "pages_total": 400,
+# →   "pages_used": 112,
+# →   "pages_free": 288,
+# →   "slots": [
+# →     { "size": 128, "used": 45, "fails": 0 },
+# →     { "size": 256, "used": 12, "fails": 0 }
+# →   ]
+# → }
 ```
 
-### Проверка конфигурации Angie
+### 3. Проверка экспорта OpenMetrics / Prometheus
 
 ```bash
-# Проверка включен ли модуль metric
-angie -V 2>&1 | grep -o 'http_metric_module'
-# → --with-http_metric_module=dynamic
+# Сбор и фильтрация кастомных метрик по префиксу
+curl -s http://127.0.0.1:9090/metrics | grep '^angie_custom_'
+# → angie_custom_service_requests_total{service="checkout_service"} 45120
+# → angie_custom_service_latency_seconds_avg{service="checkout_service"} 0.084
 
-# Проверка наличия директив metric_zone и prometheus_template
+# Проверка корректности типов (TYPE) кастомных метрик
+curl -s http://127.0.0.1:9090/metrics | grep -E '^# TYPE angie_custom'
+# → # TYPE angie_custom_service_requests_total counter
+# → # TYPE angie_custom_service_latency_seconds_avg gauge
+# → # TYPE angie_custom_upstream_latency_seconds_bucket counter
+
+# Подсчет количества уникальных временных рядов (Series Count)
+curl -s http://127.0.0.1:9090/metrics | grep -v '^#' | grep -c '^angie_'
+# → 48
+```
+
+### 4. Верификация конфигурации и управление сервисом
+
+```bash
+# Проверка наличия модулей metric в скомпилированном бинарнике Angie
+angie -V 2>&1 | grep -oE '\-\-with-(http|stream)_metric_module'
+# → --with-http_metric_module
+# → --with-stream_metric_module
+
+# Синтаксическая валидация конфигурационных файлов с выводом активных зон
 angie -T | grep -E 'metric_zone|metric_complex_zone|prometheus_template'
-# → metric_zone browsers:2m count expire=on;
-# → metric_complex_zone shop_stats:10m { ... };
-# → prometheus_template advanced_metrics { ... };
+# → metric_zone upstream_latency:8m histogram ...;
+# → metric_complex_zone service_telemetry:16m { ... };
+# → prometheus_template custom_sre_telemetry { ... };
+
+# Безопасная перезагрузка конфигурации с сохранением разделяемой памяти метрик
+angie -t && systemctl reload angie
+# → angie: the configuration file /etc/angie/angie.conf syntax is ok
+# → angie: configuration file /etc/angie/angie.conf test is successful
 ```
+
+---
 
 ## Устранение неполадок
 
-| Проблема | Возможная причина | Решение |
-|:---|:---|:---|
-| **Ошибка: `unknown directive "metric_zone"`** | Модуль `ngx_http_metric_module` не загружен или не включен в сборку. | Проверьте вывод `angie -V` на наличие `--with-http_metric_module`. В официальных пакетах модуль включен по умолчанию. |
-| **Зона метрик пустая (0 ключей)** | Директива `metric` не срабатывает или переменная пустая. | Проверьте `on=request`/`on=end` и что переменная (`$http_user_agent`, `$request_time`) содержит значение. |
-| **Метрики отсутствуют в Prometheus** | `prometheus_template` не настроен или путь не совпадает. | Убедитесь, что `path=~` в шаблоне соответствует реальному пути API, и что метрика включена в `location /p8s`. |
-| **Высокое потребление памяти** | Создано слишком много уникальных ключей (высокая кардинальность). | Ограничьте длину ключа (например, обрежьте User-Agent), используйте агрегацию или увеличьте размер зоны. |
-| **Ключи обрезаются** | Длина ключа превышает 255 символов. | Используйте `map` для сокращения переменной перед записью в метрику. |
-| **Метрики сбрасываются при restart** | Разделяемая память resides в RAM. | Это ожидаемое поведение. Для персистентности используйте внешние системы сбора (Prometheus). |
-| **Тип метрики в Prometheus неверный** | В `prometheus_template` указан неверный `type` (например, `gauge` вместо `counter`). | Убедитесь, что `type` соответствует семантике: `counter` для монотонно растущих значений, `gauge` для текущих. |
-| **Expired записи не удаляются** | `expire` не включен или размер зоны слишком велик для LRU. | Установите `expire=on` и следите за использованием памяти через `/status/slabs/`. |
-| **discard_key не работает** | Ключ `discard_key` не объявлен как метрика или имеет неверное имя. | Добавьте `metric discard_key <zone> <metric_name>;` для агрегации удаленных значений. |
+| Симптом | Первопричина | Диагностика | Решение |
+|:---|:---|:---|:---|
+| **Ошибка: `unknown directive "metric_zone"` или `"metric"`** | Модуль `ngx_http_metric_module` не включен в сборку или отсутствует директива загрузки динамического модуля. | Выполнить `angie -V 2>&1 \| grep metric`. Проверить версию Angie (требуется ≥ 1.6.0). | Обновить Angie до актуальной версии (`dnf upgrade angie` / `apt install angie`). Убедиться, что модуль скомпилирован. |
+| **Зона создана, но массив ключей в API пуст (`[]`)** | 1. Директива `metric` не добавлена в рабочий `location`.<br>2. Переменная-ключ пуста.<br>3. Переменная вычисляется позже фазы `on=request`. | Проверить значение переменной через `add_header X-Debug $var;`. Проверить фазу `on=request` vs `on=end`. | Использовать `on=end` для таймингов и статусов (`$upstream_response_time`, `$status`). Обеспечить значение ключа по умолчанию через `map`. |
+| **Ошибки `ngx_slab_alloc() failed: no memory` в `error.log`** | Исчерпана разделяемая память зоны из-за высокой кардинальности (High Cardinality) при `expire=off`. | Проверить `error.log`: `grep 'ngx_slab_alloc' /var/log/angie/error.log`. Проверить `/status/slabs/<zone>`. | 1. Включить `expire=on`.<br>2. Настроить `discard_key`.<br>3. Увеличить размер зоны (`metric_zone name:32m`).<br>4. Нормализовать ключи через `map`. |
+| **Метрики отсутствуют в выводе Prometheus (`/metrics`)** | Регулярное выражение `path` в `prometheus_template` не совпадает с реальным путем в JSON API. | Проверить точный путь через `curl http://127.0.0.1:8888/status/http/metric_zones/<zone>/metrics/<key>/`. | Исправить регулярное выражение `path=~^/...$` в `prometheus_template`. Убедиться в корректности номеров групп захвата (`$1`, `$2`). |
+| **Promtool сообщает о синтаксической ошибке в метриках** | Недопустимые символы в именах меток, полученных из ключа, либо неверный маппинг типа. | Запустить `curl -s ... \| promtool check metrics /dev/stdin`. | Санитизировать ключи через `map`, исключая пробелы, кириллицу и спецсимволы. Использовать `counter` для сумм/счетчиков, `gauge` для задержек. |
+| **Ключи обрезаются до нечитаемого вида** | Длина ключа превышает жесткий лимит ядра Angie в 255 байт. | Проверить ключи через `/status/http/metric_zones/<zone>/metrics/`. | Использовать хэширование (например, `$md5`) или нормализацию строк до фиксации в метрике. |
+| **Значения метрик обнуляются после регламентных работ** | Сервис был перезапущен командой `restart` вместо `reload`. | Проверить аптайм мастер-процесса: `systemctl status angie`. | Использовать `systemctl reload angie` (сигнал `SIGHUP`) для применения конфигурации без сброса Shared Memory. |
+| **Значение `discard_key` лавинообразно растет** | Скорость появления новых ключей превышает емкость зоны; активный LRU-сброс искажает гранулярность. | Сравнить значение ключа `discard` с остальными через API. | Увеличить размер зоны памяти и сократить кардинальность нормализацией. |
+
+---
 
 ## Лучшие практики
 
-### Безопасность
+### 1. Безопасность (Security)
 
-1. **Ограничивайте доступ к эндпоинтам метрик** по IP или через внутреннюю сеть. Минимальная конфигурация:
-    ```nginx
-    location = /p8s {
-        prometheus all;
-        allow 10.0.10.5;
-        deny all;
-    }
-    ```
-2. **Используйте TLS** при доступе к метрикам через ненадежные каналы.
-3. **Не экспортируйте метрики на публичные интерфейсы.** Даже без аутентификации метрики раскрывают топологию и нагрузки.
+- **Изоляция эндпоинтов телеметрии:** Запрещайте доступ к эндпоинтам `/status/` и `/metrics` из внешних публичных сетей. Размещайте их на выделенном Loopback-интерфейсе (`127.0.0.1:9090`) или внутренней сети управления:
+  ```nginx
+  server {
+      listen 127.0.0.1:9090;
+      server_name localhost;
 
-### Производительность
+      location /metrics {
+          prometheus all custom_sre_telemetry;
+          allow 127.0.0.1;
+          allow 10.200.0.0/16; # Подсеть серверов Prometheus
+          deny all;
+      }
+  }
+  ```
+- **Предотвращение утечки персональных данных (PII):** Никогда не используйте в качестве ключей `metric` сырые значения `$http_authorization`, `$request_uri` (содержащие токены в Query string), email или номера телефонов. Это нарушает требования безопасности и приводит к неконтролируемой кардинальности.
 
-1. **Размер зон:** выделяйте память с запасом. Для гистограмм с большим количеством ключей рекомендуется от 1 МБ до 10 МБ на зону.
-2. **expire=on:** используйте для зон с высокой оборачиваемостью ключей (например, по User-Agent), чтобы избежать зависания записи при переполнении.
-3. **discard_key:** применяйте, когда важно сохранять общую сумму даже при потере детализации (например, общий revenue при удалении старых записей).
-4. **Cardinality:** избегайте высококардинальных ключей. Максимальная длина ключа — 255 символов; слишком длинные ключи обрезаются без предупреждения.
-5. **metric_complex_zone:** используйте вместо нескольких `metric_zone` для одного логического объекта (например, заказа), чтобы сократить обращения к памяти.
+### 2. Производительность и сайзинг памяти (Sizing & Performance)
 
-### Эксплуатация
+- **Расчет необходимого объема Shared Memory:**
+  Каждая уникальная запись ключа требует:
+  $$\text{Memory per Key} \approx 128\text{ байт (rbtree + LRU)} + \text{длина ключа} + \text{размер структуры метрик}$$
+  - Для простой зоны `count` с 10 000 уникальных ключей средней длины 32 байта:
+    $$10\,000 \times (128 + 32 + 8) \approx 1.68\text{ МБ}$$
+    *Рекомендация:* выделять зону с двукратным запасом — `metric_zone routes:4m count expire=on;`.
+  - Для гистограммы на 8 бакетов:
+    $$10\,000 \times (128 + 32 + 9 \times 8) \approx 2.32\text{ МБ}$$
+    *Рекомендация:* выделять зону не менее 8 МБ.
+- **Применение `metric_complex_zone`:** Если требуется собирать 3 и более метрик по одному объекту (например, RPS, Latency, Bytes), всегда используйте `metric_complex_zone` вместо нескольких `metric_zone`. Это снижает расход памяти на 60–70% за счет исключения дублирования узлов rbtree и очередей LRU.
+- **Обязательное использование `expire=on` и `discard_key`:** В продакшн-контурах зоны с динамическими ключами всегда должны объявляться с параметрами `expire=on discard_key=expired_total`. Это гарантирует стабильность веб-сервера при резких всплесках кардинальности без потери общих сумм.
 
-1. **Именование ключей:** используйте осмысленные ключи (`api_v1`, `static_files`) вместо необработанных URI или полных User-Agent.
-2. **Верификация после изменений:** после добавления новых `metric_zone` проверяйте появление ключей через API: `curl -s http://localhost:8888/status/http/metric_zones/<zone>/metrics/ | jq keys`.
-3. **Валидация Prometheus:** после настройки `prometheus_template` проверяйте вывод через `promtool check metrics`.
-4. **Мониторинг памяти:** регулярно проверяйте `/status/slabs/<zone>/` для контроля использования разделяемой памяти.
+### 3. Эксплуатация и SRE (Operational Excellence)
 
-### Отладка
+- **Нормализация через `map`:** Любой пользовательский ввод перед передачей в метрики должен валидироваться через `map` со строгим значением `default`.
+- **Мониторинг самого мониторинга:** Настройте в Alertmanager оповещение на заполненность страниц slab-аллокатора зон метрик (`/status/slabs/`) с порогом 80%, чтобы заранее выявлять нехватку памяти.
+- **Валидация при CI/CD:** Перед деплоем конфигурации с новыми шаблонами `prometheus_template` выполняйте валидацию синтаксиса OpenMetrics через тестовый скрейп и утилиту `promtool`.
 
-1. **Сравнение API и Prometheus:** при расхождениях проверяйте, что `path` в `prometheus_template` точно соответствует пути API.
-2. **Проверка переменных:** используйте `metric on=request` для отладки входных переменных (User-Agent, URI), проверяя их через API.
-3. **Логи Angie:** при проблемах с модулем проверяйте `error.log` на наличие `metric`:
-    ```bash
-    grep -i metric /var/log/angie/error.log | tail -20
-    ```
+---
 
 ## Дополнительная информация
 
-### Визуализация
+### Сравнение подходов к сбору метрик
 
-Для кастомных метрик в Grafana можно использовать готовые панели или создавать собственные дашборды на основе PromQL-запросов к `angie_*` метрикам.
+| Критерий | Angie Custom Metrics (`metric_zone`) | Стандартные зоны (`status_zone`) | Парсинг логов (Vector / mtail) | Внешний экспортер (Sidecar) |
+|:---|:---|:---|:---|:---|
+| **Потребление CPU** | Минимальное (lock-free атомарные операции в RAM) | Минимальное | Высокое (парсинг строк логов на диске) | Среднее (периодический опрос API и сериализация) |
+| **Задержка данных** | 0 секунд (реальное время) | 0 секунд | Задержка буферизации диска (1–5 сек) | Задержка интервала скрейпинга (15–30 сек) |
+| **Гибкость ключей** | Любые переменные сервера, вычисляемые поля, мапы | Фиксированные сущности (сервер, локация, апстрим) | Любые поля из строки лога | Ограничено метриками экспортера |
+| **Поддержка гистограмм** | Произвольные бакеты для любых таймингов | Только базовые тайминги апстримов | Настраиваемые бакеты | Фиксированные бакеты |
+| **Персистентность** | В RAM (сброс при restart, сохранение при reload) | В RAM | На диске в файле лога | Зависит от хранилища TSDB |
+| **Автономность** | Полная (встроено в бинарник Angie) | Полная | Требует отдельного процесса демона | Требует отдельного процесса демона |
 
-### Производительность
+### Технические ограничения
 
-Нативный модуль `ngx_http_metric_module` работает в процессе воркеров и использует атомарные операции (lock-free) для обновления счетчиков. Это обеспечивает минимальный overhead даже при высокой частоте событий. Внешние агенты (sidecar-экспортеры) потребляют дополнительные ресурсы CPU и памяти, так как требуют парсинга access-логов или JSON API.
+1. **Максимальная длина ключа:** 255 байт. Строки большей длины усекаются, что может приводить к коллизиям ключей.
+2. **Волатильность памяти при перезапуске:** Данные зон хранятся в ОЗУ. При аварийном падении хоста или выполнении `systemctl restart` значения обнуляются. Историчность должна обеспечиваться внешним хранилищем временных рядов (Prometheus, VictoriaMetrics).
+3. **Режим API:** В версии Angie Open Source чтение данных через `/status/` работает строго в режиме `read-only` (методы GET и HEAD). Ручной сброс счетчиков через API без перезапуска master-процесса не поддерживается.
 
-### Сравнение инструментов
+### Связанные ссылки
 
-| Характеристика | metric_zone + API | metric_zone + Prometheus | Console Light |
-|:---|:---|:---|:---|
-| **Гранулярность** | Реал-тайм (~1 сек через API) | Зависит от scrape_interval (от 15s) | Реал-тайм (~1 сек) |
-| **История** | Нет | Месяцы/годы (TSDB) | Нет |
-| **Масштаб** | Один узел | Весь кластер | Один узел |
-| **Алертинг** | Через внешние системы | Нативный (Alertmanager) | Отсутствует |
-| **Типы метрик** | Любые (count, sum, gauge, histogram, average) | counter, gauge, histogram, summary | Стандартные зоны API |
-| **Overhead** | Минимальный | Зависит от частоты скрапинга | Минимальный (браузер опрашивает API) |
-| **Назначение** | Оперативная отладка, бизнес-метрики | Тренды, Capacity Planning, SLA | Оперативная отладка |
-
-### Ограничения
-
-1. **Pull-модель для Prometheus:** метрики доступны только при активном скрапинге. При недоступности Angie данные не собираются.
-2. **Cardinality:** каждая уникальная комбинация ключей создает отдельную временную серию. При высокой кардинальности TSDB быстро растет.
-3. **Один источник:** стандартный модуль metric покрывает только пользовательские зоны Angie. Для метрик ОС (CPU, RAM, disk I/O) требуется отдельный `node_exporter`.
-4. **Отсутствие истории при restart:** метрики в разделяемой памяти сбрасываются при `stop/start`. Это не влияет на Prometheus TSDB, но может создавать "провалы" на графиках.
-5. **Максимальная длина ключа:** 255 символов. При превышении ключи обрезаются без предупреждения.
-6. **Типы метрик:** модуль metric поддерживает richer типы (average, min/max, last), которые не имеют прямого соответствия в Prometheus. При экспорте через `prometheus_template` используйте `gauge` для средних и экстремумов.
-
-### Связанные технологии
-
-- **[Основные концепции мониторинга](./angie_monitoring_concepts.md)** — определения `status_zone`, `metric_zone`, расчет памяти
-- **[Интеграция с Prometheus](./angie_monitoring_prometheus.md)** — `prometheus_template`, `prometheus_all.conf`, нативный экспорт
-- **[Возможности Angie Pro](./angie_monitoring_pro.md)** — динамическое управление весами, `upstream_probe`, `keyval_zone`
-- **[Работа с конфигурацией через API](./angie_monitoring_api.md)** — полная таблица эндпоинтов, JSON-схемы
-- **[Настройка Console Light и API](./angie_monitoring_console.md)** — веб-интерфейс для оперативного контроля
+- [Основные концепции мониторинга Angie](./angie_monitoring_concepts.md) — расчет разделяемой памяти, архитектура worker-процессов и slab-аллокатор.
+- [Интеграция с Prometheus](./angie_monitoring_prometheus.md) — базовые шаблоны `prometheus_all.conf`, настройка скрейпинга и типы метрик.
+- [Работа с конфигурацией через API](./angie_monitoring_api.md) — полная спецификация REST-эндпоинтов, структуры JSON и методы доступа.
+- [Настройка Console Light и API](./angie_monitoring_console.md) — интерактивная веб-панель мониторинга в режиме реального времени.
+- [Возможности Angie Pro](./angie_monitoring_pro.md) — активные проверки доступности `upstream_probe` и расширенные функции мониторинга.
 
 ---
 
@@ -501,6 +747,6 @@ angie -T | grep -E 'metric_zone|metric_complex_zone|prometheus_template'
 
 - [Основные концепции мониторинга](./angie_monitoring_concepts.md)
 - [Интеграция с Prometheus](./angie_monitoring_prometheus.md)
-- [Возможности Angie Pro](./angie_monitoring_pro.md)
 - [Работа с конфигурацией через API](./angie_monitoring_api.md)
 - [Настройка Console Light и API](./angie_monitoring_console.md)
+- [Возможности Angie Pro](./angie_monitoring_pro.md)

@@ -1,99 +1,198 @@
 # Автоматические TLS-сертификаты в Angie: модуль ACME
 
+**Актуально для:** Angie 1.12.x (модуль включен в базовую поставку начиная с Angie 1.10.x)
+
 ## Определения
 
-**Модуль `acme` в Angie** — встроенный полнофункциональный клиент для автоматизации жизненного цикла [SSL/TLS-сертификатов](../../Networking/Protocols/tls.md) по протоколу ACME (Automated Certificate Management Environment). 
+**Модуль `acme` в Angie** — встроенный полнофункциональный клиент для автоматизации полного жизненного цикла [SSL/TLS-сертификатов](../../Networking/Protocols/tls.md) по протоколу ACME (Automated Certificate Management Environment, RFC 8555). В отличие от Nginx, где для выпуска и продления требуются внешние демоны и утилиты (Certbot, `acme.sh`, cron-скрипты), Angie интегрирует протокольную логику получения, прохождения проверок (challenges) и обновления сертификатов непосредственно в серверное ядро.
 
-В отличие от Nginx, где требуются внешние утилиты (Certbot, acme.sh), Angie интегрирует логику получения, проверки и обновления сертификатов непосредственно в ядро. Это позволяет управлять безопасностью соединений исключительно через конфигурационные файлы веб-сервера без развертывания дополнительного ПО.
+**ACME v2 Directory** — точка входа сервера сертификации (CA), возвращающая JSON со списком доступных ресурсов и методов авторизации (`newOrder`, `newAccount`, `newNonce`).
 
-Общие принципы работы Let's Encrypt, лимиты и типы проверок описаны в базовом руководстве:
+**HTTP-01 Challenge** — метод валидации владения доменом через протокол HTTP. Центр сертификации запрашивает уникальный проверочный токен по пути `http://<domain>/.well-known/acme-challenge/<token>`. Angie перехватывает такие запросы на порту 80 аппаратно в ядре без создания статических файлов на диске.
+
+**DNS-01 Challenge** — метод валидации через публикацию одноразовой криптографической TXT-записи `_acme-challenge.<domain>`. Необходим для выпуска Wildcard-сертификатов (`*.example.com`) и для хостов, закрытых корпоративным файрволом от входящего HTTP-трафика.
+
+**Встроенный DNS-responder** — встроенный в Angie легковесный DNS-сервер на базе директивы `acme_dns_port`, способный отвечать на проверочные TXT-запросы Let's Encrypt напрямую при делегировании NS-записи, без взаимодействия с внешними DNS-провайдерами или API.
+
+**EAB (External Account Binding)** — механизм привязки ACME-аккаунта к предварительно зарегистрированной учетной записи в корпоративном или коммерческом CA (ZeroSSL, Entrust, Sectigo, внутренний HashiCorp Vault / Step-CA) с использованием пары идентификатора (`kid`) и криптографического HMAC-ключа (`hmac_key`).
+
+**Atomic In-Memory Hot-Reload** — механизм Angie, при котором обновленные сертификаты и закрытые ключи загружаются в разделяемую память рабочих процессов (`worker`) на лету. В отличие от связки Nginx + Certbot, операция не требует выполнения `systemctl reload angie`, не порождает новых worker-процессов и не обрывает существующие Keepalive/WebSocket/gRPC-соединения.
+
+Общие принципы протокола ACME, типы проверок и лимиты Let's Encrypt описаны в базовом руководстве:
 > **[Let's Encrypt и Certbot: общие принципы и методы авторизации](../Concepts/https_with_certbot.md)**
 
-## Базовые концепции
+---
 
-### Преимущества встроенного модуля
+## Базовые концепции и архитектура
 
-*   **Нативная интеграция:** Отсутствие зависимостей от Python (Certbot) или Bash-скриптов.
-*   **Динамическое применение:** Сертификаты обновляются в памяти рабочих процессов без прерывания соединений и необходимости `reload`.
-*   **Встроенный DNS-responder:** Для проверки DNS-01 (Wildcard) Angie сам может выступать в роли временного DNS-сервера.
-*   **Поддержка Stream:** Автоматизация TLS доступна не только для HTTP, но и для TCP/UDP проксирования (блок `stream`).
+### Внутренний жизненный цикл и архитектура процессов
 
-### Параметры ACME-клиента
+Встроенный клиент ACME функционирует в контексте многопроцессной архитектуры Angie:
 
-Настройка клиента выполняется в блоке `http` или `stream` через директиву `acme_client`. Основные параметры:
+```
+[ Master Process ]
+       │
+       ├─► 1. Фоновый таймер ревизии сертификатов (период проверки)
+       ├─► 2. Генерация локального закрытого ключа (ECDSA/RSA)
+       ├─► 3. Отправка заявки (CSR) к ACME Directory (Let's Encrypt / Step-CA)
+       ├─► 4. Сохранение выданных данных в /var/lib/angie/acme/
+       │
+[ Worker Processes (Shared Memory) ]
+       │
+       ├─► HTTP-01: Перехват входящих /.well-known/acme-challenge/ (L7)
+       ├─► DNS-01:  Встроенный mini-DNS responder на порту 53/UDP (L4)
+       └─► Zero-Downtime: Мгновенное применение нового X.509 из памяти
+```
 
-| Параметр | Описание | Значение по умолчанию |
-| :--- | :--- | :--- |
-| `directory` | URL ACME-сервера (Let's Encrypt, ZeroSSL и др.). | Обязателен |
-| `challenge` | Метод верификации: `http` (HTTP-01) или `dns` (DNS-01). | `http` |
-| `key_type` | Тип закрытого ключа: `rsa` или `ecdsa`. | `ecdsa` |
-| `key_bits` | Размер ключа (RSA: 2048/4096, ECDSA: 256/384). | `256` (для ECDSA) |
-| `renew` | Срок до истечения, при котором начинается обновление. | `30d` |
+1. **Инициализация:** При старте мастер-процесс Angie считывает параметры блоков `acme_client` в контекстах `http` или `stream`. Если сертификаты в локальном хранилище отсутствуют, генерируются приватные ключи аккаунта и домена, формируется CSR и отправляется запрос в ACME Directory.
+2. **Маршрутизация проверок:** 
+   - Для **HTTP-01** worker-процессы автоматически перехватывают URI с префиксом `/.well-known/acme-challenge/` на виртуальных серверах, где активирована директива `acme <name>;`. Перенаправления (редиректы на HTTPS) не ломают проверку, так как перехват выполняется до пользовательских блоков `location`.
+   - Для **DNS-01** Angie слушает UDP/TCP-порт (по умолчанию 53 или заданный в `acme_dns_port`) и динамически генерирует TXT-ответ на DNS-запрос центра сертификации.
+3. **Хранилище на диске:** Все артефакты сохраняются в защищенном системном каталоге `/var/lib/angie/acme/`.
+4. **Бесшовное обновление:** За `renew` дней (по умолчанию 30 дней) до истечения срока действия мастер-процесс запускает процедуру ротации. После успешного получения новый сертификат атомарно монтируется в TLS-контекст рабочих процессов.
+
+### Директивы конфигурации
+
+Настройка клиента выполняется на глобальном уровне в блоке `http` или `stream` через директиву `acme_client`:
+
+```nginx
+acme_client <name> {
+    directory   <url>;
+    challenge   http | dns;
+    key_type    rsa | ecdsa;
+    key_bits    <size>;
+    renew       <time>;
+    contact     <uri>;
+    eab         kid=<key_id>:key=<hmac_key>;
+    account_key <path>;
+}
+```
+
+#### Параметры блока `acme_client`
+
+| Параметр | Описание | Значение по умолчанию | Допустимые значения |
+| :--- | :--- | :--- | :--- |
+| `directory` | Точка входа ACME Directory API. | **Обязателен** | URL (HTTPS) |
+| `challenge` | Метод подтверждения владения доменом. | `http` | `http`, `dns` |
+| `key_type` | Алгоритм генерации закрытого ключа сертификата. | `ecdsa` | `ecdsa`, `rsa` |
+| `key_bits` | Длина ключа в битах. | `256` (для ECDSA) / `2048` (для RSA) | ECDSA: `256`, `384`; RSA: `2048`, `4096` |
+| `renew` | Временной порог до окончания действия, запускающий обновление. | `30d` | Временные интервалы (`14d`, `30d`, `720h`) |
+| `contact` | Контактный URI для оповещений от CA о проблемах безопасности. | Отсутствует | `mailto:admin@example.corp` |
+| `eab` | Параметры External Account Binding для авторизованных CA. | Отсутствует | `kid=...:key=...` |
+| `account_key` | Пользовательский путь к закрытому ключу аккаунта ACME. | Автоматически в хранилище | Абсолютный путь к файлу ключа |
+
+#### Вспомогательные директивы контекста `http` и `stream`
+
+*   `acme <client_name>;` — активирует привязку виртуального сервера (`server`) к указанному клиенту ACME. Серверный блок использует доменные имена из директивы `server_name` для формирования списка SAN (Subject Alternative Names).
+*   `acme_dns_port <port>;` — задает сетевой порт для встроенного DNS-сервера проверок DNS-01 (по умолчанию 53).
 
 ### Переменные модуля
 
-После успешного получения сертификата становятся доступны следующие переменные (где `<name>` — имя клиента):
-*   `$acme_cert_<name>` — путь к файлу сертификата (полная цепочка).
-*   `$acme_cert_key_<name>` — путь к файлу закрытого ключа.
-*   `$acme_cert_chain_<name>` — путь к файлу цепочки CA.
+После завершения выпуска или загрузки сертификата из локального хранилища модуль регистрирует динамические переменные (где `<name>` — имя клиента из `acme_client`):
+
+*   `$acme_cert_<name>` — абсолютный путь к файлу полного сертификата хоста (включая промежуточные сертификаты CA).
+*   `$acme_cert_key_<name>` — абсолютный путь к файлу приватного ключа хоста.
+*   `$acme_cert_chain_<name>` — абсолютный путь к цепочке доверия издателя (Intermediate CA).
+
+Данные переменные передаются стандартным директивам Nginx/Angie:
+```nginx
+ssl_certificate     $acme_cert_myclient;
+ssl_certificate_key $acme_cert_key_myclient;
+```
+
+---
 
 ## Практические сценарии
 
-### Сценарий 1: Стандартный сертификат (HTTP-01)
+### Сценарий 1: Стандартный HTTP-01 сертификат с SAN и авторедиректом
 
-Рекомендуется для большинства сайтов. Требует открытого порта 80 для входящих запросов проверки.
+Классический сценарий для веб-серверов в публичном контуре. Запросы на порт 80 автоматически перенаправляются на HTTPS, при этом системный endpoint `/.well-known/acme-challenge/` обслуживается Angie без помех.
 
 ```nginx
 http {
-    resolver 1.1.1.1 8.8.8.8 valid=300s;
+    # Резолвер необходим Angie для разрешения имени ACME Directory
+    resolver 127.0.0.53 1.1.1.1 valid=300s ipv6=off;
 
-    acme_client le_http {
+    # Конфигурация ACME-клиента
+    acme_client letsencrypt_prod {
         directory https://acme-v02.api.letsencrypt.org/directory;
         challenge http;
-        key_type ecdsa;
+        key_type  ecdsa;
+        key_bits  256;
+        renew     30d;
+        contact   mailto:security@example.com;
     }
 
+    # Сервер HTTP: обработка вызовов валидации и перенаправление пользователей
     server {
         listen 80;
-        server_name example.com;
+        server_name example.com www.example.com;
 
-        # Angie автоматически перехватывает запросы в /.well-known/acme-challenge/
+        # Angie перехватывает /.well-known/acme-challenge/ автоматически,
+        # глобальный редирект не блокирует валидацию Let's Encrypt
         location / {
             return 301 https://$host$request_uri;
         }
     }
 
+    # Защищенный виртуальный хост HTTPS
     server {
         listen 443 ssl;
-        server_name example.com;
+        http2 on;
+        server_name example.com www.example.com;
 
-        acme le_http;
-        ssl_certificate     $acme_cert_le_http;
-        ssl_certificate_key $acme_cert_key_le_http;
+        # Привязка к ACME клиенту
+        acme letsencrypt_prod;
+        ssl_certificate     $acme_cert_letsencrypt_prod;
+        ssl_certificate_key $acme_cert_key_letsencrypt_prod;
 
-        # [Обзор TLS/SSL в Nginx/Angie](../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md)
+        # Базовая оптимизация TLS (см. ../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md)
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_session_timeout 1d;
+        ssl_session_cache shared:SSL:10m;
+
+        location / {
+            root /var/www/html;
+            index index.html;
+        }
     }
 }
 ```
 
-### Сценарий 2: Wildcard-сертификат (DNS-01)
+### Сценарий 2: Wildcard-сертификат через встроенный DNS-01 responder
 
-Позволяет защитить домен и все его поддомены (`*.example.com`). Требует делегирования поддомена `_acme-challenge` на IP-адрес сервера Angie.
+Позволяет выпустить единый сертификат на домен и все поддомены (`example.com`, `*.example.com`). Метод не требует открывать порт 80.
 
-**1. Настройка в DNS:**
-Создайте NS-запись: `_acme-challenge.example.com. IN NS <IP_вашего_сервера>`
+#### 1. Делегирование NS-записи на DNS-сервере домена
+В авторитетной DNS-зоне домена настраивается перенаправление поддомена проверок на публичный IP-адрес хоста Angie:
+```text
+; DNS зона example.com
+_acme-challenge.example.com.   IN  NS  acme-ns.example.com.
+acme-ns.example.com.           IN  A   198.51.100.10
+```
 
-**2. Конфигурация Angie:**
+#### 2. Перенаправление порта 53 на непривилегированный (Linux Sysadmin)
+Если Angie запускается от непривилегированного пользователя без capability `CAP_NET_BIND_SERVICE`, настраивается перенаправление через `nftables`:
+```bash
+sudo nft add table inet nat
+sudo nft add chain inet nat prerouting '{ type nat hook prerouting priority -100; }'
+sudo nft add rule inet nat prerouting udp dport 53 redirect to :5353
+sudo nft add rule inet nat prerouting tcp dport 53 redirect to :5353
+```
+
+#### 3. Конфигурация Angie
 ```nginx
 http {
-    resolver 1.1.1.1;
-    
-    # Порт для приема DNS-запросов от CA (Let's Encrypt)
-    acme_dns_port 53;
+    resolver 1.1.1.1 8.8.8.8 valid=60s;
+
+    # Слушаем перенаправленный порт DNS
+    acme_dns_port 5353;
 
     acme_client le_wildcard {
         directory https://acme-v02.api.letsencrypt.org/directory;
         challenge dns;
+        key_type  ecdsa;
+        contact   mailto:admin@example.com;
     }
 
     server {
@@ -103,378 +202,427 @@ http {
         acme le_wildcard;
         ssl_certificate     $acme_cert_le_wildcard;
         ssl_certificate_key $acme_cert_key_le_wildcard;
+
+        location / {
+            proxy_pass http://internal_backend;
+        }
     }
 }
 ```
 
-### Сценарий 3: Использование External Account Binding (EAB)
+### Сценарий 3: Интеграция с внутренним Private CA (Smallstep / HashiCorp Vault)
 
-Необходимо для коммерческих CA (ZeroSSL, Google Trust Services).
+В закрытых корпоративных контурах без доступа в Интернет выпуск сертификатов организуется через локальный ACME CA (Smallstep `step-ca` или HashiCorp Vault ACME backend).
 
 ```nginx
 http {
-    resolver 8.8.8.8;
+    # Внутренний корпоративный DNS
+    resolver 192.168.10.2 192.168.10.3 valid=120s;
 
-    acme_client zerossl {
-        directory https://acme.zerossl.com/v2/DV90;
-        # kid и key предоставляются провайдером
-        eab kid=YOUR_KID:key=YOUR_HMAC_KEY;
+    # Конфигурация клиента с корпоративным CA
+    acme_client internal_ca {
+        directory https://ca.corp.internal:9000/acme/acme/directory;
+        challenge http;
+        key_type  ecdsa;
+        renew     10d;
+
+        # Если внутренний CA требует External Account Binding
+        eab kid=08f7b2c9e4a1:key=7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a;
+    }
+
+    server {
+        listen 80;
+        server_name portal.corp.internal;
+
+        location / {
+            return 301 https://$host$request_uri;
+        }
     }
 
     server {
         listen 443 ssl;
-        server_name example.com;
+        server_name portal.corp.internal;
 
-        acme zerossl;
-        ssl_certificate     $acme_cert_zerossl;
-        ssl_certificate_key $acme_cert_key_zerossl;
+        acme internal_ca;
+        ssl_certificate     $acme_cert_internal_ca;
+        ssl_certificate_key $acme_cert_key_internal_ca;
+
+        # Указание доверенной корневой цепочки корпоративного CA
+        ssl_trusted_certificate /etc/ssl/certs/corp-internal-root-ca.pem;
+
+        location / {
+            proxy_pass http://127.0.0.1:8080;
+        }
     }
 }
 ```
 
-### Сценарий 4: ACME в модуле Stream (L4)
+> **Важно:** Для успешного подключения Angie к внутреннему CA корневой сертификат CA должен быть установлен в общесистемное хранилище ОС:
+> ```bash
+> sudo cp corp-internal-root-ca.pem /usr/local/share/ca-certificates/
+> sudo update-ca-certificates
+> # Для RHEL/CentOS/Astra:
+> # sudo cp corp-internal-root-ca.pem /etc/pki/ca-trust/source/anchors/
+> # sudo update-ca-trust
+> ```
 
-Автоматизация TLS для не-HTTP сервисов (например, PostgreSQL или Mail сервера).
+### Сценарий 4: ACME в модуле Stream (L4 TCP/UDP TLS Termination)
+
+Автоматизация шифрования для не-HTTP сервисов: защищенные базы данных (PostgreSQL), брокеры сообщений (MQTT) или корпоративная почта.
 
 ```nginx
 stream {
-    resolver 1.1.1.1;
+    resolver 1.1.1.1 valid=300s;
 
-    acme_client db_le {
+    acme_client stream_le {
         directory https://acme-v02.api.letsencrypt.org/directory;
+        # В блоке stream доступен только challenge dns
+        challenge dns;
+        key_type  rsa;
+        key_bits  4096;
     }
 
     server {
         listen 5432 ssl;
-        
-        acme db_le;
-        ssl_certificate     $acme_cert_db_le;
-        ssl_certificate_key $acme_cert_key_db_le;
 
-        proxy_pass pg_backend;
+        acme stream_le;
+        ssl_certificate     $acme_cert_stream_le;
+        ssl_certificate_key $acme_cert_key_stream_le;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers HIGH:!aNULL:!MD5;
+
+        proxy_pass postgresql_cluster;
+    }
+
+    upstream postgresql_cluster {
+        server 192.168.20.11:5432 max_fails=3 fail_timeout=10s;
+        server 192.168.20.12:5432 backup;
     }
 }
 ```
 
+### Сценарий 5: Высокая доступность (HA) в Multi-Node кластере (Keepalived / VRRP)
+
+При работе кластера из нескольких серверов под общим виртуальным IP (VRRP) запросы HTTP-01 от Let's Encrypt могут поступить на `BACKUP`-ноду, которая не инициировала вызов.
+
+#### Рекомендуемая архитектура синхронизации:
+1. Выпуск сертификатов делегируется исключительно узлу `MASTER` (или через DNS-01, доступный всем узлам).
+2. Директория хранилища `/var/lib/angie/acme/` синхронизируется на вспомогательные ноды через защищенный `rsync` по SSH по триггеру `systemd.path`.
+
+**Конфигурация systemd unit на MASTER (`/etc/systemd/system/angie-acme-sync.service`):**
+```ini
+[Unit]
+Description=Sync Angie ACME certificates to secondary nodes
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rsync -a --delete -e "ssh -o StrictHostKeyChecking=accept-new" /var/lib/angie/acme/ root@192.168.1.102:/var/lib/angie/acme/
+ExecStartPost=/usr/bin/ssh root@192.168.1.102 "chown -R angie:angie /var/lib/angie/acme && angie -s reload"
+```
+
+**Монитор изменений файловой системы (`/etc/systemd/system/angie-acme-sync.path`):**
+```ini
+[Unit]
+Description=Monitor Angie ACME storage directory for certificate renewals
+
+[Path]
+PathModified=/var/lib/angie/acme/
+Unit=angie-acme-sync.service
+
+[Install]
+WantedBy=multi-user.target
+```
+
+---
+
 ## Операции и команды
 
-### Управление процессами Angie
+### Проверка конфигурации и запуск
 
 ```bash
-# Проверка конфигурации перед применением
+# Синтаксическая валидация конфигурационных файлов
 sudo angie -t
 # → angie: the configuration file /etc/angie/angie.conf syntax is ok
 # → angie: configuration file /etc/angie/angie.conf test is successful
 
-# Проверка конфигурации с тестовой загрузкой сертификатов
-sudo angie -T
-# → показывает загруженные конфиги, ACME-клиенты и сертификаты
+# Проверка конфигурации с подробным дампом загруженных директив ACME
+sudo angie -T | grep -E "acme_client|ssl_certificate"
+# → acme_client letsencrypt_prod {
+# →     ssl_certificate $acme_cert_letsencrypt_prod;
 
-# Применение конфигурации (zero downtime)
+# Перезагрузка конфигурации без обрыва соединений
+sudo angie -s reload
+# → [ok] configuration reloaded successfully
+```
+
+### Мониторинг состояния ACME через REST API Angie
+
+Статус клиентов ACME инспектируется через встроенный API (см. [Мониторинг Angie — API](./angie_monitoring/angie_monitoring_api.md)):
+
+```bash
+# Просмотр списка и статуса всех сконфигурированных ACME клиентов
+curl -s http://127.0.0.1:8080/status/http/acme_clients/ | jq .
+# → {
+# →   "letsencrypt_prod": {
+# →     "directory": "https://acme-v02.api.letsencrypt.org/directory",
+# →     "challenge": "http",
+# →     "status": "ready"
+# →   }
+# → }
+
+# Детальная информация по конкретному клиенту и выпущенным доменам
+curl -s http://127.0.0.1:8080/status/http/acme_clients/letsencrypt_prod/ | jq .
+# → {
+# →   "domains": {
+# →     "example.com": {
+# →       "status": "valid",
+# →       "valid_from": "2026-09-01T12:00:00Z",
+# →       "valid_to": "2026-11-30T12:00:00Z",
+# →       "days_left": 47,
+# →       "key_type": "ECDSA",
+# →       "sans": ["example.com", "www.example.com"]
+# →     }
+# →   }
+# → }
+
+# Мониторинг клиентов уровня L4 (Stream)
+curl -s http://127.0.0.1:8080/status/stream/acme_clients/ | jq .
+```
+
+### Проверка и инспекция сертификатов на диске
+
+```bash
+# Просмотр структуры каталогов хранилища
+ls -la /var/lib/angie/acme/
+# → drwx------ 4 angie angie 4096 Sep 14 10:00 .
+# → drwxr-xr-x 3 angie angie 4096 Sep 14 10:00 letsencrypt_prod
+
+# Проверка срока действия и атрибутов сертификата через OpenSSL
+openssl x509 -in /var/lib/angie/acme/letsencrypt_prod/example.com/cert.pem -noout -issuer -dates -subject
+# → issuer=C = US, O = Let's Encrypt, CN = E1
+# → notBefore=Sep 14 09:30:15 2026 GMT
+# → notAfter=Dec 13 09:30:14 2026 GMT
+# → subject=CN = example.com
+
+# Проверка альтернативных имен субъекта (SAN)
+openssl x509 -in /var/lib/angie/acme/letsencrypt_prod/example.com/cert.pem -noout -ext subjectAltName
+# → X509v3 Subject Alternative Name: 
+# →     DNS:example.com, DNS:www.example.com
+
+# Проверка параметров открытого ключа (ECDSA кривая)
+openssl x509 -in /var/lib/angie/acme/letsencrypt_prod/example.com/cert.pem -noout -text | grep -A 2 "Public Key Algorithm"
+# → Public Key Algorithm: id-ecPublicKey
+# →     Public-Key: (256 bit)
+# →     ASN1 OID: prime256v1
+```
+
+### Экстренная ротация и принудительное обновление
+
+```bash
+# Способ 1: Удаление текущего сертификата для форсирования перевыпуска
+sudo rm -f /var/lib/angie/acme/letsencrypt_prod/example.com/cert.pem
 sudo angie -s reload
 
-# Перезапуск worker процессов
-sudo angie -s reopen
+# Способ 2: Полная очистка данных клиента (перерегистрация аккаунта)
+sudo rm -rf /var/lib/angie/acme/letsencrypt_prod/
+sudo angie -s reload
 
-# Остановка сервера
-sudo angie -s stop
-
-# Принудительная остановка
-sudo angie -s quit
+# Мониторинг процесса выпуска в реальном времени
+sudo tail -n 50 -f /var/log/angie/error.log | grep -i acme
+# → 2026/09/14 10:15:02 [notice] 14201#14201: [acme] order created for example.com
+# → 2026/09/14 10:15:05 [notice] 14201#14201: [acme] challenge verified for example.com
+# → 2026/09/14 10:15:08 [notice] 14201#14201: [acme] certificate successfully obtained
 ```
 
-### Управление ACME через CLI
+### Резервное копирование и восстановление
 
 ```bash
-# Просмотр логов ACME в реальном времени
-sudo tail -f /var/log/angie/error.log | grep -i acme
-# → [acme] certificate obtained for example.com
-# → [acme] certificate renewed for example.com
-# → [acme] challenge failed for example.com
-
-# Проверка доступности директории ACME-сервера
-curl -I https://acme-v02.api.letsencrypt.org/directory
-# → HTTP/2 200
-
-# Проверка доступности staging-окружения
-curl -I https://acme-staging-v02.api.letsencrypt.org/directory
-# → HTTP/2 200
-```
-
-### Управление сертификатами и данными ACME
-
-```bash
-# Просмотр списка сертификатов в директории
-ls -la /var/lib/angie/acme/
-# → letsencrypt/
-# → zerossl/
-
-# Просмотр конкретного сертификата
-sudo ls -la /var/lib/angie/acme/letsencrypt/example.com/
-# → example.com.crt
-# → example.com.key
-# → example.com.chain.pem
-
-# Проверка срока действия сертификата
-echo | openssl s_client -connect example.com:443 -servername example.com 2>/dev/null | openssl x509 -noout -dates
-# → notBefore=...
-# → notAfter=...
-
-# Резервное копирование ACME-данных
-sudo tar -czf /backup/angie-acme-$(date +%Y%m%d).tar.gz /var/lib/angie/acme/
+# Создание зашифрованного резервного архива ключей и сертификатов
+sudo tar -C /var/lib/angie/ -czf /backup/angie_acme_$(date +%F).tar.gz acme/
+sudo chmod 600 /backup/angie_acme_*.tar.gz
 
 # Восстановление из резервной копии
-sudo tar -xzf /backup/angie-acme-20260921.tar.gz -C /
-
-# Очистка устаревших сертификатов (старше 30 дней)
-sudo find /var/lib/angie/acme/ -name "*.crt" -mtime +30 -exec ls -la {} \;
-```
-
-### Принудительное обновление сертификатов
-
-```bash
-# Способ 1: Временная активация renew через конфиг (если поддерживается)
-# Добавить в http/stream блок: acme_renew on;
-sudo angie -s reload
-# После обновления удалить директиву и reload
-
-# Способ 2: Удаление файлов сертификата (принудительный перевыпуск)
-sudo rm -f /var/lib/angie/acme/letsencrypt/example.com.crt
-sudo rm -f /var/lib/angie/acme/letsencrypt/example.com.key
-sudo angie -s reload
-
-# Способ 3: Полная очистка ACME-данных (использовать с осторожностью)
-sudo rm -rf /var/lib/angie/acme/letsencrypt/*
+sudo tar -xzf /backup/angie_acme_2026-09-14.tar.gz -C /var/lib/angie/
+sudo chown -R angie:angie /var/lib/angie/acme/
+sudo chmod 700 /var/lib/angie/acme/
 sudo angie -s reload
 ```
 
-### Переключение между Staging и Production
-
-```bash
-# Staging для тестов (не влияет на rate limits)
-# В конфигурации:
-acme_client le_test {
-    directory https://acme-staging-v02.api.letsencrypt.org/directory;
-    challenge http;
-}
-
-# Production
-acme_client le_prod {
-    directory https://acme-v02.api.letsencrypt.org/directory;
-    challenge http;
-}
-
-# Проверка текущего окружения через API
-curl -s http://127.0.0.1/api/v1/http/acme_clients/ | jq '.clients[] | {name, directory}'
-```
-
-### Мониторинг через API Angie
-
-```bash
-# Список всех ACME-клиентов
-curl -s http://127.0.0.1/api/v1/http/acme_clients/ | jq .
-
-# Статус конкретного клиента
-curl -s http://127.0.0.1/api/v1/http/acme_clients/le_http/ | jq .
-# → показывает домены, сроки действия, статус
-
-# Проверка всех сертификатов
-curl -s http://127.0.0.1/api/v1/http/acme/ | jq '.certs[] | {domain, expires, serial}'
-# → {"domain": "example.com", "expires": "2026-12-21T...", "serial": "..."}
-```
+---
 
 ## Устранение неисправностей
 
-### Ошибка ACME challenge failed
+### 1. Ошибка верификации HTTP-01: Challenge Failed (404 Not Found)
 
-**Симптом:** В `error.log` появляется `[acme] challenge failed for example.com`.
+**Симптом:** Сертификат не выпускается. В `/var/log/angie/error.log` фиксируется сообщение:
+`[acme] challenge failed for domain example.com: Invalid response from http://example.com/.well-known/acme-challenge/...: 404`
 
 **Диагностика:**
 ```bash
-# Проверка доступности ACME-сервера
-curl -I https://acme-v02.api.letsencrypt.org/directory
-# → HTTP/2 200
+# 1. Проверка доступности порта 80 из внешней сети
+curl -I -L http://example.com/.well-known/acme-challenge/test-probe
+# → HTTP/1.1 301 Moved Permanently (или 404/502)
 
-# Для HTTP-01: проверка доступности порта 80
-sudo ss -tlnp | grep :80
-curl -s http://example.com/.well-known/acme-challenge/test
+# 2. Проверка, слушает ли Angie внешний интерфейс
+sudo ss -tlpn | grep :80
+# → LISTEN 0 511 0.0.0.0:80 users:(("angie",pid=14202,fd=7))
 
-# Для DNS-01: проверка делегирования
+# 3. Проверка правил межсетевого экрана (nftables / iptables)
+sudo nft list chain inet filter input | grep -E "dport 80"
+# → tcp dport 80 accept
+```
+
+**Причины и решение:**
+1. **Кастомный `location` перехватывает путь:** В блоке `server { listen 80; }` задан строгий регулярный `location ^~ /.` или `location ~ \.`, который отменяет дефолтный роутинг Angie. Убедитесь, что нет конфликтующих директив `return` или `rewrite`, блокирующих путь `/.well-known/acme-challenge/`.
+2. **Внешний Reverse Proxy / Балансировщик:** Если перед Angie расположен внешний балансировщик (L4/L7), запросы к `/.well-known/acme-challenge/` должны безусловно проксироваться на порт 80 бэкенда Angie.
+3. **Блокировка GeoIP / WAF:** Проверьте директивы `geo` или модуль безопасности Angie, отсекающие трафик от валидационных серверов Let's Encrypt (запросы на проверку исходят из распределенных пулов IP по всему миру).
+
+---
+
+### 2. Ошибка DNS-01: Зависание или Timeout резолвинга
+
+**Симптом:** Лог содержит ошибки таймаута:
+`[acme] DNS-01 challenge failed for *.example.com: DNS query timed out or SERVFAIL`
+
+**Диагностика:**
+```bash
+# 1. Проверка наличия делегирования в родительской зоне
 dig +short _acme-challenge.example.com NS
-dig @<IP_сервера> _acme-challenge.example.com TXT
+# → acme-ns.example.com.
 
-# Проверка DNS-резолвера
-dig +short example.com
+# 2. Проверка ответа встроенного DNS responder Angie
+dig @127.0.0.1 -p 5353 _acme-challenge.example.com TXT
+# → ;; ANSWER SECTION:
+# → _acme-challenge.example.com. 0 IN TXT "2bN7...token"
+
+# 3. Проверка прослушивания порта DNS
+sudo ss -ulpn | grep -E ":53|:5353"
+# → UNCONN 0 0 0.0.0.0:5353 users:(("angie",pid=14201,fd=12))
 ```
 
-**Причины и решения:**
-1. **Порт 80 заблокирован:** Убедитесь что порт 80 открыт для входящих соединений из интернета. Проверьте брандмауэр (`sudo nft list ruleset | grep 80`).
-2. **DNS-01 delegation:** Проверьте NS-запись для `_acme-challenge.example.com` и что сервер Angie отвечает на порту 53/UDP.
-3. **Rate limit:** Используйте staging-окружение для тестов. Let's Encrypt ограничивает 50 сертификатов/неделю на домен.
-4. **Прокси/CDN:** Если перед Angie стоит прокси, убедитесь что запросы `/.well-known/acme-challenge/*` достигают Angie без изменений.
+**Причины и решение:**
+1. **Конфликт с локальным DNS-резолвером:** Если на сервере запущен `systemd-resolved` или `named/bind9`, порт `53` занят на `127.0.0.53:53` или `0.0.0.0:53`.
+   - Решение: Настройте `acme_dns_port 5353;` в Angie и используйте правило DNAT в файрволе для перенаправления входящего трафика с 53 на 5353 (см. Сценарий 2).
+2. **Фильтрация UDP-трафика:** Межсетевые экраны часто фильтруют входящий UDP/53. Убедитесь, что протоколы UDP и TCP открыты для входящих пакетов.
 
-### Сертификат не обновляется автоматически
+---
 
-**Симптом:** `error.log` не содержит записей об автоматическом обновлении, сертификат истекает.
+### 3. Ошибки прав доступа к локальному хранилищу
+
+**Симптом:** В логе фиксируется:
+`[emerg] or [error]: [acme] open() "/var/lib/angie/acme/..." failed (13: Permission denied)`
 
 **Диагностика:**
 ```bash
-# Проверка статуса ACME через API
-curl -s http://127.0.0.1/api/v1/http/acme_clients/ | jq .
+# Проверка владельца и атрибутов директории
+ls -ld /var/lib/angie/acme/
+# → drwxr-xr-x 3 root root 4096 Sep 14 09:00 /var/lib/angie/acme/
 
-# Проверка срока действия текущего сертификата
-echo | openssl s_client -connect example.com:443 2>/dev/null | openssl x509 -noout -dates
-
-# Проверка настроек renew в конфигурации
-grep -r "acme_client" /etc/angie/ | grep -v "^#"
-```
-
-**Причины и решения:**
-1. **Отсутствует параметр `renew`:** Убедитесь что в `acme_client` указан параметр `renew` (по умолчанию `30d`).
-2. **Права доступа:** Рабочий пользователь `angie` должен иметь права на запись в `/var/lib/angie/acme/`.
-3. **Сертификат не найден:** Angie не может обновить сертификат если не может его найти по пути из переменной `$acme_cert_<name>`.
-4. **Ошибка в challenge:** Проверьте `error.log` на наличие ошибок `[acme] challenge failed`.
-
-### Ошибки прав доступа к директории ACME
-
-**Симптом:** `[acme] cannot open file: /var/lib/angie/acme/... Permission denied`.
-
-**Диагностика:**
-```bash
-# Проверка прав на директорию
-ls -la /var/lib/angie/acme/
-# → drwxr-xr-x  angie angie  ... acme/
-
-# Проверка пользователя Angie
-ps -o user,pid,cmd -C angie | head -5
-# → angie  1234 angie: master process /usr/sbin/angie
+# Проверка пользователя, под которым работают worker-процессы
+ps -eo user,group,comm | grep angie
+# → root     root     angie (master)
+# → angie    angie    angie (worker)
 ```
 
 **Решение:**
+Мастер-процесс создает файлы под учетной записью воркера либо воркер пытается прочитать закрытый ключ. Задайте корректные права:
 ```bash
-# Исправление прав доступа
 sudo chown -R angie:angie /var/lib/angie/acme/
 sudo chmod 700 /var/lib/angie/acme/
+sudo find /var/lib/angie/acme/ -type f -name "*.key" -exec chmod 600 {} \;
+sudo find /var/lib/angie/acme/ -type f -name "*.pem" -exec chmod 644 {} \;
 
-# SELinux (если применимо)
+# Если используется SELinux:
 sudo restorecon -Rv /var/lib/angie/acme/
 ```
 
-### Rate limit Let's Encrypt
+---
 
-**Симптом:** `[acme] error: too many certificates already issued for: example.com`.
+### 4. Ошибка лимитов Let's Encrypt (Rate Limit 429)
 
-**Диагностика:**
-```bash
-# Проверка оставшихся лимитов через API
-curl -s https://acme-v02.api.letsencrypt.org/directory | jq .
-```
-
-**Решение:**
-1. Используйте staging-окружение для разработки и тестирования.
-2. Для production используйте единый `acme_client` для всех поддоменов.
-3. Для wildcard-сертификатов `*.example.com` используйте DNS-01, так как он покрывает все поддомены одним сертификатом.
-4. Если лимит исчерпан — ждите 7 дней или используйте альтернативный CA (ZeroSSL, Buypass).
-
-### DNS-01: Не работает делегирование
-
-**Симптом:** `[acme] DNS-01 challenge failed: timeout` или `NXDOMAIN`.
+**Симптом:**
+`[acme] error from directory: 429 urn:ietf:params:acme:error:rateLimited: too many certificates already issued for exact set of domains`
 
 **Диагностика:**
 ```bash
-# Проверка NS-записи для _acme-challenge
-dig +short _acme-challenge.example.com NS
-# → <IP_вашего_сервера>
-
-# Проверка что Angie слушает порт 53/UDP
-sudo ss -u lnp | grep :53
-# → UNCONN 0 0 *:domain *:* (users:(("angie",pid=1234,fd=10)))
-
-# Тестовый DNS-запрос
-dig @<IP_сервера> -p 53 _acme-challenge.example.com TXT
+# Проверка лога на количество повторных запросов
+grep -c "rateLimited" /var/log/angie/error.log
+# → 14
 ```
 
 **Решение:**
-1. Проверьте NS-запись в родительской зоне: `dig +short example.com NS`.
-2. Убедитесь что `acme_dns_port 53;` указан в конфигурации.
-3. Проверьте что порт 53/UDP открыт в брандмауэре.
-4. Для нескольких серверов за балансировщиком настройте синхронизацию `/var/lib/angie/acme/`.
+1. **Переключение на Staging для отладки конфигурации:**
+   Замените URL в `directory` на тестовый стенд Let's Encrypt:
+   ```nginx
+   directory https://acme-staging-v02.api.letsencrypt.org/directory;
+   ```
+2. **Объединение доменов (SAN):** Вместо выпуска отдельных сертификатов для каждого сервиса (`api.example.com`, `auth.example.com`, `www.example.com`) используйте группировку в одном `server_name` или перейдите на Wildcard-сертификат по DNS-01.
+3. **Использование альтернативного CA:** Если лимит исчерпан в production, переключитесь на альтернативный ACME-совместимый удостоверяющий центр (ZeroSSL, Buypass) через директиву `directory`.
 
-### Конфликт портов 80/443
-
-**Симптом:** `[acme] port 80 already in use` или `[acme] cannot bind to port`.
-
-**Диагностика:**
-```bash
-# Проверка занятости порта 80
-sudo ss -tlnp | grep :80
-# → LISTEN 0 128 0.0.0.0:80  users:(("nginx",pid=5678,fd=6))
-
-# Проверка конфликтующих служб
-sudo systemctl list-units --type=service --state=running | grep -E "nginx|httpd|caddy"
-```
-
-**Решение:**
-1. Остановите конфликтующий веб-сервер: `sudo systemctl stop nginx`.
-2. Используйте порт переадресации на уровне файрвола для ACME-челленджей.
-3. Настройте `acme_client` на отдельном IP-адресе через `acme_bind`.
+---
 
 ## Лучшие практики
 
-### Безопасность
+### Безопасность и хранение ключей
 
-*   **Staging для тестов:** Используйте `https://acme-staging-v02.api.letsencrypt.org/directory` при разработке и отладке. Это предотвращает исчерпание rate limits в production.
-*   **Права доступа:** Директория `/var/lib/angie/acme/` должна иметь права `700` и принадлежать пользователю `angie:angie`. Файлы ключей — `600`, сертификатов — `644`.
-*   **Резервное копирование:** Регулярно копируйте `/var/lib/angie/acme/` для восстановления после сбоев. Включите ACME-данные в общую стратегию бэкапов сертификатов.
-*   **Аудит сертификатов:** Периодически проверяйте срок действия сертификатов через API или `openssl s_client`.
+*   **Алгоритм ECDSA по умолчанию:** Используйте `key_type ecdsa; key_bits 256;`. Ключи на базе эллиптических кривых P-256 обеспечивают эквивалентную стойкость 3072-битному RSA, сокращая нагрузку на CPU при хэндшейках в 3–4 раза.
+*   **Изоляция каталога хранения:** Каталог `/var/lib/angie/acme/` должен иметь права доступа строго `700` (`drwx------`) и принадлежать системному пользователю демона (`angie:angie`).
+*   **systemd Hardening:** В unit-файле `/etc/systemd/system/angie.service.d/override.conf` укажите права на запись только в каталог ACME:
+    ```ini
+    [Service]
+    ProtectSystem=strict
+    ReadWritePaths=/var/log/angie /var/lib/angie/acme /run
+    CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID
+    ```
 
-### Эксплуатация
+### Эксплуатация и SRE-надежность
 
-*   **Мониторинг:** Настройте мониторинг срока действия сертификатов через API `/status/http/acme_clients/<client>/`. При nearing expiry (например, <7 дней) отправляйте алерты.
-*   **Единый клиент:** Для инфраструктуры с множеством поддоменов используйте один `acme_client` с wildcard-сертификатом (DNS-01) вместо множества отдельных HTTP-01 клиентов.
-*   **Синхронизация multi-node:** При использовании нескольких серверов Angie синхронизируйте `/var/lib/angie/acme/` через NFS, rsync или shared storage. Иначе каждый узел будет пытаться получить собственный сертификат, что приведет к rate limit.
-*   **Log rotation:** Настройте ротацию `error.log` через `logrotate`, чтобы логи ACME не занимали всё дисковое пространство.
-*   **Тестирование после изменений:** После изменения конфигурации ACME всегда выполняйте `angie -t` и проверяйте статус через API перед `reload`.
+*   **Интервал обновления (`renew`):** Устанавливайте `renew 30d;` при 90-дневном сроке жизни сертификатов. Это гарантирует 30-дневный резерв времени для устранения сбоев сети, DNS или багов CA до фактической деградации сервиса.
+*   **Кэширование путей к сертификатам:** При использовании переменных `$acme_cert_<name>` в высоконагруженных окружениях включайте директиву `ssl_certificate_cache`:
+    ```nginx
+    http {
+        ssl_certificate_cache max=1000 inactive=1d;
+    }
+    ```
+    Это предотвращает повторные системные вызовы `stat()` и чтение файлов сертификатов с диска на каждый SSL-хэндшейк.
+*   **Ограничение частоты DNS-запросов:** Для `resolver` задавайте параметр `valid=300s` и резервные адреса DNS, чтобы сбои одного резолвера не препятствовали получению сертификатов.
 
-### Производительность
+### Мониторинг и алертинг (Prometheus / Blackbox)
 
-*   **Кэширование переменных:** При использовании динамических путей к сертификатам включите `ssl_certificate_cache` для снижения накладных расходов на чтение файлов.
-*   **Resolver кэширование:** Укажите `valid=300s` (или больше) в `resolver` для снижения количества DNS-запросов при проверке ACME-челленджей.
-*   **Keepalive upstream:** Для DNS-01 challenge настройте `keepalive` в upstream-группе DNS-серверов для снижения задержек.
+*   **Prometheus Alertmanager Rule:** Используйте blackbox-проверку срока действия TLS:
+    ```yaml
+    - alert: TLSCertificateExpiringSoon
+      expr: probe_ssl_earliest_cert_expiry{job="blackbox"} - time() < 86400 * 14
+      for: 1h
+      labels:
+        severity: warning
+      annotations:
+        summary: "TLS certificate for {{ $labels.instance }} expires in less than 14 days"
+    ```
+*   **API Healthcheck:** Настройте периодический опрос Angie API:
+    ```bash
+    curl -sf http://127.0.0.1:8080/status/http/acme_clients/letsencrypt_prod/ | jq -e '.domains[].days_left > 7' > /dev/null
+    ```
 
-### Ограничения и известные проблемы
-
-*   **Rate limits:** Let's Encrypt ограничивает 50 сертификатов/неделю на домен и 5 дубликатов в неделю. Используйте wildcard + DNS-01 для масштабных инфраструктур.
-*   **Multi-server:** Встроенный DNS-responder для DNS-01 не поддерживает автоматическую синхронизацию между несколькими серверами. Требуется внешняя координация.
-*   **ACME-совместимость:** Модуль поддерживает ACME v2 (RFC 8555). ACME v1 устарел и не поддерживается.
+---
 
 ## Дополнительная информация
 
-### Требования и ограничения
+### Сводные системные требования
 
-*   **Версия Angie:** Модуль `acme` доступен начиная с версии **Angie 1.10**.
-*   **Поддерживаемые CA:** Let's Encrypt, ZeroSSL, Buypass и любые ACME v2-совместимые CA.
-*   **Типы проверок:** HTTP-01 (порт 80) и DNS-01 (порт 53/UDP).
-*   **Ключи:** Поддерживаются RSA (2048/4096) и ECDSA (256/384).
-*   **Stream:** Автоматизация TLS доступна для TCP/UDP сервисов (блок `stream`).
+*   **Версия:** Angie 1.10.0 и новее (рекомендуется стабильная ветка 1.12.x).
+*   **Поддерживаемые RFC:** RFC 8555 (ACME v2), RFC 8737 (ALPN challenge — через внешние связки), RFC 7633. Протокол ACME v1 признан устаревшим и не поддерживается.
+*   **Сетевые требования:** 
+    - Для HTTP-01: доступность входящего TCP-порта 80 из глобальной сети.
+    - Для DNS-01: доступность входящего UDP/TCP-порта 53 (или перенаправленного через `acme_dns_port`).
+    - Исходящий HTTPS-трафик на порт 443 к ACME Directory CA.
 
-### Диагностика
+### См. также
 
-Статус процесса получения сертификата отслеживается в `error.log`. Для принудительного обновления можно использовать директиву `acme_renew on;` (временно) или удалить файлы сертификатов из `/var/lib/angie/acme/` и выполнить `reload`.
-
-### Хранение и безопасность
-
-*   **Директория данных:** По умолчанию сертификаты и ключи аккаунтов сохраняются в `/var/lib/angie/acme/`.
-*   **Права доступа:** Убедитесь, что рабочий пользователь Angie (`angie` или `www-data`) имеет права на чтение и запись в эту директорию.
-*   **Ключ аккаунта:** Если у вас уже есть аккаунт Let's Encrypt, вы можете импортировать его ключ через директиву `acme_account_key`.
-
-### Взаимодействие с другими модулями
-
-*   **DoH:** При использовании DNS-over-HTTPS для ACME-проверок может потребоваться отдельная политика DNS-резолвинга для запросов к ACME-серверам.
-*   **TLS:** Сертификаты, полученные через ACME, автоматически используются в директивах `ssl_certificate` и `ssl_certificate_key`.
-
-## См. также
-
-*   **[Настройка TLS в Angie](./angie_tls_setup.md)**
-*   **[Let's Encrypt и Certbot: общие принципы](../Concepts/https_with_certbot.md)**
-*   **[DNS over HTTPS (DoH) в Angie](./angie_doh_module.md)**
+*   **[Настройка TLS в Angie](./angie_tls_setup.md)** — параметры протоколов, шифры, HTTP/3 (QUIC) и кэширование сертификатов
+*   **[Let's Encrypt и Certbot: общие принципы и методы авторизации](../Concepts/https_with_certbot.md)** — архитектура ACME, типы проверок, цепочки доверия и лимиты
+*   **[Мониторинг Angie — API](./angie_monitoring/angie_monitoring_api.md)** — эндпоинты `/status/http/acme_clients/` и сбор диагностических метрик
+*   **[Обзор TLS/SSL в Nginx/Angie](../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md)** — протоколы, ciphers, HSTS и OCSP Stapling
+*   **[Отказоустойчивость Angie с Keepalived](./angie_ha_with_keepalived.md)** — архитектура High Availability, плавающие IP и кластерная синхронизация

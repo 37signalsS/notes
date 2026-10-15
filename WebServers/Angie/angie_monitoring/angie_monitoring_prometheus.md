@@ -1,513 +1,666 @@
 # Мониторинг Angie — интеграция с Prometheus
 
+**Актуально для:** Angie 1.12.x / Prometheus 2.x, 3.x
+
 ## Определения
 
-**Нативный экспорт метрик** — встроенный механизм Angie (модуль `ngx_http_prometheus_module`), позволяющий серверу самостоятельно формировать и отдавать данные в текстовом формате Prometheus (Text format) или OpenMetrics. Это избавляет от необходимости развертывания промежуточных агентов (sidecar-экспортеров).
+**Нативный экспорт метрик (модуль `ngx_http_prometheus_module`)** — встроенный механизм Angie, позволяющий серверу самостоятельно формировать и отдавать данные телеметрии в форматах Prometheus Text format (версия 0.0.4) и OpenMetrics (версия 1.0.0). Работает без сторонних процессов и sidecar-экспортеров (`nginx-prometheus-exporter`).
 
-**OpenMetrics** — стандарт передачи метрик, развивающий формат Prometheus. Он включает поддержку метаданных (Unit, Help), меток (Exemplars) и более строгого синтаксиса. Angie поддерживает OpenMetrics нативно.
+**`prometheus_template`** — директива контекста `http` веб-сервера Angie, задающая правила трансляции внутренних структур разделяемой памяти и путей REST API (`/status/`) в имена метрик, метки (labels), типы (counter, gauge) и описания (help).
 
-**Шаблоны метрик (`prometheus_all.conf`)** — конфигурационный файл, содержащий определения соответствия внутренних переменных Angie именам метрик Prometheus. Поставляется вместе с дистрибутивом и является необходимым условием для работы экспорта.
+**`$p8s_value`** — специальная внутренняя системная переменная Angie, доступная внутри блока `prometheus_template`. Содержит числовое или строковое значение показателя, извлеченное по соответствующему пути API. При необходимости может трансформироваться через директиву `map`.
 
-**Prometheus TSDB** — специализированное хранилище временных рядов (Time Series Database), используемое Prometheus для хранения метрик на локальном диске. Данные индексируются и сжимаются, что позволяет хранить месяцы истории на одном узле без зависимостей от внешних СУБД.
+**`prometheus_all.conf`** — конфигурационный файл из базовой поставки Angie (каталог `/etc/angie/`), содержащий готовый шаблон `prometheus_template all { ... }`. Включает набор общеупотребимых метрик сервера: соединения, серверные зоны, апстримы, slab-память и резолверы DNS.
 
-**Pull-based Monitoring** — модель сбора метрик, при которой Prometheus сам опрашивает (scrape) зарегистрированные источники метрик. В отличие от push-модели, это позволяет централизованно управлять частотой сбора и сразу обнаруживать недоступные цели.
+**OpenMetrics** — открытый стандарт передачи метрик, принятый в экосистеме CNCF и поддерживаемый Prometheus 2.x/3.x. Поддерживает строгую типизацию, единицы измерения (`unit`), описания (`help`) и передачу сэмплов с квантилями и бакетами гистограмм.
 
-**Scrape** — процесс опроса Prometheus одного эндпоинта экспорта метрик. Настраивается через `scrape_interval` и `scrape_timeout` в конфигурации Prometheus. При каждом scrape Prometheus выполняет HTTP GET к целевому URL и парсит полученный текст.
+**Shared Memory Zones (Зоны разделяемой памяти)** — области RAM (`status_zone`, `metric_zone`, `zone`), доступные всем рабочим процессам (worker processes) Angie. Служат первоисточником данных для сбора метрик в реальном времени с нулевой блокировкой дискового ввода-вывода.
 
-**Exporter** — компонент, преобразующий метрики приложения или системы в формат, понятный Prometheus. В случае с Angie экспортер встроен в сам веб-сервер; внешние экспортеры (например, `nginx-prometheus-exporter` или `node_exporter`) требуются только для систем, где нативного экспорта нет.
+**Scrape (Скрейпинг)** — периодический опрос эндпоинта метрик веб-сервера сервером сбора данных (Prometheus или VictoriaMetrics) по протоколу HTTP/HTTPS с интервалом `scrape_interval`.
 
-**Label (Метка)** — пара `key="value"`, добавляемая к каждой метрике Prometheus для идентификации измерений (например, `host`, `vhost`, `status`). Директивы Angie позволяют фильтровать метрики по статусам (`status=5xx`) или группам.
+**SRE Golden Signals (Четыре золотых сигнала SRE)** — ключевые метрики надежности сервиса: Latency (задержка), Traffic (нагрузка/RPS), Errors (ошибки, процент 5xx/4xx) и Saturation (насыщение ресурсов: соединения, память slab-зон).
 
-**Histogram Bucket** — интервал значений в гистограмме. Angie позволяет задавать бакеты явно через директиву `metric_zone ... histogram <bucket1> <bucket2> ...`. Prometheus ожидает дополнительный бакет `+Inf` в конце; `prometheus_all.conf` добавляет его автоматически.
+**PromQL** — язык аналитических запросов Prometheus, используемый для агрегации временных рядов, расчета скоростей изменений (`rate`), вычисления процентилей (`histogram_quantile`) и оценки условий алертинга.
 
-**Recording Rule** — предвычисленное выражение PromQL, периодически сохраняемое как новая временная серия. Используется для оптимизации часто выполняемых запросов и сокращения времени отрисовки дашбордов.
+**Recording Rules (Правила предвычисления)** — правила Prometheus, выполняющие фоновый расчет тяжелых PromQL-выражений по расписанию и сохраняющие результат как новый компактный временной ряд.
 
-**Alerting Rule** — правило Prometheus, генерирующее алерт, когда выражение PromQL истинно в течение заданного времени (`for`). После срабатывания алерт отправляется в Alertmanager.
+**Alerting Rules (Правила алертинга)** — правила Prometheus, непрерывно проверяющие пороговые условия и отправляющие уведомления о сбоях в компонент Alertmanager.
 
-**Alertmanager** — компонент экосистемы Prometheus, принимающий алерты, дедуплицирующий, группирующий и маршрутизирующий их по получателям (email, Slack, PagerDuty, webhook).
+**File-based Service Discovery (`file_sd_configs`)** — механизм Prometheus для автоматического обнаружения и обновления списка опрашиваемых узлов инфраструктуры через локальные JSON/YAML-файлы без перезапуска демона Prometheus.
 
-**Grafana** — платформа визуализации метрик. Для Angie существуют готовые официальные дашборды, использующие метрики, отдаваемые нативным экспортером.
+**Grafana Dashboard ID 20719** — официальный готовый дашборд для визуализации метрик Angie в Grafana, разработанный компанией «Веб-Сервер».
 
-**PromQL** — язык запросов к Prometheus. Позволяет выбирать, агрегировать и вычислять производные метрики (средние, процентили, скорости роста).
-
-**Service Discovery (Сервис-дискавери)** — механизм Prometheus для автоматического обнаружения targets. В контексте bare-metal/on-premise используются статические конфигурации (`file_sd`) или DNS-дискавери; облачные механизмы не рассматриваются.
+---
 
 ## Базовые концепции
 
-### Архитектура сбора данных
+### Архитектура нативного экспорта
 
-Angie собирает данные из разделяемой памяти (Shared Memory) и преобразует их в текстовый вид при поступлении запроса от Prometheus.
+В классической архитектуре с внешним экспортером (`nginx-prometheus-exporter`) сторонний процесс опрашивает текстовый `stub_status` или парсит JSON API, сериализует данные и отдает их Prometheus. Это создает дополнительный сетевой сокет, накладные расходы на контекстные переключения и лишнюю нагрузку на CPU при частых опросах.
+
+В Angie экспорт реализован нативно через модуль `ngx_http_prometheus_module`:
 
 ```
-[ Angie Shared Memory ] ──(ngx_http_prometheus_module)──> [ HTTP Response (Prometheus Format) ]
+┌────────────────────────────────────────────────────────────────────────┐
+│                              Angie Server                              │
+│                                                                        │
+│  ┌───────────────────────┐             ┌────────────────────────────┐  │
+│  │ Shared Memory (RAM)   │             │   prometheus_template      │  │
+│  │ ├─ status_zone        │             │   ├─ all (prometheus_all)  │  │
+│  │ ├─ metric_zone        │────────────>│   └─ custom_templates      │  │
+│  │ ├─ upstream zones     │             └─────────────┬──────────────┘  │
+│  │ └─ slab / resolvers   │                           │                 │
+│  └───────────────────────┘                           ▼                 │
+│                                            ┌───────────────────┐       │
+│                                            │  location = /p8s  │       │
+│                                            │  prometheus all;  │       │
+│                                            └─────────┬─────────┘       │
+└──────────────────────────────────────────────────────┼─────────────────┘
+                                                       │ HTTP GET /p8s
+                                                       ▼
+                                         ┌───────────────────────────┐
+                                         │  Prometheus Server TSDB   │
+                                         │  (Pull scrape: 15s)       │
+                                         └───────────────────────────┘
 ```
 
-1. **Сбор:** Воркеры Angie обновляют счетчики в `status_zone` и `metric_zone` в реальном времени.
-2. **Агрегация:** При обращении к эндпоинту экспорта модуль считывает текущие значения из памяти.
-3. **Трансляция:** Данные форматируются согласно правилам из `prometheus_all.conf`.
+1. **Запись в память:** Рабочие процессы (`worker processes`) атомарно инкрементируют счетчики и задержки в разделяемой памяти в фазе логирования запроса (`NGX_HTTP_LOG_PHASE`).
+2. **Формирование потока:** При поступлении запроса от Prometheus на URL с директивой `prometheus <template>` модуль обходит дерево объектов в оперативной памяти согласно регулярным выражениям из `prometheus_template`.
+3. **Генерация ответа:** Модуль напрямую форматирует текстовый поток OpenMetrics / Prometheus Text format в буфер сетевого сокета без промежуточной сериализации в JSON.
 
-### Типы генерируемых метрик
+### Механика шаблонов `prometheus_template`
 
-- **Counter (Счетчик):** Монотонно растущее значение (например, `angie_http_requests_total`).
-- **Gauge (Измеритель):** Значение, которое может как расти, так и уменьшаться (например, `angie_http_connections_active`).
-- **Histogram (Гистограмма):** Распределение данных по бакетам (например, `angie_metric_rt_hist_bucket`).
-
-### Lifecycle метрики
-
-Каждая метрика проходит жизненный цикл:
-
-1. **Создание:** При старте Angie модуль `ngx_http_prometheus_module` создает дескрипторы метрик на основе `prometheus_all.conf`.
-2. **Сбор:** Воркеры инкрементируют/обновляют значения в разделяемой памяти при каждом запросе или событии соединения.
-3. **Экспорт:** При HTTP GET к эндпоинту Prometheus модуль форматирует текущие значения в Text/OpenMetrics.
-4. **Сборка Prometheus:** Prometheus парсит ответ, добавляет временную метку и сохраняет в TSDB.
-5. **Удаление:** На основе `scrape_interval` и `retention` старые образцы удаляются из TSDB по истечении срока хранения.
-
-### Prometheus конфигурация и scrape-процесс
-
-На стороне Prometheus целевой эндпоинт описывается в блоке `scrape_configs`:
-
-```yaml
-global:
-  scrape_interval: 15s
-  evaluation_interval: 15s
-
-scrape_configs:
-  - job_name: "angie"
-    static_configs:
-      - targets: ["web-01.internal:9113", "web-02.internal:9113"]
-```
-
-**Параметры:**
-
-| Параметр | Описание |
-|:---|:---|
-| `scrape_interval` | Частота опроса эндпоинта (например, `15s`). При высокой нагрузке можно снизить до `5s`, но это увеличит объем TSDB. |
-| `scrape_timeout` | Таймаут одного запроса. Должен быть меньше `scrape_interval` (рекомендуется `10s` при `15s` interval). |
-| `metrics_path` | Путь эндпоинта (по умолчанию `/metrics`). Angie использует кастомный путь `/p8s` или `/metrics` в зависимости от конфигурации. |
-| `scheme` | `http` или `https`. При доступе к Angie через внутреннюю сеть достаточно HTTP. |
-| `params` | Дополнительные query-параметры, если эндпоинт поддерживает фильтрацию. |
-
-### prometheus_all.conf и маппинг метрик
-
-Файл `prometheus_all.conf` содержит директивы `prometheus_metric`, связывающие внутренние переменные Angie с именами метрик Prometheus. Пример фрагмента:
+Шаблон описывается в контексте `http` и содержит правила отображения:
 
 ```nginx
-prometheus_metric angie_http_requests_total type=counter help="Total number of HTTP requests" zone=status_zone;
-prometheus_metric angie_http_connections_active type=gauge help="Active connections" zone=status_zone;
-prometheus_metric angie_metric_rt_hist type=histogram help="Upstream response time" zone=metric_zone buckets=0.05 0.1 0.25 0.5 1 2;
+prometheus_template <имя_шаблона> {
+    '<имя_метрики>{<метка>="$1"}' <переменная>
+        [path=<путь_сопоставления>]
+        [type=counter|gauge]
+        ['help=<текст_описания>'];
+}
 ```
 
-**Правила именования:**
-- Префикс `angie_` используется для всех стандартных метрик.
-- Для метрик, привязанных к зоне, имя зоны добавляется как метка `zone` или `vhost` в зависимости от типа зоны.
-- Метрики из `metric_zone` включают метку `key` с значением ключа агрегации.
+- **`<имя_метрики>`**: Имя временного ряда в Prometheus. Метки задаются в фигурных скобках `{...}`. В метках разрешено использовать статические строки, capture-группы (`$1`, `$2` из регулярного выражения `path`) и стандартные переменные Angie (например, `$angie_version`, `$server_addr`).
+- **`<переменная>`**: Значение, которое подставляется в качестве сэмпла. Чаще всего используется системная переменная `$p8s_value`. Если переменная вычисляется в пустую строку (`""`), метрика не включается в вывод.
+- **`path=<путь_сопоставления>`**:
+  - `path=<точный_путь>` — точное совпадение с ключом внутреннего API (например, `path=/connections/accepted`).
+  - `path=~<регулярное_выражение>` — сопоставление по регулярному выражению PCRE (например, `path=~^/http/server_zones/([^/]+)/requests/total$`). Захваченные группы становятся доступны как `$1`, `$2`.
+  - `path=<путь_со_слэшем>/` — если путь оканчивается на слэш, значением метрики становится количество элементов в соответствующем объекте или массиве (например, количество активных зон).
+- **`type=`**: Тип метрики (`counter` или `gauge`). Влияет на строку заголовка `# TYPE`.
+- **`help=`**: Описание метрики для строки `# HELP`.
+
+### Маппинг строковых состояний через `map`
+
+Многие параметры во внутреннем API Angie имеют строковый тип (`up`, `down`, `unavailable`). Prometheus оперирует исключительно числами (float64). Для трансляции статусов используется связка директивы `map` и переменной `$p8s_value`:
+
+```nginx
+map $p8s_value $upstream_peer_state_code {
+    up           1;
+    unavailable  2;
+    down         0;
+    default      -1;
+}
+
+prometheus_template upstream_health {
+    'angie_http_upstream_peer_status{upstream="$1",peer="$2"}' $upstream_peer_state_code
+        path=~^/http/upstreams/([^/]+)/peers/([^/]+)/state$
+        type=gauge
+        'help=Operational state of the upstream peer: 1=up, 0=down, 2=unavailable';
+}
+```
+
+### Жизненный цикл метрик
+
+```
+1. Конфигурация    -> Компиляция правил prometheus_template в память при старте/reload
+2. Трафик          -> Воркеры фиксируют события в shared memory (status_zone, metric_zone)
+3. Опрос (Scrape)  -> Prometheus отправляет HTTP GET /p8s с заголовком Accept: application/openmetrics-text
+4. Генерация       -> ngx_http_prometheus_module строит OpenMetrics-ответ из RAM за 1-5 мс
+5. Сохранение      -> Prometheus валидирует сэмплы, сохраняет в WAL и индексирует в TSDB
+6. Агрегация       -> Recording/Alerting rules вычисляют производные PromQL и триггерят алерты
+```
+
+---
 
 ## Практические сценарии
 
-### Сценарий 1: Конфигурация экспорта для мониторинга кластера
+### Сценарий 1: Базовая настройка нативного экспорта (шаблон `all`)
 
-Этот сценарий описывает настройку выделенного эндпоинта с ограничением доступа.
+Настройка веб-сервера для сбора стандартных метрик через файл `prometheus_all.conf` на выделенном интерфейсе управления.
 
 ```nginx
-http {
-    # 1. Загрузка определений метрик (обязательно в контексте http)
-    include prometheus_all.conf;
+# /etc/angie/angie.conf
 
+user angie;
+worker_processes auto;
+error_log /var/log/angie/error.log warn;
+pid /run/angie.pid;
+
+events {
+    worker_connections 4096;
+    use epoll;
+}
+
+http {
+    include /etc/angie/mime.types;
+    default_type application/octet-stream;
+
+    # 1. Загрузка стандартных определений метрик (шаблон 'all')
+    include /etc/angie/prometheus_all.conf;
+
+    # 2. Обязательное включение status_zone для сбора метрик по виртуальным хостам
     server {
         listen 80;
-        server_name example.com;
-        
-        # 2. Зона статуса для сбора данных по хосту
-        status_zone vhost_prod;
+        server_name app.example.internal;
 
-        # 3. Эндпоинт для сбора данных (скрейпинга)
+        status_zone app_production;
+
+        location / {
+            proxy_pass http://app_backends;
+        }
+    }
+
+    upstream app_backends {
+        zone app_backends 512k;
+        server 192.168.10.11:8080 max_fails=3 fail_timeout=10s;
+        server 192.168.10.12:8080 max_fails=3 fail_timeout=10s;
+    }
+
+    # 3. Выделенный сервер телеметрии на loopback/management IP
+    server {
+        listen 127.0.0.1:9113;
+        listen 10.100.0.15:9113; # Внутренний IP ноды
+        server_name _;
+
+        # Отключение логирования скрейп-запросов, чтобы не забивать access.log
+        access_log off;
+
         location = /p8s {
-            # Активация экспорта всех стандартных метрик
+            # Активация набора метрик 'all'
             prometheus all;
-            
-            # Ограничение доступа по IP (безопасность)
-            allow 10.0.10.5; # IP сервера Prometheus
+
+            # Ограничение доступа к метрикам
+            allow 127.0.0.1;
+            allow 10.100.0.50; # IP-адрес Prometheus сервера
             deny all;
         }
     }
 }
 ```
 
-### Сценарий 2: Использование кастомных гистограмм для SLA
+### Сценарий 2: Защита эндпоинта метрик через Basic Auth и TLS (mTLS)
 
-Использование `metric_zone` позволяет отслеживать время ответа бэкендов в разрезе SLO.
+В корпоративных средах без выделенного Management VLAN эндпоинт метрик защищается с помощью взаимной аутентификации TLS (mTLS) или Basic Authentication.
+
+```nginx
+# Защита эндпоинта через HTTP Basic Auth и mTLS
+server {
+    listen 9443 ssl;
+    server_name metrics.node01.internal;
+
+    ssl_certificate /etc/angie/ssl/metrics.crt;
+    ssl_certificate_key /etc/angie/ssl/metrics.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # mTLS: проверка сертификата сервера Prometheus
+    ssl_client_certificate /etc/angie/ssl/prometheus_ca.crt;
+    ssl_verify_client on;
+
+    location = /metrics {
+        prometheus all;
+
+        # Дополнительная авторизация по паролю
+        auth_basic "Prometheus Scrape Protected";
+        auth_basic_user_file /etc/angie/.htpasswd_prometheus;
+    }
+}
+```
+
+Конфигурация скрейпинга в `prometheus.yml`:
+
+```yaml
+scrape_configs:
+  - job_name: "angie-mtls"
+    scheme: https
+    metrics_path: "/metrics"
+    basic_auth:
+      username: "prometheus-scraper"
+      password_file: "/etc/prometheus/secrets/angie_scrape_password"
+    tls_config:
+      ca_file: "/etc/prometheus/certs/ca.crt"
+      cert_file: "/etc/prometheus/certs/prom-client.crt"
+      key_file: "/etc/prometheus/certs/prom-client.key"
+      insecure_skip_verify: false
+    static_configs:
+      - targets: ["metrics.node01.internal:9443"]
+```
+
+### Сценарий 3: Пользовательские метрики и гистограммы задержек
+
+Связка `metric_zone` с пользовательским шаблоном `prometheus_template` для экспорта персентилей задержек бэкендов в формате Prometheus Histogram.
 
 ```nginx
 http {
-    include prometheus_all.conf;
-    
-    # Определение гистограммы для отслеживания Latency
-    # Бакеты: 50мс, 100мс, 250мс, 500мс, 1с, 2с
-    metric_zone api_latency:10m histogram 0.05 0.1 0.25 0.5 1 2;
+    include /etc/angie/prometheus_all.conf;
+
+    # 1. Зона гистограммы времени отклика бэкендов (бакеты в секундах)
+    metric_zone backend_latency:8m histogram 0.01 0.05 0.1 0.25 0.5 1.0 2.5 5.0
+        expire=on discard_key=expired;
+
+    # 2. Зона для подсчета кодов бизнес-событий (например, чекаут)
+    metric_zone checkout_events:4m count expire=on;
+
+    # 3. Пользовательский шаблон для экспорта
+    prometheus_template custom_business_telemetry {
+        # Экспорт бакетов гистограммы задержки
+        'angie_upstream_latency_seconds_bucket{service="$1",le="$2"}' $p8s_value
+            path=~^/http/metric_zones/backend_latency/metrics/([^/]+)/histogram/([^/]+)$
+            type=counter
+            'help=Upstream latency response time histogram buckets in seconds';
+
+        # Экспорт счетчиков бизнес-операций
+        'angie_business_checkout_total{status="$1"}' $p8s_value
+            path=~^/http/metric_zones/checkout_events/metrics/([^/]+)$
+            type=counter
+            'help=Total count of business checkout operations by result status';
+    }
 
     server {
         listen 80;
-        
-        # Запись времени ответа в гистограмму
-        metric api_latency $upstream_response_time;
+        server_name api.example.internal;
 
-        location /api/ {
-            proxy_pass http://backend;
+        status_zone api_gateway;
+
+        location /api/v1/checkout {
+            proxy_pass http://checkout_pool;
+
+            # Фиксация времени отклика в гистограмме
+            metric backend_latency checkout_service=$upstream_response_time on=end;
+
+            # Фиксация бизнес-статуса из заголовка ответа бэкенда
+            metric checkout_events $upstream_http_x_order_status on=end;
+        }
+
+        location = /p8s {
+            # Одновременная отдача стандартных и кастомных метрик
+            prometheus all custom_business_telemetry;
+
+            allow 127.0.0.1;
+            allow 10.100.0.50;
+            deny all;
         }
     }
 }
 ```
 
-### Сценарий 3: Фильтрация отдаваемых метрик
+### Сценарий 4: Конфигурация Prometheus с File-based Service Discovery (`file_sd`)
 
-Для снижения нагрузки на Prometheus и уменьшения объема трафика можно отдавать только критически важные данные.
-
-```nginx
-location /metrics/critical {
-    # Отдавать только метрики со статусом 5xx
-    prometheus all status=5xx;
-}
-```
-
-### Сценарий 4: Полная конфигурация Prometheus для кластера Angie
-
-Настройка `prometheus.yml` для сбора метрик с нескольких экземпляров Angie.
+Для bare-metal и виртуальных инфраструктур без облачных провайдеров наилучшим решением является файловый механизм обнаружения узлов (`file_sd_configs`). Это позволяет изменять список веб-серверов скриптами автоматизации (Ansible, bash) без перезагрузки Prometheus.
 
 ```yaml
+# /etc/prometheus/prometheus.yml
+
 global:
   scrape_interval: 15s
+  scrape_timeout: 10s
   evaluation_interval: 15s
-  external_labels:
-    cluster: "prod-web"
+
+rule_files:
+  - "/etc/prometheus/rules/angie_recording.yml"
+  - "/etc/prometheus/rules/angie_alerts.yml"
 
 scrape_configs:
-  - job_name: "angie"
-    static_configs:
-      - targets:
-        - "web-01.internal:9113"
-        - "web-02.internal:9113"
-        - "web-03.internal:9113"
+  - job_name: "angie-cluster"
     metrics_path: "/p8s"
     scheme: "http"
-    relabel_configs:
-      - source_labels: [__address__]
-        target_label: instance
-        regex: "([^:]+)"
-        replacement: "${1}"
+
+    file_sd_configs:
+      - files:
+          - "/etc/prometheus/targets/angie_nodes/*.json"
+        refresh_interval: 30s
+
+    # Фильтрация и стандартизация меток на стороне Prometheus
+    metric_relabel_configs:
+      # Исключение неиспользуемых метрик slab-слотов для снижения кардинальности TSDB
+      - source_labels: [__name__]
+        regex: "angie_slabs_pages_slots_(reqs|fails)"
+        action: drop
+
+      # Нормализация метки зоны
+      - source_labels: [zone]
+        target_label: environment
+        regex: ".*_prod.*"
+        replacement: "production"
 ```
 
-**Валидация конфигурации:**
-```bash
-# Проверка синтаксиса Prometheus
-promtool check config /etc/prometheus/prometheus.yml
-# → Checking /etc/prometheus/prometheus.yml
-# → SUCCESS: 0 rules found
+Пример файла целей `/etc/prometheus/targets/angie_nodes/web_servers.json`:
 
-# Проверка доступности targets
-curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, instance: .labels.instance, health: .health}'
+```json
+[
+  {
+    "targets": [
+      "10.100.0.11:9113",
+      "10.100.0.12:9113",
+      "10.100.0.13:9113"
+    ],
+    "labels": {
+      "datacenter": "dc1",
+      "role": "frontend-proxy",
+      "cluster": "prod-web"
+    }
+  }
+]
 ```
 
-### Сценарий 5: Recording Rules для часто запрашиваемых агрегатов
+### Сценарий 5: Recording Rules для SRE Golden Signals
 
-Recording Rules позволяют предвычислять часто используемые выражения PromQL, снижая нагрузку на Prometheus и ускоряя дашборды.
+Предвычисление ключевых характеристик в фоновом режиме снижает нагрузку на Prometheus TSDB при отрисовке нагруженных дашбордов Grafana.
 
 ```yaml
+# /etc/prometheus/rules/angie_recording.yml
+
 groups:
-  - name: angie.rps
+  - name: angie.golden_signals
     interval: 15s
     rules:
-      - record: angie:http_requests_per_second:rate5m
-        expr: sum(rate(angie_http_requests_total[5m])) by (instance, vhost)
+      # 1. Traffic: суммарный RPS по зонам виртуальных хостов
+      - record: angie:server_zone_requests:rate5m
+        expr: sum by (instance, zone) (rate(angie_http_server_zones_requests_total[5m]))
 
-  - name: angie.error_rate
-    interval: 30s
-    rules:
-      - record: angie:http_error_rate:ratio
-        expr: sum(rate(angie_http_responses_total{status=~"5.."}[5m])) / sum(rate(angie_http_requests_total[5m]))
+      # 2. Errors: процент ответов 5xx по отношению к общему объему запросов
+      - record: angie:server_zone_errors_5xx:ratio5m
+        expr: >
+          sum by (instance, zone) (rate(angie_http_server_zones_responses_total{status=~"5.."}[5m]))
+          /
+          sum by (instance, zone) (rate(angie_http_server_zones_requests_total[5m]))
+
+      # 3. Latency: 95-й персентиль времени отклика бэкендов
+      - record: angie:upstream_latency_p95:seconds5m
+        expr: >
+          histogram_quantile(0.95, sum by (le, instance, service) (rate(angie_upstream_latency_seconds_bucket[5m])))
+
+      # 4. Latency: 99-й персентиль времени отклика бэкендов
+      - record: angie:upstream_latency_p99:seconds5m
+        expr: >
+          histogram_quantile(0.99, sum by (le, instance, service) (rate(angie_upstream_latency_seconds_bucket[5m])))
+
+      # 5. Saturation: утилизация свободных страниц в slab-зонах памяти
+      - record: angie:slab_memory_used:ratio
+        expr: >
+          angie_slabs_pages_used
+          /
+          (angie_slabs_pages_used + angie_slabs_pages_free)
 ```
 
-**Проверка:**
-```bash
-# Проверка синтаксиса правил
-promtool check rules /etc/prometheus/rules/angie_rules.yml
+### Сценарий 6: Alerting Rules для Alertmanager
 
-# Проверка результата после загрузки
-curl -s 'http://localhost:9090/api/v1/query?query=angie:http_requests_per_second:rate5m' | jq '.data.result[].value'
-```
-
-### Сценарий 6: Alerting Rules для критических порогов
-
-Настройка алертов при превышении порогов ошибок, latency или исчерпании соединений.
+Готовые правила мониторинга критических состояний веб-сервера.
 
 ```yaml
+# /etc/prometheus/rules/angie_alerts.yml
+
 groups:
   - name: angie.alerts
-    interval: 30s
     rules:
-      - alert: HighErrorRate
-        expr: angie:http_error_rate:ratio > 0.05
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Высокий процент 5xx ошибок на {{ $labels.instance }}"
-          description: "Error rate {{ $value }} превышает порог 5% в течение 2 минут."
-
-      - alert: HighLatency
-        expr: histogram_quantile(0.95, sum(rate(angie_metric_rt_hist_bucket[5m])) by (le, instance)) > 1
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "P95 latency > 1с на {{ $labels.instance }}"
-          description: "95-й персентиль latency составляет {{ $value }} секунд."
-
-      - alert: AngieDown
-        expr: up{job="angie"} == 0
+      - alert: AngieInstanceDown
+        expr: up{job="angie-cluster"} == 0
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "Angie недоступен: {{ $labels.instance }}"
+          summary: "Веб-сервер Angie недоступен на {{ $labels.instance }}"
+          description: "Prometheus не может получить метрики с эндпоинта {{ $labels.instance }}/p8s более 1 минуты."
+
+      - alert: AngieHighErrorRate5xx
+        expr: angie:server_zone_errors_5xx:ratio5m > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Высокая доля ошибок 5xx на зоне {{ $labels.zone }}"
+          description: "Уровень серверных ошибок 5xx на узле {{ $labels.instance }} составляет {{ $value | humanizePercentage }} (порог 5%) в течение 2 минут."
+
+      - alert: AngieHighLatencyP95
+        expr: angie:upstream_latency_p95:seconds5m > 1.0
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 задержка сервиса {{ $labels.service }} превысила 1 секунду"
+          description: "95-й персентиль задержки бэкенда на {{ $labels.instance }} равен {{ $value | humanizeDuration }}."
+
+      - alert: AngieUpstreamPeerDown
+        expr: angie_http_upstreams_peers_state{state="down"} == 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Бэкенд {{ $labels.peer }} в пуле {{ $labels.upstream }} отключен"
+          description: "Сервер {{ $labels.peer }} перешел в состояние DOWN по результатам проверок доступности."
+
+      - alert: AngieSlabMemoryNearExhaustion
+        expr: angie:slab_memory_used:ratio > 0.90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Память slab-зоны {{ $labels.zone }} заполнена более чем на 90%"
+          description: "Утилизация slab-памяти на {{ $labels.instance }} достигла {{ $value | humanizePercentage }}. Необходим пересчет лимитов зоны."
 ```
 
-### Сценарий 7: Экспорт пользовательских метрик через prometheus_template
+### Сценарий 7: Автоматизированное подключение официального дашборда Grafana 20719
 
-Интеграция кастомных `metric_zone` и `metric_complex_zone` с Prometheus через `prometheus_template`. Подробное описание смотри в [Пользовательские метрики и их экспорт](./angie_monitoring_custom_metrics.md); здесь — краткий пример.
+В bare-metal окружениях дашборд подключается через механизм автоматического провижининга Grafana.
 
-```nginx
-http {
-    include prometheus_all.conf;
-
-    prometheus_template business_metrics {
-        'angie_shop_revenue_total{shop_id="$1"}' $p8s_value
-            path=~^/http/metric_zones/shop_stats/metrics/([^/]+)/total_revenue$
-            type=counter;
-
-        'angie_http_vhost_latency_avg{host="$1"}' $p8s_value
-            path=~^/http/metric_zones/geo_latency/metrics/([^/]+)$
-            type=gauge;
-    }
-
-    server {
-        listen 80;
-        location /p8s {
-            prometheus business_metrics;
-            allow 10.0.10.5;
-            deny all;
-        }
-    }
-}
-```
-
-### Сценарий 8: Интеграция с blackbox-экспортером для внешних проверок
-
-Проверка доступности Angie извне через blackbox-exporter (modu`blackbox_exporter`). Позволяет отслеживать не только метрики процесса, но и ответы HTTP/HTTPS.
+Конфигурационный файл провижининга `/etc/grafana/provisioning/dashboards/angie.yaml`:
 
 ```yaml
-# blackbox.yml
-modules:
-  http_2xx:
-    prober: http
-    timeout: 5s
-    http:
-      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
-      method: GET
+apiVersion: 1
 
-# prometheus.yml
-scrape_configs:
-  - job_name: "blackbox-angie"
-    metrics_path: /probe
-    params:
-      module: [http_2xx]
-    static_configs:
-      - targets:
-        - http://web-01.internal/p8s
-        - http://web-02.internal/p8s
-    relabel_configs:
-      - source_labels: [__address__]
-        target_label: __param_target
-      - target_label: __address__
-        replacement: 127.0.0.1:9115  # blackbox-exporter
+providers:
+  - name: "Angie Web Server"
+    orgId: 1
+    folder: "Web Infrastructure"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 60
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/angie
 ```
 
-## Диагностика и проверка
-
-### Проверка эндпоинта вручную
-
-Перед добавлением в Prometheus проверьте корректность ответа с помощью `curl`:
+Загрузка дашборда через CLI:
 
 ```bash
-# Проверка эндпоинта и заголовка Content-Type
-curl -v http://localhost/p8s
+# Создание каталога для дашборда
+sudo mkdir -p /var/lib/grafana/dashboards/angie
 
-# Ожидаемый результат в теле ответа:
-# HELP angie_http_requests_total Total number of HTTP requests
-# TYPE angie_http_requests_total counter
-# angie_http_requests_total{instance="web-01"} 12345
+# Загрузка последней ревизии официального дашборда ID 20719
+sudo curl -sSL https://grafana.com/api/dashboards/20719/revisions/latest/download \
+    -o /var/lib/grafana/dashboards/angie/angie_dashboard_20719.json
+
+# Установка прав владельца
+sudo chown -R grafana:grafana /var/lib/grafana/dashboards/angie
+
+# Перезапуск службы Grafana
+sudo systemctl restart grafana-server
+# → ● grafana-server.service - Grafana instance
+# →    Active: active (running)
 ```
 
-### Валидация с помощью promtool
-
-```bash
-# Проверка формата экспорта
-curl -s http://localhost/p8s | promtool check metrics /dev/stdin
-# → Checking /dev/stdin
-# → SUCCESS: 42 metrics found
-```
+---
 
 ## Операции и команды
 
-### Основные curl-команды для экспорта
+### 1. Верификация эндпоинта экспорта Angie
 
 ```bash
-# Проверка доступности эндпоинта Prometheus
-curl -sf http://localhost/p8s | head -n 10
-# → HELP angie_http_requests_total ...
-# → TYPE angie_http_requests_total counter
-# → angie_http_requests_total{...} 12345
+# Проверка HTTP-заголовков и протокола ответа эндпоинта
+curl -s -D - -o /dev/null http://127.0.0.1:9113/p8s
+# → HTTP/1.1 200 OK
+# → Server: Angie/1.12.3
+# → Content-Type: application/openmetrics-text; version=1.0.0; charset=utf-8
+# → Connection: close
 
-# Подсчет количества уникальных метрик
-curl -s http://localhost/p8s | grep -E '^[a-z_]+{' | wc -l
-# → 42
+# Просмотр первых строк выгрузки
+curl -sf http://127.0.0.1:9113/p8s | head -n 12
+# → # TYPE angie_connections_accepted counter
+# → # HELP angie_connections_accepted The total number of accepted client connections.
+# → angie_connections_accepted 1845920
+# → # TYPE angie_connections_active gauge
+# → # HELP angie_connections_active The current number of active client connections.
+# → angie_connections_active 42
+# → # TYPE angie_connections_idle gauge
+# → # HELP angie_connections_idle The current number of idle client connections.
+# → angie_connections_idle 15
+# → # TYPE angie_connections_dropped counter
+# → # HELP angie_connections_dropped The total number of dropped client connections.
+# → angie_connections_dropped 0
 
-# Проверка конкретной метрики
-curl -s http://localhost/p8s | grep '^angie_http_requests_total'
-# → angie_http_requests_total{instance="web-01",vhost="main"} 4321
-
-# Проверка гистограммы (наличие бакетов)
-curl -s http://localhost/p8s | grep 'angie_metric_rt_hist_bucket'
-# → angie_metric_rt_hist_bucket{le="0.05"} 120
-# → angie_metric_rt_hist_bucket{le="0.1"} 350
-# → angie_metric_rt_hist_bucket{le="+Inf"} 500
-
-# Проверка фильтрации по статусу
-curl -s 'http://localhost/p8s?status=5xx' | head -n 5
-# → HELP angie_http_responses_total ...
-# → TYPE angie_http_responses_total counter
-# → angie_http_responses_total{status="500"} 3
+# Подсчет количества уникальных метрик в экспорте
+curl -s http://127.0.0.1:9113/p8s | grep -v '^#' | cut -d'{' -f1 | cut -d' ' -f1 | sort -u | wc -l
+# → 28
 ```
 
-### Проверка конфигурации Angie
+### 2. Валидация метрик с помощью `promtool`
+
+Утилита `promtool` из пакета Prometheus валидирует синтаксис OpenMetrics и структуру экспортируемых серий:
 
 ```bash
-# Проверка включен ли модуль Prometheus
-angie -V 2>&1 | grep -o 'http_prometheus_module'
-# → --with-http_prometheus_module=dynamic
+# Валидация потока метрик Angie через stdin
+curl -sf http://127.0.0.1:9113/p8s | promtool check metrics
+# → Checking /dev/stdin
+# → SUCCESS: 28 metric types found, 142 total series validated
 
-# Проверка наличия include prometheus_all.conf
-angie -T | grep -A2 'prometheus_all'
-# → /etc/angie/prometheus/prometheus_all.conf
+# Валидация синтаксиса конфигурации Prometheus
+promtool check config /etc/prometheus/prometheus.yml
+# → Checking /etc/prometheus/prometheus.yml
+# →   SUCCESS: 2 rule files found
+# →  SUCCESS: /etc/prometheus/prometheus.yml syntax OK
 
-# Проверка загруженных директив prometheus
-angie -T | grep 'prometheus'
+# Валидация файлов правил PromQL
+promtool check rules /etc/prometheus/rules/angie_recording.yml /etc/prometheus/rules/angie_alerts.yml
+# → Checking /etc/prometheus/rules/angie_recording.yml
+# →   SUCCESS: 5 rules found
+# → Checking /etc/prometheus/rules/angie_alerts.yml
+# →   SUCCESS: 5 rules found
+```
+
+### 3. Диагностика состояния целей через Prometheus HTTP API
+
+```bash
+# Проверка статуса скрейпинга инстансов Angie
+curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job=="angie-cluster") | {instance: .labels.instance, health: .health, lastScrape: .lastScrape, scrapeDuration: .lastScrapeDuration}'
+# → {
+# →   "instance": "10.100.0.11:9113",
+# →   "health": "up",
+# →   "lastScrape": "2026-10-14T14:35:00Z",
+# →   "scrapeDuration": 0.00312
+# → }
+
+# Мгновенный запрос PromQL к Prometheus API для проверки суммарного RPS
+curl -s -G 'http://localhost:9090/api/v1/query' \
+    --data-urlencode 'query=sum(rate(angie_http_server_zones_requests_total[1m]))' | jq '.data.result[] | {value: .value[1]}'
+# → {
+# →   "value": "1284.6"
+# → }
+```
+
+### 4. Проверка модулей веб-сервера Angie
+
+```bash
+# Проверка наличия встроенного модуля prometheus
+angie -V 2>&1 | grep -o 'with-http_prometheus_module'
+# → with-http_prometheus_module
+
+# Проверка синтаксиса конфигурации и путей include
+angie -t
+# → angie: the configuration file /etc/angie/angie.conf syntax is ok
+# → angie: configuration file /etc/angie/angie.conf test is successful
+
+# Проверка загруженных директив prometheus через полный дамп конфигурации
+angie -T | grep -E 'prometheus_template|prometheus '
+# → prometheus_template all {
 # → prometheus all;
-# → metric_zone api_latency:10m histogram ...;
 ```
 
-### Проверка Prometheus
-
-```bash
-# Проверка доступности targets
-curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.job=="angie") | {instance: .labels.instance, health: .health}'
-# → {"instance":"web-01.internal:9113","health":"up"}
-
-# Проверка метрик через API Prometheus
-curl -s 'http://localhost:9090/api/v1/query?query=angie_http_requests_total' | jq '.data.result[].value'
-# → [["2026-09-21T11:00:00Z","4321"]]
-
-# Проверка правил (recording + alerting)
-curl -s http://localhost:9090/api/v1/rules | jq '.data.groups[] | select(.name | startswith("angie"))'
-```
+---
 
 ## Устранение неполадок
 
-| Проблема | Возможная причина | Решение |
-|:---|:---|:---|
-| **Ошибка: `unknown directive "prometheus"`** | Модуль `ngx_http_prometheus_module` не загружен или не включен в сборку. | Проверьте вывод `angie -V` на наличие `--with-http_prometheus_module`. В официальных пакетах модуль включен по умолчанию. |
-| **Пустой ответ или отсутствие метрик** | Не подключен `prometheus_all.conf` или не созданы `status_zone`. | Добавьте `include` и убедитесь, что в блоках `server` или `upstream` есть зоны. |
-| **Prometheus не видит target (state=down)** | Неверный `metrics_path`, блокировка firewall или недоступность из сети Prometheus. | Проверьте `curl` с хоста Prometheus, убедитесь что порт открыт и путь совпадает с `metrics_path`. |
-| **Ошибка: `parse error` в Prometheus** | Версия `prometheus_all.conf` несовместима с версией Angie или ручное редактирование сломало синтаксис. | Восстановите оригинальный `prometheus_all.conf` из пакета и проверьте конфигурацию через `angie -t`. |
-| **Отсутствуют гистограммные бакеты** | Зона `metric_zone` объявлена без параметра `histogram` или бакеты не заданы. | Убедитесь, что `metric_zone` объявлена как `histogram <bucket1> <bucket2> ...` и метка записывается через `metric`. |
-| **Метрики не обновляются после reload** | `prometheus all` или `include prometheus_all.conf` находятся в блоке, который не перезагружается. | Убедитесь, что директивы находятся в контексте `http` и затрагивают нужные `server` блоки. |
-| **Метрики сбрасываются при restart** | Разделяемая память resides в RAM. | Это ожидаемое поведение. Для персистентности используйте внешние системы сбора (Prometheus, Grafana). |
-| **High cardinality в Prometheus** | Создано слишком много уникальных ключей в `metric_zone` (например, по полному URI или User-Agent). | Ограничьте длину ключа, используйте префиксы или агрегируйте метрики на стороне Angie. |
-| **Scrape timeout** | Слишком малое значение `scrape_timeout` при большом объеме метрик. | Увеличьте `scrape_timeout` до `10s` или `15s`, либо уменьшите количество экспортируемых метрик через фильтрацию. |
+| Проблема | Возможная причина | Диагностика | Решение |
+|:---|:---|:---|:---|
+| **Ошибка: `unknown directive "prometheus"`** | Angie собран без модуля `ngx_http_prometheus_module` (был указан флаг `--without-http_prometheus_module`). | `angie -V 2>&1 \| grep prometheus` | Установить официальный бинарный пакет Angie из репозитория `angie.software` или пересобрать сервер без флага `--without`. |
+| **Пустой ответ или отсутствие метрик серверов/апстримов** | В блоках `server` отсутствует `status_zone`, а в `upstream` нет директивы `zone`. Метрики по умолчанию собираются только для именованных зон. | `curl -s http://127.0.0.1:9113/p8s \| grep server_zones` возвращает пустоту. | Добавить директиву `status_zone <name>;` в блоки `server` и директиву `zone <name> <size>;` в блоки `upstream`. |
+| **Prometheus Target находится в состоянии DOWN** | Firewall (`nftables`/`iptables`) блокирует порт 9113, либо неверно указан IP-адрес/интерфейс в `listen`. | `nc -zv <angie_ip> 9113` с хоста Prometheus. Проверка `ss -tulpn \| grep 9113` на сервере Angie. | Разрешить порт в локальном межсетевом экране: `sudo ufw allow from <prom_ip> to any port 9113 proto tcp`. Проверить директиву `allow` в блоке `location /p8s`. |
+| **Ошибка HTTP 403 Forbidden при скрейпинге** | Сработали директивы ограничения доступа `allow`/`deny` внутри `location /p8s`. | В логе `/var/log/angie/error.log` запись `access forbidden by rule`. | Добавить IP-адрес Prometheus сервера в директивы `allow <prom_ip>;` перед `deny all;`. |
+| **Ошибка синтаксиса `parse error` в promtool** | Ошибка в кастомном `prometheus_template`: незакрытые кавычки, спецсимволы в именах меток или неэкранированные слеши. | `curl -sf http://localhost:9113/p8s \| promtool check metrics` покажет точный номер строки с ошибкой. | Исправить регулярные выражения и имена меток в `prometheus_template`. Имена метрик должны соответствовать шаблону `[a-zA-Z_:][a-zA-Z0-9_:]*`. |
+| **Scrape timeout (таймаут опроса цели)** | Объем экспортируемых метрик слишком велик из-за сотен тысяч уникальных ключей в `metric_zone` (высокая кардинальность). | В логах Prometheus: `context deadline exceeded`. Время генерации ответа `time curl -s http://localhost:9113/p8s > /dev/null` превышает `scrape_timeout`. | Добавить параметр `expire=on discard_key=expired` в директивы `metric_zone`. Отфильтровать ненужные метрики в `prometheus.yml` через `metric_relabel_configs` (действие `drop`). |
+| **Сброс значений счетчиков до нуля** | Перезапуск процесса Angie (`systemctl restart angie`). Разделяемая память resides исключительно в RAM. | Проверка времени старта процесса: `ps -eo pid,lstart,cmd \| grep angie`. | Это штатное поведение разделяемой памяти. Для сохранения истории используйте Prometheus TSDB. Для применения изменений конфигурации используйте reload (`angie -s reload` или `systemctl reload angie`), который сохраняет память зон. |
+
+---
 
 ## Лучшие практики
 
-### Безопасность
+### Безопасность и изоляция
 
-1. **Ограничивайте доступ к эндпоинту Prometheus** по IP или через внутреннюю сеть. Минимальная конфигурация:
+1. **Не публиковать порт телеметрии наружу:** Директива `listen` для эндпоинта Prometheus должна быть привязана исключительно к интерфейсу `127.0.0.1` или выделенному интерфейсу внутренней сервисной сети (Management LAN/VLAN).
+2. **Многоуровневый контроль доступа:** Комбинируйте сетевую фильтрацию на уровне ядра ОС (`iptables`/`nftables`), директивы Angie `allow <prom_ip>; deny all;` и HTTP Basic Authentication для межсетевого взаимодействия.
+3. **Отключение access_log для /p8s:** Частые запросы скрейпинга (каждые 5-15 секунд) раздувают журналы доступа. Указывайте `access_log off;` внутри сервера телеметрии.
+
+### Управление кардинальностью (Cardinality) и памятью
+
+1. **Исключение неконтролируемых ключей в `metric_zone`:** Никогда не используйте полный URI (`$request_uri`) или заголовки `Cookie`/`Authorization` в качестве ключей зон метрик. Это порождает миллионы уникальных серий и приводит к деградации Prometheus TSDB (Out of Memory).
+2. **Политика вытеснения устаревших ключей:** При использовании динамических ключей (например, GeoIP или User-Agent) всегда объявляйте зоны с параметром `expire=on discard_key=expired`:
    ```nginx
-   location = /p8s {
-       prometheus all;
-       allow 10.0.10.5;
-       deny all;
-   }
+   metric_zone geo_stats:10m count expire=10m discard_key=expired;
    ```
-2. **Используйте TLS** при доступе к метрикам через ненадежные каналы.
-3. **Не размещайте метрики на публичных интерфейсах.** Даже без данных аутентификации, метрики раскрывают топологию и нагрузки.
-
-### Производительность
-
-1. **Scrape interval:** для большинства production-сценариев достаточно `15s`. Более частый сбор (`5s`) оправдан только при расследовании инцидентов.
-2. **Фильтрация метрик:** используйте `prometheus all status=5xx` или именованные директивы для снижения объема передаваемых данных.
-3. **Размер зон:** `status_zone` и `metric_zone` потребляют разделяемую память. Для кластеров с сотнями виртуальных хостов выделяйте от 1 МБ до 10 МБ на зону.
-4. **Cardinality:** избегайте высококардинальных метрик. Максимальная длина ключа `metric_zone` — 255 символов; слишком длинные ключи обрезаются.
-
-### Эксплуатация
-
-1. **Именование меток:** в `metric_zone` используйте осмысленные ключи (`api_v1`, `static_files`) вместо необработанных URI.
-2. **Верификация после изменений:** после добавления новых `metric_zone` проверяйте появление метрик через `curl -s http://localhost/p8s | grep <metric_name>`.
-3. **Резервное копирование:** `prometheus_all.conf` поставляется с пакетом. При обновлении Angie проверяйте изменения в shipped-версии файла.
-4. **Алертинг:** настраивайте алерты на основе recording rules, а не на сырые метрики, чтобы избежать флута при изменении внутренних имен метрик.
-
-### Отладка
-
-1. **Сравнение API и Prometheus:** при расхождениях проверяйте, что `status_zone` создана до `reload`, и что в `prometheus_all.conf` нет опечаток.
-2. **Promtool:** используйте `promtool check metrics` для валидации вывода и `promtool check rules` для проверки правил.
-3. **Логи Angie:** при проблемах с модулем Prometheus проверяйте `error.log` на наличие `prometheus`:
-   ```bash
-   grep -i prometheus /var/log/angie/error.log | tail -20
+3. **Фильтрация метрик на коллекторе:** Если инфраструктуре не требуется посекундная статистика по каждому отдельному размеру slab-слотов, отсекайте их в `prometheus.yml`:
+   ```yaml
+   metric_relabel_configs:
+     - source_labels: [__name__]
+       regex: "angie_slabs_pages_slots_.*"
+       action: drop
    ```
+
+### Надежность и эксплуатация (SRE)
+
+1. **Согласование таймаутов:** Устанавливайте `scrape_timeout` на стороне Prometheus равным 60-70% от `scrape_interval` (например, `scrape_interval: 15s`, `scrape_timeout: 10s`). Это защищает от наложения циклов сбора при пиковых нагрузках на сервер.
+2. **Алертинг на Recording Rules:** Всегда настраивайте правила оповещений в Alertmanager на предварительно вычисленные временные ряды из `Recording Rules` (`angie:server_zone_errors_5xx:ratio5m`), а не на "сырые" функции `rate(...)`. Это обеспечивает стабильность вычислений и защищает от кратковременных выбросов.
+3. **Валидация конфигурации в CI/CD:** Перед деплоем новой конфигурации Angie или правил PromQL на продуктовые серверы обязательно запускайте:
+   - `angie -t` — проверка директив веб-сервера.
+   - `promtool check config <path>` — валидация конфигурации Prometheus.
+   - `promtool check rules <path>` — синтаксическая проверка правил алертинга и предвычислений.
+
+---
 
 ## Дополнительная информация
 
-### Визуализация
+### Сравнение методов мониторинга Angie
 
-Для быстрого старта используйте дашборд в Grafana:
-- **ID:** `20719` (Официальный дашборд Angie).
+| Критерий | Нативный Prometheus (`/p8s`) | Console Light / API (`/api/`) | Внешний `nginx-prometheus-exporter` |
+|:---|:---|:---|:---|
+| **Архитектурный оверхед** | Нулевой (прямое чтение из Shared RAM) | Минимальный (веб-интерфейс в браузере) | Дополнительный сторонний процесс, порт и парсинг JSON |
+| **Глубина хранения** | Долгосрочная (месяцы/годы в Prometheus TSDB) | Отсутствует (только текущие значения) | Долгосрочная в TSDB |
+| **Автоматический алертинг** | Да (Alertmanager, Alerting Rules) | Нет (только визуальный контроль) | Да (Alertmanager) |
+| **Формат данных** | OpenMetrics / Prometheus Text format | REST JSON API | Prometheus Text format |
+| **Назначение в SRE** | Анализ трендов, SLA/SLO, Capacity Planning | Оперативный траблшутинг в реальном времени | Устаревший легаси-механизм для Nginx |
 
-### Производительность
+### Ограничения архитектуры
 
-Нативный экспорт Angie на 15–25% эффективнее внешних экспортеров, так как не требует парсинга JSON и промежуточного хранения данных в другом процессе.
+1. **Pull-модель:** Prometheus должен иметь прямой сетевой маршрут к IP-адресу и порту инстанса Angie. В закрытых периметрах без прямого доступа требуется настройка проксирования или реверс-туннелей.
+2. **Неперсистентность Shared Memory:** При полной остановке процесса Angie (`stop`/`start`) данные счетчиков в разделяемой памяти сбрасываются. Исторические тренды сохраняются только в базе Prometheus TSDB.
+3. **Разделение зон ответственности:** Модуль `ngx_http_prometheus_module` собирает метрики исключительно сетевой и прикладной активности самого Angie. Метрики операционной системы хоста (утилизация CPU, дисковой подсистемы, памяти ядра) должны собираться стандартным системным `node_exporter`.
 
-### Сравнение инструментов
+### Связанные материалы в базе знаний
 
-| Характеристика | Native Prometheus Export | Console Light / API |
-|:---|:---|:---|
-| **Гранулярность** | Зависит от `scrape_interval` (от 5s) | Реал-тайм (~1 сек) |
-| **История** | Глубина хранения месяцы/годы (TSDB) | Отсутствует |
-| **Масштаб** | Весь кластер и инфраструктура | Один узел Angie |
-| **Алертинг** | Нативный (Alertmanager) | Отсутствует |
-| **Overhead** | Зависит от частоты скрапинга | Минимальный (браузер опрашивает API) |
-| **Назначение** | Тренды, Capacity Planning, SLA | Оперативная отладка |
-
-### Ограничения
-
-1. **Pull-модель:** Prometheus должен иметь сетевой доступ до эндпоинта Angie. При использовании firewall или NAT требуется проброс портов или reverse-proxy.
-2. **Cardinality:** каждая уникальная комбинация меток создает отдельную временную серию. При высокой кардинальности TSDB быстро растет.
-3. **Один источник:** стандартный экспорт покрывает только метрики Angie. Для метрик ОС (CPU, RAM, disk I/O) требуется отдельный `node_exporter`.
-4. **Отсутствие истории при restart:** метрики в разделяемой памяти сбрасываются при `stop/start`. Это не влияет на Prometheus TSDB, но может создавать "провалы" на графиках.
-
-### Связанные технологии
-
-- **[Основные концепции мониторинга](./angie_monitoring_concepts.md)** — определения `status_zone`, `metric_zone`, расчет памяти
-- **[Настройка Console Light и API](./angie_monitoring_console.md)** — веб-интерфейс для оперативного контроля
-- **[Пользовательские метрики и их экспорт](./angie_monitoring_custom_metrics.md)** — `metric_zone`, `prometheus_template`, APDEX, бизнес-метрики
-- **[Возможности Angie Pro](./angie_monitoring_pro.md)** — динамическое управление весами, `upstream_probe`, KV-зоны
-- **[Работа с конфигурацией через API](./angie_monitoring_api.md)** — полная таблица эндпоинтов, keepalive, JSON-схемы
+- [Основные концепции мониторинга](./angie_monitoring_concepts.md) — расчет памяти, структуры `status_zone` и архитектура Shared Memory.
+- [Пользовательские метрики и их экспорт](./angie_monitoring_custom_metrics.md) — детальный синтаксис `metric_zone`, `metric_complex_zone`, вычисление APDEX и шаблоны `prometheus_template`.
+- [Настройка Console Light и API](./angie_monitoring_console.md) — развертывание встроенного веб-интерфейса реального времени.
+- [Работа с конфигурацией через REST API](./angie_monitoring_api.md) — структура JSON эндпоинтов `/status/` и динамическое управление.
+- [Возможности Angie Pro](./angie_monitoring_pro.md) — кластерная синхронизация зон и активные проверки зон `upstream_probe`.
 
 ---
 
@@ -516,4 +669,5 @@ curl -s http://localhost:9090/api/v1/rules | jq '.data.groups[] | select(.name |
 - [Основные концепции мониторинга](./angie_monitoring_concepts.md)
 - [Пользовательские метрики и их экспорт](./angie_monitoring_custom_metrics.md)
 - [Настройка Console Light и API](./angie_monitoring_console.md)
+- [Работа с конфигурацией через REST API](./angie_monitoring_api.md)
 - [Возможности Angie Pro](./angie_monitoring_pro.md)

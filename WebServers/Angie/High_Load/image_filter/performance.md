@@ -1,469 +1,569 @@
 # Модуль image_filter в Angie: производительность и масштабирование
 
+**Актуально для:** Angie 1.12.x
+
 ## Определения
 
-**Производительность image_filter** — комплексная характеристика эффективности обработки медиаконтента, определяемая временем задержки (Latency) на операцию трансформации и совокупной пропускной способностью (Throughput) системы при заданных лимитах вычислительных ресурсов (CPU, RAM).
+**Производительность image_filter** — комплексная характеристика эффективности динамической обработки медиаконтента, определяемая временем задержки (Latency/TTFB/TTLB) на операцию трансформации и совокупной пропускной способностью (Throughput, RPS) системы при контролируемых ограничениях вычислительных ресурсов (CPU, RAM, Disk I/O).
 
-**Масштабирование обработки** — процесс увеличения мощности системы для поддержания стабильного времени ответа при росте количества запросов на динамическую генерацию изображений.
+**Синхронный конвейер трансформации (Synchronous Transformation Pipeline)** — механизм выполнения `ngx_http_image_filter_module`, при котором декодирование исходного сжатого файла, манипуляции с несжатой пиксельной матрицей в библиотеке `libgd` и кодирование в целевой формат выполняются синхронно в контексте рабочего процесса (worker process). В процессе трансформации рабочий процесс полностью блокирует свой цикл событий (`epoll event loop`), не обрабатывая сетевые события других клиентских соединений на данном воркере.
 
-**Пропускная способность (Throughput)** — количество успешно обработанных трансформаций в единицу времени (обычно запросов в секунду, rps). Ограничена min(CPU_bound, IO_bound, Memory_bound).
+**Буфер чтения оригинала (`image_filter_buffer`)** — максимальный объем оперативной памяти, выделяемый воркером Angie для считывания сырого сжатого файла из хранилища или апстрима перед передачей декодеру `libgd`. Если размер входящего файла превышает этот лимит, обработка прерывается с возвратом HTTP `415 Unsupported Media Type`.
 
-**Saturation (Насыщение)** — состояние, при котором добавление новой единицы нагрузки (запроса) не увеличивает пропускную способность, а только растет задержка или queue depth.
+**Рабочий набор памяти (Memory Footprint / RSS)** — совокупный объем оперативной памяти, аллоцируемый процессом при выполнении трансформации. Складывается из памяти `image_filter_buffer`, промежуточной несжатой RGBA-матрицы в `libgd` (`Ширина × Высота × 4 байта`), буфера масштабированного изображения и рабочих буферов кодеков (`libavif`, `libwebp`).
 
-**Tail Latency (P95/P99)** — перцентили времени ответа, отражающие worst-case поведение системы. Для image_filter критичен P95/P99, потому что единичный AVIF-запрос может заблокировать воркер на сотни миллисекунд.
+**Tail Latency (P95/P99)** — перцентили времени отклика системы, отражающие worst-case сценарии. В задачах обработки изображений P95/P99 критически чувствительны к типу кодека: ресурсоемкое кодирование AVIF способно вызвать всплеск задержки до сотен миллисекунд и заблокировать воркер.
 
-**Head-of-line blocking** — явление, при котором медленный запрос (например, AVIF на 180 мс) блокирует очередь (HTTP/2 stream или worker connection), замедляя отдачу всех последующих запросов на этом соединении/воркере.
+**Насыщение (Saturation)** — состояние вычислительной подсистемы, при котором дальнейший рост входящей нагрузки не увеличивает фактический RPS, а приводит к лавинообразному росту глубины очередей сокетов (`listen backlog`), задержки планировщика ядра ОС (`CFS runqueue latency`) и возрастанию таймаутов (HTTP 504 Gateway Timeout).
 
-**Cache Warmup (Прогрев кэша)** — процесс предварительного заполнения кэша результатами трансформаций до прихода пиковой нагрузки, чтобы минимизировать MISS-запросы к image_filter.
+**Head-of-Line Blocking (HOL)** — явление блокировки очереди, при котором медленный запрос (например, кодирование AVIF высокого разрешения длительностью 150 мс) задерживает обработку последующих мультиплексированных запросов в рамках одного воркера или HTTP/2-соединения.
 
-**Cold Start Latency** — задержка первого запроса после перезагрузки Angie или истечения TTL, когда результат отсутствует в кэше и требуется полная трансформация оригинала.
+**Двухуровневое проксирование (Double Proxying)** — архитектурный паттерн High Load, разделяющий конвейер на внешний фронтенд (SSL-терминация, неблокирующий `proxy_cache`, согласование формата `Accept`, отдача статики) и изолированный внутренний бэкенд трансформации (выделенный пул воркеров с `image_filter`), связанный через Unix Domain Socket или локальный loopback.
+
+**Защита от эффекта стада (Thundering Herd / Cache Stampede)** — предотвращение параллельного запуска одинаковых тяжелых вычислений при промахе кэша (MISS) с помощью директив синхронизации `proxy_cache_lock` и отдачи устаревшего контента `proxy_cache_use_stale updating`.
+
+**Прогрев кэша (Cache Warmup)** — контролируемый регламентный процесс генерации и сохранения в кэш наиболее востребованных размеров и форматов изображений до поступления пользовательского трафика, исключающий деградацию производительности при холодном старте.
+
+---
 
 ## Базовые концепции
 
-### Факторы влияния на производительность
+### Механика выполнения и блокировка event loop
 
-Время обработки одного изображения (Latency) в Angie зависит от нескольких ключевых факторов:
-
-- **Вычислительная сложность кодека:**
-  - **AVIF/HEIC:** Требуют в 10–50 раз больше циклов CPU по сравнению с JPEG. В Angie скорость регулируется через `image_filter_avif_speed` (0 — макс. сжатие, 10 — макс. скорость).
-  - **WebP:** Промежуточный вариант, требует в 2–3 раза больше ресурсов, чем JPEG.
-- **Размер и глубина цвета оригинала:** Чем выше разрешение исходного файла, тем больше памяти занимает его декомпрессия в буфере `image_filter_buffer` и тем дольше длится этап фильтрации.
-- **Дополнительные фильтры:** Директива `image_filter_sharpen` значительно увеличивает нагрузку на CPU, так как требует прохода по всей матрице пикселей для вычисления резкости (свертка с ядром Гаусса).
-- **Режим кодирования JPEG:** Директива `image_filter_interlace on` включает двухпроходное кодирование, добавляя +5–10% к времени обработки по сравнению с baseline JPEG.
-- **Ориентировочные задержки (на 1 ядро 3GHz):**
-  - JPEG → WebP (800x600): ~30–50 мс.
-  - JPEG → AVIF (speed 8, 800x600): ~100–180 мс.
-  - Применение Sharpen (1–10): добавляет +15–30% к времени обработки.
-  - Применение Interlace: добавляет +5–10%.
-
-### Архитектура производительности
-
-Для обеспечения стабильности под высокой нагрузкой обязательным является использование схемы **двухуровневого проксирования** (Double Proxying). Внешний фронтенд отвечает за кэширование и защиту, внутренний сервер — за ресурсоёмкую обработку.
+Модуль `ngx_http_image_filter_module` принципиально отличается от стандартных модулей Angie:
+1. Стандартная отдача статических файлов работает в неблокирующем асинхронном режиме через системный вызов `sendfile()` с минимальным расходом CPU и нулевым копированием (Zero-Copy).
+2. Модуль `image_filter` является фильтром тела ответа (`body filter`). Он аккумулирует весь файл в `image_filter_buffer`, затем вызывает C-библиотеку `libgd`, которая выполняет распаковку, билинейное или бикубическое масштабирование и последующее сжатие в JPEG, WebP или AVIF.
 
 ```
-Клиент (Accept: image/avif) → [Фронтенд: Проверка кэша + Vary: Accept]
-                                 ↓
-                                 MISS → [Внутренний прокси: Трансформация]
-                                           ↓
-                                           [Запрос оригинала у хранилища]
-                                           ↓
-                                           [Применение image_filter: Resize/Convert]
-                                           ↓
-                                 HIT ← [Кэширование результата + Vary: Accept]
+Входящий запрос → epoll → чтение оригинала в image_filter_buffer
+                                  │
+                                  ▼
+                     [БЛОКИРОВКА EVENT LOOP ВОРКЕРА]
+                     ├── libgd: декодирование в RGBA (CPU/RAM)
+                     ├── libgd: gdImageCopyResampled (CPU)
+                     ├── libavif / libwebp: сжатие (CPU)
+                                  │
+                                  ▼
+                     [РАЗБЛОКИРОВКА EVENT LOOP]
+                                  │
+                                  ▼
+                     Отправка готового файла клиенту
 ```
 
-**Ключевые аспекты архитектуры:**
-- **Изоляция:** Тяжелые операции обработки (особенно AVIF) выносятся на внутренние воркеры или отдельные инстансы, чтобы не блокировать быструю отдачу статики.
-- **Управление кэшем:** Обязательная передача заголовка `Vary: Accept`, чтобы разные браузеры получали подходящие им форматы (AVIF для Chrome, JPEG для старых Safari) по одному URL.
-- **Эффективность:** В `proxy_cache` сохраняется готовый результат. Оригинал запрашивается только один раз при промахе кэша (cache miss).
+> [!WARNING]
+> Пока воркер занят кодированием изображения, его цикл событий `epoll` полностью остановлен. Воркер не может принимать новые TCP-соединения, обрабатывать TLS-хэндшейки или передавать данные по уже открытым соединениям. Если тяжелый `image_filter` работает на тех же процессах, что и публичный фронтенд, это приводит к резкому росту задержки всех клиентов сайта.
 
-### Модель загрузки и насыщения
+### Вычислительная сложность современных кодеков
 
-Каждый воркер Angie обрабатывает один запрос в один поток (один процесс — один запрос). Для параллельной обработки множества запросов требуется адекватное количество `worker_processes`, соответствующее числу ядер CPU.
+Вычислительные затраты на операцию сжатия различаются на порядки в зависимости от целевого формата:
 
-**Формула параллелизма:**
-```
-Параллельные трансформации = (PPS_peak × p_avif × t_avif) + (PPS_peak × p_webp × t_webp) + (PPS_peak × p_jpeg × t_jpeg)
-```
+| Формат | Библиотека | Алгоритм | Относительная нагрузка на CPU | Средняя задержка (800×600, 1 ядро 3.2 GHz) | Рекомендации для High Load |
+|:-------|:-----------|:---------|:------------------------------|:-------------------------------------------|:---------------------------|
+| **JPEG** | `libgd` (libjpeg-turbo) | DCT, Huffman | Базовая (1x) | 10–25 мс | Стандартный baseline-режим; `image_filter_interlace on` добавляет +5–10% CPU |
+| **WebP** | `libwebp` | VP8 (lossy), VP8L (lossless) | Средняя (2x–3x) | 25–45 мс | `image_filter_webp_quality 75–80` |
+| **AVIF** | `libavif` (libaom / rav1e) | AV1 intra-frame | Экстремальная (10x–40x) | 70–160 мс (при speed 9) / >1500 мс (при speed 4) | Обязательно `image_filter_avif_speed 8–10`; speed < 8 запрещен в online-контуре |
+| **HEIC** | `libheif` | HEVC / x265 | Высокая (8x–15x) | 60–120 мс | `image_filter_heic_quality 70–75` |
+| **Sharpen** | `libgd` | Свертка матрицы 3×3 | Дополнительная (+15–30%) | +10–25 мс к любому кодеку | Ограничивать `image_filter_sharpen 1–2` только для мелких превью (thumbnails) |
+
+### Детальная модель потребления оперативной памяти
+
+Ошибочно полагать, что память на запрос ограничена только параметром `image_filter_buffer`. Полный объем памяти, выделяемый воркером из системной кучи (glibc heap) при трансформации:
+
+$$\text{RAM}_{\text{req}} = \text{image\_filter\_buffer} + (\text{Width}_{\text{src}} \times \text{Height}_{\text{src}} \times 4) + (\text{Width}_{\text{dst}} \times \text{Height}_{\text{dst}} \times 4) + \text{Heap}_{\text{codec}}$$
 
 Где:
-- `PPS_peak` — пиковое количество запросов в секунду
-- `p_avif/p_webp/p_jpeg` — доля запросов на соответствующий формат
-- `t_avif/t_webp/t_jpeg` — среднее время обработки одного запроса в секундах
+- $\text{image\_filter\_buffer}$ — буфер для входящего файла (например, 20 МБ);
+- $\text{Width}_{\text{src}} \times \text{Height}_{\text{src}} \times 4$ — несжатая матрица оригинала TrueColor в `libgd` (4 байта на пиксель: R, G, B, Alpha). Для фото со смартфона 24 Мп (6000×4000) размер матрицы составляет:
+  $$6000 \times 4000 \times 4 = 96\,000\,000 \text{ байт } (\approx 91.5 \text{ МБ});$$
+- $\text{Width}_{\text{dst}} \times \text{Height}_{\text{dst}} \times 4$ — результирующая матрица после масштабирования;
+- $\text{Heap}_{\text{codec}}$ — внутренние рабочие структуры кодека (`libavif` аллоцирует дополнительные 15–30 МБ под контекст энкодера AV1).
 
-**Пример расчета:**
-- 1000 rps пик, 60% AVIF (180 мс), 30% WebP (40 мс), 10% JPEG (20 мс)
-- Параллельные AVIF: 1000 × 0.6 × 0.18 = 108 воркеров
-- Параллельные WebP: 1000 × 0.3 × 0.04 = 12 воркеров
-- Параллельные JPEG: 1000 × 0.1 × 0.02 = 2 воркера
-- Итого: ~122 параллельных трансформации
+**Следствие для сайзинга:**
+При обработке 24 Мп фото один воркер кратковременно потребляет $20 + 91.5 + 4 + 20 \approx 135.5 \text{ МБ}$ RAM. Если на 16-ядерном сервере все 16 воркеров одновременно примут запросы на обработку тяжелых оригиналов, мгновенный всплеск составит более 2.1 ГБ оперативной памяти только под нужды трансформации.
 
-При `image_filter_buffer 20M` требуется ~2.44 GB RAM только для модуля. Добавьте 30% запас на ОС и другие процессы.
+### Архитектурная топология High Load (Двухуровневый контур)
 
-### Память и вычислительная модель
+Для устранения деградации производительности в bare-metal и on-premise инфраструктурах применяется строгое разделение:
 
-Каждая трансформация требует объема RAM, равного `image_filter_buffer`, для хранения полностью раскодированного изображения в пиксельной матрице.
-
-**Расчет буфера:**
 ```
-Буфер ≥ (Ширина × Высота × 4 байта RGB) × 1.3 (запас на метаданные)
+[ Публичный сетевой трафик ]
+             │
+             ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 1. Фронтенд-уровень (Edge Tier / Angie Frontend)            │
+│  - SSL/TLS termination, HTTP/2, HTTP/3 (QUIC)               │
+│  - worker_processes auto, worker_cpu_affinity               │
+│  - Content Negotiation (map $http_accept -> avif, webp, ...)│
+│  - proxy_cache на NVMe (индекс в keys_zone)                │
+│  - proxy_cache_lock on; proxy_cache_use_stale updating      │
+│  - Rate Limiting (limit_req, limit_conn)                    │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ (MISS / BYPASS)
+                 Unix Domain Socket / Keepalive Loopback
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 2. Бэкенд-уровень (Compute Tier / Angie Image Processor)    │
+│  - worker_processes = количеству выделенных CPU ядер         │
+│  - Изоляция ядер через worker_cpu_affinity / isolcpus       │
+│  - image_filter_buffer 20M–30M; proxy_buffering off;        │
+│  - Выделенные лимиты systemd (CPUQuota, MemoryMax)          │
+│  - Отдача трансформированного потока в сокет фронтенда      │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-Примеры:
-- 12 МП фото (4032×3024): ~46 MB несжато → буфер 20M–30M
-- 8 К видео кадр (7680×4320): ~100 MB несжато → буфер 40M–60M
+**Преимущества схемы:**
+- Фронтенд обслуживает 100 000+ соединений без риска зависания event loop.
+- Бэкенд получает ровно столько запросов, сколько способен обработать без деградации планировщика (ограничивается через параметр `max_conns` в апстриме фронтенда).
+- 95–99% запросов отдаются из кэша фронтенда со скоростью статики (latency < 1–2 мс).
 
-При 100 параллельных запросах и буфере 20M потребуется ~2 GB оперативной памяти только под нужды модуля.
+### Модель очередей и Capacity Planning
 
-### Влияние HTTP/2 и мультиплексирования
+Пропускная способность пула трансформации подчиняется модели систем массового обслуживания (M/M/c). При приближении коэффициента утилизации CPU к $U > 0.75$ (75%) среднее время ожидания в очереди начинает расти экспоненциально:
 
-HTTP/2 позволяет передавать несколько запросов по одному TCP-соединению. Это повышает эффективность использования соединений, но создает риск **head-of-line blocking**: медленный AVIF-запрос может заблокировать весь поток (stream), если `worker_connections` исчерпаны или очередь воркера переполнена. Для компенсации:
-- Увеличивайте `worker_connections` (например, до 4096).
-- Настраивайте `proxy_cache_lock` для предотвращения дублирования тяжелых операций.
-- Используйте отдельный балансировщик для image_filter backend.
+$$\text{Параллельные трансформации } (C_{\text{active}}) = \text{RPS}_{\text{miss}} \times \overline{T}_{\text{latency}}$$
 
-### CPU Affinity и NUMA
+Где $\overline{T}_{\text{latency}}$ — средневзвешенное время обработки запроса с учетом распределения форматов:
 
-Привязка воркеров к ядрам через `worker_cpu_affinity` критична для image_filter, так как это предотвращает вытеснение кэша L1/L2 при интенсивных математических вычислениях. В системах с NUMA (многосокетные серверы) для предсказуемой производительности:
-- Размещайте `worker_processes` на ядрах одного NUMA-узла, где находится оперативная память, используемая модулем.
-- Используйте `numactl` или `systemd` CPUAffinity для привязки Angie к конкретному узле.
+$$\overline{T}_{\text{latency}} = (p_{\text{avif}} \times t_{\text{avif}}) + (p_{\text{webp}} \times t_{\text{webp}}) + (p_{\text{jpeg}} \times t_{\text{jpeg}})$$
 
-### Стратегии масштабирования
+**Расчет необходимого числа ядер (Headroom 30%):**
 
-1.  **Вертикальное (Scale Up):**
-    - Увеличение количества `worker_processes` до соответствия числу ядер CPU.
-    - **CPU Affinity:** Привязка процессов к ядрам через `worker_cpu_affinity` предотвращает вытеснение кэша L1/L2 при интенсивных вычислениях.
-2.  **Горизонтальное (Scale Out):**
-    - Вынос фильтрации на выделенные узлы (Backend-фермы).
-    - **Метод feedback (Angie Pro):** Позволяет балансировщику выбирать узел на основе реального времени ответа (Latency). Если одна нода занята тяжелым ресайзом AVIF, новые запросы уйдут на менее нагруженные узлы.
-3.  **Изоляция ресурсов:** Использование `cgroups` или лимитов в Kubernetes (CPU shares) для предотвращения ситуации, когда процесс ресайза «задушит» отдачу статического контента или обработку TLS.
+$$N_{\text{cores}} = \left\lceil \frac{C_{\text{active}}}{U_{\text{target}}} \right\rceil = \left\lceil \frac{C_{\text{active}}}{0.70} \right\rceil$$
+
+**Пример практического расчета:**
+- Входящая нагрузка: 500 RPS в фазе cache miss (или при прогреве).
+- Распределение форматов: 60% AVIF ($t = 0.12$ c), 30% WebP ($t = 0.035$ c), 10% JPEG ($t = 0.02$ c).
+- Средневзвешенное время: $(0.6 \times 0.12) + (0.3 \times 0.035) + (0.1 \times 0.02) = 0.072 + 0.0105 + 0.002 = 0.0845 \text{ с } (84.5 \text{ мс})$.
+- Активных одновременных задач: $500 \times 0.0845 = 42.25$.
+- Необходимое число ядер CPU при целевой утилизации 70%: $\lceil 42.25 / 0.70 \rceil = 61 \text{ ядро}$.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий: Базовое тестирование пропускной способности (Baseline Benchmark)
+### Сценарий 1: Двухуровневая высоконагруженная архитектура с Unix Domain Socket
 
-Определение максимальной пропускной способности и Tail Latency на эталонном конфигурации перед внедрением в production.
+Разделение логики между фронтендом с дисковым кэшем и внутренним воркер-процессором через Unix Domain Socket с контролем соединений.
 
-**Предварительные требования:**
-- Установлен `wrk` или `ab` (ApacheBench).
-- Включен `status_zone` на внутреннем сервере трансформации.
-- Кэш очищен (`find /var/cache/angie/images -type f -delete`), чтобы запросы шли в image_filter.
-
-```bash
-# Базовый тест: 1000 запросов, 50 параллельных соединений, 10s ramp-up
-wrk -t4 -c50 -d10s -H "Accept: image/avif" https://img.example.com/resize/400x300/photo.jpg
-
-# Ожидаемый вывод (пример):
-# Requests/sec: ~350, Latency P95 ~180ms, Timeout 12
-```
-
-**Валидация:**
-```bash
-# Проверка статуса зоны после теста
-curl -s http://127.0.0.1:8080/api/6/http/status_zones/image_filter_backend | jq '.responses | {time: .time, codes: .codes}'
-
-# Проверка утилизации CPU под нагрузкой
-mpstat -P ALL 1 5 | grep -E "Average|CPU"
-# → CPU0: 100% (все запросы ушли на одно ядро при worker_processes 1)
-```
-
-### Сценарий: Изоляция CPU для задач фильтрации
-
-Выделение конкретных ядер CPU только под задачи обработки изображений для обеспечения предсказуемого времени ответа.
+**Конфигурация бэкенда (`/etc/angie/conf.d/image_backend.conf`):**
 
 ```nginx
-# В основном контексте angie.conf
-worker_processes 4;
-# Привязываем воркеры к первым 4 ядрам
-worker_cpu_affinity 0001 0010 0100 1000;
-
-http {
-    upstream image_filter_backend {
-        server 127.0.0.1:8081;
-        keepalive 32;
-    }
-}
-```
-
-**Валидация:**
-```bash
-# Проверка привязки воркеров к ядрам
-ps -o pid,psr,comm -p $(pgrep angie | head -4)
-# → PID  PSR COMMAND
-# → 1234   0 angie, 1235   1 angie, 1236   2 angie, 1237   3 angie
-```
-
-### Сценарий: Тюнинг скорости и качества для High Load
-
-Оптимизация параметров для снижения Latency при сохранении приемлемого визуального качества.
-
-```nginx
-location /img/v1/ {
-    image_filter convert avif;
-    image_filter_avif_quality 60;
-    # Значение 9-10 обеспечивает скорость, близкую к WebP
-    image_filter_avif_speed 9; 
-    
-    # Резкость только для превью
-    image_filter_sharpen 2;
-    
-    # Буфер с запасом для мобильных фото
-    image_filter_buffer 20M;
-}
-```
-
-**Валидация:**
-```bash
-# → 0.142 (при speed 9, AVIF 800x600)
-```
-
-### Сценарий: Защита от всплесков нагрузки (Thundering Herd)
-
-Предотвращение одновременной генерации одного и того же изображения несколькими потоками.
-
-```nginx
-location / {
-    proxy_cache img_cache;
-    # Ожидание завершения первой генерации
-    proxy_cache_lock on;
-    proxy_cache_lock_age 10s;
-    proxy_cache_lock_timeout 5s;
-    
-    # Отдача старой версии при обновлении в фоне
-    proxy_cache_use_stale updating error timeout;
-    proxy_pass http://image_filter_backend;
-}
-```
-
-**Валидация:**
-```bash
-# → MISS (только один запрос до image_filter), последующие HIT
-```
-
-### Сценарий: Наблюдаемость и алертинг через API Angie
-
-Включение `status_zone` позволяет анализировать эффективность масштабирования в реальном времени.
-
-```nginx
-# Внутренний сервер (трансформация)
+# Внутренний сервер трансформации
 server {
-    listen unix:/var/run/angie_img_filter.sock;
-    server_name localhost;
+    listen unix:/var/run/angie/image_processor.sock backlog=2048;
+    server_name _;
+
+    # Учет метрик внутреннего контура
     status_zone image_filter_backend;
-    
-    # ... конфигурация фильтрации ...
-}
 
-# Фронтенд с API
-server {
-    listen 127.0.0.1:8080;
-    server_name localhost;
-    
-    location /status {
-        api /status/;
+    # Буфер под сжатый входящий оригинал
+    image_filter_buffer 25M;
+
+    # Настройки кодеков для минимизации Latency
+    image_filter_avif_speed 9;
+    image_filter_avif_quality 65;
+    image_filter_webp_quality 80;
+    image_filter_jpeg_quality 80;
+
+    location ~ ^/transform/(?<fmt>avif|webp|jpeg)/(?<w>\d+)x(?<h>\d+)/(?<path>.+)$ {
+        # Защита: доступ только из локального процесса
         allow 127.0.0.1;
+        allow unix:;
         deny all;
-    }
-    
-    location /p8s {
-        prometheus;
+
+        alias /var/www/media/originals/$path;
+
+        # Конвертация и пропорциональное масштабирование
+        image_filter resize $w $h;
+        image_filter convert $fmt;
+
+        # Отключение буферизации для немедленной передачи чанков
+        proxy_buffering off;
     }
 }
 ```
 
-**Метрики для мониторинга:**
-- **`responses.time`**: Среднее время ответа внутреннего фильтра. Используется для тюнинга `avif_speed`.
-- **`responses.codes.415`**: Частота ошибок из-за нехватки `image_filter_buffer`.
-- **`requests.current`**: Количество параллельно обрабатываемых изображений.
+**Конфигурация фронтенда (`/etc/angie/conf.d/image_frontend.conf`):**
+
+```nginx
+proxy_cache_path /var/cache/angie/images 
+    levels=1:2 
+    keys_zone=img_cache:64m 
+    max_size=50g 
+    inactive=30d 
+    use_temp_path=off;
+
+map $http_accept $target_format {
+    default                  jpeg;
+    "~*image/avif"           avif;
+    "~*image/webp"           webp;
+}
+
+upstream image_backend_cluster {
+    zone image_backend_cluster 512k;
+    server unix:/var/run/angie/image_processor.sock max_conns=16 max_fails=3 fail_timeout=10s;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen 443 ssl reuseport;
+    server_name media.example.internal;
+
+    status_zone image_frontend;
+
+    location ~ ^/media/(?<w>\d+)x(?<h>\d+)/(?<path>.+)$ {
+        proxy_cache img_cache;
+        proxy_cache_key "$target_format:$w:$h:$path";
+        
+        # Защита от Thundering Herd
+        proxy_cache_lock on;
+        proxy_cache_lock_timeout 5s;
+        proxy_cache_lock_age 10s;
+        
+        # Отдача устаревшего кэша при обновлении или сбое бэкенда
+        proxy_cache_use_stale updating error timeout invalid_header http_500 http_502 http_503 http_504;
+        proxy_cache_valid 200 30d;
+        proxy_cache_valid 404 415 1m;
+
+        # Заголовки для браузера и CDN
+        add_header X-Cache-Status $upstream_cache_status always;
+        add_header Vary Accept always;
+
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_pass http://image_backend_cluster/transform/$target_format/${w}x${h}/$path;
+    }
+}
+```
 
 **Валидация:**
 ```bash
-# Проверка статуса зоны
-curl -s http://127.0.0.1:8080/api/6/http/status_zones/image_filter_backend | jq .
+# Проверка прав и существования сокета
+ls -la /var/run/angie/image_processor.sock
+# → srw-rw-rw- 1 angie angie 0 Oct 14 13:20 /var/run/angie/image_processor.sock
 
-# Проверка Prometheus-метрик
-curl -s http://127.0.0.1:8080/p8s | grep -E "angie_zone|image_filter"
+# Тестовый запрос с эмуляцией поддержки AVIF
+curl -I -H "Accept: image/avif,image/webp,*/*" http://127.0.0.1/media/400x300/catalog/item1.jpg
+# → HTTP/1.1 200 OK
+# → Content-Type: image/avif
+# → X-Cache-Status: MISS
+# → Vary: Accept
+
+# Повторный запрос (проверка HIT)
+curl -I -H "Accept: image/avif,image/webp,*/*" http://127.0.0.1/media/400x300/catalog/item1.jpg
+# → HTTP/1.1 200 OK
+# → X-Cache-Status: HIT
 ```
 
-### Сценарий: Тюнинг sysctl и systemd для High Load
+---
 
-Оптимизация параметров ядра и systemd для обработки тысяч параллельных трансформаций.
+### Сценарий 2: Привязка воркеров к ядрам (CPU Affinity) и оптимизация NUMA
 
+На многопроцессорных bare-metal серверах (2 сокета NUMA) перенос процесса с одного ядра на другое или обращение к чужому банку оперативной памяти вызывает деградацию L1/L2 кэша и пропускной способности шин UPI/QPI.
+
+**Конфигурация `/etc/angie/angie.conf` (для 16-ядерной системы, 2 сокета по 8 ядер):**
+
+```nginx
+user angie;
+# Запуск 16 воркеров
+worker_processes 16;
+
+# Жесткая маска привязки воркеров к конкретным ядрам (ядра 0-15)
+worker_cpu_affinity 0000000000000001 
+                    0000000000000010 
+                    0000000000000100 
+                    0000000000001000 
+                    0000000000010000 
+                    0000000000100000 
+                    0000000001000000 
+                    0000000010000000 
+                    0000000100000000 
+                    0000001000000000 
+                    0000010000000000 
+                    0000100000000000 
+                    0001000000000000 
+                    0010000000000000 
+                    0100000000000000 
+                    1000000000000000;
+
+worker_rlimit_nofile 131072;
+```
+
+**Оптимизация NUMA на уровне ОС:**
 ```bash
-# /etc/sysctl.d/99-image-filter.conf
-fs.file-max = 200000
-net.core.somaxconn = 65535
-net.ipv4.tcp_max_syn_backlog = 65535
-net.core.netdev_max_backlog = 65535
+# Проверка распределения памяти по NUMA-узлам
+numastat -c angie
+# → Node 0   Node 1   Total
+# → 1250 MB  1240 MB  2490 MB
 
-# Применение
-sudo sysctl --system
+# Запуск Angie с политикой чередования памяти между сокетами
+# /etc/systemd/system/angie.service.d/numa.conf
+[Service]
+ExecStart=
+ExecStart=/usr/bin/numactl --interleave=all /usr/sbin/angie -c /etc/angie/angie.conf
 ```
+
+**Валидация:**
+```bash
+# Проверка привязки воркеров (PSR - процессор, на котором работает процесс)
+ps -o pid,psr,comm -p $(pgrep angie | tr '\n' ' ')
+# → PID   PSR COMMAND
+# → 4101    0 angie
+# → 4102    1 angie
+# → 4103    2 angie
+# → 4104    3 angie
+```
+
+---
+
+### Сценарий 3: Настройка параметров ядра Linux (sysctl) и лимитов systemd
+
+Для обслуживания High Load и предотвращения переполнения сетевых сокетов и исчерпания памяти на физическом сервере настраиваются подсистемы ядра и `systemd`.
+
+**Конфигурация `/etc/sysctl.d/99-angie-image-filter.conf`:**
 
 ```ini
-# /etc/systemd/system/angie.service.d/override.conf
-[Service]
-LimitNOFILE = 65536
-MemoryMax = 8G
-CPUQuota = 800%
-TasksMax = 1024
+# Максимальное число открытых файловых дескрипторов в системе
+fs.file-max = 2097152
+
+# Глубина очереди входящих соединений на слушающих сокетах (backlog)
+net.core.somaxconn = 65535
+
+# Глубина очереди сетевых пакетов на уровне интерфейса (NIC RX queue)
+net.core.netdev_max_backlog = 16384
+
+# Защита от переполнения SYN-очереди при всплесках соединений
+net.ipv4.tcp_max_syn_backlog = 32768
+
+# Быстрое переиспользование сокетов в TIME_WAIT для локальных апстримов
+net.ipv4.tcp_tw_reuse = 1
+
+# Буферы приема и передачи TCP (автотюнинг)
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+
+# Запрет паники OOM и контроль аллокации памяти для libgd
+vm.overcommit_memory = 0
+vm.swappiness = 10
 ```
 
+**Применение настроек:**
+```bash
+sudo sysctl --system
+# → * Applying /etc/sysctl.d/99-angie-image-filter.conf ...
+# → fs.file-max = 2097152
+# → net.core.somaxconn = 65535
+```
+
+**Конфигурация `/etc/systemd/system/angie.service.d/override.conf`:**
+
+```ini
+[Service]
+# Лимит на файловые дескрипторы для мастер-процесса и воркеров
+LimitNOFILE = 131072
+LimitNPROC = 65536
+
+# Изоляция ресурсов cgroups v2
+MemoryHigh = 14G
+MemoryMax = 16G
+CPUWeight = 1000
+
+# Защита от выбивания процесса OOM Killer при общем дефиците памяти
+OOMScoreAdjust = -500
+
+# Перезапуск в случае падения воркера из-за segfault в сторонних библиотеках
+Restart = on-failure
+RestartSec = 2s
+```
+
+**Применение и валидация:**
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart angie
+
+# Проверка действующих лимитов процесса Angie
+systemctl show angie --property=LimitNOFILE,MemoryMax,OOMScoreAdjust
+# → LimitNOFILE=131072
+# → MemoryMax=17179869184
+# → OOMScoreAdjust=-500
+```
+
+---
+
+### Сценарий 4: Нагрузочное тестирование с защитой от Coordinated Omission (wrk2)
+
+Стандартные утилиты (`ab`, `wrk`) задерживают отправку новых запросов, если сервер заблокирован обработкой предыдущих, что скрывает реальные катастрофические хвосты задержки (Tail Latency). Для объективного тестирования используется `wrk2` с фиксированной частотой подачи запросов (`-R`).
+
+**Команда нагрузочного теста:**
+```bash
+# Тест с фиксированной нагрузкой 200 RPS, 4 потока, 50 соединений, длительность 60 секунд
+wrk -t4 -c50 -d60s -R200 --latency -H "Accept: image/avif" http://127.0.0.1/media/800x600/catalog/photo.jpg
+```
+
+**Ожидаемый результат валидации:**
+```text
+Running 1m test @ http://127.0.0.1/media/800x600/catalog/photo.jpg
+  4 threads and 50 connections
+  Thread calibration: mean lat.: 42.12ms, rate: 50.00 rps
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    45.18ms   12.35ms 182.40ms   84.20%
+    Req/Sec    50.00      0.00    50.00    100.00%
+  Latency Distribution (HdrHistogram - Raw)
+     50.000%   42.10ms
+     75.000%   49.80ms
+     90.000%   58.40ms
+     95.000%   72.10ms
+     99.000%  112.50ms
+     99.900%  164.20ms
+  Requests/sec:    199.98
+  Transfer/sec:      4.82MB
+```
+
+---
+
+### Сценарий 5: Профилирование узких мест CPU и памяти (perf, pidstat)
+
+Анализ времени процессора на физическом сервере для выявления доли, приходящейся на кодеки, и устранения непроизводительных циклов.
+
+**1. Непрерывный мониторинг загрузки воркеров и переключений контекста:**
+```bash
+pidstat -u -w -r -p $(pgrep -d',' -f "angie: worker") 1 3
+```
+**Ожидаемый вывод:**
+```text
+Linux 6.8.0 (node01)    10/14/2026      _x86_64_        (16 CPU)
+
+13:25:01      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+13:25:02      101      4101   88.00    8.00    0.00    0.00   96.00     0  angie
+13:25:02      101      4102   89.00    7.00    0.00    0.00   96.00     1  angie
+13:25:02      101      4103   91.00    6.00    0.00    0.00   97.00     2  angie
+```
+> Анализ: `%usr` > 85% при `%system` < 10% указывает на чисто вычислительную работу кодека (норма для AVIF/WebP). Высокий `%wait` или `%system` свидетельствует о блокировках на системных вызовах или дисковом I/O.
+
+**2. Анализ профиля функций в реальном времени через `perf`:**
+```bash
+# Сбор топ-функций по использованию CPU (требуются отладочные символы библиотек)
+sudo perf top --pid=$(pgrep -o -f "angie: worker") --sort comm,dso,symbol
+```
+**Ожидаемый вывод:**
+```text
+Samples: 42K of event 'cycles', 4000 Hz, Event count (approx.): 18451200234
+Overhead  Shared Object         Symbol
+  42.15%  libavif.so.16.0.1     [.] aom_convolve8_vert_ssse3
+  21.30%  libavif.so.16.0.1     [.] av1_quantize_fp_sse2
+  14.20%  libgd.so.3.0.11       [.] gdImageCopyResampled
+   8.40%  libwebp.so.7.1.9      [.] VP8EncLoop
+   2.10%  angie                 [.] ngx_http_image_filter_body_filter
+```
+> Анализ: Топ-функции принадлежат оптимизированным SIMD-инструкциям (`ssse3`, `sse2`) энкодеров. Если в топе появляется `lock` или системные вызовы аллокатора (`malloc`/`free`), требуется настройка `jemalloc` или `tcmalloc`.
+
+---
+
+### Сценарий 6: Graceful Degradation и сброс нагрузки при перегрузке CPU
+
+Когда процессор загружен на 95–100%, прием новых запросов на кодирование AVIF приведет к параличу сервера. Настраивается отсечка с возвратом HTTP 503 или мгновенным fallback на отдачу исходного JPEG без трансформации.
+
+**Конфигурация `/etc/angie/conf.d/shedding.conf`:**
+
 ```nginx
-# В основном контексте angie.conf
-worker_processes auto;
-worker_rlimit_nofile 65536;
+# Зона лимита на параллельные тяжелые трансформации
+limit_conn_zone $server_name zone=heavy_transforms:10m;
+limit_req_zone $binary_remote_addr zone=transform_rate:20m rate=100r/s;
 
-events {
-    worker_connections 4096;
-    use epoll;
-    multi_accept on;
-}
+server {
+    listen 8081;
+    server_name localhost;
 
-http {
-    # Включаем sendfile для статики, но для image_filter используем proxy_buffering off
-    sendfile on;
-    
-    server {
-        location / {
-            proxy_buffering off;
-            proxy_pass http://image_filter_backend;
-        }
+    location /resize/ {
+        # Жесткое ограничение очереди: если в обработке уже 32 трансформации,
+        # новые запросы немедленно сбрасываются с кодом 503
+        limit_conn heavy_transforms 32;
+        limit_req zone=transform_rate burst=50 nodelay;
+
+        limit_conn_status 503;
+        limit_req_status 503;
+
+        # Обработка ошибки 503: мгновенный возврат оригинального файла
+        error_page 503 = @fallback_original;
+
+        image_filter resize 800 600;
+        image_filter convert avif;
+        alias /var/www/media/originals/;
+    }
+
+    location @fallback_original {
+        # Отдача исходника без вызова image_filter
+        root /var/www/media/originals;
+        add_header X-Transform-Status "Degraded-Original" always;
     }
 }
 ```
 
 **Валидация:**
 ```bash
-# → LimitNOFILE=65536, MemoryMax=8G, CPUQuota=800%
+# Стресс-тест генерации 50 параллельных запросов
+ab -n 100 -c 50 http://127.0.0.1:8081/resize/photo.jpg | grep "Complete requests"
+# → Complete requests: 100
+
+# Проверка наличия заголовка деградации при насыщении
+curl -I http://127.0.0.1:8081/resize/photo.jpg
+# → HTTP/1.1 200 OK
+# → X-Transform-Status: Degraded-Original
 ```
 
-### Сценарий: Профилирование CPU для image_filter
+---
 
-Диагностика bottlenecks при высокой утилизации CPU.
+### Сценарий 7: Регламентный прогрев кэша (Cache Warmup)
 
-```bash
-# 1. Топ процессов Angie по CPU
-top -b -n1 -p $(pgrep angie | tr '\n' ',' | sed 's/,$//') | head -20
+Для предотвращения дискового и процессорного шторма после перезапуска Angie или выкатки нового каталога выполняется асинхронный прогрев с ограничением параллелизма на локальном хосте.
 
-# 2. Детальная статистика по потокам
-pidstat -t -p $(pgrep angie | head -1) 1 5
-
-# 3. Perf-отчет по hottest функциям (требует debug-символы angie)
-perf top -p $(pgrep angie | head -1) --sort cpu
-
-# 4. Flame Graph (требует perf + FlameGraph)
-perf record -g -p $(pgrep angie | head -1) -- sleep 30
-perf script | ./stackcollapse-perf.pl | ./flamegraph.pl > angie-flamegraph.svg
-```
-
-- `libavif`/`libwebp` в топе — нормальная активность кодирования.
-- `libgd`/`gdImage*` — штатная работа с пиксельной матрицей.
-- Аномально высокий `wait`/`iowait` — проблема с диском или памятью.
-
-### Сценарий: Диагностика утечек памяти и давления
+**Скрипт прогрева `/usr/local/bin/angie-image-warmup.sh`:**
 
 ```bash
-# → Mem: 16384 total, 8192 used, 8192 free
-# → si/so = 0
-```
+#!/usr/bin/env bash
+set -euo pipefail
 
-- Увеличить `image_filter_buffer` только при ошибках 415.
-- Уменьшить `worker_processes` при бесконечном росте RSS (утечка в libgd).
-- Добавить `MemoryMax` в systemd override для автоматического перезапуска при превышении лимита.
+TARGET_HOST="http://127.0.0.1"
+CONCURRENCY=4
+URL_LIST="/var/run/angie/warmup_urls.txt"
 
-### Сценарий: Диагностика задержек I/O
-
-```bash
-# → %util близко к 100% означает насыщение диска
-# → await < 5ms на NVMe
-```
-
-- Переместить кэш Angie на быстрый NVMe.
-- Включить `use_temp_path=off` в `proxy_cache_path` для снижения I/O.
-- Увеличить `inactive` в `proxy_cache_path`, чтобы объекты дольше оставались в page cache.
-
-### Сценарий: Сравнение Unix-сокет vs TCP loopback
-
-Оценка производительности двух вариантов соединения фронтенда и внутреннего фильтра.
-
-```bash
-# TCP loopback:   ~320 rps, P95 ~180ms
-# Unix-сокет:     ~380 rps, P95 ~150ms
-```
-
-**Вывод:** Unix-сокет дает прирост 15–20% за счет исключения TCP/IP-стека.
-
-### Сценарий: HTTP/2 Multiplexing и Tail Latency
-
-Оценка влияния HTTP/2 на производительность image_filter.
-
-```bash
-# HTTP/2:    ~280 rps, P95 210ms (head-of-line blocking)
-# HTTP/1.1:  ~350 rps, P95 160ms (изоляция соединений)
-```
-
-**Рекомендация:** Для image_filter приоритет имеет HTTP/1.1 или отдельные TCP-соединения к внутреннему фильтру, чтобы исключить блокировку быстрых запросов медленными AVIF-операциями.
-
-### Сценарий: Прогрев кэша (Cache Warmup)
-
-Предварительное заполнение кэша популярными трансформациями для минимизации MISS при развертывании или после перезагрузки.
-
-```bash
-# Список популярных трансформаций (widths и форматы)
-cat <<EOF > /tmp/warmup.txt
-/resize/400x300/photo.jpg
-/resize/800x600/photo.jpg
-/resize/1200x900/photo.jpg
-/resize/400x400/avatar.jpg
-/resize/100x100/thumb.jpg
+# Генерация списка целевых URI
+cat << 'EOF' > "${URL_LIST}"
+/media/400x300/catalog/item1.jpg
+/media/800x600/catalog/item1.jpg
+/media/400x300/catalog/item2.jpg
+/media/800x600/catalog/item2.jpg
+/media/1200x900/promo/banner.jpg
 EOF
 
-# → 200 /resize/400x300/photo.jpg, 200 /resize/800x600/photo.jpg
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Запуск прогрева кэша с параллелизмом ${CONCURRENCY}..."
 
-# Проверка заполнения кэша
-curl -s http://127.0.0.1:8080/api/6/http/caches/img_cache | jq '.bytes | .total, .free'
+# Прогрев AVIF и WebP через xargs
+cat "${URL_LIST}" | xargs -P "${CONCURRENCY}" -I {} \
+    curl -s -o /dev/null -w "URI: {} | Format: AVIF | Status: %{http_code} | Time: %{time_total}s\n" \
+    -H "Accept: image/avif" "${TARGET_HOST}{}"
+
+cat "${URL_LIST}" | xargs -P "${CONCURRENCY}" -I {} \
+    curl -s -o /dev/null -w "URI: {} | Format: WebP | Status: %{http_code} | Time: %{time_total}s\n" \
+    -H "Accept: image/webp" "${TARGET_HOST}{}"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Прогрев успешно завершен."
 ```
 
-### Сценарий: Graceful Degradation при насыщении CPU
-
-Настройка поведения системы при превышении порога утилизации CPU.
-
-```nginx
-http {
-    # Зона для отслеживания очереди
-    limit_req_zone $binary_remote_addr zone=image_ops:10m rate=50r/s;
-    
-    server {
-        location /resize/ {
-            # При превышении 50 r/s возвращаем статический placeholder
-            limit_req zone=image_ops burst=100 nodelay;
-            limit_req_status 503;
-            error_page 503 = /static/placeholder_avif.png;
-            
-            proxy_pass http://image_filter_backend;
-        }
-        
-        # Fallback: отдача оригинала без трансформации
-        location /static/ {
-            internal;
-            root /var/www/images/originals;
-            expires 7d;
-        }
-    }
-}
-```
-
-**Валидация:**
+**Запуск и валидация:**
 ```bash
-# → Часть запросов 503, latency не растет бесконечно
-```
+chmod +x /usr/local/bin/angie-image-warmup.sh
+/usr/local/bin/angie-image-warmup.sh
+# → [2026-10-14 13:30:00] Запуск прогрева кэша с параллелизмом 4...
+# → URI: /media/400x300/catalog/item1.jpg | Format: AVIF | Status: 200 | Time: 0.112s
+# → URI: /media/800x600/catalog/item1.jpg | Format: AVIF | Status: 200 | Time: 0.145s
+# → [2026-10-14 13:30:02] Прогрев успешно завершен.
 
-### Сценарий: Планирование мощности (Capacity Planning) с учетом headroom
-
-Расчет параметров для горизонтального масштабирования с запасом на пики.
-
-**Формула:**
-```
-Рекомендуемое число воркеров = ceil(Пиковые параллельные трансформации × 1.3)
-```
-
-Где 1.3 — запас на 30% на пики и сбои.
-
-**Пример расчета:**
-- 1000 rps пик, 60% AVIF (180 мс), 30% WebP (40 мс), 10% кэш HIT
-- Параллельные AVIF: 1000 × 0.6 × 0.18 = 108
-- Параллельные WebP: 1000 × 0.3 × 0.04 = 12
-- Итого без HIT: 120 воркеров
-- С запасом 30%: ceil(120 × 1.3) = 156 воркеров
-
-При `image_filter_buffer 20M` требуется ~3.1 GB RAM только для модуля (156 × 20M).
-
-**Валидация:**
-```bash
-# → time в диапазоне, codes.415 ≈ 0
+# Проверка наполнения кэша через API Angie
+curl -s http://127.0.0.1:8080/status/http/caches/img_cache | jq '.responses'
+# → { "hit": 0, "stale": 0, "updating": 0, "revalidated": 0, "miss": 10, "expired": 0, "bypass": 0 }
 ```
 
 ---
@@ -472,126 +572,120 @@ http {
 
 | Задача | Команда | Ожидаемый результат |
 |:-------|:--------|:--------------------|
-| Проверка версии Angie | `angie -V 2>&1 | grep -E "1.1[1-9]|image_filter"` | Версия ≥ 1.11.0 и флаг модуля |
-| Проверка libgd | `ldd /usr/lib/angie/modules/ngx_http_image_filter_module.so \| grep -E "webp\|avif\|heif"` | Вывод `libwebp`, `libavif`, `libheif` |
-| Статус воркеров | `systemctl status angie && ps aux \| grep angie \| wc -l` | active (running), N процессов |
-| Утилизация CPU | `mpstat -P ALL 1 5 \| grep -E "Average\|CPU"` | Распределение по ядрам, нет single-thread瓶颈 |
-| Использование памяти | `free -m && vmstat 1 5` | Доступная RAM, нулевой swap in/out |
-| I/O wait | `iostat -xz 1 5` | %iowait < 5%, %util диска < 80% |
-| Открытые FD | `ls /proc/$(pgrep -o angie)/fd \| wc -l` | < worker_rlimit_nofile |
-| Статус кэша | `curl -s http://127.0.0.1:8080/api/6/http/caches/img_cache \| jq '.bytes \| .total, .free'` | total > 0, free адекватный |
-| Статус зоны | `curl -s http://127.0.0.1:8080/api/6/http/status_zones/image_filter_backend \| jq '.responses \| {time: .time, codes: .codes}'` | time в диапазоне, codes.415 ≈ 0 |
-| Prometheus метрики | `curl -s http://127.0.0.1:8080/p8s \| grep -E "angie_zone\|image_filter"` | Метрики по zone image_filter_backend |
-| Проверка синтаксиса | `angie -t -c /etc/angie/angie.conf` | syntax is ok |
-| Проверка сокета | `ss -xl \| grep angie_img_filter` | LISTEN /var/run/angie_img_filter.sock |
+| **Проверка сборки и модуля** | `angie -V 2>&1 \| grep -o 'http_image_filter_module'` | `http_image_filter_module` |
+| **Тестирование конфигурации** | `angie -t` | `syntax is ok / test is successful` |
+| **Проверка библиотек кодеков** | `ldd $(which angie) \| grep -E 'avif\|webp\|gd'` | Вывод динамических путей к `libavif.so`, `libwebp.so`, `libgd.so` |
+| **Проверка активности сокета** | `ss -xlp \| grep image_processor` | `u_str LISTEN 0 2048 /var/run/angie/image_processor.sock` |
+| **Загрузка ядер воркерами** | `mpstat -P ALL 1 3 \| grep -E 'Average\|CPU'` | Сбалансированное распределение `%usr` по ядрам, `%idle` > 20% |
+| **Память и swap воркеров** | `vmstat 1 3` | Столбцы `si` и `so` строго равны `0` |
+| **Мониторинг задержки зоны (API)**| `curl -s http://127.0.0.1:8080/status/http/status_zones/image_filter_backend \| jq '.responses.time'` | Время ответа в миллисекундах (P50/P95) |
+| **Проверка ошибок 415 (API)** | `curl -s http://127.0.0.1:8080/status/http/status_zones/image_filter_backend \| jq '.responses.codes."415"'` | `0` (или минимальный процент < 0.1%) |
+| **Статус дискового кэша (API)** | `curl -s http://127.0.0.1:8080/status/http/caches/img_cache \| jq '{size: .bytes, hit_ratio: (.responses.hit / (.responses.hit + .responses.miss))}'` | `hit_ratio` > 0.90 (90%+ кэш-хитов) |
+| **Метрики Prometheus** | `curl -s http://127.0.0.1:8080/metrics \| grep -E 'angie_http_status_zone'` | Текстовый вывод метрик в формате OpenMetrics |
+| **Проверка очередей бэкенда** | `curl -s http://127.0.0.1:8080/status/http/upstreams/image_backend_cluster \| jq '.peers[] \| {server, active, conns}'` | `active` не превышает установленный `max_conns` |
+| **Валидация правил Prometheus**| `promtool check rules /etc/prometheus/rules/image_filter.yml` | `SUCCESS: 2 rules found` |
 
 ---
 
 ## Troubleshooting
 
-### Высокая утилизация CPU (CPU-bound)
+### Матрица инцидентов производительности
 
-| Симптом | Диагностика | Решение |
-|:--------|:------------|:--------|
-| `mpstat` показывает 100% на одном ядре | `worker_processes` установлен в 1 или привязан к одному ядру | Увеличить `worker_processes` до числа ядер, настроить `worker_cpu_affinity` |
-| Рост latency AVIF при росте rps | `image_filter_avif_speed` слишком низкий (0–5) | Установить `image_filter_avif_speed 8–10` |
-| Высокий `%iowait` в `mpstat` | Диск не справляется с чтением оригиналов | Переместить хранилище на NVMe, включить `use_temp_path=off` |
-| Процессы Angie в `D` состоянии (uninterruptible sleep) | Проблемы с диском или NFS | Проверить `dmesg`, заменить хранилище на локальное |
-
-### Нехватка памяти (Memory-bound)
-
-| Симптом | Диагностика | Решение |
-|:--------|:------------|:--------|
-| Ошибки `415 Unsupported Media Type` при валидных изображениях | `curl ... \| jq '.responses.codes."415"'` > 0 | Увеличить `image_filter_buffer` до 20M–30M |
-| RSS Angie растет бесконечно | `ps aux \| grep angie \| awk '{print $6}'` — мониторинг | Уменьшить `worker_processes`, проверить обновление libgd |
-| Активный swap | `vmstat 1 5` — `si/so` > 0 | Увеличить RAM, уменьшить `image_filter_buffer`, добавить `MemoryMax` в systemd |
-| OOM Killer убил Angie | `dmesg \| grep -i "out of memory"` | Установить `OOMScoreAdjust=-500` в systemd, увеличить RAM |
-
-### Высокий Tail Latency (P95/P99)
-
-| Симптом | Диагностика | Решение |
-|:--------|:------------|:--------|
-| P95 > 500 мс при стабильном среднем | `curl -s http://127.0.0.1:8080/api/6/http/status_zones/image_filter_backend \| jq '.responses.time'` | Включить `proxy_cache_lock`, увеличить `image_filter_avif_speed` |
-| Резкие скачки latency (spikes) | `proxy_cache_use_stale error timeout updating` отключен | Включить `proxy_cache_use_stale` для отдачи старого кэша |
-| Latency растет только на AVIF | `responses.time` разный по форматам | Снизить `image_filter_avif_quality`, увеличить `image_filter_avif_speed`, добавить прегенерацию AVIF |
-| Head-of-line blocking в HTTP/2 | Высокий P99 при низком P50 | Использовать HTTP/1.1 для внутреннего проксирования или отдельные TCP-соединения |
-
-### I/O Bottleneck
-
-| Симптом | Диагностика | Решение |
-|:--------|:------------|:--------|
-| `%util` диска > 90% в `iostat` | `iostat -xz 1 5` | Переместить кэш и originals на отдельный быстрый диск/NVMe |
-| Высокий `await` (> 20 мс) | `iostat -xz 1 5` — столбец `await` | Заменить HDD на SSD/NVMe, проверить RAID |
-| Высокий `%iowait` в `mpstat` | `mpstat -P ALL 1 5` | Включить `use_temp_path=off`, увеличить `manager_sleep` в `proxy_cache_path` |
+| Симптом | Диагностика | Первопричина | Решение |
+|:---|:---|:---|:---|
+| **Полка CPU 100%, лавинообразный рост 504 Gateway Timeout** | `top -b -n1 \| grep angie`<br>`pidstat -u 1 5` | Всплеск запросов на кодирование AVIF с низким параметром скорости (`speed < 8`) или лавина cache miss | 1. Установить `image_filter_avif_speed 9;` или `10`.<br>2. Ограничить `max_conns` в апстриме бэкенда.<br>3. Включить `proxy_cache_lock on;` на фронтенде. |
+| **Рост ошибок HTTP 415 Unsupported Media Type** | `grep "image buffer is too small" /var/log/angie/error.log`<br>`curl .../status/http/status_zones/...` | Размер входящего оригинала превышает `image_filter_buffer` | Увеличить `image_filter_buffer` в блоке `server` бэкенда (например, с `10M` до `25M–30M`). |
+| **Аварийное завершение воркеров (SIGSEGV / OOM Killer)** | `dmesg -T \| grep -E -i "kill\|oom\|segfault"`<br>`journalctl -u angie -e` | Исчерпание лимита оперативной памяти (`MemoryMax`) из-за одновременной обработки гигантских фото (24–48 Мп) | 1. Уменьшить `worker_processes` на узле трансформации.<br>2. Ограничить максимальные размеры через директивы `map`.<br>3. Увеличить `MemoryMax` в systemd override. |
+| **Всплеск P99 Latency (>2 сек) при нормальном среднем P50** | `wrk2` гистограмма;<br>`curl .../status/http/status_zones/... \| jq .responses.time` | 1. Head-of-Line blocking в HTTP/2.<br>2. Несколько одновременных тяжелых трансформаций заблокировали воркеры | 1. Использовать HTTP/1.1 с пулом постоянных соединений `keepalive 32` между фронтендом и бэкендом.<br>2. Настроить `least_time` балансировку в upstream. |
+| **Высокий I/O Wait (%iowait > 15%), деградация отдачи** | `iostat -xz 1 5`<br>Столбец `%util` близок к 100%, `await > 10ms` | Запись кэша на медленный накопитель или включенный `use_temp_path=on`, вызывающий двойную перезапись файлов | 1. В директиве `proxy_cache_path` обязательно выставить `use_temp_path=off`.<br>2. Перенести директорию кэша на выделенный массив NVMe с опцией монтирования `noatime`. |
+| **Зависание соединений на сокете фронтенда** | `ss -xlp \| grep angie`<br>Очередь сокета (`Send-Q`) растет | Бэкенд трансформации перегружен и не успевает считывать данные из сокета | 1. Увеличить `backlog` в директиве `listen unix:... backlog=4096;`.<br>2. Настроить `limit_conn` для сброса избыточных задач. |
+| **Деградация скорости при использовании `image_filter_sharpen`** | `perf top` показывает высокую нагрузку на `gdImageCopyResampled` | Директива `sharpen` выполняет свертку O(W×H) по всей матрице пикселей | Отключить `image_filter_sharpen` для крупных изображений (>800x600), использовать значение не более `1` или `2` только для превью. |
 
 ---
 
 ## Best Practices
 
-1. **Выделяйте отдельный хост/контейнер для image_filter backend** при нагрузке >5000 rps. Это исключает конкуренцию за CPU и I/O с фронтендом.
-2. **Используйте Unix-сокет** для соединения фронтенда и внутреннего фильтра. Прирост 15–20% по сравнению с TCP loopback.
-3. **Никогда не кэшируйте ответ ДО фильтра.** Используйте двухслойную схему: фронтенд кэширует, внутренний сервер трансформирует.
-4. **Устанавливайте `image_filter_buffer` с запасом 30–50%** от размера самого большого оригинала. Для современных мобильных фото — минимум 20M.
-5. **Для High Load используйте `image_filter_avif_speed 8–10`**. Значения 0–5 допустимы только для offload-задач, не критичных по времени.
-6. **Настройте `proxy_cache_lock`** с `proxy_cache_lock_age 10s` и `proxy_cache_lock_timeout 5s` для защиты от Thundering Herd.
-7. **Всегда добавляйте `Vary: Accept`** при адаптивной доставке. Без этого CDN и промежуточные прокси «отравят» кэш.
-8. **Мониторьте P95/P99, а не только среднее.** Tail latency напрямую влияет на пользовательский опыт.
-9. **Настройте алерты до попадания в production:** `ImageFilterBufferExhaustion`, `ImageFilterLatencyHigh`, `ImageFilterThroughputDrop`.
-10. **Проверяйте `libgd` после каждого обновления ОС.** Поддержка AVIF/HEIC зависит от системных библиотек.
+1. **Строго изолируйте контуры обслуживания (Double Proxying):** Никогда не запускайте `image_filter` на публичных воркерах, обслуживающих клиентские соединения и SSL. Фронтенд должен только кэшировать и проверять `Accept`, бэкенд — трансформировать.
+2. **Используйте Unix Domain Socket для локального IPC:** Связка фронтенда и бэкенда через сокет устраняет накладные расходы сетевого стека TCP/IP, экономя 15–20% процессорного времени и устраняя риск исчерпания локальных портов (ephemeral ports exhaustion).
+3. **Фиксируйте параметры скорости AVIF в диапазоне 8–10:** Параметр `image_filter_avif_speed 9` обеспечивает 90% преимуществ сжатия формата AVIF по сравнению с WebP при четырехкратном снижении расхода процессорного времени относительно `speed 4`.
+4. **Контролируйте конкурентность через `max_conns`:** В блоке `upstream` фронтенда всегда указывайте `server unix:... max_conns=N;`, где $N$ равно количеству процессорных ядер бэкенда. Это предотвращает накопление блокирующих задач в воркерах.
+5. **Защищайте контур от Thundering Herd:** Обязательно настраивайте `proxy_cache_lock on;`, `proxy_cache_lock_timeout 5s;` и `proxy_cache_use_stale updating;`. Это гарантирует, что при промахе кэша только один запрос уйдет на кодирование оригинала, а остальные клиенты дождутся готового результата либо получат предыдущую версию.
+6. **Выставляйте `use_temp_path=off` в кэше:** Запись файлов кэша непосредственно в целевую иерархию папок исключает дополнительную операцию копирования между временным каталогом и постоянным хранилищем, кратно снижая нагрузку на диск.
+7. **Привязывайте воркеры к ядрам и учитывайте NUMA:** На многопроцессорных серверах используйте `worker_cpu_affinity` и утилиту `numactl --interleave=all`, чтобы избежать деградации памяти и вытеснения кэша CPU L1/L2.
+8. **Ограничивайте ресурсы через cgroups v2 / systemd:** Задавайте `MemoryMax` и `LimitNOFILE` в `override.conf` сервиса Angie. Это защитит хост от падения при попытке обработки вредоносных декомпрессионных бомб (Pixel Flood).
+9. **Мониторьте Tail Latency (P95/P99), а не среднее:** Среднее время ответа маскирует катастрофические задержки кодеков. Настройте Prometheus-алерты на 95-й перцентиль времени обработки зоны `image_filter_backend`.
 
 ---
 
 ## Дополнительная информация
 
-### Мониторинг и алертинг (Prometheus + Alertmanager)
+### Мониторинг Prometheus и правила Alertmanager
 
-```yaml
-groups:
-  - name: image_filter.rules
-    rules:
-      - record: angie_image_filter_latency_p95
-        expr: histogram_quantile(0.95, sum(rate(angie_zone_responses_time_bucket{zone="image_filter_backend"}[5m])) by (le))
-      - record: angie_image_filter_error_rate_415
-        expr: sum(rate(angie_zone_responses_codes{code="415", zone="image_filter_backend"}[1m])) / sum(rate(angie_zone_requests_total{zone="image_filter_backend"}[1m]))
+Конфигурация экспорта метрик через модуль `ngx_http_prometheus_module`:
+
+```nginx
+# В основном контексте http блока
+http {
+    include prometheus_all.conf;
+
+    # Сервер мониторинга
+    server {
+        listen 127.0.0.1:8080;
+        server_name localhost;
+
+        location /status/ {
+            api /status/;
+            allow 127.0.0.1;
+            deny all;
+        }
+
+        location /metrics {
+            prometheus all;
+            allow 127.0.0.1;
+            deny all;
+        }
+    }
+}
 ```
 
+**Файл правил Prometheus Alertmanager (`/etc/prometheus/rules/image_filter.yml`):**
+
 ```yaml
 groups:
-  - name: image_filter.alerts
+  - name: angie.image_filter.performance
     rules:
-      - alert: ImageFilterLatencyHigh
-        expr: angie_image_filter_latency_p95 > 0.5
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "P95 latency image_filter > 500ms"
-          description: "Текущий P95: {{ $value }}s. Проверьте image_filter_avif_speed и нагрузку."
+      - record: job:angie_image_filter_latency:p95
+        expr: histogram_quantile(0.95, sum(rate(angie_http_status_zone_responses_time_seconds_bucket{zone="image_filter_backend"}[5m])) by (le))
 
-      - alert: ImageFilterBufferExhaustion
-        expr: angie_image_filter_error_rate_415 > 0.05
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Более 5% ошибок 415"
-          description: "Увеличьте image_filter_buffer или ограничьте размеры оригиналов."
+      - record: job:angie_image_filter_error_rate_415:ratio
+        expr: sum(rate(angie_http_status_zone_responses_total{zone="image_filter_backend", code="415"}[5m])) / sum(rate(angie_http_status_zone_responses_total{zone="image_filter_backend"}[5m]))
 
-      - alert: ImageFilterThroughputDrop
-        expr: sum(rate(angie_zone_requests_total{zone="image_filter_backend"}[5m])) < 100
+      - alert: ImageFilterHighTailLatency
+        expr: job:angie_image_filter_latency:p95 > 0.40
         for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 latency трансформации изображений превышает 400 мс"
+          description: "Текущее значение: {{ $value }}s. Возможен всплеск тяжелых AVIF-запросов или нехватка CPU ядер."
+
+      - alert: ImageFilterBufferOverflowSpike
+        expr: job:angie_image_filter_error_rate_415:ratio > 0.02
+        for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "Пропускная способность image_filter упала ниже 100 rps"
-          description: "Проверьте worker_processes, cgroups и доступность хранилища."
+          summary: "Более 2% запросов завершаются ошибкой 415 (image_filter_buffer)"
+          description: "Входящие оригиналы превышают размер image_filter_buffer. Требуется пересмотр лимита буфера."
 ```
-
-# Проверка загрузки алертов
-curl -s http://localhost:9090/api/v1/alerts | jq '.data.alerts[] | select(.labels.alertname | startswith("ImageFilter"))'
 
 ### См. также
 
 - [Обзор модуля image_filter](./overview.md)
-- [Безопасность и защита от DoS](./security.md)
 - [Стратегии кэширования изображений](./caching.md)
+- [Безопасность и защита от DoS](./security.md)
+- [Конфигурация директив фильтрации](./filter_configuration.md)
+- [Геометрические трансформации и масштабирование](./resize.md)
+- [Комплексная настройка сайта](./site_configuration.md)
+- [Установка и сборка модуля](./installation.md)
+- [Оптимизация производительности Angie](../performance_optimization.md)

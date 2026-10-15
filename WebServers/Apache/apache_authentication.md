@@ -1,268 +1,565 @@
 # Apache: Аутентификация и авторизация (LDAP/AD, Digest, клиентские сертификаты)
 
+**Актуально для:** Apache HTTP Server 2.4.x
+
 ---
 
 ## Определения
 
-**mod_authnz_ldap** — модуль Apache, реализующий аутентификацию (проверку учётных данных — `AuthBasicProvider ldap`) и авторизацию (проверку членства — `Require ldap-*`) через LDAP-каталог: OpenLDAP, Active Directory, FreeIPA.
+**mod_authn_core / mod_authz_core** — базовые модули ядра Apache 2.4, реализующие разделение проверки подлинности (AuthN) и контроля доступа (AuthZ). Предоставляют директивы `AuthType`, `AuthName`, логические контейнеры `<RequireAll>`, `<RequireAny>`, `<RequireNone>` и механизм наследования прав `AuthMerging`.
 
-**mod_ldap** — бэкенд-модуль пула LDAP-соединений и кэширования, используется совместно с `mod_authnz_ldap` (`LDAP*` директивы).
+**mod_auth_basic** — модуль базовой аутентификации HTTP (RFC 7617): учётные данные передаются клиентом в заголовке `Authorization: Basic <base64(login:password)>`. Без шифрования TLS данные уязвимы для перехвата.
 
-**mod_auth_digest** — аутентификация по протоколу HTTP Digest (RFC 7616): пароль не передаётся открыто, используется хэш `HA1`, nonce и счетчик.
+**mod_auth_digest** — модуль аутентификации HTTP Digest (RFC 7616 / RFC 2617): учётные данные передаются в виде криптографического хэша (MD5 или SHA-256) с использованием realm, серверного nonce и счётчика запросов nc. Не требует передачи открытого пароля, но уступает связке HTTPS + Basic / mTLS / OIDC по гибкости и поддержке современными клиентами.
 
-**Аутентификация по клиентскому сертификату (mTLS)** — проверка TLS-сертификата клиента (`SSLVerifyClient require`) с сопоставлением субъекта с учётной записью.
+**mod_authnz_ldap** — модуль Apache, реализующий интерфейс аутентификации (`AuthBasicProvider ldap`) и авторизации (`Require ldap-*`) через каталоги LDAP (OpenLDAP, Active Directory, FreeIPA).
 
-**mod_authn_dbd** — аутентификационный провайдер на базе SQL-базы (через `mod_dbd` и APR DBD): пароли проверяются SQL-запросом `AuthDBDUserPWQuery`. Хранит до двух видов паролей: plaintext и хэши `{SHA}`.
+**mod_ldap** — низкоуровневый модуль управления пулом постоянных LDAP-соединений, разделяемой памятью и кэшированием результатов поиска/сравнения для `mod_authnz_ldap`.
 
-**mod_authz_dbm** — авторизация по группам пользователей из DBM-файла (`Require group`, `Require dbm-group`) — аналог `mod_authz_groupfile`, но с бинарным DBM-файлом `/etc/httpd/.htgroup_prefix` (хорошо для больших списков).
+**mTLS (Mutual TLS, клиентские сертификаты)** — механизм взаимной аутентификации на транспортном уровне (`mod_ssl`, директива `SSLVerifyClient require`): клиент подтверждает подлинность закрытым ключом и сертификатом X.509, проверенным доверенным CA сервера.
 
-**mod_session** — сессионный модуль: хранит состояние пользователя между запросами (cookie `Session` или `mod_session_dbd`/-`crypto`). Часто связывается с приложением для передачи identity.
+**mod_authn_file** — провайдер аутентификации по плоскому файлу учетных записей `htpasswd` с хэшированными паролями (bcrypt, APR1-MD5, SHA-512).
 
-**AuthN vs AuthZ** — аутентификация является «кем ты», авторизация — «что тебе можно». В Apache разделяются на модули подсистемы `mod_authn_*` (источники учетных записей) и `mod_authz_*` (правила доступа).
+**mod_authn_dbd** — аутентификационный провайдер через SQL-базу данных (PostgreSQL, MySQL, SQLite, Oracle) с использованием пула соединений APR DBD (`mod_dbd`). Пароли проверяются через SQL-запрос `AuthDBDUserPWQuery`.
+
+**mod_authz_dbm / mod_authz_groupfile** — модули авторизации по группам пользователей: плоский текстовый файл (`mod_authz_groupfile`) или высокопроизводительная бинарная DBM-база (`mod_authz_dbm`, утилита `htdbm`).
+
+**mod_session / mod_session_crypto** — модули ведения сессий на стороне сервера или в криптографически подписанных/зашифрованных cookie `Session`, устраняющие необходимость повторного вызова внешних бэкендов аутентификации на каждый HTTP-запрос.
+
+**AuthN vs AuthZ** — разделение ответственности:
+- **Authentication (AuthN)**: «Кто ты?» — проверка подлинности переданных учётных данных (модули `mod_authn_*`).
+- **Authorization (AuthZ)**: «Что тебе разрешено?» — проверка прав подтверждённого пользователя на доступ к ресурсу (модули `mod_authz_*`).
 
 ---
 
-## Основные концепции
+## Архитектура и основные концепции
 
-### Слои аутентификации Apache 2.4
+### Модульная матрица Apache 2.4
 
-| Подсистема | Модуль | Задача |
+В Apache 2.4 процесс аутентификации и авторизации декомпозирован на независимые слои:
+
+```
+[ HTTP-запрос ]
+       │
+       ▼
+ ┌───────────────┐
+ │   AuthType    │  (Basic, Digest)
+ └───────┬───────┘
+         │
+         ▼
+ ┌──────────────────────┐
+ │  Auth*Provider       │  (ldap, file, dbd) — проверка логина/пароля
+ └───────┬──────────────┘
+         │  (AuthN: OK -> REMOTE_USER)
+         ▼
+ ┌──────────────────────┐
+ │  mod_authz_core      │  (<RequireAll>, <RequireAny>, <RequireNone>)
+ │  Провайдеры Require  │  (ldap-group, user, ip, ssl-verify-client, expr)
+ └───────┬──────────────┘
+         │
+         ▼
+[ Доступ разрешён (200) / отклонён (401 / 403) ]
+```
+
+| Уровень | Модули | Назначение |
 |---|---|---|
-| Провайдер учётных данных | `mod_authn_file` (htpasswd), `mod_authn_dbd`, `mod_authnz_ldap` | Решить, верные ли логин/пароль |
-| Авторизация | `mod_authz_core` (`Require`), `mod_authz_user`, `mod_authz_groupfile`, `mod_authz_dbm`, `mod_authz_ldap` | Решить, разрешён ли доступ |
-| Форматы | `mod_auth_basic`, `mod_auth_digest` | Как передаются учётные данные |
+| Схема протокола | `mod_auth_basic`, `mod_auth_digest` | Разбор заголовков `Authorization`, генерация вызова `WWW-Authenticate` |
+| Источник AuthN | `mod_authn_file`, `mod_authnz_ldap`, `mod_authn_dbd`, `mod_authn_anon` | Валидация пары логин/пароль по базе данных или каталогу |
+| Ядро AuthZ | `mod_authz_core` | Логика объединения проверок (`Require`), контекстные контейнеры |
+| Правила AuthZ | `mod_authz_user`, `mod_authz_groupfile`, `mod_authz_ldap`, `mod_authz_host`, `mod_authz_dbm` | Конкретные проверки: членство в группе, совпадение логина, IP-адрес |
+| Транспортная безопасность | `mod_ssl` | Аутентификация по клиентским сертификатам (mTLS), экспорт TLS-переменных |
 
-**Порядок аутентификации:** пароль согласуется провайдером (например LDAP), затем применяется `Require`-правило из `mod_authz_core`. При первом совпадении `Require` принятие (all granted) — доступ открывается.
+### Цепочка провайдеров и поведение Fallback
 
-**Ключевые совместимости:**
-- `AuthBasicProvider ldap` — использовать LDAP как источник учётных записей.
-- Фоллбэк на локальный файл: `AuthBasicProvider ldap file` — обе источники по порядку (`AuthLDAPAuthoritative off` для перехода к следующему при failure).
-
-### LDAP URL (AuthLDAPURL)
-
+Директива `AuthBasicProvider` принимает упорядоченный список провайдеров:
+```apacheconf
+AuthBasicProvider ldap file
 ```
-ldap[s]://host[:port]/base_dn?attribute?scope?filter
+1. Apache вызывает первый провайдер (`ldap`). Если пользователь найден и пароль верен — доступ переходит к проверке `Require`.
+2. Если пользователь в LDAP **не найден** (`AUTH_USER_NOT_FOUND`), управление автоматически передаётся следующему провайдеру (`file`).
+3. Если пользователь найден в LDAP, но **введён неверный пароль**:
+   - По умолчанию (`AuthLDAPBindAuthoritative on`) процесс аутентификации немедленно прерывается с ошибкой `401 Unauthorized`.
+   - Если задано `AuthLDAPBindAuthoritative off`, ошибка пароля в LDAP не является терминальной: Apache переходит к проверке пользователя во вторичном провайдере (`file`). Это позволяет создавать резервные локальные учётные записи на случай рассинхронизации или аварийных работ.
+
+> [!IMPORTANT]
+> В Apache 2.4 директивы `AuthLDAPAuthoritative` и `AuthzLDAPAuthoritative` (из Apache 2.2) полностью **удалены**. За переход между источниками аутентификации отвечает список в `AuthBasicProvider` и директива `AuthLDAPBindAuthoritative`. Контроль авторизации полностью передан директивам `Require`.
+
+### Логические контейнеры авторизации
+
+В Apache 2.4 директивы `Require` группируются с помощью логических блоков `mod_authz_core`:
+
+- `<RequireAll>` — логическое **И**: доступ разрешается, если все вложенные директивы завершились успехом и ни одна не вернула отказ.
+- `<RequireAny>` — логическое **ИЛИ**: доступ разрешается при первом успешном правиле (по умолчанию несколько директив `Require` на одном уровне неявно работают как `<RequireAny>`).
+- `<RequireNone>` — логическое **НЕ**: инвертирует результат. Если хотя бы одно вложенное правило совпало, доступ безусловно запрещается.
+
+### Наследование прав: директива AuthMerging
+
+При наложении конфигураций (`<Directory>`, `<Location>`, `.htaccess`) директива `AuthMerging` определяет, как объединяются секции авторизации:
+- `AuthMerging Off` (по умолчанию) — директивы `Require` дочернего контекста полностью заменяют родительские правила.
+- `AuthMerging And` — дочерние директивы объединяются с родительскими через виртуальный `<RequireAll>` (требуется соблюдение и старых, и новых условий).
+- `AuthMerging Or` — дочерние директивы объединяются с родительскими через виртуальный `<RequireAny>` (достаточно выполнения родительских или дочерних правил).
+
+### Архитектура пула и кэша mod_ldap
+
+Для предотвращения деградации производительности LDAP-каталога при тысячах запросов `mod_ldap` реализует разделяемый кэш в общей памяти (SHM):
+- **Search Cache**: сохраняет соответствие поискового запроса (`AuthLDAPURL` + username) полученному DN пользователя.
+- **Compare/Operation Cache**: сохраняет результаты проверки членства в группах (`Require ldap-group`).
+- **Пул постоянных соединений**: дескрипторы соединений к LDAP-серверу повторно используются между рабочими потоками MPM (worker/event), минимизируя задержки на установление TCP/TLS-сессий.
+
+Параметры кэширования:
+```apacheconf
+LDAPSharedCacheSize 500000        # размер разделяемой памяти кэша в байтах
+LDAPCacheEntries 1024             # максимум записей поиска
+LDAPCacheTTL 600                  # время жизни кэша поиска в секундах (10 мин)
+LDAPOpCacheEntries 1024           # максимум записей проверки групп/атрибутов
+LDAPOpCacheTTL 600                # время жизни кэша операций в секундах
+LDAPConnectionTimeout 5           # таймаут TCP-соединения к LDAP (сек)
+LDAPTimeout 10                    # таймаут выполнения поискового запроса (сек)
 ```
-
-| Часть | Значение |
-|---|---|
-| `attribute` | Атрибут поиска логина. Для AD — `sAMAccountName`, для OpenLDAP — `uid` |
-| `scope` | `sub`/`base`/`one` — глубина поиска в поддереве |
-| `filter` | Доп. фильтр, например `(&(objectClass=person))` |
-
-### Способы проверки в LDAP
-
-1.  **Search+bind (рекомендуется):** сервер ищет запись по атрибуту, затем выполняет ldap-bind с указанным DN. Нужен `AuthLDAPBindDN`/`AuthLDAPBindPassword`, если каталог запрещает анонимный поиск.
-2.  **Direct bind:** DN пользователя формируется шаблоном — редко для Apache (нет `AuthLDAPURL`-шаблонов с привязкой), чаще Search.
-
-### Digest: особенности
-
-*   Пароль хранится в файле в виде хэша (не plaintext) — создаётся утилитой `htdigest`.
-*   **Realm обязателен**: значение `AuthName` должно совпадать с realm при генерации пользователя (`htdigest -c file "realm" user`).
-*   Не защищает содержимое (защита — TLS), но не раскрывает пароль в чистом виде.
-*   Ограничение: не работает через прокси без корректной маршрутизации; сложнее дебажить, чем Basic.
 
 ---
 
-## Практические сценарии
+## Практические сценарии и конфигурация
 
-### 1. Базовая аутентификация против LDAP (OpenLDAP)
+### 1. Интеграция с каталогом OpenLDAP / FreeIPA
+
+Типовой сценарий проверки логина и пароля по атрибуту `uid` с использованием защищенного канала StartTLS/LDAPS.
 
 ```apacheconf
+# Глобальные параметры LDAP (httpd.conf)
 LoadModule ldap_module modules/mod_ldap.so
 LoadModule authnz_ldap_module modules/mod_authnz_ldap.so
 
+LDAPSharedCacheSize 500000
+LDAPCacheEntries 2048
+LDAPCacheTTL 300
+LDAPOpCacheEntries 2048
+LDAPOpCacheTTL 300
 LDAPTrustedGlobalCert CA_BASE64 /etc/ssl/certs/ldap-ca.pem
-LDAPReferral off
 
 <Directory "/var/www/internal">
     AuthType Basic
-    AuthName "Corporate access"
+    AuthName "Корпоративный доступ (LDAP)"
     AuthBasicProvider ldap
-    AuthLDAPURL "ldap://ldap.example.com:389/ou=People,dc=example,dc=com?uid?sub"
+    
+    # URL: ldap[s]://host[:port]/base_dn?attribute?scope?filter
+    AuthLDAPURL "ldaps://ldap.example.com:636/ou=People,dc=example,dc=com?uid?sub?(objectClass=inetOrgPerson)"
+    
+    # Сервисная учетная запись для первичного поиска DN
+    AuthLDAPBindDN "cn=svc-apache,ou=Services,dc=example,dc=com"
+    AuthLDAPBindPassword "exec:/bin/cat /etc/httpd/secrets/ldap-bind.secret"
+    
+    # Требовать успешной аутентификации любого валидного пользователя
     Require valid-user
 </Directory>
 ```
 
-### 2. Подключение к Active Directory
+### 2. Интеграция с Microsoft Active Directory
 
-Для AD характерно: base DN корня домена, поиск по `sAMAccountName` (без `@domain`), часто требуется bind-аккаунт.
-
-```apacheconf
-AuthType Basic
-AuthBasicProvider ldap
-AuthLDAPURL "ldap://ad.corp.example.com:389/DC=corp,DC=example,DC=com?sAMAccountName?sub"
-AuthLDAPBindDN "CN=svc-web,CN=Users,DC=corp,DC=example,DC=com"
-AuthLDAPBindPassword "svc-pass-phrase"     # или "file:/etc/httpd/ldap-bind.secret"
-AuthLDAPBindAuthoritative on                # не использовать другие провайдеры
-Require valid-user
-```
-
-**LDAPS/TLS к AD:**
-```apacheconf
-LDAPTrustedGlobalCert CA_BASE64 /etc/ssl/certs/ad-ca.pem
-AuthLDAPURL "ldaps://ad.corp.example.com:636/DC=corp,DC=example,DC=com?sAMAccountName?sub"
-```
-
-### 3. Авторизация по группам LDAP/AD
+Особенности AD:
+- Базовый атрибут пользователя: `sAMAccountName` (логин без доменного суффикса) или `userPrincipalName` (UPN вида `user@corp.example.com`).
+- Отключение переходов по рефералам (`LDAPReferrals Off`): предотвращает зависание Apache при попытке связаться с контроллерами других доменов леса через порт 389/636. При необходимости работы со всем лесом подключайтесь к Global Catalog (порты 3268 LDAP / 3269 LDAPS).
+- Проверка членства во вложенных группах через `AuthLDAPMaxSubGroupDepth`.
 
 ```apacheconf
-Require ldap-group cn=devops,ou=Groups,dc=example,dc=com
-Require ldap-user john jane          # отдельные пользователи
-Require ldap-dn cn=CI-Host,ou=ServiceAccounts,dc=example,dc=com
+<Location "/ad-secure">
+    AuthType Basic
+    AuthName "Active Directory Domain Access"
+    AuthBasicProvider ldap
+    
+    # Поиск по sAMAccountName в корне домена
+    AuthLDAPURL "ldaps://dc1.corp.example.com:636/DC=corp,DC=example,DC=com?sAMAccountName?sub?(&(objectCategory=person)(objectClass=user))"
+    
+    # Учетная запись службы (Managed Service Account или стандартный service user)
+    AuthLDAPBindDN "CN=svc-httpd,OU=ServiceAccounts,DC=corp,DC=example,DC=com"
+    AuthLDAPBindPassword "file:/etc/httpd/secrets/ad-bind.secret"
+    
+    # Отключение рефералов для предотвращения таймаутов
+    LDAPReferrals Off
+    
+    # Настройки проверки групп
+    AuthLDAPGroupAttribute member
+    AuthLDAPGroupAttributeIsDN On
+    AuthLDAPMaxSubGroupDepth 2
+    
+    # Авторизация членов доменной группы
+    Require ldap-group CN=SRE-Team,OU=SecurityGroups,DC=corp,DC=example,DC=com
+</Location>
 ```
 
-Для групп по атрибуту членства в AD (группы вложенные) поиск может требовать `subtree` с `memberOf`-фильтром — проверять через `ldapsearch`.
+### 3. Отказоустойчивый Fallback: LDAP + аварийный локальный файл
 
-### 4. Digest аутентификация
-
-```bash
-# Создать файл с хэшами (realm должен совпадать с AuthName)
-sudo htdigest -c /etc/httpd/.digest "Restricted Area" admin
-sudo htdigest /etc/httpd/.digest "Restricted Area" operator
-```
+Сценарий обеспечивает доступ дежурному инженеру или CI/CD по локальному файлу `htpasswd`, если LDAP-сервер недоступен или учетная запись является локальной сервисной.
 
 ```apacheconf
-AuthType Digest
-AuthName "Restricted Area"                 # realm — совпадает с htdigest
-AuthDigestDomain /secure/ https://example.com/secure/
-AuthDigestProvider file
-AuthUserFile /etc/httpd/.digest
-Require valid-user
+<Directory "/var/www/critical-app">
+    AuthType Basic
+    AuthName "Operations Control Panel"
+    
+    # Список провайдеров в порядке приоритета
+    AuthBasicProvider ldap file
+    
+    # Первичный источник: корпоративный LDAP
+    AuthLDAPURL "ldaps://ldap.example.com/ou=Users,dc=example,dc=com?uid?sub"
+    AuthLDAPBindDN "cn=httpd-reader,ou=Services,dc=example,dc=com"
+    AuthLDAPBindPassword "file:/etc/httpd/secrets/ldap.secret"
+    
+    # Если пароль не подошел в LDAP — передать проверку следующему провайдеру (file)
+    AuthLDAPBindAuthoritative Off
+    
+    # Вторичный источник: локальный аварийный файл паролей
+    AuthUserFile /etc/httpd/conf/breakglass.htpasswd
+    
+    Require valid-user
+</Directory>
 ```
 
-### 5. Аутентификация клиентскими TLS-сертификатами (mTLS)
+### 4. Комплексная авторизация: IP-фильтрация + учетные данные
+
+Реализация двух типовых политик безопасности через логические контейнеры:
+
+#### Вариант А: Доступ из офиса без пароля, извне — обязательный LDAP-пароль (Логическое ИЛИ)
+```apacheconf
+<Location "/monitoring">
+    AuthType Basic
+    AuthName "Internal Monitoring"
+    AuthBasicProvider ldap
+    AuthLDAPURL "ldaps://ldap.example.com/ou=People,dc=example,dc=com?uid?sub"
+    AuthLDAPBindDN "cn=svc,dc=example,dc=com"
+    AuthLDAPBindPassword "file:/etc/httpd/secrets/ldap.secret"
+
+    <RequireAny>
+        # Доверенная офисная подсеть или локалхост
+        Require ip 10.100.0.0/16
+        Require ip 127.0.0.1 ::1
+        
+        # Для всех остальных — валидный сотрудник
+        Require valid-user
+    </RequireAny>
+</Location>
+```
+
+#### Вариант Б: Строгий барьер 2-FA (Доверенный VPN-IP И членство в группе SRE)
+```apacheconf
+<Location "/admin/production">
+    AuthType Basic
+    AuthName "Production Cluster Admin"
+    AuthBasicProvider ldap
+    AuthLDAPURL "ldaps://ldap.example.com/ou=People,dc=example,dc=com?uid?sub"
+    AuthLDAPBindDN "cn=svc,dc=example,dc=com"
+    AuthLDAPBindPassword "file:/etc/httpd/secrets/ldap.secret"
+
+    <RequireAll>
+        # Требование 1: Запрос строго через VPN-шлюз
+        Require ip 192.168.50.0/24
+        
+        # Требование 2: Пользователь обязан быть в группе devops-admins
+        Require ldap-group cn=devops-admins,ou=Groups,dc=example,dc=com
+        
+        # Требование 3: Запрет доступа заблокированным подсетям
+        <RequireNone>
+            Require ip 192.168.50.250
+        </RequireNone>
+    </RequireAll>
+</Location>
+```
+
+### 5. Аутентификация по клиентским TLS-сертификатам (mTLS)
+
+mTLS гарантирует аутентификацию клиента на уровне криптографии TLS. Подходит для межсервисного взаимодействия (M2M) и доступа к защищенным API.
 
 ```apacheconf
 <VirtualHost *:443>
+    ServerName api.example.com
+    
     SSLEngine on
-    SSLCertificateFile /etc/pki/tls/certs/server.crt
-    SSLCertificateKeyFile /etc/pki/tls/private/server.key
-
-    SSLCACertificateFile /etc/pki/tls/certs/client-ca.crt
-    SSLVerifyClient require                   # обязательный сертификат клиента
-    SSLVerifyDepth 3
-
-    <Location "/api/clients">
-        Require ssl-verify-client            # сертификат подписан доверенным CA и проверен
-        # или авторизация по субъекту:
-        # Require expr "%{SSL_CLIENT_S_DN_CN} == 'service-account'"
+    SSLCertificateFile /etc/pki/tls/certs/api-server.crt
+    SSLCertificateKeyFile /etc/pki/tls/private/api-server.key
+    
+    # Доверенный удостоверяющий центр для клиентских сертификатов
+    SSLCACertificateFile /etc/pki/tls/certs/internal-ca-chain.crt
+    
+    # Проверка списка отзыва сертификатов (CRL)
+    SSLCARevocationFile /etc/pki/tls/crl/internal-ca.crl
+    SSLCARevocationCheck chain
+    
+    # Обязательная проверка клиентского сертификата
+    SSLVerifyClient require
+    SSLVerifyDepth 2
+    
+    <Location "/v1/control">
+        # Проверка факта валидности сертификата
+        Require ssl-verify-client
+        
+        # Дополнительная авторизация по атрибутам субъекта через выражения
+        Require expr "%{SSL_CLIENT_S_DN_CN} in {'deploy-daemon', 'ci-runner-01'} && %{SSL_CLIENT_I_DN_O} == 'DevOps Core CA'"
     </Location>
-
-    # Передача субъекта приложению-бэкенду
-    RequestHeader set X-Client-DN "%{SSL_CLIENT_S_DN}s"
-    RequestHeader set X-Client-Cert-Serial "%{SSL_CLIENT_M_SERIAL}s"
+    
+    # Безопасная передача идентификатора клиента бэкенду (Gunicorn, Node, Tomcat)
+    RequestHeader set X-SSL-Client-Verify "%{SSL_CLIENT_VERIFY}s"
+    RequestHeader set X-SSL-Client-DN "%{SSL_CLIENT_S_DN}s"
+    RequestHeader set X-SSL-Client-CN "%{SSL_CLIENT_S_DN_CN}s"
+    RequestHeader set X-SSL-Client-Serial "%{SSL_CLIENT_M_SERIAL}s"
 </VirtualHost>
 ```
 
-**Сопоставление сертификата с учётной записью:** не путать сертификат с логином — для маппинга на приложение использовать `%{SSL_CLIENT_S_DN}` (субъект) и `%{SSL_CLIENT_S_CN}` (CN) в переменных окружения или заголовках. Angie/Nginx mTLS-примеры см. в «См. также».
+### 6. Аутентификация через SQL-базу данных (`mod_authn_dbd`) и сессии
 
-### 6. Комбинирование методов (LDAP + локальная запись)
-
-```apacheconf
-AuthBasicProvider ldap file
-AuthLDAPURL "ldap://ldap.example.com/ou=People,dc=example,dc=com?uid?sub"
-AuthLDAPAuthoritative off          # если LDAP не нашёл — перейти к file
-AuthUserFile /etc/httpd/.local     # аварийный доступ (automation)
-Require valid-user
-```
-
-### 7. Аутентификация через SQL (mod_authn_dbd) + сессии (mod_session)
-
-Пароли и группы в БД (PostgreSQL/MySQL) — удобно для «портал с тысячью пользователей», когда источник — корпоративная БД.
+Используется для централизованной аутентификации пользователей через существующие СУБД (PostgreSQL / MySQL) с кэшированием сессий в криптографически защищенных cookie.
 
 ```apacheconf
+# 1. Загрузка модулей
 LoadModule dbd_module modules/mod_dbd.so
 LoadModule authn_dbd_module modules/mod_authn_dbd.so
 LoadModule session_module modules/mod_session.so
+LoadModule session_cookie_module modules/mod_session_cookie.so
 LoadModule session_crypto_module modules/mod_session_crypto.so
 
-# DBD-пул
+# 2. Пул соединений к СУБД (PostgreSQL)
 DBDriver pgsql
-DBDParams "host=db.example.com user=apache pass=secret dbname=users connect_timeout=5"
-DBDMin 1
-DBDMax 20
+DBDParams "host=pg-auth.internal port=5432 dbname=auth_db user=httpd_app password=db_secret_pass connect_timeout=4"
+DBDMin 2
+DBDKeep 4
+DBDMax 15
+DBDExptime 300
 
 <VirtualHost *:443>
+    ServerName portal.example.com
     SSLEngine on
-    ...
+    SSLCertificateFile /etc/ssl/certs/portal.crt
+    SSLCertificateKeyFile /etc/ssl/private/portal.key
 
-    # Запрос поиска пользователя (вернёт колонку с паролем)
-    AuthDBDUserPWQuery "SELECT password FROM users WHERE login = %s"
-    AuthBasicProvider dbd
-    Require valid-user
-
-    # Сессии на базе крипто-подписанной cookie
-    Session On
-    SessionCryptoPassphrase top-secret
-    SessionCookieName session path=/; HttpOnly; Secure
-    Header always set X-User "%{REMOTE_USER}s"
+    <Location "/portal">
+        AuthType Basic
+        AuthName "Portal DB Login"
+        AuthBasicProvider dbd
+        
+        # SQL-запрос для проверки пароля (%s заменяется на имя пользователя)
+        # Пароль в БД должен храниться в формате хэшей crypt/apr1/sha256/bcrypt
+        AuthDBDUserPWQuery "SELECT password FROM accounts WHERE username = %s AND is_active = true"
+        
+        Require valid-user
+        
+        # Включение управления сессиями
+        Session On
+        SessionCookieName apache_auth_session path=/portal; HttpOnly; Secure; SameSite=Strict
+        SessionCryptoPassphrase "file:/etc/httpd/secrets/session-crypto.key"
+        SessionMaxAge 3600
+        
+        # Проброс имени пользователя в заголовок для приложения
+        Header always set X-Authenticated-User "%{REMOTE_USER}s"
+    </Location>
 </VirtualHost>
 ```
 
-**Аварийный мониторинг запросов к DBD:**
+### 7. Аутентификация HTTP Digest (`mod_auth_digest`)
+
+Применяется в изолированных сетях или для устаревших систем, где невозможно использовать TLS, но требуется защита от перехвата пароля в открытом виде.
+
 ```bash
-sudo pg_stat_statements=on  # на сервере PostgreSQL — план запроса
-# или посмотреть connection pool:
-sudo httpd -M | grep dbd
+# Генерация файла digest-паролей (realm обязан совпадать с AuthName)
+sudo htdigest -c /etc/httpd/.htdigest "Engineering Portal" lead_sre
+# → Adding password for lead_sre in realm Engineering Portal.
+# → New password: ****
+# → Re-type new password: ****
 ```
 
-### 8. Группы из DBM (mod_authz_dbm)
-
 ```apacheconf
-# Создать DBM-файл групп (формат: группа: пользователь)
-htdbm -c /etc/httpd/.htgroups members
-htdbm -c /etc/httpd/.htgroups admins
-
-LoadModule authz_dbm_module modules/mod_authz_dbm.so
-# Путь: префикс + имя группы
-Require dbm-group admins
+<Location "/legacy-api">
+    AuthType Digest
+    AuthName "Engineering Portal"
+    AuthDigestDomain /legacy-api/
+    AuthDigestProvider file
+    AuthUserFile /etc/httpd/.htdigest
+    
+    # Время жизни одноразового серверного nonce (секунды)
+    AuthDigestNonceLifetime 120
+    
+    Require valid-user
+</Location>
 ```
 
 ---
 
 ## Операции и команды
 
-| Команда | Назначение | Пример вывода |
-|---|---|---|
-| `apache2ctl -M \| grep -E "ldap\|authn\|authz"` | Проверка модулей | `authnz_ldap_module (shared)` |
-| `ldapsearch -x -H ldap://ldap.example.com -b "ou=People,dc=example,dc=com" "(uid=admin)"` | Проверка поиска и атрибутов | `dn: uid=admin,...` |
-| `ldapsearch -x -H ldap://ad/ -b "DC=corp,DC=..." "(sAMAccountName=login)" sAMAccountName` | Проверка членства AD | `memberOf: CN=devops,...` |
-| `htdigest /etc/httpd/.digest "Restricted" user` | Добавить/обновить digest-пользователя при unchanged realm | `Updating user ...` |
-| `openssl verify -CAfile client-ca.crt client.crt` | Проверка цепочки клиентских сертификатов | `OK` |
-| `curl -u admin -I https://example.com/secure/` | Проверка Basic/Digest из CLI | `HTTP/1.1 401`/`200` |
+Все диагностические и эксплуатационные команды с ожидаемыми результатами вывода:
 
-**Проверка LDAP из командной строки до правки конфига:**
+### 1. Проверка загруженных модулей и синтаксиса конфигурации
+
 ```bash
-ldapsearch -x -H ldap://ad.corp.example.com \
-  -D "CN=svc-web,CN=Users,DC=corp,DC=example,DC=com" -w 'secret' \
-  -b "DC=corp,DC=example,DC=com" "(sAMAccountName=testuser)" memberOf
+# Проверка наличия модулей аутентификации и авторизации в runtime
+apachectl -M | grep -E "auth[nz]?_|ldap|ssl|session|dbd"
+# → authn_core_module (static)
+# → authz_core_module (static)
+# → authn_file_module (shared)
+# → authnz_ldap_module (shared)
+# → authz_user_module (shared)
+# → authz_groupfile_module (shared)
+# → ldap_module (shared)
+# → ssl_module (shared)
+
+# Валидация синтаксиса конфигурационных файлов
+apachectl configtest
+# → Syntax OK
+```
+
+### 2. Тестирование подключения к LDAP/AD до настройки Apache
+
+Диагностика доступности атрибутов, корректности base DN и прав сервисного аккаунта через `ldapsearch`:
+
+```bash
+# Проверка учетной записи в Active Directory (LDAPS порт 636)
+ldapsearch -x -H ldaps://ad.corp.example.com:636 \
+  -D "CN=svc-httpd,OU=ServiceAccounts,DC=corp,DC=example,DC=com" \
+  -w "SecretPass123" \
+  -b "DC=corp,DC=example,DC=com" \
+  -s sub "(&(objectClass=user)(sAMAccountName=alex))" dn memberOf
+# → # extended LDIF
+# → dn: CN=Alex SRE,OU=Engineers,DC=corp,DC=example,DC=com
+# → memberOf: CN=SRE-Team,OU=SecurityGroups,DC=corp,DC=example,DC=com
+```
+
+### 3. Проверка цепочки mTLS и TLS-рукопожатия через OpenSSL
+
+```bash
+# Тест mTLS-соединения с передачей клиентского сертификата и ключа
+openssl s_client -connect api.example.com:443 \
+  -cert /etc/pki/tls/certs/client.crt \
+  -key /etc/pki/tls/private/client.key \
+  -CAfile /etc/pki/tls/certs/internal-ca-chain.crt \
+  -quiet
+# → depth=2 C = US, O = Root CA
+# → depth=1 C = US, O = Internal Issuing CA
+# → depth=0 CN = api.example.com
+# → verify return:1
+```
+
+### 4. Тестирование HTTP-аутентификации через curl
+
+```bash
+# 1. Запрос без авторизации (проверка получения 401 и заголовка realm)
+curl -s -i https://internal.example.com/monitoring | head -n 8
+# → HTTP/1.1 401 Unauthorized
+# → Date: Mon, 14 Oct 2026 11:20:00 GMT
+# → Server: Apache/2.4.62 (Unix)
+# → WWW-Authenticate: Basic realm="Internal Monitoring"
+# → Content-Type: text/html; charset=iso-8859-1
+
+# 2. Успешный запрос с Basic-аутентификацией
+curl -s -o /dev/null -w "%{http_code}\n" -u "alex:SecurePass" https://internal.example.com/monitoring
+# → 200
+
+# 3. Запрос с клиентским mTLS-сертификатом
+curl -s -o /dev/null -w "%{http_code}\n" \
+  --cert /etc/pki/tls/certs/client.crt \
+  --key /etc/pki/tls/private/client.key \
+  --cacert /etc/pki/tls/certs/internal-ca-chain.crt \
+  https://api.example.com/v1/control
+# → 200
+```
+
+### 5. Инспекция состояния кэша LDAP (mod_status / ldap-status)
+
+Для анализа эффективности кэша поиска и операций настраивается обработчик `ldap-status`:
+
+```apacheconf
+<Location "/ldap-status">
+    SetHandler ldap-status
+    Require ip 127.0.0.1 ::1
+</Location>
+```
+
+```bash
+curl -s http://127.0.0.1/ldap-status | grep -A 5 "Cache"
+# → LDAP Shared Cache Info:
+# → Total entries: 142
+# → Cache hits: 18490
+# → Cache misses: 145
+# → Cache hit ratio: 99.2%
 ```
 
 ---
 
 ## Типичные ошибки и диагностика
 
-| Симптом | Причина | Решение |
-|---|---|---|
-| `401` в цикле для всех пользователей | `AuthLDAPURL` с пустым `attribute`/неверным base; bind-аккаунт не имеет прав поиска | Проверить `ldapsearch` вручную; исправить base/attribute |
-| `AH01618: user not found` при валидном в AD | Атрибут поиска `uid` вместо `sAMAccountName`; ссылки на кандидатов в другом OU | Исправить атрибут/scope |
-| Редирект/fallback не работает | `AuthLDAPAuthoritative on` запрещает переход к следующему провайдеру | Установить `off` для фоллбэка |
-| `AH02032/ldap_bind` таймауты | LDAP-сервер не отвечает; превышен `LDAPConnectionTimeout` | Проверить сеть/DNS; увеличить `LDAPConnectionTimeout` |
-| Digest: повторный запрос пароля | Realm в `AuthName` не совпадает с realm при `htdigest` | Пересоздать пользователя с правильным realm |
-| mTLS: `400 No required SSL certificate` | `SSLVerifyClient require` + отсутствие сертификата | Проверить цепочку, `SSLVerifyDepth`, пути CA |
-| mTLS: сертификат валиден, но 403 | `Require expr`/маппинг не совпадает с субъектом | Вывести `%{SSL_CLIENT_S_DN}` в лог; сверить с правилом |
+### Коды ошибок Apache (AH) и решения
+
+| Симптом / AH-код | Возможная причина | Диагностика | Решение |
+|---|---|---|---|
+| `401 Unauthorized`<br>`AH01618: user not found: /path` | Неверный базовый DN или атрибут поиска логина (`uid` вместо `sAMAccountName`) | Выполнить `ldapsearch` с фильтром из `AuthLDAPURL` | Сверить атрибут пользователя в каталоге; для AD использовать `sAMAccountName` |
+| `401 Unauthorized`<br>`AH01617: user ...: authentication failure for "/path": Password Mismatch` | Неверный пароль пользователя или bind-пользователь не имеет прав чтения атрибута | Проверить ручной `ldapsearch` bind от имени самого пользователя | Проверить пароль; убедиться в отсутствии спецсимволов, ломающих конфиг; проверить статус блокировки в AD |
+| `500 Internal Server Error`<br>`AH02032: Ldap cache operation failed` / таймаут | Недоступен LDAP-хост, блокировка фаерволом или исчерпан `LDAPConnectionTimeout` | Проверить TCP связность: `nc -zv ldap.example.com 636` | Увеличить `LDAPConnectionTimeout 10`; проверить DNS и маршрутизацию к контроллерам |
+| Зависание запросов на 30–60 сек<br>`AH01695: auth_ldap authenticate: ... [LDAP: referral]` | Попытка перехода по рефералам в многодоменном лесу Active Directory | `LogLevel authnz_ldap:debug` показывает обращения к недоступным контроллерам | Указать директиву `LDAPReferrals Off` или использовать порт Global Catalog (`3268`/`3269`) |
+| `403 Forbidden`<br>`AH01631: user ...: authorization failure to path "/path":` | Пользователь успешно аутентифицирован, но не проходит условие `Require` (членство в группе/IP) | Проверить вывод `memberOf` пользователя и формат имени группы | Для `Require ldap-group` указывать полный DN группы; проверить `AuthLDAPGroupAttributeIsDN On` |
+| mTLS: `400 Bad Request`<br>`No required SSL certificate was sent` | Клиент не передал сертификат, либо сертификат выпущен CA, отсутствующим в `SSLCACertificateFile` | Проверить список CA, запрашиваемых сервером: `openssl s_client -showcerts` | Добавить корневой и промежуточный сертификаты выпускающего CA в файл `SSLCACertificateFile` |
+| mTLS: `403 Forbidden`<br>`AH02224: Certificate Verification: Error (23): certificate revoked` | Клиентский сертификат отозван и включена проверка `SSLCARevocationCheck` | Проверить серийный номер сертификата в CRL: `openssl crl -in ca.crl -text -noout` | Выпустить новый сертификат; обновить CRL-файл на сервере |
+| Fallback не срабатывает<br>`AH01617` блокирует локального пользователя | Директива `AuthLDAPBindAuthoritative on` запрещает переход к `AuthBasicProvider ... file` | Проверить директивы авторизации в блоке `<Directory>` | Установить `AuthLDAPBindAuthoritative Off` для передачи управления локальному файлу |
+
+### Таргетированная отладка через LogLevel
+
+Включение глобального `LogLevel trace8` заливает журнал терабайтами системного шума. Рекомендуется точечное профилирование затронутых модулей:
+
+```apacheconf
+# Точечный дебаг аутентификации, LDAP и SSL в контексте VirtualHost
+<VirtualHost *:443>
+    ServerName secure.example.com
+    
+    # Базовый уровень для всех модулей — предупреждения
+    LogLevel warn
+    
+    # Детальная трассировка подсистем доступа
+    LogLevel authn_core:trace6 authz_core:trace6 authnz_ldap:trace6 ldap:trace6 ssl:trace4
+    
+    ErrorLog /var/log/httpd/secure_error.log
+    CustomLog /var/log/httpd/secure_access.log combined
+</VirtualHost>
+```
+
+Анализ журнала:
+```bash
+tail -f /var/log/httpd/secure_error.log | grep -E "authnz_ldap|authz_core|ssl"
+```
 
 ---
 
-## Лучшие практики
+## Рекомендации и Best Practices
 
-1.  Безопасность учётных данных: `AuthLDAPBindPassword` хранить в файле (`file:`), а не plaintext в конфиге.
-2.  Перед изменением конфига проверять связность: `ldapsearch` той же командой, что и `AuthLDAPURL`.
-3.  TLS к LDAP обязателен для паролей (`ldaps://` или `...?uid?sub` + `TLS`). Отключать `LDAPReferral off` при проблемах с кросс-доменным поиском.
-4.  Не использовать Digest для новых систем, если нет жёсткого требования — Basic+HTTPS проще и поддерживается шире.
-5.  Маппинг сертификата и пользователя (mTLS) согласовывать с приложением заранее; логировать `SSL_CLIENT_S_DN`.
-6.  Тестировать на отдельном vhost (staging) с `LogLevel debug`.
+### 1. Безопасность сервисных учетных записей (Bind Credentials)
+
+- **Никогда не хранить пароли открытым текстом в основном конфигурационном файле.** Используйте конструкцию `AuthLDAPBindPassword "file:/etc/httpd/secrets/ldap.secret"` или `exec:/usr/local/bin/get-secret.sh`.
+- Файл с секретом должен принадлежать пользователю `root` с правами доступа `0400` или `0600`:
+  ```bash
+  sudo chown root:root /etc/httpd/secrets/ldap.secret
+  sudo chmod 0400 /etc/httpd/secrets/ldap.secret
+  ```
+- Сервисная учетная запись LDAP (`svc-apache`) должна обладать минимальными привилегиями: строго права на чтение (`Read`) пользовательских учетных записей и членства в группах без прав изменения каталога.
+
+### 2. Защита от перехвата и Brute-Force
+
+- **Запрет базовой аутентификации без TLS**: передача `Authorization: Basic` по незашифрованному HTTP (порт 80) раскрывает пароли пользователей в открытом виде (Base64 декодируется мгновенно). Все эндпоинты с аутентификацией обязаны быть защищены постоянным редиректом на HTTPS:
+  ```apacheconf
+  <VirtualHost *:80>
+      ServerName app.example.com
+      Redirect permanent / https://app.example.com/
+  </VirtualHost>
+  ```
+- **Интеграция с fail2ban**: частые 401 ошибки в журнале `CustomLog` должны приводить к временной блокировке IP-адреса на уровне фаервола (`nftables` / `iptables`), снижая нагрузку на контроллеры домена LDAP.
+
+### 3. Оптимизация производительности mod_ldap под высокую нагрузку
+
+- **Связка с MPM event/worker**: убедитесь, что `LDAPSharedCacheSize` достаточен для удержания активных пользователей. Для пула в 5000 сотрудников выделите 1–2 МБ (`LDAPSharedCacheSize 2000000`).
+- **Таймауты сети**: значения по умолчанию для `LDAPConnectionTimeout` могут приводить к зависанию рабочих процессов при сетевых сбоях. Всегда явно задавайте:
+  ```apacheconf
+  LDAPConnectionTimeout 5
+  LDAPTimeout 10
+  ```
+- **Использование LDAPS vs StartTLS**: прямое соединение LDAPS (порт 636) быстрее и надежнее в контексте пула постоянных соединений Apache, чем согласование StartTLS поверх открытого порта 389.
+
+### 4. Контроль наследования прав
+
+- При работе со сложными структурами каталогов явно указывайте директиву `AuthMerging`, чтобы дочерний файл `.htaccess` или поддиректория не сняли требования обязательной авторизации.
+- По умолчанию проверяйте, что директива `AllowOverride None` отключена для критических локаций, исключая несанкционированное изменение правил доступа через пользовательские файлы `.htaccess`.
 
 ---
 
@@ -270,8 +567,10 @@ ldapsearch -x -H ldap://ad.corp.example.com \
 
 ### См. также
 
-*   [HTTP-аутентификация: протоколы и механизмы](../../Networking/Protocols/HTTP/http_authentication.md) — Basic/Digest/Bearer/OAuth на уровне протокола.
-*   [Настройка mTLS в Nginx](../Nginx/Security/TLS_SSL/nginx_mtls_configuration.md) — аналог клиентских сертификатов для Nginx/Angie.
-*   [SSO через OIDC (mod_auth_openidc)](./apache-oidc-sso.md) — замена/дополнение к Basic при интеграции с Keycloak/Okta.
-*   [Определение реального IP (mod_remoteip)](./apache_overview.md) — учёт доверенных прокси в `Require ip` и логах.
-*   [Обзор Apache](./apache_overview.md) — базовая аутентификация htpasswd, SSL/TLS, модули.
+* [Обзор Apache HTTP Server](./apache_overview.md) — базовая архитектура, MPM-модели, виртуальные хосты и конфигурация `htpasswd`.
+* [Порядок слияния конфигурации Apache](./apache-config-merge-order.md) — приоритеты и правила наследования секций `<Directory>`, `<Location>` и директивы `AuthMerging`.
+* [Харденинг Apache](./apache_hardening.md) — защищенная конфигурация TLS, заголовки безопасности, минимизация раскрытия информации.
+* [SSO через OpenID Connect (mod_auth_openidc)](./apache-oidc-sso.md) — современная федеративная аутентификация через Keycloak, Okta, GitLab.
+* [Продвинутый Reverse Proxy в Apache](./apache-reverse-proxy-advanced.md) — безопасная передача заголовков аутентификации (`X-Forwarded-User`, mTLS) бэкендам.
+* [HTTP-аутентификация: протоколы и механизмы](../../Networking/Protocols/HTTP/http_authentication.md) — теоретические основы RFC для Basic, Digest, Bearer токенов.
+* [Настройка Mutual TLS (mTLS) в Nginx](../Nginx/Security/TLS_SSL/nginx_mtls_configuration.md) — сопоставление подходов к реализации mTLS в других веб-серверах.

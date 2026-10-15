@@ -1,596 +1,893 @@
 # Динамические группы проксируемых серверов в Angie
 
+**Актуально для:** Angie 1.12.x / Angie PRO 1.12.x
+
 ## Определения
 
-**Динамический Upstream в Angie** — это механизм автоматического управления составом групп бэкенд-серверов (IP-адреса, порты, веса, параметры доступности) без необходимости перезагрузки конфигурации (`reload`).
+**Динамический Upstream в Angie** — механизм автоматического управления составом и параметрами серверов бэкенда (IP-адреса, порты, веса, статусы доступности, лимиты соединений) в оперативной памяти без необходимости перезагрузки конфигурационного файла или отправки сигналов процессу (`reload`).
 
-**Обнаружение сервисов (Service Discovery)** — процесс автоматического поиска и регистрации адресов экземпляров приложений в распределенной среде. Общие принципы и модели (Client-side vs Server-side) описаны в [обзоре Service Discovery](../../Concepts/service-discovery-overview.md). Angie реализует этот процесс через интеграцию с внешними источниками данных: DNS, Docker API и специализированный конфигурационный API.
+**Обнаружение сервисов (Service Discovery, SD)** — процесс автоматической регистрации сетевых координат (IP и порт) экземпляров приложений и их динамического обнаружения балансировщиком нагрузки. Общие принципы и модели (Client-side vs Server-side) описаны в [обзоре Service Discovery](../../Concepts/service-discovery-overview.md). В Angie поддерживаются три нативных механизма SD: периодическое разрешение через DNS (A/AAAA и SRV), мониторинг событий Docker API и программное управление через REST API конфигурации (Angie PRO).
 
-**Zone (зона разделяемой памяти)** — именованный сегмент shared memory, в котором хранится состояние группы серверов, включая текущие IP-адреса, веса, флаги доступности и метрики производительности. Обязательна для работы любых продвинутых функций upstream.
+**Зона разделяемой памяти (Shared Memory Zone, `zone`)** — именованный пул общей памяти, доступный мастер-процессу и всем рабочим процессам (worker processes). Хранит в себе структуру данных upstream: текущий список пиров, их параметры (веса, `max_fails`, `fail_timeout`), состояние доступности и счетчики метрик. Зона строго обязательна для функционирования любых динамических механизмов.
 
-**State file (файл состояния)** — персистентное хранилище текущего состава upstream на диске. Используется для восстановления динамически добавленных серверов после перезагрузки Angie.
+**Файл состояния (State file, `state`)** — файл на дисковой подсистеме, в который Angie атомарно сохраняет актуальный состав динамической группы серверов при любых изменениях. Используется для мгновенного восстановления топологии бэкендов после перезапуска службы, предотвращая "холодный старт" до завершения первых циклов Service Discovery.
 
-## Базовые концепции
+**DNS Resolver (`resolver`)** — встроенный асинхронный клиент DNS-протокола в Angie, выполняющий запросы на разрешение имен серверов в фоне без блокировки обработки клиентского трафика. Поддерживает периодическую перепроверку записей на основе параметра `valid` или TTL записей.
 
-### Механизм разделяемой памяти (zone)
+**DNS SRV-запись (RFC 2782)** — тип записи DNS, определяющий имя хоста, порт, приоритет (priority) и вес (weight) для конкретной службы. Позволяет балансировщику определять не только IP-адрес, но и динамически назначенные порты бэкендов (характерно для Consul, HashiCorp Nomad).
 
-Для работы любого динамического апстрима обязательна директива `zone`. Она выделяет область памяти, доступную всем рабочим процессам (workers), где хранится текущее состояние группы серверов.
+**Docker Discovery (`docker_endpoint`)** — модуль в составе Angie, подключающийся напрямую к сокету Docker Engine и отслеживающий жизненный цикл контейнеров (start, stop, die, pause, unpause) в реальном времени на основе меток (labels).
 
-*   **Синтаксис:** `zone <name> <size>;`
-*   **Размер:** 64–128 КБ обычно достаточно для хранения данных о 50–200 серверах. Для крупных установок (тысячи контейнеров) используйте `1m`–`2m`.
-*   **Важно:** Без `zone` динамические обновления (DNS `resolve`, Docker discovery, API) не работают. В блоке с `state` нельзя использовать статические директивы `server`.
+**Конфигурационный API (Angie PRO API)** — HTTP REST API коммерческой версии Angie PRO, обеспечивающий управление составом upstream, параметрами балансировки и состоянием серверов (`up`, `down`, `drain`) через стандартные HTTP-методы `GET`, `PUT`, `PATCH`, `DELETE`.
+
+**Состояния пиров (Peer States)**:
+*   `up` — сервер активен и участвует в распределении трафика.
+*   `down` — сервер административно выключен из балансировки; запросы на него не направляются.
+*   `drain` / `draining` — сервер переведен в режим вывода из эксплуатации. Новые клиентские сессии на него не маршрутизируются, но существующие сессии (sticky sessions via cookie / IP hash) продолжают обслуживаться до завершения.
+*   `unhealthy` — сервер признан неисправным механизмом пассивных или активных проверок работоспособности (Health Checks).
+
+## Базовые концепции и архитектура
+
+### Механизм разделяемой памяти (zone) и Slab Allocator
+
+В традиционном веб-сервере Nginx OSS список серверов в блоке `upstream` компилируется во внутренние структуры данных при чтении конфигурации. Для изменения состава требуется полный цикл `reload`, создающий новые рабочие процессы.
+
+В Angie директива `zone` размещает данные группы бэкендов в разделяемой памяти ядра Linux (POSIX shared memory via `mmap`):
+
+```nginx
+upstream backend_nodes {
+    zone backend_nodes 64k;
+    # динамические директивы или статический состав
+}
+```
+
+*   **Архитектура памяти:** Внутри зоны память управляется slab-аллокатором Angie. Для каждого сервера создается структура пира (`peer structure`), содержащая sockaddr, вес, текущее число активных коннектов, счетчики ошибок, временные метки отказов и указатели на очереди.
+*   **Чтение без блокировок:** Процессы-воркеры читают состояние пиров при выборе бэкенда с использованием атомарных операций и спинлоков минимальной длительности, что исключает падение производительности при тысячах запросов в секунду.
+*   **Расчет размера зоны:** Минимальный поддерживаемый размер зоны составляет `64k`. Расчет требуемой памяти:
+    $$\text{Memory} \approx 32\text{ КБ (базовые накладные расходы структуры)} + (\text{Количество серверов} \times 1\text{ КБ})$$
+    *   `64k` достаточно для хранения до 30–50 серверов с подробными счетчиками.
+    *   `128k` покрывает до 100–150 серверов.
+    *   `1m`–`2m` выделяется для крупных инсталляций на сотни и тысячи динамических контейнеров.
 
 ### Жизненный цикл динамического обновления
 
-При использовании динамических методов обновления состава upstream Angie выполняет следующие действия:
+```
+   [ Внешние источники координат ]
+   ├── DNS-сервер (A/AAAA/SRV) ──> Периодический опрос (timer, valid) ┐
+   ├── Docker Engine API ────────> Поток событий (event stream) ──────┼──> [ Angie Core ]
+   └── REST API (Angie PRO) ─────> HTTP PUT/PATCH/DELETE ─────────────┘         │
+                                                                                ▼
+[ Клиенты ] <──> [ Angie Workers ] <──> [ Shared Memory Zone ] <── Обновление списка пиров
+                        │                      │
+                  Keepalive Pool          State File
+              (дренирование сокетов)   (/var/lib/angie/state)
+```
 
-1.  **Инициализация:** При старте или `reload` Angie загружает существующие данные из зоны. Если указан `state`, дополнительно читает файл состояния.
+1.  **Инициализация:** При старте службы создается сегмент shared memory. Если задана директива `state`, Angie считывает файл состояния с диска и мгновенно регистрирует сохраненные бэкенды.
 2.  **Обнаружение изменений:**
-    *   **DNS:** Периодически опрашивает DNS-сервер с интервалом, определяемым параметром `valid` в `resolver`. При изменении IP-адреса старые соединения через `keepalive` не разрываются — они используют кэш до истечения `keepalive_timeout`.
-    *   **Docker:** Подписывается на события контейнеров (start, stop, pause, unpause, destroy) через Docker API. Изменения применяются мгновенно без задержки на TTL.
-    *   **API (PRO):** Изменения применяются атомарно сразу после успешного `PUT`/`PATCH`/`DELETE` запроса.
-3.  **Применение:** Новые адреса добавляются в группу, удаленные — помечаются как `down` или удаляются полностью. Существующие сессии через `keepalive` продолжают обслуживаться.
-4.  **Восстановление:** При перезагрузке (`reload`) данные из зоны сохраняются. Файл `state` (если указан) записывается на диск.
+    *   **DNS:** Процесс Angie инициирует неблокирующие UDP/TCP-запросы к серверам, указанным в директиве `resolver`. Если параметр `valid` задан, он переопределяет значение TTL из ответа DNS-сервера. Если DNS вернул новые адреса, они добавляются в пул. Если адрес исчез из ответа — он помечается на удаление.
+    *   **Docker:** Фоновый поток в Angie устанавливает постоянное HTTP-соединение с UNIX-сокетом `/var/run/docker.sock` (эндпоинт `/events`). При событиях запуска (`start`) или остановки (`die`, `stop`) контейнера модуль парсит метки и мгновенно добавляет или исключает IP-адрес контейнера.
+    *   **API (Angie PRO):** Обработчик директивы `api` принимает REST-запрос, валидирует JSON-пейлоад, захватывает блокировку зоны и атомарно вносит изменения.
+3.  **Обработка соединений Keepalive:** При удалении бэкенда из зоны (по DNS или Docker) открытые соединения в пуле `keepalive` не сбрасываются принудительно через TCP RST. Они переводятся в режим дренирования: новые HTTP-запросы в них не отправляются, а существующие закрываются штатно по истечении `keepalive_timeout` или после обработки текущего запроса (`Connection: close`).
+4.  **Персистентность:** При любом изменении состава серверов в памяти Angie производит синхронную или фоновую запись текущего снэпшота в файл `state`.
 
-### Преимущества перед Nginx OSS
+### Сравнение функциональности Angie OSS и Angie PRO
 
-В отличие от стандартного Nginx, где имена серверов разрешаются только один раз при старте, Angie:
-1.  **Периодически обновляет DNS-записи** согласно TTL или заданному интервалу `valid`.
-2.  **Нативно работает с Docker API**, отслеживая запуск и остановку контейнеров через события.
-3.  **Предоставляет API управления** (Angie PRO) для изменения параметров upstream без перезагрузки.
+| Возможность | Angie Open Source | Angie PRO |
+| :--- | :--- | :--- |
+| Динамическое разрешение DNS A/AAAA (`resolve`) | Да | Да |
+| Поддержка DNS SRV-записей (`service=...`) | Да | Да |
+| Нативное обнаружение через Docker API (`docker_endpoint`) | Да | Да |
+| Статистика upstream в реальном времени (`/status/`) | Да (Read-Only) | Да (Read-Only) |
+| Метрики в формате Prometheus (`prometheus_template`) | Да | Да |
+| REST API для изменения серверов в runtime (`/config/`) | Нет | **Да** (`PUT`, `PATCH`, `DELETE`) |
+| Плавный вывод пиров из обслуживания (`drain`) через API | Нет | **Да** |
+| Синхронизация состояния зон в кластере (`sync`) | Нет | **Да** |
+| Персистентный файл состояния (`state`) | Да (в сочетании с SD) | Да (полное управление через API) |
 
-### Сохранение состояния (state)
+## Практические сценарии и конфигурация
 
-Директива `state` позволяет сохранять текущую конфигурацию в файл для восстановления после перезагрузки процесса.
+### Сценарий 1: Динамическое разрешение DNS (A/AAAA) для On-Premises микросервисов
 
-*   **Синтаксис:** `state /var/lib/angie/state/<filename>;`
-*   **Важно:** В апстриме с `state` нельзя использовать статические директивы `server`. Зона `zone` при этом обязательна.
-*   **Путь:** В официальных пакетах директория `/var/lib/angie/state/` создается автоматически с правильными правами доступа.
+Используется для взаимодействия с сервисами, развернутыми на виртуальных машинах или серверах внутренней сети, чьи IP-адреса могут динамически переназначаться или масштабироваться с обновлением корпоративного DNS (BIND, Unbound, dnsmasq).
 
-## Практические сценарии
+**Предварительные требования:**
+*   Установленный веб-сервер Angie.
+*   Доступность корпоративного DNS-сервера по UDP/TCP порт 53.
+*   Наличие A-записей для целевого имени в зоне `corp.internal`.
 
-### Сценарий 1: Динамическое разрешение DNS (A/AAAA)
-
-Используется в средах с эфемерными IP-адресами (Kubernetes, Docker swarm, облачные балансировщики). Angie периодически повторяет DNS-запросы и обновляет список серверов без reload.
+**Конфигурация `/etc/angie/http.d/dynamic_dns.conf`:**
 
 ```nginx
 http {
-    # Резолвер обязателен. valid переопределяет TTL из DNS.
-    resolver 127.0.0.1 valid=30s;
-    resolver_timeout 5s;
+    # Задаем надежные внутренние DNS-серверы
+    # valid=10s переопределяет TTL зоны, заставляя Angie опрашивать DNS каждые 10 секунд
+    # ipv6=off отключает отправку запросов типа AAAA (устраняет задержки при отсутствии IPv6)
+    # status_zone включает учет статистики DNS-клиента для мониторинга
+    resolver 192.168.10.2 192.168.10.3 valid=10s ipv6=off status_zone=dns_resolver_zone;
+    resolver_timeout 3s;
 
-    upstream app_servers {
-        zone app_servers 64k;
-        # Параметр resolve активирует динамическое обновление
-        server backend.internal.cloud resolve;
+    upstream internal_api {
+        # Зона разделяемой памяти обязательна для параметра resolve
+        zone internal_api 128k;
+
+        # Параметр resolve активирует динамическое отслеживание изменений DNS
+        server api.corp.internal:8080 resolve max_fails=3 fail_timeout=10s;
+
+        # Пул постоянных соединений к бэкендам
+        keepalive 32;
+        keepalive_requests 1000;
+        keepalive_timeout 60s;
+    }
+
+    server {
+        listen 80;
+        server_name gateway.corp.internal;
+
+        location /api/ {
+            proxy_pass http://internal_api;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_connect_timeout 3s;
+            proxy_read_timeout 30s;
+        }
     }
 }
 ```
 
-**Валидация:**
-```bash
-# Проверка что DNS разрешается
-dig backend.internal.cloud +short
-# → 10.0.0.5
-# → 10.0.0.6
+**Проверка конфигурации и применение:**
 
-# Проверка статуса через API
-curl -s http://127.0.0.1/status/http/upstreams/app_servers/ | jq '.peers'
-# → {"10.0.0.5:80": {"state": "up", ...}, "10.0.0.6:80": {"state": "up", ...}}
+```bash
+# 1. Валидация синтаксиса
+sudo angie -t
+# → angie: the configuration file /etc/angie/angie.conf syntax is ok
+# → angie: configuration file /etc/angie/angie.conf test is successful
+
+# 2. Применение конфигурации
+sudo systemctl reload angie
+
+# 3. Проверка текущих DNS-записей
+dig @192.168.10.2 api.corp.internal +short
+# → 192.168.20.11
+# → 192.168.20.12
+
+# 4. Проверка состояния upstream в Angie через Status API
+curl -s http://127.0.0.1/status/http/upstreams/internal_api/ | jq '.peers'
+# → {
+# →   "192.168.20.11:8080": {
+# →     "state": "up",
+# →     "weight": 1,
+# →     "selected": 45,
+# →     "responses": {"2xx": 45, "5xx": 0}
+# →   },
+# →   "192.168.20.12:8080": {
+# →     "state": "up",
+# →     "weight": 1,
+# →     "selected": 42,
+# →     "responses": {"2xx": 42, "5xx": 0}
+# →   }
+# → }
 ```
 
-### Сценарий 2: Использование DNS SRV-записей
+### Сценарий 2: Обнаружение сервисов через DNS SRV (Consul / Nomad)
 
-Идеально для интеграции с **Consul** или **HashiCorp Nomad**, так как SRV-записи передают не только IP, но и порты, веса и приоритеты.
+В микросервисных средах на базе HashiCorp Consul или Nomad приложения запускаются с динамическим выделением портов. Механизм DNS SRV передает балансировщику не только список IP, но и порты, веса и приоритеты без агентов на хосте балансировщика.
+
+**Формат SRV-записи RFC 2782:** `_Service._Proto.Name TTL Class SRV Priority Weight Port Target`
+
+**Конфигурация `/etc/angie/http.d/consul_srv.conf`:**
 
 ```nginx
 http {
-    resolver 10.0.0.1;
+    # Адрес локального агента Consul DNS
+    resolver 127.0.0.1:8600 valid=5s status_zone=consul_resolver;
+    resolver_timeout 2s;
 
-    upstream consul_services {
-        zone consul_services 128k;
-        # service=http указывает Angie искать SRV-записи для _http._tcp.web.service.consul
-        server web.service.consul service=http resolve;
+    upstream auth_cluster {
+        zone auth_cluster 256k;
+
+        # service=http указывает искать запись _http._tcp.auth-service.service.consul
+        # Angie автоматически извлекает порт и вес из каждого ответа
+        server auth-service.service.consul service=http resolve;
+
+        # Сессионная привязка по cookie с резервным распределением
+        sticky cookie srv_id expires=1h domain=.corp.internal path=/;
+    }
+
+    server {
+        listen 80;
+        server_name sso.corp.internal;
+
+        location / {
+            proxy_pass http://auth_cluster;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_next_upstream error timeout http_502 http_503;
+        }
     }
 }
 ```
 
-**Валидация:**
-```bash
-# Проверка SRV-записей
-dig web.service.consul SRV +short
-# → 10 1 8080 host1.service.consul.
-# → 20 1 8080 host2.service.consul.
+**Проверка и валидация:**
 
-# Проверка что Angie подхватил записи
-curl -s http://127.0.0.1/status/http/upstreams/consul_services/ | jq '.peers | keys'
-# → ["host1.service.consul:8080", "host2.service.consul:8080"]
+```bash
+# 1. Проверка разрешения SRV в Consul
+dig @127.0.0.1 -p 8600 auth-service.service.consul SRV +short
+# → 1 10 24101 node01.node.dc1.consul.
+# → 1 10 24102 node02.node.dc1.consul.
+
+# 2. Проверка распознавания портов в Angie
+curl -s http://127.0.0.1/status/http/upstreams/auth_cluster/ | jq '.peers | keys'
+# → [
+# →   "192.168.30.15:24101",
+# →   "192.168.30.16:24102"
+# → ]
 ```
 
-### Сценарий 3: Нативная интеграция с Docker
+### Сценарий 3: Нативная интеграция с Docker Engine через сокет
 
-Angie подключается к Docker API и автоматически наполняет upstream контейнерами, имеющими соответствующие метки (labels). Модуль поддерживает Docker и совместимые с ним инструменты (Podman 4.9.3+).
+Angie опрашивает Docker API напрямую через локальный сокет, подписывается на события контейнеров и формирует upstream на основе меток (labels). Это устраняет необходимость в сторонних утилитах вроде `registrator` или `docker-gen`.
 
-**1. Настройка в Docker Compose:**
+**Предварительные требования к системе:**
+*   Пользователь, под которым запущен рабочий процесс Angie (`angie`), должен состоять в системной группе `docker`.
+*   Сокет `/var/run/docker.sock` должен быть доступен для чтения и записи процессу Angie.
+
+**Настройка прав доступа в Linux:**
+```bash
+# Проверка пользователя службы
+id angie
+# → uid=998(angie) gid=998(angie) groups=998(angie)
+
+# Добавление пользователя в группу docker
+sudo usermod -aG docker angie
+
+# Перезапуск службы для обновления групп процессов
+sudo systemctl restart angie
+
+# Проверка доступа к сокету из-под пользователя angie
+sudo -u angie curl -s --unix-socket /var/run/docker.sock http://localhost/_ping
+# → OK
+```
+
+**1. Конфигурация Docker Compose (`docker-compose.yml` целевого сервиса):**
 
 ```yaml
 services:
-  webapp:
-    image: my-app:latest
+  billing-service:
+    image: internal-registry.corp.internal/billing:v2.4.1
+    deploy:
+      replicas: 3
+    networks:
+      - internal_mesh
     labels:
-      - "angie.http.upstreams.pool1.port=8080"
-      - "angie.network=my_bridge"
-      - "angie.http.upstreams.pool1.weight=2"
-      - "angie.http.upstreams.pool1.max_conns=50"
-      - "angie.http.upstreams.pool1.max_fails=3"
-      - "angie.http.upstreams.pool1.fail_timeout=10s"
-      - "angie.http.upstreams.pool1.backup=true"
-      - "angie.http.upstreams.pool1.slow_start=30s"
+      # Регистрация в HTTP upstream 'billing_pool'
+      - "angie.http.upstreams.billing_pool.port=8080"
+      - "angie.http.upstreams.billing_pool.weight=3"
+      - "angie.http.upstreams.billing_pool.max_conns=200"
+      - "angie.http.upstreams.billing_pool.max_fails=2"
+      - "angie.http.upstreams.billing_pool.fail_timeout=5s"
+      - "angie.http.upstreams.billing_pool.slow_start=15s"
+      # Указание целевой сети, если контейнер подключен к нескольким
+      - "angie.network=internal_mesh"
+
+networks:
+  internal_mesh:
+    external: true
 ```
 
-**2. Конфигурация в Angie:**
+**2. Конфигурация в Angie (`/etc/angie/http.d/docker_upstream.conf`):**
 
 ```nginx
 http {
-    # Подключение к Docker API (unix socket или TCP)
+    # Подключение к локальному демону Docker
     docker_endpoint unix:/var/run/docker.sock;
-    # docker_max_object_size 128k; # опционально, для >25 контейнеров
 
-    upstream pool1 {
-        zone pool1 64k;
-        # Серверы добавятся автоматически при появлении контейнеров с метками
-    }
-}
-```
+    # Увеличение размера буфера для обработки больших ответов с метаданными (>25 контейнеров)
+    docker_max_object_size 256k;
 
-**Валидация:**
-```bash
-# Проверка что контейнер получил метки
-docker ps --filter label=angie.http.upstreams.pool1.port
-# → CONTAINER ID   IMAGE       LABELS
-# → abc12345       my-app:latest {"angie.http.upstreams.pool1.port":"8080", ...}
-
-# Проверка событий Docker в логах Angie
-sudo tail -f /var/log/angie/error.log | grep -i docker
-# → [docker] connected to Docker API
-# → [docker] container abc12345 added to upstream pool1
-# → [docker] container abc12345 removed from upstream pool1
-```
-
-### Сценарий 4: Управление через API (Angie PRO)
-
-Angie PRO предоставляет REST API для динамического управления upstream без перезагрузки. API поддерживает атомарные операции: добавление, изменение и удаление серверов.
-
-```nginx
-http {
-    upstream dynamic_api {
-        zone dynamic_api 128k;
-        state /var/lib/angie/state/dynamic_api.conf;
+    upstream billing_pool {
+        zone billing_pool 128k;
+        # Пустой upstream: наполняется автоматически при обнаружении меток
     }
 
     server {
         listen 8080;
-        
-        location /config {
+        server_name billing.corp.internal;
+
+        location / {
+            proxy_pass http://billing_pool;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_connect_timeout 2s;
+        }
+    }
+}
+```
+
+**Проверка работы:**
+
+```bash
+# 1. Запуск контейнеров
+docker compose up -d --scale billing-service=3
+
+# 2. Проверка распознавания в логах Angie
+sudo tail -n 20 /var/log/angie/error.log | grep docker
+# → [info] 12412#12412: [docker] connected to Docker daemon via unix:/var/run/docker.sock
+# → [info] 12412#12412: [docker] peer 172.28.0.4:8080 added to upstream "billing_pool"
+# → [info] 12412#12412: [docker] peer 172.28.0.5:8080 added to upstream "billing_pool"
+# → [info] 12412#12412: [docker] peer 172.28.0.6:8080 added to upstream "billing_pool"
+
+# 3. Проверка статуса пиров
+curl -s http://127.0.0.1/status/http/upstreams/billing_pool/ | jq '.peers | keys'
+# → [
+# →   "172.28.0.4:8080",
+# →   "172.28.0.5:8080",
+# →   "172.28.0.6:8080"
+# → ]
+```
+
+### Сценарий 4: Управление пулом серверов в runtime через REST API в Angie PRO
+
+Используется платформами CI/CD, пайплайнами автоматического тестирования или оркестраторами для бесшовного ввода/вывода узлов из балансировки, реализации сине-зеленых (Blue-Green) и канареечных (Canary) развертываний без `reload`.
+
+**Предварительные требования:**
+*   Установленный пакет `angie-pro`.
+*   Созданный каталог для сохранения состояния `/var/lib/angie/state/` с правами пользователя `angie:angie` (права `0750`).
+
+**Конфигурация `/etc/angie/http.d/pro_api.conf`:**
+
+```nginx
+http {
+    upstream payment_backends {
+        zone payment_backends 256k;
+        # Файл персистентного хранения конфигурации upstream
+        state /var/lib/angie/state/payment_backends.conf;
+        # В блоке со state статические директивы server указывать запрещено
+    }
+
+    server {
+        # Защищенный административный порт, доступный только внутри инфраструктуры
+        listen 127.0.0.1:8888;
+        listen 192.168.10.1:8888;
+
+        location /config/ {
             api /config/;
+
+            # Ограничение доступа по подсетям доверенных систем управления
             allow 127.0.0.1;
-            allow 10.0.0.0/8;
+            allow 192.168.10.0/24;
+            deny all;
+        }
+
+        location /status/ {
+            api /status/;
+            allow 127.0.0.1;
+            allow 192.168.10.0/24;
             deny all;
         }
     }
 }
 ```
 
-**Примеры операций:**
+**Операции управления через API:**
 
 ```bash
-# Просмотр текущего состава (defaults=on показывает все параметры)
-curl -s http://127.0.0.1/config/http/upstreams/dynamic_api/servers?defaults=on | jq .
+# 1. Добавление нового сервера в пул
+curl -s -X PUT -H "Content-Type: application/json" \
+  -d '{"server": "192.168.10.15:8080", "weight": 2, "max_conns": 150}' \
+  http://127.0.0.1:8888/config/http/upstreams/payment_backends/servers/192.168.10.15:8080 | jq .
+# → {
+# →   "success": "Created",
+# →   "description": "New configuration API entity \"/config/http/upstreams/payment_backends/servers/192.168.10.15:8080\" was created."
+# → }
 
-# Добавление сервера
-curl -X PUT -d '{"server": "10.0.0.5:80", "weight": 2, "max_conns": 100}' \
-  http://127.0.0.1/config/http/upstreams/dynamic_api/servers/10.0.0.5:80
+# 2. Добавление второго сервера
+curl -s -X PUT -H "Content-Type: application/json" \
+  -d '{"server": "192.168.10.16:8080", "weight": 1}' \
+  http://127.0.0.1:8888/config/http/upstreams/payment_backends/servers/192.168.10.16:8080 | jq .
+# → {
+# →   "success": "Created",
+# →   "description": "New configuration API entity \"/config/http/upstreams/payment_backends/servers/192.168.10.16:8080\" was created."
+# → }
 
-# Изменение веса существующего сервера
-curl -X PATCH -d '5' \
-  http://127.0.0.1/config/http/upstreams/dynamic_api/servers/10.0.0.5:80/weight
+# 3. Изменение веса сервера на лету (Canary 10%)
+curl -s -X PATCH -H "Content-Type: application/json" \
+  -d '{"weight": 10}' \
+  http://127.0.0.1:8888/config/http/upstreams/payment_backends/servers/192.168.10.15:8080 | jq .
+# → {
+# →   "success": "Updated",
+# →   "description": "Existing configuration API entity \"/config/http/upstreams/payment_backends/servers/192.168.10.15:8080\" was updated with merging."
+# → }
 
-# Вывод сервера на обслуживание (drain)
-# В drain-режиме сервер продолжает обрабатывать sticky-сессии,
-# но не принимает новые запросы
-curl -X PUT -d "drain" \
-  http://127.0.0.1/config/http/upstreams/dynamic_api/servers/10.0.0.5:80/down
+# 4. Перевод сервера в режим плавного вывода из обслуживания (Graceful Drain)
+# Существующие соединения завершаются, новые запросы без сессионных cookie не поступают
+curl -s -X PUT -H "Content-Type: text/plain" \
+  -d "drain" \
+  http://127.0.0.1:8888/config/http/upstreams/payment_backends/servers/192.168.10.15:8080/down | jq .
+# → {
+# →   "success": "Updated",
+# →   "description": "Existing configuration API entity \"/config/http/upstreams/payment_backends/servers/192.168.10.15:8080/down\" was updated with replacing."
+# → }
 
-# Удаление сервера (с принудительным закрытием соединений)
-curl -X DELETE \
-  "http://127.0.0.1/config/http/upstreams/dynamic_api/servers/10.0.0.5:80?connection_drop=1000"
+# 5. Проверка состояния пира после перевода в drain
+curl -s http://127.0.0.1:8888/status/http/upstreams/payment_backends/ | jq '.peers["192.168.10.15:8080"].state'
+# → "draining"
 
-# Сброс параметра к значению по умолчанию
-curl -X DELETE \
-  http://127.0.0.1/config/http/upstreams/dynamic_api/servers/10.0.0.5:80/weight
+# 6. Полное удаление сервера с принудительным сбросом зависших коннектов через 2000 мс
+curl -s -X DELETE \
+  "http://127.0.0.1:8888/config/http/upstreams/payment_backends/servers/192.168.10.15:8080?connection_drop=2000" | jq .
+# → {
+# →   "success": "Deleted",
+# →   "description": "Configuration API entity \"/config/http/upstreams/payment_backends/servers/192.168.10.15:8080\" was deleted."
+# → }
+
+# 7. Проверка сохранения в state-файле
+cat /var/lib/angie/state/payment_backends.conf
+# → server 192.168.10.16:8080 weight=1 max_conns=0 max_fails=1 fail_timeout=10s;
 ```
 
-### Сценарий 5: Kubernetes CoreDNS интеграция
+### Сценарий 5: Динамический upstream для Kubernetes On-Premises (CoreDNS Headless Service)
 
-В Kubernetes окружении DNS-имена сервисов (_http._tcp.<service>.<namespace>.svc.cluster.local) можно использовать для автоматического discovery.
+При эксплуатации Kubernetes на собственной инфраструктуре (Bare-Metal / Talos / kubeadm) внешнему Angie часто требуется проксировать трафик напрямую на поды через Headless Service (`clusterIP: None`), минуя kube-proxy.
 
 ```nginx
 http {
-    resolver kube-dns.kube-system.svc.cluster.local valid=10s;
+    # Внутренний IP службы CoreDNS в кластере kube-system
+    resolver 10.96.0.10 valid=5s ipv6=off;
     resolver_timeout 2s;
 
-    upstream k8s_api {
-        zone k8s_api 64k;
-        # SRV-записи в Kubernetes передают порт сервиса
-        server api-service.default.svc.cluster.local service=_http._tcp resolve;
+    upstream k8s_backend {
+        zone k8s_backend 256k;
+
+        # Разрешение Headless Service: CoreDNS возвращает IP-адреса всех готовых (Ready) подов
+        server app-headless.production.svc.cluster.local:8080 resolve;
+
+        # Проверка состояния подов
+        keepalive 64;
+    }
+
+    server {
+        listen 80;
+        server_name app.infra.internal;
+
+        location / {
+            proxy_pass http://k8s_backend;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_next_upstream error timeout http_502 http_503;
+        }
     }
 }
 ```
 
 **Валидация:**
 ```bash
-# Проверка SRV в Kubernetes
-dig api-service.default.svc.cluster.local SRV +short
-# → 10 100 8080 api-service-0.default.svc.cluster.local.
+# Проверка разрешения через CoreDNS
+dig @10.96.0.10 app-headless.production.svc.cluster.local +short
+# → 10.244.1.45
+# → 10.244.2.112
+# → 10.244.3.78
 
-# Проверка upstream
-curl -s http://127.0.0.1/status/http/upstreams/k8s_api/ | jq '.peers | keys'
+# Проверка распределения в Angie
+curl -s http://127.0.0.1/status/http/upstreams/k8s_backend/ | jq '.peers | keys'
+# → [
+# →   "10.244.1.45:8080",
+# →   "10.244.2.112:8080",
+# →   "10.244.3.78:8080"
+# → ]
 ```
 
-### Сценарий 6: Смешанная конфигурация (статический + динамический fallback)
+### Сценарий 6: Отказоустойчивая гибридная схема: динамический пул + статический backup
 
-Комбинирование статического сервера с динамическими, обеспечивающее отказоустойчивость при недоступности DNS или Docker.
+Защита от сценариев сбоя корпоративного DNS или аварии реестра Service Discovery. В нормальном режиме запросы обрабатываются динамическими бэкендами, но при их отказе трафик автоматически и бесшовно переключается на статический резервный кластер или локальную страницу-заглушку.
 
 ```nginx
 http {
-    upstream mixed_app {
-        zone mixed_app 64k;
-        
-        # Статический fallback-сервер (всегда доступен)
-        server 192.168.1.100:8080 backup;
-        
-        # Динамические серверы из DNS
-        server app.internal.cloud resolve;
+    resolver 192.168.10.2 valid=10s ipv6=off;
+    resolver_timeout 2s;
+
+    upstream critical_service {
+        zone critical_service 128k;
+
+        # Основной динамический пул серверов
+        server backend.corp.internal:8080 resolve max_fails=2 fail_timeout=5s;
+
+        # Статический резервный сервер (backup активируется только если все динамические пиры недоступны)
+        server 192.168.99.10:8080 backup;
     }
 
     server {
+        listen 80;
+        server_name portal.corp.internal;
+
         location / {
-            proxy_pass http://mixed_app;
-            # Резервный маршрут если все upstream недоступны
-            error_page 502 503 504 = @fallback;
+            proxy_pass http://critical_service;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+
+            # Переключение на следующий сервер при ошибках шлюза или таймаутах
+            proxy_next_upstream error timeout invalid_header http_502 http_503 http_504;
+            proxy_next_upstream_tries 3;
+            proxy_next_upstream_timeout 5s;
+
+            # Локальный fallback если даже backup-сервер вернул ошибку
+            error_page 502 503 504 = @service_unavailable;
         }
 
-        location @fallback {
-            return 503 "Service temporarily unavailable\n";
+        location @service_unavailable {
+            return 503 '{"error": "Service Temporarily Unavailable", "code": 503}\n';
+            default_type application/json;
         }
     }
 }
 ```
 
+### Сценарий 7: Динамические апстримы L4 (TCP/UDP) в блоке `stream`
+
+Динамическое масштабирование и Service Discovery применимы не только для HTTP, но и для уровня L4 (проксирование СУБД PostgreSQL, Redis, MySQL, LDAP).
+
+**Конфигурация `/etc/angie/stream.d/postgres_balancing.conf`:**
+
+```nginx
+stream {
+    resolver 192.168.10.2 valid=10s ipv6=off status_zone=stream_dns;
+    resolver_timeout 2s;
+
+    upstream pg_read_pool {
+        zone pg_read_pool 128k;
+
+        # Разрешение реплик PostgreSQL через DNS
+        server pg-replicas.corp.internal:5432 resolve max_fails=3 fail_timeout=10s;
+    }
+
+    server {
+        listen 5433;
+        proxy_pass pg_read_pool;
+        proxy_connect_timeout 3s;
+        proxy_timeout 1h;
+    }
+}
+```
+
+**Валидация:**
+```bash
+# Проверка L4 upstream через Status API
+curl -s http://127.0.0.1/status/stream/upstreams/pg_read_pool/ | jq '.peers'
+# → {
+# →   "192.168.50.21:5432": {"state": "up", "connections": 12},
+# →   "192.168.50.22:5432": {"state": "up", "connections": 10}
+# → }
+```
+
 ## Операции и команды
 
-### Управление процессами Angie
+### Управление конфигурацией и процессами
 
 ```bash
-# Проверка конфигурации перед применением
+# Проверка корректности синтаксиса перед перезагрузкой
 sudo angie -t
 # → angie: the configuration file /etc/angie/angie.conf syntax is ok
 # → angie: configuration file /etc/angie/angie.conf test is successful
 
-# Применение конфигурации (zero downtime)
-sudo angie -s reload
+# Безопасное применение изменений (Graceful Reload)
+sudo systemctl reload angie
 
-# Перезапуск worker процессов
-sudo angie -s reopen
+# Просмотр статуса службы
+sudo systemctl status angie --no-pager
 
-# Остановка сервера (graceful)
-sudo angie -s quit
-
-# Принудительная остановка
-sudo angie -s stop
+# Просмотр активных рабочих процессов (workers)
+ps aux | grep "[a]ngie: worker"
+# → angie     14201  0.0  0.4  54210 18400 ?  S  10:00  0:02 angie: worker process
+# → angie     14202  0.0  0.4  54210 18380 ?  S  10:00  0:02 angie: worker process
 ```
 
-### Тестирование разрешения имен
+### Диагностика разрешения DNS и SRV
 
 ```bash
-# Проверка A/AAAA записи
-dig backend.internal.cloud A +short
-# → 10.0.0.5
-# → 10.0.0.6
+# Тестирование прямого разрешения имени через целевой резолвер
+dig @192.168.10.2 api.corp.internal A +short
+# → 192.168.20.11
+# → 192.168.20.12
 
-# Проверка SRV-записи
-dig web.service.consul SRV +short
-# → 10 1 8080 host1.service.consul.
+# Проверка TTL записи (сравнение с параметром valid в Angie)
+dig @192.168.10.2 api.corp.internal +nocmd +noall +answer
+# → api.corp.internal.  30  IN  A  192.168.20.11
 
-# Проверка с кастомным резолвером
-dig @10.0.0.1 backend.internal.cloud A +short
-
-# Проверка TTL записи
-dig backend.internal.cloud +nocmd +noall +answer
-# → backend.internal.cloud.  30  IN  A  10.0.0.5
-#   (TTL=30 секунд, должен совпадать с valid=30s в конфигурации)
+# Тестирование получения SRV-записи службы Consul/Nomad
+dig @127.0.0.1 -p 8600 _http._tcp.web.service.consul SRV +noall +answer
+# → _http._tcp.web.service.consul. 0 IN SRV 1 10 8080 node1.consul.
+# → _http._tcp.web.service.consul. 0 IN SRV 1 10 8081 node2.consul.
 ```
 
-### Управление Docker discovery
+### Диагностика интеграции с Docker API
 
 ```bash
-# Проверка доступности Docker API
-curl -s --unix-socket /var/run/docker.sock http://localhost/_ping
+# Проверка доступности сокета Docker Engine
+sudo -u angie curl -s --unix-socket /var/run/docker.sock http://localhost/_ping
 # → OK
 
-# Поиск контейнеров с нужными метками
-docker ps --filter "label=angie.http.upstreams.pool1.port"
-# → CONTAINER ID   IMAGE       LABELS
-# → abc12345       my-app:latest {"angie.http.upstreams.pool1.port":"8080", ...}
+# Поиск запущенных контейнеров с метками для конкретного upstream
+docker ps --filter "label=angie.http.upstreams.billing_pool.port" \
+  --format "table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Labels}}"
 
-# Просмотр всех меток контейнера
-docker inspect abc12345 --format '{{ json .Config.Labels }}' | jq .
+# Просмотр сетевых параметров контейнера и принадлежности к сетям
+docker inspect <container_id> --format '{{json .NetworkSettings.Networks}}' | jq .
 
-# Проверка прав на сокет Docker
-ls -la /var/run/docker.sock
-# → srw-rw---- 1 root docker ... /var/run/docker.sock
-# Пользователь angie должен быть в группе docker
-
-# Проверка сетей Docker
-docker network ls
-# → NETWORK ID     NAME        DRIVER    SCOPE
-# → abc12345       my_bridge   bridge     local
-
-# Просмотр событий Docker в реальном времени
-docker events --filter 'type=container' --filter 'event=start|stop|destroy'
+# Отслеживание потока событий контейнеров в реальном времени
+docker events --filter 'type=container' --filter 'event=start' --filter 'event=die'
 ```
 
-### Управление через API (Angie PRO)
+### Мониторинг и инспекция через Status API
 
 ```bash
-# Получение списка всех upstream (read-only status)
+# Список всех активных HTTP upstreams
 curl -s http://127.0.0.1/status/http/upstreams/ | jq 'keys'
-# → ["app_servers", "dynamic_api", "pool1"]
+# → [
+# →   "billing_pool",
+# →   "internal_api",
+# →   "payment_backends"
+# → ]
 
-# Просмотр деталей конкретного upstream
-curl -s http://127.0.0.1/status/http/upstreams/dynamic_api/ | jq '.peers'
-# → {"10.0.0.5:80": {"state": "up", "weight": 2, ...}, ...}
+# Сводный отчет по пирам конкретного пула (адрес, статус, вес, число активных запросов)
+curl -s http://127.0.0.1/status/http/upstreams/internal_api/ | \
+  jq '.peers | to_entries[] | {peer: .key, state: .value.state, weight: .value.weight, active: .value.active}'
 
-# Просмотр с Pretty=off для компактного вывода
-curl -s "http://127.0.0.1/status/http/upstreams/dynamic_api/?pretty=off" | jq .
-
-# Получение списка серверов через config API (PRO)
-curl -s http://127.0.0.1/config/http/upstreams/dynamic_api/servers | jq .
-
-# Параллельные запросы к нескольким upstream
-for upstream in app_servers pool1 dynamic_api; do
-  echo "=== $upstream ==="
-  curl -s "http://127.0.0.1/status/http/upstreams/$upstream/" | \
-    jq '.peers | to_entries[] | {server: .key, state: .value.state, weight: .value.weight}'
-done
+# Мониторинг метрик встроенного DNS-резолвера
+curl -s http://127.0.0.1/status/resolvers/dns_resolver_zone/ | jq .
+# → {
+# →   "queries": {"A": 12450, "AAAA": 0, "SRV": 0},
+# →   "responses": {"noerror": 12448, "nxdomain": 0, "servfail": 2, "timedout": 0}
+# → }
 ```
 
-### Управление файлом состояния
+### Управление файлами состояния (`state`)
 
 ```bash
-# Путь к файлу состояния (согласно директиве state)
-STATE_FILE="/var/lib/angie/state/dynamic_api.conf"
+# Просмотр текущего сгенерированного файла состояния
+cat /var/lib/angie/state/payment_backends.conf
+# → server 192.168.10.15:8080 weight=2 max_conns=150 max_fails=1 fail_timeout=10s;
+# → server 192.168.10.16:8080 weight=1 max_conns=0 max_fails=1 fail_timeout=10s;
 
-# Просмотр содержимого
-cat "$STATE_FILE"
-# → server 10.0.0.5:80 weight=2 max_conns=100;
-# → server 10.0.0.6:80 weight=1;
+# Проверка прав доступа к файлу и каталогу состояния
+ls -ld /var/lib/angie/state
+# → drwxr-x--- 2 angie angie 4096 Oct 14 12:00 /var/lib/angie/state
 
-# Резервное копирование перед изменениями
-cp "$STATE_FILE" "${STATE_FILE}.bak.$(date +%Y%m%d%H%M%S)"
+ls -la /var/lib/angie/state/payment_backends.conf
+# → -rw-r----- 1 angie angie 178 Oct 14 12:05 /var/lib/angie/state/payment_backends.conf
 
-# Проверка прав доступа
-ls -la "$STATE_FILE"
-# → -rw-r----- 1 angie angie ... dynamic_api.conf
-
-# Восстановление из резервной копии
-sudo systemctl stop angie
-cp "${STATE_FILE}.bak.20260921120000" "$STATE_FILE"
-sudo systemctl start angie
+# Создание резервной копии перед регламентными работами
+sudo -u angie cp /var/lib/angie/state/payment_backends.conf \
+  /var/lib/angie/state/payment_backends.conf.bak.$(date +%F_%H%M%S)
 ```
 
 ## Устранение неисправностей
 
-### Динамические серверы не добавляются в upstream
+### 1. Серверы не добавляются в upstream при запуске
 
-**Симптомы:** В `/status/http/upstreams/<name>/` отображается только статический сервер или группа пуста. В `error.log` нет сообщений о добавлении серверов.
-
-**Диагностика:**
-```bash
-# 1. Проверка что zone объявлена
-grep -n "zone.*<name>" /etc/angie/angie.conf
-# → upstream <name> { zone <name> 64k; ... }
-
-# 2. Проверка логов Angie на предмет ошибок модуля
-sudo tail -f /var/log/angie/error.log | grep -E "docker|upstream|zone"
-
-# 3. Проверка что resolver работает (для DNS)
-dig backend.internal.cloud @127.0.0.1
-```
-
-**Решение:**
-*   Добавьте `zone <name> <size>;` в блок upstream.
-*   Убедитесь что директива `resolver` указана в `http` блоке (для DNS).
-*   Проверьте что директива `docker_endpoint` указана в `http` блоке (для Docker).
-
-### DNS: серверы не обновляются после изменения IP
-
-**Симптомы:** IP-адрес в upstream остался старым после изменения DNS-записи.
+**Симптомы:** Запросы к сайту возвращают `502 Bad Gateway`. Вывод `/status/http/upstreams/<name>/peers` пуст или содержит только статические серверы. В `error.log` нет записей об обнаружении.
 
 **Диагностика:**
 ```bash
-# Проверка TTL в DNS
-dig backend.internal.cloud +nocmd +noall +answer
-# → backend.internal.cloud.  3600  IN  A  10.0.0.5
+# 1. Проверка наличия директивы zone
+grep -rn "upstream" /etc/angie/ | grep -A 2 "{"
+# Если внутри блока upstream отсутствует zone <name> <size>, динамические механизмы отключены
 
-# Проверка параметра valid в Angie
-grep -n "valid=" /etc/angie/angie.conf
-# → resolver 127.0.0.1 valid=30s;
+# 2. Проверка сообщений об ошибках парсинга
+sudo tail -n 50 /var/log/angie/error.log | grep -E "upstream|resolver|docker"
 ```
 
 **Решение:**
-*   Укажите `valid=30s` (или меньше) в директиве `resolver`, чтобы Angie опрашивала DNS чаще.
-*   Для принудительного обновления выполните `sudo angie -s reload`.
-*   Убедитесь что DNS-сервер доступен: `dig @127.0.0.1 backend.internal.cloud`.
+1.  Обязательно добавьте директиву `zone <upstream_name> 64k;` (или большего размера) первой строкой внутри блока `upstream`.
+2.  Для разрешения DNS убедитесь, что директива `resolver` объявлена на уровне `http` или текущего `server`.
+3.  Для Docker убедитесь, что объявлена директива `docker_endpoint unix:/var/run/docker.sock;` в блоке `http`.
 
-### Docker: контейнеры не добавляются в upstream
+---
 
-**Симптомы:** В логах нет сообщений `[docker] container ... added to upstream ...`.
+### 2. Задержки DNS-разрешения и зависания из-за запросов IPv6
+
+**Симптомы:** При перезагрузке или смене IP бэкенда в логах появляются ошибки:
+```text
+[error] 1234#1234: send() failed (111: Connection refused) while resolving
+[warn] 1234#1234: host "api.corp.internal" was not resolved: server error (timed out)
+```
+Время ответа клиентам периодически подскакивает на 2–5 секунд.
+
+**Причина:** По умолчанию резолвер Angie выполняет параллельные запросы типов A (IPv4) и AAAA (IPv6). Если во внутренней сети IPv6 не настроен или DNS-сервер игнорирует AAAA-запросы без ответа, резолвер ожидает истечения `resolver_timeout`.
+
+**Решение:**
+Добавьте параметр `ipv6=off` в директиву `resolver`:
+```nginx
+resolver 192.168.10.2 valid=10s ipv6=off;
+resolver_timeout 2s;
+```
+
+---
+
+### 3. Ошибка доступа к сокету Docker: `permission denied`
+
+**Симптомы:** В `error.log` фиксируется сообщение:
+```text
+[crit] 14201#14201: connect() to unix:/var/run/docker.sock failed (13: Permission denied) while connecting to docker daemon
+```
 
 **Диагностика:**
 ```bash
-# 1. Проверка доступности Docker API
-curl -s --unix-socket /var/run/docker.sock http://localhost/_ping
-# → OK
+# Проверка прав на сокет Docker
+ls -la /var/run/docker.sock
+# → srw-rw---- 1 root docker 0 Oct 14 09:00 /var/run/docker.sock
 
-# 2. Проверка прав пользователя angie
-id angie
-# → uid=996(angie) gid=996(angie) groups=996(angie),999(docker)
-# Группа docker ОБЯЗАТЕЛЬНА для доступа к /var/run/docker.sock
-
-# 3. Проверка меток контейнера
-docker inspect webapp --format '{{ json .Config.Labels }}' | jq .
-# → {"angie.http.upstreams.pool1.port": "8080", ...}
-
-# 4. Проверка что upstream name совпадает с меткой
-# Метка: angie.http.upstreams.pool1.port
-# Upstream: upstream pool1 { ... }
-# Имена "pool1" должны совпадать!
+# Проверка групп пользователя angie
+groups angie
+# → angie : angie (группа docker отсутствует!)
 ```
 
 **Решение:**
-*   Добавьте пользователя `angie` в группу `docker`: `sudo usermod -aG docker angie`.
-*   Перезапустите Angie после изменения групп: `sudo systemctl restart angie`.
-*   Убедитесь что имя upstream в конфигурации совпадает с `<name>` в метке.
-*   Для удаленного Docker API используйте `docker_endpoint http://host:2375;` и откройте порт в брандмауэре.
+1.  Включите пользователя `angie` в группу `docker`:
+    ```bash
+    sudo usermod -aG docker angie
+    ```
+2.  Перезапустите службу Angie, так как смена групп не применяется к уже работающим процессам:
+    ```bash
+    sudo systemctl restart angie
+    ```
+3.  При включенном SELinux (RHEL/AlmaLinux) создайте разрешающее правило:
+    ```bash
+    sudo setsebool -P daemons_enable_cluster_mode 1
+    ```
 
-### Docker: ошибка "container not found" после перезагрузки
+---
 
-**Симптомы:** После `reload` контейнеры временно исчезают из upstream, затем появляются снова.
+### 4. Контейнеры Docker не подхватываются или выбирается неверный IP-адрес
 
-**Причина:** При перезагрузке Angie теряет соединение с Docker API. После переустановления соединения происходит повторное сканирование контейнеров.
-
-**Решение:**
-*   Это ожидаемое поведение. Для минимизации простоев используйте `state` директиву для сохранения состояния.
-*   Убедитесь что Docker API стабильно доступен (для unix socket проверьте права, для TCP — стабильность сети).
-
-### State file: ошибки при сохранении
-
-**Симптомы:** В логах `error.log` появляются ошибки записи в state file. После reload динамические серверы исчезают.
+**Симптомы:** Контейнеры запущены, но в upstream не попадают, либо запросы уходят на недоступные адреса подсети `bridge` вместо выделенной сети.
 
 **Диагностика:**
 ```bash
-# Проверка существования директории
-ls -la /var/lib/angie/state/
-# → drwxr-xr-x  angie angie  ... state/
+# Проверка точного совпадения имени upstream в метке
+# Метка контейнера: angie.http.upstreams.<имя>.port
+# Конфиг Angie:     upstream <имя> { ... }
+docker inspect <container_id> --format '{{json .Config.Labels}}' | jq .
 
-# Проверка прав на файл
-ls -la /var/lib/angie/state/dynamic_api.conf
-# → -rw-r-----  angie angie  ... dynamic_api.conf
-
-# Проверка места на диске
-df -h /var/lib/angie
+# Проверка сетей, к которым подключен контейнер
+docker inspect <container_id> --format '{{json .NetworkSettings.Networks}}' | jq 'keys'
 ```
 
 **Решение:**
-*   Убедитесь что пользователь `angie` имеет права на запись в директорию `/var/lib/angie/state/`.
-*   Проверьте что `selinux` не блокирует запись (временно: `sudo setenforce 0` для диагностики).
-*   Убедитесь что на диске достаточно свободного места.
+1.  Имя upstream в конфиге должно посимвольно совпадать с фрагментом имени метки: для `upstream app_pool` метка обязана быть `angie.http.upstreams.app_pool.port=8080`.
+2.  Если контейнер подключен к нескольким сетям Docker (например, `backend_net` и `monitoring_net`), явно укажите целевую маршрутизируемую сеть через метку `angie.network`:
+    ```yaml
+    labels:
+      - "angie.http.upstreams.app_pool.port=8080"
+      - "angie.network=backend_net"
+    ```
 
-### API (PRO): изменения не применяются
+---
 
-**Симптомы:** `PUT`/`PATCH` запросы возвращают 200, но сервер не появляется в upstream.
+### 5. Переполнение буфера объектов Docker при большом числе контейнеров
 
-**Диагностика:**
-```bash
-# Проверка ответа API
-curl -v -X PUT -d '{"server": "10.0.0.5:80"}' \
-  http://127.0.0.1/config/http/upstreams/dynamic_api/servers/10.0.0.5:80
-# → HTTP/1.1 201 Created
-# → {"description": "New peer added."}
+**Симптомы:** В `error.log` появляется ошибка:
+```text
+[error] 14201#14201: docker response too large: buffer size 32768 exceeded
+```
+Часть контейнеров перестает отслеживаться.
 
-# Проверка что изменения применились
-curl -s http://127.0.0.1/config/http/upstreams/dynamic_api/servers | jq .
+**Причина:** По умолчанию внутренний буфер парсинга ответа Docker API ограничен 32 КБ. При наличии сотен запущенных контейнеров JSON-ответ с описанием состояния и меток превышает лимит.
+
+**Решение:**
+Увеличьте значение директивы `docker_max_object_size` в блоке `http`:
+```nginx
+http {
+    docker_endpoint unix:/var/run/docker.sock;
+    docker_max_object_size 512k;
+    ...
+}
 ```
 
+---
+
+### 6. Ошибки сохранения файла состояния (`state`): `Permission denied`
+
+**Симптомы:** При добавлении серверов через API или при `systemctl reload angie` в логах появляется ошибка:
+```text
+[crit] 14201#14201: open() "/var/lib/angie/state/dynamic.conf.tmp" failed (13: Permission denied)
+```
+После перезапуска Angie все динамически добавленные серверы исчезают.
+
 **Решение:**
-*   Убедитесь что upstream объявлен с `zone` и `state` (PRO).
-*   Проверьте что API location настроен с `api /config/;` и `write` доступен.
-*   Для HTTP upstream используйте `/config/http/upstreams/...`, для Stream — `/config/stream/upstreams/...`.
+1.  Создайте каталог состояния, если он отсутствует, и назначьте владельцем пользователя `angie`:
+    ```bash
+    sudo mkdir -p /var/lib/angie/state
+    sudo chown -R angie:angie /var/lib/angie/state
+    sudo chmod 750 /var/lib/angie/state
+    ```
+2.  Убедитесь, что дисковый раздел не заполнен на 100%:
+    ```bash
+    df -h /var/lib/angie
+    ```
 
-### Конфликт портов или ресурсов зоны
+---
 
-**Симптомы:** В логах `error.log`: `could not allocate shared memory zone`, `zone "pool1" already exists`.
+### 7. Нехватка памяти зоны: `could not allocate shared memory zone`
+
+**Симптомы:**
+```text
+[emerg] 14200#14200: could not allocate shared memory zone "internal_api"
+[error] 14201#14201: ngx_slab_alloc() failed: no memory in shared memory zone "internal_api"
+```
+Новые серверы не добавляются через DNS resolve или API.
 
 **Решение:**
-*   Убедитесь что имена `zone` уникальны в рамках одного Angie instance.
-*   Увеличьте размер зоны или уменьшите количество серверов.
-*   Проверьте что не осталось устаревших конфигов в `include` директориях.
+Увеличьте размер зоны в блоке upstream (например, с `64k` до `256k` или `1m`):
+```nginx
+upstream internal_api {
+    zone internal_api 256k;
+    server api.corp.internal:8080 resolve;
+}
+```
+После изменения размера зоны требуется перезапуск или перезагрузка (`systemctl reload angie`).
 
 ## Лучшие практики
 
+### Архитектура и надежность
+
+*   **Таймаут и частота DNS-запросов:** Настраивайте `resolver_timeout` в диапазоне `2s`–`3s`, а интервал перепроверки `valid` — от `5s` до `15s`. Избегайте экстремально низких значений `valid` (1–2 сек), чтобы не создавать избыточную нагрузку на корпоративные DNS-серверы при десятках рабочих процессов Angie.
+*   **Гибридный fallback:** В критичных контурах всегда сопровождайте динамический пул статическим сервером с флагом `backup` (Сценарий 6). Это гарантирует доступность сервиса при аварии контроллеров DNS или реестров Service Discovery.
+*   **Изоляция зон памяти:** Создавайте отдельную зону `zone` для каждого логического сервиса. Не объединяйте разнородные бэкенды в одну зону: переполнение одной зоны или сбой ее блокировки не должны затрагивать соседние сервисы.
+*   **Защита от каскадных сбоев:** Задавайте параметры `max_fails` и `fail_timeout` для каждого динамического пула, чтобы своевременно исключать зависшие бэкенды из балансировки.
+
+### Эксплуатация и SRE
+
+*   **Плавный вывод из эксплуатации (Drain):** Перед остановкой или обновлением ноды с приложением переводите ее в статус `drain` через API (Angie PRO) либо средствами платформы оркестрации. Это позволяет дождаться завершения текущих пользовательских корзин/сессий без обрыва TCP-сокетов.
+*   **Резервное копирование `state`:** Включите директорию `/var/lib/angie/state/` в планы резервного копирования инфраструктуры. Перед накатом обновлений конфигурации создавайте моментальный снимок файлов состояния.
+*   **Мониторинг резолвера:** Настраивайте директиву `resolver` с параметром `status_zone` и экспортируйте метрики в Prometheus. Отслеживайте всплески кодов ответов `servfail` и `timedout`, предупреждая деградацию Service Discovery до падения приложений.
+
 ### Безопасность
 
-*   **Docker socket:** Никогда не монтируйте `/var/run/docker.sock` в контейнер без необходимости. Если монтируете, используйте readonly (`:ro`) и ограничьте доступ через `allow/deny`.
-*   **API доступ:** Выносите конфигурационный API на отдельный порт или `listen 127.0.0.1:8080;`. Никогда не делайте `write` доступ публичным.
-*   **Аутентификация:** Используйте `auth_basic` или `auth_jwt` для защиты эндпоинта `/config/`.
-*   **State file:** Устанавливайте права `0600` на state файлы. Директория `/var/lib/angie/state/` должна принадлежать пользователю `angie`.
-
-### Эксплуатация
-
-*   **TTL и валидация:** Настраивайте `resolver valid` с запасом 2–3 раза ниже TTL в DNS. Для внутренних сервисов используйте `valid=5s`–`30s`.
-*   **Fallback:** Всегда добавляйте статический `backup` сервер в динамические upstream для случаев полной недоступности DNS/Docker.
-*   **Мониторинг:** Настройте алерты на изменение количества серверов в upstream (`/status/http/upstreams/<name>/peers`).
-*   **State backup:** Регулярно копируйте state файлы. При откате на старую версию конфигурации state может содержать серверы, которых уже нет в DNS/Docker.
+*   **Изоляция сокета Docker:** Если Angie запускается в контейнере, не монтируйте сокет хоста `/var/run/docker.sock` в режиме записи. Используйте проксирующие сокет-демоны (например, `docker-socket-proxy`), разрешающие только GET-запросы к `/events` и `/containers/json`, либо выделяйте права на сокет минимально необходимому пользователю.
+*   **Защита эндпоинтов `/config/` и `/status/`:** Никогда не публикуйте интерфейсы управления во внешнюю сеть. Привязывайте административный сервер к `127.0.0.1` или внутренней приватной подсети администрирования, используйте директивы `allow/deny`, mutual TLS (mTLS) и базовую аутентификацию `auth_basic`.
+*   **Права на файлы состояния:** Назначайте права `0600` на файлы конфигурации в `/var/lib/angie/state/` и права `0750` на директорию, владельцем должен являться системный пользователь `angie`.
 
 ### Производительность
 
-*   **Размер зоны:** Для до 100 серверов достаточно `64k`. Для 500+ серверов используйте `1m`–`2m`.
-*   **Keepalive:** Включайте `keepalive` в upstream для снижения накладных расходов на установку соединений. При использовании `resolve` кэшированные keepalive-соединения не разрываются при смене IP.
-*   **Docker буфер:** При большом количестве контейнеров (>25) увеличьте `docker_max_object_size` до `128k` или `256k`.
+*   **Использование пула Keepalive:** Обязательно настраивайте директиву `keepalive` в блоках `upstream`. При динамическом разрешении DNS кэшированные соединения продолжают эффективно переиспользоваться, снижая нагрузку на CPU бэкендов при установлении TCP/TLS хэндшейков.
+*   **Отключение IPv6 в чистых IPv4 сетях:** Директива `resolver ... ipv6=off;` экономит ровно 50% системных сетевых вызовов при опросе DNS и предотвращает блокировку пула по таймаутам несуществующих AAAA-записей.
 
-### Ограничения и известные проблемы
+### Ограничения и архитектурные нюансы
 
-*   **Docker:** Модуль отслеживает только контейнеры в Docker-сетях. Контейнеры с `network=host` добавляются с IP хоста, что может привести к конфликтам.
-*   **DNS SRV:** Вес из SRV-записи игнорируется если задан `weight` в директиве `server`. Приоритеты SRV преобразуются в `backup`/primary разделение.
-*   **State:** В одном upstream нельзя смешивать статические `server` и динамические (Docker/DNS/API) без `state`. При наличии `state` статические серверы игнорируются.
-*   **Keepalive + resolve:** При удалении IP из DNS соответствующие keepalive-соединения остаются открытыми до истечения `keepalive_timeout`. Это поведение по design.
+*   **Контейнеры с `network_mode: host`:** Модуль Docker Discovery регистрирует такие контейнеры с IP-адресом самого хоста Docker. Если несколько контейнеров на одном хосте используют режим `host`, возникнет коллизия адресов, если порты не уникальны.
+*   **Приоритеты DNS SRV:** Angie преобразует числовые приоритеты (Priority) из SRV-записей в логику `primary` / `backup`. Серверы с наименьшим числом priority считаются основными; серверы с более высоким числом priority переводятся в статус `backup`. Веса (Weight) из SRV-записей транслируются напрямую в веса балансировки Angie.
+*   **Несовместимость директивы `state` со статическими `server`:** Внутри блока `upstream`, где объявлена директива `state`, запрещено использовать директиву `server`. Начальный состав должен наполняться исключительно через API или Service Discovery.
 
 ## Дополнительная информация
 
-### Сравнение методов Service Discovery
+### Сравнение методов Service Discovery в Angie
 
-| Метод | Привязка к | Обновление | Требует PRO | Параметры сервера |
+| Критерий | DNS A/AAAA (`resolve`) | DNS SRV (`service=...`) | Docker API (`docker_endpoint`) | REST API (Angie PRO) |
 | :--- | :--- | :--- | :--- | :--- |
-| **DNS (A/AAAA)** | Доменное имя | По TTL (обычно 30–300с) | Нет | `weight`, `max_conns`, `backup` |
-| **DNS SRV** | SRV-запись | По TTL | Нет | `weight` (из SRV), `backup` |
-| **Docker labels** | Метки контейнера | Мгновенно (события) | Нет | `port`, `weight`, `max_conns`, `max_fails`, `fail_timeout`, `backup`, `slow_start`, `sid` |
-| **HTTP API** | REST-запрос | Мгновенно | **Да** | `weight`, `max_conns`, `max_fails`, `fail_timeout`, `slow_start`, `backup`, `down`, `drain` |
+| **Необходимая версия** | Angie OSS / PRO | Angie OSS / PRO | Angie OSS / PRO | **Angie PRO** |
+| **Передача порта** | Фиксированный в конфиге | **Динамический из SRV** | **Динамический из метки** | **Динамический из JSON** |
+| **Передача весов/лимитов** | Статические в конфиге | Вес из SRV | **Все параметры из меток** | **Полное управление в JSON** |
+| **Скорость реакции** | Задержка по `valid` (5–15с)| Задержка по `valid` (5–15с)| **Мгновенно (события)** | **Мгновенно (HTTP-вызов)** |
+| **Точка отказа** | DNS-сервер | DNS-сервер / Consul | Локальный Docker сокет | Оркестратор / CI/CD агент |
+| **Режим `drain`** | Нет | Нет | Нет | **Да (полная поддержка)** |
 
-### Мониторинг динамики
+### Мониторинг ключевых метрик для SRE
 
-Для проверки текущего состава апстрима используйте встроенный статус API:
-
-```bash
-# Общий статус всех HTTP upstreams
-curl -s http://127.0.0.1/status/http/upstreams/ | jq 'to_entries[] | {name: .key, servers: (.value.peers | keys)}'
-
-# Детали по конкретному upstream
-curl -s http://127.0.0.1/status/http/upstreams/pool1/ | jq '.peers[] | {server, state, weight, max_conns}'
-
-# Stream upstreams
-curl -s http://127.0.0.1/status/stream/upstreams/postgres_cluster/ | jq '.peers[] | {server, state, sessions}'
-```
-
-### Рекомендации по эксплуатации
-
-1.  **Права доступа Docker:** Если используется `unix socket`, убедитесь что пользователь `angie` добавлен в группу `docker` (`sudo usermod -aG docker angie`). После изменения групп выполните `sudo systemctl restart angie`.
-2.  **Таймауты DNS:** Всегда настраивайте `resolver_timeout` (рекомендуется `2s`–`5s`), чтобы избежать зависаний при проблемах с DNS.
-3.  **Безопасность API:** Никогда не оставляйте `api write=on` или `/config/` открытым для публичного доступа. Используйте `allow/deny` и `auth_basic`.
-4.  **State backup:** Регулярно копируйте state файлы из `/var/lib/angie/state/`. При каскадном откате на старую конфигурацию state может содержать серверы, которых уже нет в DNS/Docker.
+При использовании динамических upstream критически важно настроить алертинг на следующие метрики Status API:
+1.  **Число активных пиров в upstream:**
+    Алерт при значении `peers == 0` или падении числа доступных бэкендов ниже критического порога (`state == "up"`).
+2.  **Частота ошибок DNS-резолвера:**
+    Отношение `responses.servfail + responses.timedout` к общему числу `queries.A`. Всплеск ошибок сигнализирует о деградации DNS и риске потери бэкендов по истечении кэша.
+3.  **Переход серверов в `unhealthy`:**
+    Мониторинг счетчика `fails` и статуса доступности каждого пира.
 
 ## См. также
 
-*   **[Балансировка нагрузки HTTP в Angie](./angie_http_load_balancing.md)** — алгоритмы, health checks, Docker discovery.
-*   **[Балансировка и проксирование L4 (TCP/UDP)](./l4_balancing_and_proxying.md)** — динамические upstream в stream-контексте.
-*   **[Мониторинг Angie — API](./angie_monitoring/angie_monitoring_api.md)** — эндпоинты `/status/http/upstreams/<upstream>/` и `/status/stream/upstreams/<upstream>/`.
+*   **[Балансировка нагрузки HTTP в Angie](./angie_http_load_balancing.md)** — алгоритмы балансировки (round-robin, least_conn, hash), пассивные и активные проверки доступности.
+*   **[Балансировка и проксирование L4 (TCP/UDP)](./l4_balancing_and_proxying.md)** — динамические upstream в контексте модуля `stream` для кластеров баз данных и очередей сообщений.
+*   **[Мониторинг Angie — API](./angie_monitoring/angie_monitoring_api.md)** — описание эндпоинтов `/status/http/upstreams/` и `/status/resolvers/`.
+*   **[Мониторинг Angie PRO — расширенные возможности](./angie_monitoring/angie_monitoring_pro.md)** — подробная спецификация конфигурационного REST API (`/config/`), операции над upstream и keyval-хранилищами.
+*   **[Обзор Service Discovery](../../Concepts/service-discovery-overview.md)** — теоретические основы обнаружения сервисов, сравнение серверной и клиентской моделей.

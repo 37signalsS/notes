@@ -1,647 +1,977 @@
----
-reliability: 10
-updated: 2026-09-24
----
-
 # Let's Encrypt и Certbot — HTTPS для веб-серверов
+
+**Актуально для:** Certbot 5.8.x
 
 ## Определения
 
-**Let's Encrypt** — некоммерческий центр сертификации (CA, Certificate Authority), предоставляющий бесплатные SSL/TLS сертификаты через протокол ACME (RFC 8555). Основан EFF, Mozilla и другими организациями. Выпускает только DV (Domain Validation) сертификаты с 90-дневным сроком действия.
+**Let's Encrypt** — некоммерческий общественный центр сертификации (CA, Certificate Authority) под управлением Internet Security Research Group (ISRG). Предоставляет бесплатные сертификаты X.509 Domain Validation (DV) со стандартным сроком действия 90 дней через протокол ACME (RFC 8555).
 
-**ACME (Automated Certificate Management Environment)** — протокол автоматизированного управления сертификатами: получение, обновление, отзыв TLS-сертификатов без участия человека. В 2026 году используется ACME v2 (`acme-v02.api.letsencrypt.org`). ACME v1 устарел и не поддерживается.
+**ACME (Automated Certificate Management Environment, RFC 8555)** — стандарт протокола клиент-серверного взаимодействия, предназначенный для полной автоматизации жизненного цикла TLS-сертификатов: проверки владения идентификаторами (доменными именами и IP-адресами), выпуска, ротации и отзыва сертификатов без ручного вмешательства администратора. Используется исключительно ACME v2 API; протокол ACME v1 признан устаревшим и отключен.
 
-**ACME v2 Endpoint (Production)** — `https://acme-v02.api.letsencrypt.org/directory`
+**ACME v2 Directory Endpoints:**
+* **Production:** `https://acme-v02.api.letsencrypt.org/directory` — рабочий удостоверяющий центр с жесткими лимитами запросов.
+* **Staging:** `https://acme-staging-v02.api.letsencrypt.org/directory` — изолированная среда для отладки конфигураций, выпускающая недоверенные (fake) сертификаты с повышенными квотами.
 
-**ACME v2 Endpoint (Staging)** — `https://acme-staging-v02.api.letsencrypt.org/directory`
+**Certbot** — официальный консольный ACME-клиент, разрабатываемый Electronic Frontier Foundation (EFF) на Python 3. Поддерживает модульную архитектуру плагинов: аутентификаторы (authenticators) для прохождения проверок владения, установщики (installers) для автоматической модификации конфигураций веб-серверов, а также гибридные решения.
 
-**Certbot** — официальный инструмент EFF (Electronic Frontier Foundation) для автоматического получения и обновления сертификатов Let's Encrypt. Поддерживает плагины для Nginx, Apache и методы webroot, standalone, manual. Актуальная версия на 2026 год: **5.8.0**.
+**Webroot (HTTP-01)** — метод аутентификации, при котором Certbot сохраняет одноразовые валидационные токены в файловую систему существующего веб-сервера по пути `/.well-known/acme-challenge/`. Не требует остановки веб-сервера.
 
-**Webroot** — метод авторизации ACME: проверочный файл размещается в `.well-known/acme-challenge/` на веб-сервере.
+**Standalone** — метод аутентификации, при котором Certbot временно запускает встроенный веб-сервер на TCP-порту 80 (или 443 для TLS-ALPN-01). Применяется на серверах без постоянного веб-демона или во время инициализации хоста.
 
-**Standalone** — метод авторизации, при котором Certbot запускает временный веб-сервер на порту 80 или 443 для прохождения ACME challenge. Требует, чтобы порт был свободен.
+**Manual** — метод аутентификации, при котором операции подтверждения выполняются вручную либо через пользовательские скрипты-обработчики (`--manual-auth-hook` и `--manual-cleanup-hook`).
 
-**ARI (Automated Renewal Information, RFC 9773)** — расширение протокола ACME, позволяющее центру сертификации рекомендовать клиенту обновить сертификат раньше срока действия. В Certbot 4.1.0+ включен по умолчанию.
+**ARI (Automated Renewal Information, RFC 9773)** — стандартизированное расширение протокола ACME, посредством которого CA сообщает клиенту рекомендованный временной интервал ротации сертификата. Позволяет заблаговременно и плавно обновлять сертификаты при аварийном отзыве промежуточных центров или технических инцидентах. В современных версиях Certbot опрос ARI включен по умолчанию.
 
-**CT (Certificate Transparency)** — технология регистрации всех выданных сертификатов в публичных логах. ACME-клиенты (включая Certbot) добавляют SCT (Signed Certificate Timestamp) автоматически.
+**CT (Certificate Transparency, RFC 6962 / RFC 9162)** — механизм публичного аудита выдачи сертификатов через открытые append-only журналы (logs). CA обязан внедрять метки Signed Certificate Timestamp (SCT) в выпускаемые сертификаты.
 
-### Типы ключей: ECDSA и RSA
+**Renewal Hooks** — точки расширения жизненного цикла продления:
+* **Pre-hook (`--pre-hook`):** выполняется перед запуском попыток обновления (например, временное отключение файрвола).
+* **Deploy-hook (`--deploy-hook`):** выполняется строго после успешного выпуска или продления конкретного сертификата. Принимает системные переменные окружения `$RENEWED_LINEAGE` (путь к каталогу с сертификатами) и `$RENEWED_DOMAINS` (список доменов).
+* **Post-hook (`--post-hook`):** выполняется после завершения сессии `renew` независимо от результата.
 
-**ECDSA (Elliptic Curve Digital Signature Algorithm)** — ключ на основе эллиптических кривых. Certbot 5.x+: ECDSA (P-256) — тип по умолчанию. Обеспечивает высокий уровень безопасности при меньшей нагрузке на CPU.
+### Типы криптографических ключей: ECDSA и RSA
 
-**RSA (Rivest–Shamir–Adleman)** — классический тип ключа. Рекомендуемые размеры: 2048 (минимум), 4096 (высокая безопасность).
+**ECDSA (Elliptic Curve Digital Signature Algorithm)** — асимметричный алгоритм на основе эллиптических кривых. В Certbot алгоритм ECDSA с кривой P-256 (`secp256r1`) используется по умолчанию. Обеспечивает высокий уровень криптографической стойкости (эквивалент RSA-3072) при минимальном размере ключа и подписи, что снижает нагрузку на CPU и ускоряет TLS-рукопожатие.
+
+**RSA (Rivest–Shamir–Adleman)** — классический криптографический алгоритм. Поддерживаемые размеры: 2048 бит (минимально допустимый стандарт) и 4096 бит. Используется в dual-stack конфигурациях для обслуживания устаревших клиентов, не поддерживающих ECDSA.
 
 ### Лимиты запросов Let's Encrypt (Rate Limits)
 
-| Лимит | Значение |
-| :--- | :--- |
-| Повторные сертификаты (Duplicate Certificate Limit) | 50 сертификатов на домен в неделю |
-| Регистрация аккаунтов (Registration Rate Limit) | 5 регистраций на IP в час |
-| Проверки авторизации (Verification Rate Limit) | 30 проверок на домен в час |
+Центр сертификации Let's Encrypt защищает свою инфраструктуру скользящими лимитами (sliding window):
+
+| Тип лимита | Значение | Интервал | Описание и стратегия обхода |
+| :--- | :--- | :--- | :--- |
+| **Certificates per Registered Domain** | 50 сертификатов | 7 дней | Сумма сертификатов на базовый домен (eTLD+1). Объединяйте несколько поддоменов в один SAN-сертификат. |
+| **Duplicate Certificate Limit** | 5 сертификатов | 7 дней | Сертификаты с абсолютно идентичным набором доменных имен. Избегайте частых перевыпусков; для тестирования используйте `--staging`. |
+| **Failed Validation Limit** | 5 сбоев на аккаунт/хост | 1 час | Блокировка при 5 последовательных ошибках проверки. Тестируйте доступность через `--dry-run`. |
+| **New Orders Limit** | 300 заказов | 3 часа | Создание новых заказов на один аккаунт. Предотвращает перегрузку базы ACME. |
+| **Registration Rate Limit** | 10 аккаунтов на IP | 3 часа | Создание учетных записей ACME. Используйте единый аккаунт для всех узлов инфраструктуры. |
 
 ### Сертификаты для IP-адресов (Профиль shortlived)
 
-Начиная с Certbot 5.3.0, Let's Encrypt поддерживает выдачу сертификатов для IPv4-адресов через профиль **shortlived**.
-
-* **Срок действия:** 6 дней (требует частой ротации).
-* **Команда:**
+Certbot поддерживает выпуск сертификатов для публичных IPv4/IPv6-адресов через профиль **shortlived**:
+* **Срок действия:** 6–10 дней (требует непрерывного автообновления).
+* **Ограничение:** Не поддерживает приватные диапазоны RFC 1918 / RFC 4193.
+* **Синтаксис:**
 ```bash
 sudo certbot certonly \
   --preferred-profile shortlived \
-  --ip-address <ВАШ_IP> \
+  --ip-address 203.0.113.10 \
   --standalone
 ```
 
 ### Цепочки доверия Let's Encrypt
 
-**ISRG Root X1** — корневой сертификат Let's Encrypt. Корневой сертификат является самоподписанным и хранится в операционных системах. Промежуточные сертификаты:
+Путь доверия (trust path) строится от корневого центра до конечного сертификата:
+* **ISRG Root X1 (RSA)** — основной самоподписанный корневой сертификат, предустановленный во всех доверенных хранилищах современных ОС.
+* **ISRG Root X2 (ECDSA)** — корневой сертификат на эллиптических кривых для коротких цепочек.
+* **R10–R14 (RSA)** — промежуточные сертификаты (Intermediates) для подписи RSA-сертификатов (заменили устаревший R3).
+* **E5–E9 (ECDSA)** — промежуточные сертификаты для подписи ECDSA-сертификатов (заменили устаревший E1).
 
-* **R3 (RSA)** — промежуточный для RSA-сертификатов.
-* **E1 (ECDSA)** — промежуточный для ECDSA-сертификатов.
+### CAA-записи (RFC 8657)
 
-**ISRG Root X2** — новый корневой сертификат Let's Encrypt (включен в системы начиная с 2025–2026 годов).
-
-**Цепочки R10-R14 (RSA) и E5-E9 (ECDSA)** — новые цепочки доверия, которые короче и быстрее загружаются.
-
-### CAA-записи
-
-**CAA (Certification Authority Authorization, RFC 8657)** — DNS-запись, разрешающая конкретным CA выпускать сертификаты для домена.
+**CAA (Certification Authority Authorization)** — запись в DNS, позволяющая владельцу домена явно указать центры сертификации, имеющие право выпускать сертификаты:
 
 ```dns
 example.com.  IN  CAA  0 issue "letsencrypt.org"
+example.com.  IN  CAA  0 issuewild "letsencrypt.org; validationmethods=dns-01"
+example.com.  IN  CAA  0 iodef "mailto:security@example.com"
 ```
 
-## Основные концепции
+## Архитектура и принцип работы
 
-### Жизненный цикл сертификата
+### Жизненный цикл ACME-заказа
 
-1. **Получение:** Certbot запрашивает сертификат у CA через ACME-протокол.
-2. **Валидация:** CA проверяет контроль над доменом через HTTP-01, DNS-01 или другой метод.
-3. **Установка:** Certbot сохраняет сертификат в `/etc/letsencrypt/live/<domain>/`, обновляет конфигурацию веб-сервера.
-4. **Автообновление:** Certbot автоматически обновляет сертификат до истечения срока действия.
-5. **Отзыв:** `certbot revoke` отзывает сертификат (если ключ скомпрометирован или сертификат больше не нужен).
+Взаимодействие между клиентом Certbot и удостоверяющим центром Let's Encrypt строго регламентировано стандартом RFC 8555:
 
-### Методы авторизации
+```
++---------+              +---------------+              +-------------------+
+| Certbot |              |  ACME Server  |              | Validation Server |
++----+----+              +-------+-------+              +---------+---------+
+     |                           |                                |
+     | 1. POST /acme/new-order   |                                |
+     |-------------------------->|                                |
+     | 2. Challenges & Authz URLs|                                |
+     |<--------------------------|                                |
+     |                           |                                |
+     | 3. Provision Token        |                                |
+     |    (webroot/DNS/ALPN)     |                                |
+     |                           |                                |
+     | 4. POST /acme/chall/<id>  |                                |
+     |-------------------------->|                                |
+     |                           | 5. Multi-Perspective Check     |
+     |                           |------------------------------->|
+     |                           | 6. Validation OK               |
+     |                           |<-------------------------------|
+     | 7. Order Status: 'valid'  |                                |
+     |<--------------------------|                                |
+     |                           |                                |
+     | 8. POST /finalize (CSR)   |                                |
+     |-------------------------->|                                |
+     | 9. Download Certificate   |                                |
+     |<--------------------------|                                |
+```
 
-**HTTP-01** — проверка владения доменом через размещение файла по протоколу HTTP в директории `.well-known/acme-challenge/`.
+1. **New Order (Создание заказа):** Certbot отправляет список доменных имен (SAN) на эндпоинт `/acme/new-order`.
+2. **Authorizations (Авторизации):** CA возвращает список объектов авторизации с доступными типами проверок (HTTP-01, DNS-01, TLS-ALPN-01).
+3. **Provisioning (Размещение секрета):** Certbot размещает валидационный токен в файловой системе (`webroot`), обновляет DNS-зону либо настраивает TLS-ответ.
+4. **Challenge Trigger (Уведомление):** Certbot отправляет подписанный запрос CA, сигнализируя о готовности к проверке.
+5. **Multi-Perspective Validation:** Серверы Let's Encrypt выполняют параллельные запросы из нескольких географически распределенных дата-центров (vantage points), исключая атаки с перехватом локального BGP/DNS-трафика.
+6. **Finalize (Финализация):** После успешной проверки статуса Certbot генерирует закрытый ключ на стороне хоста, формирует CSR (Certificate Signing Request) и передает его на `/acme/order/<id>/finalize`.
+7. **Certificate Retrieval:** CA подписывает сертификат и отдает цепочку `fullchain.pem`.
 
-* Требует открытый 80 порт
-* Не поддерживает wildcard (групповые сертификаты)
-* Для обычных доменных сертификатов
+### Внутреннее устройство файловой структуры `/etc/letsencrypt/`
 
-**DNS-01** — проверка через TXT-запись `_acme-challenge.example.com` в DNS.
-
-* Поддерживает wildcard (`*.example.com`)
-* Не требует доступности сервера
-* Требует API DNS-провайдера
-
-**TLS-ALPN-01** — проверка через TLS-соединение на 443 порту с расширением ALPN `acme-tls/1`.
-
-* Требует открытый 443 порт
-* Подходит для CDN и reverse-proxy, где 80 порт закрыт
-* Не поддерживает wildcard
-
-> **Лучшие практики:** Рекомендуется использовать ECDSA (P-256). Let's Encrypt перешел на новые цепочки доверия (R10-R14 для RSA и E5-E9 для ECDSA), которые короче и быстрее. Поддержка ARI (Automated Renewal Information) позволяет Certbot автоматически обновлять сертификаты, если CA рекомендует это сделать раньше срока.
-
-### Директория сертификатов
+Certbot разделяет версионированное хранилище артефактов и стабильные точки монтирования через символические ссылки:
 
 ```
 /etc/letsencrypt/
-├── live/<domain>/
-│   ├── cert.pem            # Сертификат (сторонние инструменты часто используют fullchain.pem)
-│   ├── chain.pem           # Промежуточные сертификаты
-│   ├── fullchain.pem       # Сертификат + промежуточные (используется в веб-сервере)
-│   └── privkey.pem         # Приватный ключ
-├── archive/<domain>/
-│   ├── cert1.pem
-│   ├── chain1.pem
-│   ├── fullchain1.pem
-│   └── privkey1.pem
-├── renewal/                # Конфигурации для автообновления
-│   └── <domain>.conf
-└── csr/                    # Временные запросы на сертификаты
+├── accounts/
+│   └── acme-v02.api.letsencrypt.org/
+│       └── directory/
+│           └── <account_hash>/
+│               ├── meta.json         # Метаданные аккаунта
+│               ├── private_key.json  # Приватный ключ учетной записи ACME
+│               └── regr.json         # Данные регистрации
+├── archive/                          # Физическое хранилище ключей и сертификатов
+│   └── example.com/
+│       ├── cert1.pem                 # Сертификат сервера (версия 1)
+│       ├── chain1.pem                # Промежуточные сертификаты (версия 1)
+│       ├── fullchain1.pem            # Сертификат + цепочка (версия 1)
+│       └── privkey1.pem              # Приватный ключ (версия 1)
+├── live/                             # Символические ссылки на текущие версии в archive/
+│   └── example.com/
+│       ├── cert.pem -> ../../archive/example.com/cert1.pem
+│       ├── chain.pem -> ../../archive/example.com/chain1.pem
+│       ├── fullchain.pem -> ../../archive/example.com/fullchain1.pem
+│       ├── privkey.pem -> ../../archive/example.com/privkey1.pem
+│       └── README
+├── renewal/                          # Файлы конфигурации продления для каждого домена
+│   └── example.com.conf
+└── renewal-hooks/                    # Скрипты автоматизации жизненного цикла
+    ├── deploy/                       # Скрипты, исполняемые при успешном продлении
+    ├── post/                         # Скрипты, исполняемые после завершения certbot renew
+    └── pre/                          # Скрипты, исполняемые перед запуском проверки
 ```
+
+> **Важно:** Веб-серверы и балансировщики должны конфигурироваться исключительно на пути в каталоге `/etc/letsencrypt/live/<domain>/`. Прямое указание файлов из каталога `archive/` нарушает механизм автоматической ротации.
+
+### Сравнение методов валидации ACME
+
+| Метод | Сетевой порт | Поддержка Wildcard | Требования к сетевому контуру | Применимость в инфраструктуре |
+| :--- | :--- | :--- | :--- | :--- |
+| **HTTP-01** | TCP 80 (HTTP) | Нет | Порт 80 должен быть открыт в интернет. Допустим редирект 301/302 на HTTPS. | Стандарт для веб-серверов (Nginx, Apache, Angie). Не требует доступа к DNS. |
+| **DNS-01** | Любой (исходящий DNS/HTTPS) | **Да** (`*.example.com`) | Не требует входящих подключений на сервер. Требует API DNS или RFC 2136. | Изолированные контуры, DMZ, внутренние сервисы, балансировщики нагрузки. |
+| **TLS-ALPN-01** | TCP 443 (HTTPS) | Нет | Порт 443 должен быть напрямую направлен на процесс ACME. | Reverse-прокси, Edge-балансировщики, где порт 80 строго заблокирован. |
+
+### Механизм автоматического продления (Renewal Logic)
+
+Команда `certbot renew` работает по следующему алгоритму:
+1. Сканирует конфигурационные файлы в каталоге `/etc/letsencrypt/renewal/*.conf`.
+2. Опрашивает эндпоинт ARI (RFC 9773). Если CA передал окно обновления — использует его.
+3. При отсутствии данных ARI проверяет срок действия локального сертификата: если до истечения остается **менее 30 дней** (параметр `renew_before_expiry`), инициируется процесс перевыпуска.
+4. Выполняет аутентификацию с использованием параметров, сохраненных в `.conf`.
+5. При успешном получении новых файлов обновляет симлинки в `/etc/letsencrypt/live/<domain>/` на новую версию в `archive/`.
+6. Вызывает скрипты из каталога `/etc/letsencrypt/renewal-hooks/deploy/` или переданные через директиву `deploy_hook`.
 
 ## Практические сценарии
 
-### Сценарий 1: Установка Certbot (Рекомендуемый способ — Snap)
+### Сценарий 1: Установка и инициализация Certbot
 
-Использование **snapd** является официальной рекомендацией EFF, так как позволяет всегда иметь актуальную версию клиента и плагинов.
+EFF официально рекомендует установку Certbot через **snapd**, гарантирующий получение актуальных сборок и криптографических библиотек.
 
-**Предварительная подготовка (Debian/Ubuntu/CentOS):**
+#### Вариант A: Установка через Snap (Основной способ)
 
 ```bash
-# 1. Установка snapd (если не установлен)
-sudo apt install snapd        # Debian/Ubuntu
-sudo dnf install snapd        # CentOS/RHEL
+# 1. Проверка и установка snapd (Debian/Ubuntu)
+sudo apt update && sudo apt install -y snapd
+# Для RHEL/Rocky Linux: sudo dnf install -y epel-release && sudo dnf install -y snapd
 
-# 2. Удаление старых версий (если были установлены через apt/dnf)
-sudo apt-get remove certbot
+# 2. Удаление legacy-пакетов certbot
+sudo apt remove -y certbot python3-certbot-nginx python3-certbot-apache 2>/dev/null || true
 
-# 3. Установка через snap
+# 3. Установка ядра snap и классического пакета certbot
+sudo snap install core && sudo snap refresh core
 sudo snap install --classic certbot
 
-# 4. Подготовка команды certbot
-sudo ln -s /snap/bin/certbot /usr/bin/certbot
-```
+# 4. Создание системной символической ссылки
+sudo ln -sf /snap/bin/certbot /usr/bin/certbot
 
-**Установка плагина для Nginx:**
-
-```bash
-sudo snap set certbot trust-plugin-with-root=ok
-sudo snap install certbot-dns-cloudflare
-```
-
-**Проверка установки:**
-
-```bash
+# 5. Проверка установленной версии
 certbot --version
 # → certbot 5.8.0
 ```
 
-### Сценарий 2: Получение сертификата (Nginx)
-
-**Базовый сценарий:**
+#### Вариант B: Установка через системный пакетный менеджер (Для систем без snapd)
 
 ```bash
-sudo certbot --nginx -d example.com -d www.example.com
+# Debian / Ubuntu
+sudo apt update
+sudo apt install -y certbot python3-certbot-nginx python3-certbot-apache
+
+# RHEL / Rocky Linux 9 / AlmaLinux 9
+sudo dnf install -y epel-release
+sudo dnf install -y certbot python3-certbot-nginx python3-certbot-apache
 ```
 
-Certbot запросит email, согласование условий и предложит редирект HTTP → HTTPS (рекомендуется `Redirect`). Сертификаты сохраняются в `/etc/letsencrypt/live/example.com/`, конфигурация Nginx обновляется автоматически.
+### Сценарий 2: Получение и интеграция сертификатов в Nginx
 
-**Продвинутый сценарий (ECDSA + RSA):**
+#### Метод Webroot (Рекомендуемый для Production)
+
+Метод `webroot` полностью изолирует процесс валидации от внутренней маршрутизации Nginx и исключает необходимость вмешательства Certbot в системные файлы конфигурации.
+
+**Шаг 1. Создание каталога для проверки владения:**
 
 ```bash
-# ECDSA (по умолчанию в Certbot 5.x+)
-sudo certbot certonly --webroot -w /var/www/certbot \
-    --key-type ecdsa \
-    -d example.com -d www.example.com
-
-# RSA (отдельно, для совместимости)
-sudo certbot certonly --webroot -w /var/www/certbot \
-    --key-type rsa --rsa-key-size 2048 \
-    -d example.com -d www.example.com
+sudo mkdir -p /var/www/certbot
+sudo chown -R www-data:www-data /var/www/certbot
+sudo chmod -R 755 /var/www/certbot
 ```
 
-**Nginx для двух сертификатов:**
+**Шаг 2. Конфигурация Nginx для прохождения HTTP-01:**
+
+В конфигурации виртуального хоста `/etc/nginx/conf.d/example.com.conf`:
 
 ```nginx
 server {
-    listen 443 ssl http2;
-    server_name example.com;
+    listen 80;
+    listen [::]:80;
+    server_name example.com www.example.com;
 
-    # ECDSA (Основной)
-    ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+    # Обработка ACME-валидации Let's Encrypt
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type "text/plain";
+        try_files $uri =404;
+    }
 
-    # RSA (Для старых клиентов, если выпущен отдельно)
-    # ssl_certificate /etc/letsencrypt/live/example.com-rsa/fullchain.pem;
-    # ssl_certificate_key /etc/letsencrypt/live/example.com-rsa/privkey.pem;
+    # Принудительный редирект всего остального трафика на HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
 }
 ```
 
-**Валидация перед использованием:**
+Проверка синтаксиса и применение настроек:
 
 ```bash
 sudo nginx -t
+# → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
 # → nginx: configuration file /etc/nginx/nginx.conf test is successful
 
 sudo systemctl reload nginx
 ```
 
-### Сценарий 3: Получение сертификата (Apache)
-
-**Установка Certbot (Legacy apt):**
+**Шаг 3. Запрос сертификата в режиме certonly:**
 
 ```bash
-sudo apt update
-sudo apt install certbot python3-certbot-apache
+sudo certbot certonly \
+  --webroot \
+  -w /var/www/certbot \
+  -d example.com \
+  -d www.example.com \
+  --agree-tos \
+  --email admin@example.com \
+  --no-eff-email \
+  --key-type ecdsa
+# → Successfully received certificate.
+# → Certificate is saved at: /etc/letsencrypt/live/example.com/fullchain.pem
+# → Key is saved at:         /etc/letsencrypt/live/example.com/privkey.pem
 ```
 
-**Получение сертификата:**
+**Шаг 4. Настройка TLS-блока с Dual-Stack (ECDSA + RSA):**
+
+Для обеспечения максимальной производительности современных клиентов и совместимости со старыми системами выпускается два сертификата:
 
 ```bash
-sudo certbot --apache -d example.com -d www.example.com
+# Выпуск дополнительного RSA-сертификата в отдельный каталог
+sudo certbot certonly \
+  --webroot \
+  -w /var/www/certbot \
+  --cert-name example.com-rsa \
+  -d example.com -d www.example.com \
+  --key-type rsa \
+  --rsa-key-size 2048 \
+  --agree-tos \
+  --email admin@example.com
 ```
 
-**Ручная установка (certonly):**
+Итоговый HTTPS-блок в `/etc/nginx/conf.d/example.com.conf`:
+
+```nginx
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name example.com www.example.com;
+
+    # ECDSA (Первичный, высокий приоритет)
+    ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+
+    # RSA (Вторичный, для устаревших клиентов)
+    ssl_certificate /etc/letsencrypt/live/example.com-rsa/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com-rsa/privkey.pem;
+
+    # Оптимизация параметров TLS
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+    # OCSP Stapling
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    ssl_trusted_certificate /etc/letsencrypt/live/example.com/chain.pem;
+    resolver 127.0.0.53 1.1.1.1 valid=300s;
+    resolver_timeout 5s;
+
+    # HSTS (Strict-Transport-Security)
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+
+    location / {
+        root /var/www/html;
+        index index.html;
+    }
+}
+```
 
 ```bash
-sudo certbot certonly --webroot -w /var/www/html \
-    -d example.com -d www.example.com
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-**Конфигурация Apache (VirtualHost):**
+### Сценарий 3: Настройка для Apache HTTP Server
+
+```bash
+# Получение сертификата через webroot для Apache
+sudo certbot certonly \
+  --webroot \
+  -w /var/www/html \
+  -d example.com -d www.example.com \
+  --agree-tos \
+  --email admin@example.com
+```
+
+Конфигурация VirtualHost в `/etc/apache2/sites-available/example.com-ssl.conf`:
 
 ```apache
 <VirtualHost *:443>
     ServerName example.com
     ServerAlias www.example.com
+    DocumentRoot /var/www/html
 
     SSLEngine on
     SSLCertificateFile /etc/letsencrypt/live/example.com/fullchain.pem
     SSLCertificateKeyFile /etc/letsencrypt/live/example.com/privkey.pem
 
-    DocumentRoot /var/www/html
+    # Безопасные протоколы и шифры
+    SSLProtocol all -SSLv3 -TLSv1 -TLSv1.1
+    SSLCipherSuite ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384
+    SSLHonorCipherOrder off
+
+    # Включение OCSP Stapling
+    SSLUseStapling on
 </VirtualHost>
+
+<IfModule mod_ssl.c>
+    SSLStaplingCache shmcb:/var/run/apache2/stapling_cache(512000)
+</IfModule>
 ```
 
-**Валидация:**
+Проверка конфигурации и применение:
 
 ```bash
 sudo apachectl configtest
 # → Syntax OK
 
-sudo systemctl reload httpd
+sudo systemctl reload apache2
 ```
 
-### Сценарий 4: Wildcard-сертификат через DNS-01
+### Сценарий 4: Интеграция с HAProxy через объединенный PEM-файл
 
-**Подготовка API ключа (Cloudflare):**
+Балансировщик HAProxy требует объединения закрытого ключа и сертификата с промежуточными центрами в единый файл формата `.pem`.
 
-```bash
-export CF_Key="your_cloudflare_api_key"
-export CF_Email="your_cloudflare_email"
-```
+**Шаг 1. Создание скрипта-обработчика Deploy Hook:**
 
-**Получение wildcard-сертификата:**
-
-```bash
-# ECDSA
-sudo certbot certonly --dns-cloudflare \
-    -d example.com \
-    -d "*.example.com" \
-    --key-type ecdsa
-
-# RSA (отдельно, для совместимости)
-sudo certbot certonly --dns-cloudflare \
-    -d example.com \
-    -d "*.example.com" \
-    --key-type rsa --rsa-key-size 2048
-```
-
-**Поддерживаемые DNS-провайдеры (плагины certbot-dns-*):**
-
-* `certbot-dns-cloudflare`
-* `certbot-dns-route53` (AWS)
-* `certbot-dns-google`
-* `certbot-dns-digitalocean`
-* `certbot-dns-ovh`
-* `certbot-dns-rfc2136` (Bind9, PowerDNS)
-* `certbot-dns-linode`
-* `certbot-dns-godaddy`
-* И более 30 других.
-
-### Сценарий 5: Standalone (без веб-сервера)
-
-**Использование socat для временного сервера:**
-
-```bash
-# Установка socat
-sudo apt install socat
-
-# Получение сертификата
-sudo certbot certonly --standalone \
-    -d example.com -d www.example.com
-```
-
-**Для Nginx на порту 80/443 требуется остановка перед запуском:**
-
-```bash
-sudo systemctl stop nginx
-sudo certbot certonly --standalone -d example.com
-sudo systemctl start nginx
-```
-
-### Сценарий 6: Автоматическое обновление
-
-**При установке через Snap:** таймер настраивается автоматически. Проверка:
-
-```bash
-sudo systemctl list-timers | grep certbot
-# → snap.certbot.renew.service
-
-sudo systemctl status snap.certbot.renew.service
-# → Active: active (exited)
-```
-
-**Классический метод (Legacy):**
-* **Debian/Ubuntu:** таймер `systemd` (`certbot.timer`).
-* **CentOS:** задача в `cron`.
-
-**Ручная проверка продления:**
-
-```bash
-sudo certbot renew --dry-run
-```
-
-**Принудительное продление:**
-
-```bash
-sudo certbot renew --force-renewal
-```
-
-**Post-hooks (выполнение команд после обновления):**
-
-```bash
-sudo certbot renew --post-hook "systemctl reload nginx"
-```
-
-Или в конфигурации `/etc/letsencrypt/renewal/<domain>.conf`:
-
-```ini
-post_hook = systemctl reload nginx
-```
-
-### Сценарий 7: Firewall и SELinux/AppArmor
-
-**UFW (Uncomplicated Firewall):**
-
-```bash
-sudo ufw allow http/tcp
-sudo ufw allow https/tcp
-sudo ufw status
-# → Status: active
-
-# → http      ALLOW IN    Anywhere
-# → https     ALLOW IN    Anywhere
-```
-
-**firewalld (CentOS/RHEL):**
-
-```bash
-sudo firewall-cmd --permanent --add-service={http,https}
-sudo firewall-cmd --reload
-
-sudo firewall-cmd --list-all
-# → services: http, https, ssh
-```
-
-**SELinux (CentOS/RHEL):**
-
-```bash
-# Проверка контекста
-sudo ls -la /etc/letsencrypt/live/
-# → system_u:object_r:cert_t:s0
-
-# Разрешение веб-серверу читать сертификаты
-sudo restorecon -Rv /etc/letsencrypt/
-sudo chmod -R o+rx /etc/letsencrypt/live/
-
-# Для Nginx
-sudo setsebool -P httpd_read_user_content 1
-sudo setsebool -P httpd_can_network_connect 1
-```
-
-**AppArmor (Ubuntu/Debian):**
-
-```bash
-sudo aa-status | grep nginx
-# → nginx confined by /etc/apparmor.d/usr.sbin.nginx
-
-sudo aa-complain /usr/sbin/nginx
-sudo systemctl reload nginx
-```
-
-### Сценарий 8: Резервное копирование сертификатов
-
-```bash
-# Архивирование директории letsencrypt
-sudo tar czf /backup/letsencrypt-$(date +%F).tar.gz \
-    /etc/letsencrypt/ \
-    /var/lib/snapd/certs/
-
-# Резервное копирование конкретного домена
-sudo tar czf /backup/cert-example.com-$(date +%F).tar.gz \
-    -C /etc/letsencrypt/live/example.com .
-```
-
-### Сценарий 9: Мониторинг сроков действия
+`/etc/letsencrypt/renewal-hooks/deploy/haproxy-concat.sh`:
 
 ```bash
 #!/bin/bash
-# cert-monitor.sh — мониторинг сроков действия сертификатов
+set -euo pipefail
 
-DOMAINS=("example.com" "www.example.com")
-DAYS_WARN=30
-DAYS_CRIT=7
+# Каталог для сертификатов HAProxy
+HAPROXY_CERT_DIR="/etc/haproxy/certs"
+mkdir -p "$HAPROXY_CERT_DIR"
 
-for DOMAIN in "${DOMAINS[@]}"; do
-    EXP_DATE=$(echo | openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" 2>/dev/null | \
-      openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
-
-    if [ -z "$EXP_DATE" ]; then
-      echo "CRITICAL: Unable to fetch certificate for $DOMAIN"
-      continue
-    fi
-
-    EXP_EPOCH=$(date -d "$EXP_DATE" +%s)
-    NOW_EPOCH=$(date +%s)
-    DAYS_LEFT=$(( ($EXP_EPOCH - $NOW_EPOCH) / 86400 ))
-
-    if [ "$DAYS_LEFT" -lt "$DAYS_CRIT" ]; then
-      echo "CRITICAL: Certificate for $DOMAIN expires in $DAYS_LEFT days"
-    elif [ "$DAYS_LEFT" -lt "$DAYS_WARN" ]; then
-      echo "WARNING: Certificate for $DOMAIN expires in $DAYS_LEFT days"
-    else
-      echo "OK: Certificate for $DOMAIN expires in $DAYS_LEFT days"
+for DOMAIN in $RENEWED_DOMAINS; do
+    # Проверяем наличие каталога live
+    if [ -d "$RENEWED_LINEAGE" ]; then
+        TARGET_FILE="${HAPROXY_CERT_DIR}/$(basename "$RENEWED_LINEAGE").pem"
+        cat "${RENEWED_LINEAGE}/fullchain.pem" "${RENEWED_LINEAGE}/privkey.pem" > "$TARGET_FILE"
+        chmod 600 "$TARGET_FILE"
+        chown haproxy:haproxy "$TARGET_FILE"
     fi
 done
+
+# Валидация и перезагрузка конфигурации HAProxy
+haproxy -c -f /etc/haproxy/haproxy.cfg
+systemctl reload haproxy
 ```
 
-### Сценарий 10: SSL Labs тестирование
+```bash
+sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/haproxy-concat.sh
+```
+
+**Шаг 2. Первичный выпуск с ручным вызовом сборки:**
 
 ```bash
-# Проверка через openssl
+sudo certbot certonly \
+  --standalone \
+  --http-01-port 8888 \
+  -d lb.example.com \
+  --agree-tos \
+  --email admin@example.com
+
+# Ручное выполнение хука для создания первого pem-файла
+RENEWED_DOMAINS="lb.example.com" \
+RENEWED_LINEAGE="/etc/letsencrypt/live/lb.example.com" \
+sudo /etc/letsencrypt/renewal-hooks/deploy/haproxy-concat.sh
+```
+
+### Сценарий 5: Standalone-режим (Для изолированных узлов)
+
+Если на хосте отсутствует запущенный веб-сервер, Certbot поднимает собственный слушающий сокет:
+
+```bash
+# Получение сертификата на чистом сервере
+sudo certbot certonly \
+  --standalone \
+  --preferred-challenges http \
+  -d service.example.com \
+  --agree-tos \
+  --email admin@example.com
+```
+
+Если порт 80 уже занят сторонним сервисом (не поддерживающим webroot), используются pre-hook и post-hook для кратковременной остановки:
+
+```bash
+sudo certbot certonly \
+  --standalone \
+  --pre-hook "systemctl stop my-custom-daemon" \
+  --post-hook "systemctl start my-custom-daemon" \
+  -d service.example.com
+```
+
+### Сценарий 6: On-Premise Wildcard через DNS-01 и RFC 2136 (BIND9)
+
+Для выпуска wildcard-сертификатов (`*.example.com`) в изолированных корпоративных инфраструктурах без обращения к публичным облачным API используется протокол динамических обновлений DNS (RFC 2136).
+
+**Шаг 1. Установка плагина:**
+
+```bash
+# Для snap
+sudo snap install certbot-dns-rfc2136
+sudo snap set certbot trust-plugin-with-root=ok
+sudo snap connect certbot:plugin certbot-dns-rfc2136
+
+# Для apt
+# sudo apt install -y python3-certbot-dns-rfc2136
+```
+
+**Шаг 2. Генерация TSIG-ключа на DNS-сервере (BIND9):**
+
+```bash
+tsig-keygen -a HMAC-SHA512 certbot-key
+```
+
+Добавление ключа и политики обновления в `named.conf.local`:
+
+```named
+key "certbot-key" {
+    algorithm hmac-sha512;
+    secret "hP4mQ6J...==";
+};
+
+zone "example.com" {
+    type master;
+    file "/var/lib/bind/db.example.com";
+    update-policy {
+        grant certbot-key name _acme-challenge.example.com. txt;
+    };
+};
+```
+
+**Шаг 3. Настройка конфигурационного файла на хосте Certbot:**
+
+Создание защищенного файла `/etc/letsencrypt/rfc2136.ini`:
+
+```ini
+# IP-адрес первичного DNS-сервера (Master)
+dns_rfc2136_server = 192.168.10.53
+# Сетевой порт DNS
+dns_rfc2136_port = 53
+# Имя ключа TSIG
+dns_rfc2136_name = certbot-key
+# Секретный ключ
+dns_rfc2136_secret = hP4mQ6J...==
+# Алгоритм подписи
+dns_rfc2136_algorithm = HMAC-SHA512
+```
+
+```bash
+sudo chmod 600 /etc/letsencrypt/rfc2136.ini
+```
+
+**Шаг 4. Выпуск Wildcard-сертификата:**
+
+```bash
+sudo certbot certonly \
+  --dns-rfc2136 \
+  --dns-rfc2136-credentials /etc/letsencrypt/rfc2136.ini \
+  --dns-rfc2136-propagation-seconds 30 \
+  -d example.com \
+  -d "*.example.com" \
+  --agree-tos \
+  --email admin@example.com
+```
+
+### Сценарий 7: Выпуск сертификата для публичного IP-адреса
+
+Выпуск сертификата для хостов, доступных исключительно по IP-адресу (без DNS-имени), через профиль `shortlived`:
+
+```bash
+sudo certbot certonly \
+  --preferred-profile shortlived \
+  --ip-address 198.51.100.25 \
+  --webroot \
+  -w /var/www/certbot \
+  --agree-tos \
+  --email admin@example.com
+```
+
+Проверка сертификата утилитой OpenSSL:
+
+```bash
+openssl x509 -in /etc/letsencrypt/live/198.51.100.25/cert.pem -noout -text | grep -A1 "Subject Alternative Name"
+# → X509v3 Subject Alternative Name:
+# →     IP Address:198.51.100.25
+```
+
+### Сценарий 8: Автоматизация продления через systemd-таймеры и Deploy-Hooks
+
+#### Управление таймером systemd
+
+При установке через Snap Certbot автоматически регистрирует таймер `snap.certbot.renew.timer`. При установке из DEB/RPM пакетов создается `certbot.timer`.
+
+Проверка статуса таймеров:
+
+```bash
+sudo systemctl list-timers | grep certbot
+# → snap.certbot.renew.timer  Tue 2026-10-14 23:45:00 UTC  1h 12min left
+
+sudo systemctl status snap.certbot.renew.timer
+# → Active: active (waiting)
+```
+
+Инспекция юнита таймера:
+
+```bash
+systemctl cat snap.certbot.renew.timer
+```
+
+Обратите внимание на параметр `RandomizedDelaySec`: он распределяет время запуска службы по случайному интервалу, исключая одновременную нагрузку на серверы Let's Encrypt.
+
+#### Создание отказоустойчивого Deploy Hook
+
+Скрипты, размещенные в `/etc/letsencrypt/renewal-hooks/deploy/`, выполняются автоматически только при фактическом обновлении сертификатов.
+
+Создание скрипта `/etc/letsencrypt/renewal-hooks/deploy/01-reload-webservers.sh`:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Deploy hook triggered for domains: $RENEWED_DOMAINS" >> /var/log/letsencrypt/deploy-hook.log
+
+# 1. Перезагрузка Nginx при его наличии и успешном тесте синтаксиса
+if systemctl is-active --quiet nginx; then
+    if nginx -t >/dev/null 2>&1; then
+        systemctl reload nginx
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Nginx successfully reloaded" >> /var/log/letsencrypt/deploy-hook.log
+    else
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] CRITICAL: Nginx config test failed! Reload aborted." >> /var/log/letsencrypt/deploy-hook.log
+    fi
+fi
+
+# 2. Перезагрузка Apache при его наличии
+if systemctl is-active --quiet apache2; then
+    if apachectl configtest >/dev/null 2>&1; then
+        systemctl reload apache2
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Apache2 successfully reloaded" >> /var/log/letsencrypt/deploy-hook.log
+    fi
+fi
+```
+
+```bash
+sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/01-reload-webservers.sh
+```
+
+#### Настройка оповещения администраторов при сбое обновления (OnFailure)
+
+Для отслеживания сбоев продления создается служебный юнит аварийного оповещения.
+
+Создание обработчика `/etc/systemd/system/alert-failed-renewal@.service`:
+
+```ini
+[Unit]
+Description=Alert on Certbot Renewal Failure (%I)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/send-alert.sh "CERTBOT CRITICAL: Service %I failed on %H. Check journalctl -u %I"
+```
+
+Переопределение сервиса через drop-in конфигурацию:
+
+```bash
+sudo mkdir -p /etc/systemd/system/snap.certbot.renew.service.d/
+sudo tee /etc/systemd/system/snap.certbot.renew.service.d/override.conf << 'EOF'
+[Unit]
+OnFailure=alert-failed-renewal@%n.service
+EOF
+
+sudo systemctl daemon-reload
+```
+
+### Сценарий 9: Настройка прав доступа, POSIX ACL и SELinux/AppArmor
+
+По умолчанию каталог `/etc/letsencrypt/live/` и закрытые ключи в `archive/` доступны только пользователю `root` (права `0700` / `0600`). Веб-серверы (Nginx, Lighttpd, Angie), запускаемые от имени непривилегированных пользователей (`www-data`, `nginx`), требуют гранулярного доступа.
+
+#### Вариант A: Использование POSIX ACL (Рекомендуемый)
+
+```bash
+# Предоставление прав на чтение каталогов live и archive
+sudo setfacl -R -m u:www-data:rX /etc/letsencrypt/live/
+sudo setfacl -R -m u:www-data:rX /etc/letsencrypt/archive/
+
+# Установка прав по умолчанию для вновь создаваемых файлов в archive/
+sudo setfacl -R -d -m u:www-data:rX /etc/letsencrypt/archive/
+```
+
+#### Вариант B: Групповые права через chgrp
+
+```bash
+sudo groupadd -f ssl-cert
+sudo usermod -aG ssl-cert www-data
+
+sudo chgrp -R ssl-cert /etc/letsencrypt/live /etc/letsencrypt/archive
+sudo chmod 750 /etc/letsencrypt/live /etc/letsencrypt/archive
+sudo chmod 640 /etc/letsencrypt/archive/*/*.pem
+```
+
+#### SELinux (RHEL, Rocky Linux, AlmaLinux)
+
+Если SELinux работает в режиме `Enforcing`, веб-сервер `httpd`/`nginx` может получить отказ `Permission denied` при попытке прочитать сертификаты:
+
+```bash
+# Проверка текущего контекста безопасности
+sudo ls -lZ /etc/letsencrypt/live/example.com/
+# → lrwxrwxrwx. root root system_u:object_r:cert_t:s0 fullchain.pem -> ../../archive/example.com/fullchain1.pem
+
+# Восстановление стандартного контекста cert_t
+sudo semanage fcontext -a -t cert_t "/etc/letsencrypt/(live|archive)(/.*)?" 2>/dev/null || true
+sudo restorecon -Rv /etc/letsencrypt/
+
+# Разрешение Nginx сетевых подключений для проксирования и валидации
+sudo setsebool -P httpd_can_network_connect 1
+```
+
+#### AppArmor (Ubuntu / Debian)
+
+Если профиль Nginx в AppArmor блокирует доступ к каталогу сертификатов:
+
+```bash
+# Проверка блокировок в аудит-логе
+sudo dmesg | grep -i apparmor | grep -i letsencrypt
+
+# Добавление локального правила в /etc/apparmor.d/local/usr.sbin.nginx:
+echo "/etc/letsencrypt/archive/** r," | sudo tee -a /etc/apparmor.d/local/usr.sbin.nginx
+echo "/etc/letsencrypt/live/** r," | sudo tee -a /etc/apparmor.d/local/usr.sbin.nginx
+
+# Перезагрузка профиля AppArmor
+sudo apparmor_parser -r /etc/apparmor.d/usr.sbin.nginx
+```
+
+### Сценарий 10: Резервное копирование и Disaster Recovery
+
+При резервном копировании критически важно сохранить симлинки и каталог `accounts/`. Утрата приватного ключа аккаунта лишает возможности отзывать или изменять параметры существующих сертификатов через старую учетную запись.
+
+#### Создание резервной копии:
+
+```bash
+# Архивирование с сохранением относительных символических ссылок
+sudo tar -czpf /var/backups/letsencrypt-backup-$(date +%F).tar.gz \
+  -C /etc letsencrypt
+
+# Проверка содержимого архива
+tar -ztvf /var/backups/letsencrypt-backup-$(date +%F).tar.gz | grep live/
+```
+
+#### Аварийное восстановление:
+
+```bash
+# Остановка сервисов, зависящих от сертификатов
+sudo systemctl stop nginx
+
+# Восстановление каталога
+sudo tar -xzpf /var/backups/letsencrypt-backup-2026-10-14.tar.gz -C /etc/
+
+# Проверка целостности символических ссылок
+ls -l /etc/letsencrypt/live/*/
+# Если симлинки указывают на существующие файлы в ../../archive/<domain>/ — структура корректна
+
+sudo systemctl start nginx
+```
+
+### Сценарий 11: Мониторинг срока действия TLS-сертификатов
+
+#### Интеграция с Prometheus через blackbox_exporter
+
+Стандартным SRE-подходом к мониторингу публичных TLS-сертификатов является blackbox-тестирование из внешней сети.
+
+Конфигурация модуля в `blackbox.yml`:
+
+```yaml
+modules:
+  tls_connect:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      tls: true
+      tls_config:
+        insecure_skip_verify: false
+```
+
+Конфигурация сбора метрик в `prometheus.yml`:
+
+```yaml
+scrape_configs:
+  - job_name: 'blackbox-ssl'
+    metrics_path: /probe
+    params:
+      module: [tls_connect]
+    static_configs:
+      - targets:
+          - example.com:443
+          - www.example.com:443
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 127.0.0.1:9115  # Адрес blackbox-экспортера
+```
+
+Prometheus Alerting Rule (`alert-rules.yml`):
+
+```yaml
+groups:
+  - name: ssl_expiry_alerts
+    rules:
+      - alert: SSLCertificateExpiringSoon
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 14
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TLS certificate for {{ $labels.instance }} expires in {{ $value | printf \"%.1f\" }} days"
+          description: "Certbot renewal might have failed. Check journalctl -u snap.certbot.renew.service on the host."
+
+      - alert: SSLCertificateCriticalExpiry
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CRITICAL: TLS certificate for {{ $labels.instance }} expires in less than 3 days!"
+```
+
+#### Локальный Bash-скрипт мониторинга (для Nagios / Zabbix / Cron)
+
+Скрипт проверяет сертификаты непосредственно на хосте и возвращает стандартные коды завершения (0 — OK, 1 — Warning, 2 — Critical):
+
+```bash
+#!/bin/bash
+# /usr/local/bin/check-cert-expiry.sh
+set -euo pipefail
+
+WARN_DAYS=21
+CRIT_DAYS=7
+EXIT_CODE=0
+
+for CERT in /etc/letsencrypt/live/*/cert.pem; do
+    [ -f "$CERT" ] || continue
+    DOMAIN=$(basename "$(dirname "$CERT")")
+    END_DATE=$(openssl x509 -enddate -noout -in "$CERT" | cut -d= -f2)
+    END_EPOCH=$(date -d "$END_DATE" +%s)
+    NOW_EPOCH=$(date +%s)
+    DAYS_LEFT=$(( (END_EPOCH - NOW_EPOCH) / 86400 ))
+
+    if [ "$DAYS_LEFT" -le "$CRIT_DAYS" ]; then
+        echo "CRITICAL: Certificate for $DOMAIN expires in $DAYS_LEFT days ($END_DATE)"
+        EXIT_CODE=2
+    elif [ "$DAYS_LEFT" -le "$WARN_DAYS" ]; then
+        echo "WARNING: Certificate for $DOMAIN expires in $DAYS_LEFT days ($END_DATE)"
+        [ "$EXIT_CODE" -lt 1 ] && EXIT_CODE=1
+    else
+        echo "OK: Certificate for $DOMAIN valid for $DAYS_LEFT days"
+    fi
+done
+
+exit "$EXIT_CODE"
+```
+
+```bash
+sudo chmod +x /usr/local/bin/check-cert-expiry.sh
+sudo /usr/local/bin/check-cert-expiry.sh
+# → OK: Certificate for example.com valid for 88 days
+```
+
+### Сценарий 12: Тестирование TLS-конфигурации и OCSP Stapling
+
+```bash
+# 1. Проверка валидности цепочки и протокола TLS 1.3
+echo | openssl s_client -connect example.com:443 -servername example.com 2>&1 | \
+  grep -E "Protocol|Cipher|Verify return code"
+# → Protocol  : TLSv1.3
+# → Cipher    : TLS_AES_256_GCM_SHA384
+# → Verify return code: 0 (ok)
+
+# 2. Проверка работы OCSP Stapling
 echo | openssl s_client -connect example.com:443 -servername example.com -status 2>&1 | \
-  grep -E "Protocol|Cipher|OCSP"
+  grep -A 17 "OCSP response:" | head -n 10
+# → OCSP Response Status: successful (0x0)
+# → Cert Status: good
 
-# Проверка версии OpenSSL
-openssl version -a
-# → OpenSSL 3.5.0 15 Oct 2026
-
-# Проверка цепочки сертификатов
-echo | openssl s_client -connect example.com:443 -servername example.com -showcerts 2>&1 | \
-  grep -E "s:|i:"
+# 3. Проверка срока действия удаленного сертификата без браузера
+echo | openssl s_client -connect example.com:443 -servername example.com 2>/dev/null | \
+  openssl x509 -noout -dates
+# → notBefore=Oct 14 18:00:00 2026 GMT
+# → notAfter=Jan 12 18:00:00 2027 GMT
 ```
 
 ## Операции и команды
 
-### Основные команды
+### Команды управления сертификатами
 
-| Команда | Назначение |
-| :--- | :--- |
-| `certbot --nginx -d <domain>` | Получение и автоматическая установка сертификата в Nginx |
-| `certbot --apache -d <domain>` | Получение и автоматическая установка сертификата в Apache |
-| `certbot certonly --webroot -w <path> -d <domain>` | Получение сертификата без установки (webroot метод) |
-| `certbot certonly --standalone -d <domain>` | Получение сертификата через временный сервер (standalone) |
-| `certbot certonly --dns-<provider> -d <domain>` | Получение сертификата через DNS-01 |
-| `certbot renew` | Обновление всех сертификатов, близких к истечению |
-| `certbot renew --dry-run` | Тестовое обновление без реальной замены |
-| `certbot renew --force-renewal` | Принудительное обновление всех сертификатов |
-| `certbot renew --post-hook "<cmd>"` | Выполнение команды после обновления |
-| `certbot certificates` | Список всех сертификатов и сроков действия |
-| `certbot revoke --cert-path <path>` | Отзыв сертификата |
-| `certbot delete -d <domain>` | Удаление сертификата из базы Certbot |
-| `certbot register --update-registration` | Обновление email аккаунта |
-| `certbot plugins` | Список доступных плагинов |
-| `certbot --staging --nginx -d <domain>` | Получение тестового сертификата (staging) |
-
-### Диагностические команды
-
-| Команда | Назначение |
-| :--- | :--- |
-| `openssl x509 -in <file> -text -noout` | Детали сертификата |
-| `openssl x509 -in <file> -enddate -noout` | Дата истечения срока действия |
-| `openssl s_client -connect <host>:443 -servername <host>` | Проверка TLS-рукопожатия |
-| `openssl s_client -connect <host>:443 -status` | Проверка OCSP Stapling |
-| `echo | openssl s_client -connect <host>:443 -reconnect 5 \| grep "Reused"` | Проверка session resumption |
-| `certbot renew --force-renewal --post-hook "systemctl reload nginx"` | Принудительное обновление с перезагрузкой Nginx |
-| `systemctl list-timers \| grep certbot` | Проверка таймера автоматического обновления |
-| `journalctl -u snap.certbot.renew.service --since "1 hour ago"` | Логи автообновления Certbot |
-| `nginx -t` | Проверка синтаксиса Nginx |
-| `apachectl configtest` | Проверка синтаксиса Apache |
-
-## Диагностика ошибок
-
-### Типичные ошибки и решения
-
-| Ошибка | Причина | Решение |
+| Команда | Назначение | Пояснение и контекст использования |
 | :--- | :--- | :--- |
-| **DNS error** | DNS-запись не обновилась | Подождать 1–5 минут (учитывая TTL), проверить `dig TXT _acme-challenge.example.com` |
-| **404 Not Found** | Неправильный webroot / конфигурация location | Проверить путь, конфигурацию `location` у веб-сервера, права доступа |
-| **Rate limit exceeded** | Превышен лимит CA | Прекратить попытки, устранить причину, дождаться сброса. Для тестов использовать staging |
-| **Connection refused** | 80 порт закрыт | Открыть 80 порт или использовать DNS-01 |
-| **Invalid response** | CA не может получить доступ к проверочному файлу | Проверить файрвол, CDN, WAF; убедиться что запрос `http://example.com/.well-known/acme-challenge/` возвращает 200 |
-| **CAA record blocks** | CAA-запись не разрешает выпуск | Добавить `example.com. IN CAA 0 issue "letsencrypt.org"` |
-| **OCSP response parse error** | Нестандартное кодирование OCSP (криптография 5.8.0) | Откатиться на certbot 5.7.x или подождать исправления; не влияет на валидность сертификата |
-
-### Методология диагностики
-
-1. **Локализация проблемы:** определите, является ли проблема связанной с DNS, файрволом, конфигурацией веб-сервера или правами доступа.
-2. **Проверка доступности:** `curl -I http://example.com/.well-known/acme-challenge/` должен возвращать 200.
-3. **Проверка файрвола:** `sudo ufw status` / `sudo firewall-cmd --list-all`.
-4. **Проверка конфигурации веб-сервера:** `nginx -t` / `apachectl configtest`.
-5. **Проверка логов:** `journalctl -u nginx --since "1 hour ago"` / `sudo tail /var/log/letsencrypt/letsencrypt.log`.
+| `certbot certificates` | Инспекция сертификатов | Выводит список всех зарегистрированных сертификатов, пути к файлам и оставшийся срок действия. |
+| `certbot renew` | Обновление сертификатов | Продлевает все сертификаты, у которых до истечения осталось менее 30 дней (или по ARI). |
+| `certbot renew --dry-run` | Тестирование продления | Симулирует процесс обновления через Staging API без изменения локальных файлов. |
+| `certbot renew --force-renewal` | Принудительный перевыпуск | Заставляет обновить все сертификаты немедленно. Применять с осторожностью из-за Rate Limits. |
+| `certbot delete --cert-name <name>` | Удаление сертификата | Полностью удаляет сертификат, архивные файлы, симлинки и файл `.conf` из базы Certbot. |
+| `certbot revoke --cert-path <path>` | Отзыв сертификата | Отправляет запрос на отзыв сертификата в CA (при компрометации приватного ключа). |
+| `certbot update_account` | Обновление контактов | Позволяет изменить контактный email учетной записи ACME. |
+| `certbot plugins` | Список плагинов | Отображает установленные аутентификаторы и установщики. |
+| `certbot reconfigure --cert-name <name>` | Изменение настроек | Позволяет перенастроить тип ключа, параметры аутентификатора без полного перевыпуска. |
 
 ### Диагностические команды
 
 ```bash
-# Проверка доступности проверочного URL
-curl -I http://example.com/.well-known/acme-challenge/test
+# Тестирование продления с выводом детального лога
+sudo certbot renew --dry-run -v
 
-# Проверка синтаксиса Nginx
-sudo nginx -t
+# Проверка содержимого сертификата X.509
+openssl x509 -in /etc/letsencrypt/live/example.com/cert.pem -noout -text
 
-# Проверка синтаксиса Apache
-sudo apachectl configtest
+# Проверка соответствия открытого ключа в сертификате и приватного ключа
+# (Хеши MD5 должны строго совпадать)
+openssl x509 -noout -modulus -in /etc/letsencrypt/live/example.com/cert.pem | openssl md5
+openssl rsa -noout -modulus -in /etc/letsencrypt/live/example.com/privkey.pem | openssl md5
 
-# Логи Nginx
-sudo tail -f /var/log/nginx/error.log
+# Просмотр логов Certbot
+sudo tail -n 100 /var/log/letsencrypt/letsencrypt.log
 
-# Логи Certbot
-sudo tail -f /var/log/letsencrypt/letsencrypt.log
-
-# Логи systemd
-journalctl -u snap.certbot.renew.service --since "1 hour ago"
-
-# Проверка DNS
-dig TXT _acme-challenge.example.com
-
-# Проверка порта 80
-sudo ss -tlnp | grep ':80'
+# Просмотр журнала системного таймера продления
+journalctl -u snap.certbot.renew.service -n 50 --no-pager
 ```
 
-## Рекомендации
+## Диагностика и устранение неисправностей
 
-### Чеклист SRE/SysAdmin для управления сертификатами
+### Типичные ошибки и методы их устранения
 
-- [ ] **Базовый firewall:** Открыты порты 80 и 443. Проверено `sudo ufw status` / `sudo firewall-cmd --list-all`.
-- [ ] **Валидация перед использованием:** Всегда выполняйте `nginx -t` или `apachectl configtest` перед reload.
-- [ ] **Тестирование:** Используйте staging (`--staging`) перед боевым запуском. Не повторяйте команду без устранения причины.
-- [ ] **Email аккаунта:** Обновите email в `/etc/letsencrypt/renewal/<domain>.conf` для получения уведомлений об отзыве сертификатов.
-- [ ] **CAA-запись:** Создайте CAA-запись для ограничения CA, которые могут выпускать сертификаты.
-- [ ] **HSTS:** Включите HSTS (`Strict-Transport-Security`) для предотвращения Downgrade-атак.
-- [ ] **OCSP Stapling:** Включите OCSP Stapling в веб-сервере для ускорения проверки статуса сертификата.
-- [ ] **Резервное копирование:** Автоматическое резервное копирование `/etc/letsencrypt/` перед каждой ротацией.
-- [ ] **Мониторинг:** Настройте мониторинг сроков действия сертификатов (за 30, 14 и 7 дней до истечения).
-- [ ] **Сеть:** Убедитесь, что нет прокси или CDN, блокирующих доступ к `.well-known/acme-challenge/`.
+| Симптом / Ошибка | Первопричина | Пошаговое решение |
+| :--- | :--- | :--- |
+| **Invalid response: 404 Not Found** при HTTP-01 | Webroot указан неверно либо Nginx перехватывает путь `/.well-known/acme-challenge/` другим `location` или редиректом. | 1. Убедитесь, что каталог совпадает: `certbot ... -w /var/www/certbot`.<br>2. Проверьте `nginx -T \| grep -A5 "acme-challenge"`.<br>3. Создайте проверочный файл `echo "ok" > /var/www/certbot/.well-known/acme-challenge/test` и проверьте `curl -Iv http://example.com/.well-known/acme-challenge/test`. |
+| **Connection refused (Port 80)** | Закрыт TCP-порт 80 в брандмауэре (UFW, firewalld, nftables) либо веб-сервер не слушает порт 80. | 1. Проверьте сокеты: `sudo ss -tlpn \| grep ':80'`.<br>2. Проверьте правила: `sudo ufw status` или `sudo firewall-cmd --list-ports`.<br>3. Разрешите входящий трафик: `sudo ufw allow 80/tcp`. |
+| **Rate limit exceeded: 5 failures per hour** | Превышен лимит неудачных попыток валидации на стороне Let's Encrypt. | 1. Немедленно прекратите повторные запуски команды.<br>2. Добавьте флаг `--staging` для отладки конфигурации.<br>3. Дождитесь истечения скользящего окна (ровно 60 минут с момента первой ошибки). |
+| **DNS problem: NXDOMAIN / SERVFAIL** | DNS-записи домена не успели распространиться, либо DNS-сервер блокирует рекурсивные запросы от CA. | 1. Проверьте резолвинг через публичные DNS: `dig +trace example.com` и `dig @8.8.8.8 example.com A`.<br>2. Для DNS-01 увеличьте тайм-аут распространения флагом `--<plugin>-propagation-seconds 60`. |
+| **CAA record prevents issuance** | В DNS домена присутствует CAA-запись, не разрешающая выпуск центру Let's Encrypt. | 1. Проверьте записи: `dig CAA example.com +short`.<br>2. Добавьте разрешение: `example.com. IN CAA 0 issue "letsencrypt.org"`. |
+| **Broken symlinks in `/etc/letsencrypt/live/`** | Ручное удаление или перемещение файлов в каталоге `archive/`. | 1. Проверьте целостность: `ls -la /etc/letsencrypt/live/<domain>/`.<br>2. Пересоздайте ссылки на актуальные версии файлов `certN.pem`, `privkeyN.pem` в `archive/`.<br>3. Либо полностью удалите поврежденную конфигурацию через `certbot delete --cert-name <domain>` и выпустите сертификат заново. |
+| **Permission denied (Nginx/Apache)** | Веб-сервер не может прочитать `privkey.pem` из-за строгих прав доступа (`0600 root:root`) или ограничений SELinux. | 1. Настройте POSIX ACL: `sudo setfacl -R -m u:www-data:rX /etc/letsencrypt/archive/`.<br>2. Примените контекст SELinux: `sudo restorecon -Rv /etc/letsencrypt/`. |
 
-### Безопасность
+### Методология диагностики SRE
 
-* Храните приватные ключи (`privkey.pem`) в секретных менеджерах или с ограниченными правами доступа (`600`).
-* Используйте ECDSA (P-256) по умолчанию. RSA (2048/4096) — для совместимости с очень старыми клиентами.
-* Ограничьте доступ к `/etc/letsencrypt/` только root-пользователем.
-* Включите уведомления Let's Encrypt о проблемах с сертификатом через email.
-* Для внутренних сервисов рассмотрите Private CA (HashiCorp Vault, step-ca) вместо публичных CA.
-* Создайте CAA-запись для ограничения CA, которые могут выпускать сертификаты.
-* Включите HSTS (`Strict-Transport-Security`) для предотвращения Downgrade-атак.
-* Включите OCSP Stapling в веб-сервере.
+1. **Сетевой уровень:** Убедитесь, что внешний IP-адрес сервера совпадает с A/AAAA записями в DNS (`curl -4 icanhazip.com` и `dig +short A example.com`).
+2. **Маршрутизация HTTP:** Проверьте доступность файла-маркера без браузерного кэша:
+   ```bash
+   curl -s -o /dev/null -w "%{http_code}\n" http://example.com/.well-known/acme-challenge/test
+   # Ожидаемый ответ: 200 (или 404, если файл отсутствует, но НЕ 301 на внешний ресурс и НЕ 502/503)
+   ```
+3. **Анализ логов Certbot:**
+   ```bash
+   grep -E "ERROR|FAILED" /var/log/letsencrypt/letsencrypt.log | tail -n 20
+   ```
+4. **Проверка Multi-Perspective Validation:** Если запрос с локального сервера проходит, но CA возвращает ошибку, проверьте доступность порта 80 из внешних сетей (например, через Looking Glass или мобильную сеть), исключая гео-блокировки по GeoIP в WAF/Nginx.
 
-### Операционная поддержка
+## Рекомендации и Best Practices
 
-**Валидация после изменений:**
+### Чеклист SRE / SysAdmin по управлению TLS-сертификатами
 
-```bash
-# 1. Проверка синтаксиса
-sudo nginx -t
+- [ ] **Staging-first подход:** Любое изменение структуры сертификата (добавление доменов, слияние SAN, смена плагина) предварительно тестируется флагом `--staging` или `--dry-run`.
+- [ ] **Выделенный Webroot:** Метод `webroot` предпочтительнее автоматических плагинов `--nginx`/`--apache`, так как он не перезаписывает системные конфигурационные файлы веб-серверов сторонним Python-кодом.
+- [ ] **Deploy Hooks вместо Post Hooks:** Для перезагрузки веб-сервисов используйте исключительно `--deploy-hook` или каталоги `/etc/letsencrypt/renewal-hooks/deploy/`. Это исключает бессмысленные reload веб-серверов при фоновых проверках каждые 12 часов.
+- [ ] **Предварительная проверка синтаксиса:** В скриптах deploy-hook всегда вызывайте `nginx -t` или `apachectl configtest` перед выполнением команды `reload`.
+- [ ] **Сохранение симлинков:** Никогда не копируйте отдельные файлы из каталога `live/` без сохранения относительных связей. При необходимости передачи сертификатов в Docker или chroot используйте Deploy Hook.
+- [ ] **Мониторинг:** Настройте внешний blackbox-мониторинг истечения сертификатов за 21 и 7 дней до окончания срока.
+- [ ] **Резервное копирование:** Каталог `/etc/letsencrypt` должен включаться в план регулярного резервного копирования инфраструктуры с обязательным сохранением прав доступа `tar -p`.
 
-# 2. Применение
-sudo systemctl reload nginx
+### Безопасность приватных ключей
 
-# 3. Логи
-sudo journalctl -u nginx --since "1 minute ago"
+* **Минимальные привилегии:** Приватные ключи в `/etc/letsencrypt/archive/<domain>/privkey*.pem` должны иметь маску `0600` или `0640` с доверенной группой.
+* **Отзыв при компрометации:**
+  ```bash
+  sudo certbot revoke \
+    --cert-path /etc/letsencrypt/live/example.com/cert.pem \
+    --reason keycompromise
+  ```
+* **Ротация ключей:** Certbot по умолчанию генерирует новую ключевую пару при каждом успешном продлении сертификата, что соответствует требованиям Forward Secrecy.
 
-# 4. Метрики TLS
-echo | openssl s_client -connect example.com:443 -servername example.com -status 2>&1 | \
-  grep -E "Protocol|Cipher|OCSP"
-```
+### Сравнение Certbot с альтернативными ACME-клиентами
 
-**Откат изменений:**
-
-```bash
-# Если reload вызвал проблемы
-git checkout /etc/nginx/conf.d/example.com.conf  # или восстановите из бэкапа
-sudo systemctl reload nginx
-```
-
-**Резервное копирование:**
-
-```bash
-# Резервное копирование конфигурации
-sudo tar czf /backup/nginx-vhosts-$(date +%F).tar.gz /etc/nginx/conf.d/
-
-# Резервное копирование сертификатов
-sudo tar czf /backup/letsencrypt-$(date +%F).tar.gz /etc/letsencrypt/
-```
-
-**Восстановление из резервной копии:**
-
-```bash
-sudo tar xzf /backup/letsencrypt-2026-09-24.tar.gz -C /
-sudo systemctl reload nginx
-```
-
-### Wildcard-сертификаты
-
-**Wildcard-сертификат** (`*.example.com`) защищает основной домен и все поддомены первого уровня. Certbot поддерживает wildcard только через DNS-01, что требует API DNS-провайдера. Для wildcard рекомендуется **[acme.sh](./acme_sh.md)** с поддержкой 110+ DNS API.
-
-### Сравнение с альтернативами
-
-* **acme.sh** — легковесный ACME-клиент на bash. Детали: [acme.sh — ACME-клиент для TLS-сертификатов](./acme_sh.md).
-* **Angie** — веб-сервер со встроенным ACME-модулем. Детали: [Автоматические TLS-сертификаты в Angie: модуль ACME](../Angie/angie_acme_module.md).
-* **Traefik** — reverse proxy с автоматическим Let's Encrypt. Детали: [Traefik — ACME и автоматические сертификаты](../Traefik/traefik_overview.md).
+* **acme.sh** — легковесный ACME-клиент на чистом POSIX Shell без сторонних зависимостей (Python/Snap). Идеален для встраиваемых систем, серверов с дефицитом памяти и интеграции со 110+ DNS API. Детали: [acme.sh — ACME-клиент для TLS-сертификатов](./acme_sh.md).
+* **Встроенный ACME в Angie** — веб-сервер со штатным модулем `angie_acme`, выполняющий выпуск и ротацию сертификатов в памяти без внешних cron-задач и перезагрузок рабочих процессов. Детали: [Автоматические TLS-сертификаты в Angie: модуль ACME](../Angie/angie_acme_module.md).
+* **Traefik** — Edge-маршрутизатор со встроенной нативной поддержкой ACME Let's Encrypt и автоматическим управлением сертификатами в контейнерных средах. Детали: [Traefik — управление TLS и опциями](../Traefik/traefik-tls-options.md).
 
 ## Дополнительная информация
 
 **См. также:**
-* [acme.sh — ACME-клиент для TLS-сертификатов](./acme_sh.md) — легковесная альтернатива Certbot
-* [Автоматические TLS-сертификаты в Angie: модуль ACME](../Angie/angie_acme_module.md) — встроенный ACME без внешних утилит
-* [Настройка TLS/SSL в Nginx](../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md) — оптимальная конфигурация TLS
+* [acme.sh — ACME-клиент для TLS-сертификатов](./acme_sh.md) — обзор Shell-клиента и интеграции с DNS
+* [Автоматические TLS-сертификаты в Angie: модуль ACME](../Angie/angie_acme_module.md) — нативный ACME без внешних утилит
+* [Настройка Let's Encrypt с Nginx](../Nginx/Scenarios/nginx_with_letsencrypt.md) — сценарии интеграции Nginx в Docker и bare metal
+* [Обзор TLS/SSL в Nginx](../Nginx/Security/TLS_SSL/nginx_tls_ssl_overview.md) — параметры шифрования, протоколы и оптимизация
+* [Терминация SSL/TLS в сетевой инфраструктуре](../../Networking/Protocols/ssl_tls_termination.md) — HAProxy, балансировщики и сквозное шифрование
+* [Traefik — конфигурация TLS](../Traefik/traefik-tls-options.md) — управление сертификатами в Traefik
 
-**Официальные ресурсы:**
-* [Официальный сайт Let's Encrypt](https://letsencrypt.org)
-* [Официальный сайт Certbot](https://certbot.eff.org)
-* [Документация ACME (RFC 8555)](https://datatracker.ietf.org/doc/rfc8555/)
-* [Staging Environment](https://letsencrypt.org/docs/staging-environment/)
-* [Официальный репозиторий Certbot](https://github.com/certbot/certbot)
+**Официальные спецификации и ресурсы:**
+* [RFC 8555 — Automatic Certificate Management Environment (ACME)](https://datatracker.ietf.org/doc/rfc8555/)
+* [RFC 8737 — ACME TLS with Application Layer Protocol Negotiation (TLS-ALPN-01)](https://datatracker.ietf.org/doc/rfc8737/)
+* [RFC 8657 — Certification Authority Authorization (CAA) Processing for ACME](https://datatracker.ietf.org/doc/rfc8657/)
+* [RFC 9773 — Automated Certificate Management Environment (ACME) Renewal Information (ARI)](https://datatracker.ietf.org/doc/rfc9773/)
+* [Документация Let's Encrypt](https://letsencrypt.org/docs/)
+* [Официальная документация Certbot (EFF)](https://certbot.eff.org/docs/)

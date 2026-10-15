@@ -1,268 +1,647 @@
 # Apache: Перенаправления и перезапись URL (mod_rewrite, mod_alias)
 
+**Актуально для:** Apache HTTP Server 2.4.x (включая 2.4.58+)
+
 ---
 
 ## Определения
 
-**mod_rewrite** — модуль Apache, позволяющий переписывать URL на основе регулярных выражений. Обеспечивает два механизма: внутреннюю перезапись (internal rewrite — URI меняется для обработчика, клиент не видит изменение) и внешнее перенаправление (redirect — клиент получает `3xx` и повторяет запрос на новый адрес).
+**mod_rewrite** — модуль веб-сервера Apache, реализующий механизм синтаксического разбора и динамической трансформации входящих URL на основе регулярных выражений PCRE (Perl Compatible Regular Expressions). Поддерживает как внутреннюю перезапись (internal rewrite — изменение URI внутри конвейера обработки без уведомления клиента), так и внешнее перенаправление (redirect — отправка клиенту HTTP-статуса `3xx` с новым адресом в заголовке `Location`).
 
-**mod_alias** — штатный модуль для простых редиректов (`Redirect`, `RedirectMatch`) и сопоставления URL с путями файловой системы (`Alias`, `AliasMatch`). Выполняет ту же задачу, что и mod_rewrite, но без накладных расходов на регулярные выражения.
+**mod_alias** — штатный легковесный модуль Apache для сопоставления URL с файловой системой (`Alias`, `AliasMatch`) и выполнения базовых перенаправлений (`Redirect`, `RedirectMatch`). Работает на ранней фазе трансляции URL-to-filename без инициализации механизма правил `mod_rewrite`, обладая минимальными накладными расходами по CPU и памяти.
 
-**RewriteRule** — директива mod_rewrite, описывающая одно правило перезаписи: проверяемый адрес (regexp) и результат (подстановка или действие).
+**RewriteRule** — фундаментальная директива `mod_rewrite`, задающая шаблон проверки URL (`Pattern`), строку или действие замены (`Substitution`) и управляющие модификаторы (`flags`).
 
-**RewriteCond** — условие, предшествующее RewriteRule. Правило применяется только если все связанные с ним условия истинны.
+**RewriteCond** — директива предварительного условия, привязанная к последующему `RewriteRule`. Правило исполняется только при истинности всех (или группы по `[OR]`) предшествующих условий.
 
-**RewriteBase** — директива, задающая префикс URL для относительных замен в контексте `.htaccess`/`<Directory>`.
+**RewriteBase** — директива контекста каталога (`<Directory>`, `.htaccess`), явно задающая базовый URL-префикс для относительных подстановок при внутренней перезаписи.
 
-**mod_setenvif** — модуль условного назначения переменных окружения на основе шаблонов в заголовках запроса. Часто используется совместно с mod_rewrite и mod_headers для управления доступом и установки заголовков.
+**RewriteMap** — высокопроизводительный механизм внешних таблиц подстановок (хэш-таблицы DBM, текстовые файлы, внешние скрипты-демоны, внутренние функции Apache), обеспечивающий поиск соответствий со сложностью $O(1)$ для тысяч URL без разрастания списка правил.
+
+**FallbackResource** — директива модуля `mod_dir`, задающая единую точку входа (Front Controller) для несуществующих URI. В Apache 2.4 выступает более производительной и стабильной заменой типовых правил `mod_rewrite` для Single Page Applications (SPA).
+
+**RewriteOptions** — директива конфигурации глобального поведения движка перезаписи (например, наследование правил между контекстами VirtualHost через `Inherit` или `InheritBefore`).
+
+**mod_setenvif** — модуль условного выставления переменных окружения (`SetEnvIf`, `SetEnvIfNoCase`) на основе заголовков и атрибутов запроса, часто используемый совместно с `mod_rewrite` для списков блокировки и гибкой маршрутизации.
 
 ---
 
-## Основные концепции
+## Архитектура и основные концепции
 
 ### Внутренняя перезапись vs внешнее перенаправление
 
-| Механизм | Клиент | HTTP-статус | Когда использовать |
-|---|---|---|---|
-| Internal rewrite | Не видит изменения, получает содержимое | 200 | Маршрутизация внутри приложения, alias без смены адреса |
-| Redirect (`[R]`) | Получает новый адрес и повторяет запрос | 3xx (301/302/303/307/308) | Смена домена, HTTP→HTTPS, удаление старых URL |
+Apache разделяет преобразование адресов на два принципиально разных типа:
 
-### Синтаксис RewriteRule
+| Характеристика | Внутренняя перезапись (Internal Rewrite) | Внешнее перенаправление (External Redirect) |
+|---|---|---|
+| **Видимость клиентом** | Прозрачно: URL в строке браузера не меняется | Заметно: браузер получает заголовок `Location` и обновляет адрес |
+| **HTTP-статус ответа** | Статус ответа обработчика (`200 OK`, `404 Not Found` и др.) | Статус семейства `3xx` (`301`, `302`, `307`, `308`) |
+| **Сетевые накладные расходы** | Нулевые (обработка в рамках одного TCP/TLS соединения) | Дополнительный round-trip клиента к серверу |
+| **Флаг `mod_rewrite`** | По умолчанию (без флага `[R]`) | Флаг `[R]` или `[R=code]` |
+| **Типовое применение** | Маршрутизация на Front Controller, сокрытие структуры backend | Смена домена, миграция на HTTPS, канонизация URL |
+
+#### Различия статус-кодов HTTP при внешнем редиректе
+
+*   `301 Moved Permanently` — постоянный редирект с агрессивным кэшированием браузерами. Согласно историческому поведению, POST-запросы могут трансформироваться браузером в GET.
+*   `302 Found` — временный редирект без постоянного кэширования (поведение POST → GET аналогично 301).
+*   `307 Temporary Redirect` — временный редирект по стандарту HTTP/1.1+, **гарантирующий сохранение исходного HTTP-метода** (POST остается POST) и тела запроса.
+*   `308 Permanent Redirect` — постоянный редирект по стандарту RFC 7538, кэшируемый клиентами, с **гарантированным сохранением метода** (POST/PUT). Рекомендуется для API.
+
+### Фазы обработки и контексты: Server vs Per-Directory
+
+Поведение `mod_rewrite` критически зависит от контекста директив:
 
 ```
++---------------------------------------------------------------------------------+
+| Фаза URL-to-filename (translate_name hook)                                      |
+| Контекст: Server Config, <VirtualHost>                                          |
+|                                                                                 |
+| 1. Входной URI: полный путь от корня сайта (начинается со слэша: /blog/item)    |
+| 2. Сопоставление с RewriteRule                                                  |
+| 3. Подстановка формирует путь файловой системы или новый URI                    |
++---------------------------------------------------------------------------------+
+                                      |
+                                      v
++---------------------------------------------------------------------------------+
+| Фаза Per-Directory Fixups (fixups hook)                                         |
+| Контекст: <Directory "/var/www/site">, .htaccess                               |
+|                                                                                 |
+| 1. Префикс директории СРЕЗАЕТСЯ: сопоставление идет по относительному пути!     |
+|    Пример: URI /blog/item в каталоге /var/www/site/blog сопоставляется как item |
+| 2. Требуется Options FollowSymLinks или SymLinksIfOwnerMatch                    |
+| 3. После подстановки префикс директории возвращается обратно                    |
+| 4. Запускается ВНУТРЕННИЙ ПОДЗАПРОС (Internal Subrequest / Loop)                |
++---------------------------------------------------------------------------------+
+```
+
+> [!WARNING]
+> Для работы `mod_rewrite` в контексте `<Directory>` или `.htaccess` директива `Options` обязана содержать `FollowSymLinks` либо `SymLinksIfOwnerMatch`. Если опция выключена, Apache блокирует работу модуля и возвращает клиенту ошибку `403 Forbidden` (`AH00670`).
+
+### Цикл итераций в Per-Directory контексте: `[L]` vs `[END]`
+
+В контексте директорий (`<Directory>`, `.htaccess`) после применения правил `mod_rewrite` Apache перезапускает конвейер обработки запроса с новым URI (внутренний подзапрос).
+
+*   **Флаг `[L]` (Last):** останавливает текущий проход по набору правил. Однако при изменении URI ядро Apache инициирует **новый цикл обработки** (Internal Redirect), и весь набор правил вызывается повторно для нового URI. Если правила составлены некорректно, возникает зацикливание, пока не сработает лимит ядра (`LimitInternalRecursion`, по умолчанию 10), возвращая ошибку `500 Internal Server Error` (`AH00124` / `AH03490`).
+*   **Флаг `[END]` (появился в Apache 2.4.8):** полностью завершает не только текущий проход, но и **блокирует любые последующие итерации перезаписи** в контексте директории. Является надежным средством предотвращения rewrite-петель при маршрутизации.
+
+### Синтаксис и структура RewriteRule
+
+```apacheconf
 RewriteRule Pattern Substitution [flags]
 ```
 
-*   **Pattern** — регулярное выражение (PCRE), применяется к URL-path без строки запроса (в контексте сервера), либо к относительному пути (в `<Directory>`/`.htaccess`).
-*   **Substitution** — результат замены. Может быть абсолютным URL, относительным путём или `-` (без изменений, для флагов-действий).
-*   **Flags** — управляющие модификаторы, разделяются запятыми.
+*   **Pattern** — регулярное выражение PCRE. В контексте сервера сопоставляется с абсолютным URL-path (начиная со слэша, без строки запроса `?query`). В контексте каталога сопоставляется с относительным путем (без ведущего слэша).
+*   **Substitution** — целевой результат:
+    *   Абсолютный путь в файловой системе (`/var/www/html/index.php`).
+    *   Относительный или абсолютный URL (`/app/index.php`, `https://example.com/target`).
+    *   Дефис `-` — означает отсутствие изменения URI (применяется для модификации заголовков, переменных окружения, проксирования или возврата ошибок).
+*   **Flags** — модификаторы выполнения (задаются через запятую в квадратных скобках).
 
-### Ключевые флаги RewriteRule
+### Справочник ключевых флагов RewriteRule
 
-| Флаг | Действие |
-|---|---|
-| `R[=301\|302\|...]` | Внешний редирект. Без кода — 302. `[R=301]` — постоянный (для SEO) |
-| `L` | Последнее правило в текущем проходе (внутреннее завершение) |
-| `END` | Полное завершение всех последующих итераций перезаписи (Apache 2.4.8+). Защита от rewrite-петель |
-| `NC` | Регистронезависимое сравнение |
-| `NE` | Не кодировать спецсимволы в подстановке (`%20`, `;`) |
-| `QSA` | Дописать исходный query-string к новой подстановке |
-| `B` | Экранировать обратные ссылки в подстановке |
-| `F` | Вернуть 403 Forbidden, без подстановки |
-| `G` | Вернуть 410 Gone |
-| `P` | Проксировать запрос (proxy). Предпочтительнее mod_proxy |
-| `PT` | Передать URL дальше по конвейеру (часто с `Alias`) |
-| `CO` | Установить cookie |
-| `E=VAR:VAL` | Установить переменную окружения |
-| `H=handler` | Принудительно задать обработчик (например, `H=proxy:fcgi://...`) |
+| Флаг | Полное имя | Назначение |
+|---|---|---|
+| `[R=code]` | Redirect | Внешний редирект клиенту с кодом `301`, `302` (по умолчанию), `307`, `308`. |
+| `[L]` | Last | Прекратить выполнение текущего набора правил в данном цикле. |
+| `[END]` | End | Завершить процесс перезаписи полностью, предотвратив внутренние перезапуски цикла (Apache 2.4.8+). |
+| `[NC]` | No Case | Регистронезависимое сопоставление регулярного выражения. |
+| `[QSA]` | Query String Append | Дописать исходную строку запроса (Query String) к новому URI, а не перезаписать ее. |
+| `[QSD]` | Query String Discard | Отбросить входящую строку запроса (Apache 2.4.29+). Более явный аналог подстановки со знаком `?` на конце. |
+| `[NE]` | No Escape | Не производить автоматическое экранирование спецсимволов (`%20`, `&` и др.) в строке подстановки. |
+| `[B]` | Escape Backreferences | Экранировать спецсимволы в обратных ссылках (`$1`, `%1`) перед подстановкой. В Apache 2.4.56+ расширен флагами `[BNE]` (исключение символов) и `[BCTLS]` (экранирование только управляющих символов и пробелов) для защиты от уязвимостей path traversal. |
+| `[F]` | Forbidden | Немедленно вернуть HTTP-ответ `403 Forbidden`. |
+| `[G]` | Gone | Немедленно вернуть HTTP-ответ `410 Gone` (ресурс удален навсегда). |
+| `[P]` | Proxy | Передать запрос через модуль `mod_proxy` на указанный backend URL. |
+| `[PT]` | Pass Through | Передать полученный URI дальше по цепочке обработчиков ядра (например, модулям `mod_alias`, `mod_vhost_alias`). |
+| `[H=handler]` | Set Handler | Принудительно назначить обработчик запроса (например, `H=proxy:fcgi://127.0.0.1:9000`). |
+| `[T=mime-type]`| Set MIME Type | Принудительно установить MIME-тип ответа. |
+| `[E=VAR:VAL]` | Set Env | Выставить переменную окружения Apache (`REDIRECT_VAR` в последующих фазах). |
+| `[CO=...]` | Set Cookie | Установить HTTP-cookie в заголовке ответа клиенту. |
 
-**`[L]` vs `[END]`:** `[L]` завершает текущую итерацию, но перезаписанный URL может снова пройти через правила (до 10 итераций, защита от бесконечного цикла). `[END]` останавливает процесс полностью и не даёт повторной обработки — надёжная защита от rewrite-петель.
+### RewriteCond: синтаксис и логические операторы
 
-### RewriteCond — синтаксис и применение
-
-```
+```apacheconf
 RewriteCond TestString CondPattern [flags]
 ```
 
-*   Условие предшествует правилу; правило выполняется только если верны **все** его `RewriteCond`.
-*   Следующий `RewriteRule` «привязан» к столько RewriteCond, сколько стоит непосредственно над ним.
-*   `%N` — обратная ссылка на захват из `RewriteCond`; `$N` — из последнего `RewriteRule`.
-*   Флаги: `[NC]`, `[OR]` (логическое «или» между условиями — по умолчанию «и»), `[NOCOOKIE]` и др.
+Директива `RewriteCond` проверяет условие `CondPattern` над переменной `TestString`. Правило `RewriteRule`, находящееся непосредственно под группой `RewriteCond`, выполняется только тогда, когда соблюдены условия.
 
-**Примеры TestString:** `%{HTTP_HOST}`, `%{REQUEST_URI}`, `%{HTTPS}` (`on`/`off`), `%{REMOTE_ADDR}`, `%{HTTP_USER_AGENT}`, `%{REQUEST_FILENAME}` (путь в ФС), `%{ENV:VAR}` (переменная окружения).
+*   По умолчанию несколько `RewriteCond` объединяются логическим оператором **AND**.
+*   Флаг `[OR]` задает оператор **ИЛИ** для следующего условия.
+*   Флаг `[NC]` делает проверку `CondPattern` регистронезависимой.
+*   Флаг `[NV]` (No Vary) запрещает добавление имени заголовка в заголовок ответа `Vary`.
 
-### Взаимодействие mod_rewrite и mod_alias
+#### Обратные ссылки (Backreferences)
+*   `$1` ... `$9` — захваченные группы круглых скобок из шаблона текущей директивы `RewriteRule`.
+*   `%1` ... `%9` — захваченные группы круглых скобок из последнего успешно сработавшего `RewriteCond`.
 
-`Redirect`, `RedirectMatch`, `Alias`, `AliasMatch` из mod_alias обрабатываются в фазе URL-to-filename так же, как серверный mod_rewrite. Для постоянных редиректов **без** regexp приоритетнее `Redirect` (быстрее, проще в аудите):
+#### Основные переменные `TestString`
+*   `%{HTTP_HOST}` — доменное имя из заголовка `Host`.
+*   `%{REQUEST_URI}` — запрашиваемый путь без строки аргументов (например, `/index.html`).
+*   `%{QUERY_STRING}` — строка параметров после знака `?`.
+*   `%{THE_REQUEST}` — исходная строка HTTP-запроса от клиента целиком (например, `GET /index.html?id=1 HTTP/1.1`). Не декодируется Apache, что критично для фильтрации атак.
+*   `%{HTTPS}` — строка `on`, если запрос пришел по TLS/SSL, или `off`.
+*   `%{REMOTE_ADDR}` — IP-адрес клиента (или прокси, если не используется `mod_remoteip`).
+*   `%{HTTP:Header-Name}` — значение произвольного HTTP-заголовка запроса (например, `%{HTTP:X-Forwarded-Proto}`).
+*   `%{REQUEST_FILENAME}` — полный путь к целевому файлу в файловой системе сервера.
+*   `%{ENV:variable}` — значение внутренней переменной окружения Apache.
 
-*   `Redirect` — простой редирект «путь → URL».
-*   `RedirectMatch` — редирект с регулярным выражением (аналог доступнее `RewriteRule ... [R=301,L]`).
-*   `Alias` — сопоставление URL-префикса каталогу ФС.
-*   `AliasMatch` — то же с regexp.
+#### Специальные операторы `CondPattern`
+*   `-f` — проверяет, что `TestString` существует на диске и является регулярным файлом (`!-f` — не является файлом).
+*   `-d` — проверяет, что `TestString` является существующей директорией (`!-d` — не является директорией).
+*   `-s` — проверяет, что файл существует и его размер больше нуля.
+*   `-l` — проверяет, что объект является символической ссылкой.
+*   `-U` — проверяет доступность URL через внутренний тестовый подзапрос (subrequest).
+*   `<CondPattern`, `>CondPattern`, `=CondPattern` — лексикографическое сравнение строк.
+*   `-eq`, `-ne`, `-lt`, `-le`, `-gt`, `-ge` — целочисленное сравнение.
 
-**Правило:** не смешивать `Alias` и `RewriteRule` для одного и того же пути в одном контексте — результат зависит от порядка и фазы обработки. Выбрать один механизм на ресурс.
+### Архитектура RewriteMap
 
-### Отладка правил
+При наличии сотен или тысяч статических редиректов (например, после миграции e-commerce или ребрендинга) использование отдельных директив `RewriteRule` недопустимо: каждое правило компилируется в регулярное выражение и последовательно выполняется для каждого запроса, вызывая деградацию производительности CPU по закону $O(N)$.
+
+Директива `RewriteMap` выносит таблицу соответствий во внешнее хранилище с доступом за $O(1)$:
 
 ```apacheconf
-# Включить trace-логирование mod_rewrite (только на время отладки!)
-LogLevel alert rewrite:trace6
+# Объявляется ТОЛЬКО в контексте сервера или <VirtualHost> (запрещено в .htaccess)
+RewriteMap MapName MapType:MapSource
 ```
 
-Повышенный `LogLevel` в продакшене не оставлять — вернуть `LogLevel warn`.
+#### Типы карт подстановок (`MapType`)
+1.  `dbm` — скомпилированная бинарная база данных DBM (Berkeley DB, GDBM или sdbm). Максимально производительный вариант в продакшене. Создается утилитой `httxt2dbm`.
+2.  `txt` — плоский текстовый файл с парами `key value`. Apache кэширует его в памяти и автоматически перечитывает при изменении mtime файла, но для больших объемов уступает DBM.
+3.  `rnd` — текстовый файл, где значения разделены символом `|`. Позволяет случайно выбирать один из вариантов (балансировка статики, зеркала).
+4.  `prg` — внешний демон-процесс (скрипт на Python, Bash, Perl), запущенный от пользователя Apache при старте сервера. Общается через STDIN/STDOUT.
+5.  `int` — встроенные внутренние функции ядра: `tolower` (перевод в нижний регистр), `toupper`, `escape` (URL-encode), `unescape`.
+
+### Сравнение mod_alias и mod_rewrite
+
+| Критерий | mod_alias (`Redirect`, `Alias`) | mod_rewrite (`RewriteRule`) |
+|---|---|---|
+| **Сложность движка** | Минимальная, прямое сопоставление префиксов | Высокая, конечный автомат регулярных выражений |
+| **Накладные расходы CPU** | Практически нулевые | Умеренные/высокие при сложных цепочках правил |
+| **Условия применения** | Только URL (или regexp в `RedirectMatch`) | Любые параметры HTTP (заголовки, IP, query, cookie) |
+| **Внутренние циклы** | Нет (однократная трансляция пути) | Возможны в Per-Directory контексте |
+| **Рекомендация SRE** | **Предпочтительно** для типовых перенаправлений | Использовать только при необходимости сложной логики |
+
+> [!IMPORTANT]
+> Запрещается смешивать `Alias` и `RewriteRule` для одного и того же URI в пределах одного виртуального хоста. `mod_alias` и `mod_rewrite` выполняются на разных хуках трансляции путей, и порядок их применения может приводить к труднодиагностируемым ошибкам 404.
+
+### Диагностика и логирование в Apache 2.4
+
+В Apache 2.4 директивы `RewriteLog` и `RewriteLogLevel` **полностью удалены**. Трассировка правил осуществляется штатной системой логирования ядра через директиву `LogLevel`:
+
+```apacheconf
+# Включается только временно в контексте конкретного VirtualHost!
+LogLevel warn rewrite:trace3
+
+# Уровни детализации:
+# trace1 — только финальные результаты применения правил
+# trace2 — отображение промежуточных шагов разбора и флагов
+# trace3 — детальное сопоставление RewriteCond и условий
+# trace8 — максимальная детализация, включая состояние PCRE движка
+```
 
 ---
 
-## Практические сценарии
+## Практические сценарии конфигурации
 
-### 1. Форсированный HTTPS (HTTP → HTTPS)
+### Подготовка окружения (активация модулей)
+
+Перед применением правил необходимо убедиться, что требуемые модули загружены:
+
+```bash
+# Для Debian / Ubuntu:
+sudo a2enmod rewrite alias headers setenvif
+sudo systemctl reload apache2
+
+# Для RHEL / Rocky Linux / AlmaLinux (проверка в /etc/httpd/conf.modules.d/):
+httpd -M | grep -E 'rewrite|alias|headers|setenvif'
+# → rewrite_module (shared)
+# → alias_module (shared)
+# → headers_module (shared)
+# → setenvif_module (shared)
+```
+
+### Сценарий 1: Канонический редирект HTTP → HTTPS
+
+#### Вариант А: Рекомендуемый эталонный метод через `mod_alias` (Edge/Origin)
+
+Если Apache самостоятельно принимает открытый трафик на порту 80, использование `mod_rewrite` избыточно:
+
+```apacheconf
+<VirtualHost *:80>
+    ServerName example.com
+    ServerAlias www.example.com
+    
+    # 301 редирект всего входящего трафика на HTTPS с сохранением пути и параметров
+    Redirect permanent / https://example.com/
+</VirtualHost>
+
+<VirtualHost *:443>
+    ServerName example.com
+    ServerAlias www.example.com
+    
+    SSLEngine on
+    SSLCertificateFile /etc/ssl/certs/example.com.crt
+    SSLCertificateKeyFile /etc/ssl/private/example.com.key
+    DocumentRoot /var/www/example.com/html
+</VirtualHost>
+```
+
+#### Вариант Б: Редирект за Reverse Proxy / Load Balancer (SSL Offloading)
+
+Когда SSL/TLS терминируется на внешнем балансировщике (HAProxy, Nginx, аппаратный шлюз), балансировщик передает трафик на Apache по HTTP (порт 80), добавляя заголовок `X-Forwarded-Proto`:
+
+```apacheconf
+<VirtualHost *:80>
+    ServerName example.com
+    DocumentRoot /var/www/example.com/html
+
+    RewriteEngine On
+    # Проверяем протокол, переданный балансировщиком
+    RewriteCond %{HTTP:X-Forwarded-Proto} =http [NC]
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+</VirtualHost>
+```
+
+> [!CAUTION]
+> Использование проверки `RewriteCond %{HTTPS} off` за балансировщиком с SSL Offloading приведет к **бесконечному циклу редиректов (ERR_TOO_MANY_REDIRECTS)**, так как соединение между балансировщиком и Apache всегда открыто без SSL!
+
+### Сценарий 2: Нормализация домена (Канонизация Host: non-www → www или наоборот)
+
+#### Приведение к виду без www (Canonical Apex Domain)
+
+```apacheconf
+<VirtualHost *:443>
+    ServerName example.com
+    ServerAlias www.example.com
+    DocumentRoot /var/www/example.com/html
+
+    RewriteEngine On
+    # Если в начале Host присутствует www., перенаправляем на чистый домен
+    RewriteCond %{HTTP_HOST} ^www\.(.+)$ [NC]
+    RewriteRule ^ https://%1%{REQUEST_URI} [R=301,L]
+</VirtualHost>
+```
+
+#### Приведение к виду с www
+
+```apacheconf
+<VirtualHost *:443>
+    ServerName example.com
+    ServerAlias www.example.com
+    DocumentRoot /var/www/example.com/html
+
+    RewriteEngine On
+    RewriteCond %{HTTP_HOST} !^www\. [NC]
+    RewriteCond %{HTTP_HOST} ^(.+)$ [NC]
+    RewriteRule ^ https://www.%1%{REQUEST_URI} [R=301,L]
+</VirtualHost>
+```
+
+### Сценарий 3: Маршрутизация для SPA (Single Page Applications: React, Vue, Angular)
+
+В SPA реальных HTML-файлов на диске нет, кроме `/index.html`. Все маршруты приложения (`/dashboard`, `/profile/settings`) должны отдавать `/index.html`, сохраняя при этом прямую отдачу статических ассетов (`.js`, `.css`, картинок).
+
+#### Метод 1: Современный и наиболее производительный (через `FallbackResource`)
+
+```apacheconf
+<VirtualHost *:443>
+    ServerName app.example.com
+    DocumentRoot /var/www/app/dist
+
+    <Directory "/var/www/app/dist">
+        Options FollowSymLinks
+        AllowOverride None
+        Require all granted
+
+        # Если запрошенный URI физически не существует на диске,
+        # mod_dir передает управление указанному ресурсу без накладных расходов mod_rewrite
+        FallbackResource /index.html
+    </Directory>
+</VirtualHost>
+```
+
+#### Метод 2: Классический подход через `mod_rewrite`
+
+```apacheconf
+<Directory "/var/www/app/dist">
+    Options FollowSymLinks
+    AllowOverride None
+    Require all granted
+
+    RewriteEngine On
+    RewriteBase /
+
+    # Если запрос указывает на реальный существующий файл — отдаем его напрямую
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Все остальные запросы направляем на index.html
+    # Флаг [END] предотвращает повторный цикл обработки запроса
+    RewriteRule ^ index.html [END]
+</Directory>
+```
+
+### Сценарий 4: Высокопроизводительные массовые редиректы через `RewriteMap` (DBM)
+
+Сценарий необходим при слиянии сайтов, смене структуры каталогов интернет-магазина или сохранении сотен/тысяч старых адресов для SEO.
+
+#### Шаг 1. Формирование исходного файла соответствий (`/etc/apache2/maps/redirects.txt`)
+
+```text
+# Исходный относительный путь <пробел> Целевой абсолютный URL
+/old-catalog/item-101.html    https://example.com/products/sensors/temp-101
+/old-catalog/item-102.html    https://example.com/products/sensors/temp-102
+/about-company.html           https://example.com/company/about
+/legacy-pricing               https://example.com/pricing
+```
+
+#### Шаг 2. Компиляция в бинарную базу данных DBM
+
+```bash
+# Создание бинарного файла хеш-таблицы redirects.map
+sudo httxt2dbm -i /etc/apache2/maps/redirects.txt -o /etc/apache2/maps/redirects.map -t dbm
+
+# Проверка корректности прав (пользователь apache/www-data должен иметь право на чтение)
+sudo chown root:www-data /etc/apache2/maps/redirects.map
+sudo chmod 0640 /etc/apache2/maps/redirects.map
+```
+
+#### Шаг 3. Подключение карты в VirtualHost
+
+```apacheconf
+# Объявление карты внутри виртуального хоста
+RewriteMap urlmap "dbm:/etc/apache2/maps/redirects.map"
+
+<VirtualHost *:443>
+    ServerName example.com
+    DocumentRoot /var/www/example.com/html
+
+    RewriteEngine On
+
+    # Ищем запрашиваемый URI в карте DBM
+    RewriteCond ${urlmap:%{REQUEST_URI}} !=""
+    RewriteRule ^ ${urlmap:%{REQUEST_URI}} [R=301,L]
+</VirtualHost>
+```
+
+### Сценарий 5: Режим технического обслуживания (Maintenance Mode 503)
+
+Сценарий вывода сервиса на регламентные работы с корректным HTTP-кодом `503 Service Unavailable`, заголовком `Retry-After` и исключением для IP-адресов инженеров DevOps/SRE:
+
+```apacheconf
+<VirtualHost *:443>
+    ServerName app.example.com
+    DocumentRoot /var/www/app/public
+
+    RewriteEngine On
+
+    # 1. Проверяем наличие триггерного файла maintenance.enable на диске
+    RewriteCond /var/www/app/maintenance.enable -f
+    # 2. Исключаем белый список IP инженеров (офис / VPN)
+    RewriteCond %{REMOTE_ADDR} !^(198\.51\.100\.25|203\.0\.113\.50)$
+    # 3. Исключаем саму страницу техобслуживания и ее статические стили
+    RewriteCond %{REQUEST_URI} !\.(css|png|jpg|svg|ico)$ [NC]
+    RewriteCond %{REQUEST_URI} !^/maintenance\.html$
+    # 4. Возвращаем 503 статус
+    RewriteRule ^ - [R=503,L]
+
+    # Обработчик ошибки 503 и заголовок повторной попытки через 5 минут
+    ErrorDocument 503 /maintenance.html
+    Header always set Retry-After "300" env=REDIRECT_STATUS
+</VirtualHost>
+```
+
+Включение и выключение режима обслуживания:
+```bash
+# Включение режима обслуживания:
+sudo touch /var/www/app/maintenance.enable
+
+# Выключение режима обслуживания:
+sudo rm -f /var/www/app/maintenance.enable
+```
+
+### Сценарий 6: Проксирование и маршрутизация API (`mod_proxy` + `mod_rewrite`)
+
+В микросервисной архитектуре `mod_rewrite` с флагом `[P]` позволяет динамически маршрутизировать трафик на внутренние сервисы с модификацией пути:
+
+```apacheconf
+<VirtualHost *:443>
+    ServerName api.example.com
+
+    RewriteEngine On
+
+    # Проксирование v1 API с удалением префикса /api/v1/ и передачей параметров
+    # Запрос /api/v1/users?id=5 -> http://user-service.internal:8080/users?id=5
+    RewriteRule ^/api/v1/(.*)$ http://user-service.internal:8080/$1 [P,L]
+
+    # Проксирование сокетов на внутренний FastCGI демон
+    RewriteRule ^/legacy-app/(.*\.php)$ - [H=proxy:fcgi://127.0.0.1:9000/var/www/legacy/$1,L]
+
+    # Защита от раскрытия внутренних путей в заголовках ответов
+    ProxyPassReverse /api/v1/ http://user-service.internal:8080/
+</VirtualHost>
+```
+
+### Сценарий 7: Безопасность и защита от атак
+
+#### Предотвращение Open Redirect (уязвимость открытого перенаправления)
+
+Уязвимая конфигурация, позволяющая злоумышленнику использовать сервер для фишинга (`https://example.com/goto?url=https://evil.com`):
+```apacheconf
+# УЯЗВИМО:
+RewriteCond %{QUERY_STRING} url=(.+)
+RewriteRule ^/goto$ %1 [R=301,L]
+```
+
+Защищенная конфигурация с валидацией только доверенных доменов:
+```apacheconf
+# БЕЗОПАСНО: разрешаем редиректы только на доверенные внутренние поддомены
+RewriteCond %{QUERY_STRING} (?:^|&)url=(https?://([a-zA-Z0-9-]+\.)?example\.com(?:/.*)?) [NC]
+RewriteRule ^/goto$ %1 [R=301,QSD,L]
+
+# Если параметр не прошел валидацию — блокируем доступ
+RewriteCond %{QUERY_STRING} (?:^|&)url=
+RewriteRule ^/goto$ - [F,L]
+```
+
+#### Блокировка попыток сканирования и служебных файлов
 
 ```apacheconf
 RewriteEngine On
-RewriteCond %{HTTPS} off
-RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
-```
 
-`^` совпадает с любым путём; `%{REQUEST_URI}` сохраняет исходный путь вместе с query-string.
+# 1. Защита от утечки каталогов систем контроля версий и файлов конфигурации
+RewriteRule "(^|/)\.(git|svn|env|aws|ssh)" - [F,L,NC]
 
-**Альтернатива без mod_rewrite:**
-```apacheconf
-<IfModule mod_ssl.c>
-    <VirtualHost *:80>
-        ServerName example.com
-        Redirect permanent / https://example.com/
-    </VirtualHost>
-</IfModule>
-```
+# 2. Блокировка попыток Path Traversal и инъекций нулевого байта (%00) через THE_REQUEST
+RewriteCond %{THE_REQUEST} "(\.\./|%2e%2e/|%00)" [NC]
+RewriteRule ^ - [F,L]
 
-### 2. Канонический домен (варианты www / без www)
-
-```apacheconf
-# www → без www
-RewriteCond %{HTTP_HOST} ^www\.(.+) [NC]
-RewriteRule ^(.*)$ http://%1/$1 [R=301,L]
-
-# без www → www
-RewriteCond %{HTTP_HOST} !^www\. [NC]
-RewriteCond %{HTTP_HOST} ^(.+)$ [NC]
-RewriteRule ^(.*)$ http://www.%1/$1 [R=301,L]
-```
-
-### 3. Удаление завершающего слэша (кроме директорий)
-
-```apacheconf
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^(.*)/$ /$1 [R=301,L]
-```
-
-### 4. Переезд старых URL на новые пути (SEO)
-
-```apacheconf
-RedirectMatch 301 ^/old-section/(.*)$ https://example.com/new-section/$1
-Redirect 301 /downloads.html https://example.com/files/download
-```
-
-### 5. Смена протокола/домена: сохранение query-string
-
-```apacheconf
-RewriteRule ^/shop/?$ https://example.com/store [R=301,QSA,L]
-# /shop?variant=x → https://example.com/store?variant=x
-```
-
-### 6. Блокировка нежелательных клиентов (403)
-
-По User-Agent через SetEnvIf + RewriteCond:
-
-```apacheconf
-SetEnvIf User-Agent "AhrefsBot|SemrushBot|curl|wget" bad_client
-RewriteCond %{ENV:bad_client} "=1"
+# 3. Блокировка агрессивных уязвимостных сканеров по User-Agent
+RewriteCond %{HTTP_USER_AGENT} (sqlmap|nikto|wpscan|acunetix|masscan|nuclei) [NC]
 RewriteRule ^ - [F,L]
 ```
 
-### 7. Защита от hotlinking (встраивание изображений с других сайтов)
+#### Защита от хотлинкинга (Hotlinking Protection)
+
+Защита трафика и предотвращение встраивания медиа-файлов сторонними веб-сайтами:
 
 ```apacheconf
 RewriteEngine On
 RewriteCond %{HTTP_REFERER} !^$
-RewriteCond %{HTTP_REFERER} !^https?://(www\.)?example\.com/ [NC]
-RewriteRule \.(jpg|jpeg|png|gif|webp|svg)$ - [F,NC]
+RewriteCond %{HTTP_REFERER} !^https?://([a-zA-Z0-9-]+\.)?example\.com [NC]
+RewriteRule \.(jpe?g|png|gif|webp|svg|mp4)$ - [F,NC,L]
 ```
 
-### 8. Страница технического обслуживания (503)
+### Сценарий 8: Манипуляция строкой запроса (Query String)
+
+#### Очистка отслеживающих меток (UTM, Facebook Click ID) с флагом `[QSD]`
 
 ```apacheconf
 RewriteEngine On
-RewriteCond %{REMOTE_ADDR} !^203\.0\.113\.50$
-RewriteRule ^ /maintenance.html [R=503,L]
-ErrorDocument 503 /maintenance.html
+
+# Если URL содержит fbclid, удаляем строку запроса целиком и отдаем чистый 301
+RewriteCond %{QUERY_STRING} (?:^|&)fbclid= [NC]
+RewriteRule ^(.*)$ /$1 [R=301,QSD,L]
 ```
 
-### 9. Условные переменные окружения (mod_setenvif)
+#### Добавление параметров к запросу с флагом `[QSA]`
 
 ```apacheconf
-SetEnvIfNoCase User-Agent "^Googlebot|^Bingbot" search_engine
-SetEnvIf Request_URI "\.php$" php_request
-Header set X-Request-Tag "php" env=php_request
-
-SetEnvIf Remote_Addr "^127\.0\.0\.1$" internal_monitor
-```
-
-Совместно с `Require` (белый список внутренних клиентов):
-
-```apacheconf
-SetEnvIf User-Agent "InternalTool" allow_internal
-<RequireAll>
-    Require all denied
-    Require env allow_internal
-</RequireAll>
-```
-
-### 10. Принудительный обработчик через RewriteRule (FCGI)
-
-```apacheconf
-RewriteRule \.php$ - [H=proxy:fcgi://127.0.0.1:9000]
+# Запрос /search/phones преобразуется в /find.php?type=phones&sort=popular,
+# сохраняя при этом любые параметры клиента (например, &page=2)
+RewriteRule ^/search/([^/]+)$ /find.php?type=$1&sort=popular [QSA,L]
 ```
 
 ---
 
 ## Операции и команды
 
-| Команда/проверка | Назначение | Пример вывода |
-|---|---|---|
-| `httpd -M \| grep rewrite` | Проверка загрузки модуля | `rewrite_module (shared)` |
-| `apachectl configtest` | Синтаксическая проверка | `Syntax OK` |
-| `curl -I https://example.com/old` | Проверка кода редиректа | `HTTP/1.1 301 Moved Permanently` |
-| `curl -s -o /dev/null -w "%{http_code}" URL` | Проверка статуса без тела | `200` |
-| `curl -I -L URL` | Проход всех редиректов | `HTTP/1.1 301` → `HTTP/1.1 200` |
+### Валидация синтаксиса и проверка загрузки модулей
 
-**Пример разбора цепочки редиректов:**
 ```bash
-curl -sIL https://example.com/old-path | grep -E "^HTTP|^Location"
-# → HTTP/1.1 301 Moved Permanently
-# → Location: https://www.example.com/new-path
-# → HTTP/1.1 200 OK
+# 1. Проверка синтаксиса конфигурационных файлов перед перезагрузкой сервиса
+sudo apachectl configtest
+# → Syntax OK
+
+# Альтернативная команда для RHEL-систем:
+sudo httpd -t
+# → Syntax OK
+
+# 2. Проверка активности модулей перенаправления
+sudo apachectl -M | grep -E 'rewrite|alias'
+# → alias_module (shared)
+# → rewrite_module (shared)
 ```
 
-**Диагностика rewrite-петли:**
+### Применение изменений без разрыва соединений (Zero-Downtime Reload)
+
 ```bash
-# При LogLevel alert rewrite:trace6 (только на время отладки) воспроизвести запрос
-sudo tail -50 /var/log/httpd/error_log | grep -i "looping\|AH03490"
-# → [rewrite:trace3] ... AH03482: applying 'QSA' to 'URI'...
-# → [rewrite:trace6] ... AH03490: looping ...
+# Грациозная перезагрузка рабочих процессов:
+sudo apachectl graceful
+
+# Либо через systemd:
+sudo systemctl reload apache2   # Debian/Ubuntu
+sudo systemctl reload httpd     # RHEL/Rocky Linux
+```
+
+### Тестирование и инспекция цепочек редиректов через cURL
+
+```bash
+# 1. Проверка заголовков ответа и кода состояния:
+curl -sI https://example.com/old-page | grep -E '^HTTP/|^Location:'
+# → HTTP/1.1 301 Moved Permanently
+# → Location: https://example.com/new-page
+
+# 2. Трассировка полной цепочки перенаправлений с финальным статусом:
+curl -sIL -o /dev/null -w "Chain:\nStatus: %{http_code}\nEffective URL: %{url_effective}\nRedirect Count: %{num_redirects}\n" https://example.com/old-page
+# → Chain:
+# → Status: 200
+# → Effective URL: https://example.com/new-page
+# → Redirect Count: 1
+
+# 3. Тестирование с имитацией внешнего SSL-терминатора (X-Forwarded-Proto):
+curl -sI -H "X-Forwarded-Proto: http" http://example.com/test | grep Location
+# → Location: https://example.com/test
+```
+
+### Сборка и обслуживание файлов `RewriteMap`
+
+```bash
+# Компиляция текстового файла в формат DBM (sdbm / gdbm):
+sudo httxt2dbm -i /etc/apache2/maps/redirects.txt -o /etc/apache2/maps/redirects.map -t dbm
+
+# Проверка создания бинарного файла базы данных:
+ls -lh /etc/apache2/maps/redirects.map*
+# → -rw-r----- 1 root www-data 4.2M Oct 14 16:50 /etc/apache2/maps/redirects.map.dir
+# → -rw-r----- 1 root www-data 8.1M Oct 14 16:50 /etc/apache2/maps/redirects.map.pag
+```
+
+### Мониторинг и динамическая отладка правил
+
+```bash
+# 1. Временное включение детальной трассировки в VirtualHost (без перезапуска всего сервера):
+# Добавить в блок <VirtualHost>: LogLevel warn rewrite:trace4
+sudo apachectl graceful
+
+# 2. Просмотр журнала в реальном времени с фильтрацией шагов mod_rewrite:
+sudo tail -f /var/log/apache2/error.log | grep -E '\[rewrite:trace[1-8]\]'
+# → [rewrite:trace3] [pid 14210] mod_rewrite.c(480): [client 192.0.2.1:41202] applying pattern '^/old/(.*)$' to uri '/old/catalog'
+# → [rewrite:trace2] [pid 14210] mod_rewrite.c(480): [client 192.0.2.1:41202] rewrite '/old/catalog' -> '/new/catalog'
+# → [rewrite:trace2] [pid 14210] mod_rewrite.c(480): [client 192.0.2.1:41202] explicitly forcing redirect with https://example.com/new/catalog
+
+# 3. Не забудьте вернуть уровень логирования обратно после завершения диагностики!
 ```
 
 ---
 
 ## Типичные ошибки и диагностика
 
-| Симптом | Причина | Решение |
+| Код ошибки / Симптом | Причина возникновения | Практическое решение |
 |---|---|---|
-| `AH03490: looping...` | Правило зациклено; `[L]` не завершает цепочку | Заменить `[L]` на `[END]` |
-| Редирект не срабатывает | Контекст `.htaccess` и `AllowOverride`/`AllowOverrideList` запрещают директивы | Проверить `AllowOverride` и `AllowOverrideList`; `RewriteEngine` в `.htaccess` обязателен |
-| `500 Internal Server Error` | Ошибка regexp в RewriteRule; правило в недопустимом контексте | `apachectl configtest`; проверить `error_log` |
-| Редирект зацикливается (www↔www) | Противоречивые RewriteCond | Проверить обе ветки условий `[NC]` |
-| Query-string теряется | Отсутствует `[QSA]` или подстановка без query | Добавить `[QSA]` или `?` в подстановку |
-| `403 Forbidden` для легитимного клиента | Переменная окружения для блока совпадает ложно | Уточнить regexp в SetEnvIf/RewriteCond |
-| Спецсимволы `%20`/`;` в URL перекодируются | Подстановочная строка не экранирует | Добавить `[NE]` |
+| `AH00124: Request exceeded the limit of 10 internal redirects due to probable configuration error` | Зацикливание правил в контексте `<Directory>` или `.htaccess`. Флаг `[L]` не предотвращает повторный цикл перенаправления. | Заменить флаг `[L]` на `[END]`. Добавить проверки `RewriteCond %{REQUEST_FILENAME} !-f` и `RewriteCond %{ENV:REDIRECT_STATUS} ^$` перед правилом. |
+| `AH00670: Options FollowSymLinks or SymLinksIfOwnerMatch is off which implies that RewriteRule directive is forbidden` | В секции `<Directory>` отсутствует обязательная опция безопасности `FollowSymLinks`. Сервер возвращает клиенту ошибку `403 Forbidden`. | Добавить `Options +FollowSymLinks` (или `SymLinksIfOwnerMatch`) в соответствующую секцию `<Directory>`. |
+| Бесконечный цикл редиректов браузера: `ERR_TOO_MANY_REDIRECTS` (код 301/302) | Неправильная проверка протокола за Reverse Proxy / Load Balancer. Сервер постоянно шлет редирект на HTTPS, получая от балансировщика запросы по HTTP. | Использовать `RewriteCond %{HTTP:X-Forwarded-Proto} =http [NC]` вместо `RewriteCond %{HTTPS} off`. |
+| Изменения в `.htaccess` не дают эффекта | В родительской секции `<Directory>` установлена директива `AllowOverride None`. | Разрешить использование директив перезаписи: `AllowOverride FileInfo Options=FollowSymLinks` (или `AllowOverride All`). |
+| Ошибка `404 Not Found` после внутренней перезаписи в подкаталоге | Не задана директива `RewriteBase` в контексте `.htaccess` или `<Directory>`, в результате чего Apache подставляет путь от корня сервера. | Явно указать `RewriteBase /catalog/` перед правилами `RewriteRule`. |
+| Клиент получает `500 Internal Server Error` при обращении к `RewriteMap` | Файл карты DBM не существует, поврежден либо у процесса веб-сервера (`www-data`/`apache`) нет прав на чтение файла. | Пересобрать карту через `httxt2dbm` и проверить права доступа (`chmod 0640`, владение группой веб-сервера). |
+| Потеря параметров URL (`?param=value`) при перенаправлении | В строке `Substitution` не указан флаг `[QSA]`, а новое правило перезаписывает query-часть. | Добавить флаг `[QSA]` в квадратные скобки `RewriteRule`. |
+| Появление артефактов экранирования (`%252F` вместо `/`, `%2520`) | Двойное URL-экранирование подстановки движком `mod_rewrite`. | Использовать флаг `[NE]` (No Escape) в целевом правиле. |
 
 ---
 
 ## Лучшие практики
 
-1.  `Redirect`/`RedirectMatch` вместо mod_rewrite для статических редиректов — проще, быстрее, читаемее.
-2.  Всегда указывать явный код `[R=301]` (или `308` для POST) — поисковики и клиенты запоминают только постоянные редиректы.
-3.  Использовать `[END]` вместо `[L]` везде, где правило не должно повторно обрабатываться.
-4.  Не смешивать `Alias` и `RewriteRule` на одном пути.
-5.  Не оставлять `LogLevel ... rewrite:trace6` в продакшене.
-6.  Правила выносить из `.htaccess` в основной конфиг (`AllowOverride None`).
-7.  Держать правила под контролем версий (Git/Ansible) как часть конфигурации.
+### 1. Архитектура и контексты применения
+*   **Отказ от `.htaccess` в продакшене:** Выносить все правила перезаписи в конфигурационные файлы виртуальных хостов (`/etc/apache2/sites-available/` или `/etc/httpd/conf.d/`) с обязательной установкой `AllowOverride None`. Это устраняет лишние операции `stat()` на файловой системе для каждого уровня каталогов при каждом запросе.
+*   **Использование `mod_alias` вместо `mod_rewrite`:** Если перенаправление является статическим (префикс URL → целевой URL) и не требует анализа параметров или заголовков, всегда использовать `Redirect` или `RedirectMatch`.
+*   **`FallbackResource` для SPA:** Использовать директиву `FallbackResource /index.html` вместо громоздких правил `RewriteCond %{REQUEST_FILENAME} !-f ...` для снижения накладных расходов.
+
+### 2. Надежность и производительность
+*   **Приоритет флага `[END]` над `[L]`:** В контексте каталогов всегда предпочитать `[END]`, если правило формирует окончательный адрес и не должно участвовать в последующих циклах перезаписи.
+*   **Использование `RewriteMap` для больших таблиц:** При наличии более 30-50 статических редиректов компилировать их в бинарный DBM-формат через `httxt2dbm`.
+*   **Защита от утечек отладочной информации:** Никогда не оставлять уровни трассировки `LogLevel rewrite:trace1..8` в продакшене. Стандартный рабочий уровень — `LogLevel warn`.
+
+### 3. Безопасность
+*   **Защита от Open Redirect:** Никогда не подставлять невалидированные входные параметры из строки запроса (`%{QUERY_STRING}`) или пути (`$1`) напрямую в заголовок `Location` редиректа без проверки регулярным выражением белого списка доменов.
+*   **Использование безопасных обратных ссылок `[B]`:** При подстановке пользовательского ввода в пути файловой системы экранировать спецсимволы флагом `[B]` для предотвращения атак обхода каталогов (Path Traversal).
+*   **Явное указание кодов статуса:** Всегда явно задавать HTTP-код в правилах перенаправления: `[R=301]` для постоянных изменений структуры сайта, `[R=308]` для API-интерфейсов, сохраняющих методы POST/PUT.
+
+### 4. Автоматизация и управление конфигурацией (IaC)
+*   **Контроль версий:** Хранить конфигурации Apache и исходные файлы `RewriteMap` в репозиториях Git.
+*   **Автоматизированный pre-reload синтаксический тест:** В скриптах CI/CD и плейбуках Ansible перед вызовом перезагрузки (`systemctl reload`) обязательно выполнять `apachectl configtest`.
 
 ---
 
 ## Дополнительная информация
 
 ### См. также
-
-*   [Перенаправления и перезапись URI в Nginx](../Nginx/Core/nginx_rewrite_rules_and_try_files.md) — сравнение подходов Nginx (`rewrite`/`return`/`try_files`).
-*   [Обзор Apache](./apache_overview.md) — MPM, VirtualHost, модули, контексты конфигурации.
-*   [Обзор WAF](../../Security/ApplicationSecurity/waf.md) — защита приложений поверх маршрутизации.
+*   [Обзор веб-сервера Apache](./apache_overview.md) — общая архитектура, MPM, контексты конфигурации и хуки жизненного цикла.
+*   [Порядок объединения конфигурационных секций](./apache-config-merge-order.md) — правила наследования и приоритета директив (`<Directory>`, `<Location>`, `<VirtualHost>`).
+*   [Продвинутое обратное проксирование Apache](./apache-reverse-proxy-advanced.md) — настройка `mod_proxy`, `ProxyPass`, `ProxyPassReverse` и балансировка.
+*   [Тюнинг производительности Apache](./apache_performance_tuning.md) — оптимизация MPM event, KeepAlive и параметров ввода-вывода.
+*   [Харденинг веб-сервера Apache](./apache_hardening.md) — комплексные меры безопасности, защита заголовков и изоляция прав.
+*   [Перенаправления и перезапись URI в Nginx](../Nginx/Core/nginx_rewrite_rules_and_try_files.md) — сравнительный анализ директив `rewrite`, `return` и `try_files` в Nginx.
+*   [Межсетевой экран веб-приложений (WAF)](../../Security/ApplicationSecurity/waf.md) — фильтрация вредоносного трафика на уровне L7.
