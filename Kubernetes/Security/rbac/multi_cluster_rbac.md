@@ -365,4 +365,5 @@ done
 - **[Обзор RBAC](./rbac_overview.md)** — основы управления доступом
 - **[Субъекты доступа](./subjects.md)** — типы субъектов
 - **[ArgoCD RBAC](../../../GitOps/ArgoCD/argocd_rbac_deep.md)** — RBAC для multi-cluster GitOps
+- **[RBAC-паттерны: per-namespace роли в GitOps](./gitops_rbac_patterns.md)** — иерархическая модель ролей с Kustomize-трансформером namespace
 - **[Multi-tenancy](../../Concepts/multi-tenancy.md)** — изоляция租ant в кластере

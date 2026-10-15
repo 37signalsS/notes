@@ -250,6 +250,103 @@ helm install blackbox prometheus-community/prometheus-blackbox-exporter \
   --namespace monitoring --create-namespace
 ```
 
+#### Развёртывание через Flux HelmRelease (GitOps)
+
+В GitOps-подходе (Flux CD) развёртывание blackbox exporter выполняется через `HelmRelease` — декларативный CRD, управляемый `helm-controller`. Манифесты хранятся в Git и применяются автоматически, исключяя ручные `helm install`.
+
+**Расположение в репозитории:**
+- `HelmRelease` — в слое `base/monitoring/exporters/blackbox-exporter/`
+- `Probe` и `PrometheusRule` — в слое `spoke/monitoring/` (отдельная Kustomization `dev-monitoring-spoke`)
+
+```yaml
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: blackbox-exporter
+  namespace: observability
+spec:
+  chart:
+    spec:
+      chart: prometheus-blackbox-exporter
+      version: ">= 11.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+        namespace: flux-system
+  interval: 1h
+  values:
+    config:
+      modules:
+        http_2xx:
+          prober: http
+          timeout: 10s
+          http:
+            valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+            valid_status_codes: [200, 301, 302]
+            follow_redirects: true
+            tls_config:
+              insecure_skip_verify: false
+        http_2xx_insecure:
+          prober: http
+          timeout: 10s
+          http:
+            valid_status_codes: [200]
+            tls_config:
+              insecure_skip_verify: true
+        tcp_connect:
+          prober: tcp
+          timeout: 5s
+    serviceMonitor:
+      enabled: true
+      labels:
+        release: kube-prom-stack  # должен совпадать с serviceMonitorSelector в ресурсе Prometheus
+```
+
+Два HTTP-модуля: `http_2xx` для эндпоинтов с публичными сертификатами и `http_2xx_insecure` для внутренних сервисов с самоподписанными сертификатами. Подробнее о модулях: [Конфигурация модулей](./blackbox_exporter_modules_configuration.md).
+
+> **Версия чарта:** Текущая версия `prometheus-blackbox-exporter` — 11.20.0 (октябрь 2026), `appVersion` `v0.28.0`. Ограничение `>= 11.0.0` согласуется с текущей линией версий. В production рекомендуется pinning конкретной версии.
+
+#### Порядок развёртывания: отдельная Kustomization для мониторинга
+
+Объекты `Probe` и `PrometheusRule` зависят от CRD `Probe`, который устанавливается вместе с `kube-prom-stack`. Если Kustomization мониторинга запустится одновременно с базовым слоем (`dev-spoke`), объекты `Probe` могут быть применены до создания CRD — это вызовит ошибку реконсиляции (`probe.monitoring.coreos.com not found`).
+
+Параметр `dependsOn` в ресурсе `Kustomization` (Flux CD) формирует детерминированный граф развертывания: зависимый объект не начнёт реконсиляцию, пока родительский не перейдёт в `Ready=True`.
+
+```yaml
+# Kustomization dev-monitoring-spoke
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-monitoring-spoke
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./fluxcd/projects/dev/kustomization/spoke/monitoring/
+  dependsOn:
+    - name: dev-spoke
+      namespace: dev
+  sourceRef:
+    kind: GitRepository
+    name: fleet-infra
+```
+
+Это гарантирует, что слой `spoke/monitoring/` (включая установку `kube-prom-stack` через `dev-spoke`) применяется **до** создания `Probe` и `PrometheusRule`. Подробнее о `dependsOn`: [Flux — обзор и ключевые концепции](../../../GitOps/flux.md).
+
+#### Отладка ошибок проб через port-forward
+
+Для отладки обращайтесь к blackbox exporter напрямую через `port-forward`, чтобы увидеть, что именно он возвращает:
+
+```bash
+# Проверить URL через модуль http_2xx
+kubectl port-forward -n observability svc/blackbox-exporter 9115:9115
+curl "http://localhost:9115/probe?module=http_2xx&target=https://example.com"
+
+# Проверить внутренний TCP-endpoint через модуль tcp_connect
+curl "http://localhost:9115/probe?module=tcp_connect&target=elasticsearch-master.elasticsearch.svc.cluster.local:9200"
+```
+
+Вывод — сырой Prometheus text format. `probe_success 1` — проверка прошла, `probe_success 0` — нет, остальные метрики объясняют причину.
+
 ### 4. Интеграция с Prometheus Operator (Probe CRD)
 
 Для интеграции с **Prometheus Operator** используется ресурс `Probe`:

@@ -1,6 +1,6 @@
 # OIDC и Workload Identity в GitLab CI/CD
 
-**Актуально для:** GitLab 17.x–19.x
+**Актуально для:** GitLab 17.0–19.x (CI_JOB_JWT удалён в 18.0; `id_tokens` — единственный механизм OIDC).
 
 ## Определения
 
@@ -10,21 +10,25 @@
 
 **ID Token** — краткоживущий JWT, содержащий claims о identity workloads. В GitLab CI генерируется через блок `id_tokens` в `.gitlab-ci.yml`. Срок действия равен таймауту задачи или 5 минутам при отсутствии таймаута.
 
-**`id_tokens`** — нативный механизм GitLab (стандарт с 15.7+), заменивший устаревший `CI_JOB_JWT`. Позволяет генерировать токены с настраиваемой аудиторией (`aud`).
+**`id_tokens`** — нативный механизм GitLab (стандарт с 15.7+), заменивший устаревший `CI_JOB_JWT`. Позволяет генерировать токены с настраиваемой аудиторией (`aud`). Срок действия равен таймауту задачи или 5 минутам при отсутствии таймаута.
 
-**instance_oidc_token** — глобальная настройка GitLab Server, включающая генерацию OIDC токенов для CI jobs. Доступна с GitLab 17.0+.
+**OIDC Token Issuance (instance-level)** — настройка GitLab Server (`Settings → CI/CD → Token Access`), включающая выдачу ID Token для CI jobs на уровне инстанса. Доступна с GitLab 17.0+.
 
-**workload_oidc_token** — настройка на уровне проекта/группы, включающая workload identity для CI jobs. Доступна с GitLab 17.0+.
+**OIDC Token Issuance (group/project-level)** — настройка `Workload Identity Federation` на уровне группы/проекта (`Settings → CI/CD → Token Access`), управляет выдачей токенов в конкретных областях. Доступна с GitLab 17.0+.
 
-**Fulcio** — корневой CA сертификат Sigstore. Выдаёт сертификаты, привязанные к identity (email, GitLab runner, workload identity).
+**`ci_id_token_sub_claim_components`** — API-параметр проекта (Projects API), определяющий порядок компонентов в `sub` claim. По умолчанию `["project_path", "ref_type", "ref"]`. Позволяет использовать `project_id` или `job_project_id` вместо `project_path` для защиты от namespace-reclamation атак. Доступна с GitLab 18.4+.
 
-**Rekor** — transparency log Sigstore. Записывает все подписи для аудита и верификации.
+**`Fulcio`** — корневой CA сертификат Sigstore. Выдаёт сертификаты, привязанные к identity (email, GitLab runner, workload identity).
 
-**Vault JWT auth** — метод аутентификации в Vault через JWT токен. Поддерживает GitLab CI JWT, Kubernetes service account JWT.
+**`Rekor`** — transparency log Sigstore. Записывает все подписи для аудита и верификации.
 
-**Consul JWT Auth Method** — универсальный метод headless-аутентификации в Consul с использованием любых подписанных JWT-токенов. Часто используется для интеграции с CI/CD.
+**Vault JWT auth** — метод аутентификации в Vault через JWT токен (`auth/jwt` или `auth/oidc`). Поддерживает GitLab CI ID Token, Kubernetes service account JWT. Для JWT с `aud` claim требует `bound_audiences` в роли (Vault 1.17+).
+
+**Consul JWT Auth Method** — метод аутентификации в Consul (`-type jwt`), использующий подписанные JWT-токены. Часто используется для headless-аутентификации из CI/CD. Требует отдельной настройки `ClaimMappings` для раскрытия claims и `binding-rule` для привязки к ролям.
 
 **Bound Claims** — набор ограничений в роли внешнего провайдера (Vault, Consul), гарантирующий, что токен будет принят только от конкретного проекта или ветки GitLab.
+
+**Claim** — отдельное поле (атрибут) внутри JWT payload. GitLab передаёт свы­детельствующие данные о проекте, ветке, пользователе, pipeline и runner.
 
 ## Основные концепции
 
@@ -82,39 +86,55 @@ GitLab CI Job
 
 ### Claims в GitLab CI JWT
 
-| Claim | Значение | Пример |
+| Claim | Когда | Пример |
 | :--- | :--- | :--- |
-| `iss` | Issuer | `https://gitlab.example.com` |
-| `sub` | Subject | `project_path:mygroup/myproject:ref_type:branch:ref:main` |
-| `aud` | Audience | `https://vault.example.com` |
-| `exp` | Expiration | `now + job timeout / 5 мин` |
-| `iat` | Issued At | `1700000000` |
-| `nbf` | Not Before | `1700000000` |
-| `jti` | JWT ID | `unique-id` |
-| `namespace_id` | GitLab namespace | `12345` |
-| `namespace_path` | GitLab namespace path | `mygroup` |
-| `project_id` | GitLab project | `67890` |
-| `project_path` | GitLab project path | `mygroup/myproject` |
-| `user_id` | GitLab user | `11111` |
-| `user_login` | GitLab username | `deploy-bot` |
-| `user_email` | GitLab user email | `deploy@example.com` |
-| `user_access_level` | Access level (16.9+) | `30` |
-| `pipeline_id` | Pipeline ID | `22222` |
-| `pipeline_source` | Pipeline source | `push` |
-| `job_id` | Job ID | `33333` |
-| `ref` | Git ref | `main` |
-| `ref_type` | Ref type | `branch` |
-| `ref_protected` | Protected flag | `true` |
-| `environment` | Environment name | `production` |
-| `environment_protected` | Environment protected | `true` |
-| `deployment_tier` | Deployment tier (15.2+) | `production` |
+| `iss` | Всегда | `https://gitlab.example.com` |
+| `sub` | Всегда (настраивается через Projects API: `ci_id_token_sub_claim_components`) | `project_path:mygroup/myproject:ref_type:branch:ref:main` |
+| `aud` | Всегда | `https://vault.example.com` |
+| `exp` | Всегда | `now + job timeout / 5 мин` |
+| `iat` | Всегда | `1700000000` |
+| `nbf` | Всегда | `1700000000` |
+| `jti` | Всегда | `235b3a54-b797-45c7-ae9a-f72d7bc6ef5b` |
+| `namespace_id` | Всегда | `72` |
+| `namespace_path` | Всегда | `mygroup` |
+| `project_id` | Всегда | `67890` |
+| `project_path` | Всегда | `mygroup/myproject` |
+| `job_project_id` | Всегда (18.4+) | `67890` |
+| `job_project_path` | Всегда (18.4+) | `mygroup/myproject` |
+| `job_namespace_id` | Всегда (18.4+) | `72` |
+| `user_id` | Пользователь запустил | `11111` |
+| `user_login` | Пользователь запустил | `deploy-bot` |
+| `user_email` | Пользователь запустил | `deploy@example.com` |
+| `user_access_level` | Пользователь запустил (16.9+) | `30` — Developer |
+| `user_identities` | Пользователь запустил | `[{"provider":"github","extern_uid":"2435223452345"}]` |
+| `pipeline_id` | Всегда | `22222` |
+| `pipeline_source` | Всегда | `push` |
+| `job_id` | Всегда | `33333` |
+| `job_source` | Всегда | `pipeline` |
+| `job_config` | Всегда | `{"url":".../.gitlab-ci.yml@..."}` |
+| `ref` | Всегда | `main` |
+| `ref_type` | Всегда | `branch` |
+| `ref_path` | Всегда (16.0+) | `refs/heads/main` |
+| `ref_protected` | Всегда | `true` |
+| `environment` | Job с environment | `production` |
+| `environment_protected` | Job с environment | `true` |
+| `deployment_tier` | Job с environment (15.2+) | `production` |
+| `environment_action` | Job с environment (18.7+) | `start` |
+| `groups_direct` | Всегда | `["mygroup/mysubgroup", ...]` |
+| `runner_id` | Всегда | `42` |
+| `runner_environment` | Всегда | `self-hosted` |
+| `sha` | Всегда | `714a629c0b40...` |
+| `project_visibility` | Всегда | `public` |
+| `ci_config_ref_uri` | Всегда | `gitlab.example.com/mygroup/myproject//.gitlab-ci.yml@refs/heads/main` |
+| `ci_config_sha` | Всегда | `714a629c0b40...` |
+
+> **`ci_id_token_sub_claim_components`:** через Projects API можно изменить порядок компонентов `sub`, используя неизменяемые ID (`project_id`, `job_project_id`) вместо путей. Это защищает от namespace-reclamation атак, когда переименованный/перемещённый проект унаследует trust policies предыдущего владельца. Пример: `["project_id", "ref_type", "ref"]` → `sub: project_id:67890:ref_type:branch:ref:main`.
 
 ## Предварительные требования
 
 **Инфраструктура:**
-- GitLab 17.0+ (self-managed или GitLab.com)
-- GitLab Runner с поддержкой `id_tokens`
-- Внешний провайдер: Vault 1.15+, Consul 1.19+, внутренний API с OIDC support, Kubernetes 1.27+
+- GitLab 17.0+ (self-managed или GitLab.com); Vault 1.17+ (требуется `bound_audiences` для JWT с `aud` claim); Consul 1.22+ (JWT auth method); внутренний API с OIDC/JWKS support; Kubernetes 1.27+
+- GitLab Runner 17.0+ с поддержкой `id_tokens`
 - TLS-сертификаты для всех endpoints (GitLab, Vault, Consul, внутренние сервисы)
 
 **Переменные CI/CD:**
@@ -143,7 +163,7 @@ vault auth enable jwt
 
 # Настройка доверия к GitLab JWKS
 vault write auth/jwt/config \
-  jwks_url="https://gitlab.example.com/-/jwks" \
+  oidc_discovery_url="https://gitlab.example.com" \
   bound_issuer="https://gitlab.example.com"
 
 # Создание политики
@@ -153,16 +173,17 @@ path "secret/data/projects/my-app/production/*" { capabilities = ["read"] }
 EOF
 
 # Создание роли с bound claims
+# Важно: bound_audiences обязан совпадать с aud в id_tokens (Vault 1.17+)
 vault write auth/jwt/role/gitlab-prod-role \
   role_type="jwt" \
   policies="gitlab-app-policy" \
   token_ttl="15m" \
+  bound_audiences="https://vault.example.com" \
   bound_claims_type="glob" \
   bound_claims='{
-    "namespace_path": "my-org/backend/api-service",
+    "project_path": "my-org/backend/api-service",
     "ref_protected": "true",
-    "ref": "main",
-    "environment": "production"
+    "ref": "main"
   }' \
   user_claim="user_email"
 ```
@@ -183,7 +204,7 @@ get_secrets:
     - |
       export VAULT_TOKEN=$(vault write -field=token auth/jwt/login \
         role=$VAULT_AUTH_ROLE jwt=$VAULT_ID_TOKEN)
-      vault kv get -format=json secret/projects/my-app/db_config > secrets.json
+      vault kv get -format=json secret/projects/my-app/production/db_config > secrets.json
   artifacts:
     paths:
       - secrets.json
@@ -198,35 +219,204 @@ vault read auth/jwt/role/gitlab-prod-role
 vault token lookup $VAULT_TOKEN | jq '.data.policies, .data.lease_duration'
 
 # Проверка access к секрету
-vault kv get secret/projects/my-app/db_config
+vault kv get secret/projects/my-app/production/db_config
 ```
 
 Для детального развёртывания Vault в Kubernetes, настройки Vault Secrets Operator (VSO) и интеграции с GitLab Runner см. **[Интеграция GitLab CI и HashiCorp Vault в Kubernetes](../Tutorials/vault_kubernetes_integration.md)**.
 
+### Сценарий 1.1: Environment-specific роли (Development / Production)
+
+Сценарий 1 показывает одну роль. Для реальной инфраструктуры удобно иметь отдельную роль на каждую среду с разной политикой доступа и TTL. Здесь — два режима: `Development` (ветки `dev`/`feat/*`, TTL 1h) и `Production` (только ветки `rel/*`, TTL 30m). Конфиг `oidc_discovery_url`/`bound_issuer` из Сценария 1 уже задан — здесь только роли, политики и клиентская часть.
+
+**Политики Vault** (только `read`, никогда `create`/`update`/`delete`):
+
+```hcl
+# Политика app-development
+path "Microservices/data/+/Development/*" {
+  capabilities = ["read"]
+}
+path "common-secret/data/Development/*" {
+  capabilities = ["read"]
+}
+
+# Политика app-production
+path "Microservices/data/+/Production/*" {
+  capabilities = ["read"]
+}
+path "common-secret/data/Production/*" {
+  capabilities = ["read"]
+}
+```
+
+> `*` — суффиксный glob Vault (только в конце пути); `+` — wildcard для одного сегмента пути (см. [документацию Vault](https://developer.hashicorp.com/vault/docs/concepts/policies)). Пути политик используют KV v2-конвенцию с `/data/`.
+
+**Роли:**
+
+```bash
+# Роль для Development — ветки dev и feat/*, TTL 1h
+vault write auth/jwt/role/access-Development \
+  role_type="jwt" \
+  bound_audiences="https://vault.test.antonnovikov.com" \
+  user_claim="user_login" \
+  bound_claims_type="glob" \
+  bound_claims='{"project_path": ["mygroup/backend/*"], "ref": ["dev", "feat/*"]}' \
+  policies="app-development" \
+  token_ttl="1h" \
+  token_max_ttl="2h"
+
+# Роль для Production — только ветки rel/*, TTL 30m
+vault write auth/jwt/role/access-Production \
+  role_type="jwt" \
+  bound_audiences="https://vault.test.antonnovikov.com" \
+  user_claim="user_login" \
+  bound_claims_type="glob" \
+  bound_claims='{"project_path": ["mygroup/backend/*"], "ref": ["rel/*"]}' \
+  policies="app-production" \
+  token_ttl="30m" \
+  token_max_ttl="1h"
+```
+
+Ключевые моменты:
+
+- `bound_claims_type="glob"` включает glob-сопоставление: `feat/*` и `rel/*` работают как маски, `dev` — как точное значение.
+- `bound_claims.ref` ограничивает, с каких веток можно деплоить: `dev, feat/*` для Development и `rel/*` для Production.
+- `bound_claims.project_path` (маска `mygroup/backend/*`) позволяет нескольким сервисам одной группы использовать одну роль.
+- TTL 30m для Production — CI job должен завершиться в этом окне; для Development допущено 1h.
+- `bound_audiences` обязан совпадать с `aud`, указанной в блоке `id_tokens` на стороне GitLab CI — иначе Vault вернёт `invalid audience`.
+
+**Сторона CI/CD.** YAML-якорь `&auth_jwt` объявляется один раз и переиспользуется в каждом deploy job — меняется только `APP_ENV`:
+
+```yaml
+variables:
+  VAULT_ADDR: https://vault.test.antonnovikov.com
+  DOCKER_IMAGE: registry.example.com/ci-images/vault-cli:1.0.1
+
+.auth:jwt: &auth_jwt |
+  export VAULT_TOKEN="$(vault write -field=token auth/jwt/login \
+    role=access-${APP_ENV} \
+    jwt=$VAULT_ID_TOKEN)"
+  vault kv get -field=kubeconfig_${NAMESPACE} common-secret/${APP_ENV} > kube_config
+  chmod 600 kube_config
+  export KUBECONFIG=kube_config
+
+deploy_dev:
+  image: ${DOCKER_IMAGE}
+  stage: deploy
+  id_tokens:
+    VAULT_ID_TOKEN:
+      aud: https://vault.test.antonnovikov.com
+  before_script:
+    - *auth_jwt
+  script:
+    - helm upgrade --install ...
+  variables:
+    APP_ENV: Development
+    NAMESPACE: app
+
+deploy_prod:
+  image: ${DOCKER_IMAGE}
+  stage: deploy
+  id_tokens:
+    VAULT_ID_TOKEN:
+      aud: https://vault.test.antonnovikov.com
+  before_script:
+    - *auth_jwt
+  script:
+    - helm upgrade --install ...
+  variables:
+    APP_ENV: Production
+    NAMESPACE: app
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^rel\//
+```
+
+> **Примечание:** устаревшая переменная `CI_JOB_JWT` (удалена в GitLab 18.0) заменена нативным блоком `id_tokens` с `VAULT_ID_TOKEN`. Аудитория (`aud`) в `id_tokens` обязана совпадать с `bound_audiences` роли.
+
+**Kubeconfig из Vault.** Вместо хранения `kubeconfig` в CI-переменной GitLab (в UI он виден открытым текстом) — кладётся в Vault под `common-secret/<env>/kubeconfig_<cluster>` и забирается при деплое:
+
+```bash
+export VAULT_TOKEN="$(vault write -field=token auth/jwt/login \
+  role=access-${APP_ENV} jwt=$VAULT_ID_TOKEN)"
+vault kv get -field=kubeconfig_${NAMESPACE} common-secret/${APP_ENV} > kube_config
+chmod 600 kube_config
+export KUBECONFIG=kube_config
+```
+
+`kubeconfig` содержит service account token с правом `helm upgrade` строго в одном namespace. Никакого `cluster-admin` и никакого постоянного доступа к shell.
+
+**Кастомный CI-образ.** Образ `vault-cli` собирает `vault`, `consul-template`, `helm`, `kubectl` и `curl`. Тег в `DOCKER_IMAGE` зафиксирован — каждый deploy job получает одинаковое окружение независимо от изменений в upstream:
+
+```dockerfile
+FROM hashicorp/vault:1.15
+RUN apk add --no-cache curl helm kubectl
+COPY --from=hashicorp/consul-template:0.33 /bin/consul-template /bin/consul-template
+```
+
+**Валидация:**
+
+```bash
+# Список ролей
+vault list auth/jwt/role
+
+# Детали роли
+vault read auth/jwt/role/access-Development
+vault read auth/jwt/role/access-Production
+
+# Декодировать claims JWT (без проверки подписи)
+echo $VAULT_ID_TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool
+
+# Проверка выданного токена
+vault token lookup $VAULT_TOKEN | jq '.data.policies, .data.lease_duration'
+```
+
+**Что нельзя сделать с токеном.** Ограничения, которые обеспечиваются комбинацией `bound_claims`, политик `read`-only и короткого TTL:
+
+| Возможность | Статус | Обоснование |
+| :--- | :--- | :--- |
+| Доступ к секретам другой среды | Невозможно | `bound_claims` роли не пропустит токен другой среды |
+| Использовать токен после завершения job | Нет | TTL истёк (30m для Production) |
+| Деплой prod с feature-ветки | Нет | `bound_claims.ref` допускает только `rel/*` |
+| Изменить секреты в Vault | Нет | политика выдаёт только `read` |
+| Доступ к секретам других проектов | Нет | `project_path` в `bound_claims` ограничен |
+
+Типичные ошибки: `bound claim mismatch` (ref/project_path не совпадают с ролью), `role not found` (опечатка в `APP_ENV`) и `invalid audience` (`bound_audiences` ≠ `aud` в `id_tokens`) — см. также [Устранение неполадок](#устранение-неполадок).
+
 ### Сценарий 2: Consul через JWT auth (self-hosted)
 
 **Настройка в Consul (one-time):**
+
+Consul использует трёхэтапную модель: auth method → binding rule → role. В отличие от Vault, `binding-rule` управляется отдельной командой, а не флагом `consul acl role create`.
+
 ```bash
-# Включение JWT auth method
+# 1. Создание JWT auth method
 consul acl auth-method create -type jwt -name gitlab-ci \
   -description "GitLab CI JWT auth" \
   -config '{
     "JWKSURL": "https://gitlab.example.com/-/jwks",
     "BoundIssuer": "https://gitlab.example.com",
+    "BoundAudiences": ["https://consul.example.com"],
     "ClaimMappings": {
-      "namespace_path": "consul_namespace",
-      "project_path": "consul_service"
+      "project_path": "project_path",
+      "ref": "ref"
     }
   }' \
   -token "<MANAGEMENT_TOKEN>"
 
-# Создание роли
-consul acl role create -name gitlab-ci-role -description "GitLab CI role" \
+# 2. Создание роли (политики доступа)
+consul acl role create -name gitlab-ci-role -description "GitLab CI service role" \
   -policy-name "service-write" \
-  -auth-method gitlab-ci \
-  -binding-rule 'Value.project_path == "mygroup/myproject" && Value.ref == "main"' \
+  -token "<MANAGEMENT_TOKEN>"
+
+# 3. Создание binding rule — связывает auth method с ролью по claims
+consul acl binding-rule create \
+  -method gitlab-ci \
+  -selector 'Value.project_path == "mygroup/myproject" && Value.ref == "main"' \
+  -bind-type role \
+  -bind-name gitlab-ci-role \
   -token "<MANAGEMENT_TOKEN>"
 ```
+
+> **ClaimMappings:** карта маппит claim-имена из JWT на атрибуты Consul. Без неё claims недоступны в селекторе `Value.*`. Здесь `project_path` и `ref` пробраскиваются с теми же именами — селектор может использовать `Value.project_path` и `Value.ref` напрямую. `BoundAudiences` обязателен для проверки `aud` claim (совпадает с `aud` в блоке `id_tokens`).
 
 **Интеграция в GitLab CI:**
 ```yaml
@@ -243,11 +433,11 @@ register_service:
       aud: https://consul.example.com
   script:
     - |
-      # Аутентификация через JWT
-      CONSUL_TOKEN=$(curl -s -X POST \
-        -H "Content-Type: application/json" \
-        -d "{\"auth_method\":\"$CONSUL_AUTH_METHOD\",\"bearer_token\":\"$CONSUL_JWT\",\"meta\":{\"pipeline\":\"$CI_PIPELINE_ID\"}}" \
-        "$CONSUL_HTTP_ADDR/v1/acl/login" | jq -r '.SecretID')
+       # Аутентификация через JWT (Consul API использует PascalCase в JSON)
+       CONSUL_TOKEN=$(curl -s -X POST \
+         -H "Content-Type: application/json" \
+         -d "{\"AuthMethod\":\"$CONSUL_AUTH_METHOD\",\"BearerToken\":\"$CONSUL_JWT\",\"Meta\":{\"pipeline\":\"$CI_PIPELINE_ID\"}}" \
+         "$CONSUL_HTTP_ADDR/v1/acl/login" | jq -r '.SecretID')
 
       # Регистрация сервиса
       curl -X PUT "$CONSUL_HTTP_ADDR/v1/agent/service/register" \
@@ -279,8 +469,9 @@ consul acl token read -self -token "<SECRET_ID>"
 **Настройка на стороне внутреннего API (one-time):**
 ```python
 # Пример middleware для FastAPI (Python)
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from jose import jwt, JWTError
+from jose.exceptions import ExpiredSignatureError
 import requests
 
 app = FastAPI()
@@ -303,7 +494,7 @@ async def oidc_auth(request: Request, call_next):
             audience="https://internal-api.example.com"
         )
         request.state.identity = payload
-    except JWTError:
+    except (JWTError, ExpiredSignatureError):
         return Response(status_code=401)
     
     return await call_next(request)
@@ -446,18 +637,50 @@ get_mq_credentials:
         "https://rabbitmq.example.com:15671/api/queues/myapp-vhost"
 ```
 
-### Сценарий 6: Kubernetes service account + GitLab OIDC (self-hosted)
+### Сценарий 6: Kubernetes через GitLab OIDC (self-hosted)
 
-**Настройка ServiceAccount:**
+В self-hosted Kubernetes API server настраивается как OIDC relying party с GitLab в качестве issuer. JWT от GitLab используется напрямую как Bearer token для `kubectl`.
+
+**Настройка Kubernetes API server (one-time):**
+```bash
+# Параметры OIDC в kube-apiserver
+--oidc-issuer-url=https://gitlab.example.com
+--oidc-username-claim=email
+--oidc-username-prefix="gitlab:"
+--oidc-groups-claim=groups_direct
+--oidc-client-id=kubernetes
+--oidc-ca-file=/path/to/gitlab-ca.crt
+```
+
+**Настройка RBAC в Kubernetes:**
 ```yaml
-apiVersion: v1
-kind: ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
 metadata:
-  name: gitlab-ci-sa
-  namespace: gitlab-ci
-  annotations:
-    workload.identity/gitlab.com/subject: "project_path:mygroup/myproject:ref_type:branch:ref:main"
-    workload.identity/gitlab.com/audience: "https://gitlab.example.com"
+  name: gitlab-ci-deployer
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list", "create", "update", "patch"]
+- apiGroups: [""]
+  resources: ["pods", "pods/portforward"]
+  verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gitlab-ci-deployer-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gitlab-ci-deployer
+subjects:
+- kind: User
+  name: "gitlab:deploy@example.com"
+  apiGroup: rbac.authorization.k8s.io
+- kind: Group
+  name: "mygroup/myproject"
+  apiGroup: rbac.authorization.k8s.io
 ```
 
 **Интеграция в GitLab CI:**
@@ -466,16 +689,20 @@ deploy:
   stage: deploy
   image: bitnami/kubectl:latest
   id_tokens:
-    K8S_SA_TOKEN:
-      aud: https://gitlab.example.com
+    K8S_ID_TOKEN:
+      aud: kubernetes  # должен совпадать с --oidc-client-id в kube-apiserver
   script:
     - |
-      # Exchange JWT на service account token
-      kubectl apply -f k8s/
-  kubernetes:
-    namespace: gitlab-ci
-    service_account: gitlab-ci-sa
+      # Использование GitLab JWT напрямую как Bearer token
+      kubectl --token=$K8S_ID_TOKEN --server=https://k8s-api.example.com \
+        apply -f k8s/
+      kubectl --token=$K8S_ID_TOKEN \
+        rollout status deployment/myapp
+  variables:
+    KUBECONFIG: ""  # используем --token вместо kubeconfig
 ```
+
+> **`aud` обязан совпадать с `--oidc-client-id`** в kube-apiserver, иначе Kubernetes отклонит токен.
 
 ### Сценарий 7: Подпись образов через OIDC (Cosign keyless)
 
@@ -485,7 +712,7 @@ variables:
 
 sign_image:
   stage: sign
-  image: gcr.io/projectsigstore/cosign:v2.4.0
+  image: gcr.io/projectsigstore/cosign:v3.1.3
   id_tokens:
     COSIGN_ID_TOKEN:
       aud: https://fulcio.sigstore.dev
@@ -529,7 +756,7 @@ vault read auth/jwt/role/gitlab-prod-role
 vault token lookup $VAULT_TOKEN | jq '.data.policies, .data.lease_duration'
 
 # Проверка access
-vault kv get secret/projects/my-app/db_config
+vault kv get secret/projects/my-app/production/db_config
 ```
 
 ### Проверка Consul JWT auth
@@ -566,11 +793,17 @@ gitlab-runner run --debug
 | `JWT expired` | `exp` < текущее время | Увеличьте таймаут задачи или ускорьте pipeline |
 | `Vault: permission denied` | JWT не имеет нужных claims | Проверьте `bound_claims` в Vault role |
 | `Consul: permission denied` | Несоответствие binding rule | Проверьте `binding-rule` в Consul role |
-| `Token audience mismatch` | `aud` не совпадает | Значение `aud` в `.gitlab-ci.yml` должно совпадать с провайдером |
-| `JWKS fetch failed` | Vault/Consul не видит GitLab | Проверьте DNS, firewall, self-signed сертификаты |
-| `Cosign: certificate not found` | Fulcio недоступен | Проверьте `COSIGN_EXPERIMENTAL=1` и GitLab OIDK конфигурацию |
-| `Kubernetes: token exchange failed` | SA не привязана к GitLab OIDC | Проверьте annotations в ServiceAccount |
-| `ID token issuance is disabled` | Путь проекта использовался ранее | Обратитесь к администратору GitLab для разблокировки |
+| `Token audience mismatch` | `aud` не совпадает | Значение `aud` в `.gitlab-ci.yml` должно совпадать с `bound_audiences`/`BoundAudiences` провайдера |
+| `JWKS fetch failed` | Vault/Consul не видит GitLab | Проверьте DNS, firewall, self-signed сертификаты; для self-signed добавьте CA в trust store |
+| `Cosign: certificate not found` | Fulcio недоступен | Проверьте `COSIGN_EXPERIMENTAL=1` и подключение к `fulcio.sigstore.dev` |
+| `Kubernetes: token rejected` | `aud` ≠ `--oidc-client-id` или RBAC не настроен | Проверьте совпадение `aud` и `--oidc-client-id`; создайте ClusterRole+ClusterRoleBinding для GitLab identity |
+| `ID token issuance is disabled` | Путь проекта ранее использовался (reclaimed path) | Обратитесь к администратору GitLab; настройте `ci_id_token_sub_claim_components` с `project_id` первым |
+| `invalid audience` | `bound_audiences` ≠ `aud` в `id_tokens` | Синхронизируйте значения; в Vault 1.17+ `bound_audiences` обязателен при наличии `aud` claim |
+| `bound claim mismatch` | Claims не соответствуют ролям | Проверьте `project_path`/`ref`/`ref_protected` в bound_claims |
+| `Vault: role not found` | Опечатка в `VAULT_AUTH_ROLE` | Проверьте имя роли в Vault и переменную `VAULT_AUTH_ROLE` в CI/CD |
+| `Consul: auth method not found` | `ClaimMappings` не включает нужные claims | Добавьте claims в `ClaimMappings`; проверьте имя `-method` в binding-rule |
+| `OIDC token not generated` | `id_tokens` не задан или настройка выключена | Проверьте `id_tokens` в `.gitlab-ci.yml`; админ включил OIDC Token Issuance в `Settings → CI/CD → Token Access` |
+| `Merge request pipeline denied` | `ref_protected: false` в MR pipeline | Добавьте `ref_protected` в `sub` claim components или bound_claims через `ci_id_token_sub_claim_components` API |
 
 ## Ограничения и крайние случаи
 
@@ -591,13 +824,18 @@ gitlab-runner run --debug
 
 **Vault:**
 - Batch tokens не записываются на диск — используйте для high-load сред
-- Ротация ключей GitLab происходит автоматически каждые 90 дней
+- Ротация ключей GitLab: Vault автоматически запрашивает новые ключи из JWKS каждый `jwks_url` refresh interval; `oidc_discovery_url` обновляет кэш каждые 10 мин
 - Для CI/CD задач используйте `token_ttl` не более 30 минут
+- `bound_claims_type="glob"` позволяет использовать `*` в значениях claims
 
 **Consul:**
-- OIDC Auth Method доступен только в Enterprise версии
-- JWT Auth Method работает в Community Edition
-- Bound claims в Consul используют glob-маски, а не exact match
+- JWT Auth Method работает в Community Edition с Consul 1.8.0+; OIDC Auth Method (для интерактивного SSO) — Enterprise только
+- `BoundAudiences` обязателен — без него любой токен от GitLab пройдёт аутентификацию
+- `ClaimMappings` требуется для каждого claim, используемого в `binding-rule` selector
+- Binding rules и роли управляются отдельно (binding-rule связывает auth-method с ролью)
+
+**Self-hosted GitLab — ограничения подписи:**
+- Если сеть недоступна, используйте статический `jwt_validation_pubkeys` в Vault/Consul config — **требует ручной ротации** при смене ключей GitLab
 
 ## Лучшие практики
 
@@ -612,17 +850,20 @@ gitlab-runner run --debug
 
 ### Эксплуатация (DevOps/SRE)
 
-1. **Мониторьте OIDC failures:** Алерты на 401/403 от внешних провайдеров.
-2. **Мониторьте Vault/Consul метрики:** Доступность API, latency, количество активных токенов.
-3. **Настройте SLO:** Доступность Vault/Consul API (например, 99.9% uptime).
-4. **Кэшируйте секреты:** На стороне приложения, но не дольше TTL токена.
-5. **Используйте batch tokens:** Для high-load сред CI/CD.
-6. **Тестируйте в staging:** Перед использованием в production протестируйте OIDC flow.
-7. **Версионируйте политики:** Храните IAM/Vault/Consul политики в Git.
+1. **Мониторьте OIDC failures:** Алерты на 401/403 от Vault/Consul. Метрика: `vault_jwt_auth_failures_total`, `consul_acl_auth_method_login_failures`.
+2. **Мониторьте Vault/Consul метрики:** Доступность API (HTTP 2xx), latency (`vault_core_handle_activate_seconds`), количество активных токенов (`vault_token_count`).
+3. **SLO:** Доступность Vault/Consul API — 99.9% uptime. Алерт при `http_request_duration_seconds{quantile="0.95"} > 1s` или `up == 0`.
+4. **Мониторьте JWKS latency:** Vault/Consul должен получать ключи GitLab в ≤1s; алерт при `vault_jwks_fetch_failures_total > 0`.
+5. **Кэшируйте секреты:** На стороне приложения, но не дольше TTL токена.
+6. **Используйте batch tokens:** Для high-load сред CI/CD (меньше записей в storage).
+7. **Тестируйте в staging:** Перед использованием в production протестируйте OIDC flow.
+8. **Версионируйте политики:** Храните IAM/Vault/Consul политики в Git с CI-проверкой (OPA/Sentinel).
+9. **Аудит токенов:** Vault audit device (`file` или `syslog`) логирует все `auth/jwt/login` запросы с `request_id`, `time`, `path`, `policy_override`.
+10. **Отслеживание ротации ключей GitLab:** JWKS ключи ротируются, Vault периодически их запрашивает. Мониторьте `vault_jwks_cache_age_seconds` чтобы убедиться, что кэш не устарел.
 
 ### Sysadmin
 
-1. **Включите `workload_oidc_token` на уровне группы:** Централизованное управление.
+1. **Включите OIDC Token Issuance на уровне группы:** Централизованное управление через `Settings → CI/CD → Token Access` на уровне группы/инстанса.
 2. **Настройте network policies:** Ограничьте доступ к Vault/Consul/JWKS только из CI/CD сетей.
 3. **Настройте TLS:** Все endpoints (GitLab, Vault, Consul, внутренние сервисы) должны использовать валидные TLS-сертификаты.
 4. **Резервное копирование:** Регулярное резервное копирование Vault (Raft snapshot) и Consul (snapshot).
@@ -650,15 +891,20 @@ vault write -f auth/jwt/role/<role>/token/revoke
 vault token revoke -accessor $(vault token lookup -format=json | jq -r '.data.accessor')
 ```
 
-### Удаление Consul роли
+### Удаление Consul конфигурации
 
 ```bash
+# Удаление binding rule (связывает auth-method с ролью)
+consul acl binding-rule delete -method gitlab-ci -token "<MANAGEMENT_TOKEN>"
+
 # Удаление роли
 consul acl role delete -name gitlab-ci-role -token "<MANAGEMENT_TOKEN>"
 
-# Отключение auth method
+# Отключение auth method (удаляет связанные binding rules автоматически)
 consul acl auth-method delete -name gitlab-ci -token "<MANAGEMENT_TOKEN>"
 ```
+
+> **Важно:** удаление auth method автоматически удаляет все связанные binding rules. Удаляйте binding rules в первую очередь только для аудита, затем роль, затем auth method.
 
 ### Очистка GitLab CI/CD
 
@@ -678,7 +924,7 @@ vault kv delete -versions=0 secret/projects/<project-path>/
 - **[Переменные и секреты GitLab CI/CD](../Concepts/gitlab_ci_variables_secrets.md)** — управление переменными, OIDC, `id_tokens`
 - **[Интеграция GitLab CI и HashiCorp Vault в Kubernetes](../Tutorials/vault_kubernetes_integration.md)** — детальное руководство по Vault + K8s + OIDC
 - **[Управление секретами в CI/CD](../../DevSecOps/secrets_management.md)** — методология управления секретами
-- **[Система управления доступом Consul](../Consul/consul_acl.md)** — Consul ACL, JWT Auth Method
+- **[Система управления доступом Consul](../../../Consul/consul_acl.md)** — Consul ACL, JWT Auth Method
 - **[Zero Trust Architecture в Vault](../../../Vault/zero_trust.md)** — принципы Zero Trust
 - **[CI_JOB_TOKEN Security](../Advanced/ci_job_token_security.md)** — безопасность токенов в GitLab CI
 - **[SBOM и подпись артефактов](../Advanced/sbom_and_artifact_signing.md)** — Cosign, Sigstore
@@ -687,7 +933,10 @@ vault kv delete -versions=0 secret/projects/<project-path>/
 ### Внешние ресурсы
 
 - [GitLab: OpenID Connect (OIDC) Authentication Using ID Tokens](https://docs.gitlab.com/ee/ci/secrets/id_token_authentication.html)
-- [GitLab: Connect to cloud services](https://docs.gitlab.com/ee/ci/cloud_services/index.html)
+- [GitLab: Use HashiCorp Vault secrets in GitLab CI/CD](https://docs.gitlab.com/ee/ci/secrets/hashicorp_vault.html)
+- [GitLab: Projects API (`ci_id_token_sub_claim_components`)](https://docs.gitlab.com/ee/api/projects.html#save_edit_project)
 - [HashiCorp Vault: JWT Auth Method](https://developer.hashicorp.com/vault/docs/auth/jwt)
-- [HashiCorp Consul: JWT Auth Method](https://developer.hashicorp.com/consul/docs/security/acl/auth-methods)
-- [Sigstore: Cosign](https://docs.sigstore.dev/cosign/overview/)
+- [HashiCorp Vault: Convert CI_JOB_JWT to ID Tokens](https://docs.gitlab.com/ee/ci/secrets/convert-to-id-tokens.html)
+- [HashiCorp Consul: JWT Auth Method](https://developer.hashicorp.com/consul/docs/secure/acl/auth-methods/jwt)
+- [HashiCorp Consul: ACL Binding Rules](https://developer.hashicorp.com/consul/commands/acl/binding-rule/create)
+- [Sigstore: Cosign keyless signing](https://docs.sigstore.dev/cosign/overview/)

@@ -353,3 +353,4 @@ spec:
 - [GitOps Integration](./operator/gitops_integration.md) — ArgoCD ApplicationSet для multi-cluster.
 - [Federation (Prometheus)](../scaling/federation.md) — нативная федерация.
 - [Thanos Overview](../scaling/thanos_overview.md) — архитектура Thanos.
+- [Мультикластерный remote_write в VictoriaMetrics](./multi-cluster-remote-write-victoria-metrics.md) — spoke-to-infra паттерн с kube-prom-stack и Kustomize.

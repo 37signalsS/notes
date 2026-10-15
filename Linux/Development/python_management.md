@@ -457,6 +457,40 @@ cat /proc/12345/limits | grep "Max open files"
 
 ## Дополнительная информация
 
+### Справочник: часто используемые pip/venv команды
+
+```bash
+# Создание и активация виртуального окружения (стандартный способ)
+python -m venv venv
+source venv/bin/activate
+
+# Установка пакетов
+pip install package_name                    # установить пакет
+pip install -r requirements.txt             # установить из файла
+pip install --user package_name             # установить в ~/.local (без venv)
+
+# Удаление и обновление
+pip uninstall package_name                  # удалить пакет
+python -m pip install --upgrade pip         # обновить pip
+pip install --upgrade package_name          # обновить пакет
+
+# Инспекция
+pip list                                    # список установленных
+pip list --outdated                         # список устаревших
+pip show package_name                       # информация о пакете
+pip freeze > requirements.txt               # экспорт зависимостей
+
+# Скачивание без установки
+python -m pip download package_name         # скачать wheel в текущую директорию
+python -m pip index versions package_name   # список доступных версий
+
+# Быстрый локальный веб-сервер (Python 3)
+python -m http.server 8000
+
+# Один-liner для проверки
+python -c "import sys; print(sys.executable)"
+```
+
 ### См. также
 * **[Dockerfile: Лучшие практики для Python](../../Docker/Dockerfile/Docker_best_practices/python.md)** — multi-stage, uv в Docker, безопасность.
 * **[Развертывание Python-приложения с Ansible](../../Ansible/examples/example_python_app_deployment.md)** — systemd, Nginx, Gunicorn, rolling update.

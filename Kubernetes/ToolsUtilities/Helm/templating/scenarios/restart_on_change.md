@@ -384,6 +384,8 @@ annotations:
 checksum/config: {{ tpl ($.Files.Get "configs/app.conf") . | sha256sum }}
 ```
 
+> **См. также:** Паттерн CI-рендеринга конфигурационных файлов через `consul-template` + `Vault` с использованием `subPath`-монтирования и checksum-аннотаций в продакшене — в [CI-рендеринг конфигов через consul-template + Vault](./config-rendering-pattern.md).
+
 ### Согласованность имён аннотаций
 
 Используйте префикс `checksum/` для стандартных аннотаций и уникальный суффикс при нескольких конфигурациях:
@@ -624,3 +626,4 @@ helm history myapp -n production
 - [Обновление и Rollout ConfigMap](../../../../Base/ConfigMap/update_and_rollout.md) — как Kubernetes обрабатывает изменения конфигурации на уровне Kubelet.
 - [stakater/Reloader](../../../reloader/reloader_overview.md) — альтернативный "динамический" подход к перезапуску через контроллер.
 - [Kustomize Name Hashing](../../../../ToolsUtilities/kustomize/kustomize_advanced_features.md) — аналогичный механизм в Kustomize через суффиксы имен ресурсов.
+- [CI-рендеринг конфигов через consul-template + Vault](./config-rendering-pattern.md) — production-паттерн с директорией `config/`, `subPath`-монтированием и отдельными ConfigMap для CA-сертификатов.

@@ -671,7 +671,7 @@ sudo wg show wg0
 # →   transfer: 12.3 MiB received, 4.5 MiB sent
 ```
 
-Массовое развёртывание конфигов на флот (Ansible, GitOps) — [VPN Automation](../Networking/Tunnels/vpn_automation.md).
+Массовое развёртывание конфигов на флот (Ansible, GitOps) — [VPN Automation](../Networking/Tunnels/vpn_automation.md); корпоративный выкат на Windows/macOS (GPO, MDM, тихая установка, `.mobileconfig`) — [wireguard-client-deployment.md](./wireguard-client-deployment.md).
 
 ### Резервное копирование и восстановление
 
@@ -754,7 +754,7 @@ sudo tcpdump -i wg0 port 22            # расшифрованный трафи
 
 ## Граничные случаи и ограничения
 
-1. **Нет мультикаста.** WireGuard — чистый unicast-L3 туннель и не передаёт multicast/broadcast. Для multicast-задач применяют GRE или VXLAN; динамическая маршрутизация поверх WG — через unicast-протоколы (BGP/OSPF point-to-point), см. [wireguard-routing.md](./wireguard-routing.md).
+1. **Нет мультикаста.** WireGuard — point-to-point unicast-L3 туннель и не рассылает broadcast/multicast по сегменту. Для multicast-задач применяют GRE или VXLAN; динамическая маршрутизация поверх WG — через unicast-протоколы (BGP; OSPF требует явного соседа, т.к. multicast-Hello не доставляется), см. [wireguard-routing.md](./wireguard-routing.md).
 2. **Нет keepalive по умолчанию.** За NAT требуется `PersistentKeepalive = 25` (секунды).
 3. **Одна сессия на пару ключей.** Для одной пары публичных ключей поддерживается одна активная сессия; при роуминге `Endpoint` обновляется автоматически.
 4. **Нет встроенного PKI/CA.** Отзыв = удаление `[Peer]`. Для масштабных флотов нужен внешний инвентарь/автоматизация — [wireguard-key-management.md](./wireguard-key-management.md).
@@ -763,6 +763,8 @@ sudo tcpdump -i wg0 port 22            # расшифрованный трафи
 7. **Кроссплатформенные клиенты.** Конфигурация на Windows/macOS/iOS/Android отличается (GUI или `wg-quick` в WSL); на мобильных недоступны `PostUp`/`PostDown`.
 8. **Лимит пиров.** Ядровый модуль допускает до **2^20 (~1 048 576)** пиров на интерфейс (`MAX_PEERS_PER_DEVICE = 1U << 20`), userspace-реализация `wireguard-go` — до **2^16 (65 536)**. Практический предел задают память под index-хеш-таблицу и удобство управления, а не «256» (частая ошибка). Большие флоты удобнее делить между несколькими интерфейсами/концентраторами — [wireguard-ha.md](./wireguard-ha.md).
 9. **Публичный адрес сервера.** Статический `Endpoint` клиента делает DNS/IP сервера точкой отказа — HA строится внешними средствами (Keepalived/Anycast) — [wireguard-ha.md](./wireguard-ha.md).
+10. **Roaming Mischief.** Обновление `Endpoint` при роуминге происходит без дополнительной аутентификации (проверяется только подлинность самого пакета), поэтому активный MITM может подменить source IP и ретранслировать трафик — расшифровать его он не способен, но «прибить» адрес-привязку сможет. Для статических site-to-site пиров endpoint можно закрепить firewall-правилом на конкретный адрес; для мобильных клиентов (Wi-Fi→LTE) привязка неприменима — от roaming-атак защищают общие меры периметра. Подробно — [Known Limitations: Roaming Mischief](https://www.wireguard.com/known-limitations/).
+11. **Нет встроенного failover между Endpoint у клиента.** У одного пира поддерживается только один endpoint (два `[Peer]` с одним `PublicKey` невозможны — записи ключатся по публичному ключу). Практические паттерны отказоустойчивости клиента: (1) DNS-имя шлюза с низким TTL и периодический `reresolve-dns.sh`; (2) серверный VIP/Anycast — клиентский конфиг не меняется ([wireguard-ha.md](./wireguard-ha.md)); (3) два туннеля (основной и резервный концентратор) с разными `Endpoint` и разными метриками маршрутов по умолчанию — переключение ручное или скриптом, встроенного механизма нет.
 
 ## Лучшие практики
 
@@ -813,6 +815,8 @@ WireGuard не отдаёт метрик по сети. Состояние сн�
 - **[WireGuard — расширенная маршрутизация](./wireguard-routing.md)** — PBR, fwmark, Table, BGP/OSPF поверх туннеля
 - **[WireGuard — защита концентратора](./wireguard-security.md)** — rate limiting handshake, anti-DDoS, hardening
 - **[WireGuard — высокая доступность](./wireguard-ha.md)** — Active/Passive, Keepalived, ECMP/Anycast
+- **[WireGuard — совместимость с оборудованием](./wireguard-interop.md)** — site-to-site с MikroTik RouterOS 7, pfSense, OPNsense
+- **[WireGuard — массовое развёртывание клиентов](./wireguard-client-deployment.md)** — GPO/MSI для Windows, `.mobileconfig`/MDM для macOS и iOS
 - **[Rosenpass: постквантовая защита WireGuard](./rosenpass_overview.md)** — гибридный обмен ключами, PSK
 
 ### Сравнение и выбор
@@ -832,6 +836,7 @@ WireGuard не отдаёт метрик по сети. Состояние сн�
 - **[NAT и VPN](../Networking/Concepts/nat/nat_and_vpn.md)** — работа за NAT, PersistentKeepalive, CGNAT
 - **[MTU и VPN](../Networking/OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md)** — расчёт overhead и MSS Clamping
 - **[VPN Troubleshooting](../Networking/Tunnels/vpn_troubleshooting_universal.md)** — универсальный чек-лист диагностики
+- **[VPN: чек-лист приёмки развёртывания](./vpn-acceptance-checklist.md)** — smoke, HA-drill, soak, критерии отката
 - **[Документация WireGuard](https://www.wireguard.com/protocol/)** — спецификация протокола
 
 ### Смежные темы

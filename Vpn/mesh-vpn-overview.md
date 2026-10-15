@@ -4,7 +4,7 @@
 
 ## Определения
 
-**Mesh-VPN** — overlay-сеть, в которой каждый узел устанавливает прямое соединение с любым другим (P2P), а общий «справочник» узлов, адресов и ключей ведёт координационный сервер (control plane). **Control plane** — сервис, раздающий конфигурацию (адреса, ключи, ACL) и не участвующий в передаче пользовательских данных. **Data plane** — зашифрованный трафик между узлами; у WireGuard-совместимых решений его содержимого не видит ни координатор, ни релей. **Lighthouse (Nebula)** — узел-«справочник»: узлы сообщают ему свои публичные адреса и через него узнают адреса пиров. **Relay / DERP-узел** — промежуточный сервер, ретранслирующий уже зашифрованные пакеты, когда прямое P2P-соединение невозможно (симметричный NAT, строгий файрвол). **NAT traversal** — автоматическое «пробивание» NAT через UDP hole punching и STUN. **Overlay** — виртуальная сеть поверх реальной. **Enrollment key / setup key / preauthkey** — предварительный ключ для неинтерактивной регистрации узла у координатора.
+**Mesh-VPN** — overlay-сеть, в которой каждый узел устанавливает прямое соединение с любым другим (P2P), а общий «справочник» узлов, адресов и ключей ведёт координационный сервер (control plane). **Control plane** — сервис, раздающий конфигурацию (адреса, ключи, ACL) и не участвующий в передаче пользовательских данных. **Data plane** — зашифрованный трафик между узлами; у WireGuard-совместимых решений его содержимого не видит ни координатор, ни релей. **Lighthouse (Nebula)** — узел-«справочник»: узлы сообщают ему свои публичные адреса и через него узнают адреса пиров. **Relay / DERP-узел** — промежуточный сервер, ретранслирующий уже зашифрованные пакеты, когда прямое P2P-соединение невозможно (симметричный NAT, строгий файрвол). **NAT traversal** — автоматическое «пробивание» NAT через UDP hole punching и STUN. **Overlay** — виртуальная сеть поверх реальной. **Enrollment key / setup key / preauthkey** — предварительный ключ для неинтерактивной регистрации узла у координатора. **Routing peer / Gateway** — узел overlay, публикующий в сеть ресурсы, на которых клиент не установлен (подсеть, отдельный хост, домен). **Exit node / Internet Gateway** — узел, через который трафик клиентов overlay выходит в интернет.
 
 ## Основные концепции
 
@@ -27,13 +27,13 @@
 - **NAT traversal** автоматический: прямой UDP, при невозможности — relay.
 - **ACL** применяются на control plane: у Tailscale — HuJSON (`grants`), у Netbird и Netmaker — политики по группам/хостам/тегам, у Nebula — распределённый firewall на узле, вычисляемый по группам из сертификата.
 - **Аудит входов** на стороне координатора (см. [vpn-session-audit.md](./vpn-session-audit.md)).
-- **Выход в интернет и удалённые сети** через узел: exit node у Tailscale, gateways (egress/ingress) у Netmaker, маршруты у Netbird, `unsafe_routes` у Nebula.
+- **Выход в интернет и удалённые сети** через узел: exit node у Tailscale, gateways (egress/ingress) у Netmaker, Networks и exit nodes у Netbird, `unsafe_routes` у Nebula.
 
 ### Архитектура: control plane и data plane
 
 **Nebula** — самый легковесный из рассматриваемых. Data plane и распределённый firewall реализованы одним демоном `nebula` на каждом узле; PKI обслуживает утилита `nebula-cert`. Отдельного сервиса-control plane нет: роль «справочника» выполняют lighthouses — обычные узлы с `am_lighthouse: true`. Нет внешней БД, нет MQTT, нет REST API; вся конфигурация узла — один YAML-файл и его сертификат. Протокол Nebula построен на **Noise Protocol Framework** (ECDH, по умолчанию AES-256-GCM); это не WireGuard.
 
-**Netbird** — координатор с полноценным control plane. Исторически (до consolidated-архитектуры v0.29) он состоял из **management** (REST API + БД), **signal** (координирует обмен адресами между пирами и согласование relay), **relay** (релей через WebSocket/QUIC) и **STUN/TURN** (Coturn). Актуальный quickstart разворачивает единый контейнер `netbird-server` (management + signal + relay + STUN) вместе с dashboard; опционально включается встроенный reverse proxy для публикации внутренних сервисов. Data plane — WireGuard: `signal` и `relay` релеят уже зашифрованные пакеты и не видят содержимого.
+**Netbird** — координатор с полноценным control plane. Исторически сервисы были раздельными: **management** (REST API + БД), **signal** (координация обмена адресами между пирами), **relay**, **STUN/TURN** (Coturn). В v0.29 relay переведён с TURN на собственный WebSocket/QUIC-релей, а management и signal консолидированы на порт 443 (согласование протокола по HTTP/2); в v0.65.0 всё сведено в единый контейнер `netbird-server` (management + signal + relay + STUN) с файлом `config.yaml`. Актуальный quickstart разворачивает `netbird-server` вместе с dashboard; опционально включается встроенный reverse proxy для публикации внутренних сервисов. Data plane — WireGuard: `signal` и `relay` релеят уже зашифрованные пакеты и не видят содержимого.
 
 **Netmaker** — сервер (REST API + dashboard + MQTT-брокер) и сопутствующий стек мониторинга. На узлах демон `netclient` управляет **реальными WireGuard-интерфейсами**: overlay — это не отдельный протокол, а конфигурация WireGuard, которой дистанционно управляет сервер. Это даёт совместимость с любым клиентом WireGuard (в том числе статическим конфигом), но требует прав root на узле.
 
@@ -200,7 +200,7 @@ netbird status                                    # состояние соед�
 ip addr show wt0                                  # Linux: интерфейс Netbird (macOS — utun100)
 ```
 
-Политики доступа (по группам, хостам, тегам) задаются в UI — аналог HuJSON-ACL из [tailscale.md](./tailscale.md). Setup keys и posture-проверки используются для неинтерактивного онбординга.
+Политики доступа (по группам, хостам, тегам) задаются в UI — аналог HuJSON-ACL из [tailscale.md](./tailscale.md). Setup keys и posture-проверки используются для неинтерактивного онбординга. Публикация внутренних подсетей и сервисов выполняется через объект **Network** (routing peer + ресурсы + access policy), выход в интернет — через exit node (см. сценарий 4). С v0.60.0 доступен identity-aware SSH: встроенный SSH-сервер на узле (`netbird up --allow-server-ssh`) с аутентификацией через IdP и без открытия порта 22 в интернет.
 
 ### 3. Netmaker: WireGuard с gateways и UI
 
@@ -232,7 +232,74 @@ netclient list                          # список сетей узла
 
 Типовые опции: **gateways** (egress в удалённые сети, internet gateway), **access policies (ACL)** по группам/хостам/тегам/IP, **auto-relay** для NAT, **TCP/WSS-uplink** при блокировке UDP, DNS. Начиная с v1.7 доступны MSP-мультитенантность и интеграции с EDR/MDM для posture-проверок.
 
-### 4. Когда mesh-VPN вместо классического WireGuard
+### 4. Удалённый доступ: маршруты, exit nodes и gateways
+
+Все решения публикуют в overlay подсети, где нет клиента mesh (clientless-узлы), и умеют выпускать пользовательский трафик в интернет через выбранный узел. Механика различается.
+
+**Nebula — `unsafe_routes`.** Маршрут к внешней (не-Nebula) сети задаётся на клиентах, а `via` ссылается на Nebula-IP узла-шлюза. Критично: в сертификате `via`-узла эта подсеть должна быть объявлена через `-subnets`, иначе он молча откажется маршрутизировать.
+
+```bash
+# Сертификат узла-шлюза с объявленной подсетью (на хосте, где доступен ca.key)
+nebula-cert sign -name "gateway" -ip "10.10.0.5/24" -subnets "172.16.1.0/24"
+```
+
+Узел-шлюз должен иметь `net.ipv4.ip_forward=1`; клиенты добавляют маршрут:
+
+```yaml
+tun:
+  unsafe_routes:
+    - route: 172.16.1.0/24
+      via: 10.10.0.5        # Nebula-IP шлюза
+      metric: 100
+      install: true         # установить маршрут в системной таблице
+```
+
+С версии 1.10.0 `unsafe_routes` поддерживает ECMP: несколько `via` на один `route` (с весами) дают балансировку и автоматический failover.
+
+Firewall Nebula по умолчанию запрещает весь входящий и исходящий трафик; правила ссылаются на группы из сертификата (`-groups`). Встроенный DNS включается на lighthouse флагом `serve_dns` и отвечает на `A`/`TXT`-запросы об известных ему хостах:
+
+```yaml
+# на lighthouse
+lighthouse:
+  am_lighthouse: true
+  serve_dns: true
+  dns:
+    host: 0.0.0.0
+    port: 53
+firewall:
+  inbound:
+    - port: 53
+      proto: udp
+      group: any          # разрешить DNS-запросы к lighthouse из overlay
+```
+
+Клиенты опрашивают lighthouse напрямую: `dig @10.10.0.1 web01 A` вернёт Nebula-IP узла `web01`.
+
+**Netbird — Networks и exit nodes.** Удалённый доступ строится на объекте **Network**: routing peer (клиент Netbird внутри приватной сети) публикует ресурсы (IP, подсеть, домен или wildcard-домен), а access policy определяет, каким группам-источникам они видны. Модель Zero Trust: ресурс недоступен, пока политика не разрешит. Для выхода в интернет служит частный случай маршрута — **exit node** (`0.0.0.0/0`), распространяемый по группам.
+
+```bash
+netbird networks ls                                   # какие Networks видит клиент
+netbird up --setup-key <SETUP_KEY> --management-url https://netbird.example.com
+netbird up --block-lan-access                         # exit node: не выпускать трафик в его локальную LAN
+```
+
+> Прежняя Route-модель (раздельные Distribution/ACL Groups) объявлена deprecated: все сценарии, кроме exit nodes, перенесены в Networks.
+
+**Netmaker — gateways.** Gateway — публично доступный узел сети, служащий точкой входа и/или relay. Варианты: **Internet Gateway** (full-tunnel выход в интернет, только Linux), **WireGuard-конфиги** для clientless-устройств (роутеры, IoT), **HA gateways** (автовыбор и failover с v1.2.0; проверка доступности каждые ~30 с) и **Auto-Relay** (Pro) — выбор relay с наименьшей задержкой. Clientless-устройства подключаются по сгенерированному conf-файлу:
+
+```ini
+[Interface]
+PrivateKey = <client_private_key>
+Address = 100.70.101.254/32
+DNS = 1.1.1.1
+[Peer]
+PublicKey = <gateway_public_key>
+AllowedIPs = 100.70.101.0/24, 192.168.1.0/24
+Endpoint = <gateway_public_ip>:443
+PersistentKeepalive = 20
+```
+
+### 5. Когда mesh-VPN вместо классического WireGuard
 
 | Критерий | WireGuard вручную | Mesh-VPN (Nebula/Netbird/Netmaker) |
 |----------|-------------------|------------------------------------|
@@ -278,6 +345,44 @@ netclient list                          # список сетей узла
 - **SSO/MFA и короткоживущие ключи:** привязка узлов к IdP, ограниченный срок setup/enrollment keys для IaC — см. [vpn-authentication.md](./vpn-authentication.md).
 - **Мониторинг:** состояние handshake/пиров, доступность relay и координатора, свежесть сессий — см. [vpn-monitoring.md](./vpn-monitoring.md); у Nebula есть сбор метрик в Prometheus/Graphite, у Netmaker — встроенный стек.
 - **Обновления по release notes:** у Netmaker миграции БД применяются на старт и не откатываются; обновляться пошагово между соседними стабильными версиями.
+
+## Очистка и вывод узлов из эксплуатации
+
+Отзыв доступа к overlay и удаление самого решения — разные операции; порядок: сначала отозвать узел у координатора, затем деинсталлировать агент.
+
+**Nebula.**
+
+```bash
+sudo systemctl disable --now nebula
+sudo rm /etc/systemd/system/nebula.service
+sudo systemctl daemon-reload
+sudo rm -rf /etc/nebula /usr/local/bin/nebula /usr/local/bin/nebula-cert
+```
+
+Отозвать узел без перевыпуска CA можно, добавив SHA его сертификата в `pki.blocklist` в конфигах остальных узлов (приватный ключ CA для этого не нужен — он требуется только для подписи новых сертификатов). Перевыпуск CA отзывает все выданные сертификаты разом, если узел недоступен для правки конфигов.
+
+**Netbird.** `netbird down` отключает узел, но не удаляет сервис; удаление сервиса:
+
+```bash
+netbird down
+sudo netbird service uninstall     # удаляет сервис, но не конфигурацию и не бинарник
+sudo rm -rf /var/lib/netbird /usr/local/bin/netbird
+```
+
+После этого удалите пир в dashboard, иначе он останется в списке узлов.
+
+**Netmaker.**
+
+```bash
+# На узле
+sudo netclient leave <network>     # выйти из сети (или apt remove netclient)
+sudo netclient uninstall           # полностью удалить агент
+
+# На сервере (quickstart-развёртывание)
+sudo docker compose -f docker-compose.quickstart.yml down --volumes
+```
+
+Тома БД при `down --volumes` удаляются безвозвратно — предварительно сделайте резервную копию. Сеть в UI нельзя удалить, пока в ней остаются узлы: сначала выведите их командой `netclient leave`.
 
 ## Дополнительная информация
 

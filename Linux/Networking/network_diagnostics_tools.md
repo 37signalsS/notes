@@ -995,6 +995,70 @@ chmod +x /etc/scripts/network_health.sh
 
 ---
 
+### Сценарий 12: Диагностика недоступности приложения через reverse proxy
+
+**Задача:** Проверить цепочку "Клиент → Reverse Proxy → Backend" при ошибке 502/504 или недоступности приложения через reverse proxy.
+
+```bash
+# Шаг 1: Проверка DNS-резолвинга домена
+dig +short app.example.com
+# → 192.168.1.50
+
+# Шаг 2: Проверка доступности reverse proxy
+curl -I -H "Host: app.example.com" --connect-timeout 5 http://192.168.1.50
+# → HTTP/1.1 502 Bad Gateway
+
+# Шаг 3: Проверка процесса reverse proxy
+ps aux | grep -E 'nginx|haproxy|traefik' | grep -v grep
+
+# Шаг 4: Проверка слушающих портов
+ss -tulnp | grep -E ':(80|443|8080)\b'
+
+# Шаг 5: Проверка ответа backend по localhost
+curl -I http://127.0.0.1:8080/api/health
+# → HTTP/1.1 200 OK
+
+# Шаг 6: Проверка upstream-конфигурации
+sudo nginx -T 2>/dev/null | grep proxy_pass
+
+# Шаг 7: Проверка логов backend
+journalctl -u backend-app -n 50 --no-pager
+```
+
+**Валидация:**
+```bash
+# Пример: все этапы прошли успешно
+dig +short app.example.com
+# → 192.168.1.50
+
+ss -tulnp | grep 8080
+# → tcp LISTEN 0 128 0.0.0.0:8080 0.0.0.0:* users:(("python",pid=1234))
+
+curl -I http://127.0.0.1:8080/api/health
+# → HTTP/1.1 200 OK
+```
+
+**Типичные ошибки и решения:**
+
+| Симптом | Причина | Решение |
+| :--- | :--- | :--- |
+| 502 Bad Gateway от proxy, но backend доступен по localhost | Proxy не может достучаться до backend по внутреннему IP | Проверить firewall/security groups между proxy и backend; проверить `proxy_pass` в конфиге |
+| 504 Gateway Timeout | Backend медленно отвечает или завис | Проверить `timeout` в конфиге proxy; увеличить `proxy_read_timeout` |
+| `curl: (7) Failed to connect` | Порт не слушается на backend | Проверить `ss -tulnp`, убедиться что процесс запущен |
+| `curl: (6) Could not resolve host` | DNS проблемы для домена proxy | Проверить `/etc/resolv.conf`, `nslookup` |
+
+**Best Practices:**
+- Используйте `curl --connect-timeout 5 --max-time 10` для проверки с таймаутом.
+- Проверяйте как HTTP, так и HTTPS (особенно при редиректах на 301/302).
+- Используйте `curl -H "Host: app.example.com"` для проверки виртуального хоста.
+
+**Cleanup:**
+```bash
+# Нет изменений в системе для отката
+```
+
+---
+
 ## Порядок комплексной диагностики
 
 При возникновении проблемы следуйте алгоритму (Bottom-up):

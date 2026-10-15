@@ -904,6 +904,13 @@ kubectl -n crossplane-system describe pod -l pkg.crossplane.io/function=function
 * [Self-Service и IDP](./self_service.md) — построение внутренних платформ разработчика на базе Claims и Backstage.
 * [Безопасность пакетов](./package_security.md) — проверка подписей OCI-образов (Cosign) и работа в Airgap.
 * [Сравнение с Terraform](./terraform_comparison.md) — архитектурные различия Push и Pull моделей IaC.
+* [Патчи, трансформы и PatchSets](./patch_transform.md) — детали работы `function-patch-and-transform`, типы патчей и трансформов.
+* [Connection Details (проброс секретов)](./connection_details.md) — проброс учетных данных от MR к XR и потребителю.
+* [Разработка кастомных Composition Functions](./custom_function_development.md) — создание функций на Go/Python поверх function-sdk, сборка и отладка.
+* [Управление парком кластеров (Fleet Management)](./fleet_management.md) — multi-cluster через provider-kubernetes, ClusterProviderConfig, CAPI-паттерны.
+* [Capacity Planning и сайзинг](./capacity_planning.md) — ресурсные лимиты control plane, etcd, MRAP, тюнинг poll interval.
+* [Типовые аварийные паттерны](./incident_patterns.md) — OOMKill, herd reconcile, finalizer deadlock, каскадные удаления.
+* [Air-Gap установка](./airgap_install.md) — полный bootstrap изолированного контура с нуля.
 * [GitOps Overview](../GitOps_overview.md) — методологический обзор декларативного управления конфигурациями.
 * [ArgoCD Overview](../ArgoCD/argocd_overview.md) — архитектура и эксплуатация GitOps-оператора.
 

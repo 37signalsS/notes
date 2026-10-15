@@ -466,7 +466,7 @@ helm plugin uninstall helm-diff
 test-helm:
   image: registry.example.com/ci/helm-runner:4.2.0
   script:
-    - helm plugin install oci://registry.example.com/plugins/unittest:0.7.0
+    - helm plugin install oci://registry.example.com/plugins/unittest:1.2.1
     - helm plugin install oci://registry.example.com/plugins/diff:4.2.0
     - helm unittest ./my-chart
     - helm diff upgrade my-app ./chart -f values.yaml

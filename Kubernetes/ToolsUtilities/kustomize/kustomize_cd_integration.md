@@ -79,6 +79,8 @@ infra-repo/                        # GitOps-репозиторий
 
 ### Хеширование имен в CD
 
+Подробное описание `configMapGenerator`, `secretGenerator` и опции `disableNameSuffixHash`: [Генераторы ConfigMap и Secret](./kustomize_generators.md).
+
 Использование `configMapGenerator` и `secretGenerator` является критическим для CD. Kustomize автоматически добавляет хеш к имени ресурса, что гарантирует запуск **Rolling Update** при изменении конфигурации, исключая ситуации, когда поды используют устаревшие данные.
 
 **Пример** (`base/kustomization.yaml`):
@@ -951,7 +953,8 @@ spec:
 
 - **[Обзор Kustomize: основные концепции](./kustomize_overview.md)** — базовые определения, установка, интеграция с `kubectl`.
 - **[Структура и синтаксис kustomization.yaml](./kustomize_structure_and_syntax.md)** — детальный разбор полей, transformers, generators.
-- **[Продвинутые возможности](./kustomize_advanced_features.md)** — components, replacements, hash-суффиксы, exec-плагины.
+- **[Генераторы ConfigMap и Secret](./kustomize_generators.md)** — configMapGenerator, secretGenerator, Name Hashing, disableNameSuffixHash.
+- **[Продвинутые возможности](./kustomize_advanced_features.md)** — генераторы, компоненты и Helm-интеграция.
 - **[Debugging Kustomize](./kustomize_debugging.md)** — troubleshooting ошибок в CI/CD.
 - **[Multi-cluster паттерны](./kustomize_multi_cluster.md)** — multi-cluster деплой через overlays.
 - **[Git-автоматизация](./kustomize_git_automation.md)** — Renovate, image promotion, pre-commit.

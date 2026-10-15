@@ -45,6 +45,8 @@ Kustomize «из коробки» знает, как работать со ст�
 
 ### 3.1. Продвинутая генерация ресурсов
 
+Подробное описание `configMapGenerator`, `secretGenerator`, `envs`, `generatorOptions` и `behavior`: [Генераторы ConfigMap и Secret](./kustomize_generators.md).
+
 ```yaml
 # kustomization.yaml
 generatorOptions:
@@ -259,10 +261,13 @@ components:
 
 ### См. также
 - **[Обзор Kustomize: основные концепции](./kustomize_overview.md)** — базовые определения и установка.
+- **[Структура и синтаксис kustomization.yaml](./kustomize_structure_and_syntax.md)** — детальный разбор полей, transformers, generators.
+- **[Генераторы ConfigMap и Secret](./kustomize_generators.md)** — configMapGenerator, secretGenerator, Name Hashing, disableNameSuffixHash.
 - **[Наложения и патчи](./kustomize_overlays_and_patches.md)** — механизм работы Strategic Merge и JSON патчей.
 - **[Интеграция в CD конвейеры](./kustomize_cd_integration.md)** — использование в Jenkins и GitOps.
 - **[Security Hardening](./kustomize_security_hardening.md)** — PSS, NetworkPolicy, OPA через компоненты.
 - **[Multi-cluster паттерны](./kustomize_multi_cluster.md)** — multi-cluster и multi-tenancy через overlays.
+- **[Отладка и диагностика](./kustomize_debugging.md)** — troubleshooting ошибок сборки и проблем с хеш-суффиксами.
 
 ### Внешние ресурсы
 - [Kustomize Built-in Plugins](https://kubectl.docs.kubernetes.io/guides/extending_kustomize/builtins/)

@@ -34,6 +34,25 @@ echo | openssl s_client -connect example.com:443 -servername example.com 2>/dev/
 openssl x509 -in server.crt -noout -enddate
 ```
 
+**Быстрая проверка срока действия с `-checkend`:**
+```bash
+# Вернёт код 0, если сертификат действителен ещё более N секунд
+openssl x509 -in server.crt -noout -checkend 0 && echo "valid" || echo "expired"
+openssl x509 -in server.crt -noout -checkend 86400 # проверка на 24 часа вперёд
+```
+
+**Пакетная проверка сертификатов для списка хостов:**
+```bash перебирает хосты и выводит notAfter для сортировки по ближайшей просрочке
+for h in $(cat hosts.txt); do
+  echo -n "$h "
+  echo | openssl s_client -connect "$h:443" -servername "$h" 2>/dev/null | \
+    openssl x509 -noout -enddate
+done | sort -t= -k2
+
+# → example.com=May 14 18:57:50 2026 GMT
+# → service.local=Jan 23 09:00:00 2026 GMT
+```
+
 **Важно:** Неверное системное время (рассинхронизация NTP) на стороне клиента или сервера часто является причиной ложных ошибок «Certificate Expired».
 
 ### Верификация цепочки и типичные ошибки
@@ -107,6 +126,21 @@ openssl x509 -noout -modulus -in server.crt | openssl md5
 # Для ECDSA ключей
 openssl ec -noout -text -in server.key | grep "pub:" -A 5
 openssl x509 -noout -text -in server.crt | grep "Subject Public Key:" -A 5
+```
+
+### Симметричное шифрование файлов
+
+Для одиночного файла без сертификатов используйте `openssl enc` с PBKDF2:
+
+```bash
+# Шифрование файла (запросит пароль, использует AES-256-CBC + PBKDF2)
+openssl enc -aes-256-cbc -pbkdf2 -salt -in file.txt -out file.enc
+
+# Расшифровка
+openssl enc -d -aes-256-cbc -pbkdf2 -in file.enc -out file.dec
+
+# Шифрование с указанием пароля (опасно — виден в history/ps)
+openssl enc -aes-256-cbc -pbkdf2 -k "mypassword" -in file.txt -out file.enc
 ```
 
 ### Расширенная проверка SNI и виртуальных хостов
@@ -450,6 +484,10 @@ show logging | include NTP
 - `openssl s_client -connect host:port -showcerts` — вывод всех сертификатов, передаваемых сервером (анализ бандла).
 - `openssl verify -CAfile ca-bundle.crt -untrusted intermediate.crt server.crt` — верификация локальных файлов цепочки.
 - `openssl s_client -connect host:port -brief` — компактная сводка handshake (TLS 1.3+, OpenSSL 1.1.1+).
+- `openssl s_client -starttls smtp -connect host:25` — проверка STARTTLS для SMTP/POP3/IMAP (неявный TLS → явный Upgrade).
+- `openssl x509 -in cert.pem -noout -checkend 86400` — проверка, не истекает ли сертификат в ближайшие 24 часа (выход 0 = OK).
+- `openssl enc -aes-256-cbc -pbkdf2 -salt -in file.txt -out file.enc` — симметричное шифрование файла.
+- `openssl enc -d -aes-256-cbc -pbkdf2 -in file.enc` — расшифровка файла.
 - `openssl s_client -connect host:port -debug -msg` — пошаговая отладка handshake (для глубокой диагностики).
 - `openssl x509 -in cert.pem -noout -fingerprint -sha256` — отпечаток для сверки с CT-логами.
 - `openssl crl -in crl.pem -noout -text` — просмотр CRL для проверки отзыва.

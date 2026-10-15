@@ -353,6 +353,7 @@ kubectl run -n monitoring --rm -it --image=curlimages/curl debug -- \
 | [VictoriaMetrics Overview](../../../VictoriaMetrics/overview.md) | MetricsQL, vmagent, vmalert |
 | [Mimir Overview](../../../Mimir/mimir_overview.md) | Архитектура Mimir, multi-tenancy, sizing |
 | [Agent Mode](../../../Prometheus/concepts/agent_mode.md) | Agent vs Server для edge-кластеров |
+| [Мультикластерный remote_write в VictoriaMetrics](../multi-cluster-remote-write-victoria-metrics.md) | Spoke-to-infra паттерн с kube-prom-stack, Kustomize, cross-cluster URL, writeRelabelConfigs |
 
 ### Частые ошибки на собеседованиях
 

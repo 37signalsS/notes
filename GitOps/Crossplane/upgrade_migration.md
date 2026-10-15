@@ -602,6 +602,9 @@ crossplane validate /tmp/rendered.yaml
 * [Управление ресурсами Kubernetes (provider-kubernetes)](./provider_kubernetes_setup.md) — Server-Side Apply, работа с ClusterProviderConfig и манифестами `Object`.
 * [Безопасность пакетов](./package_security.md) — проверка подписей OCI-образов через Cosign и развертывание в изолированных Airgap-контурах.
 * [Observability](./observability.md) — мониторинг метрик контроллеров Crossplane, дашборды Grafana и алерты SRE.
+* [Типовые аварийные паттерны](./incident_patterns.md) — runbook на OOMKill, зависшие ревизии, каскадные удаления и деградацию control plane.
+* [Capacity Planning и сайзинг](./capacity_planning.md) — сайзинг control plane, гигиена etcd, тюнинг poll interval перед/после обновлений.
+* [Air-Gap установка](./airgap_install.md) — обновления в изолированных контурах (только через шлюз).
 * [Интеграция с GitOps](./gitops_integration.md) — синхронизация пакетов через Argo CD и Flux, управление фазами развертывания.
 
 ### Внешняя документация и ресурсы

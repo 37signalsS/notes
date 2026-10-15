@@ -1,10 +1,12 @@
 # Юнит-тестирование Helm-чартов
 
+**Актуально для:** Helm 3.22 (support mode, EOL 2026-07-08), Helm 4.1+ (stable); helm-unittest 1.2.x
+
 ## Определения
 
 **Юнит-тестирование Helm-чартов** — это процесс автоматизированной проверки корректности рендеринга шаблонов без необходимости развертывания ресурсов в реальном кластере Kubernetes. В отличие от интеграционных тестов (`helm test`), юнит-тесты проверяют логику шаблонизации: правильность условий (`if/else`), циклов (`range`), формирование меток и соответствие манифестов ожиданиям. Это самый быстрый и дешёвый уровень проверки чарта — типичный прогон 50–200 тестов занимает 1–5 секунд на CI-агенте.
 
-Основным инструментом является плагин **[helm-unittest](https://github.com/helm-unittest/helm-unittest)** (текущая мажорная линейка **0.7.x**, стабильная совместимость с Helm 3.8+ и Helm 4.x). Альтернативы:
+Основным инструментом является плагин **[helm-unittest](https://github.com/helm-unittest/helm-unittest)** (текущая мажорная линейка **1.2.x**, стабильная совместимость с Helm 3.9+ и Helm 4.x). Альтернативы:
 
 - **[helm-template](https://github.com/technosophos/helm-template)** — рендеринг без Tiller, но без встроенной assertion-логики.
 - **[chart-testing](https://github.com/helm/chart-testing)** (`ct`) — оркестратор комплексной валидации: lint, unittest, install dry-run, kubeconform. Используется как обёртка поверх helm-unittest для полного цикла.
@@ -36,7 +38,7 @@
 Юнит-тесты работают исключительно с локальным рендерингом (`helm template`). Инструментарий позволяет подменять:
 
 - **`.Values`**: через секцию `set` (точечные переопределения) или `values` (полные values-файлы, абсолютные или glob-пути).
-- **`.Release`**: имитация имени релиза, неймспейса, статуса (`installed|uninstalled|superseded`), `IsInstall`/`IsUpgrade`/`IsTest`.
+- **`.Release`**: имитация имени релиза, неймспейса, статуса (`installed|uninstalled|superseded`), `upgrade` (флаг апгрейда).
 - **`.Capabilities`**: имитация версий Kubernetes и доступных API (важно для адаптивных чартов — см. [scenarios.md](./scenarios.md#3-создание-универсальных-адаптивных-чартов)).
 - **`.Files`**: имитация содержимого нешаблонных файлов чарта (для `configmap_files` и `secrets_files`).
 
@@ -77,13 +79,13 @@ helm-unittest автоматически обнаруживает и прого�
 ### 9. Изоляция от окружения (offline / air-gapped CI)
 В закрытых контурах (финансы, промышленность, госсектор) установка плагина из `github.com` запрещена. Поддерживаются следующие пути:
 
-- **OCI-установка** из локального реестра: `helm plugin install oci://harbor.corp.local/helm-plugins/unittest:0.7.0`. Преимущества: версионирование, репликация, RBAC.
+- **OCI-установка** из локального реестра: `helm plugin install oci://harbor.corp.local/helm-plugins/unittest:1.2.1`. Преимущества: версионирование, репликация, RBAC.
 - **HTTP-установка** из корпоративного артефакт-стора (Nexus, Artifactory) с заранее подготовленным `.tgz` и проверенной контрольной суммой.
-- **Docker-образ** `helmunittest/helm-unittest:<helm-ver>-<plugin-ver>` — внутри уже установлены и Helm, и плагин. Запуск: `docker run --rm -v $(pwd):/apps helmunittest/helm-unittest:3.16.4-0.7.0 .` — наиболее воспроизводимый вариант для CI.
+- **Docker-образ** `helmunittest/helm-unittest:<helm-ver>-<plugin-ver>` — внутри уже установлены и Helm, и плагин. Запуск: `docker run --rm -v $(pwd):/apps helmunittest/helm-unittest:3.22.0-1.2.1 .` — наиболее воспроизводимый вариант для CI.
 - **Pre-baked CI-раннер** (Packer/AMI) с предустановленным плагином из локального зеркала.
 
 ### 10. GPG-верификация (Helm 4)
-Начиная с Helm 4, при `helm plugin install` из git проверяется GPG-подпись тега репозитория плагина. Для helm-unittest v0.7.0+ при установке из git-URL требуется флаг `--verify=false`, либо предварительный импорт публичного ключа:
+Начиная с Helm 4, при `helm plugin install` из git проверяется GPG-подпись тега репозитория плагина. При установке helm-unittest v1.2.x из git-URL на Helm 4 требуется флаг `--verify=false`, либо предварительный импорт публичного ключа:
 
 ```bash
 curl -SsL https://github.com/helm-unittest/helm-unittest/raw/refs/heads/main/public-key.asc | gpg --import
@@ -100,19 +102,28 @@ gpg --export > ~/.gnupg/pubring.gpg
 
 **Из публичного GitHub (online):**
 ```bash
+# Helm 3
 helm plugin install https://github.com/helm-unittest/helm-unittest.git
+# или с указанием версии:
+helm plugin install https://github.com/helm-unittest/helm-unittest.git --version 1.2.1
+
+# Helm 4 (требуется --verify=false, т.к. GPG-проверка не поддерживается для git-URL)
+helm plugin install https://github.com/helm-unittest/helm-unittest.git --verify=false
+
+# Официальный OCI-реестр (только с v1.1.0+)
+helm plugin install oci://ghcr.io/helm-unittest/helm-unittest/unittest:latest
 ```
 
 **Из локального OCI-реестра (air-gapped):**
 ```bash
-helm plugin install oci://harbor.corp.local/helm-plugins/unittest:0.7.0
+helm plugin install oci://harbor.corp.local/helm-plugins/unittest:1.2.1
 ```
 
 **Через Docker (воспроизводимый CI):**
 ```bash
-docker run --rm -v "$(pwd):/apps" helmunittest/helm-unittest:3.16.4-0.7.0 .
+docker run --rm -v "$(pwd):/apps" helmunittest/helm-unittest:3.22.0-1.2.1 .
 # с JUnit-отчётом:
-docker run --rm -v "$(pwd):/apps" helmunittest/helm-unittest:3.16.4-0.7.0 \
+docker run --rm -v "$(pwd):/apps" helmunittest/helm-unittest:3.22.0-1.2.1 \
   -o test-output.xml -t JUnit .
 ```
 
@@ -141,9 +152,10 @@ my-chart/
 ```text
 tests/
 __snapshot__/
+ci/
 ```
 
-Чтобы тесты и снапшоты не попадали в собранный `.tgz`-артефакт чарта (это полезно и для безопасности, и для уменьшения размера).
+Чтобы тесты, снапшоты и `ci/`-заглушки не попадали в собранный `.tgz`-артефакт чарта (это полезно и для безопасности, и для уменьшения размера, и чтобы secrets из `ci/` случайно не оказались в релизе).
 
 ### 2. Мокирование Capabilities, Release, Values
 
@@ -155,8 +167,8 @@ templates:
 tests:
   - it: should use networking.k8s.io/v1 for K8s 1.19+
     capabilities:
-      major: 1
-      minor: 19
+      majorVersion: 1
+      minorVersion: 19
       apiVersions:
         - networking.k8s.io/v1
     asserts:
@@ -165,8 +177,8 @@ tests:
           value: networking.k8s.io/v1
   - it: should fall back to extensions/v1beta1 on K8s 1.16
     capabilities:
-      major: 1
-      minor: 16
+      majorVersion: 1
+      minorVersion: 16
       apiVersions:
         - extensions/v1beta1
     asserts:
@@ -182,10 +194,10 @@ templates:
   - deployment.yaml
 tests:
   - it: should use release name and namespace
-    release:
-      name: my-release
-      namespace: payments
-      isInstall: true
+      release:
+        name: my-release
+        namespace: payments
+        upgrade: false
     asserts:
       - equal:
           path: metadata.name
@@ -270,14 +282,14 @@ tests:
       - lengthEqual:             # длина массива/строки
           path: spec.template.spec.containers
           count: 1
-      - greaterThan:             # числовое сравнение
+      - greaterOrEqual:           # числовое сравнение
           path: spec.template.spec.containers[0].resources.requests.memory
           value: 64
-      - lessThanOrEqual:
+      - lessOrEqual:
           path: spec.template.spec.containers[0].resources.limits.memory
           value: 512
       - isNotNullOrEmpty:        # строка не пуста
-          path: metadata.labels.app\.kubernetes\.io/version
+          path: metadata.labels["app.kubernetes.io/version"]
       - isNullOrEmpty:           # поле пусто или отсутствует
           path: spec.template.spec.dnsPolicy
 ```
@@ -480,11 +492,20 @@ helm unittest --with-subchart=true ./my-chart
 # Цветной вывод (в CI принудительно выключить)
 helm unittest --color=false ./my-chart
 
+# Параллельный запуск тестов (v1.1+, ускоряет большие наборы)
+helm unittest --parallel --max-workers 4 ./my-chart
+
+# Покрытие кода шаблонов (v1.2+)
+helm unittest --coverage ./my-chart
+# с машинночитаемым отчётом:
+helm unittest --coverage-format cobertura,lcov --coverage-file ./reports/cov ./my-chart
+# → result: ./reports/cov.xml (Cobertura), ./reports/cov.info (LCOV)
+
 # Генерация JUnit-отчёта для GitLab/GitHub
 helm unittest -o report.xml -t JUnit ./my-chart
 ```
 
-Форматы отчётов: `JUnit`, `NUnit`, `XUnit` (по умолчанию). Для GitLab — `JUnit`, для Jenkins — `JUnit` или `XUnit`, для Azure DevOps — `JUnit`.
+Форматы отчётов: `JUnit`, `NUnit`, `XUnit` (по умолчанию **XUnit**), `Sonar`. Для GitLab — `JUnit`, для Jenkins — `JUnit` или `XUnit`, для Azure DevOps — `JUnit`, для SonarQube — `Sonar`.
 
 ### 10. Запуск и интеграция в CI/CD
 
@@ -496,17 +517,22 @@ stages:
   - package
 
 variables:
-  HELM_IMAGE: "harbor.corp.local/devops/helm:3.16.4"
+  HELM_IMAGE: "harbor.corp.local/devops/helm:3.22.0"
 
 helm-lint:
   stage: validate
   image: ${HELM_IMAGE}
   script:
     - helm lint ./charts/*
+    - |
+      for chart in charts/*/; do
+        helm lint "$chart"
+        helm lint "$chart" -f "${chart}values-dev.yaml" || true
+      done
 
 helm-unittest:
   stage: test
-  image: helmunittest/helm-unittest:3.16.4-0.7.0
+  image: helmunittest/helm-unittest:3.22.0-1.2.1
   script:
     - helm unittest --strict --failfast -o report.xml -t JUnit ./charts/*
   artifacts:
@@ -521,8 +547,19 @@ chart-testing:
   stage: test
   image: ${HELM_IMAGE}
   script:
-    - ct lint --config ct.yaml
-    - ct install --config ct.yaml --debug
+    - ct lint --config ct.yaml --charts charts/my-service
+    - ct install --config ct.yaml --charts charts/my-service --debug
+
+helm-package:
+  stage: package
+  image: ${HELM_IMAGE}
+  script:
+    - helm package ./charts/* --destination dist/
+  artifacts:
+    paths:
+      - dist/*.tgz
+  only:
+    - main
 ```
 
 **GitHub Actions:**
@@ -552,7 +589,7 @@ jobs:
 pipeline {
   agent {
     docker {
-      image 'helmunittest/helm-unittest:3.16.4-0.7.0'
+      image 'helmunittest/helm-unittest:3.22.0-1.2.1'
       args '-v $WORKSPACE:/apps'
     }
   }
@@ -573,7 +610,7 @@ kind: pipeline
 name: helm-unittest
 steps:
   - name: unittest
-    image: helmunittest/helm-unittest:3.16.4-0.7.0
+    image: helmunittest/helm-unittest:3.22.0-1.2.1
     commands:
       - helm unittest --strict --failfast -o report.xml -t JUnit ./charts/*
   - name: publish
@@ -593,7 +630,7 @@ metadata:
 spec:
   steps:
     - name: run
-      image: helmunittest/helm-unittest:3.16.4-0.7.0
+      image: helmunittest/helm-unittest:3.22.0-1.2.1
       script: |
         #!/usr/bin/env bash
         set -e
@@ -634,6 +671,7 @@ Pre-commit ловит ошибки шаблонов **до** push в remote, э�
 
 `ct.yaml`:
 ```yaml
+target-branch: main
 chart-dirs:
   - charts
 chart-repos:
@@ -641,7 +679,10 @@ chart-repos:
 validate-maintainers: false
 chart-yaml-schema: https://raw.githubusercontent.com/helm/chart-testing/main/etc/chart_schema.yaml
 lint-conf: ct-lint.yaml
+check-version-increment: true
 ```
+
+`check-version-increment: true` (вкл. по умолчанию) заставляет `ct` падать, если шаблоны чарта изменены, а версия в `Chart.yaml` — нет. Это защищает от выпуска артефакта, который не отличается от предыдущего тега.
 
 ```bash
 # Только линтинг (lint + unittest + values.schema)
@@ -650,11 +691,38 @@ ct lint --config ct.yaml
 # Полный цикл (lint + install dry-run в kind/eks/...)
 ct install --config ct.yaml
 
-# Только helm-unittest
+# Только helm-unittest через ct
 ct lint --config ct.yaml --lint-cmd "helm unittest --strict --failfast {}"
+
+# Явно указать чарты (избегает линта на неизменённых чартах в монорепо)
+ct lint --config ct.yaml --charts charts/my-service
 ```
 
 `ct` запускает helm-unittest автоматически как часть `ct lint`, если в чарте есть директория `tests/`. Кастомный `lint-cmd` позволяет переопределить команду.
+
+**Values-заглушки для `ct install`:**
+
+`ct install` использует values из поддиректории `ci/` внутри чарта. Каждый `.yaml`-файл в `ci/` — отдельная установка с разными значениями:
+
+```text
+charts/my-service/
+├── Chart.yaml
+├── templates/
+├── values.yaml
+└── ci/
+    ├── default-values.yaml      # ← используется для ct install
+    ├── dev-values.yaml          # ← вторая установка
+    └── staging-values.yaml      # ← третья установка
+```
+
+Если `ci/` отсутствует, `ct install` использует значения из `values.yaml` чарта. Однако для production-чартов `values.yaml` часто содержит placeholder-значения, поэтому рекомендуется всегда заводить `ci/default-values.yaml` с безопасными значениями для тестовой установки. Файлы `ci/` должны быть добавлены в `.helmignore` основного чарта (они нужны только для тестов, а не для релиза):
+
+```text
+# .helmignore
+tests/
+__snapshot__/
+ci/
+```
 
 ### 13. Интеграция с helm diff (pre-upgrade safety)
 
@@ -671,21 +739,25 @@ helm upgrade my-release ./my-chart -f values-prod.yaml
 
 В CI это выглядит как job `helm-diff`, который **всегда** падает, если diff не пустой при изменении версии чарта (защита от случайного force-upgrade).
 
-### 14. Миграция с helm-unittest 0.6.x → 0.7.x
+### 14. Миграция с helm-unittest 0.7.x → 1.2.x
 
-Ключевые изменения:
+Ключевые изменения (breaking changes):
 
-- **JsonPath по умолчанию** в `path`. Старые выражения с `\.` для экранирования точек в ключах ломаются: `metadata.labels.app\.kubernetes\.io/name` → `metadata.labels["app.kubernetes.io/name"]`. Проверьте все тестовые файлы через `helm unittest --strict`.
-- **`documentSelector`** — новый способ адресации документов. Рекомендуется для multi-doc чартов вместо `documentIndex`.
+- **`capabilities.major`/`minor` → `capabilities.majorVersion`/`minorVersion`.** Поля переименованы в v1.0.0. Старые имена больше не расп 인яются.
+- **`release.isInstall`/`isUpgrade` → `release.upgrade`.** Объединены в одно логическое поле. `isInstall: true` эквивалентно `upgrade: false` (значение по умолчанию, может быть опущено).
+- **`greaterThan` → `greaterOrEqual`, `lessThanOrEqual` → `lessOrEqual`.** Имена assertion-ов выровнены с семантикой (ранее назывались смещённо).
+- **JsonPath по умолчанию** в `path`. Старые выражения с `\.` для экранирования точек в ключах ломаются: `metadata.labels.app\.kubernetes\.io/name` → `metadata.labels["app.kubernetes.io/name"]`.
 - **`--strict`** — теперь выявляет опечатки в assertion-именах и неизвестные поля тестов. Включите в CI как можно раньше.
-- **Формат отчёта по умолчанию** изменён на `XUnit` (был `JUnit`). Проверьте парсеры отчётов в CI.
+- **Формат отчёта по умолчанию** — `XUnit`. Если CI использует парсер, ожидающий `JUnit`, укажите `-t JUnit` явно.
 
 Пошаговый план:
-1. Обновите плагин: `helm plugin install --version 0.7.0 ...`
+1. Обновите плагин: `helm plugin install --version 1.2.1 ...`
 2. Запустите `helm unittest --strict ./my-chart` — соберите список упавших тестов.
-3. Замените экранированные точки в `path` на JsonPath-кавычки.
-4. Замените `documentIndex` на `documentSelector` где возможно.
-5. Закоммитьте изменения тестов отдельным PR с меткой `unittest-0.7-migration`.
+3. Замените `capabilities.major`/`minor` на `majorVersion`/`minorVersion`.
+4. Замените `release.isInstall: true` → `upgrade: false` (или удалите, т.к. это дефолт).
+5. Замените `greaterThan` → `greaterOrEqual`, `lessThanOrEqual` → `lessOrEqual`.
+6. Замените экранированные точки в `path` на JsonPath-кавычки: `metadata.labels.app\.kubernetes\.io/name` → `metadata.labels["app.kubernetes.io/name"]`.
+7. Закоммитьте изменения тестов отдельным PR с меткой `unittest-1.x-migration`.
 
 ### 15. Troubleshooting
 
@@ -695,12 +767,16 @@ helm upgrade my-release ./my-chart -f values-prod.yaml
 | `test file does not exist` | Тесты вне `tests/` | Переместите в `tests/` или используйте `-f 'pattern/**/*_test.yaml'` |
 | `snapshot not found, please use -u to update` | Снапшот ещё не создан | `helm unittest -u ./my-chart` локально, закоммитьте `__snapshots__/` |
 | Тест проходит локально, падает в CI | Разные версии Helm | Зафиксируйте версии через Docker-образ или `helm version` в pre-job |
-| `failed parsing testsuite` после обновления 0.6→0.7 | Старый синтаксис `path` | Запустите с `--strict`, замените `\.` на `["..."]` |
+| `failed parsing testsuite` после обновления 0.7→1.x | Старый синтаксис `capabilities.major`/`release.isInstall`/`greaterThan` | Запустите с `--strict`, замените на `majorVersion`/`upgrade`/`greaterOrEqual` |
 | `helm plugin install` падает на git-URL в Helm 4 | GPG-проверка | `--verify=false` или импорт публичного ключа плагина |
 | Тесты внутри subchart игнорируются | `--with-subchart=false` | Уберите флаг или поставьте `true` |
 | `isKind` не находит ресурс | Multi-doc шаблон | Добавьте `documentSelector` или `documentIndex` |
 | `values.schema.json` блокирует тест | Schema не пускает тестовые значения | Временно `--skip-schema-validation` или ослабьте schema |
 | Snapshot diff после изменения шаблона | Шаблон действительно изменился | Проверьте `git diff` руками, затем `helm unittest -u` |
+| `helm plugin install` долго устанавливается в CI | Скачивание из github.com при каждом запуске | Предустановите плагин в Docker-образ на базе `alpine/helm:3.22.0` |
+| `ct lint` падает на неизменённых чартах | По умолчанию ct проверяет все чарты в `chart-dirs` | Используйте `--charts charts/my-service`, чтобы явно указать чарты |
+| `ct install` не находит values для тестовой установки | Нет файла-заглушки в `ci/` | Создайте `ci/default-values.yaml` в директории чарта |
+| `check-version-increment: true` ломает CI | Шаблоны изменены, а версия в `Chart.yaml` нет | Инкрементируйте `version:` в `Chart.yaml`, либо отключите `--target-branch`-поведение |
 
 ### 16. Ограничения и границы применимости
 
@@ -710,6 +786,55 @@ helm upgrade my-release ./my-chart -f values-prod.yaml
 - **Snapshot-тесты хрупки при больших рефакторингах**. Любое изменение условной логики «зацепит» десятки снапшотов. Точечные ассерты более устойчивы к рефакторингу, хотя требуют больше кода.
 - **Templated Test Suites** — рендерят чарт внутри тестового прогона, что увеличивает время. Для 10+ окружений может стать узким местом. Альтернатива — параметризация через shell-цикл.
 - **Тесты не покрывают helm-хуки** в полном объёме: `helm-unittest` рендерит хуки как обычные манифесты, но не запускает их lifecycle (pre-install, post-upgrade). Для E2E хуков — `helm test` или `ct install`.
+
+### 17. helm lint — статическая валидация
+
+`helm lint` — встроенный линтер, который проверяет синтаксис `Chart.yaml`, структуру каталога чарта, корректность шаблонов и соответствие `values.schema.json`. Он работает без кластера и ловит ошибки, которые не видит рендеринг: отсутствующие `required`-поля, несоответствие типов values и нарушения структуры.
+
+```bash
+# Базовый линтинг чарта
+helm lint charts/my-service
+
+# Линтинг с environment-specific values
+helm lint charts/my-service -f charts/my-service/values-dev.yaml
+```
+
+**Критически важно:** линтите с `values`-файлами каждого окружения, а не только с `defaults`. Значение, опциональное в `values.yaml`, может стать обязательным в `values-dev.yaml` из-за `{{ required "field is required" .Values.someField }}` в шаблонах.
+
+Для нескольких чартов в монорепо:
+
+```bash
+for chart in charts/*/; do
+  helm lint "$chart"
+  helm lint "$chart" -f "${chart}values-dev.yaml" || true
+done
+```
+
+> **Примечание для Helm 4:** флаг `--strict` для `helm lint` всё ещё доступен (`--strict  fail on lint warnings`). Комбинируйте его с `values.schema.json` для максимальной строгости валидации в CI.
+
+### 18. Что тестировать и что пропускать
+
+Необходимо покрывать проверками те участки, где ошибка приводит к нерабочему или небезопасному деплою, а не те, что валидирует и так Kubernetes.
+
+**Тестировать (unit-тесты на helm-unittest):**
+
+| Что | Почему | Пример assertion |
+|---|---|---|
+| Количество реплик по окружениям | Неправильный `replicaCount` приводит к over/under-provisioning | `equal: path: spec.replicas, value: 3` |
+| SecurityContext | `allowPrivilegeEscalation: true` или отсутствие `readOnlyRootFilesystem` — нарушение PSA | `equal: path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation, value: false` |
+| Resource requests/limits | Отсутствие `requests` приводит к плохой scheduling-стратегии и OOM | `isNotNullOrEmpty: path: spec.template.spec.containers[0].resources.requests.cpu` |
+| Selector Service совпадает с метками Deployment | Мismatch ломает Service-to-Pod routing | `equal: path: spec.selector.app, value: my-service` |
+| Обязательные secrets/configmaps | Отсутствие `required`-вызова приводит к пустым значениям в runtime | `failedTemplate: errorMessage: "field is required"` |
+| Image tag и репозиторий | `latest` или неверный репозиторий ломают деплой | `notMatchRegex: path: spec.template.spec.containers[0].image, pattern: ":latest"` |
+
+**Пропустить (не unit-тестами):**
+
+| Что | Почему | Как проверять |
+|---|---|---|
+| Внутренности Kubernetes (scheduler, controller-manager) | Это функции платформы, а не чарта | `ct install --dry-run` + E2E |
+| Runtime-поведение (readiness probe, volume mounts, работоспособность образа) | Требует запущенного кластера | `helm test` (integration test pod) |
+| ConfigMap/Secret data содержимое (за исключением presence) | Данные генерируются внешними системами | Интеграционные тесты в кластере |
+| Helm hooks lifecycle (pre-install, post-upgrade) | `helm-unittest` рендерит, но не исполняет | `ct install` или `helm test` в кластере |
 
 ---
 
@@ -722,4 +847,4 @@ helm upgrade my-release ./my-chart -f values-prod.yaml
 - **[Проверка версий API и возможностей](./scenarios.md#3-создание-универсальных-адаптивных-чартов)** — когда и зачем нужно мокировать `.Capabilities`.
 - **[Безопасность и лучшие практики](./security_best_practices.md)** — соседний уровень валидации: `helm lint`, `values.schema.json`, `kubeconform`.
 - **[chart-testing (ct)](https://github.com/helm/chart-testing)** — оркестратор полного цикла валидации чартов.
-- **[helm-unittest DOCUMENT.md](https://github.com/helm-unittest/helm-unittest/blob/main/DOCUMENT.md)** — полный справочник по assertion-API.
+- **[helm-unittest DOCUMENT.md](https://github.com/helm-unittest/helm-unittest/blob/main/DOCUMENT.md)** — полный справочник по assertion-API (v1.x).

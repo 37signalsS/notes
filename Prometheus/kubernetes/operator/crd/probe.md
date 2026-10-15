@@ -415,6 +415,7 @@ targets:
 *   **Cardinality:** Каждый уникальный target создает отдельный временной ряд. Для >10 000 уникальных целей используйте шардирование или разделение на несколько Probe-ресурсов.
 *   **URL-кодирование:** Параметр `target` должен быть корректно URL-encoded. Prometheus relabeling обрабатывает это автоматически для большинства случаев.
 *   **Зависимость от Blackbox Exporter:** Ресурс `Probe` не работает без запущенного Blackbox Exporter в кластере. При его недоступности все проверки будут возвращать `probe_success = 0`.
+*   **Зависимость от CRD `Probe`:** CRD `Probe` устанавливается вместе с `kube-prom-stack`. Объекты `Probe` должны применяться **после** установки CRD, иначе реконсиляция завершится ошибкой (`probe.monitoring.coreos.com not found`). В GitOps (Flux CD) это обеспечивается отдельной Kustomization с `dependsOn` на базовый слой. Подробнее: [Blackbox Exporter — установка и настройка](../../../Exporters/blackbox/blackbox_exporter_installation_and_setup.md).
 
 ### Диагностика
 

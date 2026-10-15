@@ -397,6 +397,40 @@ grep -oE '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}' app.log
 | Не работает `grep -P` на macOS | BSD grep не поддерживает PCRE | Установить GNU grep: `brew install grep` и использовать `ggrep` |
 | `grep: memory exhausted` | Слишком сложный PCRE-шаблон или огромный файл | Упростить шаблон, добавить `-F`, разбить файл |
 
+### Поиск с номером строки и рекурсией
+
+```bash
+# Рекурсивный поиск с номерами строк и именами файлов
+grep -rn 'panic:' /var/log/app/
+
+# Инверсия: удалить комментарии и пустые строки из конфига
+grep -v '^#' /etc/nginx/nginx.conf | grep -v '^[[:space:]]*$'
+```
+
+### Рипгреп (ripgrep / rg)
+
+`ripgrep` — современная замена `grep`, написанная на Rust. По умолчанию уважает `.gitignore`, `.ignore` и `.rgignore`, ищет рекурсивно и использует все ядра CPU. Поддерживает почти все флаги `grep`, плюс собственные расширения.
+
+```bash
+# Быстрый поиск по типу файлов (замена --include)
+rg 'TODO|FIXME|HACK' --type py -l
+
+# Поиск с контекстом (аналог -C3)
+rg 'panic' -C3 --glob '*.go'
+
+# Поиск в скрытых и .gitignore-файлах
+rg 'secret_key' --hidden --no-ignore
+
+# Предпросмотр замены без записи в файл
+rg 'old_value' --replace 'new_value' --passthru config.yaml
+
+# Статистика поиска: совпадения, файлы, время
+rg 'error' /var/log/ --stats 2>&1 | tail -5
+
+# Поиск в бинарном файле (аналог grep -a)
+rg -a 'password' /proc/<pid>/mem 2>/dev/null | strings | head -20
+```
+
 ### Связанные инструменты и альтернативы
 
 - **`ripgrep (rg)`**: Современная замена на Rust. Значительно быстрее, по умолчанию уважает `.gitignore`. Рекомендуется для DevOps.

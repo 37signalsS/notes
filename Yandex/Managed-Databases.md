@@ -206,6 +206,50 @@ yc managed-postgresql cluster restore \
 yc managed-postgresql backup create --cluster-name pg-main
 ```
 
+### Управление пользователями и базами данных PostgreSQL
+
+```bash
+# Список хостов кластера (FQDN, роль MASTER/REPLICA, статус)
+yc managed-postgresql cluster list-hosts --cluster-name pg-main --format json | \
+  jq -r '.[] | "\(.name)\t\(.role)\t\(.health)"'
+
+# Создать пользователя (пароль через stdin — не светит в истории shell)
+yc managed-postgresql user create app \
+  --cluster-name pg-main \
+  --password-stdin
+
+# Создать базу данных с владельцем
+yc managed-postgresql database create app_db \
+  --cluster-name pg-main \
+  --owner app \
+  --lc-collate en_US.UTF-8 \
+  --lc-ctype en_US.UTF-8
+```
+
+### Подключение к PostgreSQL с TLS verify-full
+
+```bash
+# Загрузить корневой сертификат YC
+curl -s https://storage.yandexcloud.net/cloud-certs/CA.pem -o ~/.postgresql/root.crt
+
+# Подключение через PgBouncer (порт 6432) с полной проверкой TLS
+psql "host=<host> port=6432 sslmode=verify-full \
+  dbname=app user=app target_session_attrs=read-write"
+# note: verify-full требует root.crt для проверки сертификата хоста
+```
+
+### Аудит и листинг кластеров
+
+```bash
+# Redis: отфильтровать только нездоровые кластеры
+yc managed-redis cluster list --format json | \
+  jq -r '.[] | select(.health!="ALIVE") | "\(.name)\t\(.status)\t\(.health)"'
+
+# ClickHouse: аудит версий и пресетов для поиска кандидатов на обновление
+yc managed-clickhouse cluster list --format json | \
+  jq -r '.[] | "\(.name)\t\(.config.version)\t\(.resources.resourcePresetId)"'
+```
+
 ### Выбор класса ресурсов
 
 | Класс | vCPU | RAM | Сценарии |

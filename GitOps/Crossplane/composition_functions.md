@@ -537,9 +537,12 @@ cannot compose resources: step "patch-and-transform" failed: cannot patch field:
 - [Crossplane CLI Reference: render and validate](https://docs.crossplane.io/latest/cli/command-reference/)
 
 Смежные разделы базы знаний:
-- [Управление ресурсами Kubernetes](file:///c:/Users/Elise/notes/GitOps/Crossplane/provider_kubernetes_setup.md) — декларативное управление объектами K8s через provider-kubernetes.
-- [Мультитенантность в Crossplane](file:///c:/Users/Elise/notes/GitOps/Crossplane/multi_tenancy.md) — архитектура изоляции тенантов и связка с `EnvironmentConfig`.
-- [Тестирование платформы](file:///c:/Users/Elise/notes/GitOps/Crossplane/testing_crossplane.md) — расширенные методики интеграционного тестирования и CI.
-- [Интеграция с GitOps](file:///c:/Users/Elise/notes/GitOps/Crossplane/gitops_integration.md) — доставка манифестов и композиций через Argo CD и Flux.
-- [Обзор Crossplane](file:///c:/Users/Elise/notes/GitOps/Crossplane/overview.md) — концептуальная архитектура Control Plane и XRD.
-- [Защита зависимостей (Usage)](file:///c:/Users/Elise/notes/GitOps/Crossplane/usage_protection.md) — предотвращение каскадного удаления инфраструктуры.
+- [Управление ресурсами Kubernetes](./provider_kubernetes_setup.md) — декларативное управление объектами K8s через provider-kubernetes.
+- [Мультитенантность в Crossplane](./multi_tenancy.md) — архитектура изоляции тенантов и связка с `EnvironmentConfig`.
+- [Тестирование платформы](./testing_crossplane.md) — расширенные методики интеграционного тестирования и CI.
+- [Интеграция с GitOps](./gitops_integration.md) — доставка манифестов и композиций через Argo CD и Flux.
+- [Обзор Crossplane](./overview.md) — концептуальная архитектура Control Plane и XRD.
+- [Защита зависимостей (Usage)](./usage_protection.md) — предотвращение каскадного удаления инфраструктуры.
+- [Патчи, трансформы и PatchSets](./patch_transform.md) — детали `function-patch-and-transform`, типы патчей, трансформы, PatchSets.
+- [Connection Details (проброс секретов)](./connection_details.md) — проброс учетных данных от MR к XR и потребителю.
+- [Разработка кастомных Composition Functions](./custom_function_development.md) — создание функций на Go/Python поверх function-sdk, сборка и отладка.

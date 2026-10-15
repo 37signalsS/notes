@@ -147,6 +147,25 @@ annotations:
   summary: "Too many 5xx errors on checkout service"
 ```
 
+### 3.5. Чтение логов из группы Cloud Logging
+
+```bash
+# Чтение логов из группы за последний час (только ERROR/WARN)
+yc logging read \
+  --group-name <group_name> \
+  --since 1h \
+  --levels ERROR,WARN \
+  --format json | \
+  jq -r '.[] | "\(.timestamp) \(.level) \(.message)"'
+
+# Подписка на логи в реальном времени
+yc logging read \
+  --group-name <group_name> \
+  --since 5m \
+  --follow
+# note: --since принимает относительные окна (1h, 30m)
+```
+
 ## 4. Дополнительная информация
 
 ### Связанные темы

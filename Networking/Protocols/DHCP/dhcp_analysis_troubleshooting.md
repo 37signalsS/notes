@@ -399,6 +399,7 @@ cat /proc/sys/net/ipv6/conf/eth0/accept_ra
 | Проблема | Вероятная причина | Метод диагностики | Решение |
 | :--- | :--- | :--- | :--- |
 | **APIPA (169.254.x.x)** | Нет L2-связности или DHCP Snooping блокирует сервер | `tcpdump` на сервере: приходят ли запросы? | Проверить VLAN, порты коммутатора (Trusted/Untrusted). |
+| **DHCP Discover не доходит до сервера** | Неверный PVID на порту — нетегированный DHCP Discover попадает в чужой broadcast-домен | `bridge vlan show` / `tcpdump -eni <iface> 'udp port 67 or 68'` на uplink | Исправить PVID на порту на нужную VLAN: `bridge vlan add dev <iface> vid <VLAN> pvid untagged` |
 | **No Free Leases** | Исчерпание пула адресов | Лог: `no free leases` | Увеличить `range` или сократить `default-lease-time`. |
 | **DHCP Relay Failure** | Неверный `giaddr` или отсутствие маршрута к нему | `tcpdump` на сервере: поле `giaddr` равно `0.0.0.0`? | Проверить конфиг ретранслятора (`ip helper-address`). |
 | **Конфликт IP (NAK)** | Наличие статических IP внутри пула DHCP | `tcpdump`: пакет `DHCPNAK` или `DHCPDECLINE` | Исключить статику через `reserved-range` или `ping-check`. |
@@ -406,6 +407,126 @@ cat /proc/sys/net/ipv6/conf/eth0/accept_ra
 | **Медленный DORA** | Проблема с disk I/O на сервере, fsync в dhcpd.leases | `tcpdump`: задержка между DISCOVER и OFFER >1с | Проверить `iostat`, перейти на SSD или memfile (Kea). |
 | **DHCP Snooping блокирует** | Клиент на Untrusted-порту без статической привязки | `show ip dhcp snooping binding` | Добавить static binding для серверов/Relay. |
 | **Клиент получает чужой IP** | Rogue DHCP-сервер в сети | `tcpdump`: `dhcp.option.dhcp_server_id` ≠ ожидаемый | Включить DHCP Snooping, проверить `ip helper-address`. |
+
+## Практический сценарий: DHCP не работает из-за неверного PVID
+
+**Проблема:** Клиент подключается к сети — физический линк поднят, но IP-адрес не получает. DHCP-сервер работает, свободные адреса есть в пуле, однако DHCP Discover от клиента не достигает сервера.
+
+**Архитектура:**
+```
+Клиент (нетегированный)
+    │
+    ▼
+eth1 (access-порт)
+    │
+    ▼
+VLAN-aware Bridge (br0) ← DHCP-сервер в VLAN 20
+    └── VLAN 10 (PVID ошибочно назначен)
+    └── VLAN 20 (требуемая)
+```
+
+**Корень проблемы:** DHCP Discover отправляется широковещательно без VLAN-тега. Коммутатор (или Linux bridge) принимает кадр и относит его к VLAN, заданному через PVID на порту. Если вместо требуемого VLAN 20 на порту установлен PVID = 10, Discover попадает в чужой broadcast-домен. DHCP-сервер в VLAN 20 его не видит.
+
+### Где теряется DHCP Discover
+
+Клиент отправляет DHCP Discover широковещательно (`255.255.255.255:67`), обычно без VLAN-тега. Коммутатор принимает кадр и относит его к VLAN, заданному через PVID. Если вместо VLAN 20 на порту стоит VLAN 10, Discover попадёт не в тот широковещательный домен.
+
+DHCP-сервер в VLAN 20 его просто не увидит — широковещательные запросы не пересекают границы broadcast-домена без маршрутизации.
+
+### Шаг 1: Проверка VLAN на порту
+
+На Linux bridge с включённой VLAN-фильтрацией:
+
+```bash
+bridge vlan show
+```
+
+```text
+# → port    vlan ids
+# → eth0    10                       ← Trunk: тегированный трафик
+# → eth1    10 PVID Egress Untagged  ← ОШИБКА: PVID = 10, а не 20
+# →         20
+```
+
+Здесь нетегированные кадры с `eth1` попадают в VLAN 10, а не в VLAN 20. Если клиент должен находиться в VLAN 20, конфигурация порта неверна.
+
+### Шаг 2: Исправление PVID
+
+```bash
+# Удаляем неверный PVID (VLAN 10)
+sudo bridge vlan del dev eth1 vid 10 pvid untagged
+
+# Добавляем правильный PVID (VLAN 20)
+sudo bridge vlan add dev eth1 vid 20 pvid untagged
+
+# Проверка
+bridge vlan show
+# → port    vlan ids
+# → eth1    20 PVID Egress Untagged
+```
+
+### Шаг 3: Поиск DHCP Discover в трафике
+
+```bash
+# Захват DHCP-трафика на клиентском порту
+sudo tcpdump -eni eth1 'udp port 67 or 68'
+```
+
+Ключ `-e` показывает Ethernet-заголовок, что позволяет увидеть наличие или отсутствие 802.1Q тега. На trunk-порту можно дополнительно проверить, с каким VLAN-тегом проходит DHCP-трафик.
+
+```bash
+# Захват на uplink для проверки, в каком VLAN проходит Discover
+sudo tcpdump -eni eth0 'udp port 67 or 68'
+
+# Фильтрация по конкретному VLAN (должен видеть Discover в VLAN 20)
+sudo tcpdump -eni eth0 'vlan 20 and udp port 67'
+```
+
+Если Discover виден на клиентском порту, но отсутствует в нужном VLAN на uplink — проблема в PVID, VLAN membership или правилах тегирования.
+
+### Шаг 4: Проверка на коммутаторах (Cisco/Juniper/Huawei)
+
+Для аппаратных коммутаторов PVID называется иначе, но смысл тот же:
+
+```cisco
+# Cisco — проверка Native VLAN и Allowed VLAN на trunk-порту
+show interfaces trunk
+# → Port        Mode        Encapsulation  Status        Native vlan
+# → Gi0/24      on          802.1q         trunking      10      ← ОШИБКА (должно быть 999 или no native)
+
+show interfaces switchport | include Administrative Mode|Trunking Native
+# → Administrative Mode: trunk
+# → Trunking Native VLAN: 10
+```
+
+Исправление:
+
+```cisco
+interface GigabitEthernet0/24
+  switchport trunk allowed vlan 20
+  no switchport trunk native vlan 10
+```
+
+Для Huawei:
+
+```huawei
+display port vlan interface GigabitEthernet0/0/24
+# → PVID: 10   ← ОШИБКА
+
+# Исправление:
+interface GigabitEthernet0/0/24
+  port trunk pvid vlan 999
+  port trunk allow-pass vlan 20
+```
+
+### Профилактика
+
+- **Документируйте PVID/Native VLAN** для каждого порта — расхождения между портами приводят к потере broadcast-трафика в чужих VLAN.
+- **Удаляйте VLAN 1** по умолчанию с всех портов (см. **[VLAN в Linux](./../VLAN/vlan_linux_diagnostics.md)**).
+- **Проверяйте тегирование** через `tcpdump -e` на физических интерфейсах — это быстрее, чем ловить симптомы на уровне L3.
+- **Для коммутаторов:** включяйте `vlan dot1q tag native` (Cisco) или аналог — это устраняет неоднозначность с Native VLAN.
+
+**Важно:** DHCP Discover не знает, в какой VLAN ему нужно попасть. Для нетегированного кадра это решает коммутатор. Один неверный PVID может отправить весь DHCP-трафик в чужую сеть.
 
 ## Инструменты мониторинга и метрики
 

@@ -272,9 +272,285 @@ trigger-modules:
       - artifact: child-pipeline.yml
         job: generate-config
     strategy: depend
-  rules:
     - if: $CI_PIPELINE_SOURCE == "push"
 ```
+
+### Сценарий 6: Мульти-окружейный пайплайн через общий CI-шаблон (`include:project`)
+
+В этом сценарии описана модель организации CI/CD для множества backend-сервисов, каждый из которых подключает **общий** `.gitlab-ci.yml` из центрального CI/CD-проекта через `include:project`. Единый пайплайн управляет четырьмя средами деплоя — Development, Test/Demo, Pre-production и Production — с разграничением автоматических и ручных деплоев по веткам и ролям.
+
+#### Архитектура
+
+```
+Центральный CI/CD-проект (ci/common-ci, ветка dev)
+  └─ ci-cd/dotnet/.gitlab-ci.yml  ← workflow.rules, stages, job-шаблоны (.deploy, .grafana:notify, .cover_compare)
+
+Сервис my-service
+  └─ .gitlab-ci.yml  ← ТОЛЬКО variables + include:project
+```
+
+**Принцип работы:**
+- Проект содержит минимальный `.gitlab-ci.yml` с `include`-ом из центрального репозитория и сервис-специфичными переменными.
+- Центральный файл определяет все `stages`, `workflow:rules`, скрытые job-шаблоны (`.deploy`, `.grafana:notify`, `.cover_compare`) и переиспользуемые job.
+- Проект переопределяет переменные, но job наследует целиком через `extends`.
+- Подробнее о механизме `include:project` и версионировании через `ref` — в [Механизм `include`](../Reusable_Pipelines/include_keyword.md).
+
+#### Модель ветвления и сред
+
+| Ветка | Build | Test | Deploy |
+| :--- | :--- | :--- | :--- |
+| `feat/*` | Нет | Да | Нет |
+| `fix/*` | Нет | Да | Нет |
+| MR → `dev` | Нет | Да | Нет |
+| `dev` | Да | Да | Development (авто) |
+| `rel/*` | Да | Да | Test/Demo (авто), Pre-production (вручную), Production (вручную) |
+
+#### 1. Минимальный `.gitlab-ci.yml` в репозитории приложения
+
+```yaml
+# В репозитории приложения
+variables:
+  CUSTOM_PROJECT_NAME: my-service
+  CHART_NAME: my-service
+
+include:
+  - project: "ci/common-ci"
+    ref: dev
+    file: ci-cd/dotnet/.gitlab-ci.yml
+```
+
+`ref: dev` указывает ветку центрального CI/CD-проекта. Для production-проектов рекомендуется фиксировать `ref` на SemVer-тег (например, `v4.2.0`) — см. [Управление библиотекой шаблонов](../Reusable_Pipelines/include_keyword.md#управление-библиотекой-шаблонов).
+
+#### 2. `workflow:rules` — что запускает пайплайн
+
+Без `workflow:rules` GitLab создаёт пайплайн на каждый push и каждый MR — job дублируются, ресурсы раннеров тратятся впустую. Правила разрешают только значимые события:
+
+```yaml
+workflow:
+  rules:
+    # Запускать на MR (для code review и тестов)
+    - if: $CI_MERGE_REQUEST_ID
+    # Запускать при push в ветку dev
+    - if: $CI_COMMIT_BRANCH == "dev"
+    # Запускать на feature/fix/release ветках
+    - if: $CI_COMMIT_BRANCH =~ /^feat\/.*/
+    - if: $CI_COMMIT_BRANCH =~ /^fix\/.*/
+    - if: $CI_COMMIT_BRANCH =~ /^rel\/.*/
+    # Запускать на MR в dev или release ветку
+    - if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev"
+    - if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^rel\/.*/
+    # Подавить дублирующий пайплайн когда для ветки открыт MR
+    - if: "$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS"
+      when: never
+```
+
+Последнее правило — критично: если для ветки есть открытый MR, не запускать branch-пайплайн — запускается только MR-пайплайн. Без этого каждый push в feature-ветку с открытым MR создаёт два пайплайна. Подробнее о типичных ошибках `workflow:rules` — в [Правила запуска задач](../Advanced/workflow_rules/job_rules.md#проблемы-с-workflowrules).
+
+#### 3. Stages
+
+```yaml
+stages:
+  - sonarqube    # статический анализ, только на ветке dev
+  - test         # dotnet test, на большинстве веток
+  - cover_compare # проверка регрессии покрытия, на MR
+  - build        # docker build + push, на dev + rel/*
+  - deploy       # helm upgrade по средам, для prod — вручную
+  - autotests    # интеграционные тесты через API
+```
+
+#### 4. Test job: image tag в зависимости от ветки
+
+Версия .NET SDK отличается от проекта к проекта. Вместо отдельного job на каждую версию SDK единственный `test` job переключает тег образа, переопределяя переменные в `rules`:
+
+```yaml
+test:
+  stage: test
+  image: ${DOCKER_TEST_IMAGE}
+  variables:
+    DOCKER_TEST_IMAGE: registry.example.com/ci-images/dotnet-build:${DOCKER_TEST_IMAGE_TAG}
+    DOCKER_TEST_IMAGE_TAG: net6   # значение по умолчанию
+  script:
+    - dotnet build -c Release src/
+    - dotnet test -c Release --no-build --filter Category!~IntegrationExternal src/
+    - dotnet publish -c Release -o app/ src/ --no-build
+  artifacts:
+    paths:
+      - app/
+    expire_in: 100 days
+  rules:
+    # Переопределить на .net8 для нужных проектов
+    - if: $CI_PROJECT_PATH_SLUG =~ /^(my-api|other-api|...)/
+      variables:
+        DOCKER_TEST_IMAGE_TAG: net8
+    # Пропустить дублирующий пайплайн на ветке с открытым MR
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS == "true"'
+      when: never
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_COMMIT_BRANCH =~ /^rel\/.*/
+    - if: $CI_COMMIT_BRANCH =~ /^feat\/.*/
+    - if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev"
+    - if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^rel\/.*/
+```
+
+> **См. также:** Полный пример выбора образа по проекту через `CI_PROJECT_PATH_SLUG` в контексте SonarQube-анализа — в [Выбор образа по проекту (rules)](../Tutorials/sonarqube_integration.md#выбор-образа-по-проекту-rules).
+
+#### 5. Deploy jobs: по одному на среду
+
+Все deploy job расширяют `.deploy`, где лежит сама логика `helm upgrade`. Каждый job только задаёт `APP_ENV` и переопределяет `rules`:
+
+```yaml
+deploy_dev:
+  extends: .deploy
+  before_script:
+    - *auth_jwt
+  variables:
+    APP_ENV: Development
+  rules:
+    - if: $CI_COMMIT_BRANCH == "dev"
+      # автоматически — каждый push в dev деплоится
+
+deploy_test:
+  extends: .deploy
+  before_script:
+    - *auth_jwt
+  variables:
+    APP_ENV: Test
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^rel\/.*/
+      # автоматически на release ветках
+
+deploy_demo:
+  extends: .deploy
+  before_script:
+    - *auth_jwt
+  variables:
+    APP_ENV: Demo
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^rel\/.*/
+
+deploy_pre_prod:
+  extends:
+    - .deploy
+    - .grafana:notify   # постит аннотацию в Grafana после деплоя
+  before_script:
+    - *auth_jwt
+  variables:
+    APP_ENV: Pre-production
+    ENV_PREFIX: -preprod   # суффикс имени helm release
+
+deploy_prod:
+  extends:
+    - .deploy
+    - .grafana:notify
+  before_script:
+    - *auth_jwt
+  variables:
+    APP_ENV: Production
+  rules:
+    # Для критичных сервисов: ограничить конкретными пользователями
+    - if: >
+        $CI_COMMIT_BRANCH =~ /^rel\/.*/ &&
+        ($GITLAB_USER_LOGIN == "alice" || $GITLAB_USER_LOGIN == "bob") &&
+        $CI_PROJECT_PATH_SLUG =~ /^(critical-service-1|critical-service-2)$/
+      when: manual
+    # Для остальных на release-ветке
+    - if: >
+        $CI_COMMIT_BRANCH =~ /^rel\/.*/ &&
+        $CI_PROJECT_PATH_SLUG !~ /^(critical-service-1|critical-service-2)$/
+      when: manual
+```
+
+С `when: manual` job не стартует сам — в UI пайплайна GitLab появляется кнопка. Деплой в Production всегда ручной: кто-то должен нажать.
+
+**Ограничения доступа через `$GITLAB_USER_LOGIN`:** данный подход позволяет ограничить запуск production-деплоя на уровне `rules` конкретными пользователями. Это альтернатива [Protected Environments](../Tutorials/environments_and_protected_environments.md) — выбирайте подходящий вариант:
+
+- **`$GITLAB_USER_LOGIN` в `rules`** — прост, работает в Community Edition, но не масштабируется на большие команды. Не подходит для API/Schedule-триггеров (переменная пуста).
+- **Protected Environments + Approval Rules** — более надёжный, масштабируемый подход для production. Требует Premium/Ultimate.
+
+#### 6. Проверка регрессии покрытия (`cover_compare`)
+
+Job `cover_compare` — скрытый (с префиксом `.`); при необходимости его расширяют в конкретном проекте. Он через GitLab API сравнивает покрытие текущего пайплайна с последним успешным на целевой ветке:
+
+```yaml
+.cover_compare:
+  stage: cover_compare
+  image: alpine:latest
+  script:
+    - apk add --no-cache jq curl
+    # Получить покрытие текущего пайплайна
+    - latest=$(curl -sH "PRIVATE-TOKEN: $ACCESS_TOKEN_READ"
+        "$CI_API_V4_URL/projects/${CI_PROJECT_ID}/pipelines/${CI_PIPELINE_ID}"
+        | jq -r '.coverage // "0"' | cut -d. -f1)
+    # Получить покрытие последнего успешного пайплайна на целевой ветке
+    - success_id=$(curl -sH "PRIVATE-TOKEN: $ACCESS_TOKEN_READ"
+        "$CI_API_V4_URL/projects/${CI_PROJECT_ID}/pipelines?ref=${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-$CI_COMMIT_REF_NAME}&status=success"
+        | jq -r '.[0].id')
+    - prev=$(curl -sH "PRIVATE-TOKEN: $ACCESS_TOKEN_READ"
+        "$CI_API_V4_URL/projects/${CI_PROJECT_ID}/pipelines/${success_id}"
+        | jq -r '.coverage // "0"' | cut -d. -f1)
+    # Уведомить в любом случае — job не падает, просто отправляет сообщение
+    - |
+      if [ "$latest" -ge "$prev" ]; then
+        msg="${CI_PROJECT_PATH_SLUG}: coverage ${latest}% >= ${prev}% OK"
+      else
+        msg="${CI_PROJECT_PATH_SLUG}: coverage dropped ${latest}% < ${prev}%"
+      fi
+      curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+        -d chat_id="${TG_CHAT_ID}" -d text="$msg"
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+  allow_failure: true
+```
+
+`allow_failure: true` — падение покрытия не блокирует MR, это только информационное сообщение. Уведомление в Telegram идёт в выделенный QA-канал.
+
+> **См. также:** Более детальная версия `cover_compare` для .NET-проектов с `dotnet-coverage` — в [Сравнение дельты покрытия в MR (cover_compare)](../Tutorials/sonarqube_integration.md#сравнение-дельты-покрытия-в-mr-cover_compare).
+
+**Требования:**
+- `ACCESS_TOKEN_READ` — групповой токен GitLab со скоупом `read_api`. Достаточно для чтения метаданных пайплайнов, без доступа к коду.
+- `TG_BOT_TOKEN`, `TG_CHAT_ID` — для уведомления в Telegram.
+
+> **Примечание:** GitLab API возвращает `coverage` в виде числа/строки (чаще с десятичной частью). В примере выше для сравнения берётся целая часть (`cut -d. -f1`).
+
+> **Важно:** используется `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` (имя целевой ветки MR), а не `CI_COMMIT_REF_SLUG` — в MR-пайплайне `CI_COMMIT_REF_SLUG` соответствует slug **источника** ветки, а не целевой. API `pipelines?ref=` принимает имя ветки, поэтому для slug с именем ветки, содержащим специальные символы (например, `rel/1.2.3`), нужно использовать `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` или `CI_COMMIT_REF_NAME`.
+
+#### 7. Аннотация деплоя в Grafana
+
+Каждый деплой в production и pre-production постит аннотацию в Grafana. На дашбордах появляется отметка времени деплоя — изменения метрик легко соотнести с релизами:
+
+```yaml
+.grafana:notify:
+  after_script:
+    - >
+      curl -sX POST ${GRAFANA_URL}/api/annotations
+      -H "Content-Type: application/json"
+      -H "Authorization: Bearer ${GRAFANA_TOKEN}"
+      -d "{
+        \"text\": \"Deployed ${CI_PROJECT_PATH_SLUG} ${CI_COMMIT_BRANCH}\",
+        \"tags\": [\"deployment\", \"env:${APP_ENV}\"]
+      }"
+```
+
+Job, которым это нужно, расширяют и `.deploy`, и `.grafana:notify`:
+
+```yaml
+deploy_prod:
+  extends:
+    - .deploy
+    - .grafana:notify
+```
+
+GitLab объединяет `after_script` из `.grafana:notify` в job. Аннотация появляется на каждом Grafana-дашборде как вертикальная линия с именем сервиса.
+
+> **Важно:** конечная точка API — `/api/annotations` (множественное число). Использование `/api/annotation` (единственное число) вернёт `404 Not Found`. Аутентификация через `Authorization: Bearer ${GRAFANA_TOKEN}` требует API-токена с правом `annotations:create`.
+
+#### 8. Валидация и проверка
+
+1. **CI Lint:** `glab ci lint` или `POST /api/v4/ci/lint` — проверка синтаксиса.
+2. **Слияние конфигурации:** `glab ci config compile` — проверка раскрытого YAML после `include` и `extends`.
+3. **Проверка workflow.rules:** имитация событий через `glab ci lint --dry-run --variable CI_COMMIT_BRANCH=rel/1.2.3 --variable CI_PIPELINE_SOURCE=push`.
+4. **Проверка deploy_prod:** убедиться, что `when: manual` появляется в UI только для `rel/*` веток.
+5. **Grafana annotation:** после деплоя в pre-production/production проверить наличие аннотации на дашборде с тегом `deployment`.
 
 ## Архитектура Runner для Sysadmin
 

@@ -542,6 +542,7 @@ kubectl describe providerrevision provider-kubernetes-94c8b21ef0
 
 Смежные темы в базе знаний:
 * [Обзор Crossplane](./overview.md) — общая архитектура, жизненный цикл и концепции Control Plane.
+* [Air-Gap установка](./airgap_install.md) — полный bootstrap изолированного контура с нуля (чарты, CLI, провайдеры, CA Bundle).
 * [GitOps Integration](./gitops_integration.md) — автоматизированная доставка Crossplane и управление секретами через Argo CD и SOPS.
 * [Политики и Governance](./policy_governance.md) — применение Kyverno и OPA Gatekeeper для валидации Claim и XR.
 * [Настройка Provider Kubernetes](./provider_kubernetes_setup.md) — развертывание и изоляция базового провайдера для On-Premise кластеров.

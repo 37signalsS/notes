@@ -806,6 +806,7 @@ kubectl describe providerrevision -l pkg.crossplane.io/provider=provider-kuberne
 - [Интеграция с GitOps](./gitops_integration.md) — архитектура совместной работы с Argo CD и Flux, управление секретами и Server-Side Apply.
 - [Мультитенантность в Crossplane](./multi_tenancy.md) — проектирование изолированных платформ на базе namespace-scoped MR и ClusterProviderConfig.
 - [Observability и мониторинг Crossplane](./observability.md) — метрики Prometheus, мониторинг очередей контроллеров и алертинг.
+- [Управление парком кластеров (Fleet Management)](./fleet_management.md) — ClusterProviderConfig, мультикластерный топология, CAPI-паттерны поверх provider-kubernetes.
 - [Backup и Disaster Recovery Crossplane](./backup_dr.md) — резервное копирование etcd, стратегии защиты от каскадного удаления и аварийное восстановление.
 - [Управление секретами в GitOps](../secrets_encryption.md) — организация безопасного хранения kubeconfig и учетных данных через SOPS и External Secrets Operator.
 

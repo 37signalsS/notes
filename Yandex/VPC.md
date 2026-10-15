@@ -170,6 +170,22 @@ yc vpc security-group add-rule \
   --description "Allow all outbound"
 ```
 
+### Security Group: замена правил (update-rules)
+
+```bash
+# Полное перечисление текущих правил
+yc vpc security-group get --name sg-web --format json | jq '..rules'
+
+# Замена ВСЕХ правил сетевой группы (add-rule добавляет, update-rules перезаписывает)
+# Правила работают как allow-list: если есть хотя бы одно правило — всё остальное блокируется
+yc vpc security-group update-rules sg-web \
+  --add-rule 'direction=ingress,protocol=tcp,port=443,v4-cidrs=[0.0.0.0/0]' \
+  --add-rule 'direction=ingress,protocol=tcp,port=22,v4-cidrs=[203.0.113.0/24]' \
+  --add-rule 'direction=egress,protocol=any,v4-cidrs=[0.0.0.0/0]'
+```
+
+> **Важно:** `update-rules` полностью заменяет набор правил. Чтобы сохранить существующие — сначала `get-rules`, затем `update-rules` с полным набором.
+
 ### Security Group для БД
 
 ```bash
@@ -268,6 +284,39 @@ yc vpc route-table get --name rt-nat
 yc vpc security-group delete --name sg-old
 yc vpc subnet delete --name subnet-unused
 ```
+
+### Load Balancer: диагностика NLB и ALB
+
+```bash
+# Сетевой балансировщик (L4, Network Load Balancer): просмотр конфигурации
+yc load-balancer network-load-balancer get <name> --format json | jq '.listeners,.attached_target_groups'
+
+# Список всех сетевых балансировщиков в каталоге
+yc load-balancer network-load-balancer list
+
+# Приложенческий балансировщик (L7, Application Load Balancer): список с жанрами и статусом
+yc application-load-balancer load-balancer list --format json | jq -r '.[] | [.name,.status]|@tsv'
+```
+
+### DNS: управление зонами и записями
+
+```bash
+# Создать публичную DNS-зону (обязательно завершающая точка в FQDN)
+yc dns zone create --name myzone --zone example.com. --public-visibility
+# → Name: myzone, DNS name: example.com., Visibility: public
+
+# Добавить A-запись на корень зоны (apex) с TTL 600
+yc dns zone add-records --name myzone --record '@ 600 A 1.2.3.4'
+# → Added 1 record(s) to zone example.com.
+
+# Добавить CNAME для www
+yc dns zone add-records --name myzone --record 'www 300 CNAME example.com.'
+
+# Просмотр записей зоны
+yc dns zone get --name myzone --format json | jq '.records[]'
+```
+
+> **Важно:** При создании публичной зоны необходимо делегировать NS-записи у регистратора домена. YC выдаёт их в выводе `zone create`.
 
 ---
 

@@ -922,6 +922,7 @@ flux reconcile helmrelease ingress-nginx -n flux-system --force
 - [Прогрессивная доставка в GitOps](./Concepts/progressive_delivery_gitops.md) — канареечные релизы через Argo Rollouts и Flagger.
 - [Мультикластерные паттерны](./Concepts/multi_cluster_patterns.md) — архитектура распределения приложений по нескольким кластерам.
 - [Оповещения в GitOps](./gitops_notifications.md) — настройка webhook-уведомлений в мессенджеры и корпоративные чаты.
+- [RBAC-паттерны: per-namespace роли в Kubernetes](./Kubernetes/Security/rbac/gitops_rbac_patterns.md) — иерархические ClusterRole с агрегацией и per-namespace RoleBinding в GitOps.
 
 ### Официальные ресурсы
 

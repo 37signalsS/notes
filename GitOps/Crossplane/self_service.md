@@ -101,7 +101,7 @@
 
 1. **GitOps-Driven Self-Service (рекомендуемый производственный стандарт):**
    - Разработчик или IDP фиксирует манифест Claim в ветке прикладного репозитория (`tenants/team-alpha/infrastructure/postgres.yaml`).
-   - Изменения проходят ревью (или авто-мерж при соблюдении лимитов) и синхронизируются в кластер через [GitOps Integration](file:///c:/Users/Elise/notes/GitOps/Crossplane/gitops_integration.md) (Argo CD / Flux).
+   - Изменения проходят ревью (или авто-мерж при соблюдении лимитов) и синхронизируются в кластер через [GitOps Integration](GitOps/Crossplane/gitops_integration.md) (Argo CD / Flux).
    - Обеспечивается версионирование, аудит действий и простота отката (Disaster Recovery).
 
 2. **Direct Portal Provisioning (интерактивный портал):**
@@ -133,7 +133,7 @@
 3. **Рендеринг и оркестрация:** Pipeline Functions генерируют набор управляемых ресурсов (MR) в локальном кластере (экземпляры баз данных, учетные записи, сетевые политики).
 4. **Ожидание готовности:** Crossplane ожидает перехода всех дочерних MR в статус `Ready=True, Synced=True`.
 5. **Публикация секретов:** Учетные данные агрегируются из MR, шифруются и записываются в пространство имен тенанта как Kubernetes Secret (`writeConnectionSecretToRef`).
-6. **Day-2 обслуживание и удаление:** При изменении параметров Claim обновляются дочерние MR. При удалении Claim поведение определяется политикой `deletionPolicy` и механизмом [Usage Protection](file:///c:/Users/Elise/notes/GitOps/Crossplane/usage_protection.md).
+6. **Day-2 обслуживание и удаление:** При изменении параметров Claim обновляются дочерние MR. При удалении Claim поведение определяется политикой `deletionPolicy` и механизмом [Usage Protection](GitOps/Crossplane/usage_protection.md).
 
 ---
 
@@ -651,11 +651,11 @@ kubectl get xpostgresqlinstance -o custom-columns=NAME:.metadata.name,CLAIM:.spe
 1. **Принцип минимальных привилегий (Least Privilege):**
    - Прикладным разработчикам и сервисным аккаунтам CI/CD предоставляется доступ исключительно к объектам Claim в границах их `Namespace`.
    - Доступ к кластерным ресурсам (`XRD`, `Compositions`, `ClusterProviderConfig`, корневые секреты СХД и баз данных) категорически запрещен.
-   - Подробнее см. [Мультитенантность и изоляция](file:///c:/Users/Elise/notes/GitOps/Crossplane/multi_tenancy.md).
+   - Подробнее см. [Мультитенантность и изоляция](GitOps/Crossplane/multi_tenancy.md).
 
 2. **Строгая валидация входных параметров:**
    - Каждое поле в `spec.parameters` XRD должно содержать строгие ограничения (`minimum`, `maximum`, `pattern`, `enum`).
-   - Используйте [ValidatingAdmissionPolicy](file:///c:/Users/Elise/notes/GitOps/Crossplane/policy_governance.md) для динамической проверки соответствия корпоративным стандартам.
+   - Используйте [ValidatingAdmissionPolicy](GitOps/Crossplane/policy_governance.md) для динамической проверки соответствия корпоративным стандартам.
 
 3. **Изоляция учетных данных:**
    - Не используйте единый суперпользовательский логин для всех баз данных. На стороне композиции через `provider-sql` или `provider-vault` создавайте уникальные роли с индивидуальными случайно сгенерированными паролями на каждый экземпляр Claim.
@@ -664,7 +664,7 @@ kubectl get xpostgresqlinstance -o custom-columns=NAME:.metadata.name,CLAIM:.spe
 
 1. **Защита от непреднамеренного уничтожения данных:**
    - Для производственных окружений накладывайте `deletionPolicy: Orphan` на физические тома (PersistentVolume / Block Devices), чтобы при случайном удалении Claim данные на дисках сохранялись.
-   - Используйте механизм [Usage Protection](file:///c:/Users/Elise/notes/GitOps/Crossplane/usage_protection.md) (`protection.crossplane.io/v1beta1`), блокирующий удаление инфраструктуры, пока к ней привязаны активные поды приложений.
+   - Используйте механизм [Usage Protection](GitOps/Crossplane/usage_protection.md) (`protection.crossplane.io/v1beta1`), блокирующий удаление инфраструктуры, пока к ней привязаны активные поды приложений.
 
 2. **Декларативные SLO платформы:**
    - Измеряйте Time to Provision (TTP): 95% запросов на создание типовой базы данных должны переходить в статус `Ready=True` менее чем за 180 секунд.
@@ -681,18 +681,18 @@ kubectl get xpostgresqlinstance -o custom-columns=NAME:.metadata.name,CLAIM:.spe
 
 3. **Версионирование каталога самообслуживания:**
    - При обновлении схем API выпускайте новую версию (`v1beta1`, `v1`), сохраняя обратную совместимость через конверсионные вебхуки или поддерживая обе версии в XRD параллельно.
-   - Не вносите ломающие изменения (`breaking changes`) в существующие Compositions без предварительного тестирования через [Testing Crossplane](file:///c:/Users/Elise/notes/GitOps/Crossplane/testing_crossplane.md).
+   - Не вносите ломающие изменения (`breaking changes`) в существующие Compositions без предварительного тестирования через [Testing Crossplane](GitOps/Crossplane/testing_crossplane.md).
 
 ---
 
 ## Связанные материалы и ссылки
 
-- [Обзор Crossplane и архитектура](file:///c:/Users/Elise/notes/GitOps/Crossplane/overview.md) — базовые концепции XRD, XR, Composition и Claim.
-- [Мультитенантность и изоляция](file:///c:/Users/Elise/notes/GitOps/Crossplane/multi_tenancy.md) — разделение прав команд, RBAC Manager и модели Soft/Hard Multi-Tenancy.
-- [Интеграция с GitOps](file:///c:/Users/Elise/notes/GitOps/Crossplane/gitops_integration.md) — управление жизненным циклом Claim и пакетов через Argo CD и Flux.
-- [Политики и Governance](file:///c:/Users/Elise/notes/GitOps/Crossplane/policy_governance.md) — контроль лимитов, Kyverno, Gatekeeper и ValidatingAdmissionPolicy.
-- [Функции композиций (Composition Functions)](file:///c:/Users/Elise/notes/GitOps/Crossplane/composition_functions.md) — построение продвинутых pipeline-обработчиков для генерации инфраструктуры.
-- [Мониторинг и Observability](file:///c:/Users/Elise/notes/GitOps/Crossplane/observability.md) — метрики, экспортеры и трассировка состояния ресурсов.
-- [Защита зависимостей (Usage Protection)](file:///c:/Users/Elise/notes/GitOps/Crossplane/usage_protection.md) — предотвращение каскадного удаления зависимых ресурсов.
+- [Обзор Crossplane и архитектура](GitOps/Crossplane/overview.md) — базовые концепции XRD, XR, Composition и Claim.
+- [Мультитенантность и изоляция](GitOps/Crossplane/multi_tenancy.md) — разделение прав команд, RBAC Manager и модели Soft/Hard Multi-Tenancy.
+- [Интеграция с GitOps](GitOps/Crossplane/gitops_integration.md) — управление жизненным циклом Claim и пакетов через Argo CD и Flux.
+- [Политики и Governance](GitOps/Crossplane/policy_governance.md) — контроль лимитов, Kyverno, Gatekeeper и ValidatingAdmissionPolicy.
+- [Функции композиций (Composition Functions)](GitOps/Crossplane/composition_functions.md) — построение продвинутых pipeline-обработчиков для генерации инфраструктуры.
+- [Мониторинг и Observability](GitOps/Crossplane/observability.md) — метрики, экспортеры и трассировка состояния ресурсов.
+- [Защита зависимостей (Usage Protection)](GitOps/Crossplane/usage_protection.md) — предотвращение каскадного удаления зависимых ресурсов.
 - [Backstage Documentation](https://backstage.io/docs/) — официальное руководство по настройке Software Templates и Service Catalog.
 - [Score Specification](https://score.dev/docs/) — спецификация описания рабочих нагрузок для платформ разработки.

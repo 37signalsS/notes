@@ -169,6 +169,41 @@ curl -X DELETE "https://api.cloudflare.com/client/v4/zones/{zone_id}/purge_cache
 # → {"result":{"purge_everything":true}}
 ```
 
+**Cloudflare DNS API (прокси и управление записями):**
+
+Создание A-записи в режиме прокси (`proxied: true`) маршрутизирует трафик через сеть Cloudflare (CDN + WAF). Параметр `ttl: 1` означает автоопределение TTL — требуется, когда запись находится за прокси.
+
+```bash
+# Получить zone_id по домену
+curl -sX GET "https://api.cloudflare.com/client/v4/zones?name=example.com" \
+  -H "Authorization: Bearer {api_token}" \
+  -H "Content-Type: application/json" | jq -r '.result[0].id'
+# → 023e105f4ecef8ad8ca31a42bb512345
+
+# Создать A-запись за прокси (proxied=true → трафик идёт через CDN Cloudflare)
+curl -sX POST "https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records" \
+  -H "Authorization: Bearer {api_token}" \
+  -H 'Content-Type: application/json' \
+  --data '{"type":"A","name":"<host>","content":"<ip>","proxied":true,"ttl":1}'
+# → {"result":{"id":"...","name":"<host>","type":"A","content":"<ip>","proxied":true,"ttl":1}}
+
+# Обновить существующую запись
+curl -sX PUT "https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records/{record_id}" \
+  -H "Authorization: Bearer {api_token}" \
+  -H 'Content-Type: application/json' \
+  --data '{"type":"A","name":"<host>","content":"<new_ip>","proxied":true,"ttl":1}'
+# → {"result":{"id":"...","content":"<new_ip>","proxied":true}}
+
+# Переключить запись из прокси в DNS-only (proxied: false)
+curl -sX PUT "https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records/{record_id}" \
+  -H "Authorization: Bearer {api_token}" \
+  -H 'Content-Type: application/json' \
+  --data '{"type":"A","name":"<host>","content":"<ip>","proxied":false,"ttl":300}'
+# → {"result":{"id":"...","proxied":false}}
+```
+
+> **Важно:** `proxied: true` требует `ttl: 1` (авто). При `proxied: false` (DNS-only) можно задать явный TTL (300, 3600 и т.д.).
+
 **Fastly Purge API:**
 ```bash
 # Очистка конкретного URL

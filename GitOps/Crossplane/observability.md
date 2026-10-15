@@ -526,6 +526,13 @@ crossplane beta trace cluster PostgreSQLInstance failed-db -n app-team-alpha
 # →    └─ Object/failed-db-pg-config (MR)                 True     True    Available
 ```
 
+Для непрерывного наблюдения за деревом композиции в режиме реального времени (полезно во время инцидентов и отладки reconcile) используйте флаг `--watch`: команда перерисовывает граф при каждом обновлении условий (Synced/Ready) и не завершается сама. Это удобнее, чем повторять `crossplane beta trace` вручную после каждой итерации.
+
+```bash
+crossplane beta trace cluster PostgreSQLInstance failed-db -n app-team-alpha --watch
+# → (граф перерисовывается при каждом изменении conditions; для выхода — Ctrl+C)
+```
+
 ### 3. Диагностика событий через Kubernetes Events API
 
 Фильтрация Warning-событий, связанных с объектами Crossplane:
@@ -620,6 +627,9 @@ kubectl get providers,functions
 - [Резервное копирование и восстановление](./backup_dr.md) — резервирование состояния etcd, XR и обработка аварий.
 - [Тестирование платформы](./testing_crossplane.md) — валидация композиций до выкатки в продакшен.
 - [Настройка Provider Kubernetes](./provider_kubernetes_setup.md) — управление внутренними объектами кластера через Crossplane.
+- [Типовые аварийные паттерны](./incident_patterns.md) — runbook на OOMKill, herd reconcile, finalizer deadlock, деградацию etcd/API.
+- [Capacity Planning и сайзинг](./capacity_planning.md) — ресурсные лимиты control plane и тюнинг poll interval.
+- [Управление секретами в GitOps](../secrets_encryption.md) — ESO, SOPS, HashiCorp Vault для доставки учетных данных.
 - [PodMonitor (CRD)](../../Prometheus/kubernetes/operator/crd/podmonitor.md) — декларативный скрейпинг подов через Prometheus Operator.
 - [ServiceMonitor (CRD)](../../Prometheus/kubernetes/operator/crd/servicemonitor.md) — мониторинг эндпоинтов сервисов.
 - [PrometheusRule (CRD)](../../Prometheus/kubernetes/operator/crd/prometheusrule.md) — декларативное описание правил алертинга и записи.

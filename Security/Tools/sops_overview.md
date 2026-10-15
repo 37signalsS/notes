@@ -61,6 +61,12 @@ sops --version
     sops --encrypt --age age1abc... secrets.yaml > secrets.enc.yaml
     ```
 
+    **Вариант B2 — age с SSH-ключом (без отдельного age-ключа):**
+    Переиспользует существующий SSH-ключ как получателя/identity age — новых ключей не нужно:
+    ```bash
+    age -R ~/.ssh/id_ed25519.pub -o out.age file && age -d -i ~/.ssh/id_ed25519 out.age
+    ```
+
     **Вариант C — через переменную окружения (удобно для age):**
     ```bash
     export SOPS_AGE_KEY_FILE=$(pwd)/age.key

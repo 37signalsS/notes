@@ -53,6 +53,25 @@ aws s3 sync ./dist s3://my-artifacts/www/ \
   --endpoint-url https://storage.yandexcloud.net
 ```
 
+### Объектное хранилище: управление бакетами и lifecycle
+
+```bash
+# Список всех бакетов с лимитом размера в GiB и классом хранения
+yc storage bucket list --format json | \
+  jq -r '.[] | "\(.name)\t\(.max_size/1073741824)GiB\t\(.default_storage_class)"'
+
+# S3-совместимая синхронизация с удалением устаревших объектов
+aws --endpoint-url=https://storage.yandexcloud.net s3 sync ./dist \
+  s3://my-artifacts/releases/ \
+  --delete \
+  --exclude '*.map'
+
+# Inline lifecycle-политика: удаление объектов с префиксом logs/ через 30 дней
+aws --endpoint-url=https://storage.yandexcloud.net s3api put-bucket-lifecycle-configuration \
+  --bucket my-artifacts \
+  --lifecycle-configuration '{"Rules":[{"ID":"expire-logs","Status":"Enabled","Filter":{"Prefix":"logs/"},"Expiration":{"Days":30}}]}'
+```
+
 ### Объектное хранилище: версионирование и жизненные циклы
 
 ```bash

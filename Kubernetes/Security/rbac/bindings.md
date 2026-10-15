@@ -338,5 +338,6 @@ Kubernetes автоматически создает ряд системных �
 - **[Определение ролей (Role и ClusterRole)](./roles.md)**
 - **[Субъекты доступа (Subjects)](./subjects.md)**
 - **[Агрегируемые ClusterRole](./aggregation_scenarios.md)**
+- **[RBAC-паттерны: per-namespace роли в GitOps](./gitops_rbac_patterns.md)** — per-namespace RoleBinding с Kustomize-трансформером
 - **[Multi-cluster RBAC](./multi_cluster_rbac.md)**
 - **[RBAC для ResourceQuota и LimitRange](./resource_quota_rbac.md)**

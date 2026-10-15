@@ -121,7 +121,7 @@ spec:
    - По умолчанию удаление Claim приводит к каскадному удалению XR и всех сгенерированных Managed Resources (MR), что чревато безвозвратной потерей данных в On-Premise хранилищах (Ceph, локальные СУБД).
    - Для предотвращения катастрофы в мультитенантной среде применяются:
      - `spec.deletionPolicy: Orphan` на уровне композиции для критичных баз данных и хранилищ.
-     - Механизм `Usage` (`protection.crossplane.io/v1beta1`) — блокирует удаление ресурса, пока существует зависимый объект (см. [Защита зависимостей (Usage)](file:///c:/Users/Elise/notes/GitOps/Crossplane/usage_protection.md)).
+     - Механизм `Usage` (`protection.crossplane.io/v1beta1`) — блокирует удаление ресурса, пока существует зависимый объект (см. [Защита зависимостей (Usage)](GitOps/Crossplane/usage_protection.md)).
      - `defaultCompositeDeletePolicy: Foreground` в XRD — гарантирует, что удаление Claim будет заблокировано до тех пор, пока не завершатся все проверки зависимостей.
 
 ---
@@ -549,13 +549,13 @@ kubectl get postgresqlinstances -A -o custom-columns=NAMESPACE:.metadata.namespa
 ## Дополнительная информация
 
 Смежные материалы базы знаний:
-- [Обзор Crossplane](file:///c:/Users/Elise/notes/GitOps/Crossplane/overview.md) — базовая архитектура, XRD, Compositions и функции.
-- [Интеграция с GitOps](file:///c:/Users/Elise/notes/GitOps/Crossplane/gitops_integration.md) — доставка манифестов через Argo CD и Flux в мультитенантных средах.
-- [Composition Functions](file:///c:/Users/Elise/notes/GitOps/Crossplane/composition_functions.md) — конвейеры генерации инфраструктуры и работа с `EnvironmentConfig`.
-- [Защита зависимостей (Usage)](file:///c:/Users/Elise/notes/GitOps/Crossplane/usage_protection.md) — предотвращение случайного удаления зависимых ресурсов через `protection.crossplane.io/v1beta1`.
-- [Политики и Governance (Kyverno / OPA)](file:///c:/Users/Elise/notes/GitOps/Crossplane/policy_governance.md) — декларативный аудит и валидация манифестов до применения.
-- [Self-Service и Internal Developer Portal](file:///c:/Users/Elise/notes/GitOps/Crossplane/self_service.md) — организация каталога платформенных сервисов для команд.
-- [Управление ресурсами Kubernetes (provider-kubernetes)](file:///c:/Users/Elise/notes/GitOps/Crossplane/provider_kubernetes_setup.md) — работа с `kubernetes.m.crossplane.io` и `ClusterProviderConfig`.
-- [Резервное копирование и Disaster Recovery](file:///c:/Users/Elise/notes/GitOps/Crossplane/backup_dr.md) — защита etcd, состояний и восстановления после сбоев.
-- [Argo CD: Мультитенантность и изоляция](file:///c:/Users/Elise/notes/GitOps/ArgoCD/argocd_multi_tenancy.md) — шаблоны изоляции на уровне AppProject и tenant namespaces.
-- [NetworkPolicy: Изоляция тенантов](file:///c:/Users/Elise/notes/Kubernetes/Networking/Network/NetworkPolicy/multi_tenancy.md) — сетевая безопасность и разграничение трафика между пространствами имён.
+- [Обзор Crossplane](GitOps/Crossplane/overview.md) — базовая архитектура, XRD, Compositions и функции.
+- [Интеграция с GitOps](GitOps/Crossplane/gitops_integration.md) — доставка манифестов через Argo CD и Flux в мультитенантных средах.
+- [Composition Functions](GitOps/Crossplane/composition_functions.md) — конвейеры генерации инфраструктуры и работа с `EnvironmentConfig`.
+- [Защита зависимостей (Usage)](GitOps/Crossplane/usage_protection.md) — предотвращение случайного удаления зависимых ресурсов через `protection.crossplane.io/v1beta1`.
+- [Политики и Governance (Kyverno / OPA)](GitOps/Crossplane/policy_governance.md) — декларативный аудит и валидация манифестов до применения.
+- [Self-Service и Internal Developer Portal](GitOps/Crossplane/self_service.md) — организация каталога платформенных сервисов для команд.
+- [Управление ресурсами Kubernetes (provider-kubernetes)](GitOps/Crossplane/provider_kubernetes_setup.md) — работа с `kubernetes.m.crossplane.io` и `ClusterProviderConfig`.
+- [Резервное копирование и Disaster Recovery](GitOps/Crossplane/backup_dr.md) — защита etcd, состояний и восстановления после сбоев.
+- [Argo CD: Мультитенантность и изоляция](GitOps/ArgoCD/argocd_multi_tenancy.md) — шаблоны изоляции на уровне AppProject и tenant namespaces.
+- [NetworkPolicy: Изоляция тенантов](Kubernetes/Networking/Network/NetworkPolicy/multi_tenancy.md) — сетевая безопасность и разграничение трафика между пространствами имён.

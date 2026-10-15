@@ -1313,14 +1313,28 @@ spec:
 
 ```bash
 # Все отброшенные соединения в неймспейсе
-hubble observe --namespace app --verdict DROPPED
+hubble observe --namespace dev --verdict DROPPED -f
 
 # Трафик в реальном времени
-hubble observe --namespace app -f
+hubble observe --namespace dev -f
+
+# Потоки конкретного пода
+hubble observe --pod dev/api-6d8b4c5f9-xk4qv -f
+
+# Потоки на конкретный порт
+hubble observe --namespace dev --port 5432 -f
 
 # Что отбрасывается у конкретного пода
 hubble observe --namespace app --from-pod app/my-service --verdict DROPPED
 ```
+
+#### Чеклист отладки NetworkPolicy
+
+1. **Что блокируется:** `hubble observe --verdict DROPPED` — просмотр отброшенных потоков в реальном времени
+2. **Метки namespace:** `namespaceSelector` использует метки namespace, а не имя. Проверить: `kubectl get namespace --show-labels`
+3. **Метки подов:** при неправильной метке политика не сработает. Проверить: `kubectl get pods -n <ns> --show-labels`
+4. **DNS egress:** перед любыми FQDN-правилами явно разрешить порт 53 на kube-dns
+5. **L7-правила:** требуют включённого HTTP-прокси Cilium (Envoy)
 
 Hubble показывает под-источник, под-цель или FQDN, порт и политику с вердиктом `POLICY_DENIED`. Добавлять логирование в приложения не нужно.
 
@@ -1361,6 +1375,135 @@ kubectl rollout restart ds cilium -n kube-system
 ```
 
 В режиме аудита трафик разрешается, а нарушения логируются как события `policy-verdict` с вердиктом `POLICY_DENIED`. Это позволяет проинвентаризировать потоки перед включением блокировки [Источник](https://docs.cilium.io/en/latest/security/policy-creation/).
+
+---
+
+## Стандартные NetworkPolicy для базовой изоляции
+
+Cilium полностью поддерживает стандартные Kubernetes NetworkPolicy (API-группа `networking.k8s.io/v1`). Для базовой изоляции на уровне L3/L4 достаточно стандартных политик — `CiliumNetworkPolicy` требуется только для L7, FQDN и кластерных политик.
+
+### Default Deny (стандартный NetworkPolicy)
+
+Политика блокирует весь входящий трафик в namespace. Egress по умолчанию остаётся разрешённым:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: dev
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+```
+
+Применяйте её в каждом прикладном namespace. После применения поды становятся изолированными — входящий трафик блокируется, пока не будет добавлено разрешающее правило.
+
+Для полной изоляции (ingress + egress) добавьте `Egress` в `policyTypes`:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: dev
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+```
+
+После полного default-deny обязательно добавьте явные egress-правила для DNS и других нужных сервисов.
+
+### Метка `expose: "true"` для внешних сервисов
+
+Сервисы, доступные извне (через ingress-контроллер), получают метку `expose: "true"`. Остальные поды остаются изолированными:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-apisix-ingress
+  namespace: dev
+spec:
+  podSelector:
+    matchLabels:
+      expose: "true"
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-apisix
+```
+
+Только поды с меткой `expose: "true"` принимают трафик от ingress-контроллера APISIX в namespace `ingress-apisix`. Прямой трафик между подами из других namespace заблокирован.
+
+### Межсервисное взаимодействие (стандартный NetworkPolicy)
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-backend
+  namespace: dev
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - port: 8080
+          protocol: TCP
+```
+
+Frontend может обращаться к backend только на порт 8080. Любые другие поды или порты блокируются.
+
+---
+
+## Кластерная политика: CiliumClusterwideNetworkPolicy
+
+`CiliumClusterwideNetworkPolicy (CCNP)` применяется ко всем подам в кластере без привязки к namespace. Вместо добавления правил в каждый namespace отдельно:
+
+```yaml
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": observability
+            app.kubernetes.io/name: prometheus
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+            - port: "9100"
+              protocol: TCP
+            - port: "8080"
+              protocol: TCP
+```
+
+Одна политика — и Prometheus собирает метрики со всех подов во всех namespace. Порты `9090` (Prometheus), `9100` (Node Exporter) и `8080` (приложения) открыты только для подов с метками `app.kubernetes.io/name: prometheus` в namespace `observability`.
+
+Для управления CCNP используйте:
+
+```bash
+kubectl get ciliumclusterwidenetworkpolicy
+kubectl describe ciliumclusterwidenetworkpolicy allow-prometheus-scrape
+```
 
 ---
 
@@ -1471,6 +1614,9 @@ hubble observe --verdict DROPPED -f
 
 # Потоки неймспейса за последние 5 минут
 hubble observe --namespace <ns> --since 5m
+
+# Потоки на конкретный порт
+hubble observe --namespace <ns> --port 5432 -f
 
 # TCP egress к FQDN (проверка egress-политики по DNS-имени)
 hubble observe --protocol tcp --from-pod <ns>/<pod> --to-fqdn '*.example.com'

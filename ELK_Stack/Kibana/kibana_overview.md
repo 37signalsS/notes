@@ -136,6 +136,33 @@ sudo /usr/share/kibana/bin/kibana-keystore add xpack.encryptedSavedObjects.encry
 4. Теперь объекты (дашборды, запросы), созданные в `Development`, не будут видны в пространстве `Default`.
 5. **Best Practice:** Создайте отдельный Space для каждого проекта или сервиса, чтобы избежать пересечения данных.
 
+### Управление Spaces через API
+
+Для автоматизации создания и копирования объектов между Spaces используйте Kibana Spaces API:
+
+```bash
+export KBN="http://kibana:5601"
+export AUTH="Authorization: ApiKey ${KIBANA_API_KEY}"
+
+# Список всех Spaces по ID
+curl -s "${KBN}/api/spaces/space" -H "${AUTH}" | jq '.[].id'
+# → "default"
+# → "staging"
+
+# Копировать дашборд в другой Space
+curl -X POST "${KBN}/api/spaces/_copy_saved_objects" \
+  -H "kbn-xsrf: true" -H "${AUTH}" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "spaces": ["staging"],
+    "objects": [{"type": "dashboard", "id": "my-dash"}],
+    "overwrite": true
+  }'
+# → {"exported": {...}, "imported": ..., "errors": []}
+```
+
+Параметры: `overwrite=true` замещает объекты с теми же ID в целевом Space; `objects` принимает массив `{"type": "...", "id": "..."}` для любого saved object (dashboard, visualization, index-pattern, alert).
+
 ### Конфигурация сервера (kibana.yml)
 
 Протокол сервера задаётся параметром `server.protocol`. В **8.19** дефолт — **`http1`** безусловно, HTTP/2 включается явно (`server.protocol: http2`) и требует включенного TLS (`server.ssl.enabled: true`). В **9.x** дефолт становится условным: `http2`, если TLS включён, иначе `http1`; значение `http2` без TLS (h2c) валидируется отдельно и не поддерживается для обычного браузерного трафика. Статус настройки — Preview.

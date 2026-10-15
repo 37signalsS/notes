@@ -309,6 +309,49 @@ awk '{
 }' app.log
 ```
 
+#### Часто используемые паттерны awk
+
+```bash
+# Фильтр по паттерну с номером строки
+awk '/ERROR/ {print NR": "$0}' app.log
+
+# Сумма колонки (накопление в END)
+awk '{sum += $4} END {print sum}' access.log
+
+# Диапазон строк между паттернами (включительно START и END)
+awk '/START/,/END/' config.txt
+
+# Пропустить заголовок (NR > 1)
+awk 'NR>1 {print $1, $2}' data.csv
+
+# Подсчёт уникальных значений по ключу
+awk '{count[$1]++} END {for (k in count) print count[k], k}' access.log | sort -rn
+
+# Последнее поле (NF = количество полей, $NF = последнее)
+awk '{print $NF}' file.txt
+
+# Форматированный вывод (printf)
+awk '{printf "%-20s %5d\n", $1, $2}' data.txt
+
+# Запуск программы из файла
+awk -f transform.awk input.txt
+
+# In-place трансформация (запись в temp + move)
+awk '{gsub(/foo/, "bar"); print}' input.txt > tmp && mv tmp input.txt
+
+# CSV с кавычками (gawk, FPAT)
+gawk -v FPAT='([^,]+)|("[^"]+")' '{print $2}' data.csv
+
+# Блоки BEGIN/END
+awk 'BEGIN{print "Start"} {lines++} END{print lines" lines processed"}' file.txt
+
+# Объединение двух файлов по ключу (left join)
+awk 'NR==FNR{a[$1]=$2; next} $1 in a {print $0, a[$1]}' lookup.txt data.txt
+
+# Среднее значение колонки
+awk '{sum+=$2} END {print "avg:", sum/NR}' data.txt
+```
+
 ### sed: массовые преобразования конфигов
 
 `sed` использует BRE по умолчанию, `-E` переключает на ERE. Основные сценарии — замена, удаление, вставка.

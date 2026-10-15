@@ -169,6 +169,20 @@ modules:
       ip_protocol_fallback: true
 ```
 
+**Проверка с пропуском валидации TLS (для внутренних сервисов с самоподписанными сертификатами):**
+```yaml
+modules:
+  http_2xx_insecure:
+    prober: http
+    timeout: 10s
+    http:
+      valid_status_codes: [200]
+      tls_config:
+        insecure_skip_verify: true
+```
+
+> **Важно:** Используйте `http_2xx_insecure` только для внутренних сервисов. Для внешних эндпоинтов с публичными сертификатами применяйте `http_2xx` с `insecure_skip_verify: false`.
+
 **Аутентификация и OAuth2 (v0.25.0+):**
 ```yaml
 modules:

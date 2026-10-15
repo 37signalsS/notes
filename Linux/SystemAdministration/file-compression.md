@@ -199,6 +199,21 @@ tar -xvf archive.tar.xz
 tar -xvf archive.tar.zst
 ```
 
+**Инкрементные архивы по снимку:**
+```bash
+# Инкрементный бэкап по уровням: snapshot.snar хранит состояние, в архив идут только изменённые файлы
+tar -czg snapshot.snar -f backup-$(date +%F).tgz /data
+```
+
+**Потоковая передача каталога по SSH:**
+```bash
+# Копирует дерево без промежуточного файла, сохраняя права
+tar c -C /src . | ssh user@<host> 'tar x -C /dst'
+
+# С индикатором прогресса через pv и zstd-сжатием в конвейере
+tar cf - /data | pv -s $(du -sb /data | awk '{print $1}') | zstd -T0 > data.tar.zst
+```
+
 ### 3.5. ZIP — кроссплатформенный архиватор
 
 Утилита `zip` объединяет упаковку и сжатие в одном формате, в отличие от Linux-подхода `tar` + отдельный компрессор. Это делает ZIP стандартом для обмена архивами с системами Windows, где нативные tar-архивы не поддерживаются без дополнительного ПО.
@@ -354,6 +369,12 @@ zstd --single-thread -3 file.txt
 
 # Многопоточное сжатие (все ядра CPU)
 zstd -T0 -3 file.txt
+
+# Максимальное сжатие с длинным диапазоном совпадений (--long=27 = 128 МБ window)
+zstd -19 --long=27 -T0 huge.bin -o huge.bin.zst
+
+# Обучение словаря для маленьких файлов
+zstd --train samples/*.json -o dict.zstd && zstd -D dict.zstd file.json
 
 # Автоматический выбор по расширению в tar
 tar -caf archive.tar.zst directory/

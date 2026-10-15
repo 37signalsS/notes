@@ -332,3 +332,4 @@ vm.dirty_background_ratio = 10
 *   [Масштабирование: обзор](./overview.md)
 *   [Внутреннее устройство TSDB](../concepts/tsdb.md)
 *   [Thanos: архитектура](./thanos_overview.md)
+*   [Мультикластерный remote_write в VictoriaMetrics](../kubernetes/multi-cluster-remote-write-victoria-metrics.md) — spoke-to-infra паттерн с кросс-кластерными дашбордами и алертингом

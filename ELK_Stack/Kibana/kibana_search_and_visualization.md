@@ -69,7 +69,14 @@ service.name: checkout and event.duration > 500000000 and not url.path: "/health
 
 # Вложенное поле: один элемент массива должен удовлетворять обоим условиям
 user: { first: "John" and last: "Smith" }
+```
+
+**Фильтр по метаданным Kubernetes (flattened-поля с wildcard):**
+
 ```text
+# Поды веб-сервиса в продакшене
+kubernetes.pod.name: web-* AND kubernetes.namespace: prod
+```
 
 ### Возможности Lucene Query Syntax
 
@@ -469,6 +476,29 @@ curl -sk -X POST "${KBN}/api/saved_objects/_import?createNewCopies=true" \
 
 Параметры: `createNewCopies=true` создает копии с новыми ID (безопасный перенос), `overwrite=true` замещает объекты с теми же ID (актуализация окружения), `?spaceId=` задает целевое пространство. Полученный `.ndjson` коммитится в Git и деплоится через CI — стандарт управления конфигурацией Kibana как кодом.
 
+### Управление Data View (index patterns) через API
+
+Data View (ранее Index Pattern) можно создавать и перечислять программно — удобно для bootstrap новых окружений и CI/CD:
+
+```bash
+export KBN="http://kibana:5601"
+export AUTH="Authorization: ApiKey ${KIBANA_API_KEY}"
+
+# Создать Data View для логов с полем времени
+curl -X POST "${KBN}/api/saved_objects/index-pattern" \
+  -H "kbn-xsrf: true" -H "${AUTH}" \
+  -H 'Content-Type: application/json' \
+  -d '{"attributes":{"title":"logs-*","timeFieldName":"@timestamp"}}'
+# → {"id":"logs-*","name":"","type":"index-pattern", ...}
+
+# Список всех зарегистрированных Data View
+curl -s "${KBN}/api/saved_objects/_find?type=index-pattern" \
+  -H "kbn-xsrf: true" -H "${AUTH}" | jq '.saved_objects[].attributes.title'
+# → logs-*
+```
+
+**Примечание:** в 9.x тип `index-pattern` в Saved Objects API сохраняет обратную совместимость с 8.x; UI-терминология — Data View, API-имя — index-pattern.
+
 **Dashboards и Visualizations API** (эксперимент в 9.4, GA в 9.5.0): программное создание дашбордов и визуализаций. Панели размещаются на 48-колоночной сетке; поддерживаются визуализации (data view и ES|QL), сессии Discover, изображения, markdown, ссылки и ES|QL-контролы (`esql_control`); закрепленные controls (`pinned_panels`) применяются ко всем панелям дашборда.
 
 **ES|QL REST API** — для автоматизированной выгрузки данных и отчетов:
@@ -494,6 +524,20 @@ curl -sk -u elastic:$PASSWORD "https://localhost:9200/_query/async/<id>?wait_for
 Параметры запроса: `columnar=true` — колоночный формат вывода (JSON/YAML/CBOR/smile), `filter` — предварительная фильтрация документов через Query DSL, `drop_null_columns`, `time_zone`. Асинхронный запрос можно остановить API остановки, а результат удалить до истечения `keep_alive`.
 
 **Проверка:** после импорта откройте дашборд в целевом окружении и убедитесь, что все панели отображают данные (отсутствующий Data View или индексы — самая частая причина пустых панелей).
+
+### Запросы через Dev Tools Console
+
+Dev Tools (Console) — интерактивная консоль для прямых запросов к Elasticsearch API. Удобен для отладки и ad-hoc аналитики:
+
+```
+GET logs-*/_search
+{
+  "query": {"match": {"level": "error"}},
+  "size": 10
+}
+```
+
+Нажмите **Play** (▶) или `Ctrl+Enter` — результат появится в правой части. История запросов сохраняется между сессиями.
 
 ## Дополнительная информация
 

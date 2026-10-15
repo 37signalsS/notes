@@ -205,6 +205,60 @@ sudo perf record -e syscalls:sys_enter_fdatasync -p $PID -g -- sleep 30
 sudo perf report --stdio | head -30
 ```
 
+## Прочее: трассировка сетевых, сигнальных и других вызовов
+
+### Сетевые системные вызовы
+
+```bash
+# Трассировка сетевых вызовов (connect, sendto, recvfrom)
+strace -e trace=network -p $PID
+
+# С таймингом для поиска медленных сетевых операций
+strace -e trace=network -T -p $PID
+
+# Трассировка всех сетевых вызовов при старте программы
+strace -e trace=network -f curl -s https://api.example.com
+```
+
+### Сигналы и процессы
+
+```bash
+# Трассировка сигналов (kill, sigaction)
+strace -e trace=signal -p $PID
+
+# Трассировка fork/clone (дочерние процессы)
+strace -e trace=process -f -p $PID
+
+# Трассировка execve (что запускается)
+strace -e trace=execve -f command
+
+# Печать стека вызовов для каждого вызова (требует unwind info)
+strace -k -p $PID
+```
+
+### Инъекция системных вызовов (fault injection)
+
+```bash
+# Искусственно вызвать ошибку write (EIO)
+strace -e inject=write:retval=-1:EIO -p $PID
+
+# Инициировать SIGTERM при следующем write
+strace -e inject=write:signal=SIGTERM -p $PID
+
+# Эмуляция нехватки памяти для mmap
+strace -e inject=mmap:retval=-1:ENOMEM -p $PID
+```
+
+### Файловые дескрипторы — расширенная диагностика
+
+```bash
+# Трассировка операций с fd (close, dup2, fcntl)
+strace -e trace=desc -p $PID
+
+# Трассировка нескольких категорий с таймингом
+strace -e trace=file,network,signal -T -p $PID
+```
+
 ## Типичные ошибки и диагностика
 
 | Ошибка / Симптом | Причина | Команда диагностики | Решение |

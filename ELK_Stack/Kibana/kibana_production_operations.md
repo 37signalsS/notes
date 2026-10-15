@@ -58,6 +58,10 @@
 # 503, пока Kibana не готова (идут миграции Saved Objects или нет связи с Elasticsearch).
 # Эндпоинт официально заявлен Elastic как liveness/readiness-проба.
 curl -s http://localhost:5601/api/status
+
+# Краткая выборка статуса и версии для проб мониторинга
+curl -s http://localhost:5601/api/status | jq '{status: .status.overall.level, version: .version.number}'
+# → {"status": "available", "version": "9.5.5"}
 # → {"status":{"overall":{"level":"available","summary":"All services are available"},
 #     "core":{"elasticsearch":{"level":"available"},"savedObjects":{"level":"available"}},
 #     "plugins":{...}},
@@ -237,6 +241,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://kibana_ui:5601/api/status
 | Фоновые задачи (alerting, reporting) не выполняются, UI жив | Все инстансы работают в режиме `ui` | Выделить инстансы с `node.roles: [background_tasks]` |
 | Правила отстают от расписания / выполняются не вовремя | Task Manager в `RanOutOfCapacity` либо дрейф/просроченные задачи в `_health` | `GET /api/task_manager/_health`: поднять `xpack.task_manager.capacity`, снизить число правил/их интервалы |
 | Сессии сбрасываются на часть инстансов | Разные `xpack.security.encryptionKey` за LB | Привести ключи к одинаковым значениям |
+| UI показывает устаравшие настройки после апгрейда | Закешированный объект конфигурации в Saved Objects | `curl -X DELETE http://kibana:5601/api/saved_objects/config/<version> -H 'kbn-xsrf: true'` — удаляет кэшированный объект конфигурации версии `<version>`, заставляя Kibana пересоздать его |
 | Kibana не завершается по SIGTERM | Долгие запросы держат грейс-период | Увеличить `server.shutdownTimeout` либо сократить тяжёлые запросы |
 | Проба балансировщика без аутентификации не получает статус | `status.allowAnonymous: false` (дефолт) — доступ к status API без учётных данных закрыт | Выставить `status.allowAnonymous: true`: unauth-вызов получает redacted-ответ с `status.overall.level`, для пробы по коду `200`/`503` этого достаточно |
 | Импорт NDJSON падает с 413 Request Entity Too Large | Прокси режет тело запроса раньше Kibana: `client_max_body_size` в nginx по умолчанию `1m` | Увеличить `client_max_body_size` не меньше `savedObjects.maxImportPayloadBytes` (дефолт `26214400` = 25 МБ; он же перекрывает `server.maxPayload` = `1048576` только для импорта Saved Objects) |

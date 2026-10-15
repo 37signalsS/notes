@@ -26,13 +26,13 @@
 | **Транспорт** | IP (протокол 47) | UDP (порт 51820) | WireGuard (NAT-friendly) |
 | **NAT Traversal** | Плохо (требует FOU) | Отлично (нативно UDP) | WireGuard |
 | **Keepalive** | Нативно не поддерживается (Linux) | Да (нативно) | WireGuard |
-| **Динамическая маршрутизация** | Да (mGRE + NHRP + OSPF/BGP) | Нет (Point-to-Point только) | GRE |
+| **Динамическая маршрутизация** | Да (mGRE + NHRP + OSPF/BGP) | Ограниченно (BGP; OSPF/IS-IS — с явными соседями) | GRE |
 | **Мультикаст** | Да (через GRE) | Нет | GRE |
 | **L2-туннелирование** | Да (GRETAP) | Нет | GRE |
 | **Зеркалирование трафика** | Да (ERSPAN) | Нет | GRE |
 | **Количество пиров** | Неограниченное (mGRE) | 2 (Point-to-Point) | GRE |
 | **Overhead** | 24-28 байт (L3), ~42 байт (L2) | ~60 байт | GRE |
-| **Производительность (CPU)** | Средняя (без шифрования) | Высокая (硬件 AES-NI, ChaCha20) | WireGuard |
+| **Производительность (CPU)** | Средняя (без шифрования) | Высокая (аппаратное AES-NI, ChaCha20) | WireGuard |
 | **Установка** | Встроено в ядро Linux | Модуль ядра (wg) | GRE |
 | **Сложность настройки** | Низкая | Очень низкая | WireGuard |
 | **Аудит кода** | Зрелый, десятилетиями | Современный, ~4000 строк | — |
@@ -41,7 +41,7 @@
 
 **GRE выигрывает в сценариях:**
 
-1. **Динамическая маршрутизация** — OSPF, BGP, IS-IS требуют multicast/broadcast. GRE пропускает multicast «из коробки». WireGuard — чистый L3 unicast.
+1. **Динамическая маршрутизация** — OSPF и IS-IS для поиска соседей используют multicast/broadcast, который GRE пропускает «из коробки», а WireGuard (чистый unicast-L3) — нет. BGP работает поверх обоих (unicast TCP), но OSPF/IS-IS в WG требуют ручного задания соседей (см. [wireguard-routing.md](../../../Vpn/wireguard-routing.md)).
 
 2. **L2-туннелирование** — GRETAP растягивает VLAN между площадками. WireGuard не поддерживает L2.
 
@@ -53,7 +53,7 @@
 
 6. **Интеграция с IPsec** — GRE-over-IPsec — проверенная комбинация для site-to-site VPN. WireGuard заменяет оба протокола.
 
-**Пример: OSPF over GRE (реализуемо), OSPF over WireGuard (нереализуемо):**
+**Пример: OSPF over GRE (работает «из коробки»), OSPF over WireGuard (требует ручного соседа):**
 ```bash
 # GRE: multicast OSPF hello проходит через туннель
 ip link add gre0 type gre remote 203.0.113.2 local 198.51.100.1
@@ -61,10 +61,9 @@ ip addr add 10.0.0.1/30 dev gre0
 ip link set gre0 up
 # OSPF автоматически видит соседей через multicast
 
-# WireGuard: multicast НЕ проходит
-# WireGuard — это чистый L3 unicast tunnel
-# OSPF не может обнаружить соседей
-# Решение: статические маршруты или BGP (не OSPF)
+# WireGuard: multicast not delivered
+# OSPF cannot auto-discover neighbors
+# Workaround: static routes, BGP, or OSPF with an explicit neighbor (non-broadcast)
 ```
 
 ### Когда WireGuard предпочтительнее GRE
@@ -223,7 +222,7 @@ sudo ip route del 172.16.0.0/24 via 10.0.0.2 dev gre0
 
 **Не заменяйте GRE на WireGuard если:**
 
-1. **Используется динамическая маршрутизация (OSPF/BGP)** — WireGuard не поддерживает multicast. Решение: статические маршруты или BGP через WireGuard (но без OSPF).
+1. **Используется динамическая маршрутизация (OSPF/BGP)** — WireGuard не передаёт multicast. Решение: BGP через WireGuard либо OSPF с явно заданным соседом (см. [wireguard-routing.md](../../../Vpn/wireguard-routing.md)).
 
 2. **Требуется GRETAP (L2-туннели)** — WireGuard не поддерживает L2. Решение: туннелирование L2 через VXLAN поверх WireGuard.
 

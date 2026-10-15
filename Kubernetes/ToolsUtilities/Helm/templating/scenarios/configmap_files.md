@@ -171,6 +171,8 @@ data:
 {{ tpl (.Files.Get "configs/app.yaml.tpl") . | nindent 4 }}
 ```
 
+> **См. также:** Паттерн хранения конфигурационных файлов в директории `config/` с рендерингом секретов через `consul-template` + `Vault` и использованием `subPath` для монтирования — в [CI-рендеринг конфигов через consul-template + Vault](./config-rendering-pattern.md).
+
 ### Условный импорт по окружению
 
 Импортируйте разные файлы конфигурации в зависимости от окружения (development, staging, production):
@@ -275,7 +277,7 @@ echo "$RENDERED"
 |--------|---------|---------|
 | `file not found` | Путь указан не от корня чарта или файл в `.helmignore` | Проверьте путь относительно `Chart.yaml` и содержимое `.helmignore`. |
 | `request is too large` | ConfigMap/Secret превысил 1 MiB | Разбейте на несколько ConfigMap или вынесите файлы в Docker-образ/PV. |
-| Некорректные отступы | Использование `indent` вместо `nindent` | `indent` не добавляет новую строку в начале, что часто ломает YAML. Всегда предпочитайте `nindent`. |
+| Некорректные отступы | Использование `indent` вместо `nindent` (или наоборот) для block scalar `|` | `indent` не добавляет перенос строки в начале, `nindent` добавляет. Для выражений в колонке 0 используйте `indent`; для выражений с отступом — `nindent`. См. [Паттерн config/ + tpl + subPath](./config-rendering-pattern.md). |
 | Ошибки бинарных данных | Попытка вставить байты в поле `data` | Используйте `binaryData` и `b64enc` для любых не-UTF8 файлов. |
 | `nil pointer evaluating field .Files` | Файл находится в `templates/` | Переместите файл в корень чарта или поддиректорию, но не в `templates/`. |
 | Пустой ConfigMap после Glob | Паттерн не совпал ни с одним файлом | Проверьте регистр букв в путях (Glob чувствителен к регистру) и наличие файлов в `.helmignore`. |
@@ -397,3 +399,4 @@ kubectl exec -n production deploy/myapp -- sh -c \
 - [Встроенные объекты Helm](../objects.md) — справочник по всем свойствам `.Files`.
 - [Функции Helm](../functions.md) — детали работы `tpl`, `b64enc`, `base` и `nindent`.
 - [Автоматический перезапуск подов](./restart_on_change.md) — паттерн checksum-аннотаций для Rolling Update при изменении ConfigMap.
+- [CI-рендеринг конфигов через consul-template + Vault](./config-rendering-pattern.md) — паттерн хранения конфигурации в `config/` с рендерингом секретов и `subPath`-монтированием.

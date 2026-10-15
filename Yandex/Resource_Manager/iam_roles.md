@@ -92,6 +92,24 @@ yc iam key create \
 yc resource-manager folder list-access-bindings --id "$FOLDER_ID"
 ```
 
+### Управление профилями и статическими ключами
+
+```bash
+# Создать именованный профиль для изоляции сред (dev/stage/prod)
+yc config profile create prod && yc config profile activate prod
+# modern: в CI используйте YC_PROFILE=prod вместо --profile
+
+# Переключить активный каталог
+yc config set folder-id <folder_id> && yc config list
+
+# Статический ключ доступа для S3-совместимого доступа к Object Storage
+# secret отображается один раз — сохраняйте сразу в Vault
+yc iam access-key create \
+  --service-account-name sa-ci \
+  --folder-id "$FOLDER_ID" \
+  --format json | jq -r '"AWS_ACCESS_KEY_ID=\(.access_key.key_id)\nAWS_SECRET_ACCESS_KEY=\(.secret)"'
+```
+
 ### Аудит и мониторинг ресурсов
 
 ```bash

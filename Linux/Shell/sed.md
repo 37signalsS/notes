@@ -260,11 +260,23 @@ sed '/^$/d' file.txt
 # Удалить строки 1-10
 sed '1,10d' file.txt
 
-# Удалить строки, содержащие "deprecated"
-sed '/deprecated/d' config.yml
+# Удалить все пустые строки и строки, состоящие только из пробелов
+sed '/^[[:space:]]*$/d' file.txt
 
-# Удалить строки, начинающиеся с комментария #
-sed '/^#/d' config.ini
+# Удалить строки с комментариями и пустые строки (комбинированный паттерн)
+sed -E '/^\s*(#|$)/d' config.conf
+```
+
+#### Вставка и добавление строк рядом с совпадением
+
+Команды `i` (insert) и `a` (append) вставляют текст перед или после строки-источника:
+
+```bash
+# Вставить строку-комментарий перед каждой директивой server_name
+sed '/^server_name/i # Added by deploy script' nginx.conf
+
+# Добавить параметр после заголовка [defaults]
+sed '/^\[defaults\]/a ansible_python_interpreter=/usr/bin/python3' ansible.cfg
 ```
 
 #### Регистр команды: `d` против `D`
@@ -401,6 +413,28 @@ sed -i 's/old1/new1/g; s/old2/new2/g' file.txt
 ```bash
 # Инверсия строк файла
 sed '1!G;h;$!d' file.txt
+```
+
+### Извлечение значений из key=value
+
+```bash
+# Вывести значение DB_HOST из .env
+sed -n 's/^DB_HOST=//p' .env
+# → 10.0.0.5
+
+# Извлечь значение порта из конфига
+sed -n 's/^port=\(.*\)/\1/p' app.conf
+# → 8080
+```
+
+### Адресный диапазон и границы
+
+```bash
+# Заменить DEBUG на INFO только в строках с 5 по 15
+sed '5,15s/DEBUG/INFO/g' app.log
+
+# Обрезать пробелы в начале и конце каждой строки
+sed 's/^[[:space:]]*//;s/[[:space:]]*$//' file.txt
 ```
 
 ### Парсинг логов (nginx, syslog, journalctl)

@@ -492,6 +492,19 @@ curl -s "http://localhost:9115/metrics" | grep 'probe_success{target="example.co
 curl -s "http://localhost:9115/metrics" | grep probe_http_duration_seconds | grep example.com
 ```
 
+**Диагностические запросы PromQL:**
+
+```promql
+# Эндпоинты, которые сейчас недоступны
+probe_success == 0
+
+# Дней до истечения TLS-сертификата (читаемая форма)
+(probe_ssl_earliest_cert_expiry - time()) / 86400
+
+# Среднее время пробы за час
+avg_over_time(probe_duration_seconds[1h])
+```
+
 ### Интеграция с Alertmanager
 
 Пример маршрутизации алертов Blackbox Exporter по severity:

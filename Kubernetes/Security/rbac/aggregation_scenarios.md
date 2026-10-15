@@ -771,5 +771,6 @@ metadata:
 - **[Общий обзор RBAC](./rbac_overview.md)** — архитектура управления доступом.
 - **[Определение ролей (Role и ClusterRole)](./roles.md)** — описание базовых объектов.
 - **[Привязки ролей (RoleBinding)](./bindings.md)** — назначение прав субъектам.
+- **[RBAC-паттерны: per-namespace роли в GitOps](./gitops_rbac_patterns.md)** — иерархическая модель ролей (view → developer → devops) с развёртыванием через GitOps и Kustomize.
 - **[Kyverno: Агрегированные роли](../kyverno/additional.md)** — практическое применение агрегации в контроллерах.
 - **[OPA Gatekeeper: RBAC для контроллеров](./rbac_overview.md#rbac-для-opa-gatekeeper)** — назначение прав Gatekeeper/Kyverno.
