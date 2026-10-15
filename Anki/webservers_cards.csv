@@ -132,7 +132,7 @@ question;answer
 Какой OPcache Hit Rate считается хорошим?;"Выше 98%; ниже — неэффективное использование памяти или частая инвалидация кэша"
 Что происходит при 100% заполнении OPcache Memory Usage?;PHP перестаёт кэшировать новые файлы, что резко снижает производительность
 Какие метрики даёт ?full в статусе PHP-FPM?;last request memory (утечки памяти), last request cpu, request uri (какой скрипт вызвал нагрузку)
-Как ограничить доступ к status page PHP-FPM?;pm.status_path=/fpm-status и в Nginx location с allow 127.0.0.1, deny all (актуально после CVE-2026-6735)
+Как ограничить доступ к status page PHP-FPM?;pm.status_path=/fpm-status и в Nginx location с allow 127.0.0.1, deny all (предотвращает раскрытие путей скриптов, аргументов запросов и PHP_AUTH_USER)
 Как собирать метрики PHP-FPM в Prometheus с PHP 8.4+?;"Нативно через OpenMetrics: curl ""http://localhost/fpm-status?openmetrics"" без сторонних экспортеров"
 Какой экспортер использовать для PHP < 8.4?;php-fpm-exporter (рекомендуется v3.0+ с поддержкой OPcache), порт 9253
 Какой алерт сигнализирует о переполнении пула PHP-FPM?;phpfpm_max_children_reached_total > 0 или phpfpm_listen_queue > 0
