@@ -431,3 +431,21 @@ vault read -field=password kv/data/ci/staging/db
 * **[Управление изменениями и CAB](./Core_Concepts/change_management.md)** — процессы Change Management и Change Advisory Board в контексте CI/CD.
 * **[Capacity Planning для CI/CD](./Core_Concepts/capacity_planning.md)** — планирование мощности пайплайнов, раннеров и реестров.
 * **[Database CI/CD: Автоматизация миграций](../../Databases/Concepts/migrations/database-ci-cd.md)** — интеграция миграций баз данных в пайплайн.
+
+### Tekton CLI (tkn)
+
+Для работы с Tekton Pipelines используется CLI `tkn`:
+
+```bash
+# Логи последнего PipelineRun (все TaskRun)
+tkn pipelinerun logs -f --last -n <ns>
+
+# Список PipelineRun
+tkn pipelinerun list -n <ns>
+
+# Детали PipelineRun
+tkn pipelinerun describe <name> -n <ns>
+
+# Запуск Pipeline
+tkn pipeline start <name> -n <ns>
+```

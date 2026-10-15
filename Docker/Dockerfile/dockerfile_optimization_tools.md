@@ -87,6 +87,9 @@ trivy image --severity CRITICAL --ignore-unfixed my-app:latest
 ```bash
 # Запуск анализа
 dive my-app:latest
+
+# CI-режим: падать при низкой эффективности слоёв (>5% мусора) или избыточном размере
+CI=true dive --lowestEfficiency 0.95 --highestWastedBytes 20MB <reg>/<name>:tag
 ```
 В интерфейсе обратите внимание на колонку **Efficiency**. Если она ниже 90%, образ содержит файлы, которые были созданы и затем удалены в разных слоях (типичная ошибка — `apt-get clean` в отдельной инструкции `RUN`).
 

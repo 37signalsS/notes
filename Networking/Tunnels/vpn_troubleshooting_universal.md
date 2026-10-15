@@ -2,9 +2,9 @@
 
 ## Определения
 
-**VPN Troubleshooting** — систематический подход к диагностика и устранению проблем с VPN-туннелями. Данный документ представляет universальный чек-лист, применимый к любому VPN-протоколу (WireGuard, IPsec, OpenVPN, GRE, L2TP/IPsec).
+**VPN Troubleshooting** — систематический подход к диагностике и устранению проблем с VPN-туннелями. Данный документ представляет универсальный чек-лист, применимый к любому VPN-протоколу (WireGuard, IPsec, OpenVPN, GRE, L2TP/IPsec).
 
-> **См. также:** [WireGuard Troubleshooting](./wireguard_practical.md#типичные-ошибки-и-их-устранение), [IPsec Troubleshooting](./ipsec/ipsec_troubleshooting.md), [MTU и VPN](../OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md)
+> **См. также:** [WireGuard Troubleshooting](../../Vpn/wireguard.md#типичные-ошибки), [IPsec Troubleshooting](./ipsec/ipsec_troubleshooting.md), [MTU и VPN](../OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md)
 
 ---
 
@@ -310,6 +310,6 @@ sudo tcpdump -ni <interface> 'tcp[tcpflags] & (tcp-syn) != 0' -c 5 -v 2>/dev/nul
 
 - **[MTU и VPN](../OSI_TCP_IP_Model/Network_layer/mtu_and_vpn.md)** — глубокий разбор MTU, PMTUD, MSS Clamping
 - **[IPsec Troubleshooting](./ipsec/ipsec_troubleshooting.md)** — специфичные ошибки IPsec
-- **[WireGuard Troubleshooting](./wireguard_practical.md#типичные-ошибки-и-их-устранение)** — специфичные ошибки WireGuard
+- **[WireGuard Troubleshooting](../../Vpn/wireguard.md#типичные-ошибки)** — специфичные ошибки WireGuard
 - **[GRE Troubleshooting](./gre/gre.md#диагностика-и-устранение-неисправностей)** — специфичные ошибки GRE
 - **[Firewall templates](./vpn_firewall_templates.md)** — шаблоны правил для nftables/iptables

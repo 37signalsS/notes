@@ -378,7 +378,7 @@ aa-status | grep nginx
 tail -f /var/log/nginx/access.log | grep "\.\(css\|js\|png\|jpg\)"
 
 # Проверка настроек Open File Cache
-curl http://localhost/nginx_status 2>/dev/null || echo "stub_status не настроен"
+curl http://localhost/stub_status 2>/dev/null || curl -s http://localhost/nginx_status 2>/dev/null || echo "stub_status не настроен"
 
 # Анализ ошибок доступа
 grep "denied" /var/log/nginx/error.log

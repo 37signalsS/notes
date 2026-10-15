@@ -648,6 +648,255 @@ ansible-playbook ... -vvv
 
 ---
 
+### 11. Выделенный Control Plane и два Worker'а для разгрузки перегруженного узла
+
+#### Цель
+
+Разделить роли Control Plane (etcd, API-сервер, scheduler, controller-manager) и рабочие нагрузки на отдельные VM, чтобы устранить конкуренцию за CPU, которая маскируется под «медленные диски». На тестовом стенде один узел тянет всё: Control Plane + etcd + тяжёлую БД (ClickHouse) — и упирается в CPU. Лечится это не быстрым диском, а разнесением ролей: выделенный Control Plane под taint + два Worker'а под нагрузку.
+
+#### Предусловия
+
+- 3 VM с Ubuntu 24.04 (cgroups v2 по умолчанию).
+- SSH-доступ по ключу с `sudo` (можно с паролем — используйте `-K`).
+- Python 3 на всех узлах.
+- Синхронизация времени (chrony) — etcd чувствителен к расхождению часов.
+- Фаервол отключен или открыты порты K8s/etcd/Cilium.
+
+#### Диагностика: точно ли диск?
+
+На узле, где «тормозят диски», проверьте, на чём встают задачи — на I/O или на CPU:
+
+```bash
+nproc                                       # сколько ядер реально есть
+cat /proc/loadavg                           # load относительно ядер
+cat /proc/pressure/cpu /proc/pressure/io    # PSI: % времени в ожидании за 10/60/300с
+vmstat 1 3                                  # 'wa' = iowait%, 'b' = процессы, заблокированные на I/O
+```
+
+**Интерпретация:**
+
+- `wa` низкий (единицы процентов), `b ≈ 0`, PSI io низкий, а PSI cpu высокий и `load` больше числа ядер → **узкое место в CPU**. Диск ни при чём: fsync etcd, kubelet, API-сервер и приложение ждут процессор.
+- `wa` высокий, процессы в D-состоянии → проблема в хранилище (другая история).
+
+#### Архитектура: 1 Control Plane + 2 Worker'а
+
+| Узел | IP | Роли | Примечание |
+|------|-----|------|------------|
+| `cp1` | 10.0.0.10 | control-plane + etcd | Выделенный, под taint `NoSchedule` |
+| `worker1` | 10.0.0.11 | worker | Тяжёлая нагрузка (БД) |
+| `worker2` | 10.0.0.12 | worker | Всё остальное |
+
+**Почему не 3 Control Plane?** Три дали бы etcd-HA (кворум из 3 переживает один отказ), но вернули бы оверхед Control Plane на каждый узел — обратное изоляции. На тесте цель — разгрузка, а не HA. Один член etcd нормально; вырасти в 3-узловый HA-Control Plane позже — правка inventory (см. раздел Day-2).
+
+#### Подготовка управляющей машины
+
+```bash
+git clone -b v2.31.0 https://github.com/kubernetes-sigs/kubespray.git
+cd kubespray
+
+python3 -m venv .venv && source .venv/bin/activate
+pip install -U pip
+pip install -r requirements.txt   # прибивает ansible==11.13.0 → ansible-core 2.18.x
+```
+
+> **Важно:** `v2.31.0` (апрель 2026) поддерживает Kubernetes до 1.35.4, Cilium 1.19.3 и Ubuntu 24.04. `requirements.txt` прибивает `ansible==11.13.0` (ansible-core 2.18.x); метаданные роли требуют `>=2.18.0,<2.19.0`. **Не делайте `apt install ansible`** — там 2.19+, и проверка синтаксиса упадёт.
+
+#### Inventory
+
+```bash
+cp -rfp inventory/sample inventory/mycluster
+```
+
+`inventory/mycluster/inventory.ini`:
+
+```ini
+[kube_control_plane]
+cp1 ansible_host=10.0.0.10 ip=10.0.0.10 ansible_user=ubuntu etcd_member_name=etcd1
+
+[etcd:children]
+kube_control_plane
+
+[kube_node]
+worker1 ansible_host=10.0.0.11 ip=10.0.0.11 ansible_user=ubuntu
+worker2 ansible_host=10.0.0.12 ip=10.0.0.12 ansible_user=ubuntu
+```
+
+**Ключевые поля:**
+- `ansible_host=` — адрес для SSH.
+- `ip=` — адрес для бинда kubelet/etcd. Задавайте явно; на VM с несколькими NIC автоопределённый IP часто не тот.
+- `[etcd:children] kube_control_plane` кладёт etcd на Control Plane узлы. Ровно один хост в `[kube_control_plane]` → ровно один член etcd.
+- **`cp1` НЕ указан в `[kube_node]`** — это делает его выделенным Control Plane: он подключается как control-plane узел (kubelet работает, но висит taint `NoSchedule`) и никогда не становится целью планирования для нагрузки.
+
+#### Конфигурация кластера
+
+Файлы в `inventory/mycluster/group_vars/`:
+
+**k8s_cluster/k8s-cluster.yml**
+```yaml
+kube_version: v1.35.4
+
+kube_network_plugin: cilium
+
+container_manager: containerd
+
+kubeconfig_localhost: true
+kubectl_localhost: true
+
+supplementary_addresses_in_ssl_keys:
+  - 10.0.0.10
+```
+
+**k8s_cluster/addons.yml**
+```yaml
+helm_enabled: true
+local_path_provisioner_enabled: true   # Kubespray по умолчанию НЕ ставит StorageClass
+```
+
+**k8s_cluster/k8s-net-cilium.yml**
+```yaml
+cilium_version: "1.19.3"
+
+cilium_kube_proxy_replacement: true
+
+cilium_l2announcements: false
+cilium_loadbalancer_ip_pools: []
+```
+
+**Как убирается kube-proxy:**  
+При `kube_network_plugin: cilium` и `cilium_kube_proxy_replacement: true` Kubespray добавляет `addon/kube-proxy` в пропускаемые фазы `kubeadm init` — kube-proxy не создаётся вовсе. Нужны **оба** условия. В v2.31.0 принимается булево `true` (строки `"strict"` в 1.19 устарели). `kube_proxy_remove: true` не нужен — это запасной вариант для других CNI.
+
+#### Запуск установки
+
+```bash
+ansible-playbook -i inventory/mycluster/inventory.ini \
+  --become --become-user=root \
+  --ask-become-pass \
+  cluster.yml
+```
+
+- `--become` поднимает права до root; `--ask-become-pass` (`-K`) спрашивает sudo-пароль один раз.
+- Если SSH тоже по паролю — добавьте `-k`.
+- Время: ~20–30 минут на 3 VM. Прогон идемпотентен — повтор сходится.
+
+#### Держим Control Plane выделенным и изолируем тяжёлую нагрузку
+
+**Не снимайте taint с cp1.** Kubespray ставит `node-role.kubernetes.io/control-plane:NoSchedule` — это ровно то, что нужно.
+
+```bash
+kubectl get node cp1 -o jsonpath='{.spec.taints}'
+# [{"effect":"NoSchedule","key":"node-role.kubernetes.io/control-plane"}]
+```
+
+**Прибейте тяжёлую нагрузку к worker1.** Повесьте taint, чтобы его терпела только БД:
+
+```bash
+kubectl taint nodes worker1 dedicated=db:NoSchedule
+```
+
+В pod spec базы:
+
+```yaml
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: worker1
+  tolerations:
+    - key: dedicated
+      value: db
+      effect: NoSchedule
+  containers:
+    - name: clickhouse
+      resources:
+        requests: { cpu: "6", memory: 24Gi }
+        limits:   { cpu: "10", memory: 32Gi }
+```
+
+**Остальное** планируется на worker2 (и никогда — на Control Plane). Для реплицируемых нагрузок используйте anti-affinity:
+
+```yaml
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels: { app: my-api }
+          topologyKey: kubernetes.io/hostname
+```
+
+**Проставьте остальным шумным подам (сборщики логов, сайдкары) явные CPU requests** — поды без них тихо забивают узел.
+
+#### Storage в multi-node кластере
+
+Kubespray по умолчанию не ставит StorageClass. Варианты:
+
+| Provisioner | Под переехал на другой узел | Цена по CPU | Когда |
+|-------------|----------------------------|-------------|-------|
+| local-path (встроенный addon) | PV прибит к ноде → под остаётся на своей ноде | ~ноль | Тестовые данные, привязка к ноде ок |
+| NFS subdir | Данные едут (сетевой том) | Низкая | Общие файлы / RWX; экспортирующая нода — SPOF |
+| Longhorn (Helm) | Реплика уже на целевой ноде → едут | Высокая (engine + реплика, iSCSI) | Данные должны пережить падение ноды |
+
+На стенде с дефицитом CPU: **local-path** (дешевле всего) или **NFS** (лёгкий, RWX) против Longhorn — синхронная репликация и per-volume engine у Longhorn добавляют ровно тот CPU, который вы пытаетесь освободить. `local_path_provisioner_enabled: true` создаёт дефолтный StorageClass `local-path`; его PV прибиты к ноде, так что прибитый под БД и его данные остаются вместе на worker1.
+
+#### Получение kubeconfig
+
+```bash
+export KUBECONFIG=$PWD/inventory/mycluster/artifacts/admin.conf
+kubectl get nodes -o wide
+```
+
+```
+NAME      STATUS   ROLES           AGE   VERSION    INTERNAL-IP
+cp1       Ready    control-plane   9m    v1.35.4    10.0.0.10
+worker1   Ready    <none>          7m    v1.35.4    10.0.0.11
+worker2   Ready    <none>          7m    v1.35.4    10.0.0.12
+```
+
+`server:` в `admin.conf` указывает на IP cp1. Если ходите по другому адресу — NAT, hostname, jump-хост — поправьте `server:` и убедитесь, что адрес был в `supplementary_addresses_in_ssl_keys`, иначе TLS отклонит соединение.
+
+#### Day-2: масштабируем воркеры, растём в HA
+
+Тот же inventory ведёт lifecycle-плейбуки:
+
+```bash
+# Добавить worker3: дописать в [kube_node], затем
+ansible-playbook -i inventory/mycluster/inventory.ini --become -K scale.yml
+
+# Аккуратно drain и удалить узел
+ansible-playbook -i inventory/mycluster/inventory.ini --become -K \
+  -e node=worker2 remove-node.yml
+
+# Плавный апгрейд версии по одному узлу (сперва поднять kube_version)
+ansible-playbook -i inventory/mycluster/inventory.ini --become -K upgrade-cluster.yml
+
+# Снести k8s/etcd/CNI со всех хостов до голой ОС — деструктивно
+ansible-playbook -i inventory/mycluster/inventory.ini --become -K reset.yml
+```
+
+**Расти в HA Control Plane:** добавьте ещё два хоста в `[kube_control_plane]`, чтобы у etcd стало 3 члена (нечётный счёт, переживающий отказ), и запустите `upgrade-cluster.yml`. Добавить воркеры — `scale.yml` после дописывания хоста. Inventory и есть кластер — никакой пересборки.
+
+#### Типовые проблемы
+
+| Симптом | Причина | Решение |
+|---------|---------|---------|
+| Добавил воркер, но на него ничего не переехало | Поды без resource requests не перебалансируются | Проставьте requests/limits, разместите taint'ом/anti-affinity, пере-раскатайте |
+| Случайно снял taint с Control Plane | Мышечная память от одно-/двухузловых кластеров | Верните: `kubectl taint nodes cp1 node-role.kubernetes.io/control-plane=:NoSchedule` |
+| `ansible-core version is not supported` | Запустили Ansible вне venv / `apt install ansible` | Пересоздайте venv, `pip install -r requirements.txt` |
+| Сбор фактов падает: `/usr/bin/python3 not found` | Минимальный образ без Python | `ssh ubuntu@host sudo apt-get install -y python3` |
+| Missing sudo password | sudo без NOPASSWD | Добавьте `-K` (и `-k` если SSH по паролю) |
+| etcd нездоров / установка виснет на join | Расхождение часов или чётный счёт etcd | Ровно 1 хост в `[etcd]`, chrony на всех узлах |
+| Поды Pending / kube-proxy всё ещё есть | Firewall режет CNI/etcd или не включена замена | `ufw disable`; проверьте `cilium_kube_proxy_replacement: true` и `kube_network_plugin: cilium` |
+
+#### Итого
+
+- Симптом «медленные диски» → причина **конкуренция за CPU**. Проверяйте `wa`/PSI до закупки хранилища.
+- Разнесите роли по VM: выделенный Control Plane под taint + два Worker'а. etcd и API-сервер перестают конкурировать с CPU приложений; два Worker'а удваивают планируемую ёмкость.
+- Ноды сами по себе нагрузку не разносят. Проставьте requests/limits, прибейте доминирующую нагрузку к своему Worker'у, используйте anti-affinity для реплик — **один большой под не делится**.
+- Cilium с `cilium_kube_proxy_replacement: true` убирает kube-proxy целиком — но только если задан и `kube_network_plugin: cilium`.
+- Хранилище выбирайте по бюджету CPU: local-path или NFS против Longhorn на нагруженном стенде.
+- Inventory и есть кластер. Добавляйте воркеры через `scale.yml`; вырастите в 3-узловой HA-Control Plane позже — перенос хостов в `[kube_control_plane]`, правка, а не пересборка.
+
+---
+
 ## Дополнительная информация
 
 ### Действия после развертывания

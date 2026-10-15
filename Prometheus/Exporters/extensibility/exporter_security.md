@@ -52,7 +52,7 @@ spec:
 #### External Secrets Operator (интеграция с Vault/AWS/Azure)
 
 ```yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: postgres-exporter-credentials
@@ -346,7 +346,7 @@ docker run -d \
 
 ```yaml
 # 1. SecretStore (подключение к Vault)
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: SecretStore
 metadata:
   name: vault-backend
@@ -366,7 +366,7 @@ spec:
 
 ---
 # 2. ExternalSecret (синхронизация из Vault)
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: postgres-exporter-credentials

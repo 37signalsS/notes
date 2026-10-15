@@ -1,6 +1,6 @@
 # GitOps: Управление секретами и шифрование
 
-**Актуально для:** Mozilla SOPS v3.13.x, Bitnami Sealed Secrets v0.39.x, External Secrets Operator (ESO) v1.x (API external-secrets.io/v1), HashiCorp Vault 1.18–1.21 / OpenBao 2.x, Argo CD v3.5+, Flux v2.9.x, Kubernetes 1.30–1.34+ (on-premise / bare-metal)
+**Актуально для:** Mozilla SOPS v3.13.x, Bitnami Sealed Secrets v0.40.x, External Secrets Operator (ESO) v1.x (API external-secrets.io/v1), HashiCorp Vault 1.18–1.21 / OpenBao 2.x, Argo CD v3.5+, Flux v2.9.x, Kubernetes 1.30–1.34+ (on-premise / bare-metal)
 
 Хранение секретов — одна из центральных архитектурных задач в GitOps. Поскольку Git является единственным источником истины (Source of Truth), хранить в нем пароли, сертификаты и токены в открытом виде категорически недопустимо. Данное руководство описывает подходы, инструменты и эксплуатационные практики для безопасного управления секретами в рамках методологии GitOps в локальной, частной и on-premise инфраструктуре.
 
@@ -475,6 +475,252 @@ grep -E "tls.key|tls.crt" sealed-secrets-master-backup.yaml
 # → tls.crt: LS0tLS1CRUdJTi...
 # → tls.key: LS0tLS1CRUdJTi...
 ```
+
+### Сценарий: Sealed Secrets с Flux CD (hub-and-spoke)
+
+В hub-and-spoke топологии Flux CD контроллер Sealed Secrets разворачивается декларативно через `HelmRelease` в неймспейсе `flux-system` на hub-кластере. Spoke-кластеры подключаются к hub через kubeconfig, зашифрованный в `SealedSecret` и хранимый в Git. Этот паттерн отличается от автономного развертывания ([Сценарий 5](#сценарий-5-bitnami-sealed-secrets-автономный-кластер)) тем, что контроллер управляется Flux, работает в `flux-system` (а не `kube-system`), а kubeconfigы spoke-кластеров встраиваются непосредственно в env-кастомизацию.
+
+**Архитектурная схема:**
+
+```
+hub-кластер (Flux CD)
+│
+├── flux-system namespace
+│   ├── sealed-secrets-controller (HelmRelease → Deployment)
+│   └── sealed-secrets keys (Master Key в Secret)
+│
+└── GitOps-репозиторий
+    ├── fluxcd/{env}-kustomization.yaml  ← встроенный SealedSecret с kubeconfig
+    └── fluxcd/projects/{env}/kustomization/spoke/secrets/
+        ├── registry-pull-secret.yaml
+        └── tls-cert.yaml
+```
+
+Контроллер работает в `flux-system` и расшифровывает каждый `SealedSecret`, создавая нативный `Secret`. Приватный ключ никогда не покидает кластер. Vault для этого паттерна не нужен, как и подстановка секретов через CI/CD.
+
+**1. Установка через HelmRelease (Flux-native):**
+
+Требуется ранее созданный `HelmRepository` с именем `sealed-secrets` в неймспейсе `flux-system`. Внимание: официальный Helm-репозиторий изменился с `bitnami-labs.github.io/sealed-secrets` на `bitnami.github.io/sealed-secrets` — используйте актуальный URL.
+
+```yaml
+# fluxcd/projects/infra/kustomization/flux/helmreleases/sealed-secrets.yaml
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: sealed-secrets
+  namespace: flux-system
+spec:
+  chart:
+    spec:
+      chart: sealed-secrets
+      version: "2.*"
+      sourceRef:
+        kind: HelmRepository
+        name: sealed-secrets
+        namespace: flux-system
+  values:
+    fullnameOverride: sealed-secrets-controller
+```
+
+Контроллер создаёт ключевую пару RSA и сохраняет её в `Secret` с меткой `sealedsecrets.bitnami.com/sealed-secrets-key` в неймспейсе `flux-system`.
+
+> **Важно:** с `fullnameOverride: sealed-secrets-controller` имя сервиса контроллера становится `sealed-secrets-controller`, а не `sealed-secrets`. При запечатывании через `kubeseal` укажите `--controller-name=sealed-secrets-controller --controller-namespace=flux-system`, иначе kubeseal не найдёт сервис по умолчанию. Подробнее об ошибке `error: cannot get sealed secret service` — в [Sealed Secrets Overview](../../Kubernetes/Security/sealed_secrets_overview.md) (Сценарий 10).
+
+**2. Запечатывание spoke kubeconfig:**
+
+Kubeconfig содержит credentials для доступа к spoke-кластеру. Его нужно запечатать в `SealedSecret` с ключом `value`:
+
+```bash
+# 1. Записать kubeconfig во временный файл (НЕ КОММИТИТЬ)
+cat > /tmp/spoke-kubeconfig.yaml <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dev-kubeconfig
+  namespace: dev
+type: Opaque
+stringData:
+  value: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+    - name: dev-cluster
+      cluster:
+        server: https://dev-cluster.example.com:6443
+        certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t
+    users:
+    - name: flux
+      user:
+        client-certificate-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t
+        client-key-data: LS0tLS1CRUdJTiBSU0EgUFJJV...
+    contexts:
+    - name: dev
+      context:
+        cluster: dev-cluster
+        user: flux
+    current-context: dev
+EOF
+
+# 2. Запечатать (kubeseal получит сертификат с hub-кластера)
+kubeseal \
+  --format yaml \
+  --controller-name=sealed-secrets-controller \
+  --controller-namespace flux-system \
+  --kubeconfig .kubeconfigs/infra.yaml \
+  < /tmp/spoke-kubeconfig.yaml \
+  > fluxcd/projects/dev/kustomization/spoke/secrets/dev-kubeconfig.yaml
+
+# 3. Удалить файл с открытым секретом
+rm /tmp/spoke-kubeconfig.yaml
+```
+
+**Оффлайн-режим (без доступа к hub-кластеру):**
+
+```bash
+# Получить и сохранить публичный сертификат (требуется один раз)
+kubeseal \
+  --fetch-cert \
+  --controller-name=sealed-secrets-controller \
+  --controller-namespace flux-system \
+  --kubeconfig .kubeconfigs/infra.yaml \
+  > .kubeconfigs/sealed-secrets-infra.pem
+
+# Запечатать офлайн, используя сохранённый сертификат
+kubeseal \
+  --format yaml \
+  --cert .kubeconfigs/sealed-secrets-infra.pem \
+  < /tmp/spoke-kubeconfig.yaml \
+  > fluxcd/projects/dev/kustomization/spoke/secrets/dev-kubeconfig.yaml
+```
+
+Файл `.pem` можно хранить в репозитории — он не секретный. Механизм шифрования (RSA-OAEP + AES-GCM), scope и ротация ключей — в [Sealed Secrets Overview](../../Kubernetes/Security/sealed_secrets_overview.md).
+
+**Привязка к namespace:** `SealedSecret` привязан к namespace — данные, зашифрованные для namespace `dev`, нельзя расшифровать в другом namespace. Если секрет нужен в нескольких namespace, запечатайте его отдельно для каждого.
+
+**3. Репозиторная структура:**
+
+| Что | Путь |
+|---|---|
+| Spoke kubeconfigs | `fluxcd/{env}-kustomization.yaml` — встроенный `SealedSecret` рядом с `Namespace` и `Flux Kustomization` |
+| Docker registry pull secrets | `fluxcd/projects/{env}/kustomization/spoke/secrets/` |
+| TLS-сертификаты | `fluxcd/projects/{env}/kustomization/spoke/secrets/` |
+| Vault token для Terraform | `fluxcd/projects/infra/kustomization/terraform/vault-token-sealed.yaml` |
+
+Самые важные секреты — kubeconfigы spoke-кластеров. Каждый встраивается прямо в `fluxcd/{env}-kustomization.yaml` вместе с `Namespace` и `Flux Kustomization`:
+
+```yaml
+# fluxcd/dev-kustomization.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dev
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: dev-kubeconfig
+  namespace: dev
+spec:
+  encryptedData:
+    value: AgB3eVxk...очень-длинный-base64...
+  template:
+    metadata:
+      name: dev-kubeconfig
+      namespace: dev
+    type: Opaque
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dev-apps
+  namespace: dev
+spec:
+  path: ./fluxcd/projects/dev/kustomization/hub/
+  kubeConfig:
+    secretRef:
+      name: dev-kubeconfig
+```
+
+`Namespace`, `SealedSecret` и ссылающаяся на него `Kustomization` находятся в одном файле. `Kustomization` спикает `kubeConfig.secretRef.name` на имя `SealedSecret` → контроллер расшифровывает его в нативный `Secret` → Flux использует этот kubeconfig для синхронизации spoke-кластера.
+
+**4. Добавление нового spoke-кластера:**
+
+Новый spoke-кластер добавляется копированием и переименованием:
+
+```bash
+# 1. Скопировать кастомизацию из существующего env
+cp fluxcd/dev-kustomization.yaml fluxcd/staging-kustomization.yaml
+
+# 2. Запечатать kubeconfig для нового кластера
+kubeseal \
+  --format yaml \
+  --controller-name=sealed-secrets-controller \
+  --controller-namespace flux-system \
+  --kubeconfig .kubeconfigs/infra.yaml \
+  < /tmp/staging-kubeconfig.yaml \
+  > fluxcd/projects/staging/kustomization/spoke/secrets/staging-kubeconfig.yaml
+
+# 3. Обновить ссылки в kustomization.yaml
+# 4. Commit
+```
+
+**5. Обновление kubeconfig spoke-кластера:**
+
+`SealedSecret` нельзя обновить частично — только перезапечатать целиком:
+
+```bash
+kubeseal \
+  --format yaml \
+  --controller-name=sealed-secrets-controller \
+  --controller-namespace flux-system \
+  --kubeconfig .kubeconfigs/infra.yaml \
+  < /tmp/updated-kubeconfig.yaml \
+  > fluxcd/projects/dev/kustomization/spoke/secrets/dev-kubeconfig.yaml
+```
+
+Новый `encryptedData` заменяет старый. Контроллер обнаружит изменение и пересоздаст нативный `Secret`.
+
+Антипаттерн — править поле `encryptedData` вручную. Шифротекст не делится по ключам: при изменении любого значения меняется весь блок данных. Просто перезапечатайте секрет.
+
+**Резервное копирование и ротация ключей:**
+
+Контроллер по умолчанию ротирует ключ каждые 30 дней, сохраняя старые для расшифровки существующих `SealedSecret`. Резервную копию ключей делают из неймспейса `flux-system`:
+
+```bash
+# Бэкап ключей контроллера
+kubectl get secret \
+  -n flux-system \
+  -l sealedsecrets.bitnami.com/sealed-secrets-key \
+  -o yaml > sealed-secrets-keys-backup.yaml
+
+# Восстановление
+kubectl apply -f sealed-secrets-keys-backup.yaml
+kubectl rollout restart deployment/sealed-secrets-controller -n flux-system
+```
+
+Если удалить контроллер и переустановить, старые приватные ключи пропадут. Миграция на новое железо требует перезапечатывания каждого `SealedSecret` сертификатом нового кластера — подробности в [Sealed Secrets Overview](../../Kubernetes/Security/sealed_secrets_overview.md) (Сценарий 9).
+
+**Устранение ошибок расшифровки:**
+
+```bash
+# Логи контроллера
+kubectl logs \
+  -n flux-system \
+  -l app.kubernetes.io/name=sealed-secrets-controller \
+  --context=infra-k8s
+
+# Проверка наличия ключей
+kubectl get secret -n flux-system -l sealedsecrets.bitnami.com/sealed-secrets-key
+
+# Статус конкретного SealedSecret
+kubectl describe sealedsecret my-secret -n dev
+```
+
+Частые ошибки:
+
+- `no key could decrypt secret` — секрет запечатан другим сертификатом или для другого namespace; перезапечатайте текущим.
+- `failed to decrypt` — не совпадает namespace; перезапечатайте для правильного namespace.
+- `controller not found` — неверный `--controller-namespace` или `--controller-name`; имя должно совпадать с `fullnameOverride`.
 
 ---
 

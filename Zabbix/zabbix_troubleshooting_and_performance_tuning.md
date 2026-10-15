@@ -1,6 +1,6 @@
 # Zabbix — устранение неисправностей и тюнинг производительности
 
-> Сведения актуальны для **Zabbix 7.0 LTS** и **Zabbix 8.0 LTS** (выпущена в сентябре 2026 г.). Основная долгосрочная ветка — 7.0 LTS (поддержка до 30 июня 2029). Текущая стандартная ветка — 8.0 LTS (поддержка до Q3 2029).
+> Сведения актуальны для **Zabbix 7.0 LTS**, **Zabbix 7.4** (текущая стандартная ветка, 7.4.15) и **Zabbix 8.0 LTS** (релиз запланирован на Q4 2026, roadmap — ноябрь 2026; на момент сверки доступен кандидат в релиз **8.0.0rc1** от 1 октября 2026). Для 7.0 LTS полная поддержка до 30 июня 2027, ограниченная — до 30 июня 2029; для 8.0 LTS полная поддержка планируется до Q4 2029, ограниченная — до Q4 2031.
 
 ---
 
@@ -15,8 +15,8 @@
 * **Runtime Control** — механизм управления работающим Zabbix Server/Proxy без рестарта через команды `zabbix_server -R <command>` (повышение логирования, принудительная очистка, обновление кэша).
 * **Асинхронный поллер (Async Poller)** — процесс сбора (Agent/HTTP/SNMP), обслуживающий до 1000 параллельных проверок, не блокируясь в ожидании ответа (Zabbix 7.0+).
 * **tcache (Trend Function Cache)** — кэш рассчитанных результатов функций трендов (`trendavg`, `trendmax`). В Zabbix 8.0 добавлен внутренний элемент `zabbix[tcache,cache,<parameter>]` с параметром `paccessed`, показывающим долю записей, к которым было обращение за последние 24 часа.
-* **HistoryProviders** — механизм хранения истории Zabbix 8.0, заменивший устаревший `HistoryStorageURL`. Поддерживает провайдеры: `sql` (основная СУБД), `elasticsearch` (текстовые данные), `clickhouse` (JSON и аналитические нагрузки). Устаревшие параметры `HistoryStorageDateIndex`, `HistoryStorageTypes`, `HistoryStorageURL` удалены в 8.0.
-* **Proxy throttling (Ограничение прокси при восстановлении)** — в Zabbix 8.0 уточнена логика ограничения приёма данных от прокси при переполнении History Cache. При достижении порога сервер прекращает приём данных; при снижении утилизации до 60% сервер возобновляет обработку, но продолжает отклонять особо крупные пакеты (>10k записей) до поленного снятия давления.
+* **HistoryProvider** — параметр сервера Zabbix 8.0, задающий провайдера хранения истории: `sql` (основная СУБД, по умолчанию), `elasticsearch` (текстовые данные), `clickhouse` (JSON и аналитические нагрузки). Заменил устаревшие `HistoryStorageURL`, `HistoryStorageTypes`, `HistoryStorageDateIndex`, которые в 8.0 объявлены устаревшими (deprecated); использовать их одновременно с `HistoryProvider` нельзя. В конфигурации frontend аналогично `$HISTORY` заменён на `$HISTORY_PROVIDERS`.
+* **Proxy throttling (Ограничение прокси при восстановлении)** — в Zabbix 8.0 уточнена логика ограничения приёма данных от прокси при переполнении History Cache. При достижении 80% утилизации сервер прекращает приём данных; при снижении до 60% начинает обрабатывать накопленный список, но продолжает отклонять особо крупные пакеты (~>10k записей); окончательно снимает ограничение при снижении до 20%, когда список очищается.
 
 ---
 
@@ -29,7 +29,7 @@
 | **Signal** | **Zabbix-метрика / компонент** | **SRE-смысл** |
 | :--- | :--- | :--- |
 | **Latency** | `zabbix[process,<тип>,avg,busy]`, время вычисления триггеров | Задержка обработки запросов; рост говорит о нехватке ресурсов или блокировках |
-| **Traffic** | NVPS (`zabbix[history]`, `zabbix[trends]`), скорость роста очереди | Объём операций; базовый показатель для Capacity Planning |
+| **Traffic** | NVPS (`zabbix[requiredperformance]`), скорость роста очереди | Объём операций; базовый показатель для Capacity Planning |
 | **Errors** | Количество Unsupported items, сбои доставки оповещений, ошибки предобработки | Доля некорректных операций; ранний индикатор проблем конфигурации |
 | **Saturation** | Утилизация кэшей (`zabbix[wcache,...]`), заполненность очереди, загрузка CPU/RAM процессов | Степень использования доступных ресурсов; переполнение приводит к каскадным сбоям |
 
@@ -42,16 +42,16 @@
 ### SRE-контекст: Change Management, Capacity Planning, Post-mortem
 
 * **Change Management:** любые изменения в конфигурации (`zabbix_server.conf`, шаблонах, триггерах) должны проходить через процедуры управления изменениями. Используйте **Runtime Control** для диагностики без рестарта и **Vault** для секретов (Zabbix 8.0 поддержирует AppRole HashiCorp Vault).
-* **Capacity Planning:** основывается на NVPS. Правила: 1M NVPS ≈ 2–4 CPU / 4–8 GB RAM / SSD с 5k IOPS (PostgreSQL + TimescaleDB). Трендовые данные компрессии в TimescaleDB снижают требования к хранилищу на 90%.
+* **Capacity Planning:** основывается на NVPS. Ориентир по официальной таблице «Examples of hardware configuration» (Zabbix 7.0): 1 000 NVPS — 2 CPU / 8 GB; 10 000 — 4 CPU / 16 GB; 100 000 — 16 CPU / 64 GB; 1 000 000 — 32 CPU / 96 GB. Для PostgreSQL + TimescaleDB критична дисковая подсистема (SSD/NVMe). Компрессия трендовых данных в TimescaleDB снижает требования к хранилищу примерно на 90%.
 * **Post-mortem:** при инцидентах Zabbix фиксируются в **Audit log** (с 7.0). Собирайте: графики `zabbix[queue,5m]`, `zabbix[process,,avg,busy]`, `zabbix[wcache,history,pused]`, логи `/var/log/zabbix/zabbix_server.log`, вывод `diaginfo`.
 
 ### Мониторинг «Золотой четверки» кэшей
 
 Для стабильной работы необходимо отслеживать утилизацию ключевых кэшей. Если утилизация стабильно превышает **80%**, размер кэша в `zabbix_server.conf` (или `zabbix_proxy.conf`) необходимо увеличить. Контроль ведётся через шаблон `Template App Zabbix Server` (внутренние элементы `zabbix[process,...]`, `zabbix[wcache,...]`, в 8.0 — `zabbix[tcache,cache,...]`).
 
-* **Configuration Cache (`CacheSize`):** хранит в оперативной памяти данные о хостах, элементах данных и триггерах. При переполнении снижается общая скорость сервера и замедляется применение изменений конфигурации. Управляется через `zabbix[cache,config,...]`.
+* **Configuration Cache (`CacheSize`):** хранит в оперативной памяти данные о хостах, элементах данных и триггерах. При переполнении снижается общая скорость сервера и замедляется применение изменений конфигурации. Контроль — `zabbix[rcache,buffer,<mode>]` (`total`, `free`, `pfree`, `used`, `pused`).
 * **History Cache (`HistoryCacheSize`):** буфер хранения входящих сырых данных перед сбросом в БД. Переполнение означает, что дисковая подсистема СУБД не справляется с потоком записи (IOPS) либо `History Syncers` заняты транзакциями. В 8.0 при переполнении сервер автоматически отклоняет крупные пакеты данных от прокси (>10k записей) до снижения давления. Элемент контроля — `zabbix[wcache,history,...]`.
-* **Value Cache (`ValueCacheSize`):** кэх исторических данных для вычисления триггеров. *Критически важен.* При нехватке сервер выполняет прямые `SELECT` в базу для каждого вычисляемого триггера — это мгновенно снижает производительность СУБД и создаёт запаздывание по алертам. В 8.0 добавлен новый параметр `paccessed` для `zabbix[tcache,cache,...]`, показывающий актуальность записей кэша. Контроль — `zabbix[wcache,values,all]`.
+* **Value Cache (`ValueCacheSize`):** кэш исторических данных для вычисления триггеров. *Критически важен.* При нехватке сервер выполняет прямые `SELECT` в базу для каждого вычисляемого триггера — это мгновенно снижает производительность СУБД и создаёт запаздывание по алертам. Контроль — `zabbix[vcache,buffer,pused]` (заполнение буфера), `zabbix[vcache,cache,hits]` / `zabbix[vcache,cache,misses]` (эффективность).
 * **History Index Cache (`HistoryIndexCacheSize`):** индексный кэш History Cache. Обычно составляет **10–20%** от его размера (примерно 100 байт на элемент истории).
 * **Trend Cache (`TrendCacheSize`):** буфер записи агрегированных данных (trends) перед сбросом в БД.
 * **Trend Function Cache (`TrendFunctionCacheSize`):** кэш рассчитанных результатов функций трендов. Критичен при большом количестве графиков за длинные периоды. В Zabbix 8.0 добавлен элемент `zabbix[tcache,cache,<parameter>]` с параметром `paccessed` (доля записей, к которым было обращение за последние 24 часа).
@@ -111,6 +111,7 @@
 * **Proxy Memory Buffer:** в Zabbix 7.0 добавлен режим `ProxyBufferMode=memory`. При его активации прокси хранит собираемые данные в оперативной памяти, а не в локальной базе SQLite/MySQL. Это исключает дисковый I/O на стороне прокси и значительно увеличивает пропускную способность.
   * Ресурсы: выделите прокси достаточный объём RAM — начинайте с 512M–1G и следите за занятостью кэша.
   * Режим не допускает переполнения: при нехватке кэша прокси теряет данные — контролируйте заполнение и увеличивайте память.
+  * Контроль буфера: внутренние элементы `zabbix[proxy_buffer,buffer,pused]` (заполненность), `zabbix[proxy_buffer,state,current]` (текущий режим disk/memory) и `zabbix[proxy_history]` (объём неотправленных данных). Частые смены режима в `zabbix[proxy_buffer,state,changes]` сигнализируют о необходимости увеличить `ProxyMemoryBufferSize` или `ProxyMemoryBufferAge`.
   * В 8.0 уточнена логика ограничения приёма данных от прокси при переполнении History Cache: сервер отклоняет крупные пакеты (>10k записей) до снижения давления.
 * **Прокси как концентратор пассивных проверок:** распределение нагрузки между прокси позволяет переносить хосты между ними, снижая пиковую нагрузку на сервер.
 * **Proxy History Syncers:** для большого прокси увеличивайте `StartDBSyncers` для своевременной выгрузки данных на сервер.
@@ -131,14 +132,14 @@
 
 При росте NVPS разгружайте историю на специализированные хранилища:
 
-* В **Zabbix 8.0** устаревший `HistoryStorageURL` заменён параметром **`HistoryProviders`** с форматом `<provider>[;<options>]`:
+* В **Zabbix 8.0** устаревшие `HistoryStorageURL`, `HistoryStorageTypes` и `HistoryStorageDateIndex` заменены единым параметром **`HistoryProvider`** с форматом `<provider>[;<параметр>=<значение>,...]`:
   * `sql` (по умолчанию) — история в основной СУБД;
   * `elasticsearch` — отдельное хранение текстовых типов (дашборды/поиск);
   * `clickhouse` — новинка 8.0: аналитический бэкенд для JSON и больших объёмов данных (не поддерживает тип `BIN`).
 * Настройка позволяет разделить типы: LOG/TEXT → Elasticsearch, числовые → PostgreSQL, JSON → ClickHouse, снижая нагрузку записи на основной SQL-бэкенд.
 * Для **Zabbix 7.0** это возможно через устаревший `HistoryStorageURL` (Elasticsearch).
 
-> При подключении внешнего хранилища убедитесь, что `HistoryCacheSize` / `HistoryIndexCacheSize` рассчитаны с учётом извлечения данных из исторического провайдера (в 8.0 — опция `precache` в `HistoryProviders`).
+> При подключении внешнего хранилища убедитесь, что `HistoryCacheSize` / `HistoryIndexCacheSize` рассчитаны с учётом извлечения данных из исторического провайдера (в 8.0 — опция `precache` в `HistoryProvider`).
 
 ### 6. Тюнинг веб-интерфейса (Frontend)
 
@@ -149,10 +150,10 @@
 ### 7. Пошаговый алгоритм диагностики узкого места
 
 1. **Внутренний мониторинг:** подключите шаблон `Template App Zabbix Server` к серверу и прокси, смотрите:
-   * очередь: `zabbix[queue,1m]`, `zabbix[queue,overall]`;
-   * NVPS: `zabbix[history]`, `zabbix[trends]`;
+   * очередь: `zabbix[queue,1m]`, `zabbix[queue]`;
+   * NVPS: `zabbix[requiredperformance]`;
    * занятость процессов: `zabbix[process,<тип>,avg,busy]`;
-   * кэши: `zabbix[wcache,values,all]`, `zabbix[wcache,history,...]`, `zabbix[tcache,cache,paccessed]` (8.0+).
+   * кэши: `zabbix[wcache,history,pused]`, `zabbix[vcache,buffer,pused]`, `zabbix[tcache,cache,paccessed]`.
 2. **`diaginfo`:** команды `zabbix_server -R diaginfo=<секция>` (например `historycache`/`preprocessing`/`valuecache`/`alerting`) пишут диагностику в лог.
 3. **Запись в БД:** если `History Syncers` показывают `syncing history` на 100% — увеличьте `StartDBSyncers` (но аккуратно: больше соединений = больше нагрузка БД) и оптимизируйте IOPS СУБД.
 4. **Логи и система:** повысьте Debug Level для конкретного процесса (см. раздел «Операции и команды»); проверьте `dmesg` на OOM-записи при падениях сервера.
@@ -189,15 +190,18 @@ zabbix_server -R log_level_decrease='history syncer'
 
 | Элемент данных | Назначение | Пример проверки |
 | :--- | :--- | :--- |
-| `zabbix[version]` | Версия сервера | `zabbix_get -s 127.0.0.1 -k "zabbix[version]"` |
-| `zabbix[process,<тип>,avg,busy]` | Утилизация процесса | `zabbix_get -s 127.0.0.1 -k "zabbix[process,poller,avg,busy]"` |
-| `zabbix[queue,<интервал>]` | Очередь за интервал | `zabbix_get -s 127.0.0.1 -k "zabbix[queue,5m]"` |
-| `zabbix[queue,overall]` | Общая очередь | `zabbix_get -s 127.0.0.1 -k "zabbix[queue,overall]"` |
-| `zabbix[history]` | NVPS (записей/сек) | `zabbix_get -s 127.0.0.1 -k "zabbix[history]"` |
-| `zabbix[trends]` | NVPS трендов | `zabbix_get -s 127.0.0.1 -k "zabbix[trends]"` |
-| `zabbix[wcache,history,...]` | Заполненность History Cache | `zabbix_get -s 127.0.0.1 -k "zabbix[wcache,history,pused]"` |
-| `zabbix[wcache,values,all]` | Попадания в Value Cache | `zabbix_get -s 127.0.0.1 -k "zabbix[wcache,values,all]"` |
-| `zabbix[tcache,cache,paccessed]` | Утилизация Trend Function Cache (8.0+) | `zabbix_get -s 127.0.0.1 -k "zabbix[tcache,cache,paccessed]"` |
+| `zabbix[version]` | Версия сервера | `zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[version]"` |
+| `zabbix[process,<тип>,avg,busy]` | Утилизация процесса | `zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[process,poller,avg,busy]"` |
+| `zabbix[queue,<интервал>]` | Очередь за интервал | `zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[queue,5m]"` |
+| `zabbix[queue]` | Очередь (элементы, отставшие ≥ 6s) | `zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[queue]"` |
+| `zabbix[requiredperformance]` | NVPS (требуемая производительность, записей/сек) | `zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[requiredperformance]"` |
+| `zabbix[wcache,history,...]` | Заполненность History Cache | `zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[wcache,history,pused]"` |
+| `zabbix[vcache,buffer,pused]` | Заполненность Value Cache, % | `zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[vcache,buffer,pused]"` |
+| `zabbix[tcache,cache,paccessed]` | Утилизация Trend Function Cache (8.0+) | `zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[tcache,cache,paccessed]"` |
+| `zabbix[rcache,buffer,pused]` | Заполненность Configuration Cache, % | `zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[rcache,buffer,pused]"` |
+| `zabbix[proxy_buffer,buffer,pused]` | Заполненность proxy memory buffer, % (только на прокси) | `zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[proxy_buffer,buffer,pused]"` |
+| `zabbix[proxy_buffer,state,current]` | Текущий режим буфера прокси (0 — disk, 1 — memory) | `zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[proxy_buffer,state,current]"` |
+| `zabbix[proxy_history]` | Число значений в очереди прокси к отправке на сервер | `zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[proxy_history]"` |
 
 ### Команды Runtime Control
 
@@ -209,6 +213,11 @@ zabbix_server -R log_level_decrease='history syncer'
 | `history_cache_clear=<target>` | Очистить кэш истории (7.4+) | `zabbix_server -R history_cache_clear=12345` |
 | `config_cache_reload` | Перезагрузить кэш конфигурации | `zabbix_server -R config_cache_reload` |
 | `housekeeper_execute` | Запустить Housekeeper | `zabbix_server -R housekeeper_execute` |
+| `trigger_housekeeper_execute` | Запустить Trigger Housekeeper (удаление проблем удалённых триггеров) | `zabbix_server -R trigger_housekeeper_execute` |
+| `snmp_cache_reload` | Перезагрузить кэш SNMP (engine ID/time/boots, credentials) | `zabbix_server -R snmp_cache_reload` |
+| `proxy_config_cache_reload[=<target>]` | Перезагрузить кэш конфигурации прокси — всех или указанных | `zabbix_server -R proxy_config_cache_reload=Proxy1,Proxy2` |
+| `service_cache_reload` | Перезагрузить кэш service manager | `zabbix_server -R service_cache_reload` |
+| `ha_status` | Вывести статус узлов HA-кластера в лог | `zabbix_server -R ha_status` |
 | `secrets_reload` | Перезагрузить секреты из Vault | `zabbix_server -R secrets_reload` |
 
 ### Секции `diaginfo`
@@ -219,6 +228,11 @@ zabbix_server -R log_level_decrease='history syncer'
 | `preprocessing` | Очередь, скорость обработки, ошибки | `Preprocessing queue: 12 items, rate 800/s` |
 | `valuecache` | Попадания/промахи, утилизация | `Value cache: hits 95%, entries 12000` |
 | `alerting` | Очередь оповещений, доставленные/недоставленные | `Alerts pending: 3, failed: 0` |
+| `lld` | Статистика LLD manager (правила низкоуровневого обнаружения) | — |
+| `locks` | Список мьютексов (на BSD-системах пуст) | — |
+| `connector` | Статистика коннекторов с наибольшей очередью | — |
+
+> На Zabbix Proxy набор секций `diaginfo` сокращён: доступны только `historycache`, `preprocessing` и `locks`.
 
 > **Примечание:** команды управления службами systemd и общая валидация конфигурации описаны в **[Операции и команды](./additional_info.md#операции-и-команды)**. Не дублируйте их здесь — используйте ссылку.
 
@@ -234,7 +248,7 @@ zabbix_server -R log_level_decrease='history syncer'
 | Разрывы (Gaps) | Переполнение History Cache (до 100% `History Syncers`), SLOW IOPS БД | Увеличьте `HistoryCacheSize`/`HistoryIndexCacheSize`, добавьте `StartDBSyncers`, включите компрессию TimescaleDB |
 | `Zabbix server is running: No` | OOM Killer, потеря соединения с БД, диск полон | `dmesg|grep -i oom`, проверить подключение к БД, свободное место, увеличить RAM |
 | Медленный Frontend | PHP-FPM/OPcache, нет индексов, HDD БД | Раздел «Тюнинг веб-интерфейса»; включите тренд-функции на графиках |
-| Триггеры медленные | Нехватка Value Cache → прямой `SELECT` в БД | Увеличить `ValueCacheSize` и контролировать `zabbix[wcache,values,all]` |
+| Триггеры медленные | Нехватка Value Cache → прямой `SELECT` в БД | Увеличить `ValueCacheSize` и контролировать `zabbix[vcache,buffer,pused]` |
 | Unsupported items | Битые ключи, недоступность хостов | Ищите через `zabbix[host,,items_unsupported]`, отключайте некорректные |
 | Медленные графики за большие периоды | Не хватает `TrendFunctionCacheSize`, нет компрессии | Увеличить кэш функций трендов, использовать `trendavg` в виджетах; в 8.0 контролируйте `paccessed` |
 | Proxy теряет данные | `ProxyBufferMode=memory`, нехватка RAM | Увеличьте RAM на прокси, контролируйте заполнение кэша |
@@ -244,25 +258,25 @@ zabbix_server -R log_level_decrease='history syncer'
 
 ```bash
 # 1. Проверка очереди
-zabbix_get -s 127.0.0.1 -k "zabbix[queue,5m]"
+zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[queue,5m]"
 # → 0 — норма; >0 — проблемы с опросом
 
-# 2. Проверка NVPS
-zabbix_get -s 127.0.0.1 -k "zabbix[history]"
-# → текущая скорость записи новых значений
+# 2. Проверка NVPS (требуемая производительность сервера)
+zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[requiredperformance]"
+# → требуемое число новых значений в секунду
 
 # 3. Проверка утилизации кэшей
-zabbix_get -s 127.0.0.1 -k "zabbix[wcache,history,pused]"
-zabbix_get -s 127.0.0.1 -k "zabbix[wcache,values,all]"
-zabbix_get -s 127.0.0.1 -k "zabbix[tcache,cache,paccessed]"
+zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[wcache,history,pused]"
+zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[vcache,buffer,pused]"
+zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[tcache,cache,paccessed]"
 # → 0..100%; >80% — увеличивайте размер кэша
 
 # 4. Проверка занятости процессов
-zabbix_get -s 127.0.0.1 -k "zabbix[process,agent poller,avg,busy]"
+zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[process,agent poller,avg,busy]"
 # → 0..100%; >75% — масштабируйте воркеры
 
 # 5. Проверка версии
-zabbix_get -s 127.0.0.1 -k "zabbix[version]"
+zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[version]"
 # → Zabbix Server 8.0.0 (revision ...)
 ```
 
@@ -296,7 +310,7 @@ zabbix_get -s 127.0.0.1 -k "zabbix[version]"
 
 ### Масштабирование
 
-* **Используйте Zabbix Proxy Groups** (Zabbix 8.0) для распределения сбора данных при большом числе целей мониторинга.
+* **Используйте Zabbix Proxy Groups** (Zabbix 7.0+) для распределения сбора данных при большом числе целей мониторинга.
 * **Разделите поллеры по типам:** ODBC-поллеры отдельно от обычных пассивных проверок.
 * **При большом числе целей (>100)** используйте несколько Zabbix Proxy, каждый со своим набором проверок.
 * **Для высоких NVPS (>100k)** используйте TimescaleDB с компрессией, несколько History Syncers, достаточный `HistoryCacheSize` (128M–512M).
@@ -305,7 +319,7 @@ zabbix_get -s 127.0.0.1 -k "zabbix[version]"
 
 При инцидентах инфраструктуры Zabbix используйте стандартизированный runbook:
 
-1. **Сбор показателей:** `zabbix[queue,5m]`, `zabbix[process,,avg,busy]`, `zabbix[wcache,history,pused]`, `zabbix[wcache,values,all]`, `zabbix[history]`.
+1. **Сбор показателей:** `zabbix[queue,5m]`, `zabbix[process,,avg,busy]`, `zabbix[wcache,history,pused]`, `zabbix[vcache,buffer,pused]`, `zabbix[requiredperformance]`.
 2. **Сбор логов:** `/var/log/zabbix/zabbix_server.log`, `dmesg | grep -i oom`, PostgreSQL logs.
 3. **Диагностика:** `zabbix_server -R diaginfo=<секция>` (historycache, preprocessing, valuecache, alerting).
 4. **Корректировка:** временное увеличение параметров кэшей или процессов, перезапуск проблемных процессов.
@@ -324,5 +338,5 @@ zabbix_get -s 127.0.0.1 -k "zabbix[version]"
 ### Источники и ссылки
 
 * Официальная документация Zabbix 8.0: [https://www.zabbix.com/documentation/8.0/en/manual](https://www.zabbix.com/documentation/8.0/en/manual)
-* Release Notes Zabbix 8.0 LTS: [https://www.zabbix.com/rn/rn8.0.0](https://www.zabbix.com/rn/rn8.0.0)
+* Release Notes Zabbix 8.0.0rc1: [https://www.zabbix.com/rn/rn8.0.0rc1](https://www.zabbix.com/rn/rn8.0.0rc1)
 * Roadmap Zabbix: [https://www.zabbix.com/roadmap](https://www.zabbix.com/roadmap)

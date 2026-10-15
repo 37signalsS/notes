@@ -1,8 +1,10 @@
 # DNS внутри VPN (Split DNS)
 
+**Актуально для:** WireGuard/wg-quick (wireguard-tools 1.0.x), dnsmasq 2.8x, unbound 1.5+ (DNS64-модуль добавлен в версии 1.5.0), systemd-resolved
+
 ## Определения
 
-**Split DNS (раздельный DNS)** — схема, при которой одни зоны (внутренние) резолвятся через DNS-сервер внутри VPN-туннеля, а остальные — через обычный интернет-резолвер. **DNS over tunnel** — доставка DNS-запросов до внутреннего сервера через туннельный интерфейс (10.0.0.x), а не через внешний канал. **MagicDNS** — автоматический DNS поверх mesh-VPN (Tailscale), раздающий имена узлов сети без ручных зон.
+**Split DNS (раздельный DNS)** — схема, при которой одни зоны (внутренние) резолвятся через DNS-сервер внутри VPN-туннеля, а остальные — через обычный интернет-резолвер. **DNS over tunnel** — доставка DNS-запросов до внутреннего сервера через туннельный интерфейс (10.0.0.x), а не через внешний канал. **MagicDNS** — автоматический DNS поверх mesh-VPN (Tailscale), раздающий имена узлов сети без ручных зон. **DNS leak (утечка DNS)** — резолвинг имён клиента через внешний канал, минуя туннель: запросы видны провайдеру, а внутренние имена могут «утечь» в публичный резолвер. **Search domain (домен поиска)** — суффикс, который клиент приписывает коротким именам (`db` → `db.corp.example`); в systemd-resolved домен с префиксом `~` резолвится исключительно через данный интерфейс.
 
 ## Основные концепции
 
@@ -24,7 +26,7 @@
 | 2. Клиентский VPN-конфиг | `wg0.conf` клиента | Директива `DNS = <ip>` у WireGuard, `server=...`/`local-zone` у DNS |
 | 3. Маршрутизация | AllowedIPs/владельцы DNS | Адрес DNS-сервера должен попадать в туннель (AllowedIPs) |
 
-В WireGuard клиенту DNS задаётся директивой интерфейса (wg-quick при поднятии обновляет `/etc/resolv.conf` через resolvconf/systemd-resolved):
+В WireGuard клиенту DNS задаётся директивой интерфейса. `wg-quick` при поднятии применяет её через `resolvconf -a tun.<iface> -m 0 -x` (openresolv или shim системного resolver'а), при снятии — через `resolvconf -d tun.<iface> -f`; если `resolvconf` недоступен, DNS не применяется — тогда настройку делают вручную через `PostUp` с `resolvectl` (см. сценарий 6):
 
 ```ini
 [Interface]
@@ -43,10 +45,40 @@ PersistentKeepalive = 25
 
 ### Где взять серверный DNS
 
-- **dnsmasq** — лёгкий conditional forwarding (внутренние зоны → внутренний DNS, остальное → интернет), кэширование, статические записи. SSoT: [dnsmasq](../Networking/Protocols/DNS/dnsmasq.md).
-- **unbound** — локальный резолвер с `local-zone`/`local-data`, валидацией DNSSEC. SSoT: [unbound](../Networking/Protocols/DNS/unbound_resolver.md).
+- **dnsmasq** — лёгкий conditional forwarding (внутренние зоны → внутренний DNS, остальное → интернет), кэширование, статические записи. Подробнее: [dnsmasq](../Networking/Protocols/DNS/dnsmasq.md).
+- **unbound** — локальный резолвер с `local-zone`/`local-data`, валидацией DNSSEC. Подробнее: [unbound](../Networking/Protocols/DNS/unbound_resolver.md).
 - **BIND/PowerDNS** — полноценные авторитативные/кэширующие серверы при крупной инфраструктуре DNS.
 - **MagicDNS** (Tailscale) — автоматический вариант, см. [Vpn/tailscale.md](./tailscale.md).
+
+## Установка и настройка
+
+**Предусловия** (сервер `10.0.0.1` — WireGuard-шлюз в VPN-подсети `10.0.0.0/24`):
+
+```bash
+# Сервер: установлен DNS-сервер, интерфейс wg0 поднят
+sudo apt install dnsmasq        # или unbound
+sudo wg show wg0
+# → interface: wg0
+#   public key: ...
+#   10.0.0.1/24
+
+# Порт 53 свободен на VPN-адресе. systemd-resolved слушает 127.0.0.53 — конфликта нет,
+# но локальный dnsmasq или NetworkManager могут занять 0.0.0.0:53
+sudo ss -ulnp | grep :53
+
+# Клиент: wireguard-tools (wg-quick) и resolvconf (openresolv) либо systemd-resolved
+wg-quick --version
+# → 1.0.20210914
+command -v resolvconf || command -v resolvectl
+# → /usr/sbin/resolvconf  (или /usr/bin/resolvectl)
+```
+
+**Порядок настройки split DNS:**
+
+1. Поднять DNS-сервер в VPN-подсети (сценарии 1–2), открыв порт 53 только для `wg0`.
+2. Раздавать клиентам адрес этого сервера: `DNS = 10.0.0.1` в клиентском конфиге WireGuard (или `push "dhcp-option DNS ..."` в OpenVPN — сценарий 8).
+3. Проверить, что адрес DNS-сервера входит в `AllowedIPs` клиента (иначе запросы пойдут мимо туннеля).
+4. Валидация: `dig @10.0.0.1 db.corp.example` с клиента и `ip route get 10.0.0.1` (→ `dev wg0`).
 
 ## Практические сценарии
 
@@ -58,7 +90,8 @@ PersistentKeepalive = 25
 # Слушать только VPN-интерфейс
 interface=wg0
 bind-interfaces
-listen-address=::1,10.0.0.1
+listen-address=::1
+listen-address=10.0.0.1
 
 # Внутреннюю зону — во внутренний DNS
 server=/corp.example/10.20.0.53
@@ -69,6 +102,14 @@ server=1.1.1.1
 
 # Статические записи для теста
 address=/vpn-gw.int/10.0.0.1
+```
+
+Валидация и запуск:
+
+```bash
+sudo dnsmasq --test
+# → dnsmasq: syntax check OK
+sudo systemctl restart dnsmasq
 ```
 
 **Клиентская часть** — конфиг из «Основных концепций» выше с `DNS = 10.0.0.1`.
@@ -108,12 +149,19 @@ server:
 
 `local-zone ... transparent` — внутренние имена резолвятся из `local-data` и внутренних форвардов, а не падают в интернет. Подробности: [unbound resolver](../Networking/Protocols/DNS/unbound_resolver.md).
 
+```bash
+# Проверка конфига до перезапуска
+sudo unbound-checkconf /etc/unbound/unbound.conf
+# → unbound-checkconf: no errors in /etc/unbound/unbound.conf
+```
+
 ### 3. Split DNS при full tunnel (всё через VPN)
 
 Если `AllowedIPs = 0.0.0.0/0`, весь интернет-трафик клиента идёт через концентратор, и DNS-запросы клиента тоже надо закрыть в туннель — иначе запросы к внутренним зонам уйдут через внешний канал. Варианты:
 
 - серверный DNS в подсети туннеля (как выше) с указанием `DNS = 10.0.0.1`;
-- DNS-проксирование/маскарадинг на шлюзе, чтобы client resolver не «выглядывал» наружу.
+- DNS-проксирование/маскарадинг на шлюзе, чтобы client resolver не «выглядывал» наружу;
+- на клиенте с systemd-resolved — исключительная маршрутизация всего DNS через туннель: `PostUp = resolvectl domain %i ~.` (все запросы идут только через `wg0`).
 
 ### 4. Диагностика DNS внутри VPN
 
@@ -164,27 +212,44 @@ sudo tcpdump -i any "udp and (port 53 or port 853)" 2>/dev/null | head
 
 ### 6. Search domain и split с несколькими зонами
 
-При нескольких внутренних зонах (`corp.example`, `office.internal`) клиенту удобнее домен поиска, чем полные имена:
+При нескольких внутренних зонах (`corp.example`, `office.internal`) клиенту удобнее домен поиска, чем полные имена. `wg-quick` принимает в `DNS` не только IP-адреса, но и не-IP имена — они становятся доменами поиска:
 
 ```ini
 [Interface]
-DNS = 10.0.0.1
-# systemd-resolved через wg-quick допускает и зону поиска (опция зависит от версии);
-# строго настраивается в /etc/systemd/resolved.conf
+PrivateKey = <client_private_key>
+Address = 10.0.0.2/24
+DNS = 10.0.0.1, corp.example
 ```
+
+`wg-quick` передаёт это в `resolvconf` (`nameserver 10.0.0.1` + `search corp.example`). На системах с systemd-resolved, где нет shim `resolvconf`, настройку применяют вручную через `PostUp`:
+
+```ini
+[Interface]
+PrivateKey = <client_private_key>
+Address = 10.0.0.2/24
+PostUp = resolvectl dns %i 10.0.0.1; resolvectl domain %i ~corp.example
+PreDown = resolvectl revert %i
+```
+
+Префикс `~` перед доменом делает его «исключительно маршрутизируемым»: зона `corp.example` резолвится только через `wg0`, а остальные зоны остаются на резолверах хоста. Для full-tunnel (весь DNS через туннель) — `resolvectl domain %i ~.` (см. сценарий 3).
 
 ```bash
-# /etc/systemd/resolved.conf (пример ручного задания на клиенте)
-[Resolve]
-DNS=10.0.0.1
-Domains=corp.example office.internal
+# Проверка: у интерфейса wg0 должен быть резолвер и домен
+resolvectl status wg0
+# → Current DNS Server: 10.0.0.1
+# → DNS Servers: 10.0.0.1
+# → DNS Domain: ~corp.example
+
+# Короткое имя резолвится через домен поиска (glibc учитывает search list)
+getent hosts db
+# → 10.20.0.55   db.corp.example
 ```
 
-`resolvectl status wg0` должен показать список `Domains:`. Детали настройки resolver в systemd-пресетах — [systemd-resolved](../Linux/Core/systemd/systemd_resolved.md); тонкости у `wg-quick` на Windows/macOS (DNS пишут GUI-клиенты, см. [Vpn/wireguard.md](./wireguard.md)).
+Детали настройки resolver в systemd-пресетах — [systemd-resolved](../Linux/Core/systemd/systemd_resolved.md); тонкости у `wg-quick` на Windows/macOS (DNS пишут GUI-клиенты, см. [Vpn/wireguard.md](./wireguard.md)).
 
 ### 7. DNS64 для IPv6-only клиентов
 
-Когда VPN даёт клиенту IPv6, но внутренний сервис — только IPv4 (см. [vpn-ipv6.md](./vpn-ipv6.md)), DNS64 синтезирует AAAA для IPv4-only зон: клиент уходит в IPv6 внутри туннеля во «понятный» префикс, а шлюз транслирует в IPv4. Пример на unbound:
+Когда VPN даёт клиенту IPv6, но внутренний сервис — только IPv4 (см. [vpn-ipv6.md](./vpn-ipv6.md)), DNS64 синтезирует AAAA для IPv4-only зон: клиент уходит в IPv6 внутри туннеля во «понятный» префикс, а шлюз транслирует в IPv4. DNS64-модуль в unbound доступен с версии 1.5.0. Пример на unbound:
 
 ```conf
 server:
@@ -194,10 +259,64 @@ server:
 
 Без DNS64 IPv6-only клиент не сможет открыть IPv4-only ресурс, даже если NAT64 на шлюзе есть. Подробности — [NAT64/DNS64](../Networking/OSI_TCP_IP_Model/Network_layer/Concepts/ipv4_ipv6_dual_stack.md) и [vpn-ipv6.md](./vpn-ipv6.md).
 
+### 8. Split DNS для OpenVPN
+
+OpenVPN раздаёт DNS-сервер и домен поиска клиенту через DHCP-опции (push), а клиент применяет их скриптом `update-resolv-conf`:
+
+```ini
+# /etc/openvpn/server.conf (сервер)
+push "dhcp-option DNS 10.8.0.1"
+push "dhcp-option DOMAIN corp.example"
+```
+
+```ini
+# /etc/openvpn/client.conf (клиент)
+script-security 2
+up /etc/openvpn/update-resolv-conf
+down /etc/openvpn/update-resolv-conf
+```
+
+Скрипт `update-resolv-conf` (из состава OpenVPN) правит `/etc/resolv.conf` при подключении и восстанавливает исходное состояние при отключении; для systemd-resolved применяется вариант `update-systemd-resolved` (работает через D-Bus). Проверка:
+
+```bash
+resolvectl status tun0
+# → Current DNS Server: 10.8.0.1
+# → DNS Domain: corp.example
+```
+
+Контекст настройки OpenVPN за NAT и полный конфиг — [NAT и VPN](../Networking/Concepts/nat/nat_and_vpn.md); типовые проблемы с push-ом DNS — [OpenVPN](../Networking/Tunnels/openvpn.md).
+
+## Устранение неполадок
+
+| Симптом | Причина | Диагностика | Решение |
+|---------|---------|-------------|---------|
+| `Name or service not known` для внутренних имён | DNS-сервер не задан в клиентском конфиге или адрес DNS не в `AllowedIPs` | `resolvectl status`, `ip route get 10.0.0.1` | Задать `DNS = 10.0.0.1`; включить адрес DNS-сервера в `AllowedIPs` |
+| Внутренние имена резолвятся, но запросы уходят наружу (утечка) | Не настроен split: системный resolver по умолчанию публичный | `dig @8.8.8.8 db.corp.example +short` (сценарий 5) | Настроить split DNS (сценарии 1–2, 6) |
+| `wg-quick up` падает с `resolvconf: command not found` | Нет resolvconf/openresolv и нет shim systemd-resolved | `command -v resolvconf` | Установить `openresolv` или применять `PostUp` с `resolvectl` (сценарий 6) |
+| После `wg-quick down` не работает внешний DNS | resolvconf не восстановил исходный resolv.conf | `cat /etc/resolv.conf` | Повторить `wg-quick down`; при systemd-resolved — `resolvectl revert wg0` |
+| dnsmasq не отвечает на адресе 10.0.0.1 | `listen-address` не совпадает с адресом `wg0`, либо порт 53 занят | `sudo ss -ulnp \| grep :53`, `sudo dnsmasq --test` | Выровнять `listen-address` с адресом интерфейса (по одной директиве на адрес), освободить порт |
+| unbound отвечает NXDOMAIN/REFUSED для внутренней зоны | Зона не покрыта `local-zone`/`local-data` или нет форварда для зоны | `sudo unbound-checkconf`, `dig @10.0.0.1 db.corp.example` | Добавить `local-data`/`server=` для зоны; проверить `access-control` |
+| DNSSEC-валидация ломает неподписанную внутреннюю зону | Зона не подписана, валидатор отвергает ответы | `dig @10.0.0.1 db.corp.example +dnssec` (SERVFAIL) | `domain-insecure: "corp.example"` в unbound (сценарий 2) |
+
+## Лучшие практики
+
+- **DNS-сервер — в туннельной подсети, и только на ней.** Слушать `wg0` (`interface=wg0` + `bind-interfaces` у dnsmasq, `access-control: 10.0.0.0/24 allow` у unbound), чтобы внутренний resolver не был доступен извне.
+- **Адрес DNS-сервера всегда включать в `AllowedIPs`** клиента — иначе split DNS не работает даже при правильном `DNS =`.
+- **Валидировать конфиги перед применением:** `dnsmasq --test`, `unbound-checkconf`, `wg-quick strip <conf>` (выводит конфиг без wg-quick-специфичных ключей — полезно для передачи `wg setconf`).
+- **DNSSEC для внешних форвардов** (validator в unbound); для неподписанных внутренних зон явно указывать `domain-insecure`.
+- **Домены поиска — через `~` (исключительная маршрутизация), а не через подмену глобального resolver'а**, чтобы split-сценарий случайно не перехватывал весь интернет-трафик.
+- **`log-queries` только при отладке** — запросы пишут в лог и нагружают диск (см. [dnsmasq](../Networking/Protocols/DNS/dnsmasq.md)).
+- **Проверять утечки после каждого изменения** конфига (сценарий 5) и держать canary-проверку в мониторинге (см. [vpn-monitoring.md](./vpn-monitoring.md)).
+- **Откат изменений:** `wg-quick down <conf>` снимает интерфейс вместе с DNS-настройками; удаление `/etc/dnsmasq.d/vpn.conf` + `systemctl restart dnsmasq` убирает серверный split.
+
 ## Дополнительная информация
 
 - **[dnsmasq — локальный DNS/DHCP-сервер](../Networking/Protocols/DNS/dnsmasq.md)** — conditional forwarding, статические записи, диагностика
+- **[Unbound — рекурсивный резолвер](../Networking/Protocols/DNS/unbound_resolver.md)** — `local-zone`/`local-data`, DNSSEC, DNS64
 - **[Vpn/tailscale.md](./tailscale.md)** — MagicDNS и автоматическое распределение DNS в mesh-VPN
 - **[DNS-мониторинг и производительность](../Networking/Protocols/DNS/dns_monitoring.md)** — метрики и наблюдаемость резолверов
 - **[Vpn/vpn-ipv6.md](./vpn-ipv6.md)** — DNS64/NAT64 для IPv6-only клиентов
 - **[Vpn/vpn-monitoring.md](./vpn-monitoring.md)** — canary-проверки доступности DNS внутри туннеля
+- **[Vpn/wireguard.md](./wireguard.md)** — клиентский конфиг wg-quick, особенности Windows/macOS
+- **[systemd-resolved](../Linux/Core/systemd/systemd_resolved.md)** — per-link DNS и домены маршрутизации (`~`)
+- **[OpenVPN](../Networking/Tunnels/openvpn.md)** — push DHCP-опций и update-resolv-conf

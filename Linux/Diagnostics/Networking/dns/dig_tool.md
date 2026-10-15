@@ -151,6 +151,7 @@ ExecStart=/usr/bin/dig @8.8.8.8 example.com +short
 | `+multiline` | Многострочный, легкочитаемый формат записей (например, для SOA). |
 | `+noall +answer` | Скрыть всё, кроме секции ответа. |
 | `+trace` | Трассировка пути от корневых серверов до авторитетных. |
+| `+nodnssec` | Подавить вывод DNSSEC-записей (RRSIG, DS) при трассировке. |
 | `+tcp` | Принудительное использование TCP вместо UDP. |
 | `-x` | Обратный DNS-запрос (Reverse Lookup) — IP в домен. |
 | `-p <port>` | Использовать нестандартный порт (по умолчанию 53). |
@@ -158,6 +159,7 @@ ExecStart=/usr/bin/dig @8.8.8.8 example.com +short
 | `+dnssec` | Запросить записи DNSSEC (RRSIG, DNSKEY). |
 | `+client=<subnet>` | Использовать EDNS Client Subnet (ECS) для проверки GeoDNS. |
 | `+nsid` | Запросить идентификатор сервера (Name Server ID). |
+| `+nssearch` | Опросить все авторитативные NS-сервера зоны и показать их SOA. |
 | `+json` / `+yaml` | Структурированный вывод (BIND 9.18+). |
 | `+bufsize=<size>` | Установить размер UDP-буфера (по умолчанию 512, рекомендуется 4096 для DNSSEC). |
 | `+time=<seconds>` | Таймаут на запрос (по умолчанию 5 секунд). |
@@ -234,11 +236,20 @@ dig @8.8.8.8 google.com +nsid +short
 # Просмотр всей цепочки делегирования
 dig example.com +trace
 
+# Трассировка без шума DNSSEC (скрывает RRSIG/DS)
+dig example.com +trace +nodnssec
+
 # Проверка SOA-записи с подробным форматированием
 dig example.com SOA +multiline
 
 # Проверка возможности трансфера зоны (AXFR)
 dig @ns1.example.com example.com AXFR
+
+# Опрос всех авторитативных NS-серверов зоны (+nssearch)
+dig +nssearch example.com
+# → SOA ns1.example.com. hostmaster.example.com. 2023091501 3600 600 86400 3600 from server 192.0.2.1
+#    SOA ns2.example.com. hostmaster.example.com. 2023091501 3600 600 86400 3600 from server 192.0.2.2
+#    (показывает рассинхрон серийников между NS)
 ```
 
 ### Сценарий 5: Современные и специфические записи
@@ -251,6 +262,25 @@ dig google.com HTTPS
 dig google.com CAA
 dig _443._tcp.example.com TLSA
 dig example.com SSHFP
+
+# Резолвинг SRV-записей для service discovery (SIP, XMPP, AD, LDAP)
+dig +short SRV _sip._tcp.example.com
+dig +short SRV _ldap._tcp.dc._msdcs.example.com
+dig +short SRV _xmpp-client._tcp.example.com
+```
+
+### Сценарий 5a: Аудит почтовых записей (SPF, DKIM, DMARC)
+
+Вытягивает TXT-записи SPF, DMARC и DKIM одним циклом для аудита почты.
+
+```bash
+# SPF, DMARC и DKIM селектор за один проход
+for r in example.com _dmarc.example.com sel._domainkey.example.com; do
+  dig +short TXT "$r"
+done
+
+# Проверка CAA-записей перед выпуском сертификатов
+dig +short CAA example.com
 ```
 
 ### Сценарий 6: Шифрованные протоколы (DoH/DoT)
@@ -332,6 +362,9 @@ for server in 8.8.8.8 1.1.1.1 9.9.9.9; do
   echo "=== $server ==="
   dig @$server example.com +short
 done
+
+# Быстрое сравнение двух резолверов через diff (split-horizon, кэш)
+diff <(dig +short @1.1.1.1 example.com) <(dig +short @8.8.8.8 example.com)
 ```
 
 ### Сценарий 10: Диагностика переключения TCP/UDP
@@ -346,6 +379,10 @@ dig example.com +dnssec +noall +header
 
 # Принудительный TCP для получения полного ответа
 dig example.com +dnssec +tcp +noall +answer
+
+# Комбо: TCP + человекочитаемый TTL + только ответ (для скриптов)
+dig +tcp +ttlunits +noall +answer example.com @8.8.8.8
+# → example.com.	1h	IN	A	93.184.216.34
 ```
 
 ### Сценарий 11: Проверка DNSSEC-цепочки доверия
@@ -441,6 +478,9 @@ dig @ns2.example.com example.com +short
 ```bash
 # Прямой запрос PTR-записи
 dig -x 93.184.216.34
+
+# Обратный PTR-запрос для IPv6 (расширяет обратный формат по полубайтам)
+dig -x 2606:4700:4700::1111 +short
 
 # Проверка через IN-ADDR.ARPA
 dig 34.216.184.93.in-addr.arpa PTR +short

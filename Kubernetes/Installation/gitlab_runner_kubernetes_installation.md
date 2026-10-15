@@ -1,5 +1,7 @@
 # Установка GitLab Runner в Kubernetes
 
+**Актуально для:** GitLab Runner 17.x–19.x, Helm chart gitlab/gitlab-runner 0.63.x, Kubernetes 1.28–1.31
+
 Руководство по развертыванию, масштабированию и оптимизации GitLab Runner в кластере Kubernetes при помощи официального Helm-чарта.
 
 ---
@@ -25,6 +27,9 @@
 | **Log Limit** | Максимальный размер лога задачи (в байтах), после которого логи обрезаются. Настраивается через `log_limit` в `config.toml` или `Runner.maximum_artifact_size`. |
 | **Debug Mode** | Режим отладки Runner (`[session_server]` с `debug` + `GITLAB_TRACE`). Позволяет включить детальное логирование для устранения проблем. |
 | **Deprecated Registration Token** | Устаревший метод регистрации Runner через `registration_tokens` (префикс `GR1348941`). Заменён на `authentication_token` (префикс `glrt-`) в GitLab 16.0+. |
+| **External Secrets Operator (ESO)** | Kubernetes-оператор для синхронизации секретов из внешних хранилищ (Vault, AWS Secrets Manager) в нативные Kubernetes Secrets. Используется для безопасной доставки токена регистрации Runner. |
+| **Flux HelmRelease** | Flux CD CRD (`helm.toolkit.fluxcd.io/v2`) для декларативного управления жизненным циклом Helm-чартов через GitOps. |
+| **GitOps** | Модель управления инфраструктурой, где желаемое состояние кластера декларируется в Git, а контроллеры (Flux, ArgoCD) обеспечивают его непрерывное применение. |
 
 ---
 
@@ -265,30 +270,118 @@ helm upgrade --install gitlab-runner gitlab/gitlab-runner \
   --set rbac.create=true
 ```
 
+### 1а. Деплой через Flux HelmRelease (GitOps)
+
+Для GitOps-управления Runner'ом используется Flux CD с `HelmRelease` CRD. Это обеспечивает декларативное управление, автоматический откат при сбоях и защиту от дрейфа конфигурации.
+
+**HelmRelease манифест:**
+
+```yaml
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: gitlab-runner
+  namespace: gitlab-runner
+spec:
+  chart:
+    spec:
+      chart: gitlab-runner
+      version: "0.63.*"
+      sourceRef:
+        kind: HelmRepository
+        name: gitlab
+        namespace: flux-system
+  values:
+    gitlabUrl: "https://gitlab.example.com"
+    runnerRegistrationToken: "${RUNNER_TOKEN}"
+    concurrent: 10
+    rbac:
+      create: true
+      clusterWideAccess: false
+    runners:
+      tags: "k8s,dev"
+      locked: false
+      config: |
+        [[runners]]
+          [runners.kubernetes]
+            namespace = "gitlab-runner"
+            image = "alpine:3.19"
+            privileged = true
+            [[runners.kubernetes.volumes.empty_dir]]
+              name = "docker-certs"
+              mount_path = "/certs/client"
+              medium = "Memory"
+```
+
+> **Примечание:** `privileged: true` обязателен для Docker-in-Docker. В окружениях, где DinD не нужен, ставьте `privileged: false` и используйте Kaniko или Buildah.
+
+`concurrent: 10` — максимум параллельных джоб на все поды раннера. Если джобы встают в очередь, увеличьте значение — и заодно добавьте ресурсов узлам.
+
+### 1б. Токен регистрации через External Secrets Operator (ESO)
+
+Никогда не вставляйте токен регистрации в values-файл или CI-переменные открытым текстом. Используйте ESO для синхронизации токена из Vault (или другого внешнего хранилища) в Kubernetes Secret, на который ссылается HelmRelease.
+
+**ExternalSecret для GitLab Runner токена:**
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: gitlab-runner-token
+  namespace: gitlab-runner
+spec:
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  target:
+    name: gitlab-runner-secret
+    template:
+      data:
+        runner-registration-token: "{{ .token }}"
+  data:
+    - secretKey: token
+      remoteRef:
+        key: secret/infra/gitlab-runner
+        property: registration_token
+```
+
+Затем ссылаемся на этот Secret в HelmRelease:
+
+```yaml
+values:
+  existingRunnerSecret: gitlab-runner-secret
+```
+
 ### 2. Настройка распределенного кэширования (S3/MinIO)
 
 Без внешнего кэша данные между запусками на разных узлах будут теряться.
 
-**Пример конфигурации в values.yaml:**
+**Конфигурация кэша на уровне Runner (values.yaml / config.toml):**
+
+```toml
+[[runners]]
+  [runners.cache]
+    Type = "s3"
+    Shared = true
+    [runners.cache.s3]
+      ServerAddress = "minio.infra.svc.cluster.local:9000"
+      BucketName = "gitlab-runner-cache"
+      Insecure = true
+```
+
+*Примечание: Секреты (AccessKey/SecretKey) рекомендуется прокидывать через существующий Kubernetes Secret (`runners.cache.secretName`).*
+
+**Конфигурация кэша в .gitlab-ci.yml (на уровне пайплайна):**
 
 ```yaml
-runners:
-  config: |
-    [[runners]]
-      [runners.kubernetes]
-        image = "alpine:latest"
-      [runners.cache]
-        Type = "s3"
-        Path = "gitlab-runner"
-        Shared = true
-        [runners.cache.s3]
-          ServerAddress = "minio.example.com"
-          BucketName = "runner-cache"
-          BucketLocation = "us-east-1"
-          Insecure = false
-          AuthenticationType = "access-key"
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - .npm/
+    - vendor/
 ```
-*Примечание: Секреты (AccessKey/SecretKey) рекомендуется прокидывать через существующий Kubernetes Secret (`runners.cache.secretName`).*
+
+> **Важно:** Без кэша каждая CI-джоба заново скачивает все зависимости. С S3-кэшем повторные джобы выполняются в 3–5 раз быстрее.
 
 ### 3. Оптимизация стоимости (Spot-инстанции)
 
@@ -313,7 +406,36 @@ runners:
 
 По умолчанию раннер запускается с минимальными правами. Если требуется сборка Docker-образов, используйте **[Kaniko](../../Docker/Dockerfile/dockerfile_kaniko.md)** вместо привилегированного режима (DinD).
 
-**Ограничение ресурсов для задач:**
+**Ограничение ресурсов для задач (подробная конфигурация):**
+
+```toml
+[[runners]]
+  [runners.kubernetes]
+    [runners.kubernetes.pod_annotations]
+      "cluster-autoscaler.kubernetes.io/safe-to-evict" = "false"
+    [runners.kubernetes.build_container_resources]
+      [runners.kubernetes.build_container_resources.requests]
+        cpu = "500m"
+        memory = "512Mi"
+      [runners.kubernetes.build_container_resources.limits]
+        cpu = "2"
+        memory = "2Gi"
+    [runners.kubernetes.helper_container_resources]
+      [runners.kubernetes.helper_container_resources.requests]
+        cpu = "100m"
+        memory = "128Mi"
+      [runners.kubernetes.helper_container_resources.limits]
+        cpu = "500m"
+        memory = "256Mi"
+```
+
+**Пояснения:**
+- `build_container_resources` — лимиты для основного контейнера задачи (где выполняется `script`)
+- `helper_container_resources` — лимиты для helper-контейнера (клонирование, кэш, артефакты)
+- `Requests` без `limits` приводят к OOM kill. Слишком низкие `limits` замедляют сборки. `cpu: "2"` — разумный потолок для docker build.
+- `safe-to-evict: "false"` не даёт cluster autoscaler вытеснять поды с активными джобами при уменьшении числа узлов.
+
+**Упрощённая конфигурация (общие лимиты):**
 
 ```yaml
 runners:
@@ -325,6 +447,55 @@ runners:
         cpu_limit = "2"
         memory_limit = "4Gi"
 ```
+
+### 4а. Docker-in-Docker (DinD) с TLS
+
+Для сборки Docker-образов внутри Kubernetes executor требуется DinD. Рекомендуется использовать mutual TLS через общий том `emptyDir` для сертификатов.
+
+**Конфигурация в values.yaml (Helm) или config.toml:**
+
+```toml
+[[runners]]
+  [runners.kubernetes]
+    namespace = "gitlab-runner"
+    image = "alpine:3.19"
+    privileged = true
+    [[runners.kubernetes.volumes.empty_dir]]
+      name = "docker-certs"
+      mount_path = "/certs/client"
+      medium = "Memory"
+```
+
+**Настройка в .gitlab-ci.yml:**
+
+```yaml
+# .gitlab-ci.yml
+build:
+  image: docker:24
+  services:
+    - name: docker:24-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: /certs
+    DOCKER_TLS_VERIFY: 1
+    DOCKER_CERT_PATH: /certs/client
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+```
+
+Том `docker-certs` типа `emptyDir` общий для сервиса `dind` и build-контейнера — это обеспечивает mutual TLS без `--privileged` на сервисном контейнере.
+
+### 4б. Альтернативы Docker-in-Docker
+
+| Инструмент | Privileged | Скорость | Примечание |
+| :--- | :--- | :--- | :--- |
+| **Docker-in-Docker** | Да | Быстро | Требует `privileged: true`, полный доступ к ядру хоста |
+| **Kaniko** | Нет | Средне | Сборка в userspace без Docker-демона, медленнее но безопаснее |
+| **Buildah** | Нет | Средне | Rootless сборка, работает без демона, хорошо для OCI-образов |
+
+> **Рекомендация:** Начинайте с **Kaniko**. В большинстве случаев он покрывает все потребности и избавляет от проблем с безопасностью. Если столкнетесь с несовместимостью — переключайтесь на **Buildah** или настраивайте **DinD** на выделенных узлах с `privileged: true`.
 
 ### 5. ImagePullSecrets для приватных реестров
 
@@ -633,6 +804,17 @@ EOF
 | `kubectl exec -it deployment/gitlab-runner -n gitlab-runner -- cat /etc/gitlab-runner/config.toml` | Просмотр конфигурации Runner |
 | `helm status gitlab-runner -n gitlab-runner` | Статус Helm-релиза |
 | `helm get values gitlab-runner -n gitlab-runner` | Текущие values релиза |
+| `kubectl get pods -n gitlab-runner --field-selector=status.phase=Running` | Поды с активными джобами |
+| `kubectl exec -n gitlab-runner <job-pod-name> -c build -- /bin/sh` | Зайти в под джобы (пока она работает) |
+| `kubectl exec -n gitlab-runner deploy/gitlab-runner -- gitlab-runner list` | Список зарегистрированных раннеров |
+
+### Типичные проблемы
+
+| Проблема | Причина | Решение |
+| :--- | :--- | :--- |
+| **Под джобы завис в Pending** | Недостаточно ресурсов на узлах | Проверить `kubectl describe pod`, добавить узлы или уменьшить requests |
+| **Docker socket not found** | Не задан `DOCKER_HOST=tcp://docker:2376`, используется unix-сокет | Убедиться, что в `.gitlab-ci.yml` задан `DOCKER_HOST: tcp://docker:2376` |
+| **TLS handshake failed** | Том `docker-certs` не монтируется по одному пути в build- и dind-контейнерах | Проверить, что `emptyDir` том `docker-certs` смонтирован в оба контейнера по `/certs/client` |
 
 ### Диагностический скрипт (one-shot)
 
@@ -823,3 +1005,6 @@ docker pull gitlab/gitlab-runner-helper:x86_64-v17.0.0
 - **[Использование Docker-in-Docker](../../Docker/docker-in-docker.md)** — если Kaniko не подходит.
 - **[Интеграция GitLab CI с Kubernetes](../../CI-CD/GitLab_CI/Advanced/gitlab_kubernetes_integration_guide.md)** — настройка Агента и CI/CD.
 - **[Регистрация Runner](../../CI-CD/GitLab_CI/Tutorials/runner_registration.md)** — подробнее о токенах и UI.
+- **[Flux CD: обзор и ключевые концепции](../../GitOps/flux.md)** — GitOps деплой через HelmRelease.
+- **[External Secrets Operator (ESO)](../../Kubernetes/Base/secrets/external_managers.md)** — синхронизация секретов из Vault.
+- **[Kaniko: сборка без Docker](../../Docker/Dockerfile/dockerfile_kaniko.md)** — безопасная альтернатива DinD.

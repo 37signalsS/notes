@@ -215,8 +215,11 @@ kubectl get ingress my-app -o jsonpath='{.status.loadBalancer}'
 | Функция | NGINX Ingress | Traefik | HAProxy | Описание |
 | :--- | :--- | :--- | :--- | :--- |
 | **Rewrite** | `nginx.ingress.kubernetes.io/rewrite-target: /$1` | Нативная поддержка через `PathPrefix` + `StripPrefix` middleware | `haproxy.org/path-rewrite: /(.*) /v1/\1` | Изменение пути перед отправкой в бэкенд. |
+| **Rewrite (capture group)** | `nginx.ingress.kubernetes.io/rewrite-target: /$2` + `use-regex: "true"` | — | — | Срезание префикса пути через regex-захват `(/|$)(.*)`. |
 | **SSL Redirect** | `nginx.ingress.kubernetes.io/force-ssl-redirect: "true"` | Мiddleware `redirectScheme` | `haproxy.org/ssl-redirect: "true"` | Редирект HTTP на HTTPS. |
 | **Rate Limit** | `nginx.ingress.kubernetes.io/limit-rps: "10"` | Middleware `rateLimit` | `haproxy.org/rate-limit: "10"` | Ограничение запросов в секунду. |
+| **Rate Limit (burst)** | `nginx.ingress.kubernetes.io/limit-rps: "10"` (burst=5x по умолчанию) | — | — | Дополнительный параметр burst. |
+| **Canary** | `nginx.ingress.kubernetes.io/canary: "true"` + `canary-weight: "20"` | Нативная поддержка через `TrafficSplit` | — | Канареечный деплой: 20% трафика на canary ingress. |
 | **Auth** | `nginx.ingress.kubernetes.io/auth-type: basic` | Middleware `basicAuth` | `haproxy.org/auth: "basic"` | Базовая аутентификация через Secret. |
 | **CORS** | `nginx.ingress.kubernetes.io/enable-cors: "true"` | Middleware `headers` | `haproxy.org/cors: "true"` | Настройка Cross-Origin Resource Sharing. |
 | **WebSocket** | `nginx.ingress.kubernetes.io/websocket-services: "svc"` | Автообнаружение Upgrade | `haproxy.org/path-announce: "true"` | Поддержка WebSocket-соединений. |
@@ -610,9 +613,26 @@ kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx | grep -i 
 | `kubectl get ingress -A` | Список всех точек входа в кластере. | `my-app ingress-nginx myapp.example.com 10.0.0.1 80,443 5m` |
 | `kubectl describe ingress <name>` | Детальная информация о правилах и TLS. | Rules, Annotations, Events, LoadBalancer status. |
 | `kubectl logs -n <ns> <pod>` | Логи работы прокси-сервера. | Access log с кодами ответа и latencies. |
+| `kubectl logs -n ingress-nginx deploy/ingress-nginx-controller --tail=2000 \| grep -iE 'upstream timed out\|504\|499'` | Поиск таймаутов upstream и разорванных клиентом запросов (499 = клиент закрыл соединение до ответа). | `upstream timed out (110: Connection timed out) while connecting to upstream` |
+| `kubectl exec deploy/ingress-nginx-controller -n ingress-nginx -- nginx -T \| less` | Дамп полной действующей конфигурации nginx.conf со всеми server-блоками. | Полный `nginx.conf` с upstream и location. |
+| `kubectl exec deploy/ingress-nginx-controller -n ingress-nginx -- curl -s localhost:10254/nginx_status` | Метрики статуса контроллера (stub_status): активные соединения, reading/writing/waiting. | `Active connections: 42` `Reading: 1 Writing: 2 Waiting: 39` |
 | `kubectl get ingressclass` | Список доступных классов и класс по умолчанию. | `nginx  k8s.io/ingress-nginx  true` |
-| `kubectl get events -n <ns>` | События, связанные с Ingress. | CREATE, UPDATE, RELOAD事件. |
-| `kubectl exec -it <controller-pod> -- cat /etc/nginx/nginx.conf` | Просмотр сгенерированной конфигурации. | Полный `nginx.conf` с upstream и location. |
+| `kubectl get ingressclass -o custom-columns='NAME:.metadata.name,DEFAULT:.metadata.annotations.ingressclass\.kubernetes\.io/is-default-class'` | Список IngressClass с явным указанием дефолтного класса. | `nginx  true` |
+| `kubectl get events -n <ns>` | События, связанные с Ingress. | CREATE, UPDATE, RELOAD события. |
+| `kubectl exec -it <controller-pod> -- cat /etc/nginx/nginx.conf` | Просмотр сгенерированной конфигурации (альтернатива nginx -T). | Полный `nginx.conf` с upstream и location. |
+
+#### Примеры annotate для распространенных задач
+
+```bash
+# Канареечный сплит трафика (20% на canary)
+kubectl annotate ingress <name> -n <ns> nginx.ingress.kubernetes.io/canary=true nginx.ingress.kubernetes.io/canary-weight="20"
+
+# Лимит RPS и размер тела запроса
+kubectl annotate ingress <name> -n <ns> nginx.ingress.kubernetes.io/limit-rps="10" nginx.ingress.kubernetes.io/proxy-body-size="50m"
+
+# Rewrite-target с группой захвата (regex)
+kubectl annotate ingress <name> -n <ns> nginx.ingress.kubernetes.io/rewrite-target='/$2' nginx.ingress.kubernetes.io/use-regex='true'
+```
 
 ---
 

@@ -1,5 +1,7 @@
 # Мониторинг PostgreSQL в Zabbix
 
+> **Актуально для:** Zabbix 7.0 LTS / 7.4, шаблон «PostgreSQL by Zabbix agent 2» (PostgreSQL 10–17). Освещён также переход с шаблонов Zabbix 5.x.
+
 ## Определения
 
 **Zabbix Agent 2 PostgreSQL Plugin** — специализированный загружаемый модуль (loadable plugin) для Zabbix Agent 2, обеспечивающий сбор метрик PostgreSQL через нативные системные представления (`pg_stat_*`). Начиная с версий Zabbix 6.0.10 / 6.2.4 / 6.4 плагин вынесен из основного бинарника агента в отдельный пакет `zabbix-agent2-plugin-postgresql` (или собирается из исходников).
@@ -26,7 +28,20 @@
   * **Database discovery** (`pgsql.db.discovery`) — автоматическое обнаружение баз данных (исключая шаблонные и запрещающие подключение); в момент создания новой БД система автоматически начинает собирать её метрики.
   * **Replication discovery** (`pgsql.replication.process.discovery`) — обнаружение `application_name` WAL-отправителей и мониторинг отставания потоковой репликации (write / flush / replay lag).
   * Фильтры LLD задаются макросами `{$PG.LLD.FILTER.DBNAME}` и `{$PG.LLD.FILTER.APPLICATION}` (по умолчанию `.+` — обнаруживать все).
-* **Учётные данные:** Базовый способ — указуются макросы шаблона (`{$PG.USER}`, `{$PG.PASSWORD}`, `{$PG.DATABASE}`). **Named Sessions** обязателен, если требуется SSL/TLS-шифрование соединения, а также рекомендован при мониторинге нескольких инстансов СУБД на одном агенте — пароли и сертификаты остаются в локальном файле агента и не передаются в открытом виде в веб-интерфейс Zabbix.
+  * **Учётные данные:** Базовый способ — указуются макросы шаблона (`{$PG.USER}`, `{$PG.PASSWORD}`, `{$PG.DATABASE}`). **Named Sessions** обязателен, если требуется SSL/TLS-шифрование соединения, а также рекомендован при мониторинге нескольких инстансов СУБД на одном агенте — пароли и сертификаты остаются в локальном файле агента и не передаются в открытом виде в веб-интерфейс Zabbix.
+
+### Контекст DevOps/SRE/Sysadmin
+
+Метрики шаблона покрывают не только «живость» СУБД, но и ключевые эксплуатационные риски PostgreSQL, поэтому они напрямую используются для SLI/SLO, capacity planning и runbook-автоматизации:
+
+* **Доступность (Availability):** `pgsql.ping` и `pgsql.uptime` — базовый SLI. Триггер `Service is down` (High) — точка запуска runbook (проверка `pg_hba.conf`, листенеров, места на диске). Событие `Service has been restarted` ловит незапланированный рестарт.
+* **Репликация и RPO:** `pgsql.replication.process.*_lag` (write/flush/replay lag) и `pgsql.replication.lag.sec` — SLI для SLO на отставание standby. Рост replay lag — сигнал о нехватке I/O или CPU на реплике; разрыв потока — риск роста RPO и повод для failover.
+* **Защита от wraparound:** `pgsql.oldest.xid` (триггер `Oldest xid is too big` при возрасте > 18 000 000) и `pgsql.frozenxid.prc_before_stop` — критичный для долгоживущих кластеров сигнал. Приближение к лимиту XID без успешного `VACUUM FREEZE` ведёт к остановке записи, поэтому это приоритетный алерт, а не «фон».
+* **Насыщение (Saturation):** `pgsql.connections.sum.total_pct` — доля занятых соединений от `max_connections`. Для SRE это golden-signal насыщения пула: рост `waiting` и `idle_in_transaction` указывает на блокировки и утечки соединений (часто перед пулером вроде PgBouncer).
+* **Capacity planning:** `pgsql.db.size`, `pgsql.wal.count`/`pgsql.wal.write`, `pgsql.archive.*` — тренды роста данных и WAL/архива. Ускоряющийся рост WAL или файлов, ожидающих архивации, предсказывает исчерпание диска и сбой бэкапов.
+* **Целостность данных (Durability):** `pgsql.dbstat.sum.checksum_failures.rate` (PG 12+) — подтверждённые повреждения страниц; `pgsql.dbstat.sum.conflicts.rate` — конфликты горячего резерва, приводящие к отмене запросов на standby.
+* **Change management:** пороги триггеров задаются макросами и вместе с шаблоном версионируются в Git; плановые работы (обновление, `VACUUM FULL`, переключение) закрываются через Zabbix Maintenance, чтобы не порождать шум.
+* **Связь с пулером:** при работе через PgBouncer метрики самого пулера (`cl_waiting`, `sv_active`, `sv_idle`) сопоставляются с `pgsql.connections.sum.waiting` — см. **[Эксплуатация и мониторинг PgBouncer](../Databases/PostgreSQL/Operations/pgbouncer_operations.md)**.
 
 ---
 
@@ -71,8 +86,8 @@
    ```
    Проверка загрузки плагина:
    ```bash
-   zabbix_agent2 -t pgsql.ping["tcp://127.0.0.1:5432","zbx_monitor","password","postgres"]
-   # → {"status":"up"}
+   zabbix_agent2 -t 'pgsql.ping["tcp://127.0.0.1:5432","zbx_monitor","password","postgres"]'
+   # → pgsql.ping[...] [u|1]   (1 = соединение установлено, 0 = ошибка)
    ```
 
 2. **Настройка макросов (простейший способ, один инстанс):**
@@ -107,12 +122,12 @@
 
 1. Привяжите к хосту официальный шаблон **PostgreSQL by Zabbix agent 2**.
 2. В макросах хоста укажите в `{$PG.CONNSTRING.AGENT2}` либо строку подключения URI, либо имя настроенной сессии, например: `ProdDB`.
-3. Если используется Named Session, поля макросов `{$PG.USER}`, `{$PG.PASSWORD}`, `{$PG.DATABASE}` он принимает из конфигурации агента и могут быть оставлены пустыми.
-4. Укажите пароль в макро `{$PG.PASSWORD}` для способа с макро-параметрами.
+3. Если используется Named Session, значения макросов `{$PG.USER}`, `{$PG.PASSWORD}`, `{$PG.DATABASE}` берутся из конфигурации агента, поэтому в веб-интерфейсе их можно оставить пустыми.
+4. Укажите пароль в макросе `{$PG.PASSWORD}` для способа с макро-параметрами.
 
-> Примечание о версиях: в шаблонах Zabbix 6.x использовались макросы `{$PG.CONNSTRING}` и `{$PG.URI}`. В актуальных шаблонах 7.4/x и 8.x используется `{$PG.CONNSTRING.AGENT2}`; при переезде со старых версий макросы необходимо перенести.
+> Примечание о версиях: в шаблоне «PostgreSQL by Zabbix agent 2» для Zabbix 5.4 и ранее строка подключения задавалась макросом `{$PG.URI}`; начиная с Zabbix 6.0 он заменён на `{$PG.CONNSTRING.AGENT2}`. Формат ключей элементов данных также изменился — в актуальных шаблонах передаются четыре параметра (`connString`, `user`, `password`, `database`), поэтому при переезде со старых версий значения макросов и ключи необходимо перенести, иначе элементы данных уйдут в статус `Unsupported`.
 
-### Макросы шаблона (актуальные для 7.4/8.0)
+### Макросы шаблона (актуальные для 7.0/7.4)
 
 | Макрос | Описание | По умолчанию |
 |---|---|---|
@@ -150,14 +165,14 @@ Plugins.PostgreSQL.CustomQueriesEnabled=true
 | Системное представление / ключ | Отслеживаемые метрики | Срабатывающие триггеры |
 |---|---|---|
 | `pgsql.connections` (`pg_stat_activity`) | Активные, `idle`, `waiting`, `idle_in_transaction` соединения | Рост числа ожидающих соединений (блокировки, нехватка пула). `total_pct` (доля от `max_connections`) |
-| `pgsql.locks` (`pg_locks`) | Количество и типы блокировок (accessshare, rowexclusive...) | Обнаружение `Deadlocks` и `Recovery Conflicts`. |
-| `pgsql.dbstat` (`pg_stat_database`) | Transactions (Commit/s, Rollback/s), Rows вставлено/обновлено/удалено | Аномальный всплеск откатов транзакций (Rollbacks). |
+| `pgsql.locks` (`pg_locks`) | Количество и типы блокировок (accessshare, rowexclusive, ...) | Рост общего числа блокировок в базе; выявление ожидающих блокировок. |
+| `pgsql.dbstat` (`pg_stat_database`) | Transactions (Commit/s, Rollback/s), строки вставлено/обновлено/удалено, deadlocks, recovery conflicts | Аномальный всплеск откатов транзакций (Rollbacks); deadlocks (High), recovery conflicts. |
 | `pgsql.bgwriter` (`pg_stat_bgwriter`) | Buffer hit/miss ratio, checkpoint metrics | Низкий hit rate (нехватка `shared_buffers`). |
 | `pgsql.replication.process*` (`pg_stat_replication`) | Streaming lag (write/flush/replay), число standby | Превышение допустимого отставания, разрыв репликации. |
-| `pgsql.queries`, `pgsql.dbstat` (`pg_stat_statements`) | Самые медленные и частые SQL-запросы | Слишком много медленных запросов (`Too Many Slow Queries`). |
-| `pgsql.wal.stat`, `pgsql.archive` | Размер WAL, скорость записи, архивная логика | Остановка `autovacuum`, риск переполнения диска WAL-файлами. |
-| `pgsql.oldest.xid` | Возраст самого старого XID | Триггер «Oldest xid is too big» (предупреждение о wraparound). |
-| `pgsql.autovacuum.count` | Количество воркеров `autovacuum` | Наблюдение за улавливанием ломов. |
+| `pgsql.queries` (`pg_stat_statements`) | Суммарное и максимальное время выполнения запросов по базам | Слишком много медленных запросов (`Too many slow queries`); требует расширения `pg_stat_statements`. |
+| `pgsql.wal.stat`, `pgsql.archive` | Размер WAL, скорость записи, число файлов к архивации, ошибки архивации | Риск переполнения диска WAL-файлами; сбой `archive_command` (`failed_trying_to_archive`). |
+| `pgsql.oldest.xid`, `pgsql.frozenxid` | Возраст самого старого XID, доля до autovacuum/stop | Триггер «Oldest xid is too big» (предупреждение о wraparound); `VACUUM FREEZE is required`. |
+| `pgsql.autovacuum.count` | Количество воркеров `autovacuum` | Контроль работы автоочистки: обвал числа воркеров указывает на сбой autovacuum или нехватку ресурсов. |
 | `pgsql.ping`, `pgsql.uptime` | Живость соединения, время работы инстанса | Триггер `Service is down` (High), `Service has been restarted`. |
 
 ---
@@ -167,6 +182,106 @@ Plugins.PostgreSQL.CustomQueriesEnabled=true
 * **Zabbix Dashboards:** Шаблон Agent 2 "из коробки" генерирует дашборды для хоста, визуализирующие throughput (TPS), кэш и блокировки.
 * **Интеграция:** Использование Zabbix API для вывода метрик в Grafana описано в **[Источники данных в Grafana](../Grafana/grafana_datasources.md)**.
 * **LLD-правила** шаблона: `database discovery` и `replication discovery` лучше всего видны в разделе **Discovery rules** при создании элементов данных (см. **[Низкоуровневое обнаружение (LLD)](./low_level_discovery.md)**).
+
+---
+
+## Устранение неисправностей
+
+### Типичные симптомы
+
+| Симптом | Вероятная причина | Решение |
+|---|---|---|
+| Все элементы данных шаблона в статусе `Unsupported`, в логе агента `cannot execute PostgreSQL plugin` | Плагин не загружен: не установлен пакет `zabbix-agent2-plugin-postgresql` или не указан `Plugins.PostgreSQL.System.Path` | Установите пакет, проверьте путь к бинарнику плагина, перезапустите `zabbix-agent2` |
+| `pgsql.ping` возвращает 0, триггер `Service is down` | СУБД недоступна, неверный URI/сессия, нет записи в `pg_hba.conf`, неверный метод аутентификации | Проверьте `pg_isready`, содержимое `pg_hba.conf`, доступность порта |
+| `permission denied for relation pg_stat_...` | Пользователь мониторинга без роли `pg_monitor` | `GRANT pg_monitor TO zbx_monitor;` (роль должна быть выдана с `INHERIT`) |
+| Элементы группы «Queries» / `pgsql.queries` в статусе `Unsupported` | Не установлено расширение `pg_stat_statements` | См. Шаг 1: `shared_preload_libraries` + рестарт + `CREATE EXTENSION pg_stat_statements;` в целевых БД |
+| LLD `replication discovery` не создаёт объекты | Нет активных WAL-отправителей (нет подключённых standby) либо фильтр `{$PG.LLD.FILTER.APPLICATION}` отсекает все `application_name` | Проверьте `SELECT * FROM pg_stat_replication;`, скорректируйте фильтр |
+| LLD `database discovery` не создаёт БД | Фильтр `{$PG.LLD.FILTER.DBNAME}` или исключение шаблонных БД | По умолчанию `.+`; шаблонные `template0`/`template1` и БД, запрещающие подключение, исключаются автоматически |
+| Ошибка TLS: `x509: certificate is valid for ..., not ...` | Агент проверяет SAN сертификата, а не CN; либо не используется Named Session | Выпустите сертификат с нужным SAN; для TLS обязательна Named Session с параметрами `TLSConnect`/`TLSCAFile` |
+| При работе через PgBouncer: `prepared statement "..." already exists` | В transaction pooling prepared statements теряют контекст сессии | Укажите `Plugins.PostgreSQL.Sessions.<name>.CacheMode=describe` |
+| `too many connections` на стороне СУБД | Исчерпан `max_connections`, утечка соединений, несколько агентов без пулинга | Проверьте `pgsql.connections.sum.*`, включите/проверьте пулинг (`KeepAlive`), используйте PgBouncer |
+| Триггер `Too many slow queries` не срабатывает, хотя запросы медленные | Не задан `{$PG.QUERY_ETIME.MAX.WARN}` или мал `{$PG.SLOW_QUERIES.MAX.WARN}` | Настройте пороги под профиль нагрузки |
+
+### Быстрая диагностика
+
+```bash
+# 1. Проверить, что плагин загрузился и ключи зарегистрированы
+zabbix_agent2 -p | grep pgsql.
+# → pgsql.ping[...], pgsql.version[...] и др.
+
+# 2. Тестовый вызов элемента данных (на хосте агента)
+zabbix_agent2 -t 'pgsql.ping["tcp://127.0.0.1:5432","zbx_monitor","password","postgres"]'
+# → pgsql.ping[...] [u|1]   (1 = успех, 0 = нет подключения)
+
+# 3. Проверка версии СУБД через агент
+zabbix_agent2 -t 'pgsql.version["tcp://127.0.0.1:5432","zbx_monitor","password","postgres"]'
+# → pgsql.version[...] [s|16.4]
+
+# 4. Проверка с Zabbix Server/Proxy (для активного агента используйте zabbix_get с ключом)
+zabbix_get -s 127.0.0.1 -k 'pgsql.ping["tcp://127.0.0.1:5432","zbx_monitor","password","postgres"]'
+# → 1
+
+# 5. Доступность СУБД напрямую
+pg_isready -h 127.0.0.1 -p 5432
+# → 127.0.0.1:5432 - accepting connections
+
+# 6. Логи агента (ошибки плагина, подключения, TLS)
+journalctl -u zabbix-agent2 -n 100
+# → при Unsupported: причина в строках с "postgresql" / "cannot"
+```
+
+> Если элемент данных успешно проверяется через `zabbix_agent2 -t`, но в веб-интерфейсе он `Unsupported`, причина, как правило, в макросах хоста (несовпадение имени сессии, пароль, фильтры LLD), а не в самом плагине.
+
+---
+
+## Лучшие практики
+
+### Безопасность
+
+* **Наименьшие привилегии:** выделенный пользователь `zbx_monitor` с ролью `pg_monitor` (`INHERIT`), никогда — суперпользователь `postgres`.
+* **Named Sessions:** храните URI, логин, пароль и TLS-материалы в конфигурационном файле плагина, а не в макросах веб-интерфейса. Ограничьте доступ: `chmod 600 /etc/zabbix/zabbix_agent2.d/plugins.d/*.conf`.
+* **TLS:** для шифрованного соединения обязательна Named Session. Агент проверяет SAN сертификата, поэтому сертификат СУБД должен содержать имя/адрес, к которому подключается агент.
+* **`pg_hba.conf`:** разрешайте подключение пользователя мониторинга только с адреса агента/прокси, используя `scram-sha-256` (`md5`/`trust` — только для локальной отладки).
+* **Секреты:** пароль в макросе можно хранить в Vault (Secret user macros, Zabbix 5.2+), а не в открытом виде.
+
+### Производительность
+
+* Шаблон уже построен по модели **Master / Dependent Items**: тяжёлые выборки из `pg_stat_*` выполняются одним запросом, остальные метрики извлекаются предобработкой JSONPath. Не заменяйте их отдельными item-ами с собственными запросами.
+* Для статических метрик оставляйте предобработку `Discard unchanged with heartbeat` (в шаблоне так сделано для `pgsql.version`, `pgsql.config.hash`, `pgsql.ping`).
+* Не уменьшайте интервалы ниже значений шаблона: тяжёлые запросы (`pgsql.wal.stat` — 5m, `pgsql.db.size` — 5m, discovery — 1h) не стоит опрашивать каждую минуту.
+* За пулером соединений держите `CacheMode=describe`, чтобы не накапливать prepared statements в transaction pooling.
+* Кастомные SQL-запросы (`pgsql.custom.query`, по умолчанию item отключён) делайте «дешёвыми»: без полного сканирования больших таблиц и без блокировок.
+
+### Надёжность
+
+* Разворачивайте мониторинг через Named Sessions с уникальным именем на каждый инстанс — один агент может обслуживать несколько СУБД.
+* Для плановых работ (обновление, `VACUUM FULL`, switchover) используйте **Maintenance** и **Problem Suppression**, чтобы не порождать ложные инциденты.
+* Версионируйте шаблон и значения порогов в Git; изменения порогов проводите через процедуру управления изменениями.
+* Перед применением новых элементов данных в production проверяйте их на staging через `zabbix_agent2 -t`.
+
+### Очистка и откат
+
+```bash
+# 1. Отвязать шаблон от хоста в веб-интерфейсе (Data collection → Hosts → Templates)
+# 2. Удалить конфигурацию плагина
+sudo rm /etc/zabbix/zabbix_agent2.d/plugins.d/postgresql.conf
+# 3. (Опционально) удалить пакет плагина
+sudo apt remove zabbix-agent2-plugin-postgresql   # Debian/Ubuntu
+sudo dnf remove zabbix-agent2-plugin-postgresql   # RHEL/Rocky/Alma
+sudo systemctl restart zabbix-agent2
+```
+
+На стороне СУБД при полном выводе из эксплуатации: `DROP EXTENSION pg_stat_statements;` и `DROP USER zbx_monitor;` (отзыв роли `pg_monitor`).
+
+### Пограничные случаи
+
+* **`pg_stat_statements`:** расширение подключается через `shared_preload_libraries` и создаётся **в каждой БД отдельно**; без него элементы группы «Queries» уходят в `Unsupported` — это ожидаемое поведение, а не сбой конфигурации.
+* **`pgsql.dbstat.sum.checksum_failures.rate`:** доступно начиная с PostgreSQL 12 и возвращает `NULL`, если контрольные суммы страниц (`data_checksums`) не включены.
+* **`pgsql.bgwriter.buffers_backend.rate` / `buffers_backend_fsync.rate`:** доступны только в PostgreSQL версий ниже 17; в PG 17+ соответствующая статистика перенесена.
+* **Именование сессии:** значение макроса `{$PG.CONNSTRING.AGENT2}` чувствительно к регистру и должно точно совпадать с `Plugins.PostgreSQL.Sessions.<SessionName>.*`.
+* **Пакет плагина:** на Debian/Ubuntu — `zabbix-agent2-plugin-postgresql`, на RHEL/Rocky/Alma — одноимённый пакет; при сборке из исходников путь к плагину задаётся через `Plugins.PostgreSQL.System.Path`.
+
+---
 
 ## Дополнительная информация
 

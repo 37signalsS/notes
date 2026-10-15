@@ -141,6 +141,7 @@ helm dependency list ./my-chart
 |------|----------|-------------|
 | `--timeout <duration>` | Время ожидания готовности (по умолчанию 5m). | `install`, `upgrade`, `rollback` |
 | `--wait` | Ждёт готовности всех подов, PVC, Service (LoadBalancer IP) и CRD (через kstatus). | `install`, `upgrade`, `rollback` |
+| `--wait-for-jobs` | Дополнительно блокирует до завершения hook-Job-ов; исключает гонку с миграциями БД. | `install`, `upgrade` |
 | `--atomic` | Включает `--wait` + автоматический `rollback` при сбое или таймауте. | `install`, `upgrade` |
 | `--cleanup-on-fail` | Удаляет созданные ресурсы, если транзакция не удалась (предотвращает конфликты). | `install`, `upgrade` |
 | `--server-side` | Явное включение SSA (в v4 активно по умолчанию). | `install`, `upgrade` |
@@ -296,6 +297,9 @@ helm upgrade --install my-app oci://registry.example.com/charts/my-app@sha256:7f
 | `helm template <name> <chart>` | Локальный рендер без обращения к кластеру |
 | `helm template <name> <chart> -f <file>` | Рендер с файлом значений |
 | `helm template <name> <chart> --show-only <file>` | Рендер только указанного шаблона |
+| `helm template <name> <chart> --kube-version <ver>` | Рендер для конкретной версии Kubernetes (офлайн-проверка возможностей) |
+| `helm template <name> <chart> --api-versions <vers>` | Фиксирует доступные API-версии (например `policy/v1`) |
+| `helm template <name> <chart> --include-crds` | Включает CRD из директории `crds/` в вывод |
 | `helm template <name> <chart> --debug` | Рендер с выводом значений и шаблонов |
 | `helm template <name> <chart> --output-dir <dir>` | Сохранение рендеренных манифестов в файлы |
 | `helm lint <chart>` | Локальная валидация чарта |
@@ -331,9 +335,22 @@ helm upgrade --install my-app oci://registry.example.com/charts/my-app@sha256:7f
 | Команда | Описание |
 |---------|----------|
 | `helm env` | Вывод переменных окружения Helm |
+| `helm plugin list` | Список установленных плагинов с версиями |
 | `helm completion bash` | Генерация completion-скрипта для Bash |
 | `helm completion zsh` | Генерация completion-скрипта для Zsh |
 | `helm completion fish` | Генерация completion-скрипта для Fish |
+
+**Плагины:**
+
+```bash
+# Установка плагина (например helm-diff)
+helm plugin install https://github.com/databus23/helm-diff
+
+# Расшифровка SOPS/age-зашифрованного values-файла (плагин helm-secrets)
+helm secrets view secrets.yaml
+```
+
+Подробнее о плагинах (`helm-diff`, `helm-secrets`, WASM) — [Плагины Helm](./helm_plugins.md).
 
 **Переменные окружения:**
 

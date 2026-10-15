@@ -139,7 +139,12 @@ location ~ /(config\.php|wp-config\.php|\.env|composer\.json|\.git) {
     deny all;
     return 404;
 }
-```
+
+    # Блокировка диапазона IP
+    deny 192.168.1.0/24;
+    deny 10.0.0.1;
+    allow all;
+}
 
 ### 4. Запрет на выполнение скриптов в каталогах загрузки
 
@@ -282,6 +287,13 @@ server {
         limit_req_status 429;
         limit_req_log_level notice;
         proxy_pass http://backend;
+
+        # Кастомное JSON-тело для 429 (опционально)
+        error_page 429 = @429_json;
+        location @429_json {
+            default_type application/json;
+            return 429 '{"error":"rate_limited"}';
+        }
     }
 
     # Режим dry run (Nginx 1.23.4+ / Angie): только логировать, не блокировать.
@@ -290,6 +302,13 @@ server {
         limit_req zone=api burst=100 nodelay;
         limit_req_dry_run on;                     # $limit_req_status = DRY_RUN
         proxy_pass http://backend;
+
+        # Кастомное JSON-тело для 429 (опционально)
+        error_page 429 = @429_json;
+        location @429_json {
+            default_type application/json;
+            return 429 '{"error":"rate_limited"}';
+        }
     }
 }
 ```

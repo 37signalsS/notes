@@ -769,7 +769,7 @@ curl -X POST "https://harbor.local/api/v2.0/projects/library/gc" \
   -d '{"delete_untagged": true, "dry_run": false}'
 
 # Docker Distribution (registry): GC через переменную окружения
-docker exec -it registry bin/registry garbage-collect /etc/docker/registry/config.yml
+docker exec -it registry registry garbage-collect --delete-untagged /etc/distribution/config.yml
 
 # Проверка занятого места
 du -sh /var/lib/registry/

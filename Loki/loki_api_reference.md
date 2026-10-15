@@ -284,7 +284,17 @@ curl -X POST http://localhost:3100/loki/api/v1/delete/cancel \
   }'
 ```
 
-### Сценарий 7: Интеграция с Python (простой клиент)
+### Сценарий 7: CLI — logcli
+
+`logcli` — консольный клиент к тем же endpoint'ам (адрес задаётся переменной `LOKI_ADDR` или флагом `--addr`):
+
+```bash
+# Разовый запрос: последний час, лимит 200 строк, вывод JSONL
+export LOKI_ADDR=http://loki:3100
+logcli query '{job="app/api"} |= "panic"' --since=1h --limit=200 --output=jsonl
+```
+
+### Сценарий 8: Интеграция с Python (простой клиент)
 
 ```python
 import requests

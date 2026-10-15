@@ -190,6 +190,11 @@ ip -br address show
 # → lo  UNKNOWN  127.0.0.1/8 ::1/128
 # → eth0 UP  192.168.1.100/24 2001:db8::1/64 fe80::.../64
 
+# Добавление и мгновенная проверка результата
+ip addr add 10.0.0.5/24 dev eth0 && ip addr show dev eth0
+# → 3: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> ...
+# →     inet 10.0.0.5/24 scope global eth0
+
 # Фильтрация по протоколу
 ip -4 address show
 ip -6 address show
@@ -209,6 +214,13 @@ ip address show scope link
 
 # Просмотр адресов с фильтрацией по подсети
 ip address show | grep "inet 192.168"
+```
+
+**Машиночитаемый дамп интерфейсов с фильтрацией через jq:**
+
+```bash
+# Вывести поднятые линки и их локальные IP через jq
+ip -j a | jq -r '.[] | select(.operstate=="UP") | .ifname + " " + (.addr_info[]?.local // "-")'
 ```
 
 ### Назначение и модификация адресов

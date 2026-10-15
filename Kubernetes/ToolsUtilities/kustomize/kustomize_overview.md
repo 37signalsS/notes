@@ -233,6 +233,26 @@ kustomize version
 mkdir -p my-app/base my-app/overlays/{development,production}
 ```
 
+### 3.6. CLI-справка: подкоманды `kustomize edit`
+
+`kustomize edit` позволяет программно менять `kustomization.yaml` без ручного редактирования YAML (удобно в CI/CD).
+
+| Подкоманда | Назначение | Пример |
+| :--- | :--- | :--- |
+| `kustomize edit add resource <файл>` | Добавить ресурс в блок `resources` | `kustomize edit add resource ./deployment.yaml` |
+| `kustomize edit set image <name>=<new>` | Обновить образ в блоке `images` | `kustomize edit set image myapp=registry/myapp:v2.0.0` |
+| `kustomize edit set tag <name>:<tag>` | Обновить только тег образа | `kustomize edit set tag myapp:v1.2.3` |
+| `kustomize edit set namespace <ns>` | Задать `namespace` для всех ресурсов | `kustomize edit set namespace production` |
+| `kustomize edit add label <key>:<value>` | Добавить общий лейбл (`commonLabels`) | `kustomize edit add label env:production` |
+| `kustomize edit add patch --path <файл> --kind <Kind> --name <name>` | Зарегистрировать патч в `patches` | `kustomize edit add patch --path patch.yaml --kind Deployment --name myapp` |
+| `kustomize edit add configmap <name> --from-literal=<k>=<v>` | Добавить `configMapGenerator` | `kustomize edit add configmap my-config --from-literal=key=value` |
+| `kustomize cfg list-setters .` | Показать все поля-сеттеры в kustomization | `kustomize cfg list-setters .` |
+| `kustomize cfg fmt` | Отформатировать `kustomization.yaml` | `kustomize cfg fmt` |
+
+> **Примечание:** `kustomize edit set image` с дайджестом: `kustomize edit set image app=registry.example.com/app@sha256:<id>` (фиксация по immutable digest).
+
+### 3.7. Полный пример: создание конфигурации с нуля
+
 **`base/deployment.yaml`:**
 ```yaml
 apiVersion: apps/v1

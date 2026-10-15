@@ -60,7 +60,7 @@
 | :--- | :--- | :--- |
 | `systemd-analyze critical-chain [UNIT]` | Критическая цепь зависимостей | Показывает только последовательные зависимости, влияющие на общее время |
 | `systemd-analyze plot [> boot.svg]` | Диаграмма Ганта загрузки в SVG | Требует установленного `graphviz` |
-| `systemd-analyze dot [PATTERN]` | Граф зависимостей в формате DOT | Можно конвертировать в SVG через `dot -Tsvg` |
+| `systemd-analyze dot --require [PATTERN]` | Граф зависимостей только с `Requires=` (без `Wants=`) | Позволяет увидеть жёсткие (обязательные) зависимости, отсеивая optional. | `systemd-analyze dot --require | dot -Tsvg > boot.svg` |
 
 ### Безопасность и верификация
 

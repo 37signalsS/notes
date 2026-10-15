@@ -88,6 +88,51 @@ K3s идеально подходит для локальных лаборато
 4.  **Автоматизация манифестов:** Директория `/var/lib/rancher/k3s/server/manifests/` позволяет автоматически применять YAML-файлы (HelmChart, ConfigMap) при старте кластера, что удобно для инициализации лаборатории.
 5.  **Режимы работы:** K3s поддерживает два режима — `server` (аналог control-plane) и `agent` (worker-узел). Для dev-окружения используется одиночный сервер, совмещающий обе роли. Агенты добавляются через токен: `k3s agent --server https://server:6443 --token <token>`.
 
+#### Установка без встроенных компонентов (Traefik, ServiceLB)
+
+Для использования внешних Ingress и LoadBalancer (MetalLB, NGINX) отключите встроенные компоненты:
+
+```bash
+curl -sfL https://get.k3s.io | sh -s - --disable traefik --disable servicelb
+# или через переменную окружения:
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik --disable servicelb" sh -
+```
+
+#### HA-кластер с встроенным etcd (cluster-init)
+
+Первый сервер инициализирует кластер, остальные присоединяются к нему:
+
+```bash
+# Первый сервер (cluster-init)
+curl -sfL https://get.k3s.io | sh -s - server --cluster-init --token <shared-token>
+
+# Дополнительные серверы
+curl -sfL https://get.k3s.io | sh -s - server --server https://<first-server-ip>:6443 --token <shared-token>
+```
+
+#### Подключение agent-узла по URL и токену
+
+Токен находится на сервере в `/var/lib/rancher/k3s/server/node-token`:
+
+```bash
+curl -sfL https://get.k3s.io | K3S_URL=https://<server-ip>:6443 K3S_TOKEN=$(cat /var/lib/rancher/k3s/server/node-token) sh -
+```
+
+#### Отладка через встроенные crictl/ctr
+
+Когда kubectl недоступен, используйте встроенные инструменты для работы с containerd напрямую:
+
+```bash
+# Список всех контейнеров
+k3s crictl ps -a
+
+# Список образов
+k3s ctr images ls -q
+
+# Информация о конфигурации containerd
+k3s crictl info
+```
+
 ### Архитектура компонентов K3s
 
 K3s заменяет стандартные компоненты Kubernetes собственными легковесными реализациями:

@@ -92,6 +92,61 @@ helm install falco falcosecurity/falco \
   priority: WARNING
 ```
 
+### Валидация файла правил перед перезагрузкой
+
+Офлайн-проверка синтаксиса правил перед применением. Ненулевой код выхода при ошибке — удобно для CI-гейта.
+
+```bash
+falco -r /etc/falco/falco_rules.yaml --validate
+# → exit code 0: OK, exit code != 0: синтаксическая ошибка
+```
+
+### Фильтрация критичных алертов из логов
+
+Выбирает из JSON-вывода только события Falco уровня Critical. Требует `json_output: true` в `falco.yaml`.
+
+```bash
+kubectl logs -l app.kubernetes.io/name=falco -n falco | jq 'select(.priority=="Critical")'
+```
+
+### Установка правил из реестра артефактов (falcoctl)
+
+Загрузка и управление версионированными правилами/плагинами через OCI. Заменяет ручное копирование файлов правил.
+
+```bash
+falcoctl artifact install falco-rules:latest && falcoctl artifact list
+```
+
+### Запуск с ограниченным окном захвата
+
+Запускает Falco на заданное время (например, 60 секунд) и завершается. Удобно для разовой диагностики подозрительного узла.
+
+```bash
+falco -M 60 -o json_output=true 2>/dev/null | jq -c '{rule,output_fields}'
+```
+
+### Список поддерживаемых полей событий
+
+Показывает доступные поля фильтрации для написания условий и вывода в своих правилах.
+
+```bash
+falco --list | grep -E 'k8s\.|container\.|proc\.' | sort
+```
+
+### Своё правило: запуск shell в контейнере
+
+Минимальное своё правило с `condition`/`output`/`priority`; подхватывается из каталога `rules.d`.
+
+```bash
+cat > /etc/falco/rules.d/shell.yaml <<'EOF'
+- rule: Shell in container
+  desc: A shell was spawned in a container
+  condition: container and proc.name in (bash, sh, zsh)
+  output: "Shell spawned (pod=%k8s.pod.name cmd=%proc.cmdline)"
+  priority: WARNING
+EOF
+```
+
 ### Автоматизированное реагирование с Falcosidekick
 
 Falcosidekick расширяет возможности Falco, позволяя реализовать **Active Response**:

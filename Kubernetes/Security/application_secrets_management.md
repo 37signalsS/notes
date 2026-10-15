@@ -474,6 +474,25 @@ kubectl get secretproviderclasspodstatus -n <namespace>
 kubectl get externalsecret -n <namespace> -o wide
 kubectl describe externalsecret <name>
 
+# Список всех ExternalSecrets со статусом готовности
+kubectl get externalsecret -A
+
+# Компактная таблица всех ExternalSecrets с состоянием синхронизации
+kubectl get externalsecrets -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,STORE:.spec.secretStoreRef.name,READY:.status.conditions[0].status'
+
+# Статус синхронизации ExternalSecret (условия Ready, SecretSynced)
+kubectl get externalsecret <name> -n <ns> -o jsonpath='{.status.conditions[*]}'
+
+# Принудительная синхронизация через обновление аннотации
+kubectl annotate externalsecret <name> -n <ns> force-sync=$(date +%s) --overwrite
+
+# Статус SecretStore и ClusterSecretStore
+kubectl get secretstore,clustersecretstore -A -o wide
+kubectl get clustersecretstore
+
+# Просмотр шаблонизации значений в spec ExternalSecret
+kubectl get externalsecret <name> -n <ns> -o yaml | grep -A10 'template:'
+
 # Просмотр логов CSI-драйвера
 kubectl logs -n kube-system ds/csi-secrets-store
 

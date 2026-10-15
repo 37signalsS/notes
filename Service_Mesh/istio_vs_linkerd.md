@@ -150,6 +150,9 @@ linkerd check --pre
 linkerd install --crds | kubectl apply -f -
 linkerd install | kubectl apply -f -
 
+# Установка расширения viz (метрики, tap, dashboard)
+linkerd viz install | kubectl apply -f -
+
 # Проверка
 linkerd check
 # → Linkerd core control plane is healthy
@@ -197,7 +200,7 @@ echo 'GET http://my-app.prod/api/v1' | vegeta attack -rate=1000 -duration=30s | 
 istioctl proxy-config listener deploy/my-app -n my-app -o json | jq '.[] | select(.name|contains("inbound")) | .per_filter_config'
 
 # Метрики Linkerd
-linkerd stat deploy -n my-app --duration 1m
+linkerd viz stat deploy -n my-app --duration 1m
 # → NAME     MESHED  SUCCESS      RPS  P99_LATENCY
 # → my-app      1/1  99.95%    850rps          3ms
 ```
@@ -241,7 +244,7 @@ istioctl experimental ambient describe pod my-app-pod -n prod
 kubectl get pods -n my-app -o jsonpath='{.items[*].spec.initContainers[*].name}'
 # → linkerd-proxy (restartPolicy: Always)
 
-linkerd stat deploy -n my-app
+linkerd viz stat deploy -n my-app
 # → NAME     MESHED  SUCCESS      RPS  P99_LATENCY
 # → my-app      1/1  100.00%    25rps          2ms
 ```

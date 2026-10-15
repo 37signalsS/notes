@@ -174,15 +174,161 @@ helm repo update
 
 # Установка
 helm install sonarqube sonarqube/sonarqube \
-  --namespace sonarqube --create-namespace \
+  --namespace infra --create-namespace \
   --set postgresql.enabled=false \
-  --set jdbc.url="jdbc:postgresql://external-db:5432/sonarqube" \
-  --set jdbc.username="sonarqube" \
-  --set jdbc.password="${SONAR_DB_PASSWORD}" \
+  --set jdbcOverwrite.enabled=true \
+  --set jdbcOverwrite.jdbcUrl="jdbc:postgresql://postgres.infra.svc.cluster.local:5432/sonarqube" \
+  --set jdbcOverwrite.jdbcUsername="sonarqube" \
+  --set jdbcOverwrite.jdbcPassword="${SONAR_DB_PASS}" \
+  --set sonarProperties."sonar\.forceAuthentication"="true" \
+  --set sonarProperties."sonar\.auth\.gitlab\.enabled"="true" \
+  --set sonarProperties."sonar\.auth\.gitlab\.url"="https://gitlab.example.com" \
+  --set sonarProperties."sonar\.auth\.gitlab\.applicationId"="${SONAR_GITLAB_APP_ID}" \
+  --set sonarProperties."sonar\.auth\.gitlab\.secret"="${SONAR_GITLAB_SECRET}" \
+  --set sonarProperties."sonar\.auth\.gitlab\.allowUsersToSignUp"="true" \
+  --set persistence.enabled=true \
+  --set persistence.storageClass="local-path" \
+  --set persistence.size="20Gi" \
+  --set resources.requests.cpu="400m" \
+  --set resources.requests.memory="1Gi" \
+  --set resources.limits.cpu="2" \
+  --set resources.limits.memory="2Gi" \
+  --set jvmOpts="-Xms512m -Xmx1536m" \
   --set service.type=ClusterIP \
   --set ingress.enabled=true \
   --set ingress.hosts[0].name="sonarqube.example.com"
 ```
+
+> **Примечание:** Параметр `jdbcOverwrite.enabled=true` отключает встроенную базу данных H2 и переключает SonarQube на внешний PostgreSQL. Без этого используется встроенная база — для продакшена она не годится: данные пропадают при перезапуске пода.
+> 
+> Параметр `jvmOpts="-Xms512m -Xmx1536m"` задаёт минимальный и максимальный размер JVM heap. Максимум должен оставлять запас на накладные расходы JVM в пределах лимита памяти контейнера: `limits.memory: 2Gi − 1536m heap = ~512m` на ОС и non-heap.
+```
+
+#### Вариант D: Kubernetes (HelmRelease с Flux)
+
+Для GitOps-подхода с Flux можно использовать HelmRelease с теми же значениями, что и вручную через `helm install`.
+
+```yaml
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: sonarqube
+  namespace: infra
+spec:
+  chart:
+    spec:
+      chart: sonarqube
+      version: "10.4.*"
+      sourceRef:
+        kind: HelmRepository
+        name: sonarqube
+        namespace: flux-system
+  values:
+    edition: "community"
+    jdbcOverwrite:
+      enable: true
+      jdbcUrl: "jdbc:postgresql://postgres.infra.svc.cluster.local:5432/sonarqube"
+      jdbcUsername: sonarqube
+      jdbcPassword: "${SONAR_DB_PASS}"
+    sonarProperties:
+      sonar.forceAuthentication: "true"
+      sonar.auth.gitlab.enabled: "true"
+      sonar.auth.gitlab.url: "https://gitlab.example.com"
+      sonar.auth.gitlab.applicationId: "${SONAR_GITLAB_APP_ID}"
+      sonar.auth.gitlab.secret: "${SONAR_GITLAB_SECRET}"
+      sonar.auth.gitlab.allowUsersToSignUp: "true"
+    persistence:
+      enabled: true
+      storageClass: local-path
+      size: 20Gi
+    resources:
+      requests:
+        cpu: 400m
+        memory: 1Gi
+      limits:
+        cpu: 2
+        memory: 2Gi
+    jvmOpts: "-Xms512m -Xmx1536m"
+```
+
+> **Примечание:** Значения в `values` идентичны тем, что используются вручную через `helm install` (см. Вариант C). Секретные значения (например, `${SONAR_DB_PASS}`) должны быть предоставлены через механизмы секретов Kubernetes (например, External Secrets Operator, как описано ниже).
+#### Настройка внешних зависимостей
+
+##### База данных PostgreSQL с CloudNativePG
+
+SonarQube требует внешней базы данных. На infra-кластере небольшой PostgreSQL запущен через оператор CloudNativePG:
+
+```yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres
+  namespace: infra
+spec:
+  instances: 1
+  storage:
+    size: 10Gi
+    storageClass: local-path
+  bootstrap:
+    initdb:
+      database: sonarqube
+      owner: sonarqube
+      secret:
+        name: postgres-sonarqube-creds
+```
+
+> **Примечание:** `secret.name: postgres-sonarqube-creds` указывает на Kubernetes Secret с ключами `username` и `password`. CloudNativePG создаёт базу данных и пользователя при первом запуске.
+
+##### Учётные данные через External Secrets Operator (ESO)
+
+Для безопасного хранения и injection секретов используется External Secrets Operator, который получает секреты из Vault:
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: sonarqube-creds
+  namespace: infra
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  target:
+    name: sonarqube-creds
+  data:
+    - secretKey: SONAR_DB_PASS
+      remoteRef:
+        key: secret/infra/sonarqube
+        property: db_password
+    - secretKey: SONAR_GITLAB_APP_ID
+      remoteRef:
+        key: secret/infra/sonarqube
+        property: gitlab_app_id
+    - secretKey: SONAR_GITLAB_SECRET
+      remoteRef:
+        key: secret/infra/sonarqube
+        property: gitlab_secret
+```
+
+##### Настройка OIDC с GitLab
+
+Перед деплоем создайте GitLab Application:
+
+    GitLab → Admin Area → Applications → New Application
+    Название: SonarQube
+    Redirect URI: https://sonarqube.example.com/oauth2/callback/gitlab
+    Scopes: read_user, api
+    Сохранить Application ID и Secret в Vault:
+
+```bash
+vault kv put secret/infra/sonarqube \
+  gitlab_app_id=YOUR_APP_ID \
+  gitlab_secret=YOUR_SECRET \
+  db_password=POSTGRES_PASS
+```
+
+
 
 ### Настройка проекта в SonarQube
 
@@ -1190,7 +1336,14 @@ curl -u admin:admin -X POST "http://localhost:9000/api/user_tokens/revoke?login=
 ```bash
 # Очистка старых задач Compute Engine
 curl -u admin:admin -X POST "http://localhost:9000/api/ce/clean"
+
+# Удаление анализов за определенный период
+# Пример: удалить анализы для проекта my-project с 2024-01-01 по 2024-06-01
+curl -u admin:admin -X POST \
+  "http://localhost:9000/api/projects/delete_analyses?project=my-project&from=2024-01-01&to=2024-06-01"
 ```
+
+> **Примечание:** Для автоматического очищения старых анализов можно настроить параметры через интерфейс SonarQube: Administration → Configuration → Housekeeping. Там можно настроить период хранения анализов и другие параметры очистки.
 
 ### Удаление orphaned отчетов
 

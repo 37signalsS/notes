@@ -134,7 +134,7 @@ data:
 3. **External Secrets Operator для синхронизации:**
 
 ```yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: alertmanager-slack

@@ -66,6 +66,7 @@ OCI Runtime (runc/crun) → настройка namespaces + cgroups → clone() 
 - `kubectl describe pod` — статус Pod, события (Image Pulled, Started)
 - `crictl pods` / `crictl ps` — состояние на уровне рантайма
 - `ctr -n k8s.io images ls` — список образов в containerd
+- `ctr -n k8s.io task ls` — низкоуровневый список задач (pid/статус) когда kubelet или CRI не отвечает
 - `runc list` — активные контейнеры OCI runtime
 
 ---
@@ -157,6 +158,7 @@ Docker Engine — это огромный комбайн, созданный д�
 *   Синтаксис почти полностью совпадает: `nerdctl run`, `nerdctl build`, `nerdctl ps`.
 *   Позволяет использовать продвинутые фичи `containerd`, недоступные в Docker (например, нативные пространства имен).
 *   Работает с Kubernetes namespaces: `nerdctl --namespace k8s.io ps` — покажет контейнеры, управляемые kubelet.
+*   **Compose на containerd:** `nerdctl --namespace k8s.io compose up -d` — запускает docker-compose.yml прямо на containerd без демона Docker.
 
 ---
 

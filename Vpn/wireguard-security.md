@@ -30,7 +30,7 @@
 
 ```bash
 # nftables: только известные IP → ACCEPT, остальное → DROP
-nft add rule inet filter input udp dport 51820 ip saddr { 198.51.100.0/24, 203.113.0.0/24 } accept
+nft add rule inet filter input udp dport 51820 ip saddr { 198.51.100.0/24, 203.0.113.0/24 } accept
 nft add rule inet filter input udp dport 51820 drop
 ```
 

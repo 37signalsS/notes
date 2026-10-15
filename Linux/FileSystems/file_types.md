@@ -148,6 +148,9 @@ sudo find /tmp -type p -mtime +7 -ls
 # Найти все setuid-файлы
 sudo find / -type f -perm -4000 -print 2>/dev/null
 
+# Аудит SUID+SGID разом (любой из битов 6000)
+sudo find / -perm /6000 -type f -ls 2>/dev/null
+
 # Проверить, является ли файл ELF (не устройство)
 file /usr/bin/sudo
 # → /usr/bin/sudo: ELF 64-bit LSB executable

@@ -99,7 +99,7 @@ type: notification
 EXAMPLES = r'''
 # ansible.cfg
 [defaults]
-callback_enabled = my_callback
+callbacks_enabled = my_callback
 callback_plugins = ./callback_plugins
 '''
 
@@ -149,7 +149,7 @@ class CallbackModule(CallbackBase):
 ```ini
 [defaults]
 # Активация callback-плагинов
-callback_enabled = timer, profile_tasks, mail, my_callback
+callbacks_enabled = timer, profile_tasks, mail, my_callback
 
 # Выбор stdout-плагина
 stdout_callback = yaml
@@ -237,7 +237,7 @@ project/
 ```ini
 # ansible.cfg
 [defaults]
-callback_enabled = profile_tasks
+callbacks_enabled = profile_tasks
 stdout_callback = yaml
 ```
 
@@ -256,7 +256,7 @@ Restart service ----------------------- 0.12s
 ```ini
 # ansible.cfg
 [defaults]
-callback_enabled = timer
+callbacks_enabled = timer
 ```
 
 Выводит общее время выполнения плейбука.
@@ -266,7 +266,7 @@ callback_enabled = timer
 ```ini
 # ansible.cfg
 [defaults]
-callback_enabled = mail
+callbacks_enabled = mail
 
 [email]
 mail_to=ops@example.com
@@ -333,7 +333,7 @@ collections:
 ```ini
 # ansible.cfg
 [defaults]
-callback_enabled = community.general.slack
+callbacks_enabled = community.general.slack
 
 # Переменные окружения
 # export ANSIBLE_CALLBACK_SLACK_WEBHOOK_URL=https://hooks.internal.example.com/services/xxx
@@ -557,7 +557,7 @@ class CallbackModule(CallbackBase):
 
 | Параметр | Описание |
 | :--- | :--- |
-| `callback_enabled` | Список активных callback-плагинов через запятую |
+| `callbacks_enabled` | Список активных callback-плагинов через запятую |
 | `stdout_callback` | Единственный активный stdout-плагин |
 | `callback_plugins` | Пути поиска callback-плагинов, разделённые `:` |
 | `log_path` | Путь к файлу лога Ansible |
@@ -566,11 +566,11 @@ class CallbackModule(CallbackBase):
 ### Полезные команды
 
 ```bash
-# Запуск с включенными callback-плагинами
-ansible-playbook site.yml --callback-enabled=timer,profile_tasks
+# Запуск с включенными callback-плагинами (env-переменная на один запуск)
+ANSIBLE_CALLBACKS_ENABLED=timer,profile_tasks ansible-playbook site.yml
 
 # Запуск с конкретным stdout-плагином
-ansible-playbook site.yml --stdout=debug
+ANSIBLE_STDOUT_CALLBACK=debug ansible-playbook site.yml
 
 # Проверка доступных callback-плагинов
 ansible-doc -t callback -l
@@ -582,7 +582,7 @@ ansible-doc -t callback community.general.slack
 ansible-config dump | grep -i callback
 
 # Тест callback-плагина
-ansible-playbook playbooks/deploy.yml --callback-enabled=my_callback -vvv
+ANSIBLE_CALLBACKS_ENABLED=my_callback ansible-playbook playbooks/deploy.yml -vvv
 
 # Проверка путей поиска плагинов
 ansible-config dump | grep -i callback_plugins
@@ -609,12 +609,12 @@ ansible-playbook playbooks/test.yml -e "test_notify=true"
 
 | Проблема | Вероятная причина | Решение |
 | :--- | :--- | :--- |
-| `CALLBACK_NEEDS_WHITELIST` и плагин не работает | Плагин не указан в `callback_enabled` | Добавьте имя плагина в `callback_enabled` |
+| `CALLBACK_NEEDS_WHITELIST` и плагин не работает | Плагин не указан в `callbacks_enabled` | Добавьте имя плагина в `callbacks_enabled` |
 | `ImportError: No module named 'prometheus_client'` | Библиотека не установлена на контрольном узле | `pip install prometheus-client` |
 | `ModuleNotFoundError` для кастомного плагина | Неправильный путь в `callback_plugins` | Проверьте `callback_plugins` в `ansible.cfg` |
 | `Permission denied` при записи в лог | Директория лога недоступна | Создайте директорию: `mkdir -p /var/log/ansible && chown $USER /var/log/ansible` |
 | Slack webhook не доставляет сообщения | Неверный URL или firewall | Проверьте `curl -X POST <webhook_url>` |
-| `callback_enabled` игнорируется | Нет `callback_plugins` или плагин не найден | Проверьте пути поиска через `ansible-config dump` |
+| `callbacks_enabled` игнорируется | Нет `callback_plugins` или плагин не найден | Проверьте пути поиска через `ansible-config dump` |
 | Метрики не появляются в Prometheus | Pushgateway недоступен или порт закрыт | Проверьте доступность `http://pushgateway:9091` |
 | `UnicodeEncodeError` в callback | Необработанные символы в выводе | Добавьте `ensure_ascii=False` при сериализации JSON |
 | Дублирующиеся алерты | Отсутствие rate limiting | Реализуйте `_should_notify()` с порогом времени |

@@ -351,6 +351,82 @@ echo "20000 100000" | sudo tee /sys/fs/cgroup/system.slice/problem-app.service/c
 watch cat /sys/fs/cgroup/system.slice/problem-app.service/memory.pressure
 ```
 
+### Диагностика ресурсов сервиса (cgroup v2)
+
+#### Учёт памяти сервиса
+
+Текущее потребление памяти против жёсткого лимита. Если `memory.current` приближается к `memory.max` — скорый OOM:
+
+```bash
+# Текущее потребление vs лимит
+cat /sys/fs/cgroup/system.slice/<name>.service/memory.current
+cat /sys/fs/cgroup/system.slice/<name>.service/memory.max
+# → 1879048192
+# → 2147483648
+# Или в одну строку:
+echo "current=$(cat /sys/fs/cgroup/system.slice/<name>.service/memory.current) max=$(cat /sys/fs/cgroup/system.slice/<name>.service/memory.max)"
+
+# События памяти (OOM-киллы, реклейм)
+cat /sys/fs/cgroup/system.slice/<name>.service/memory.events
+# → oom 3 oom_kill 3
+```
+
+#### Давление памяти по PSI
+
+PSI (Pressure Stall Information) показывает, сколько времени задачи простаивают из-за реклейма памяти. Рост `avg10` — скорый троттлинг до OOM:
+
+```bash
+# Текущая нагрузка на память
+cat /sys/fs/cgroup/system.slice/<name>.service/memory.pressure
+# → some avg10=0.00 avg60=0.00 avg300=0.00 total=123456
+# → full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+```
+
+#### Статистика троттлинга CPU
+
+Сколько раз и на сколько мкс cgroup троттился по квоте `cpu.max`:
+
+```bash
+# Чтение и статистика CPU квоты
+cat /sys/fs/cgroup/system.slice/<name>.service/cpu.max
+# → "50000 100000" = 50% одного ядра; "max 100000" = безлимит
+
+# Статистика троттлинга
+grep -E 'nr_throttled|throttled_usec' /sys/fs/cgroup/system.slice/<name>.service/cpu.stat
+# → nr_throttled 1234
+# → throttled_usec 567890
+```
+
+#### Давление и статистика I/O по устройствам
+
+PSI по I/O плюс `rbytes`/`wbytes`/`rios` по major:minor — ловит шумных соседей по диску:
+
+```bash
+cat /sys/fs/cgroup/system.slice/<name>.service/io.pressure
+cat /sys/fs/cgroup/system.slice/<name>.service/io.stat
+# → 8:0 rbytes=12345678 wbytes=9876543 rios=100 wios=200 ...
+```
+
+#### Список PID в cgroup сервиса
+
+Все PID в слайсе сервиса. Сверка с деревом из `systemctl status`:
+
+```bash
+cat /sys/fs/cgroup/system.slice/<name>.service/cgroup.procs
+systemctl status <name>.service | grep CGroup
+```
+
+#### Полное дерево cgroup
+
+`systemd-cgls --all` показывает и пустые cgroup; `systemd-cgtop` ранжирует слайсы по CPU/памяти/I/O:
+
+```bash
+systemd-cgls --all --no-pager
+systemd-cgtop -d 2 --depth=3
+```
+
+---
+
 ### Миграция с cgroups v1 на v2
 
 **Проверка текущей версии:**
@@ -408,6 +484,16 @@ sudo cgexec -g cpu,memory,io:mygroup /usr/bin/my-app
 
 # Просмотр статистики
 sudo cgget -g cpu,memory,io:mygroup
+```
+
+**Разовый cgroup в legacy v1 (memory-only):**
+
+Для одного контроллера используйте сокращённый синтаксис:
+
+```bash
+cgcreate -g memory:/<name>
+cgset -r memory.limit_in_bytes=512M <name>
+cgexec -g memory:/<name> <command>
 ```
 
 > **Примечание:** `cgroup-tools` работает только с **cgroups v1**. Для v2 используйте ручное управление файлами в `/sys/fs/cgroup/` или `systemd-run --scope`.
@@ -473,9 +559,10 @@ sudo cgget -g cpu,memory,io:mygroup
 
 | Инструмент | Назначение | Пример команды |
 | :--- | :--- | :--- |
-| `systemd-cgls` | Дерево cgroups и процессов. | `systemd-cgls` |
-| [`systemd-cgtop`](./systemd/cgtop.md) | Мониторинг ресурсов в реальном времени. | `systemd-cgtop` |
-| `cat /sys/fs/cgroup/.../cpu.stat` | Статистика дросселирования. | `cat /sys/fs/cgroup/user.slice/cpu.stat` |
+| `systemd-cgls` | Дерево cgroups и процессов. | `systemd-cgls --all --no-pager` |
+| [`systemd-cgtop`](./systemd/cgtop.md) | Мониторинг ресурсов в реальном времени. | `systemd-cgtop -d 2 --depth=3` |
+| `cat /sys/fs/cgroup/.../cpu.stat` | Статистика дросселирования. | `grep -E 'nr_throttled\|throttled_usec' /sys/fs/cgroup/system.slice/<name>.service/cpu.stat` |
+| `cat /sys/fs/cgroup/.../memory.current` | Текущее потребление памяти. | `cat /sys/fs/cgroup/system.slice/<name>.service/memory.current` |
 | `cat /proc/pressure/*` | Статистика давления PSI на хосте. | `cat /proc/pressure/memory` |
 
 ### Связанные темы

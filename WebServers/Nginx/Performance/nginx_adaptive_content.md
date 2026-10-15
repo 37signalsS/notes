@@ -207,7 +207,7 @@ location ~* ^/uploads/ {
 | Проверка заголовка Vary | `curl -I https://example.com/img/photo.jpg \| grep -i vary` | `Vary: Accept` |
 | Проверка mime.types | `grep -E "avif|webp|jxl" /etc/nginx/mime.types` | Строки с `image/avif`, `image/webp`, `image/jxl` |
 | Поиск файлов на диске | `ls -la /var/www/html/images/photo.*` | Наличие `.avif`, `.webp`, `.jpg` |
-| Проверка open_file_cache | `curl http://127.0.0.1/nginx_status` (при включенном `stub_status`) | Отсутствие ошибок кэша дескрипторов |
+| Проверка open_file_cache | `curl -s http://127.0.0.1/stub_status 2>/dev/null \|\| curl -s http://127.0.0.1/nginx_status` (при включенном `stub_status`) | Отсутствие ошибок кэша дескрипторов |
 | Перезагрузка без даунтайма | `nginx -s reload` | Старые воркеры завершают активные соединения |
 
 ## Устранение неполадок

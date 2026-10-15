@@ -1,6 +1,6 @@
 # Zabbix — мониторинг баз данных
 
-> **Актуальность:** материал сверен по состоянию на сентябрь 2026 г. Основная долгосрочная ветка — **Zabbix 7.0 LTS** (обновления до 30 июня 2027, ограниченная поддержка до 30 июня 2029). Текущая стандартная ветка — **Zabbix 8.0 LTS** (выпущена в сентябре 2026 г., поддержка до Q3 2029, ограниченная поддержка до Q3 2031). Особенности конкретных версий отмечены по тексту.
+> **Актуальность:** Основная долгосрочная ветка — **Zabbix 7.0 LTS** (обновления до 30 июня 2027, ограниченная поддержка до 30 июня 2029). Текущая стандартная ветка — **Zabbix 7.4** (выпущена 30 июня 2025). **Zabbix 8.0 LTS** на момент сверки не выпущен: доступен кандидат в релиз **8.0.0rc1 (1 октября 2026)**, выпуск GA запланирован на Q4 2026 (по roadmap — ноябрь 2026); поддержка 8.0 LTS планируется до Q4 2029 (полная) и Q4 2031 (ограниченная). Особенности конкретных версий отмечены по тексту.
 
 ---
 
@@ -73,7 +73,7 @@
 
 ### Принципы эффективного мониторинга
 
-1. **Master / Dependent Items:** Один SQL-запрос (Master Item) возвращает JSON с множеством метрик. Dependent Items с предобработкой JSONPath извлекают отдельные значения. Это снижает нагрузку на БД в 10–100 раз.
+1. **Master / Dependent Items:** Один SQL-запрос (Master Item) возвращает JSON с множеством метрик. Dependent Items с предобработкой JSONPath извлекают отдельные значения. Это сокращает число обращений к СУБД с десятков до одного за интервал опроса.
 2. **Троттлинг (Throttling):** Использование шага `Discard unchanged with heartbeat` в предобработке для статических метрик (версия СУБД, параметры конфигурации), чтобы не забивать историю Zabbix избыточными данными.
 3. **Безопасность (Named Sessions):** Хранение учетных данных не в макросах веб-интерфейса, а в защищенном конфигурационном файле агента. Обязательно при использовании TLS.
 4. **Принцип наименьших привилегий:** выделенный пользователь мониторинга с правами только на чтение (REPLICATION CLIENT, PROCESS, SHOW DATABASES). Никогда не используйте суперпользователя.
@@ -83,8 +83,8 @@
 | Метод | Подключение | Connection Pooling | Платформы | Когда использовать |
 | :--- | :--- | :---: | :--- | :--- |
 | **Zabbix Agent 2 Plugin** | Прямой TCP | Да | PostgreSQL, MySQL/MariaDB/Percona, Oracle, MSSQL, MongoDB, Redis | Новые инсталляции, максимальная производительность |
-| **ODBC** | Через драйвер | Нет | Все СУБД с ODBC-драйвером | Agentless, облачные БД, кастомные SQL |
-| **HTTP Agent** | REST API | Н/A | MongoDB, Cassandra, Couchbase | СУБД с HTTP-интерфейсом |
+| **ODBC** | Через драйвер | Нет | Все СУБД с ODBC-драйвером | Agentless, кастомные SQL |
+| **HTTP Agent** | REST API | N/A | MongoDB, Cassandra, Couchbase | СУБД с HTTP-интерфейсом |
 | **UserParameter** | Кастомный скрипт | Нет | Любая | Устаревший метод, legacy |
 
 ### Выбор подхода по типу СУБД
@@ -104,9 +104,9 @@
 Мониторинг баз данных — критический компонент наблюдаемости (Observability) инфраструктуры:
 
 * **Four Golden Signals для БД:** SRE применяют метрики Zabbix для оценки Latency (время отклика запросов), Traffic (количество запросов/сек), Errors (ошибки подключения, deadlocks), Saturation (загрузка CPU, I/O, пул соединений). Zabbix триггеры на эти сигналы интегрируются с Alertmanager.
-* **SLO/SLI для баз данных:** Zabbix SLA (8.0+) на основе тегов триггеров позволяет отслеживать Uptime СУБД, процент успешных транзакций и время отклика репликации. SRE используют эти данные для расчета SLI и оценки SLO.
+* **SLO/SLI для баз данных:** Zabbix SLA (6.0+) на основе тегов триггеров позволяет отслеживать Uptime СУБД, процент успешных транзакций и время отклика репликации. SRE используют эти данные для расчета SLI и оценки SLO.
 * **Change Management:** все изменения в конфигурации мониторинга БД (пороги, шаблоны) проходят через процедуры управления изменениями. Версионный контроль шаблонов в Git обеспечивает аудит и откат.
-* **Capacity Planning:** метрики роста БД (размер табличных пространств, количество соединений) используются для планированияCapacity. Zabbix графики трендов позволяют прогнозировать исчерпание диска или памяти.
+* **Capacity Planning:** метрики роста БД (размер табличных пространств, количество соединений) используются для планирования емкости. Zabbix графики трендов позволяют прогнозировать исчерпание диска или памяти.
 * **Runbook Automation:** Actions в Zabbix могут выполнять скрипты автоматического восстановления при срабатывании триггеров БД (например, перезапуск репликации, очистка кэша, масштабирование пула соединений через API оркестратора).
 * **Post-mortem Analysis:** события мониторинга БД сохраняются с полным контекстом (значения метрик, временные метки, теги). Это позволяет проводить постмортем-анализ инцидентов и выявлять системные причины падений.
 * **Compliance и аудит:** мониторинг СУБД интегрируется с требованиями compliance (PCI DSS, GDPR, SOC 2). Zabbix обеспечивает сбор метрик безопасности (успешные/неуспешные подключения, изменения конфигурации) и хранение истории для аудита.
@@ -131,7 +131,6 @@ GRANT pg_monitor TO zbx_monitor;
 -- Или минимальные права:
 GRANT USAGE ON SCHEMA public TO zbx_monitor;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO zbx_monitor;
-FLUSH PRIVILEGES;
 ```
 
 **MySQL / MariaDB:**
@@ -153,9 +152,9 @@ GRANT VIEW ANY DEFINITION TO zbx_monitor;
 
 #### Шаг 2. Установка Zabbix Agent 2 и плагинов
 
-**Ubuntu 24.04 / Zabbix 8.0:**
+**Ubuntu 24.04 / Zabbix 7.4:**
 ```bash
-wget https://repo.zabbix.com/zabbix/8.0/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest+ubuntu24.04_all.deb
+wget https://repo.zabbix.com/zabbix/7.4/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest+ubuntu24.04_all.deb
 dpkg -i zabbix-release_latest+ubuntu24.04_all.deb
 apt update
 apt install zabbix-agent2 zabbix-agent2-plugin-*
@@ -163,7 +162,7 @@ systemctl restart zabbix-agent2
 systemctl enable zabbix-agent2
 ```
 
-**RHEL 9 / Rocky 9 / Zabbix 8.0:**
+**RHEL 9 / Rocky 9 / Zabbix 7.4:**
 ```bash
 dnf install zabbix-release
 dnf install zabbix-agent2 zabbix-agent2-plugin-postgresql zabbix-agent2-plugin-mongodb zabbix-agent2-plugin-mssql
@@ -187,45 +186,45 @@ Plugins.Mysql.KeepAlive=300
 
 **Конфигурация для PostgreSQL (файл `/etc/zabbix/zabbix_agent2.d/plugins.d/postgresql.conf`):**
 ```ini
-Plugins.Pg.Sessions.ProdDB.Uri=tcp://127.0.0.1:5432
-Plugins.Pg.Sessions.ProdDB.User=zbx_monitor
-Plugins.Pg.Sessions.ProdDB.Password=your_secure_password
-Plugins.Pg.KeepAlive=300
+Plugins.PostgreSQL.Sessions.ProdDB.Uri=tcp://127.0.0.1:5432
+Plugins.PostgreSQL.Sessions.ProdDB.User=zbx_monitor
+Plugins.PostgreSQL.Sessions.ProdDB.Password=your_secure_password
+Plugins.PostgreSQL.KeepAlive=300
 ```
 
 **Для нескольких инстансов на одном агенте:**
 ```ini
-Plugins.Pg.Sessions.PrimaryDB.Uri=tcp://10.0.0.1:5432
-Plugins.Pg.Sessions.PrimaryDB.User=zbx_monitor
-Plugins.Pg.Sessions.PrimaryDB.Password=password1
+Plugins.PostgreSQL.Sessions.PrimaryDB.Uri=tcp://10.0.0.1:5432
+Plugins.PostgreSQL.Sessions.PrimaryDB.User=zbx_monitor
+Plugins.PostgreSQL.Sessions.PrimaryDB.Password=password1
 
-Plugins.Pg.Sessions.ReplicaDB.Uri=tcp://10.0.0.2:5432
-Plugins.Pg.Sessions.ReplicaDB.User=zbx_monitor
-Plugins.Pg.Sessions.ReplicaDB.Password=password2
+Plugins.PostgreSQL.Sessions.ReplicaDB.Uri=tcp://10.0.0.2:5432
+Plugins.PostgreSQL.Sessions.ReplicaDB.User=zbx_monitor
+Plugins.PostgreSQL.Sessions.ReplicaDB.Password=password2
 ```
 
-В веб-интерфейсе Zabbix в макрос `{$PG.DSN}` вписывается только имя сессии: `ProdDB`.
+В веб-интерфейсе Zabbix в макрос `{$PG.CONNSTRING.AGENT2}` вписывается только имя сессии: `ProdDB`.
 
 #### Шаг 4. Настройка элементов данных и Master/Dependent Items
 
 **Master Item (собирает JSON одним запросом):**
 - **Type:** `Zabbix agent (active)`
-- **Key:** `pgsql.get[{$PG.DSN}]` или `mysql.get_status[{$MYSQL.DSN}]`
+- **Key:** `pgsql.connections[{$PG.CONNSTRING.AGENT2}]` или `mysql.get_status_variables[{$MYSQL.DSN}]`
 - **Type of information:** `JSON`
 - **Update interval:** `1m`
 
 **Dependent Items (извлекают метрики из JSON):**
 - **Type:** `Dependent item`
 - **Master item:** выберите Master Item
-- **Preprocessing:** `JSONPath` → `$.connections.active`
+- **Preprocessing:** `JSONPath` → `$.active`
 
-Примеры зависимых элементов:
+Примеры зависимых элементов (для `pgsql.connections[{$PG.CONNSTRING.AGENT2}]`):
 | Имя элемента | JSONPath | Type of information |
 | :--- | :--- | :--- |
-| Connections active | `$.connections.active` | Numeric (unsigned) |
-| Transactions per second | `$.tps` | Numeric (float) |
-| Cache hit ratio | `$.cache.hit_ratio` | Numeric (float) |
-| Replication lag | `$.replication.lag` | Numeric (unsigned) |
+| Active connections | `$.active` | Numeric (unsigned) |
+| Idle connections | `$.idle` | Numeric (unsigned) |
+| Total connections | `$.total` | Numeric (unsigned) |
+| Waiting connections | `$.waiting` | Numeric (unsigned) |
 
 #### Шаг 5. Валидация подключения
 
@@ -235,17 +234,17 @@ zabbix_get -s 127.0.0.1 -k "pgsql.ping[ProdDB]"
 # → 1 (успешное подключение)
 
 # Проверка получения JSON (Master Item)
-zabbix_get -s 127.0.0.1 -k "pgsql.get[ProdDB]"
-# → {"connections":{"active":5,"total":1200},...}
+zabbix_get -s 127.0.0.1 -k "pgsql.connections[ProdDB]"
+# → {"active":5,"idle":3,"idle_in_transaction":0,"prepared":0,"total":1200,"waiting":0}
 
 # Проверка конкретной метрики
-zabbix_get -s 127.0.0.1 -k "pgsql.stat[ProdDB,datid]"
-# → 16384 (OID базы данных)
+zabbix_get -s 127.0.0.1 -k "pgsql.version[ProdDB]"
+# → 16.4 (версия сервера PostgreSQL)
 ```
 
 ### Метод 2: ODBC (Agentless)
 
-Метод без установки агента на целевой сервер. Используется для облачных БД, кастомных SQL-запросов и ситуаций, где установка ПО невозможна.
+Метод без установки агента на целевой сервер. Используется для кастомных SQL-запросов и ситуаций, где установка ПО невозможна.
 
 #### Шаг 1. Установка unixODBC и драйвера
 
@@ -362,11 +361,11 @@ zabbix_get -s <host_agent> -k "agent.ping"
 # → 1 (агент доступен)
 
 # Проверка подключения к СУБД (PostgreSQL)
-zabbix_get -s <host_agent> -k "pgsql.ping[{$PG.DSN}]"
+zabbix_get -s <host_agent> -k "pgsql.ping[ProdDB]"
 # → 1 (подключение успешно) или 0 (ошибка)
 
 # Проверка подключения к СУБД (MySQL)
-zabbix_get -s <host_agent> -k "mysql.ping[{$MYSQL.DSN}]"
+zabbix_get -s <host_agent> -k "mysql.ping[ProdDB]"
 # → 1 (подключение успешно)
 ```
 
@@ -378,28 +377,34 @@ isql <DSN_NAME>
 # → Connected!
 
 # Проверка элемента данных ODBC
-zabbix_get -s <host_proxy> -k "db.odbc.select[check,<DSN>]"
-# → значение или ошибка
+# Элементы db.odbc.* выполняются на Server/Proxy (процесс odbc poller) и
+# напрямую через zabbix_get не проверяются — используется isql с SQL-запросом:
+isql <DSN_NAME> "SELECT count(*) FROM <table>;"
+# → число строк (успех) или ошибка драйвера
 ```
 
 ### Валидация Master/Dependent Items
 
 ```bash
 # Получение JSON от Master Item
-zabbix_get -s <host_agent> -k "pgsql.get[{$PG.DSN}]"
-# → {"connections":{"active":5,...},...}
+zabbix_get -s <host_agent> -k "pgsql.connections[ProdDB]"
+# → {"active":5,"idle":3,"idle_in_transaction":0,"prepared":0,"total":1200,"waiting":0}
 
-# Проверка конкретной метрики из Dependent Item
-zabbix_get -s <host_agent> -k "pgsql.stat[{$PG.DSN},datid]"
-# → 16384
+# Проверка метрики из Dependent Item
+# Зависимый элемент извлекает значение через JSONPath; из CLI проверяется
+# сам JSON, а путь тестируется в предобработке элемента (кнопка Test):
+zabbix_get -s <host_agent> -k "pgsql.connections[ProdDB]"
+# → {"active":5,"idle":3,"idle_in_transaction":0,"prepared":0,"total":1200,"waiting":0}
+# JSONPath $.active для этого JSON вернёт 5
 ```
 
 ### Управление конфигурацией
 
 ```bash
-# Проверка загруженных плагинов Agent 2
-zabbix_agent2 -t plugins
-# → mysql, postgresql, mongodb, ...
+# Список известных элементов Agent 2 (включая ключи плагинов)
+zabbix_agent2 -p
+# → ...pgsql.ping[URI,User,Password,Database,...]...
+# → ...mysql.ping[URI,User,Password,...]...
 
 # Перезагрузка конфигурации агента
 systemctl reload zabbix-agent2
@@ -419,15 +424,15 @@ odbcinst -q -s
 
 ```bash
 # Проверка очереди на опрос (включая ODBC)
-zabbix_get -s 127.0.0.1 -k "zabbix[queue,5m]"
+zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[queue,5m]"
 # → количество элементов с опозданием опроса за 5 минут
 
 # Проверка занятости ODBC-поллеров
-zabbix_get -s 127.0.0.1 -k "zabbix[process,odbc poller,avg,busy]"
+zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[process,odbc poller,avg,busy]"
 # → средняя занятость процесса в %
 
 # Проверка занятости обычных поллеров
-zabbix_get -s 127.0.0.1 -k "zabbix[process,poller,avg,busy]"
+zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[process,poller,avg,busy]"
 # → средняя занятость процесса в %
 ```
 
@@ -499,7 +504,7 @@ zabbix_server -R log_level_decrease='odbc poller'
 
 5. **Диагностика очереди:**
    ```bash
-   zabbix_get -s 127.0.0.1 -k "zabbix[queue,5m]"
+   zabbix_get -s 127.0.0.1 -p 10051 -k "zabbix[queue,5m]"
    # → >0 означает проблемы с опросом
    ```
 
@@ -529,7 +534,7 @@ zabbix_server -R log_level_decrease='odbc poller'
 * **Используйте Named Sessions** для хранения учетных данных локально в конфигурационном файле агента, а не в макросах веб-интерфейса Zabbix.
 * **Включите TLS/SSL** для соединения между агентом и СУБД. Named Sessions поддерживают указание TLS-сертификатов.
 * **Ограничьте права доступа к конфигурационным файлам:** `chmod 600 /etc/zabbix/zabbix_agent2.d/plugins.d/*.conf`.
-* **Храните пароли в Vault** при использовании макросов Zabbix. Zabbix 8.0 поддерживает секреты в Vault для макросов.
+* **Храните пароли в Vault** при использовании макросов Zabbix. Zabbix поддерживает секреты в Vault для макросов начиная с 5.2; авторизация по AppRole запланирована в ветке 8.0.
 * **Ограничьте сетевой доступ:** пользователь мониторинга должен подключаться только с IP-адреса Zabbix Agent/Proxy.
 
 ### Производительность
@@ -543,7 +548,7 @@ zabbix_server -R log_level_decrease='odbc poller'
 
 ### Надежность
 
-* **Мониторьте доступность СУБД отдельно:** создайте хост для каждой критической СУБД с элементами `db.ping` или `pgsql.ping` и триггерами на `last()=0`.
+* **Мониторьте доступность СУБД отдельно:** создайте хост для каждой критической СУБД с элементами `pgsql.ping`/`mysql.ping` и триггерами на `last()=0` (для ODBC — элемент `db.odbc.select[...]` с простым запросом, например `SELECT 1`).
 * **Настраивайте гистерезис для триггеров БД:** используйте отдельное Recovery Expression для предотвращения дребезга при временных сбоях.
 * **Используйте Problem Suppression** для плановых работ на СУБД (обновление, бэкапы).
 * **Настраивайте Maintenance** для плановых остановок СУБД.
@@ -552,7 +557,7 @@ zabbix_server -R log_level_decrease='odbc poller'
 
 ### Масштабирование
 
-* **Используйте Zabbix Proxy Groups** (Zabbix 8.0) для распределения сбора данных при большом числе СУБД.
+* **Используйте Zabbix Proxy Groups** (Zabbix 7.0+) для распределения сбора данных при большом числе СУБД.
 * **Разделите поллеры по типам:** ODBC-поллеры отдельно от обычных пассивных проверок.
 * **При большом числе СУБД (>100)** используйте несколько Zabbix Proxy, каждый со своим набором проверок.
 
@@ -566,10 +571,12 @@ zabbix_server -R log_level_decrease='odbc poller'
 * **[Мониторинг PostgreSQL в Zabbix](./zabbix_postgresql_monitoring.md)** — детальная настройка мониторинга PostgreSQL.
 * **[Мониторинг MySQL: Zabbix, Prometheus и PMM](../Databases/MySQL/monitoring.md)** — детальная настройка мониторинга MySQL/MariaDB.
 * **[Низкоуровневое обнаружение (LLD)](./low_level_discovery.md)** — автоматизация поиска баз данных, табличных пространств и слотов репликации.
+* **[Плагины Zabbix Agent 2](./zabbix_agent_plugins.md)** — встроенные плагины MySQL/PostgreSQL/MSSQL/Oracle, named sessions.
+* **[Housekeeping и партиционирование](./zabbix_housekeeping_and_partitioning.md)** — обслуживание больших таблиц history/trends и TimescaleDB.
 * **[Тюнинг и производительность Zabbix](./zabbix_troubleshooting_and_performance_tuning.md)** — оптимизация инфраструктуры мониторинга.
 
 ### Источники и ссылки
 
-* Официальная документация Zabbix 8.0: [https://www.zabbix.com/documentation/8.0/en/manual](https://www.zabbix.com/documentation/8.0/en/manual)
-* Release Notes Zabbix 8.0 LTS: [https://www.zabbix.com/rn/rn8.0.0](https://www.zabbix.com/rn/rn8.0.0)
+* Официальная документация Zabbix 7.4: [https://www.zabbix.com/documentation/7.4/en/manual](https://www.zabbix.com/documentation/7.4/en/manual)
+* Release Notes Zabbix 7.4.0: [https://www.zabbix.com/rn/rn7.4.0](https://www.zabbix.com/rn/rn7.4.0)
 * Roadmap Zabbix: [https://www.zabbix.com/roadmap](https://www.zabbix.com/roadmap)

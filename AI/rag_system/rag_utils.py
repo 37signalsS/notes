@@ -64,6 +64,10 @@ logging.basicConfig(
 )
 log = logging.getLogger("rag")
 
+if _LOG_LEVEL > logging.DEBUG:
+    for _noisy in ("httpx", "httpcore"):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 _CFG_PATH = _cfg_path_default
 
 

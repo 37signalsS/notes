@@ -36,14 +36,20 @@ def _delete_chunk_ids(client: QdrantClient, collection_name: str, ids_to_remove:
         client.delete(collection_name=collection_name, points_selector=models.PointIdsList(points=valid_uuids))
 
 
-def _get_source_counts(client: QdrantClient, collection_name: str) -> dict[str, int]:
+def _scan_sources(
+    client: QdrantClient,
+    collection_name: str,
+    manifest_sources: set[str],
+    disk_sources: set[str],
+) -> tuple[dict[str, int], list[str]]:
     counts: dict[str, int] = {}
+    stale_ids: list[str] = []
     next_offset = None
     while True:
         pts, next_offset = client.scroll(
             collection_name=collection_name,
             limit=1000,
-            with_payload=["source", "original_id"],
+            with_payload=["source"],
             with_vectors=False,
             offset=next_offset,
         )
@@ -52,9 +58,11 @@ def _get_source_counts(client: QdrantClient, collection_name: str) -> dict[str, 
             if src is None:
                 src = "<none>"
             counts[src] = counts.get(src, 0) + 1
+            if src == "<none>" or (src not in manifest_sources and src not in disk_sources):
+                stale_ids.append(str(p.id))
         if next_offset is None:
             break
-    return counts
+    return counts, stale_ids
 
 
 def _delete_stray_points(client: QdrantClient, collection_name: str, rel_path: str, manifest_ids: set[str]) -> None:
@@ -229,6 +237,19 @@ def _ensure_collection(client: QdrantClient, collection_name: str, dense_embeddi
             )
 
 
+def _ensure_source_index(client: QdrantClient, collection_name: str) -> None:
+    if rag_utils.QDRANT_MODE != "server":
+        return
+    try:
+        client.create_payload_index(
+            collection_name=collection_name,
+            field_name="source",
+            field_schema=models.PayloadSchemaType.KEYWORD,
+        )
+    except Exception as e:
+        log.debug("Payload index on 'source' not created: %s", e)
+
+
 def _config_fingerprint(cfg: dict) -> str:
     parts = [
         cfg.get("model", ""),
@@ -318,8 +339,13 @@ def process_files(
 
     for file_path, rel_path in tqdm(changed_files, desc="  Splitting"):
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except UnicodeDecodeError as e:
+                log.warning("  %s is not valid UTF-8 (%s) — reading with replacement characters", rel_path, e)
+                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    content = f.read()
             if not content.strip():
                 continue
             splits = header_splitter.split_text(content)
@@ -387,16 +413,25 @@ def ingest(engine_name: str = "", force: bool = False, repair: bool = False) -> 
                     deleted.append(rel_path)
                     log.info("  Excluded from index: %s", rel_path)
 
-        counts = _get_source_counts(client, collection_name)
-        stale_sources = [src for src in counts if src != "<none>" and src not in files_meta]
-        removed_stale = 0
-        for src in stale_sources:
-            removed_stale += _delete_source_points(client, collection_name, src)
+        disk_sources = {rel for _, rel in files}
+        if client.collection_exists(collection_name=collection_name):
+            counts, stale_ids = _scan_sources(client, collection_name, set(files_meta), disk_sources)
+        else:
+            counts, stale_ids = {}, []
+        stale_source_count = sum(
+            1 for src in counts
+            if src != "<none>" and src not in files_meta and src not in disk_sources
+        )
         none_count = counts.get("<none>", 0)
-        if none_count:
-            removed_stale += _delete_source_points(client, collection_name, "<none>", null_source=True)
-        if removed_stale:
-            log.info("  Repair: removed %d stale point(s) from %d unknown source(s)", removed_stale, len(stale_sources) + (1 if none_count else 0))
+        if stale_ids:
+            client.delete(
+                collection_name=collection_name,
+                points_selector=models.PointIdsList(points=stale_ids),
+            )
+            log.info(
+                "  Repair: removed %d stale point(s) from %d unknown source(s)",
+                len(stale_ids), stale_source_count + (1 if none_count else 0),
+            )
         changed_rel = {rel for _, rel in changed}
         repaired: list[tuple[str, str]] = []
         for rel_path, entry in files_meta.items():
@@ -425,6 +460,7 @@ def ingest(engine_name: str = "", force: bool = False, repair: bool = False) -> 
             client.delete_collection(collection_name=collection_name)
 
         _ensure_collection(client, collection_name, dense_embeddings)
+        _ensure_source_index(client, collection_name)
 
     header_splitter, text_splitter = build_text_splitters(cfg)
     docs, file_chunk_info = process_files(changed, header_splitter, text_splitter)
@@ -441,40 +477,72 @@ def ingest(engine_name: str = "", force: bool = False, repair: bool = False) -> 
     total = len(docs)
     batch_size = cfg.get("batch_size", 100)
 
-    with tqdm(total=total, desc="  Embeddings & Upload", unit="chunk") as pbar:
-        for i in range(0, total, batch_size):
-            batch_docs = docs[i:i + batch_size]
-            batch_ids = all_ids[i:i + batch_size]
-            
-            texts = [d.page_content for d in batch_docs]
-            with torch.no_grad():
-                dense_vecs = dense_embeddings.embed_documents(texts)
-                sparse_iter = list(sparse_model.embed(texts))
-            
-            points = []
-            for j, doc in enumerate(batch_docs):
-                point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, batch_ids[j]))
-                sv = sparse_iter[j]
-                
-                points.append(
-                    models.PointStruct(
-                        id=point_id,
-                        vector={
-                            "dense": dense_vecs[j],
-                            "sparse": models.SparseVector(indices=sv.indices.tolist(), values=sv.values.tolist())
-                        },
-                        payload={
-                            "source": doc.metadata.get("source", ""),
-                            "page_content": doc.page_content,
-                            "original_id": batch_ids[j]
-                        }
-                    )
-                )
-            
-            client.upsert(collection_name=collection_name, points=points)
-            pbar.update(min(batch_size, total - i))
+    file_ends: list[int] = []
+    acc = 0
+    for _, ids, _ in file_chunk_info:
+        acc += len(ids)
+        file_ends.append(acc)
 
-    _update_manifest(engine_name, client, collection_name, changed, deleted, file_chunk_info, cfg_hash=cfg_hash)
+    done_files: list[tuple[str, list[str], float]] = []
+    file_ptr = 0
+    uploaded = 0
+
+    def _flush_progress() -> None:
+        nonlocal done_files
+        if done_files:
+            _update_manifest(
+                engine_name, client, collection_name, changed, deleted, done_files, cfg_hash=cfg_hash
+            )
+            done_files = []
+
+    try:
+        with tqdm(total=total, desc="  Embeddings & Upload", unit="chunk") as pbar:
+            for i in range(0, total, batch_size):
+                batch_docs = docs[i:i + batch_size]
+                batch_ids = all_ids[i:i + batch_size]
+
+                texts = [d.page_content for d in batch_docs]
+                with torch.no_grad():
+                    dense_vecs = dense_embeddings.embed_documents(texts)
+                    sparse_iter = list(sparse_model.embed(texts))
+
+                points = []
+                for j, doc in enumerate(batch_docs):
+                    point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, batch_ids[j]))
+                    sv = sparse_iter[j]
+
+                    points.append(
+                        models.PointStruct(
+                            id=point_id,
+                            vector={
+                                "dense": dense_vecs[j],
+                                "sparse": models.SparseVector(indices=sv.indices.tolist(), values=sv.values.tolist())
+                            },
+                            payload={
+                                "source": doc.metadata.get("source", ""),
+                                "page_content": doc.page_content,
+                                "original_id": batch_ids[j]
+                            }
+                        )
+                    )
+
+                client.upsert(collection_name=collection_name, points=points)
+                uploaded += len(batch_docs)
+                pbar.update(min(batch_size, total - i))
+                while file_ptr < len(file_chunk_info) and file_ends[file_ptr] <= uploaded:
+                    done_files.append(file_chunk_info[file_ptr])
+                    file_ptr += 1
+    except KeyboardInterrupt:
+        log.warning(
+            "  Interrupted: saving progress for %d/%d completed file(s)...",
+            file_ptr, len(file_chunk_info),
+        )
+        _flush_progress()
+        log.warning("  Partial index saved. Re-run ingest to continue — completed files are skipped.")
+        bust_cache()
+        raise
+
+    _flush_progress()
 
     log.info("  --- %s ready! ---", cfg['label'])
     bust_cache()
@@ -492,4 +560,19 @@ if __name__ == "__main__":
         log.error("Unknown engine: %s. Available: %s", args.engine, ', '.join(rag_utils.ENGINES))
         sys.exit(1)
 
-    ingest(args.engine, force=args.force, repair=args.repair)
+    import signal
+
+    def _raise_interrupt(signum: int, frame: Any) -> None:
+        raise KeyboardInterrupt
+
+    for _sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(_sig, _raise_interrupt)
+        except (ValueError, OSError):
+            pass
+
+    try:
+        ingest(args.engine, force=args.force, repair=args.repair)
+    except KeyboardInterrupt:
+        log.warning("Interrupted by user. Progress has been saved; re-run to continue.")
+        sys.exit(130)

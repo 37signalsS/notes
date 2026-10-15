@@ -1,5 +1,7 @@
 # Sealed Secrets
 
+**Актуально для:** Sealed Secrets v0.40.x / kubeseal v0.40.x
+
 ## Определения
 
 - **Sealed Secrets**: Инструмент от Bitnami для безопасного хранения Kubernetes Secrets в публичных Git-репозиториях через асимметричное шифрование. Позволяет реализовать полноценный GitOps для чувствительных данных.
@@ -30,9 +32,10 @@
 | v0.36.x | v0.36.x | `bitnami.com/v1alpha1` | Улучшенная поддержка кастомных сертификатов. |
 | v0.37.x | v0.37.x | `bitnami.com/v1alpha1` | Добавлена поддержка ED25519. |
 | v0.38.x | v0.38.x | `bitnami.com/v1alpha1` | Улучшенная безопасность шифрования. |
-| v0.39.x | v0.39.x | `bitnami.com/v1alpha1` | Актуальная стабильная версия. |
+| v0.39.x | v0.39.x | `bitnami.com/v1alpha1` | Исправления безопасности (/v1/rotate rate-limited, /v1/verify decryption oracle fix). |
+| v0.40.x | v0.40.x | `bitnami.com/v1alpha1` | Актуальная стабильная версия. Дополнительная security fix (/v1/rotate decryption oracle), поддержка `encryptedData` со значением `null` в шаблоне. |
 
-**Важно:** Версии kubeseal и контроллера должны совпадать по минорной версии (например, kubeseal v0.39.x работает с контроллером v0.39.x). Использование несовместимых версий может привести к ошибкам расшифровки.
+**Важно:** Версии kubeseal и контроллера должны совпадать по минорной версии (например, kubeseal v0.40.x работает с контроллером v0.40.x). Использование несовместимых версий может привести к ошибкам расшифровки.
 
 ### Сертификаты
 
@@ -171,10 +174,20 @@ echo "dGVzdC1wYXNzd29yZA==" | base64 --decode # → test-password
 # Установка с помощью Helm 3
 helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets
 helm repo update
-helm install sealed-secrets sealed-secrets/sealed-secrets \
+helm upgrade --install sealed-secrets sealed-secrets/sealed-secrets \
   --namespace kube-system \
-  --set fullnameOverride=sealed-secrets
+  --set fullnameOverride=sealed-secrets-controller \
+  --wait --timeout 120s
 ```
+
+**Важно:** `fullnameOverride=sealed-secrets-controller` критически важен: `kubeseal` по умолчанию ищет контроллер с именем `sealed-secrets-controller`. Если релиз называется иначе (например, `sealed-secrets` приведёт к имени `sealed-secrets-sealed-secrets`), вы получите ошибку `controller not found` при запуске `kubeseal` без явного `--controller-name`.
+
+После установки убедитесь, что контроллер запущен и сгенерировал ключ:
+```bash
+kubectl get pods -n kube-system | grep sealed-secrets
+kubectl get secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-key
+```
+Селектор по лейблу показывает активный ключ контроллера. Если вывод пуст — контроллер ещё не сгенерировал ключ. Подождите несколько секунд и повторите.
 
 **Установка в пользовательский namespace (не рекомендуется, но возможно):**
 ```bash
@@ -186,6 +199,9 @@ helm install sealed-secrets sealed-secrets/sealed-secrets \
 # Тогда kubeseal нужно вызывать с явными флагами:
 kubeseal --controller-name=sealed-secrets --controller-namespace=sealed-secrets-system
 ```
+
+**Установка через HelmRelease в Flux CD (hub-and-spoke):**
+В Flux CD-топологии контроллер часто разворачивают в неймспейсе `flux-system` через `HelmRelease` CRD. Сертификат получают через `kubeseal --fetch-cert --controller-namespace=flux-system` и используют для офлайн-шифрования. Подробнее о паттерне hub-and-spoke с зашифрованными kubeconfigами spoke-кластеров — в [GitOps: Sealed Secrets с Flux CD](../../GitOps/secrets_encryption.md#сценарий-sealed-secrets-с-flux-cd-hub-and-spoke).
 
 **Резервное копирование мастер-ключа (КРИТИЧНО):**
 Если вы потеряете мастер-ключ, все ваши зашифрованные секреты в Git станут бесполезны.
@@ -202,19 +218,33 @@ kubectl get secrets -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-k
   > sealed-secrets-all-keys-backup.yaml
 ```
 
+### Получение и сохранение публичного сертификата
+
+После запуска контроллера получите публичный сертификат и сохраните его локально:
+```bash
+kubeseal --fetch-cert \
+  --controller-name=sealed-secrets-controller \
+  --controller-namespace=kube-system \
+  > ~/.kube/sealed-secrets-infra.pem
+```
+
+Храните его в менеджере паролей или защищённом S3-бакете. Он понадобится для офлайн-запечатывания на машинах без kubeconfig-доступа к кластеру.
+
+Сертификат не является конфиденциальным — это публичный ключ. Его безопасно коммитить в репо в директорию `.kubeconfigs/` рядом с SealedSecret, для которых он используется. Это упрощает запечатывание в CI без специальной обработки.
+
 ### Сценарий 2: Шифрование секрета
 
 Для шифрования `kubeseal` должен иметь доступ к публичному сертификату контроллера.
 
 **Вариант А: Онлайн-шифрование (нужен доступ к API кластера)**
 ```bash
-kubeseal --controller-name=sealed-secrets --controller-namespace=kube-system < secret.yaml > sealed-secret.yaml
+kubeseal --controller-name=sealed-secrets-controller --controller-namespace=kube-system < secret.yaml > sealed-secret.yaml
 ```
 
 **Вариант Б: Оффлайн-шифрование (рекомендуется для CI/CD)**
 1. Получите сертификат один раз (требуется доступ к кластеру):
 ```bash
-kubeseal --controller-name=sealed-secrets --controller-namespace=kube-system --fetch-cert > pub-cert.pem
+kubeseal --controller-name=sealed-secrets-controller --controller-namespace=kube-system --fetch-cert > pub-cert.pem
 ```
 2. Используйте сертификат для шифрования без доступа к кластеру:
 ```bash
@@ -324,7 +354,7 @@ spec:
     - CreateNamespace=true
 ```
 
-### Сценарий 5: Работа с Helm-чартами
+### Сценарий 6: Работа с Helm-чартами
 
 Рекомендуется хранить зашифрованные строки в `values.yaml`, а в шаблонах использовать структуру `SealedSecret`:
 
@@ -353,7 +383,7 @@ sops -e secrets.yaml > secrets.enc.yaml
 helm secrets upgrade --install my-app . -f values.yaml -f secrets.enc.yaml
 ```
 
-### Сценарий 6: Интеграция с Kustomize
+### Сценарий 7: Интеграция с Kustomize
 
 Kustomize не имеет нативной поддержки шифрования секретов. Sealed Secrets решает эту проблему:
 
@@ -374,18 +404,27 @@ resources:
 3. Добавьте `sealed-secret.yaml` в Kustomize resources.
 4. Kustomize применит `SealedSecret`, контроллер расшифрует его в нативный `Secret`.
 
-### Сценарий 7: Ротация ключей и перешифрование
+### Сценарий 8: Ротация ключей и перешифрование
 
 Контроллер по умолчанию создает новый ключ каждые 30 дней. Все старые ключи сохраняются. Для повышения безопасности рекомендуется перешифровывать секреты в Git актуальным ключом:
 
 ```bash
-# Ручная ротация ключей
+# Ручная ротация ключей (через kubeseal)
 kubeseal --rotate-keys
+
+# Принудительная ротация через аннотацию Secret (альтернативный способ)
+kubectl annotate secret \
+  -n kube-system \
+  -l sealedsecrets.bitnami.com/sealed-secrets-key \
+  sealedsecrets.bitnami.com/rotate-key=force
 
 # Перешифрование существующего SealedSecret на новый сертификат
 kubeseal --re-encrypt < old.sealed.yaml --cert new-pub-cert.pem > new.sealed.yaml
 
-# Полный цикл ротации (佳 Example for SRE)
+# Перезапечатать secret с новым ключом (re-seal)
+kubectl get secret mysecret -o yaml | kubeseal --format yaml > sealed-new.yaml
+
+# Полный цикл ротации (Best Practice для SRE)
 kubeseal --rotate-keys
 kubeseal --fetch-cert > pub-cert-$(date +%Y%m%d).pem
 
@@ -395,7 +434,9 @@ for f in $(find . -name "*.sealed.yaml"); do
 done
 ```
 
-### Сценарий 8: CI/CD пайплайн (GitHub Actions)
+После ротации обновите локальный файл .pem повторным получением сертификата. Старые SealedSecret продолжают расшифровываться; новые секреты будут запечатаны новым ключом.
+
+### Сценарий 9: CI/CD пайплайн (GitHub Actions)
 
 **Шаг 1: Настройка GitHub Secrets**
 - `KUBE_CONFIG`: base64-encoded kubeconfig для доступа к кластеру.
@@ -422,7 +463,7 @@ jobs:
 
     - name: Install kubeseal
       run: |
-        wget https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.39.1/kubeseal-linux-amd64 -O kubeseal
+        wget https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.40.0/kubeseal-linux-amd64 -O kubeseal
         chmod +x kubeseal
         sudo mv kubeseal /usr/local/bin/
 
@@ -439,16 +480,138 @@ jobs:
         kubectl --kubeconfig=/tmp/kubeconfig apply -f manifests/
 ```
 
-### Сценарий 9: Восстановление из бэкапа (Disaster Recovery)
+### Сценарий 10: Работа с несколькими кластерами из CI
+
+При наличии нескольких кластеров (infra, dev, test), каждый со своим контроллером Sealed Secrets, нужны отдельные .pem-файлы для каждого кластера:
+
+```bash
+# Запечатать для infra
+kubeseal --cert .kubeconfigs/sealed-secrets-infra.pem ...
+
+# Запечатать для dev
+kubeseal --cert .kubeconfigs/sealed-secrets-dev.pem ...
+
+# Запечатать для test
+kubeseal --cert .kubeconfigs/sealed-secrets-test.pem ...
+```
+
+Результирующие манифесты `SealedSecret` разные, даже если plaintext одинаковый — каждый зашифрован своим публичным ключом. Храните сертификаты в директории `.kubeconfigs/` рядом с манифестами для удобства.
+
+### Сценарий 11: Запечатывание kubeconfig для hub-and-spoke
+
+Kubeconfig — это просто Secret с ключом файла. Запечатываем так же:
+
+```bash
+kubectl create secret generic dev-kubeconfig \
+  --namespace=flux-system \
+  --from-file=value=.kubeconfigs/dev.yaml \
+  --dry-run=client -o yaml \
+| kubeseal \
+  --cert ~/.kube/sealed-secrets-infra.pem \
+  --format yaml \
+  > fluxcd/dev-kubeconfig-sealed.yaml
+```
+
+Контроллер на infra расшифровывает его, Flux использует для обращения к dev. Обратите внимание: namespace — `flux-system`, что должно совпадать с namespace, где работает Kustomization, ссылающаяся на этот секрет.
+
+### Сценарий 12: Запечатывание учётных данных container registry
+
+Image pull secrets в JSON-формате:
+
+```bash
+kubectl create secret docker-registry registry-creds \
+  --namespace=app \
+  --docker-server=registry.example.com \
+  --docker-username=myuser \
+  --docker-password=mypass \
+  --dry-run=client -o yaml \
+| kubeseal \
+  --cert ~/.kube/sealed-secrets-infra.pem \
+  --format yaml \
+  > registry-creds-sealed.yaml
+```
+
+Для cluster-wide registry credentials (чтобы каждый под мог делать pull без указания imagePullSecrets в каждом namespace):
+
+```bash
+kubectl create secret docker-registry registry-creds \
+  --namespace=kube-system \
+  --docker-server=registry.example.com \
+  --docker-username=myuser \
+  --docker-password=mypass \
+  --dry-run=client -o yaml \
+| kubeseal \
+  --cert ~/.kube/sealed-secrets-infra.pem \
+  --scope cluster-wide \
+  --format yaml \
+  > registry-creds-sealed.yaml
+```
+
+**Важно:** Нельзя частично обновить SealedSecret. Операции «обновить поле X» не существует. Если нужно изменить любое значение — даже одно поле — нужно перезапечатать целый Secret с новыми значениями и заменить весь манифест SealedSecret.
+
+Рабочий процесс обновления:
+```bash
+# Получить текущие значения (если они хранятся отдельно)
+kubectl get secret my-secret -n app -o yaml | kubectl neat > /tmp/my-secret.yaml
+# ИЛИ восстановить с нуля с новыми значениями
+
+# Отредактировать значения в /tmp/my-secret.yaml
+
+# Перезапечатать всё целиком
+kubeseal --cert ~/.kube/sealed-secrets-infra.pem --format yaml \
+  < /tmp/my-secret.yaml > my-sealed-secret.yaml
+
+git add my-sealed-secret.yaml && git commit -m "rotate my-secret" && git push
+```
+
+Поэтому plaintext-значения нужно хранить отдельно (Vault, менеджер паролей) — иначе при обновлении без доступа к кластеру окажется, что восстанавливать значения не из чего.
+
+### Сценарий 13: Миграция кластера — перезапечатывание всего
+
+При пересборке кластера с нуля контроллер генерирует новую пару ключей. Все существующие SealedSecret бесполезны — новый контроллер не может их расшифровать.
+
+**Вариант 1: Восстановление пары ключей (рекомендуется, если есть бэкап)**
+
+Экспортируйте старый ключ до уничтожения кластера:
+```bash
+kubectl get secret \
+  -n kube-system \
+  -l sealedsecrets.bitnami.com/sealed-secrets-key=active \
+  -o yaml > sealed-secrets-key-backup.yaml
+```
+
+Храните в менеджере паролей. Это самый чувствительный файл в вашей инфраструктуре — у кого есть этот файл, тот может расшифровать все SealedSecret в репо.
+
+Импортируйте ключ в новый кластер до того, как Flux начнёт реконсиляцию:
+```bash
+kubectl apply -f sealed-secrets-key-backup.yaml
+kubectl rollout restart deployment sealed-secrets-controller -n kube-system
+```
+
+Контроллер подхватывает восстановленный ключ и может расшифровать все существующие SealedSecret.
+
+**Вариант 2: Перезапечатать все секреты (если plaintext в Vault)**
+
+Если все plaintext-значения хранятся в Vault (а так и должно быть), перезапечатывание несложно:
+1. Получить публичный сертификат нового кластера
+2. Пройтись по всем манифестам SealedSecret
+3. Восстановить plaintext из Vault
+4. Запечатать новым сертификатом
+5. Закоммитить и запушить
+
+Больше работы, но результат чище — нет зависимости от сохранения старого ключевого материала.
+
+### Сценарий 14: Восстановление из бэкапа (Disaster Recovery)
 
 **Ситуация:** Кластер потерян, но Git-репозиторий с SealedSecret и бэкап мастер-ключа сохранены.
 
 **Шаг 1: Восстановление контроллера**
 ```bash
 # Установка контроллера на новый кластер
-helm install sealed-secrets sealed-secrets/sealed-secrets \
+helm upgrade --install sealed-secrets sealed-secrets/sealed-secrets \
   --namespace kube-system \
-  --set fullnameOverride=sealed-secrets
+  --set fullnameOverride=sealed-secrets-controller \
+  --wait --timeout 120s
 
 # Восстановление мастер-ключа из бэкапа
 kubectl apply -f sealed-secrets-master-key-backup.yaml
@@ -468,7 +631,7 @@ kubectl get secret my-db-secret -n app -o yaml
 
 **Важно:** Если бэкап мастер-ключа утерян, расшифровка невозможна. Единственный выход — создать новые SealedSecret с нуля (шифрование новым ключом контроллера на новом кластере).
 
-### Сценарий 10: Troubleshooting (Диагностика)
+### Сценарий 15: Troubleshooting (Диагностика)
 
 **Проблема:** `kubeseal` не может получить сертификат (`error: cannot get sealed secret service`).
 - **Причина:** Сервис контроллера имеет нестандартное имя или находится в другом namespace, и `kubeseal` не может найти его автоматически.
@@ -485,6 +648,29 @@ kubectl get secret my-db-secret -n app -o yaml
    - Секрет зашифрован ключом другого кластера.
    - Изменены имя или namespace в режиме `strict`.
    - Мастер-ключ был удален/изменен без восстановления бэкапа.
+
+### Проверка статуса расшифровки
+
+После деплоя SealedSecret:
+
+```bash
+# Проверить, синхронизировался ли SealedSecret в настоящий Secret
+kubectl get sealedsecret my-secret -n app
+kubectl get secret my-secret -n app
+
+# Если Secret не существует, проверить events
+kubectl describe sealedsecret my-secret -n app
+```
+
+Типичные сообщения об ошибках:
+
+| Ошибка | Причина |
+|--------|---------|
+| no key could decrypt secret | Неправильный кластер — запечатан для другого контроллера |
+| illegal base64 data | Сертификат или секрет был повреждён при копировании |
+| namespace/name mismatch | Секрет был перемещён или переименован после запечатывания |
+
+`no key could decrypt secret` — частая ошибка при запечатывании для infra, но случайном коммите в путь dev.
 
 ### Диагностические команды
 
@@ -573,5 +759,5 @@ echo -n "test" | kubeseal --cert pub-cert.pem --format yaml | kubeseal --recover
 - **[SOPS](../../Security/Tools/sops_overview.md)** — шифрование файлов с ключами AWS/GCP/Age без привязки к контроллеру.
 - **[Vault](../../Vault/zero_trust.md)** — полноценная система управления секретами.
 - Общий обзор стратегий — **[Secrets Management Overview](../../Security/Concepts/secrets_management_overview.md)**.
-- Пайплайны GitOps — **[GitOps Secrets Encryption](../../GitOps/secrets_encryption.md)**.
+- Пайплайны GitOps — **[GitOps Secrets Encryption](../../GitOps/secrets_encryption.md)**, включая сценарий [Sealed Secrets с Flux CD (hub-and-spoke)](../../GitOps/secrets_encryption.md#сценарий-sealed-secrets-с-flux-cd-hub-and-spoke) для управления kubeconfigами spoke-кластеров.
 - Паттерн динамической конфигурации — **[Application Secrets Management](./application_secrets_management.md)**.

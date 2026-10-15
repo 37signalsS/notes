@@ -234,10 +234,10 @@ Retention **помечает** артефакты неиспользуемыми
 ```bash
 # 1. Включить удаление в config.yml: delete.enabled: true
 # 2. Перевести реестр в read-only: storage.maintenance.readonly.enabled: true
-# 3. Прогноз:
-registry garbage-collect --dry-run /etc/docker/registry/config.yml
+# 3. Прогноз (с удалением untagged-манифестов):
+registry garbage-collect --dry-run --delete-untagged /etc/distribution/config.yml
 # 4. Реальный GC:
-registry garbage-collect /etc/docker/registry/config.yml
+registry garbage-collect --delete-untagged /etc/distribution/config.yml
 ```
 
 > Удаление манифестов через API лишь помечает их; blobs на диске остаются до GC.

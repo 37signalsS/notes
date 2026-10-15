@@ -474,5 +474,5 @@ curl http://localhost:8081/metrics | grep policy_reporter
 - [Diagnostika](./troubleshooting.md) — методология поиска проблем интеграции
 - [Policy Reporter](./reporter.md) — настройка агрегации данных
 - [Falco](../../../Security/Tools/falco.md) — детали работы Falco
-- [Trivy](../../../Security/Tools/trivy.md) — сканирование уязвимостей
+- [Trivy Operator](../trivy_operator.md) — непрерывное сканирование уязвимостей в кластере
 - [kube-bench](../../kube-bench.md) — аудит CIS Benchmark

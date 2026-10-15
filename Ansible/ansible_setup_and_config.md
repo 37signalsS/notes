@@ -218,6 +218,9 @@ ansible-inventory -i inventory.yml --graph
 # Полный JSON со всеми переменными (hostvars)
 ansible-inventory -i inventory.yml --list
 
+# Тот же вывод в YAML-формате (удобно для diff и офлайн-отладки)
+ansible-inventory -i inventory.yml --list --yaml > resolved_inventory.yml
+
 # Просмотр переменных конкретного хоста
 ansible-inventory --host web1.example.com
 

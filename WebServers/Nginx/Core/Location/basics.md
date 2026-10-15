@@ -376,14 +376,14 @@ location = /nginx_status {
 
 ```bash
 # Запрос из подсети мониторинга
-curl -s http://nginx-host/nginx_status
+curl -s http://localhost/stub_status 2>/dev/null || curl -s http://localhost/nginx_status
 # → Active connections: 1
 #   server accepts handled requests
 #   10 10 20
 #   Reading: 0 Writing: 1 Waiting: 0
 
 # Запрос из внешней сети
-curl -s http://nginx-host/nginx_status
+curl -s http://localhost/stub_status 2>/dev/null || curl -s http://localhost/nginx_status
 # → 403 Forbidden
 ```
 

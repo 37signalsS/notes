@@ -1,6 +1,6 @@
 # Мета-мониторинг: мониторинг систем наблюдаемости
 
-**Актуально для:** Prometheus 3.x, VictoriaMetrics 1.52.x, Loki 3.x, Alertmanager 0.27.x, Vector 0.44.x, Fluent Bit 5.1.x, Zabbix 8.0.x
+**Актуально для:** Prometheus 3.x, VictoriaMetrics 1.52.x, Loki 3.x, Alertmanager 0.27.x, Vector 0.44.x, Fluent Bit 5.1.x, Zabbix 7.0 LTS / 7.4
 
 ## Определения
 

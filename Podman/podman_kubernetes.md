@@ -88,6 +88,9 @@ spec:
 # Запуск пода
 podman kube play nginx-pod.yaml
 
+# Повторный запуск с заменой существующих ресурсов (--replace)
+podman kube play nginx-pod.yaml --replace
+
 # Проверка
 podman ps
 podman pod ps

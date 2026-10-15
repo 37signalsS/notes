@@ -115,6 +115,9 @@ istioctl install --set profile=ambient -y
 
 # Установка классического профиля с кастомизацией
 istioctl install --set profile=default --set meshConfig.accessLogFile=/dev/stdout -y
+
+# Установка demo-профиля (обучение: istiod + Ingress + Egress, много ресурсов)
+istioctl install --set profile=demo -y
 ```
 
 ### 4. Верификация установки

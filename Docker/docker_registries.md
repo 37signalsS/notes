@@ -230,6 +230,238 @@ regctl tag create dev-registry.example.com/app:v1.0 prod-registry.example.com/ap
 
 Детали и сравнение методов — в **[управлении артефактами](../CI-CD/artifact_management.md)** (Сценарий 5) и **[skopeo](../Podman/skopeo_overview.md)**.
 
+### Сценарий 8: Self-hosted registry в Kubernetes (NodePort, PVC, GC)
+
+Развёртывание официального `registry:3` в Kubernetes с NodePort-сервисом, PVC и автоматизированной GC. Подходит для on-premise и air-gapped кластеров без внешних зависимостей.
+
+**Deployment + Service (NodePort):**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: registry
+  template:
+    metadata:
+      labels:
+        app: registry
+    spec:
+      containers:
+        - name: registry
+          image: registry:3
+          ports:
+            - containerPort: 5000
+          env:
+            - name: REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY
+              value: /var/lib/registry
+            - name: REGISTRY_HTTP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: registry-secret
+                  key: http-secret
+            - name: REGISTRY_STORAGE_DELETE_ENABLED
+              value: "true"
+          volumeMounts:
+            - name: registry-data
+              mountPath: /var/lib/registry
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+      volumes:
+        - name: registry-data
+          persistentVolumeClaim:
+            claimName: registry-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: registry
+spec:
+  type: NodePort
+  selector:
+    app: registry
+  ports:
+    - port: 5000
+      targetPort: 5000
+      nodePort: 30500
+```
+
+NodePort `30500` доступен с любой машины, которая может достучаться до ноды. `REGISTRY_STORAGE_DELETE_ENABLED: "true"` включает API удаления манифестов — необходимо для работы garbage collection.
+
+**HTTP-секрет (Secret):**
+
+```bash
+# Сгенерировать 32-байтовый secret и создать Secret
+kubectl create secret generic registry-secret \
+  --from-literal=http-secret=$(openssl rand -hex 32) \
+  -n registry
+```
+
+**Постоянное хранилище (PVC):**
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-pvc
+  namespace: registry
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: local-path
+```
+
+Для production вместо PVC можно использовать S3-совместимое хранилище (MinIO, Ceph RGW). Переключение через env-переменные (см. **[архитектуру хранилищ](#архитектура-хранилищ-storage-backends)**):
+
+```yaml
+env:
+  - name: REGISTRY_STORAGE
+    value: s3
+  - name: REGISTRY_STORAGE_S3_BUCKET
+    value: my-registry-bucket
+  - name: REGISTRY_STORAGE_S3_REGION
+    value: us-east-1
+  - name: REGISTRY_STORAGE_S3_ACCESSKEY
+    valueFrom:
+      secretKeyRef:
+        name: s3-creds
+        key: access-key
+  - name: REGISTRY_STORAGE_S3_SECRETKEY
+    valueFrom:
+      secretKeyRef:
+        name: s3-creds
+        key: secret-key
+```
+
+**Настройка Docker для HTTP-реестра:**
+
+Docker отклоняет HTTP-реестры по умолчанию — добавьте адрес в `insecure-registries`:
+
+```json
+// /etc/docker/daemon.json
+{
+  "insecure-registries": ["registry.registry:30500"]
+}
+```
+
+```bash
+sudo systemctl restart docker
+```
+
+> **Примечание для containerd:** в Docker 29.x containerd image store включён по умолчанию. Для надёжной маршрутизации через зеркала используйте `hosts.toml` (см. **[Сценарий 2](#сценарий-2-pull-through-cache-кэш-docker-hub)**).
+
+**Push и Pull образов:**
+
+```bash
+# Тегировать, запушить
+docker tag myapp:latest registry.registry:30500/myapp:latest
+docker push registry.registry:30500/myapp:latest
+
+# Проверить теги
+curl -s http://registry.registry:30500/v2/myapp/tags/list | jq .
+# → {"name":"myapp","tags":["latest"]}
+```
+
+В Kubernetes-подах:
+
+```yaml
+containers:
+  - name: app
+    image: registry.registry:30500/myapp:abc1234
+    imagePullPolicy: IfNotPresent
+```
+
+Если нода обращается к реестру без аутентификации, `imagePullSecret` не нужен. Для защищённых реестров (см. **[Сценарий 4](#сценарий-4-аутентификация-credential-helpers-и-ci)**):
+
+```bash
+kubectl create secret docker-registry registry-creds \
+  --docker-server=registry.registry:30500 \
+  --docker-username=robot \
+  --docker-password=TOKEN \
+  --namespace=app
+```
+
+```yaml
+spec:
+  imagePullSecrets:
+    - name: registry-creds
+```
+
+**Удаление старых тегов через API:**
+
+```bash
+DIGEST=$(curl -sI \
+  -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+  "http://registry.registry:30500/v2/myapp/manifests/old-tag" \
+  | grep -i Docker-Content-Digest | awk '{print $2}' | tr -d '\r')
+
+curl -X DELETE "http://registry.registry:30500/v2/myapp/manifests/${DIGEST}"
+# → 202 Accepted
+```
+
+После удаления тега запустите GC для физического освобождения места на диске.
+
+**Garbage collection:**
+
+API реестра не удаляет блобы физически при удалении тега — слои (blobs) остаются на диске до GC. Перед GC удалите теги через API (см. выше), затем запустите GC. Для предотвращения записи во время GC рекомендуется перевести реестр в read-only режим (`storage.maintenance.readonly.enabled: true` в config.yml, или `REGISTRY_STORAGE_MAINTENANCE_READONLY_ENABLED=true`):
+
+```bash
+# Прогон с dry-run
+kubectl exec -n registry deploy/registry -- \
+  registry garbage-collect --dry-run --delete-untagged /etc/distribution/config.yml
+
+# Если результат удовлетворительный — реальный GC
+kubectl exec -n registry deploy/registry -- \
+  registry garbage-collect --delete-untagged /etc/distribution/config.yml
+```
+
+> **Важно:** В контейнере `registry:3` конфиг находится по пути `/etc/distribution/config.yml` (в v2 путь был `/etc/docker/registry/config.yml`). Бинарник `bin/registry` в v2 соответствует `registry` в v3.
+
+**CronJob для автоматизации GC:**
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: registry-gc
+  namespace: registry
+spec:
+  schedule: "0 3 * * 0"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: gc
+              image: registry:3
+              command:
+                - registry
+                - garbage-collect
+                - --delete-untagged
+                - /etc/distribution/config.yml
+              volumeMounts:
+                - name: registry-data
+                  mountPath: /var/lib/registry
+          volumes:
+            - name: registry-data
+              persistentVolumeClaim:
+                claimName: registry-pvc
+```
+
+> **Best practice:** для production CronJob лучше сочетать с read-only режимом. Автоматизированная смена конфига через ConfigMap + rolling restart Deployment описана в **[операциях Harbor](../Docker_registries/Harbor/operations.md)**.
+
 ## Устранение неполадок
 
 | Симптом | Вероятная причина | Диагностика и решение |
@@ -237,7 +469,7 @@ regctl tag create dev-registry.example.com/app:v1.0 prod-registry.example.com/ap
 | `404` на пути `/referrers/` | Реестр или прокси перед ним не поддерживают OCI 1.1; Docker Engine может пытаться интерпретировать HTML-страницу ошибки как JSON | Проверьте версию реестра (Harbor 2.11+, Zot, distribution v3). Проверьте поддержку API через `oras discover` |
 | Высокая задержка при запросах метаданных | Реестр не индексирует поле `subject` и ищет по всему хранилищу манифестов | Используйте реестр с индексацией (Zot — BoltDB, Harbor — PostgreSQL) |
 | Пропажа подписей при параллельных сборках | Использование fallback-тегов (схема `sha256-<digest>.sig`) в реестрах без нативной поддержки Referrers API | Перейдите на нативную поддержку OCI 1.1 (Harbor 2.11+, Zot, GHCR, Docker Hub) |
-| Место не освобождается после удаления манифестов | Удаление через API лишь помечает манифест; слои (blobs) остаются на диске | Включите `delete.enabled`, переведите реестр в read-only (`storage.maintenance.readonly.enabled: true`) и запустите `registry garbage-collect /etc/distribution/config.yml` (сначала `--dry-run`). В Harbor — GC через UI/API |
+| Место не освобождается после удаления манифестов | Удаление через API лишь помечает манифест; слои (blobs) остаются на диске | Включите `delete.enabled`, переведите реестр в read-only (`storage.maintenance.readonly.enabled: true`) и запустите `registry garbage-collect --dry-run --delete-untagged /etc/distribution/config.yml`; для реестра в контейнере — `docker exec -it registry registry garbage-collect --dry-run --delete-untagged /etc/distribution/config.yml`. В Harbor — GC через UI/API |
 | `429 Too Many Requests` при pull | Лимит Docker Hub: 100 pulls/6h для анонимных (per IPv4/IPv6 /64), 200 pulls/6h для Personal | `docker login` (аутентификация увеличивает лимит), pull-through cache, проверка заголовков `ratelimit-*` — **[Сценарий 4](./Docker_registries/public_registry_security.md)** |
 | `x509: certificate signed by unknown authority` при pull | Самоподписанный или недоверенный сертификат реестра | Добавьте CA в `/etc/docker/certs.d/<registry>/ca.crt` и перезапустите демон (для containerd — `/etc/containerd/certs.d/`) |
 | Зеркало (`registry-mirrors`) не используется для `myregistry.example.com` | `registry-mirrors` работает только для Docker Hub | Обращайтесь к реестру напрямую или настраивайте маршрутизацию через `hosts.toml` containerd |
@@ -271,7 +503,7 @@ docker info --format '{{json .RegistryMirrors}}'
 
 - **Фиксация по дайджесту** в production-манифестах вместо плавающих тегов — стратегии и ловушки `:latest` в **[версионировании](./Docker_registries/image_versioning_and_tagging.md)**.
 - **Immutable tags** и **retention** на уровне реестра (Harbor) — запрет перезаписи тегов и автоматическое удаление старых.
-- **GC по расписанию:** для distribution — cron-задача с предварительным read-only; для Harbor — расписание в UI; для Zot — расширение `scrub`.
+- **GC по расписанию:** для distribution на bare metal — cron-задача с предварительным read-only; в Kubernetes — CronJob (см. **[Сценарий 8](#сценарий-8-self-hosted-registry-в-kubernetes-nodeport-pvc-gc)**); для Harbor — расписание в UI; для Zot — расширение `scrub`.
 - **Сканирование на push** (Harbor + Trivy) и **проверка подписей** (Cosign/Notation) перед деплоем — **[безопасность публичных реестров](./Docker_registries/public_registry_security.md)**.
 - **Мониторинг места:** quota на проект (Harbor), алерты на заполнение тома реестра.
 - **Очистка после тестов:** `docker logout <registry>`, `docker volume rm registry-data registry-cache-data`, удаление htpasswd-файлов.

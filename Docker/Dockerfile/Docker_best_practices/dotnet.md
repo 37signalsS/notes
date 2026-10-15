@@ -41,6 +41,56 @@ Microsoft предоставляет три категории образов д
 
 **Важно:** Начиная с .NET 8, образы `aspnet` и `runtime` доступны в вариантах `jammy-chiseled` (Ubuntu) и `alpine`. Chiseled-образы не содержат shell и пакетных менеджеров — максимальная безопасность, но невозможно отладить контейнер через `docker exec`.
 
+### Самостоятельная публикация (Self-contained) и Trimming
+
+В отличие от Native AOT (который компилирует в нативный код и использует `runtime-deps`), **self-contained** публикация упаковывает рантайм .NET прямо в образ, сохраняя JIT-компиляцию. Это позволяет брать базовый образ без установленного .NET (например, `debian:bookworm-slim`), а флаг `-p:PublishTrimmed=true` удаляет неиспользуемые зависимости и уменьшает размер:
+
+```dockerfile
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish src/MyApp/MyApp.csproj \
+    -c Release \
+    -r linux-x64 \
+    --self-contained true \
+    -p:PublishTrimmed=true \
+    -o /app/publish
+
+# debian:bookworm-slim — без базового .NET, т.к. runtime встроен в self-contained
+FROM debian:bookworm-slim AS runtime
+WORKDIR /app
+# debian:slim не содержит предустановленного пользователя app (в отличие от mcr.microsoft.com/dotnet/*),
+# поэтому пользователя создаём вручную
+RUN addgroup --system --gid 1001 appgroup && \
+    adduser --system --uid 1001 --ingroup appgroup appuser && \
+    apt-get purge -y --auto-remove gcc
+COPY --from=build /app/publish .
+RUN chown -R appuser:appgroup /app
+USER appuser
+ENTRYPOINT ["./MyApp"]
+```
+
+**Важно:** trimming анализирует статическую использованность и может удалить код, доступный только через рефлексию (EF Core, AutoMapper, JSON‑сериализаторы с `DataMember`, динамическая загрузка сборок). При включении `PublishTrimmed=true` trim‑предупреждения (`ILLink`, помечающие `RequiresUnreferencedCodeAttribute`) генерируются по умолчанию — устранять их нужно до релиза:
+
+```bash
+dotnet publish src/MyApp/MyApp.csproj -c Release -r linux-x64 \
+    --self-contained true -p:PublishTrimmed=true -p:TrimmerSingleWarn=false
+# → индивидуальные предупреждения о потенциально удаляемых типах рефлексии
+
+# Превратить trim-предупреждения в ошибки сборки:
+dotnet publish src/MyApp/MyApp.csproj -c Release -r linux-x64 \
+    --self-contained true -p:PublishTrimmed=true -p:ILLinkTreatWarningsAsErrors=true
+# → сборка прервётся, если trimmer найдёт неанализируемый код
+```
+
+Сравнение стратегий:
+
+| Стратегия | Базовый образ | Размер | Плюсы | Минусы |
+| :--- | :--- | :--- | :--- | :--- |
+| Native AOT | `runtime-deps` | ~25 МБ (Alpine) | Нативный код, мгновенный старт | Ограничен рефлексией, требует `clang` на этапе сборки |
+| Self-contained + Trimming | `debian:slim` / `runtime-deps` | ~80 МБ | Работает на не-.NET базе, JIT сохраняется | Trimming может сломать рефлексию, медленнее AOT |
+| Framework-dependent | `aspnet` | ~80 МБ (Alpine) | Самый простой, Shared Runtime в образе | Cold start с JIT, зависит от образа рантайма |
+
 ### Управление ресурсами и GC
 
 .NET отлично адаптирован под контейнеры, но требует настройки для экстремальных нагрузок:
@@ -167,6 +217,24 @@ RUN --mount=type=cache,target=/root/.nuget/packages \
 
 **BuildKit cache mount** (`--mount=type=cache`) дополнительно сохраняет пакеты на хосте между сборками, даже если базовый образ изменился. Это критично для CI/CD, где каждый запуск — новый агент.
 
+Для кэширования между отдельными прогонами сборки в CI/CD используется реестр как хранилище кэша — `mode=max` экспортирует не только финальные слои, но и все промежуточные стадии multi-stage, что резко повышает hit-rate при изменениях только кода:
+
+```yaml
+build:
+  variables:
+    DOCKER_BUILDKIT: "1"
+  script:
+    - |
+      docker buildx build \
+        --cache-from type=registry,ref=${REGISTRY}/myapp:cache \
+        --cache-to type=registry,ref=${REGISTRY}/myapp:cache,mode=max \
+        --platform linux/amd64 \
+        --tag ${REGISTRY}/myapp:${CI_COMMIT_SHORT_SHA} \
+        --push .
+```
+
+На чистом раннере это сокращает время сборки .NET с 4–5 минут до менее 1 минуты при изменениях только исходного кода (оставшиеся слои `restore`/`NuGet` берутся из кэша реестра).
+
 ### Глобализация и локализация
 
 Для большинства микросервисов, работающих с JSON и техническими данными, инвариантный режим является предпочтительным:
@@ -198,6 +266,35 @@ docker run -d \
 - `--read-only` блокирует запись в `/tmp` и лог-файлы — containerized .NET приложения пишут во временные файлы, поэтому нужно `--tmpfs /tmp`.
 - `--cap-drop=ALL` + `--security-opt=no-new-privileges` предотвращают эскалацию привилегий, если в .NET рантайме обнаружена уязвимость.
 - Пользователь `app` (UID 1654) уже непривилегирован — дополнительные меры isolation усиливают защиту.
+
+#### SecurityContext в Kubernetes
+
+Ограничения на уровне `docker run` (см. выше) дополняются `securityContext` в Kubernetes, где non-root, read-only rootfs и drop capabilities задаются декларативно. UID совпадает с пользователем `app` из .NET-образов (1654):
+
+```yaml
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1654
+    fsGroup: 1654
+  containers:
+    - securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+```
+
+С `readOnlyRootFilesystem: true` приложение может писать только в явно смонтированные тома. Если нужно `/tmp`:
+
+```yaml
+volumeMounts:
+  - name: tmp
+    mountPath: /tmp
+volumes:
+  - name: tmp
+    emptyDir: {}
+```
 
 ### Supply Chain Security и сканирование образов
 

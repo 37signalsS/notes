@@ -166,6 +166,9 @@ tshark -r capture.pcap -q -z io,phs
 # Список всех IP-диалогов (Conversations)
 tshark -r capture.pcap -q -z conv,ip
 
+# Список TCP-разговоров (Conversation) — для поиска самых активных TCP-сессий
+tshark -r capture.pcap -q -z conv,tcp
+
 # Сводка экспертной информации (Retransmissions, Zero Window и др.)
 tshark -r capture.pcap -q -z expert
 
@@ -183,6 +186,10 @@ tshark -r capture.pcap -q -z io,stat,1,"http"
 
 # Статистика с счетчиком: количество пакетов и байт
 tshark -r capture.pcap -q -z io,stat,1,"COUNT(frame)frame","SUM(frame.len)frame"
+
+# Живой захват с интервальной статистикой ретрансмиссий (Live I/O Graph)
+# Показывает количество TCP-ретрансмиссий в секунду в реальном времени
+sudo tshark -i any -q -z io,stat,1,"COUNT(tcp.analysis.retransmission)tcp.analysis.retransmission"
 
 # DNS-запросы и ответы
 tshark -r capture.pcap -q -z dns,tree

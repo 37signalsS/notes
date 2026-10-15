@@ -695,7 +695,7 @@ spec:
 Секреты для динамических сред (ключи шифрования, токены сервисов) извлекаются из корпоративного HashiCorp Vault:
 
 ```yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: preview-app-secrets

@@ -91,17 +91,26 @@ goaccess /var/log/nginx/access.log --log-format=COMBINED \
 # Топ-10 самых медленных запросов (по времени ответа апстрима)
 sort -k1,1 /dev/null; awk '{print $NF, $0}' /var/log/nginx/access.log | sort -rn | head -10
 
-# Распределение HTTP-кодов
+# Активные соединения (stub_status)
+curl -s http://localhost/stub_status 2>/dev/null || curl -s http://localhost/nginx_status 2>/dev/null || echo "stub_status не настроен"
+
+# Следить за access log
+tail -f /var/log/nginx/access.log | awk '{print $1, $7, $9, $10}'
+
+# Топ 10 запрашиваемых URL
+awk '{print $7}' /var/log/nginx/access.log | sort | uniq -c | sort -rn | head -10
+
+# Топ 10 IP по числу запросов
+awk '{print $1}' /var/log/nginx/access.log | sort | uniq -c | sort -rn | head -10
+
+# Запросы по коду ответа
 awk '{print $9}' /var/log/nginx/access.log | sort | uniq -c | sort -rn
 
 # RPS (запросы в секунду) по минутам
 awk -v d="$(date '+%d/%b/%Y:%H:%M')" '$4 ~ d {n++} END {print n/60, "rps"} ' /var/log/nginx/access.log
 
-# Топ-10 URL по объёму трафика
+# Топ 10 URL по объёму трафика
 awk '{print $7, $10}' /var/log/nginx/access.log | awk '{size[$1]+=$2; n[$1]++} END {for (u in size) print size[u], n[u], u}' | sort -rn | head -10
-
-# Источники ошибок 5xx (кто и сколько)
-grep 'HTTP/1.1" 5' /var/log/nginx/access.log | awk '{print $1}' | sort | uniq -c | sort -rn | head
 ```
 
 > **Примечание:** поля в `awk` зависят от `log_format`: `$9` — статус, `$7` — URI, `$10` — body bytes в стандартном combined-формате. Проверьте фактическую структуру строки перед использованием.

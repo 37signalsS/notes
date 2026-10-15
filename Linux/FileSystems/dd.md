@@ -151,6 +151,14 @@ sudo dd if=/dev/sda of=/dev/sdb bs=4M status=progress conv=fdatasync
 # → 500107862016 bytes (500 GB) copied, 125.3 s, 4.0 MB/s
 ```
 
+**Клонирование с пропуском битых секторов (rescue-режим): noerror + sync**
+```bash
+dd if=/dev/sda of=/dev/sdb bs=64M conv=noerror,sync status=progress
+# → noerror: пропускает ошибки чтения
+# → sync: дополняет битые блоки нулями до размера блока (сохраняет выравнивание)
+# → bs=64M: крупный блок ускоряет копирование здорового диска
+```
+
 Для клонирования на диск большего размера после завершения копирования расширьте раздел и файловую систему:
 
 ```bash
@@ -304,6 +312,13 @@ dd if=/dev/zero of=testfile bs=1G count=1 oflag=direct
 # Обход кэша + финализация записи на диск
 dd if=/dev/zero of=testfile bs=1G count=1 oflag=direct conv=fdatasync
 # → 1073741824 bytes (1.1 GB) copied, 2.345 s, 458 MB/s
+```
+
+**Бенчмарк надёжной записи (worst-case): direct + dsync без кэша, sync на каждый блок**
+```bash
+dd if=/dev/zero of=/data/ddtest bs=1M count=1024 oflag=direct,dsync status=progress; rm /data/ddtest
+# → 1073741824 bytes (1.1 GB) copied, 3.2 s, 335 MB/s (пример)
+# Примечание: это не тест IOPS, а тест пропускной способности при sync-ировании каждого блока
 ```
 
 Для более точного тестирования используйте несколько итераций и разный размер блоков:

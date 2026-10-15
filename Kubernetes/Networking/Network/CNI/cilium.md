@@ -677,6 +677,7 @@ helm upgrade --install cilium cilium/cilium \
 - Включён `kubeProxyReplacement` — обязательное условие (без замены kube-proxy BPF-программы ARP-ответа не загружаются).
 - Интерфейсы, на которых анонсируются IP, должны входить в `--devices` / Helm-опцию `devices`, если она задана явно.
 - Для анонса `externalIPs` дополнительно требуется `externalIPs.enabled=true`.
+- **sysctl на хостах:** на bare-metal требуется настроить `ip_forward` и `rp_filter` на узлах — иначе ответы на трафик могут отбрасываться из-за строгого обратного фильтра. Подробности: [Настройка sysctl на хостах](#настройка-sysctl-на-хостах).
 
 #### Пул IP и политика анонсирования
 
@@ -720,6 +721,59 @@ kubectl describe l2announcement policy1
 # → Status: Conditions: Type: io.cilium/bad-service-selector, Status: True
 ```
 
+#### Настройка sysctl на хостах
+
+На bare-metal возвратный путь трафика часто ломается из-за настроек ядра Linux. Если Cilium анонсирует IP на одном интерфейсе, а основной маршрут выходит через другой, ядро может отбрасывать ответы на входящие пакеты.
+
+**Обязательные настройки на каждом узле:**
+
+```bash
+cat <<'EOF' | sudo tee /etc/sysctl.d/99-cilium-l2.conf
+net.ipv4.ip_forward=1
+net.ipv4.conf.all.rp_filter=0
+net.ipv4.conf.default.rp_filter=0
+net.ipv4.conf.eth0.rp_filter=0
+EOF
+sudo sysctl --system
+```
+
+Пояснение параметров:
+
+- **`net.ipv4.ip_forward=1`** — узел должен перенаправлять пакеты между физическим интерфейсом и подсетью кластера. Без этого ответы от подов не достигнут клиентов за пределами L2-сегмента.
+- **`net.ipv4.conf.all.rp_filter=0`** и **`net.ipv4.conf.default.rp_filter=0`** — отключение строгого обратного фильтра (Reverse Path Forwarding). При `rp_filter=1` ядро проверяет, чтобы ответ выходил тем же интерфейсом, через который пришёл запрос; в bare-metal с асимметричной маршрутизацией это приводит к дропу валидных ответов.
+- **`net.ipv4.conf.<iface>.rp_filter=0`** — пер-интерфейсный override для конкретного NIC, если анонс IP происходит на одном интерфейсе, а основной маршрут — через другой.
+
+Если кластер использует несколько физических интерфейсов или VLAN, повторите `net.ipv4.conf.<iface>.rp_filter=0` для каждого соответствующего интерфейса.
+
+> **Важно:** `rp_filter` вычисляется как максимум значения `all` и значения конкретного интерфейса. Установка `all.rp_filter=0` не гарантирует `iface.rp_filter=0` — проверяйте оба уровня: `sysctl net.ipv4.conf.all.rp_filter` и `sysctl net.ipv4.conf.<iface>.rp_filter`.
+
+#### Фиксация IP для production-сервисов
+
+IP-адрес, назначенный LoadBalancer-сервису из `CiliumLoadBalancerIPPool`, может меняться при пересоздании сервиса. Для production-нагрузок закрепляйте адрес, чтобы DNS, firewall-правила и NAT-трансляции работали с предсказуемым IP.
+
+Поле `spec.loadBalancerIP` помечено как **устаревшее** начиная с k8s v1.24 (поддерживается, но может быть удалено). Современный способ запросить конкретный IP из пула Cilium — аннотация **`lbipam.cilium.io/ips`**:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: apisix
+  namespace: ingress-apisix
+  annotations:
+    "lbipam.cilium.io/ips": "172.16.57.193"
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 80
+  selector:
+    app: apisix
+```
+
+Cilium выдаст запрошенный IP из пула или вернёт ошибку, если адрес уже занят. Аннотация `lbipam.cilium.io/ips` принимает список через запятую, что позволяет запрашивать несколько IP для dual-stack.
+
+> **Примечание:** в старых версиях Cilium (≤1.13) аннотация называлась `io.cilium/lb-ipam-ips`. Не запрашивайте первый и последний IP из CIDR-блока пула — они зарезервированы под сетевой и широковещественные адреса.
+
 #### Выбор лидера (Leader Election) и тюнинг failover
 
 Хост хранит один MAC-адрес на IP (последний увиденный ответ), поэтому только один узел кластера может отвечать за конкретный сервисный IP. Каждый Cilium Agent участвует в выборе лидера для каждого сервиса через механизм Kubernetes **Lease** — first come, first serve (первый захвативший лизу получает её, что может давать асимметричное распределение трафика).
@@ -755,6 +809,27 @@ helm upgrade cilium cilium/cilium --version 1.20.0 \
 **Trade-off:** чем быстрее детект падения, тем выше нагрузка на API server и CPU (каждый сервис — отдельная лиза и отдельный renew-запрос). Кластеры с небольшим числом сервисов могут позволить быстрый failover; крупным кластерам, возможно, придётся увеличить параметры.
 
 **Механика failover:** узлы, участвующие в выборе, обнаруживают непродление лизы и запрашивают у API server статус нового держателя — проходит первый запрос, остальные отклоняются. Новый лидер рассылает gratuitous ARP. Клиенты, не принимающие gratuitous ARP (защита от ARP spoofing), переключатся только по истечении TTL своего ARP-кэша — их downtime будет больше настроенного окна.
+
+#### Обслуживание узлов и предсказуемая доступность
+
+Во время планового обслуживания (`kubectl drain`, перезагрузка) Cilium перестаёт анонсировать IP на узле, и сервис может стать недоступным до тех пор, пока другой узел не захватит лизу. Чтобы поведение было предсказуемым:
+
+```bash
+kubectl drain node-01 --ignore-daemonsets --delete-config=0 --delete-emptydir-data
+# → node/node-01 cordoned
+# → node/node-01 drained
+sudo reboot
+```
+
+После перезагрузки Cilium должен автоматически возобновить анонс, если узел вернулся в лист узлов, соответствующий `nodeSelector` политики.
+
+**Рекомендации для минимизации простоя:**
+
+- **Один пул на кластер:** используйте единый `CiliumLoadBalancerIPPool` для всех узлов, чтобы любой из них мог взять IP на себя.
+- **Фиксируйте IP для production-сервисов:** закрепляйте адрес через аннотацию `lbipam.cilium.io/ips` (см. [Фиксация IP для production-сервисов](#фиксация-ip-для-production-сервисов)).
+- **Анонсы только рабочим узлам:** ограничьте `nodeSelector` политики метками `node-role.kubernetes.io/worker` — контроллеры не должны анонсировать VIP.
+- **Уменьшите TTL ARP на upstream-оборудовании:** стандартный ARP cache timeout на роутерах 1–4 минуты; если оборудование позволяет, уменьшите его до 30–60 секунд для меньшего downtime при переключении.
+- **Pod Disruption Budgets:** применяйте PDB к подам балансировщика/ингресса, чтобы Kubernetes не выгружал все реплики на одном узле одновременно.
 
 #### Sizing client rate limit
 
@@ -816,9 +891,24 @@ kubectl -n kube-system exec pod/cilium-vxz67 -- bpftool map dump pinned /sys/fs/
 # → [{ "key": { "ip4": 655370, "ifindex": 50 }, "value": { "responses_sent": 20 } }]
 ```
 
-Типичные ошибки:
+# 7. sysctl на хостах: ip_forward включён, rp_filter отключён?
+sysctl net.ipv4.ip_forward
+# → net.ipv4.ip_forward = 1
+sysctl net.ipv4.conf.all.rp_filter net.ipv4.conf.default.rp_filter
+# → 0  0
+
+# 8. ARP-кэш на клиенте: правильный MAC для VIP?
+ip neigh show <vip>
+# → <vip> dev eth0 lladdr 52:54:00:12:34:56 REACHABLE
+```
+
+Типчные ошибки:
 - **RBAC:** при включении не через Helm-чарт агент не может создавать лизы — в логах `leases.coordination.k8s.io ... is forbidden`. Исправление: `kubectl edit clusterrole cilium` и добавление правил для `coordination.k8s.io/leases` (`create`, `get`, `update`, `list`, `delete`).
 - **Устройство не в `devices`:** лиза есть, но IP отсутствует в `db/show l2-announce` — проверить regex в `interfaces` политики и Helm-опцию `devices`.
+- **sysctl на хостах:** ответы на ARP приходят, но трафик не возвращается клиенту — проверить `ip_forward` и `rp_filter` на узлах (см. [Настройка sysctl на хостах](#настройка-sysctl-на-хостах)).
+- **Клиент видит неправильный MAC:** один и тот же VIP анонсируют два узла — проверить отсутствие пересечений в `CiliumL2AnnouncementPolicy` и уникальность `CiliumLoadBalancerIPPool`. На клиенте: `ip neigh show <vip>`; на узлах: `tcpdump -nei eth0 arp or icmp`.
+- **Сервис недоступен после reboot:** кластер восстановлен, но upstream-устройство хранит устаревшую ARP-запись со старым MAC — очистить ARP-кэш на роутере или клиенте (`ip neigh flush`, `arp -d <vip>`), либо уменьшить ARP cache timeout на upstream-оборудовании (см. [Обслуживание узлов](#обслуживание-узлов-и-предсказуемая-доступность)).
+- **IP остаётся `pending`:** сервис не попадает под `serviceSelector` политики, либо в пуле нет свободных адресов — проверить `kubectl get svc <name> -o jsonpath='{.status.loadBalancer.ingress}'`, статус `CiliumLoadBalancerIPPool` и селекторы политики.
 
 #### Известные проблемы: non-linear SKB (Talos)
 
@@ -1037,6 +1127,243 @@ spec:
 
 ---
 
+## Модель default-deny и allowlist с CiliumNetworkPolicy
+
+### Принцип работы
+
+CiliumNetworkPolicy реализует модель «запрет по умолчанию + разрешительный список» (default-deny + allowlist). Отличие от стандартного Kubernetes NetworkPolicy — семантика пустых правил:
+
+- `endpointSelector: {}` выбирает все поды в namespace.
+- `ingress: [{}]` — секция ingress содержит правило без `fromEndpoints` или `fromCIDR`. Пустое правило не соответствует ни одному источнику, поэтому **весь входящий трафик блокируется** (deny all).
+- `egress: [{}]` аналогичным образом блокирует весь исходящий трафик.
+
+В стандартном NetworkPolicy отсутствие секции `ingress`/`egress` означает «разрешить всё», а в CiliumNetworkPolicy — наличие секции с пустым правилом `{}` означает «ничего не разрешено».
+
+> **Cilium v1.16+:** Появилось поле `enableDefaultDeny` (`spec.enableDefaultDeny.ingress`/`egress: true`). Традиционный подход с пустыми правилами (`ingress: [{}]`) также работает — endpoint переходит в режим default-deny, если его выбирает правило и содержит соответствующую секцию [Источник](https://docs.cilium.io/en/stable/security/policy/layer3/).
+
+### default-deny для namespace
+
+```yaml
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny
+  namespace: app
+spec:
+  description: "Default deny all ingress and egress"
+  endpointSelector: {}
+  ingress:
+  - {}
+  egress:
+  - {}
+```
+
+После применения поды не смогут достучаться даже к DNS. Следующее правило исправляет это.
+
+### Разрешить DNS
+
+Без этого ломается service discovery — поды не стартуют из-за ошибок резолва DNS:
+
+```yaml
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: app
+spec:
+  endpointSelector: {}
+  egress:
+  - toEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": kube-system
+        "k8s:k8s-app": kube-dns
+    toPorts:
+    - ports:
+      - port: "53"
+        protocol: UDP
+      - port: "53"
+        protocol: TCP
+```
+
+### Разрешить ingress от ingress controller
+
+```yaml
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-from-ingress
+  namespace: app
+spec:
+  endpointSelector:
+    matchLabels:
+      app: my-service
+  ingress:
+  - fromEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": ingress-apisix
+```
+
+До `my-service` может достучаться только ingress-контроллер APISIX. Прямой трафик между подами из других неймспейсов заблокирован.
+
+### Межсервисное взаимодействие
+
+Frontend должен обращаться к backend только на порт 8080:
+
+```yaml
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-frontend-to-backend
+  namespace: app
+spec:
+  endpointSelector:
+    matchLabels:
+      app: backend
+  ingress:
+  - fromEndpoints:
+    - matchLabels:
+        app: frontend
+    toPorts:
+    - ports:
+      - port: "8080"
+        protocol: TCP
+```
+
+Только поды `frontend` и только порт 8080.
+
+### Egress к базам данных
+
+```yaml
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-backend-to-postgres
+  namespace: app
+spec:
+  endpointSelector:
+    matchLabels:
+      app: backend
+  egress:
+  - toEndpoints:
+    - matchLabels:
+        "k8s:io.kubernetes.pod.namespace": databases
+        "k8s:app": postgresql
+    toPorts:
+    - ports:
+      - port: "5432"
+        protocol: TCP
+```
+
+### Egress к внешним API через FQDN
+
+```yaml
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-external-api
+  namespace: app
+spec:
+  endpointSelector:
+    matchLabels:
+      app: my-service
+  egress:
+  - toFQDNs:
+    - matchName: "api.stripe.com"
+    - matchName: "api.sendgrid.com"
+    - matchPattern: "*.s3.amazonaws.com"
+    toPorts:
+    - ports:
+      - port: "443"
+        protocol: TCP
+```
+
+Cilium резолвит FQDN на лету и обновляет eBPF-карты. Поды могут достучаться только до явно разрешённых внешних эндпоинтов.
+
+### L7-политика для HTTP
+
+Cilium применяет политику на уровне HTTP (L7), анализируя методы и пути. Детали реализации описаны в [Сетевая политика L7 (HTTP)](#сетевая-политика-l7-http). Пример egress-правила, ограничивающего запросы к `payment-service` только методом `POST` на путь `/api/v1/charge`:
+
+```yaml
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-payment-charge
+  namespace: app
+spec:
+  endpointSelector:
+    matchLabels:
+      app: my-service
+  egress:
+  - toEndpoints:
+    - matchLabels:
+        app: payment-service
+    toPorts:
+    - ports:
+      - port: "8080"
+        protocol: TCP
+      rules:
+        http:
+        - method: "POST"
+          path: "/api/v1/charge"
+```
+
+Попытка выполнить `GET /admin` будет отброшена на сетевом уровне, до того как запрос достигнет пода.
+
+### Отладка через Hubble
+
+```bash
+# Все отброшенные соединения в неймспейсе
+hubble observe --namespace app --verdict DROPPED
+
+# Трафик в реальном времени
+hubble observe --namespace app -f
+
+# Что отбрасывается у конкретного пода
+hubble observe --namespace app --from-pod app/my-service --verdict DROPPED
+```
+
+Hubble показывает под-источник, под-цель или FQDN, порт и политику с вердиктом `POLICY_DENIED`. Добавлять логирование в приложения не нужно.
+
+### Постепенное внедрение (Policy Audit Mode)
+
+Не применяйте default-deny к продакшен-неймспейсам сразу. Рабочий процесс:
+
+1. **Включить Policy Audit Mode** на уровне демона — трафик разрешается, а нарушения логируются:
+
+```bash
+helm upgrade cilium cilium/cilium --version 1.20.0 \
+  --namespace kube-system --reuse-values \
+  --set policyAuditMode=true
+```
+
+Или через ConfigMap:
+
+```bash
+kubectl patch -n kube-system configmap cilium-config --type merge \
+  --patch '{"data":{"policy-audit-mode":"true"}}'
+kubectl rollout restart ds cilium -n kube-system
+```
+
+2. **Применить разрешающие правила** для каждого легитимного потока.
+3. **Наблюдать за нарушениями** в Hubble:
+
+```bash
+hubble observe --namespace app --verdict DROPPED
+```
+
+4. **Повторять**, пока неожиданные дропы не исчезнут.
+5. **Отключить Policy Audit Mode** и включить enforcement:
+
+```bash
+kubectl patch -n kube-system configmap cilium-config --type merge \
+  --patch '{"data":{"policy-audit-mode":"false"}}'
+kubectl rollout restart ds cilium -n kube-system
+```
+
+В режиме аудита трафик разрешается, а нарушения логируются как события `policy-verdict` с вердиктом `POLICY_DENIED`. Это позволяет проинвентаризировать потоки перед включением блокировки [Источник](https://docs.cilium.io/en/latest/security/policy-creation/).
+
+---
+
 ## Дополнительная информация
 
 ### Проверка состояния
@@ -1113,6 +1440,59 @@ cilium bpf metrics list
 # Проверка connection tracking
 cilium bpf ct list global
 # → показывает таблицу отслеживания соединений
+
+# Таблица балансировщика (VIP -> бэкенды) в datapath
+cilium-dbg bpf lb list
+
+# Таблица NAT в BPF (masquerade/SNAT)
+cilium-dbg bpf nat list | head
+
+# Трассировка политики по identity (allow/deny между identity)
+cilium-dbg policy trace --src-identity <id> --dst-identity <id> --dport <port>
+
+# Внутреннее состояние endpoint (identity, policy, BPF maps)
+cilium-dbg endpoint get <id> -o json | jq '.status.policy'
+
+# BGP пиры Cilium
+cilium bgp peers
+
+# ClusterMesh статус (межкластерная связность)
+cilium clustermesh status --wait
+```
+
+### Hubble: расширенные запросы
+
+```bash
+# Потоки конкретного пода в реальном времени
+hubble observe --pod <ns>/<pod> -f
+
+# Только отклонённые соединения по всему кластеру
+hubble observe --verdict DROPPED -f
+
+# Потоки неймспейса за последние 5 минут
+hubble observe --namespace <ns> --since 5m
+
+# TCP egress к FQDN (проверка egress-политики по DNS-имени)
+hubble observe --protocol tcp --from-pod <ns>/<pod> --to-fqdn '*.example.com'
+
+# Включить Hubble UI
+cilium hubble enable --ui
+
+# Статус Hubble relay и observer
+hubble status
+```
+
+### Мониторинг агента и сетевых событий
+
+```bash
+# Дропы пакетов в реальном времени из dataplane Cilium
+cilium monitor --type drop
+
+# Подробное состояние агента (datapath, IPAM, BPF maps, контроллеры)
+cilium status --verbose
+
+# Тест связности кластера
+cilium connectivity test
 ```
 
 ### Валидация установки

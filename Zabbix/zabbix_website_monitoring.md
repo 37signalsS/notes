@@ -1,12 +1,12 @@
 # Мониторинг веб-сайтов в Zabbix: скрипты, сценарии и Browser Items
 
-> **Актуальность:** материал сверен по состоянию на сентябрь 2026 г. Основная долгосрочная ветка — **Zabbix 7.0 LTS** (обновления до 30 июня 2027, ограниченная поддержка до 30 июня 2029). Текущая стандартная ветка — **Zabbix 8.0 LTS** (выпущена в сентябре 2026 г., поддержка до Q3 2029, ограниченная поддержка до Q3 2031). Особенности конкретных версий отмечены по тексту.
+> **Актуальность:** Основная долгосрочная ветка — **Zabbix 7.0 LTS** (обновления до 30 июня 2027, ограниченная поддержка до 30 июня 2029). Текущая стандартная ветка — **Zabbix 7.4** (выпущена 30 июня 2025). **Zabbix 8.0 LTS** на момент сверки не выпущен: доступен кандидат в релиз **8.0.0rc1 (1 октября 2026)**, выпуск GA запланирован на Q4 2026 (по roadmap — ноябрь 2026); сведения по 8.0 приведены по предрелизным данным. Особенности конкретных версий отмечены по тексту.
 
 ## Определения
 
 * **Внешний скрипт (External Check / UserParameter)** — метод мониторинга, при котором Zabbix Agent запускает исполняемый скрипт и использует его стандартный вывод как значение метрики. Обеспечивает максимальную гибкость и возможность любой нестандартной логики (SSO, криптографические библиотеки).
 * **Web Scenario (Веб-сценарий)** — встроенный в Zabbix механизм для выполнения последовательности HTTP-запросов. Оптимален для проверки REST API и простых сайтов без сложного JavaScript.
-* **Синтетический мониторинг (Synthetic Monitoring)** — эмуляция действий реального пользователя (клики, ввод текста) для оценки работоспособности сложных веб-приложений (SPA). Реализован в Zabbix 8.0 через **Browser Items**.
+* **Синтетический мониторинг (Synthetic Monitoring)** — эмуляция действий реального пользователя (клики, ввод текста) для оценки работоспособности сложных веб-приложений (SPA). Реализован начиная с Zabbix 7.0 через **Browser Items** (поддержка помечена как experimental).
 * **Browser Item** — тип элемента данных, который выполняет JavaScript-скрипт (диалект Duktape) в реальном браузере через Selenium WebDriver (протокол W3C WebDriver). Обрабатывается на Zabbix Server/Proxy процессом `browser poller`.
 * **Selenium WebDriver** — серверная прослойка автоматизации браузера, к которой Zabbix подключается по HTTP(S), указывая адрес в параметре `WebDriverURL`. Стандартный способ развертывания — контейнер с Selenium Standalone (например, `selenium/standalone-chrome`).
 * **Зависимый элемент данных (Dependent Item)** — элемент без собственного опроса: он получает отклик «материнского» элемента и извлекает нужные значения способом предобработки (JSONPath/Regex). Для Browser Item применяется для разбора JSON-отклика, в т.ч. для сохранения скриншотов (тип Binary).
@@ -27,11 +27,11 @@
 | Реализация | JavaScript | Стороннее ПО | Нагрузка на ресурсы | Когда использовать |
 | :--- | :---: | :---: | :---: | :--- |
 | **Web Scenarios** | Нет | Нет | Низкая | REST API, статические сайты, простые проверки доступности |
-| **Browser Items** (8.0+) | Да (полный браузер) | Selenium WebDriver | Высокая (RAM браузера) | SPA, авторизация, скриншоты, Navigation Timing |
+| **Browser Items** (7.0+) | Да (полный браузер) | Selenium WebDriver | Высокая (RAM браузера) | SPA, авторизация, скриншоты, Navigation Timing |
 | **Custom Scripts** (UserParameter) | Не требуется | Скрипт на хосте | Низкая | Специфическая логика, криптография, корпоративный SSO |
 
 1. **Web Scenarios:** Встроенный инструмент ядра. Не требует стороннего ПО. Отправляет GET/POST запросы, проверяет HTTP-коды (200 OK) и наличие подстрок в теле ответа. Не умеет исполнять JavaScript. Подходит для большинства API и статических сайтов.
-2. **Browser Items (Zabbix 8.0+):** Полноценный синтетический мониторинг. Требует развертывания Selenium WebDriver. Позволяет авторизоваться на сайтах с CAPTCHA/MFA (если есть обходной путь), собирать метрики производительности (Navigation Timing API) и сохранять скриншоты ошибок в БД Zabbix (тип данных `Binary`). Обрабатывается процессом `browser poller`.
+2. **Browser Items (Zabbix 7.0+, experimental):** Полноценный синтетический мониторинг. Требует развертывания Selenium WebDriver. Позволяет авторизоваться на сайтах с CAPTCHA/MFA (если есть обходной путь), собирать метрики производительности (Navigation Timing API) и сохранять скриншоты ошибок в БД Zabbix (тип данных `Binary`). Обрабатывается процессом `browser poller`.
 3. **Кастомные скрипты (UserParameter):** Классический подход. Используется, когда требуется сложная нестандартная логика (например, авторизация через корпоративный SSO с использованием специфических криптографических библиотек Python), не реализуемая через Web Scenarios или Browser Items.
 
 ### Архитектура Browser Items
@@ -48,13 +48,13 @@ Browser Items выполняются в реальном браузере (Chrom
 
 Мониторинг веб-сайтов встроен в процессы эксплуатации ИТ-инфраструктур:
 
-* **Synthetic Monitoring как часть Observability:** Browser Items дополняют Traditional Monitoring (Zabbix Agent, SNMP), давая представление о состоянии веб-приложений с точки зрения пользователя. SRE используют synthetic-проверки как one of the four golden signals (latency, traffic, errors, saturation) для веб-сервисов.
+* **Synthetic Monitoring как часть Observability:** Browser Items дополняют Traditional Monitoring (Zabbix Agent, SNMP), давая представление о состоянии веб-приложений с точки зрения пользователя. Синтетические проверки измеряют доступность и задержку с точки зрения пользователя и дополняют классическую модель Four Golden Signals (latency, traffic, errors, saturation).
 * **Incident Management:** оповещения по падению веб-сайтов интегрируются с ITSM-системами (Jira, GLPI) и дежурными сервисами (PagerDuty, OpsGenie). При срабатывании Browser Item триггера автоматически создается тикет с контекстом (скриншот, теги, время).
-* **SLI/SLO/SLA:** Zabbix 8.0 поддерживает расчет SLA на основе тегов триггеров (Services → SLA). SRE используют данные Browser Items для определения целевых показателей доступности (Uptime) и производительности (Navigation Timing) веб-сервисов.
+* **SLI/SLO/SLA:** Zabbix 6.0+ поддерживает расчет SLA на основе тегов триггеров (Services → SLA). SRE используют данные Browser Items для определения целевых показателей доступности (Uptime) и производительности (Navigation Timing) веб-сервисов.
 * **Runbook Automation:** действия (Actions) могут выполнять не только оповещения, но и скрипты автоматического восстановления. При срабатывании триггера Browser Item Zabbix может автоматически перезапустить backend-сервис, очистить кэш или вызвать API оркестратора.
 * **Post-mortem Analysis:** события Browser Items сохраняются с полным контекстом (скриншот, JSON-отклик, временные метки). Это позволяет проводить постмортем-анализ инцидентов и выявлять системные причины падений веб-приложений.
 * **Change Management:** все изменения в порогах Browser Items, шаблонах синтетического мониторинга проходят через процедуры управления изменениями. Версионный контроль шаблонов в Git обеспечивает аудит и откат.
-* **Capacity Planning:** WebDriver требует значительных ресурсов (RAM браузера). SRE планируютCapacity для инфраструктуры Browser Items (число процессов `StartBrowserPollers`, размер `--shm-size` контейнера Selenium) исходя из числа мониторимых веб-приложений.
+* **Capacity Planning:** WebDriver требует значительных ресурсов (RAM браузера). SRE планируют capacity для инфраструктуры Browser Items (число процессов `StartBrowserPollers`, размер `--shm-size` контейнера Selenium) исходя из числа мониторимых веб-приложений.
 
 ---
 
@@ -77,22 +77,22 @@ docker stop <CONTAINER_ID>
 
 ### Валидация Browser Items
 
+Selenium WebDriver и Zabbix Web Service не опрашиваются через `zabbix_get` (утилита работает только с Zabbix Agent). Проверяйте их напрямую, а внутренние метрики `zabbix[...]` настраивайте как элементы типа «Zabbix internal» на хосте Zabbix server.
+
 ```bash
-# Проверка WebDriver через HTTP Agent (ключ selenium.status)
-zabbix_get -s <host_webdriver> -k "selenium.status"
-# → 1 (WebDriver доступен) или 0 (недоступен)
+# 1. Selenium WebDriver: проверка эндпоинта /status
+curl -s http://localhost:4444/status
+# → {"value":{"ready":true,"message":"Selenium Grid ready.","nodes":[...]}}
 
-# Проверка Browser Poller (внутренний элемент)
-zabbix_get -s 127.0.0.1 -k "zabbix[process,browser poller,avg,busy]"
-# → средняя занятость процесса в %
+# 2. Zabbix Web Service: встроенного item-ключа нет, проверяйте TCP-порт
+ss -tlnp | grep 10053
+# → LISTEN 0 128 0.0.0.0:10053 (zabbix_web_service)
+# Для регулярного мониторинга порта используйте простую проверку: net.tcp.service[tcp,<host>,10053]
 
-# Проверка очереди на опрос (включая Browser Items)
-zabbix_get -s 127.0.0.1 -k "zabbix[queue,5m]"
-# → количество элементов с опозданием опроса за 5 минут
-
-# Проверка Zabbix Web Service
-zabbix_get -s 127.0.0.1 -k "web.service.ping"
-# → 1 (Web Service доступен)
+# 3. Внутренние метрики (тип "Zabbix internal", значения — в Monitoring → Latest data):
+#    zabbix[process,browser poller,avg,busy]  → занятость процесса browser poller, %
+#    zabbix[queue]                            → число элементов в очереди опроса
+#    zabbix[queue,<from>,<to>]                → очередь с задержкой опроса в диапазоне секунд
 ```
 
 ### Управление конфигурацией WebDriver
@@ -158,13 +158,15 @@ docker logs <CONTAINER_ID> --tail 50
 
 2. **Проверьте Zabbix Web Service:**
    ```bash
-   zabbix_get -s 127.0.0.1 -k "web.service.ping"
-   # → 1 (доступен) или ошибка (проверьте systemctl status zabbix-web-service)
+   systemctl status zabbix-web-service
+   ss -tlnp | grep 10053
+   # → active (running); LISTEN 0.0.0.0:10053 (zabbix_web_service)
    ```
 
 3. **Проверьте загрузку Browser Poller:**
    ```bash
-   zabbix_get -s 127.0.0.1 -k "zabbix[process,browser poller,avg,busy]"
+   # Внутренний элемент (тип "Zabbix internal"), значение — Monitoring → Latest data
+   zabbix[process,browser poller,avg,busy]
    # → >75% — увеличьте StartBrowserPollers
    ```
 
@@ -217,19 +219,19 @@ docker logs <CONTAINER_ID> --tail 50
 * **Используйте Selenium Grid для масштабирования:** при большом числе веб-приложений разверните Selenium Grid (хаб + несколько нод). Это позволяет распределять нагрузку и обеспечивает отказоустойчивость.
 * **Ограничьте размер `--shm-size`:** контейнер Selenium должен иметь разделяемую память не меньше 2 ГБ. При нехватке `--shm-size` браузер падает с ошибкой `session not created`.
 * **Не храните чувствительные данные в JS-сценариях:** используйте user macros (`{$PASSWORD}`) для передачи учетных данных, а не хардкод в сценарии.
-* **Настраивайте таймауты в JS-сценарии:** добавьте `browser.setTimeout({pageLoad: 15000})` для предотвращения зависаний на долгих загрузках.
+* **Настраивайте таймауты в JS-сценарии:** используйте `browser.setSessionTimeout(15000)` (таймаут загрузки страницы), `browser.setScriptTimeout(15000)` (таймаут загрузки скриптов) и `browser.setElementWaitTimeout(5000)` (неявное ожидание элемента). Значение задается в миллисекундах.
 
 ### Мониторинг инфраструктуры Browser Items
 
 * **Мониторьте Selenium отдельно:** создайте хост для WebDriver с элементом данных `selenium.status` (HTTP Agent + JSONPath) и триггером на `last(/selenium/status)=0`.
-* **Мониторьте Zabbix Web Service:** проверяйте доступность порта 10053 через `web.service.ping`. Web Service критичен для выполнения Browser Items.
-* **Подключите Template App Zabbix Server:** отслеживайте `zabbix[process,browser poller,avg,busy]` и `zabbix[queue,5m]` для своевременного выявления узких мест.
+* **Мониторьте Zabbix Web Service:** проверяйте доступность порта 10053 простой проверкой `net.tcp.service[tcp,<host>,10053]`. Встроенного item-ключа для Web Service нет. Web Service критичен для выполнения Browser Items.
+* **Подключите Template App Zabbix Server:** отслеживайте `zabbix[process,browser poller,avg,busy]` и `zabbix[queue]` для своевременного выявления узких мест.
 
 ### Безопасность
 
 * **Ограничьте доступ к Selenium:** WebDriver (порт 4444) должен быть доступен только с Zabbix Server/Proxy. Никогда не открывайте порт 4444 в интернет.
 * **Шифруйте трафик:** используйте HTTPS для `WebDriverURL` и `WebServiceURL` при удаленном WebDriver.
-* **Храните учетные данные в Vault:** используйте `{$PASSWORD}` макросы вместо хардкода в JS-сценариях. Zabbix 8.0 поддерживает секреты в Vault для макросов.
+* **Храните учетные данные в Vault:** используйте `{$PASSWORD}` макросы вместо хардкода в JS-сценариях. Zabbix поддерживает хранение секретов во внешнем secret provider (HashiCorp Vault) для макросов начиная с версии 5.2; поддержка метода аутентификации Vault AppRole запланирована в ветке 8.0.
 
 ### Снижение шума оповещений
 
@@ -237,11 +239,32 @@ docker logs <CONTAINER_ID> --tail 50
 * **Используйте Problem Suppression:** временно подавляйте оповещения Browser Items при плановых работах на веб-приложении.
 * **Настраивайте Maintenance:** для плановых остановок веб-приложений создайте Maintenance окно, чтобы не получать оповещения Browser Items.
 
+### Очистка и откат
+
+* **Отключите Browser Items:** удалите или отключите элементы типа Browser и связанные Dependent Items, затем уменьшите `StartBrowserPollers`.
+* **Остановите и удалите Selenium:** `docker stop <CONTAINER_ID> && docker rm <CONTAINER_ID>`; при использовании Selenium Grid остановите хаб и ноды.
+* **Откатите конфигурацию:** уберите параметры `WebDriverURL`, `WebServiceURL`, `StartBrowserPollers` из `zabbix_server.conf` и перезапустите Zabbix Server/Proxy.
+* **Удалите сторонние компоненты:** при отказе от синтетического мониторинга остановите службу `zabbix-web-service` и удалите при необходимости созданные шаблоны/хосты.
+
 ---
 
 ## Практические сценарии
 
-### Метод 1: Синтетический мониторинг через Browser Items (Zabbix 8.0+)
+### Предварительные требования
+
+Требования зависят от выбранного метода:
+
+* **Метод 1 (Browser Items):**
+  * Zabbix Server/Proxy 7.0+ с поддержкой Browser Items;
+  * Zabbix Web Service, запущенный и доступный по `WebServiceURL` (порт по умолчанию 10053);
+  * Selenium WebDriver (например, контейнер `selenium/standalone-chrome`), доступный по `WebDriverURL` (порт по умолчанию 4444);
+  * сетевой доступ от Zabbix Server/Proxy до Web Service и WebDriver; контейнеру Selenium требуется не менее 2 ГБ RAM и `--shm-size` не менее 2 ГБ.
+* **Метод 3 (UserParameter):** Zabbix Agent 2 и Python 3 на хосте-исполнителе.
+* **Методы 2 (Web Scenarios) и 4 (SSL-сертификаты):** дополнительных компонентов не требуют.
+
+Общая установка Zabbix описана в [`installation.md`](./installation.md).
+
+### Метод 1: Синтетический мониторинг через Browser Items (Zabbix 7.0+)
 
 Позволяет полноценно взаимодействовать с элементами страницы (DOM) и получать визуальное подтверждение сбоев.
 
@@ -286,7 +309,7 @@ ss -tlnp | grep 10053
 # → LISTEN 0 128 0.0.0.0:10053 (zabbix_web_service)
 ```
 
-> **Готовая основа:** вместо настройки «с нуля» можно использовать шаблон `Website By Browser` (по умолчанию доступен в Zabbix 8.x): он уже содержит items для времени навигации, ресурсов, скриншот и триггеры на доступность/производительность. В шаблоне замените только домен (макрос `{$WEBSITE.DOMAIN}`).
+> **Готовая основа:** вместо настройки «с нуля» можно использовать шаблон `Website By Browser` (поставляется начиная с Zabbix 7.0): он уже содержит items для времени навигации, ресурсов, скриншот и триггеры на доступность/производительность. В шаблоне замените только домен (макрос `{$WEBSITE.DOMAIN}`).
 
 #### 2. Настройка Browser Item в веб-интерфейсе
 
@@ -316,9 +339,9 @@ try {
 } catch (err) {
     var screenshot = browser.getScreenshot();
     return JSON.stringify({"error": err.message, "screenshot": screenshot});
-} finally {
-    browser.quit();
 }
+// Сессия WebDriver завершается автоматически при уничтожении объекта Browser:
+// отдельный метод quit() не требуется.
 ```
 
 3. Создайте **Dependent Items** (зависимые элементы данных), используя шаги предобработки (JSONPath), чтобы извлечь отдельные метрики производительности из полученного JSON. Для извлечения скриншота создайте Dependent Item с типом информации **Binary** (Base64-декод через предобработку). Скриншот доступен в истории элементов данных и может быть добавлен на дашборд.
@@ -382,7 +405,7 @@ try {
    sudo nano /opt/monitoring/site-check.py
    ```
 2. Пример логики скрипта (Python 3):
-   * Скрипт использует библиотеки `requests`, `sys`, `warnings`.
+   * Скрипт использует стандартные библиотеки `sys`, `urllib.request`, `ssl` (без внешних зависимостей).
    * При успешной проверке скрипт обязан вывести в `stdout` значение `1`, при ошибке — `0` (Zabbix как значение элемента возьмет последнюю строку вывода).
 
    ```python
@@ -419,7 +442,7 @@ try {
 
 Необходимо объявить новый пользовательский параметр (**UserParameter**), чтобы агент мог запускать скрипт и передавать вывод серверу.
 
-1. Отредактируйте конфигурацию агента (Agent 2 v8.x: `/etc/zabbix/zabbix_agent2.conf`; классический агент — `/etc/zabbix/zabbix_agentd.conf`).
+1. Отредактируйте конфигурацию агента (Agent 2, ветка 7.0/7.4: `/etc/zabbix/zabbix_agent2.conf`; классический агент — `/etc/zabbix/zabbix_agentd.conf`).
 2. Добавьте параметр:
    ```bash
    # site.auth — уникальный ключ метрики, далее абсолютный путь к скрипту
@@ -430,7 +453,7 @@ try {
    sudo systemctl restart zabbix-agent2.service
    # → (пусто при успехе)
    ```
-4. Проверьте работоспособность ключа локально (агентуры: `zabbix_agent2 -t site.auth`, классический — `zabbix_agentd -t site.auth`):
+4. Проверьте работоспособность ключа локально (Agent 2: `zabbix_agent2 -t site.auth`; классический агент: `zabbix_agentd -t site.auth`):
    ```bash
    zabbix_agent2 -t site.auth
    # → site.auth [u]: 1
@@ -487,16 +510,16 @@ Zabbix Agent 2 с одного из мониторинговых хостов в
 2. При отсутствии загрузите шаблон с [официального репозитория Zabbix](https://git.zabbix.com/projects/ZBX/repos/zabbix/browse/templates/app/zabbix_agent2) (выберите версию, соответствующую вашей инсталляции).
 3. Импортируйте: `Configuration` → `Templates` → `Import` → выберите YAML-файл → `Import`.
 
-> **Возможная ошибка импорта:** `Invalid tag "/zabbix_export/version": unsupported version number`. В этом случае вручную измените версию в YAML-файле шаблона на совместимую (например, `6.2` или `6.4`).
+> **Возможная ошибка импорта:** `Invalid tag "/zabbix_export/version": unsupported version number`. В этом случае вручную измените версию в YAML-файле шаблона на совместимую (например, `7.0` или `7.4`).
 
 #### Установка Zabbix Agent 2
 
 Агент должен быть установлен на хосте со стабильным интернет-доступом (изолированный периметр не подойдет). При наличии старого агента — остановите его.
 
-**Установка на Ubuntu 24.04 / Zabbix 8.0:**
+**Установка на Ubuntu 24.04 / Zabbix 7.4:**
 
 ```bash
-wget https://repo.zabbix.com/zabbix/8.0/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest+ubuntu24.04_all.deb
+wget https://repo.zabbix.com/zabbix/7.4/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest+ubuntu24.04_all.deb
 dpkg -i zabbix-release_latest+ubuntu24.04_all.deb
 apt update
 apt install zabbix-agent2 zabbix-agent2-plugin-*
@@ -504,7 +527,7 @@ systemctl restart zabbix-agent2
 systemctl enable zabbix-agent2
 ```
 
-Актуальные ссылки для других ОС и версий — на [официальном сайте Zabbix](https://www.zabbix.com/download?zabbix=8.0).
+Актуальные ссылки для других ОС и версий — на [официальном сайте Zabbix](https://www.zabbix.com/download?zabbix=7.4).
 
 #### Добавление хоста для мониторинга
 
@@ -569,7 +592,7 @@ systemctl enable zabbix-agent2
 
 ### Настройка SLA (Service Level Agreement)
 
-Инструмент SLA в Zabbix (8.0+) позволяет вычислять и визуализировать процент времени доступности (Uptime) в разрезе сервисов и их SLO-целей.
+Инструмент SLA в Zabbix (6.0+) позволяет вычислять и визуализировать процент времени доступности (Uptime) в разрезе сервисов и их SLO-целей.
 
 1. **Создание сервисного дерева:**
    * `Services` → `Create service`.
@@ -581,7 +604,7 @@ systemctl enable zabbix-agent2
    * **SLO:** Целевой показатель (например, `99.9%`).
    * **Reporting period:** `Quarterly` (Квартал) или `Monthly`.
    * Привяжите созданный Service к данному SLA и укажите, какие именно теги проблем учитываются в расчёте (Service tags / Problem tags).
-3. **Дашборд SLA:** виджет с метрикой SLA/SLO отражает статус `OK`/`WARNING`/`FAILED` для каждого сервиса и периодичность отчётов.
+3. **Дашборд SLA:** добавьте виджет **SLA report** (настраивается через `Monitoring` → `Dashboard`). Он отображает SLI за каждый период; периоды, нарушающие заданный SLO, выделяются красным. Количество отображаемых периодов и даты задаются параметрами **Show periods**, **From**, **To**.
 
 ### Настройка каналов оповещений (Actions)
 
@@ -616,6 +639,7 @@ systemctl enable zabbix-agent2
 
 ### Источники и ссылки
 
-* Официальная документация Zabbix 8.0: [https://www.zabbix.com/documentation/8.0/en/manual](https://www.zabbix.com/documentation/8.0/en/manual)
-* Release Notes Zabbix 8.0 LTS: [https://www.zabbix.com/rn/rn8.0.0](https://www.zabbix.com/rn/rn8.0.0)
+* Официальная документация Zabbix 7.4: [https://www.zabbix.com/documentation/7.4/en/manual](https://www.zabbix.com/documentation/7.4/en/manual) (для текущей LTS-ветки 7.0 — [/documentation/7.0/en/manual](https://www.zabbix.com/documentation/7.0/en/manual))
+* Browser item (JS API, объекты `Browser`/`Element`): [https://www.zabbix.com/documentation/7.4/en/manual/config/items/itemtypes/browser](https://www.zabbix.com/documentation/7.4/en/manual/config/items/itemtypes/browser)
+* Release Notes Zabbix 7.4.0: [https://www.zabbix.com/rn/rn7.4.0](https://www.zabbix.com/rn/rn7.4.0)
 * Roadmap Zabbix: [https://www.zabbix.com/roadmap](https://www.zabbix.com/roadmap)

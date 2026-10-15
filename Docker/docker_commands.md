@@ -124,6 +124,16 @@ docker version --format '{{.Server.Version}}'
 # → 29.8.0
 ```
 
+#### docker inspect — детали контейнера
+
+```bash
+# Сетевые настройки запущенного контейнера
+docker inspect <container> | jq '.[0].NetworkSettings.Networks'
+
+# Экспорт объединённой ФС контейнера как tar-поток
+docker export <container> | tar -tvf - | head -30
+```
+
 #### docker events — поток событий жизненного цикла
 
 ```bash
@@ -209,7 +219,37 @@ docker image prune -a
 | `docker save -o app.tar app:1.0` | Экспорт в tar (`--platform` с v28.0) |
 | `docker load -i app.tar` | Импорт из tar (`--platform` с v28.0, выбор платформ с v29.0) |
 | `docker history --no-trunc <image>` | История слоёв |
+| `docker build --build-arg KEY=VAL` | Передать переменные сборки в инструкции `ARG` |
+| `docker build --target <stage>` | Собрать до конкретного stage (многостадийный Dockerfile) |
+| `docker commit -m 'msg' <ctr> <img>` | Сохранить ФС контейнера как образ |
 | `docker login registry.example.com` | Аутентификация в реестре (`docker logout` — выход) |
+
+**Архивы и перенос образов:**
+
+```bash
+# Образ в сжатый архив (передача в изолированную среду) и обратно
+docker save myapp:1.0 | gzip > myapp.tar.gz && docker load < myapp.tar.gz
+
+# Копирование образа между реестрами (retag + push)
+docker pull src-reg/img:tag && docker tag src-reg/img:tag dst-reg/img:tag && docker push dst-reg/img:tag
+```
+
+**Продвинутый Buildx:**
+
+```bash
+# Сборка и push матрицы целей из HCL-файла (параллельно, без дублирования групп)
+docker buildx bake -f docker-bake.hcl --push
+
+# Сборщик с драйвером docker-container: мультиархитектура + экспорт кэша
+docker buildx create --name multi --use --driver docker-container --driver-opt network=host
+docker buildx build --platform linux/amd64,linux/arm64 -t reg/img:tag --push .
+
+# Платформы в манифесте без скачивания слоёв (проверка arm64+amd64)
+docker buildx imagetools inspect <reg>/<name>:tag --format '{{json .Manifest}}'
+
+# Секрет сборки: виден только в RUN --mount=type=secret, не попадает в history
+docker buildx build --secret id=token,src=token.txt -t <name> .
+```
 
 Подробнее: **[Docker Buildx](./Dockerfile/docker_buildx.md)**, **[Основы образов](./Docker_fs/images/docker_images_basics.md)**, **[Управление слоями](./Docker_fs/images/layer_management.md)**, **[Реестры](./docker_registries.md)**.
 
@@ -224,6 +264,15 @@ docker image prune -a
 | `docker volume create pg_data` | Создать именованный том | `docker volume create pg_data` |
 | `docker volume ls` / `inspect` | Список томов / детали | `DRIVER: local, VOLUME NAME: pg_data` |
 | `docker volume rm` / `prune` | Удалить том / неиспользуемые тома | `docker volume prune` |
+
+**IP-адреса контейнеров в сети:**
+
+```bash
+docker network inspect bridge | jq '.[0].Containers | to_entries[] | .value | {Name, IPv4Address}'
+
+# Сеть с кастомной подсетью
+docker network create --driver bridge --subnet 172.30.0.0/24 mynet
+```
 
 Полные справочники: **[Сети в Docker: CLI](./Docker_network/cli.md)**, **[Тома и хранилища](./Docker_fs/docker_volumes.md)**.
 
@@ -270,6 +319,7 @@ docker cp stopped-container:/data/test.json - | docker cp - running-container:/d
 |:---|:---|:---|
 | `--memory 512m` | Лимит RAM | `docker run -m 512m ...` |
 | `--cpus 0.5` | Лимит CPU (в ядрах) | `docker run --cpus 0.5 ...` |
+| `--env-file .env` | Переменные окружения из файла | `docker run --rm -it --env-file .env -p 8000:8000 img:tag` |
 | `--pids-limit 200` | Лимит процессов (защита от fork bomb) | `docker run --pids-limit=200 ...` |
 | `docker stats` | Потребление в реальном времени | `CPU %: 12.5, MEM: 100MiB` |
 | `docker system df` | Анализ использования диска | `Images: 1.2GB, Containers: 50MB` |
@@ -296,9 +346,20 @@ docker image prune -a          # все неиспользуемые образ�
 # Краткий отчет по безопасности образа
 docker scout quickview nginx:latest
 # → result: 0 critical, 2 high, 15 medium vulnerabilities (пример формата вывода)
+
+# Только CVE, для которых есть исправление
+docker scout cves --only-fixed myapp:latest
 ```
 
 **Область применения:** Docker Scout — компонент Docker Desktop (подписка). На хостах с Docker Engine standalone используйте Trivy или Grype — см. **[Сканирование Docker-образов на уязвимости](./Docker_security/vulnerability_scanning.md)**.
+
+**Усиленный read-only контейнер:**
+
+```bash
+docker run --read-only --tmpfs /tmp --security-opt no-new-privileges --cap-drop ALL <name>
+```
+
+Неизменяемый rootfs, запись только в `/tmp`, запрет эскалации привилегий и сброс всех capabilities.
 
 ### 9. Отладка и диагностика (docker debug)
 
@@ -310,6 +371,15 @@ docker debug <container_id>
 ```
 
 **Область применения:** команда входит в состав Docker Desktop (подписка); в Docker Engine standalone недоступна — запрос на портирование открыт (docker/roadmap#893, февраль 2026). Альтернативы для Engine: `docker exec` (если в образе есть shell), debug-sidecar с общими томами/сетью, `nsenter`. Подробности: **[Отладка контейнеров (Docker Debug)](./Docker_troubleshooting/docker_debug.md)**, **[Отладка distroless-контейнеров](./Docker_troubleshooting/debugging_distroless.md)**.
+
+**Альтернатива для Engine — отладочный контейнер netshoot:**
+
+```bash
+# Полноценный сетевой отладчик с хостовыми PID и сетью
+docker run --rm -it --pid=host --network=host --privileged nicolaka/netshoot
+```
+
+Образ `nicolaka/netshoot` собирает сетевые и диагностические утилиты (curl, dig, tcpdump, iperf3, conntrack, mtr и др.) в одном контейнере: `--pid=host`/`--network=host` дают видимость хостовых namespace, `--privileged` — доступ к низкоуровневым инструментам. Годится для диагностики сети, DNS и conntrack без установки пакетов на хост.
 
 ## Устранение неполадок
 

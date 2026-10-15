@@ -136,8 +136,9 @@ sudo ip link set dev eth0 alias "Primary uplink to core switch"
 # Изменение MAC-адреса (требуется DOWN)
 sudo ip link set eth0 address 00:11:22:33:44:55
 
-# Установка MTU
-sudo ip link set eth0 mtu 9000
+# Установка MTU и поднятие линка
+sudo ip link set dev eth0 mtu 9000 && ip link set dev eth0 up
+# → MTU должен совпадать на всём пути сегмента
 
 # Включение Promiscuous mode (прослушивание всего трафика в сегменте)
 sudo ip link set eth0 promisc on
@@ -258,6 +259,10 @@ ip -d link show br0
 
 # Просмотр VLAN, настроенных на мосте
 bridge vlan show
+
+# Просмотр L2-таблицы пересылки (MAC->порт) и состояний портов моста
+bridge fdb show br br0
+bridge link show
 
 # Удаление моста
 sudo ip link set eth0 nomaster

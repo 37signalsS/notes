@@ -22,6 +22,9 @@
 
 CoreDNS работает как набор подов, которые непрерывно отслеживают изменения в API-сервере Kubernetes (Services, EndpointSlices). Весь функционал CoreDNS реализован через систему плагинов, что делает его крайне гибким.
 
+**Авторитетность CoreDNS для зоны cluster.local**
+CoreDNS является авторитативным DNS-сервером для зоны `cluster.local`. Это означает, что он отвечает окончательно на запросы внутри этой зоны без обращения к upstream DNS-серверам. Все, что не попадает в зону `cluster.local`, отправляется на forwarding согласно настройкам в Corefile.
+
 **Ключевые особенности:**
 - **Модульность:** Основная логика (Kubernetes, Cache, Rewrite, Forward) реализована через плагины.
 - **Масштабируемость:** Поддержка `EndpointSlices` предотвращает деградацию производительности в больших кластерах (>1000 подов в сервисе).
@@ -180,10 +183,26 @@ CoreDNS использует модульную архитектуру, где �
 
 **Описание ключевых параметров:**
 - `pods verified` — CoreDNS проверяет существование пода через API, возвращает NXDOMAIN если под не существует
+- `pods insecure` — создаёт A-записи для подов вида 1-2-3-4.namespace.pod.cluster.local без верификации (более быстрый, но менее безопасный)
 - `fallthrough` — если запись не найдена, запрос передается следующему плагину
 - `ttl 30` — время жизни кэша в секундах для кластерных записей
 - `max_concurrent 1000` — ограничение параллельных запросов к upstream
 - `lameduck 5s` — время "подыхания" перед остановкой для graceful shutdown
+
+**Что резолвит плагин kubernetes авторитативно:**
+
+- **Сервис**
+  - `redis.default.svc.cluster.local` → ClusterIP
+  - `redis.default.svc.cluster.local` (SRV) → порт + ClusterIP
+
+- **Headless Service**
+  - `redis.default.svc.cluster.local` → IP всех endpointов
+
+- **Под (pods insecure)**
+  - `10-244-1-5.default.pod.cluster.local` → 10.244.1.5
+
+- **ExternalName Service**
+  - `ext.default.svc.cluster.local` → CNAME → external.host
 
 ---
 
@@ -257,16 +276,107 @@ kubectl get pods -n kube-system -l k8s-app=node-local-dns -o wide
     # ... другие плагины ...
     
     # Stub domain для внутренней БД
-    stubDomains {
-        "internal.corp.local" = ["10.0.0.53", "10.0.0.54"]
-    }
-    
-    # Upstream DNS для определенного домена
-    forward .internal.corp.local 10.0.0.53 10.0.0.54
-    
-    forward . /etc/resolv.conf
-}
+stubDomains {
+         "internal.corp.local" = ["10.0.0.53", "10.0.0.54"]
+     }
+     
+     # Upstream DNS для определенного домена
+     forward .internal.corp.local 10.0.0.53 10.0.0.54
+     
+     forward . /etc/resolv.conf
+ }
+ ```
+
+**Добавление собственных авторитативных зон через плагин file**
+
+Для добавления собственных авторитативных зон (например, внутренних доменов организации) можно использовать плагин `file`, который читает статические зонные файлы.
+
+**Вариант 1: Плагин file (статический zone file)**
+
+Подходит для небольших зон, которые меняются редко. Зонный файл кладётся в ConfigMap и монтируется в под CoreDNS.
+
+ConfigMap с zone file:
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom-zones
+  namespace: kube-system
+data:
+  internal.example.com.db: |
+    $ORIGIN internal.example.com.
+    $TTL 300
+    @   IN SOA ns1.internal.example.com. admin.internal.example.com. (
+                2026061601 ; serial
+                3600       ; refresh
+                900        ; retry
+                604800     ; expire
+                300 )      ; minimum TTL
+    @   IN NS  ns1.internal.example.com.
+    ns1 IN A   10.96.0.10
+    api IN A   10.244.1.100
+    db  IN A   10.244.2.50
+    *   IN A   10.244.3.1
 ```
+
+Patch CoreDNS ConfigMap — добавить блок зоны:
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns
+  namespace: kube-system
+data:
+  Corefile: |
+    internal.example.com:53 {
+        file /etc/coredns/zones/internal.example.com.db
+        log
+        errors
+    }
+    .:53 {
+        errors
+        health {
+            lameduck 5s
+        }
+        ready
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+            pods verified
+            fallthrough in-addr.arpa ip6.arpa
+            ttl 30
+        }
+        prometheus :9153
+        forward . /etc/resolv.conf {
+            max_concurrent 1000
+        }
+        cache 30
+        loop
+        reload
+        loadbalance
+    }
+```
+
+Монтировать зонный файл в Deployment CoreDNS:
+```bash
+kubectl edit deployment coredns -n kube-system
+```
+
+Добавить в spec.template.spec:
+```yaml
+volumes:
+  - name: custom-zones
+    configMap:
+      name: coredns-custom-zones
+containers:
+  - name: coredns
+    volumeMounts:
+      - name: custom-zones
+        mountPath: /etc/coredns/zones
+        readOnly: true
+```
+
+**Важно:** Плагин `reload` перечитывает Corefile автоматически при изменении ConfigMap — перезапуск не нужен. Однако зонные файлы он не перечитывает: при обновлении zone file нужен `kubectl rollout restart deployment/coredns -n kube-system`.
+
+**Настройка upstream DNS-серверов:**
 
 **Настройка upstream DNS-серверов:**
 ```text
@@ -581,6 +691,9 @@ dnsConfig:
   - **Подробнее:** См. детальный разбор и методы диагностики в **[Петли перенаправления DNS](../../Networking/Protocols/DNS/dns_forwarding_loops.md)**.
 - **Блокировка NetworkPolicy:** Часто "Default Deny" политики забывают разрешить Egress на UDP/TCP порт 53 в неймспейс `kube-system`.
 - **UDP Conntrack Race:** Задержки в 1 или 5 секунд при резолвинге. Решение: NodeLocal DNSCache.
+- **NXDOMAIN для существующего сервиса:** CoreDNS возвращает NXDOMAIN, если сервис существует но не имеет подов с готовыми endpoints (для обычных сервисов) или готовых endpoints (для headless сервисов).
+   - **Диагностика:** Проверить существование сервиса и его endpoints через `kubectl get svc` и `kubectl get endpoints`
+   - **Решение:** Убедиться, что сервис имеет соответствующие endpoints с готовými подами
 - **Размер UDP-пакета:** Если в Headless Service >20 подов, ответ может не влезть в 512 байт UDP. Убедитесь, что клиенты поддерживают переключение на TCP.
 - **OOMKilled CoreDNS:** При большом количестве сервисов или подключений CoreDNS может исчерпать память. Решение: увеличить `resources.limits.memory` в Deployment CoreDNS.
 

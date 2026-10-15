@@ -92,6 +92,9 @@ sudo tcpdump -i eth0 -w capture.pcap
 # Ротация файлов: сохранять по 100 МБ, оставить последние 10 файлов
 sudo tcpdump -i eth0 -w traffic.pcap -C 100 -W 10
 
+# Ротация по времени: новый файл каждый час (3600 сек) с timestamp в имени
+sudo tcpdump -i any -G 3600 -w '/tmp/cap-%Y%m%d-%H%M%S.pcap'
+
 # Чтение из файла с применением фильтров
 tcpdump -r capture.pcap -nn 'tcp port 443'
 ```
@@ -178,6 +181,23 @@ sudo tcpdump -i eth0 -n port 53 -c 500 -w /tmp/dns.pcap
 ```
 
 **Интерпретация:** В выводе `tcpdump` DNS-заголовок начинается с 12 байт (ID, flags, qdcount, ancount, nscount, arcount). Флаг QR (Query/Response) — бит 7 в байте 2 (offset 2, mask `0x80`).
+
+#### HTTP (TCP 80) — извлечение GET-запросов
+
+Сложный BPF-фильтр для захвата только HTTP GET-запросов (исключая заголовки TCP/IP). Формула вычисляет смещение начала L7-пейлоада: `ip[2:2]` = total IP length, `(ip[0]&0xf)<<2` = IP header length, `(tcp[12]&0xf0)>>2` = TCP header length. Разница = payload offset.
+
+```bash
+# HTTP GET запросы (verbose, полный пакет, ASCII вывод)
+sudo tcpdump -i any -A -s 0 'tcp port 80 and (((ip[2:2] - ((ip[0]&0xf)<<2)) - ((tcp[12]&0xf0)>>2)) != 0)' | grep 'GET /'
+
+# Только заголовки HTTP запросов (A = ASCII, n = no DNS)
+sudo tcpdump -i any -A -n 'tcp port 80 and (((ip[2:2] - ((ip[0]&0xf)<<2)) - ((tcp[12]&0xf0)>>2)) != 0)' | grep -E 'GET|POST|Host:|User-Agent:'
+
+# Сохранение HTTP трафика в pcap для анализа
+sudo tcpdump -i any -s 0 'tcp port 80' -w /tmp/http.pcap
+```
+
+**Примечание:** Для HTTPS (порт 443) этот фильтр не работает — трафик зашифрован. Используйте `tshark` с расшифровкой TLS или `tcpdump` для захвата Client Hello (SNI).
 
 #### DHCP (UDP 67/68)
 

@@ -641,7 +641,7 @@ Kustomize в CD-пайплайне ничего не расшифровывае�
 **External Secrets Operator (ESO)** — рекомендуется для on-prem инфраструктур с уже развернутым Vault/HashiCorp:
 
 ```yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: app-secrets

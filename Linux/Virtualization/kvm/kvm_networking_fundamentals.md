@@ -67,7 +67,8 @@ ps aux | grep dnsmasq
 ```bash
 # /var/lib/libvirt/dnsmasq/default.conf
 # Генерируется libvirt, не редактировать вручную!
-listen-address=192.168.122.1,::1
+listen-address=192.168.122.1
+listen-address=::1
 bind-interfaces
 pid-file=/var/run/libvirt/network/default.pid
 except-interface=lo

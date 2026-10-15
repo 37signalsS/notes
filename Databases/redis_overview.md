@@ -38,7 +38,7 @@ Redis — хранилище «ключ-значение» с набором с�
 | **Lists** | Упорядоченные коллекции (quicklist) | Простые очереди, логи последних событий |
 | **Sets** | Неупорядоченные уникальные элементы | Теги, уникальные посетители, пересечения |
 | **Hashes** | Карты полей и значений; compact hashes (8.10) — до 50% экономии памяти для ключей с общей схемой, массовая вставка через `HIMPORT` | Объекты пользователей, конфигурации |
-| **Sorted Sets** | Множества с числовым score; кэширование ZRANK (8.2) | Лидерборды, индексы с приоритетом |
+| **Sorted Sets** | Множества с числовым score; кэширование ZRANK (8.2) | Лидерборды (`ZREVRANGEBYSCORE` — топ-N), индексы с приоритетом |
 | **Bitmaps** | Битовые массивы; `BITOP` с операторами DIFF/DIFF1/ANDOR/ONE (8.2) | Аналитика посещаемости (DAU), флаги |
 | **Bitfields** | Инкременты/декременты произвольных битовых полей | Счетчики, упаковка состояний |
 | **HyperLogLog** | Приблизительный подсчет уникальных, ~12 КБ на ключ | Cardinality на больших данных |
@@ -84,6 +84,12 @@ Redis хранит TTL для каждого ключа с миллисекун�
 1. **Пассивное истечение:** ключ удаляется при обращении, если TTL истек.
 2. **Активное истечение:** фоновый цикл выборочно проверяет ключи (`hz`, по умолчанию 10 циклов в секунду; `dynamic-hz yes` адаптирует частоту к нагрузке).
 
+Оставшийся TTL ключа — команда `TTL key` (секунды; `PTTL` — миллисекунды). Возвращает `-1`, если ключ существует без TTL, и `-2`, если ключ не найден (с Redis 2.8):
+```bash
+redis-cli TTL session:abc123
+# → (integer) 1799
+```
+
 ### Механизмы персистентности (Persistence)
 
 1. **RDB (Snapshotting):** снапшоты всей БД (`save 3600 1 300 100 60 10000` — defaults). Компактно, быстрое восстановление, но риск потери данных между снапшотами. Создание — через `fork` (задержка пропорциональна размеру датасета).
@@ -119,7 +125,7 @@ Redis хранит TTL для каждого ключа с миллисекун�
 
 - **Event loop:** команды выполняются в одном потоке (отсюда атомарность); CPU-bound команды блокируют всех клиентов.
 - **Threaded I/O (6.0+):** вспомогательные потоки обрабатывают чтение/запись сетевых сокетов (`io-threads`; многопоточное чтение включается через `io-threads-do-reads`).
-- **Фоновые потоки (4.0+):** lazy free (`UNLINK`, `FLUSHALL ASYNC`) и active defrag (`activedefrag yes`).
+- **Фоновые потоки (4.0+):** lazy free (`UNLINK`, `FLUSHALL ASYNC`, `FLUSHDB ASYNC`) и active defrag (`activedefrag yes`).
 - **Производительность по релизам:** 8.0 — до 87% ниже задержка и 2x throughput vs 7.2; 8.6 — более 5x throughput vs 7.2 (типичная кэш-нагрузка); 8.8 — MGET +68%, XREADGROUP +83%, ZADD +74%, SCAN +40%, полная синхронизация репликации +60%.
 
 ### Масштабирование и высокая доступность
@@ -155,6 +161,12 @@ INCRBY page_views:article:123 10
 INCRBYFLOAT rating:product:789 0.5
 # Cardinality объединения без материализации (8.10+)
 SUNIONCARD visitors:mon visitors:tue visitors:wed
+```
+
+### Лидерборды (sorted sets)
+```bash
+# Топ-10 с баллами: от +inf до -inf (по убыванию score)
+ZREVRANGEBYSCORE leaderboard +inf -inf WITHSCORES LIMIT 0 10
 ```
 
 ### Сессии пользователей
@@ -287,6 +299,8 @@ redis-cli INFO server | grep redis_version
 # → redis_version:8.10.2
 ```
 
+Подключение к удалённому инстансу: `redis-cli -h <хост> -p <порт> -a <пароль>`; выбор БД — ключ `-n <db>` (например, `redis-cli -n 1`). Пароль в `-a` виден в списке процессов хоста.
+
 ### Шаг 2: Тюнинг ядра Linux (критично для Prod)
 ```bash
 # 1. Отключение Transparent Huge Pages (вызывает задержки при снапшотах)
@@ -371,8 +385,25 @@ redis-cli INFO stats        # instantaneous_ops_per_sec, keyspace_hits/misses, e
 redis-cli INFO persistence  # rdb_last_bgsave_status, aof_last_rewrite_status
 redis-cli INFO replication  # role, connected_slaves, master_repl_offset
 redis-cli INFO keyspace     # ключей на БД, с истекающим TTL
+redis-cli INFO all          # все разделы сразу (агрегат)
 ```
 Ключевые метрики: hit rate = `keyspace_hits / (keyspace_hits + keyspace_misses)`; `mem_fragmentation_ratio` > 1.5 — фрагментация; рост `evicted_keys` — не хватает `maxmemory`; разница replication offset > 10000 — лаг репликации. Углубленная диагностика: `MEMORY STATS`/`MEMORY USAGE key`/`MEMORY DOCTOR`/`MEMORY PURGE`, `LATENCY DOCTOR`/`LATEST`/`HISTORY <event>`, `SLOWLOG GET 10`, `HOTKEYS` (8.6+), `redis-cli --stat`/`--bigkeys`/`--memkeys`/`--latency`/`--hotkeys`/`--scan --pattern "user:*"`. Экспорт в Prometheus — через **[Redis Exporter](../Prometheus/Exporters/redis_exporter.md)**.
+
+Точный размер ключа: `MEMORY USAGE key` оценивает коллекции сэмплированием (по умолчанию 5 вложенных значений); `SAMPLES 0` обходит все элементы и даёт точный результат:
+```bash
+redis-cli MEMORY USAGE big_hash SAMPLES 0
+# → (integer) 480
+```
+Журнал медленных команд: `SLOWLOG GET <N>` (последние N записей, по умолчанию 10), `SLOWLOG LEN` (длина), `SLOWLOG RESET` (очистка — записи теряются безвозвратно).
+
+### Нагрузочное тестирование (redis-benchmark)
+```bash
+# Краткий вывод: 100k запросов, 50 клиентов, pipeline глубиной 10
+redis-benchmark -q -n 100000 -c 50 -P 10
+# Только SET/GET, payload 1 КБ, случайные ключи из диапазона 1M
+redis-benchmark -t set,get -d 1024 -r 1000000 -n 1000000 -q
+```
+Флаги: `-h`/`-p` (хост/порт), `-c` (параллельных клиентов, default 50), `-n` (всего запросов, default 100000), `-d` (размер значения SET/GET, байт, default 3), `-P` (глубина pipeline, default 1 — без pipeline), `-t` (подмножество тестов), `-r` (диапазон случайных ключей), `-q` (только query/sec), `--cluster` (режим кластера), `--threads` (многопоточность). Без `-P` pipeline не измеряется — а именно он основной рычаг throughput.
 
 ## Диагностика и устранение неисправностей
 
@@ -387,13 +418,23 @@ redis-cli INFO keyspace     # ключей на БД, с истекающим TT
 | `mem_fragmentation_ratio` > 1.5 | фрагментация jemalloc | `INFO memory` | `activedefrag yes`, `MEMORY PURGE`, рестарт с реплики |
 | Рост `evicted_keys` | не хватает памяти | `INFO stats` | Больше RAM, политика вытеснения, TTL |
 | Рост `connected_clients` | утечка соединений | `CLIENT LIST`, `INFO clients` | Пул соединений, `timeout` в клиенте |
-| Cluster `fail` state | непокрытые слоты | `CLUSTER INFO` | Назначить слоты, `redis-cli --cluster fix` |
+| Cluster `fail` state | непокрытые слоты | `CLUSTER INFO`, `CLUSTER NODES`, `redis-cli --cluster check` | Назначить слоты, `redis-cli --cluster fix` |
 | `MOVED`/`ASK` ошибки | клиент без Cluster-поддержки | логи клиента | Smart client с кэшем слотов |
 | Медленный `DEL`/`EXPIRE` | big key | `SLOWLOG`, `OBJECT ENCODING` | `UNLINK`, разбить ключ на части |
 | Рост AOF | частые записи | `INFO persistence` | `BGREWRITEAOF`, `auto-aof-rewrite-*` |
 | Зависшие клиенты | блокирующие команды | `CLIENT LIST`, `SLOWLOG` | Таймауты в клиенте, `CLIENT KILL` |
 
 `redis-cli monitor` показывает команды в реальном времени, но снижает производительность — используйте только в диагностике, не в постоянном мониторинге.
+
+### Полезные однострочники
+```bash
+# Суммарная память ключей по паттерну (MB)
+redis-cli --scan --pattern 'session:*' | xargs -n1 redis-cli MEMORY USAGE | awk '{sum+=$1} END{print sum/1024/1024" MB"}'
+# Безопасное удаление ключей по паттерну (SCAN вместо блокирующего KEYS)
+redis-cli --scan --pattern 'cache:*' | xargs -r redis-cli DEL
+# Долгоживущие/простаивающие соединения (сортировка по idle)
+redis-cli CLIENT LIST | tr ' ' '\n' | grep -E 'addr=|age=|idle=' | paste - - - | sort -t= -k3 -rn | head
+```
 
 ## Лучшие практики
 

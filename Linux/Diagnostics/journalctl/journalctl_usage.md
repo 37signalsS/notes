@@ -46,10 +46,16 @@
   journalctl -u myapp -f --lines=50
   ```
 - **Выбор полей для вывода:** Параметр `--output-fields` позволяет указать, какие поля выводить в форматах `short`, `short-precise`, `short-iso`, `verbose`:
+
   ```bash
   journalctl -u myapp -o short --output-fields=MESSAGE,_PID,_EXE
   ```
 
+- **Отключение имени хоста:** Флаг `--no-hostname` убирает префикс хоста из вывода — удобен для локального мониторинга или централизованного сбора, где хост уже известен из контекста:
+
+  ```bash
+  journalctl -t kernel -t sudo -f --no-hostname
+  ```
 ### Форматы вывода
 
 Разные форматы предназначены для разных сценариев использования:
@@ -310,6 +316,34 @@ journalctl -u podman -n 20 --no-pager
 journalctl -u myapp-container.service -f
 ```
 
+### Чтение журналов из другого каталога (forensic / rescue)
+
+Флаг `-D` (или `--directory`) позволяет читать файлы журнала из альтернативного каталога, например с смонтированного диска аварийной системы:
+
+```bash
+# Чтение логов прошлой загрузки с аварийного диска
+journalctl -D /mnt/crashed/var/log/journal -b -1 -p err
+
+# Аналогично: указание конкретного файла журнала
+journalctl /mnt/backup/system@*.journal -p warning
+```
+
+**Важно:** `-D` принимает путь к каталогу, содержащему файлы `.journal` (обычно `/var/log/journal/<machine-id>/` или `/run/log/journal/`).
+
+### Проверка постоянного хранилища
+
+Команда `--header` выводит метаданные файлов журнала (размер, состояние, режим хранения). Это позволяет быстро диагностировать, почему логи исчезают после перезагрузки:
+
+```bash
+# Проверка структуры и состояния файлов журнала
+journalctl --header | grep -iE 'file|state'
+
+# Быстрая диагностика: энергозависимое храниение
+ls -d /var/log/journal 2>/dev/null || echo "volatile"
+# → /var/log/journal  (постоянное хранилище)
+# → volatile           (логи в RAM, теряются при перезагрузке; создайте каталог: mkdir -p /var/log/journal && systemd-tmpfiles --create)
+```
+
 ### Мониторинг в реальном времени
 
 ```bash
@@ -350,6 +384,10 @@ journalctl -u nginx.service --no-pager | grep -i "start\|stop" | tail -20
 
 # Корреляция событий по request ID (если логируют в MESSAGE)
 journalctl -u frontend -u backend --since "5 min ago" | grep "req-12345"
+
+# Выборка конкретных полей в JSON и вывод табуляцией
+journalctl -u <name> --output=json --output-fields=__REALTIME_TIMESTAMP,MESSAGE,_PID | \
+    jq -r '[.__REALTIME_TIMESTAMP,._PID,.MESSAGE]|@tsv'
 ```
 
 ### Экспорт и форматирование

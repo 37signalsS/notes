@@ -1,5 +1,7 @@
 # Node Exporter
 
+**Актуально для:** Node Exporter v1.12.1
+
 ## Определения
 
 **Node Exporter** — это стандартный инструмент мониторинга для сбора аппаратных и операционных метрик (ОС на базе ядра Linux/Unix). Он предоставляет сотни системных показателей, отражающих состояние ресурсов: процессора, памяти, дисковых подсистем, сетевых интерфейсов, а также специфических модулей ядра.
@@ -401,106 +403,203 @@ Node Exporter собирает метрики синхронизации вре�
 
 ```yaml
 groups:
-- name: NodeExporterAlerts
+- name: node-exporter-alerts
+  interval: 60s   # 1 мин достаточно для метрик хоста
   rules:
-  # Инстанс недоступен
-  - alert: HostDown
-    expr: up{job="node-exporter"} == 0
-    for: 5m
-    labels:
-      severity: critical
-    annotations:
-      summary: "Инстанс {{ $labels.instance }} недоступен"
-      description: "Node Exporter не отвечает на HTTP запросы скрейпинга более 5 минут."
+   # Инстанс недоступен
+   - alert: HostDown
+     expr: up{job="node-exporter"} == 0
+     for: 5m
+     labels:
+       severity: critical
+     annotations:
+       summary: "Инстанс {{ $labels.instance }} недоступен"
+       description: "Node Exporter не отвечает на HTTP запросы скрейпинга более 5 минут."
 
-  # Критическое заполнение диска (осталось менее 10%)
-  - alert: HostOutOfDiskSpace
-    expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
-    for: 5m
-    labels:
-      severity: critical
-    annotations:
-      summary: "Критически мало места на диске ({{ $labels.instance }})"
-      description: "Свободно менее 10% на разделе {{ $labels.mountpoint }}."
+   # Сдвиг часов (Clock Skew)
+   - alert: NodeClockSkew
+     expr: >
+       (node_timex_offset_seconds > 1
+         and deriv(node_timex_offset_seconds[5m]) >= 0)
+       or
+       (node_timex_offset_seconds < -1
+         and deriv(node_timex_offset_seconds[5m]) <= 0)
+     for: 15m
+     labels:
+       severity: warning
+       service: ne
+       event: 'Clock Skew |{{$labels.instance}}'
+     annotations:
+       description: >-
+         Сдвиг часов на {{$labels.instance}}: {{$value}}s и растёт 15 мин. Проверьте NTP.
 
-  # Высокая нагрузка CPU (LA превышает кол-во ядер в 1.5 раза)
-  - alert: HostHighLoad
-    expr: node_load1 > count(node_cpu_seconds_total{mode="idle"}) * 1.5
-    for: 10m
-    labels:
-      severity: warning
-    annotations:
-      summary: "Высокая нагрузка на сервер {{ $labels.instance }}"
-      description: "Load Average (1m) стабильно выше количества доступных ядер более 10 минут."
+   # Использование памяти
+   - alert: NodeHighMemoryUsage
+     expr: >
+       (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 95
+     for: 10m
+     labels:
+       severity: warning
+       service: ne
+       event: 'High Memory |{{$labels.instance}}'
+     annotations:
+       description: Использование памяти на {{$labels.instance}} выше 95% более 10 мин.
 
-  # Закончились inodes
-  - alert: HostOutOfInodes
-    expr: node_filesystem_files_free{mountpoint="/"} / node_filesystem_files{mountpoint="/"} * 100 < 5
-    for: 5m
-    labels:
-      severity: critical
-    annotations:
-      summary: "Заканчиваются inodes на файловой системе {{ $labels.instance }}"
+   # Мониторинг OOM kill
+   - alert: NodeOOMKill
+     expr: increase(node_vmstat_oom_kill[5m]) > 0
+     for: 0s
+     labels:
+       severity: high
+       event: 'OOM Kill |{{$labels.instance}}'
+     annotations:
+       description: OOM kill произошёл на {{$labels.instance}} за последние 5 минут.
 
-  # NTP-расхождение
-  - alert: HostNTPDesync
-    expr: abs(node_timex_offset_seconds) > 1
-    for: 5m
-    labels:
-      severity: warning
-    annotations:
-      summary: "Расхождение времени на {{ $labels.instance }}"
-      description: "Отклонение от NTP-сервера составляет {{ $value }} секунд."
+   # Использование CPU
+   - alert: NodeHighCpuUsage
+     expr: >
+       100 - (avg by (instance) (
+         rate(node_cpu_seconds_total{mode="idle"}[15m])
+       ) * 100) > 95
+     for: 10m
+     labels:
+       severity: warning
+       service: ne
+       event: 'High CPU |{{$labels.instance}}'
+     annotations:
+       description: Использование CPU на {{$labels.instance}} выше 95% более 10 мин.
 
-  # Давление на память (PSI)
-  - alert: HostMemoryPressure
-    expr: rate(node_pressure_memory_waiting_seconds_total{state="full"}[5m]) > 0.05
-    for: 10m
-    labels:
-      severity: warning
-    annotations:
-      summary: "Давление на память ({{ $labels.instance }})"
-      description: "Процессы простаивали более 5% времени из-за нехватки памяти."
+   # CPU steal (для VM)
+   - alert: NodeHighCpuSteal
+     expr: >
+       avg by (instance) (
+         rate(node_cpu_seconds_total{mode="steal"}[15m])
+       ) * 100 > 10
+     for: 10m
+     labels:
+       severity: warning
+       event: 'CPU Steal |{{$labels.instance}}'
+     annotations:
+       description: CPU steal на {{$labels.instance}} выше 10%. Гипервизор overcommit CPU на этом хосте.
 
-  # Перегрев CPU
-  - alert: HostCPUTemperatureHigh
-    expr: node_hwmon_temp_celsius{sensor="coretemp"} > 75
-    for: 5m
-    labels:
-      severity: warning
-    annotations:
-      summary: "Высокая температура CPU ({{ $labels.instance }})"
-      description: "Температура ядра {{ $value }}°C."
+   # Использование диска по файловым системам
+   - alert: NodeFilesystemUsageHigh
+     expr: >
+       max by (instance, device) (
+         (
+           node_filesystem_size_bytes{fstype=~"ext.?|xfs"}
+           - node_filesystem_free_bytes{fstype=~"ext.?|xfs"}
+         ) * 100
+         /
+         (
+           node_filesystem_avail_bytes{fstype=~"ext.?|xfs"}
+           + node_filesystem_size_bytes{fstype=~"ext.?|xfs"}
+           - node_filesystem_free_bytes{fstype=~"ext.?|xfs"}
+         )
+       ) > 95
+     for: 10m
+     labels:
+       severity: warning
+       service: ne
+       event: 'High Disk |{{$labels.instance}}|{{$labels.device}}'
+     annotations:
+       description: Устройство {{$labels.device}} на {{$labels.instance}} заполнено более чем на 95%.
 
-  # Остановился вентилятор
-  - alert: HostFanFailed
-    expr: node_hwmon_fan_rpm == 0
-    for: 2m
-    labels:
-      severity: critical
-    annotations:
-      summary: "Вентилятор не вращается ({{ $labels.instance }})"
-      description: "Датчик {{ $labels.sensor }} показывает 0 RPM."
+   # Прогноз заполнения диска
+   - alert: NodeDiskFillingSoon
+     expr: >
+       predict_linear(
+         node_filesystem_avail_bytes{fstype=~"ext.?|xfs"}[1h],
+         4 * 3600
+       ) < 0
+     for: 30m
+     labels:
+       severity: high
+       event: 'Disk Filling |{{$labels.instance}}|{{$labels.device}}'
+     annotations:
+       description: Диск {{$labels.device}} на {{$labels.instance}} заполнится менее чем за 4ч при текущей скорости записи.
 
-  # Failed systemd-сервис
-  - alert: HostSystemdServiceFailed
-    expr: node_systemd_unit_state{state="failed"} == 1
-    for: 1m
-    labels:
-      severity: critical
-    annotations:
-      summary: "Сервис {{ $labels.unit }} в состоянии failed"
-      description: "Systemd-юнит {{ $labels.unit }} на {{ $labels.instance }} завершился с ошибкой."
+   # inotify watches
+   - alert: NodeInotifyWatchesHigh
+     expr: node_filesystem_files_free{mountpoint="/"} < 100000
+     for: 5m
+     labels:
+       severity: warning
+       event: 'Low Inotify |{{$labels.instance}}'
+     annotations:
+       description: Свободных inotify watches на {{$labels.instance}} меньше 100k. Увеличьте fs.inotify.max_user_watches.
 
-  # Частые перезапуски сервиса
-  - alert: HostSystemdServiceRestarting
-    expr: increase(node_systemd_unit_state{state="activating"}[5m]) > 3
-    for: 5m
-    labels:
-      severity: warning
-    annotations:
-      summary: "Сервис {{ $labels.unit }} перезапускается"
-      description: "Юнит {{ $labels.unit }} активировался более 3 раз за 5 минут."
+   # Сетевые ошибки
+   - alert: NodeNetworkErrors
+     expr: >
+       rate(node_network_receive_errs_total{device!~"lo|veth.*|cilium.*"}[5m]) > 10
+       or
+       rate(node_network_transmit_errs_total{device!~"lo|veth.*|cilium.*"}[5m]) > 10
+     for: 5m
+     labels:
+       severity: warning
+       event: 'Network Errors |{{$labels.instance}}|{{$labels.device}}'
+     annotations:
+       description: Сетевые ошибки на {{$labels.instance}} интерфейс {{$labels.device}}.
+
+   # Закончились inodes
+   - alert: HostOutOfInodes
+     expr: node_filesystem_files_free{mountpoint="/"} / node_filesystem_files{mountpoint="/"} * 100 < 5
+     for: 5m
+     labels:
+       severity: critical
+     annotations:
+       summary: "Заканчиваются inodes на файловой системе {{ $labels.instance }}"
+
+   # Давление на память (PSI) - дополнительная проверка
+   - alert: HostMemoryPressure
+     expr: rate(node_pressure_memory_waiting_seconds_total{state="full"}[5m]) > 0.05
+     for: 10m
+     labels:
+       severity: warning
+     annotations:
+       summary: "Давление на память ({{ $labels.instance }})"
+       description: "Процессы простаивали более 5% времени из-за нехватки памяти."
+
+   # Перегрев CPU
+   - alert: HostCPUTemperatureHigh
+     expr: node_hwmon_temp_celsius{sensor="coretemp"} > 75
+     for: 5m
+     labels:
+       severity: warning
+     annotations:
+       summary: "Высокая температура CPU ({{ $labels.instance }})"
+       description: "Температура ядра {{ $value }}°C."
+
+   # Остановился вентилятор
+   - alert: HostFanFailed
+     expr: node_hwmon_fan_rpm == 0
+     for: 2m
+     labels:
+       severity: critical
+     annotations:
+       summary: "Вентилятор не вращается ({{ $labels.instance }})"
+       description: "Датчик {{ $labels.sensor }} показывает 0 RPM."
+
+   # Failed systemd-сервис
+   - alert: HostSystemdServiceFailed
+     expr: node_systemd_unit_state{state="failed"} == 1
+     for: 1m
+     labels:
+       severity: critical
+     annotations:
+       summary: "Сервис {{ $labels.unit }} в состоянии failed"
+       description: "Systemd-юнит {{ $labels.unit }} на {{ $labels.instance }} завершился с ошибкой."
+
+   # Частые перезапуски сервиса
+   - alert: HostSystemdServiceRestarting
+     expr: increase(node_systemd_unit_state{state="activating"}[5m]) > 3
+     for: 5m
+     labels:
+       severity: warning
+     annotations:
+       summary: "Сервис {{ $labels.unit }} перезапускается"
+       description: "Юнит {{ $labels.unit }} активировался более 3 раз за 5 минут."
 ```
 
 ## Типичные ошибки и устранение неполадок

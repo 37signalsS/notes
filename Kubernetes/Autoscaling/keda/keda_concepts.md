@@ -369,7 +369,7 @@ spec:
 #### 2. Интеграция с Vault через External Secrets Operator
 
 ```yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: kafka-keda-secret

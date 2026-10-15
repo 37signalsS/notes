@@ -83,6 +83,10 @@ dig @127.0.0.1 google.com +trace +short
 
 # 6. Проверка forwarded-запросов
 rndc status | grep "recursive queries"
+
+# 7. Сброс кэша резолвера и перезагрузка конфига (если изменения в named.conf)
+rndc flush && rndc reconfig && rndc status
+# → flush: success; reconfig: success; status shows updated config
 ```
 
 **Решение:** Если ошибка в синтаксисе — исправить файл и выполнить `rndc reload`. Если DNSSEC — проверить ключи и DS-записи. Если forwarder недоступен — проверить сетевую связность.

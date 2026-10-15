@@ -36,6 +36,17 @@
 
 ## Основные концепции
 
+#### Почему Vault, а не Kubernetes Secrets + SealedSecrets
+
+Kubernetes Secrets закодированы в base64 и по умолчанию не зашифрованы при хранении (если вы не настроили шифрование etcd). SealedSecrets решают задачу «зашифровать перед коммитом в Git», но не решают:
+
+    Ротацию секретов — при каждой смене пароля нужно перезапечатать и развернуть заново
+    Audit trail — кто какой секрет читал и когда
+    Динамические секреты — учётные данные БД, действительные 1 час, автоматически отзываемые после использования
+    Детальное управление доступом — какой под может читать какой путь секрета
+
+Vault решает всё это. Эксплуатация Vault требует заметных усилий (unseal, управление ключами), но для production-сред с несколькими командами и требованиями compliance это оправданно.
+
 ### Архитектура Vault в Kubernetes
 
 Развертывание Vault в Kubernetes — распространённый паттерн для централизованного управления секретами кластера. Vault работает как **StatefulSet** в выделенном namespace (например, `vault`), а для хранения данных в HA-режиме используется **Raft** (Integrated Storage) — встроенный бэкенд, не требующий внешних зависимостей.
@@ -45,7 +56,15 @@
 - **Raft storage:** данные реплицируются между подами через внутренний порт `8201`. Лидер обрабатывает запись, остальные реплики обслуживают чтение (stale reads при настройке `read_consistency`).
 - **Service `vault`:** ClusterIP-сервис, через который приложения и операторы обращаются к активному лидеру Vault.
 - **Service `vault-internal`:** сервис для взаимодействия реплик между собой (рекомендуется для `retry_join`).
-- **Auto-unseal:** в production необходимо автоматическое распечатывание. Поскольку облачные KMS (AWS KMS, GCP CKMS) относятся к облачным технологиям и исключены из рассмотрения, используется **Transit seal** — Vault сам хранит мастер-ключ и расшифровывает данные через Transit Engine, либо ручное распечатывание (только для dev/test).
+- **Auto-unseal:** в production необходимо автоматическое распечатывание. Поскольку облачные KMS (AWS KMS, GCP CKMS) относятся к облачным технологиям и исключены из рассмотрения, используется **Transit seal** — Vault сам хранит мастер-ключ и расшифровывает данные через Transit Engine, либо ручное распечатывание (только для dev/test). Для Yandex Cloud KMS можно использовать следующую конфигурацию:
+
+  ```hcl
+  seal "transit" {
+    address = "https://kms.yandex"
+    key_name = "vault-unseal-key"
+    # Использует метаданные виртуальной машины для аутентификации в YC
+  }
+  ```
 
 **Service discovery:**
 - `service_registration "kubernetes" {}` в конфигурации Vault автоматически регистрирует сервис в Kubernetes API.
@@ -302,6 +321,8 @@ vault audit enable file file_path=/vault/audit/audit.log log_raw=true
 # Syslog audit device (удалённый сервер)
 vault audit enable syslog tag="vault-audit" facility="AUTH"
 ```
+
+**Важно:** 10Gi достаточно для хранения секретов, но при включённом audit logging объём быстро растёт. Рекомендуется размещать audit логи в отдельном томе с достаточным объёмом хранения в зависимости от объёма аудита.
 
 Audit логи содержат хэшированные значения запросов и ответов, что позволяет отслеживать активность без раскрытия plaintext. В Kubernetes audit device на file монтируется через PersistentVolumeClaim.
 
@@ -676,6 +697,15 @@ kubectl exec -n vault vault-2 -- vault operator unseal $UNSEAL_KEY_2
 kubectl exec -n vault vault-2 -- vault operator unseal $UNSEAL_KEY_3
 ```
 
+**Альтернативный вариант с использованием цикла:**
+```bash
+for pod in vault-0 vault-1 vault-2; do
+  for key in $(cat cluster-keys.json | jq -r '.unseal_keys_b64[:3][]'); do
+    kubectl exec -n vault $pod -- vault operator unseal $key
+  done
+done
+```
+
 > **Примечание:** в HA-кластере на Raft распечатывать нужно каждый pod (`vault-0`, `vault-1`, `vault-2`). Под, проигравший выборы лидера (standby), также требует распечатывания перед переходом в active. Описанный ручной процесс — только для первичной инициализации; в продакшене используйте Auto-unseal (см. Шаг 1, Вариант 1).
 
 ### Шаг 3: Настройка аутентификации Kubernetes
@@ -685,6 +715,16 @@ kubectl exec -n vault vault-2 -- vault operator unseal $UNSEAL_KEY_3
 vault auth enable kubernetes
 vault secrets enable -path=secret kv-v2
 ```
+
+**Создание dedicated ServiceAccount для Kubernetes auth:**
+```bash
+kubectl create serviceaccount vault-auth -n vault
+kubectl create clusterrolebinding vault-auth-binding \
+  --clusterrole=system:auth-delegator \
+  --serviceaccount=vault:vault-auth
+```
+
+ClusterRole system:auth-delegator даёт ServiceAccount право вызывать TokenReview — именно это нужно Vault.
 
 **2. Конфигурация связи с API Kubernetes:**
 ```bash
@@ -979,6 +1019,43 @@ metadata:
 *   **Sidecar only (`vault.hashicorp.com/agent-init-first: "false"`, `agent-inject: "true"`):** секреты появляются после старта пода — приложение должно быть готово ждать файлы (часто комбинируется с `/vault/secrets` polling).
 
 Подробнее об аннотациях и сценариях: **[Vault Agent Injector](./vault_agent/injector.md)**.
+
+### Шаг 7: Day-2 эксплуатация
+
+#### Ротация root-токена
+
+После начальной настройки отзовите root-токен и генерируйте новый только при необходимости:
+
+```bash
+vault token revoke $ROOT_TOKEN
+
+# Генерация нового root-токена при необходимости (требует кворум ключей unseal)
+vault operator generate-root -init
+# ... церемония с держателями ключей unseal ...
+```
+
+#### Мониторинг Vault с Prometheus
+
+Официальный Helm-чарт Vault включает serviceMonitor для Prometheus:
+
+```yaml
+server:
+  serviceAccount:
+    create: true
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      labels:
+        release: kube-prom-stack
+```
+
+Ключевые метрики для алертов:
+
+    vault_core_unsealed — 0 означает, что Vault запечатан, все чтения секретов завершатся ошибкой
+    vault_core_active — количество активных (лидерских) узлов, должно быть 1
+    vault_runtime_total_gc_pause_ns — высокие паузы GC указывают на нехватку памяти
+```
 
 ## Дополнительная информация
 

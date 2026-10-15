@@ -6,6 +6,7 @@ import uuid
 import shutil
 import tempfile
 import threading
+import types
 import unittest
 from unittest import mock
 
@@ -756,6 +757,140 @@ class TestDeleteSourcePoints(unittest.TestCase):
         self.ingest._delete_source_points(client, "col", "<none>", null_source=True)
         cond = client.used_filters[0].must[0]
         self.assertIsInstance(cond, qmodels.IsEmptyCondition)
+
+
+class TestScanSources(unittest.TestCase):
+    class _ScrollClient:
+        def __init__(self, points):
+            self.points = points
+
+        def scroll(self, collection_name, limit, with_payload, with_vectors, offset):
+            start = 0 if offset is None else int(offset)
+            page = [
+                types.SimpleNamespace(id=p["id"], payload=p.get("payload", {}))
+                for p in self.points[start:start + limit]
+            ]
+            nxt = start + limit if start + limit < len(self.points) else None
+            return page, nxt
+
+    def test_classifies_stale_by_manifest_and_disk(self):
+        pts = [
+            {"id": "1", "payload": {"source": "keep.md"}},
+            {"id": "2", "payload": {"source": "gone.md"}},
+            {"id": "3", "payload": {"source": "new-on-disk.md"}},
+            {"id": "4", "payload": {}},
+        ]
+        client = self._ScrollClient(pts)
+        counts, stale = ingest._scan_sources(client, "col", {"keep.md"}, {"new-on-disk.md"})
+        self.assertEqual(counts["keep.md"], 1)
+        self.assertEqual(counts["<none>"], 1)
+        self.assertIn("2", stale, "source missing from manifest and disk must be stale")
+        self.assertIn("4", stale, "null-source point must be stale")
+        self.assertNotIn("1", stale, "manifest source is not stale")
+        self.assertNotIn("3", stale, "on-disk source not yet in manifest is not stale")
+
+    def test_multiple_pages(self):
+        pts = [{"id": str(i), "payload": {"source": "gone.md"}} for i in range(25)]
+        client = self._ScrollClient(pts)
+        counts, stale = ingest._scan_sources(client, "col", set(), set())
+        self.assertEqual(counts["gone.md"], 25)
+        self.assertEqual(len(stale), 25)
+
+
+class TestIngestInterruptResume(unittest.TestCase):
+    class _Dense:
+        def embed_documents(self, texts):
+            return [[0.1, 0.2, 0.3] for _ in texts]
+
+        def embed_query(self, text):
+            return [0.1, 0.2, 0.3]
+
+    class _SparseVec:
+        def __init__(self, data):
+            self._data = data
+
+        def tolist(self):
+            return list(self._data)
+
+    class _Sparse:
+        def embed(self, texts):
+            vec = TestIngestInterruptResume._SparseVec
+            return [types.SimpleNamespace(indices=vec([0]), values=vec([0.5])) for _ in texts]
+
+    class _InterruptingClient:
+        def __init__(self, fail_on=2):
+            self.fail_on = fail_on
+            self.upserts = 0
+            self.deleted = []
+
+        def scroll(self, **kwargs):
+            return [], None
+
+        def upsert(self, collection_name, points):
+            self.upserts += 1
+            if self.upserts >= self.fail_on:
+                raise KeyboardInterrupt
+
+        def collection_exists(self, collection_name):
+            return True
+
+        def create_collection(self, **kwargs):
+            pass
+
+        def create_payload_index(self, **kwargs):
+            pass
+
+        def delete(self, collection_name, points_selector):
+            self.deleted.append(points_selector)
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.orig_script_dir = rag_utils.SCRIPT_DIR
+        rag_utils.set_script_dir(self.tmpdir)
+        self.orig_manifest = ingest.MANIFEST_FILE
+        self.orig_lock = ingest.MANIFEST_LOCK_FILE
+        ingest.MANIFEST_FILE = os.path.join(self.tmpdir, "manifest.json")
+        ingest.MANIFEST_LOCK_FILE = ingest.MANIFEST_FILE + ".lock"
+        self.files = []
+        for i in range(3):
+            path = os.path.join(self.tmpdir, f"f{i}.md")
+            with open(path, "w") as f:
+                f.write(f"# File {i}\n\nSome body text number {i}.")
+            self.files.append((path, f"f{i}.md"))
+
+    def tearDown(self):
+        rag_utils.set_script_dir(self.orig_script_dir)
+        ingest.MANIFEST_FILE = self.orig_manifest
+        ingest.MANIFEST_LOCK_FILE = self.orig_lock
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_interrupt_flushes_completed_files(self):
+        client = self._InterruptingClient(fail_on=2)
+        cfg = {
+            "dir": os.path.join(self.tmpdir, "db"),
+            "collection": "col",
+            "model": "fake",
+            "chunk_size": 2000,
+            "chunk_overlap": 150,
+            "batch_size": 1,
+            "label": "FAKE",
+            "doc_prefix": "",
+            "query_prefix": "",
+        }
+        with mock.patch.object(rag_utils, "get_files", return_value=self.files), \
+             mock.patch.object(rag_utils, "load_qdrant", return_value=(client, cfg)), \
+             mock.patch.object(rag_utils, "get_embeddings", return_value=self._Dense()), \
+             mock.patch.object(rag_utils, "get_sparse_embedding_model", return_value=self._Sparse()), \
+             mock.patch.object(rag_utils, "get_device", return_value="cpu"), \
+             mock.patch.object(ingest, "bust_cache"):
+            with self.assertRaises(KeyboardInterrupt):
+                ingest.ingest("e5")
+
+        manifest = ingest.load_manifest()
+        saved = manifest["e5"]["files"]
+        self.assertEqual(len(saved), 1, "exactly the file completed before the interrupt is saved")
+        self.assertIn("f0.md", saved)
+        self.assertEqual(client.upserts, 2)
 
 
 class TestComputeCosineSimMatrix(unittest.TestCase):

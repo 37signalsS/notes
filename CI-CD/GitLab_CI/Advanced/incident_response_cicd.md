@@ -239,7 +239,7 @@ df -h /var/lib/registry
 docker system prune -a -f --filter "until=24h"
 
 # 5. Очистка неиспользуемых образов в registry (если есть admin-доступ)
-docker exec -it registry bin/registry garbage-collect /etc/docker/registry/config.yml
+docker exec -it registry registry garbage-collect --delete-untagged /etc/distribution/config.yml
 
 # 6. Переключение на fallback registry
 export CI_REGISTRY=fallback-registry.internal

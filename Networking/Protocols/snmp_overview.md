@@ -273,7 +273,7 @@ snmpget -l authPriv -u myuser -a SHA -A AuthPassword -x AES -X PrivPassword \
 
 ### Связанные документы
 - **[Автоматизация заполнения NetBox через SNMP](../NetBox/netbox-automation-python.md)** — использование snmpwalk для сбора данных об устройствах.
-- **[Настройка SNMP в Zabbix](../../Zabbix/installation.md#настройка-snmp-мониторинга)** — интеграция с NMS.
+- **[Настройка SNMP в Zabbix](../../Zabbix/zabbix_snmp_monitoring.md)** — интеграция с NMS.
 - **[snmp_exporter для Prometheus](../../Prometheus/Exporters/other_exporters.md)** — современный стек.
 - **[Справочник сетевых портов](../Concepts/network_ports.md)** — 161, 162 UDP.
 - **[UDP — протокол транспортного уровня](./udp.md)** — транспорт для SNMP.

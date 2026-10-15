@@ -164,6 +164,12 @@ curl -s http://localhost:8888/metrics | grep otelcol_receiver_accepted_spans
 curl -s http://localhost:8888/metrics | grep otelcol_exporter_queue_size
 # → otelcol_exporter_queue_size{...} 0
 
+# Проверка OTLP/HTTP endpoint (порт 4318, JSON)
+curl -s -o /dev/null -w '%{http_code}\n' -XPOST http://localhost:4318/v1/traces \
+  -H 'Content-Type: application/json' \
+  -d '{"resourceSpans":[]}'
+# → 200
+
 # Нагрузочный тест: отправка 1000 спанов
 for i in $(seq 1 1000); do
   echo "{\"resourceSpans\":[]}" | \

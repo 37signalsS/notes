@@ -479,7 +479,7 @@ sudo sysctl -w net.ipv4.ip_forward=0
 -   **[TUN vs TAP](./tun_vs_tap.md)** — виртуальные интерфейсы.
 
 **VPN-протоколы:**
--   **[WireGuard — практическое руководство](./wireguard_practical.md)** — site-to-site, remote access, диагностика.
+-   **[WireGuard — практическое руководство](./wireguard_practical.md)** — пошаговые сценарии site-to-site и remote access.
 -   **[OpenVPN](./openvpn.md)** — PKI, site-to-site, remote access.
 -   **[L2TP/IPsec](./l2tp_ipsec.md)** — комбинация L2TP и IPsec для legacy-устройств.
 -   **[IPsec](./ipsec/ipsec.md)** — IKEv2, site-to-site, remote access.

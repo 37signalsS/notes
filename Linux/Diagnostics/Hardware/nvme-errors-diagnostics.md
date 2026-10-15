@@ -122,6 +122,18 @@ NVMe 1.0+ поддерживает **Namespace (NS)** — абстракцию, 
 
 ## Практические сценарии
 
+### Quick Reference (cheatsheet-команды)
+
+```bash
+# SMART-лог NVMe: ключевые поля износа/здоровья
+nvme smart-log /dev/nvme0 | grep -E 'percentage_used|media_errors|critical_warning|temperature'
+# percentage_used > 100% = превышен ресурс по спецификации
+
+# Лог ошибок контроллера NVMe: ненулевые error_count
+nvme error-log /dev/nvme0 | grep -A1 'error_count' | grep -v 'error_count.*: 0'
+# Дополняется id-ctrl для модели/прошивки: nvme id-ctrl /dev/nvme0
+```
+
 ### Шаг 1: Глубокий анализ системного журнала (dmesg)
 
 Ищите специфические паттерны, указывающие на уровень сбоя:

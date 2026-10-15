@@ -1,0 +1,512 @@
+# Nginx location: примеры интеграции
+
+## Определения
+
+**Примеры интеграции** — проверенные конфигурации блоков `location`, предназначенные для корректного взаимодействия Nginx с бэкенд-технологиями и приложениями в эксплуатации SRE/sysadmin.
+
+**Бэкенд-сервис** — приложение или процесс (PHP-FPM, Node.js, Python, Go), выполняющий динамическую обработку запросов, переданных от Nginx.
+
+**FastCGI (Fast Common Gateway Interface)** — бинарный протокол для взаимодействия веб-сервера с исполняемыми программами (преимущественно PHP).
+
+**uWSGI (Universal Web Server Gateway Interface)** — высокопроизводительный протокол и сервер приложений для Python.
+
+**SCGI (Simple Common Gateway Interface)** — упрощенный протокол, аналогичный FastCGI, используемый в некоторых специализированных приложениях.
+
+**gRPC (Google Remote Procedure Call)** — современный высокопроизводительный протокол на базе HTTP/2 и Protocol Buffers.
+
+**Unix Domain Socket** — механизм межпроцессного взаимодействия на локальной машине с минимальными накладными расходами. В контексте Nginx используется для соединения с PHP-FPM, uWSGI, Gunicorn.
+
+**TCP Socket** — сетевое соединение через IP-адрес и порт. Необходимо для распределенных систем и контейнерных сред без общих томов.
+
+---
+
+## Базовые концепции
+
+### Архитектура проксирования в Nginx
+
+Nginx выступает в роли обратного прокси: принимает запрос от клиента, обрабатывает его на основе правил `location`, и передает дальше бэкенду через соответствующий протокол. Жизненный цикл запроса:
+
+1. **Прием соединения** — worker process принимает TCP-соединение от клиента.
+2. **Сопоставление location** — Nginx выбирает блок `location` по алгоритму, описанному в **[Директива location: основы и приоритеты](./basics.md)**.
+3. **Формирование запроса к бэкенду** — в зависимости от типа модуля (proxy, fastcgi, uwsgi, grpc) Nginx создает новый запрос к бэкенду.
+4. **Передача данных** — запрос передается через сокет (Unix или TCP). Nginx выступает в роли клиента по отношению к бэкенду.
+5. **Получение ответа** — ответ бэкенда буферизуется (по умолчанию) или стримится клиенту.
+6. **Возврат клиенту** — финальный ответ отправляется клиенту с добавленными заголовками.
+
+### Протоколы интеграции
+
+| Модуль | Директива | Назначение | Сокеты |
+| :--- | :--- | :--- | :--- |
+| `ngx_http_proxy_module` | `proxy_pass` | HTTP/HTTPS-проксирование (Node.js, Python, Go, Java) | Unix, TCP |
+| `ngx_http_fastcgi_module` | `fastcgi_pass` | PHP через PHP-FPM | Unix, TCP |
+| `ngx_http_uwsgi_module` | `uwsgi_pass` | Python через uWSGI | Unix, TCP |
+| `ngx_http_grpc_module` | `grpc_pass` | gRPC-сервисы (HTTP/2) | TCP |
+| `ngx_http_scgi_module` | `scgi_pass` | Специализированные приложения (rTorrent) | TCP |
+
+### Выбор типа сокета
+
+**Unix Domain Sockets (`unix:/path/to/socket`):**
+- Оптимальны для локальных бэкендов на том же сервере.
+- Минимальные задержки, отсутствие накладных расходов на сетевой стек.
+- Требуют корректных прав доступа (пользователь Nginx должен иметь права на чтение/запись в сокет).
+- Пример: `fastcgi_pass unix:/run/php/php8.3-fpm.sock;`
+
+**TCP Sockets (`127.0.0.1:port` или `ip:port`):**
+- Необходимы для распределенных систем и Docker-контейнеров без общих томов.
+- Позволяют размещать бэкенды на отдельных хостах.
+- Требуют настройки брандмауэра (firewall) между Nginx и бэкендом.
+- Пример: `proxy_pass http://127.0.0.1:3000;`
+
+### Переменные окружения и заголовки
+
+При проксировании Nginx передает бэкенду набор стандартных переменных через заголовки. Критически важные для корректной работы приложения:
+
+| Заголовок | Переменная | Назначение |
+| :--- | :--- | :--- |
+| `Host` | `$host` | Имя хоста из запроса (для роутинга в бэкенде) |
+| `X-Real-IP` | `$remote_addr` | Реальный IP клиента |
+| `X-Forwarded-For` | `$proxy_add_x_forwarded_for` | Цепочка прокси-серверов |
+| `X-Forwarded-Proto` | `$scheme` | Протокол (`http` или `https`) |
+
+Без передачи этих заголовков бэкенд не может корректно формировать ссылки, логировать IP-адреса или определять схему для редиректов.
+
+---
+
+## Практические сценарии
+
+### Сценарий 1: PHP-приложение (PHP-FPM 8.3+)
+
+Конфигурация для современных PHP-приложений (Laravel, Symfony) на Ubuntu 24.04 / Debian 12+.
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name app.example.com;
+    root /var/www/html/public;
+    index index.php;
+
+    ssl_certificate     /etc/letsencrypt/live/app.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/app.example.com/privkey.pem;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+    }
+}
+```
+
+**Проверка:**
+```bash
+# 1. Валидация конфигурации
+sudo nginx -t
+# → nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+# 2. Проверка существования сокета PHP-FPM
+ls -l /run/php/php8.3-fpm.sock
+# → srw-rw---- 1 www-data www-data 0 Sep 22 12:00 /run/php/php8.3-fpm.sock
+
+# 3. Smoke-test через curl
+curl -s -o /dev/null -w "%{http_code}" https://app.example.com/
+# → 200
+```
+
+Глубокая настройка FastCGI/PHP-FPM (пулы, пул-каталоги, таймауты, `fastcgi_pass` для Angie) — в **[FastCGI и PHP-FPM в Angie](../../../Angie/angie-fastcgi-php-fpm.md)**; мониторинг PHP-FPM (метрики, медленные запросы, статусные страницы) — в **[Мониторинге PHP-FPM](../../../PHP/php-fpm-monitoring.md)**.
+
+### Сценарий 2: WordPress (Защищенная конфигурация)
+
+Включает оптимизацию статики, блокировку уязвимых путей и корректную обработку через PHP-FPM.
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name blog.example.com;
+    root /var/www/wordpress;
+    index index.php;
+
+    ssl_certificate     /etc/letsencrypt/live/blog.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/blog.example.com/privkey.pem;
+
+    # Блокировка скрытых файлов и .git
+    location ~ /\.(?!well-known) {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Единая точка входа
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    # Обработка PHP через сокет
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_pass unix:/run/php/php-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }
+
+    # Кэширование статики на стороне клиента
+    location ~* \.(webp|avif|jxl|css|js|png|jpg|jpeg|gif|ico|svg|woff2)$ {
+        expires 365d;
+        add_header Cache-Control "public, no-transform";
+        log_not_found off;
+    }
+}
+```
+
+### Сценарий 3: Node.js и WebSocket
+
+Использование Nginx как терминатора SSL и балансировщика для Node.js с поддержкой WebSocket.
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name api.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+
+    # Маппинг для поддержки WebSocket
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      close;
+    }
+
+    location / {
+        proxy_pass         http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+
+        # Проброс заголовков для Upgrade (WebSocket)
+        proxy_set_header   Upgrade $http_upgrade;
+    proxy_set_header   Connection $connection_upgrade;
+
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+
+        # Стандартный блок заголовков проксирования
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+
+        # Таймауты для долгоживущих соединений
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+}
+```
+
+**Проверка:**
+```bash
+# Проверка WebSocket-поддержки (wss://)
+curl -sI -H "Upgrade: websocket" -H "Connection: Upgrade" https://api.example.com/
+# → HTTP/1.1 101 Switching Protocols
+```
+
+### Сценарий 4: Python (Gunicorn / uWSGI)
+
+**Gunicorn (HTTP через Unix socket):**
+```nginx
+location / {
+    proxy_pass http://unix:/tmp/gunicorn.sock;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+**uWSGI (Native uwsgi):**
+```nginx
+location /app/ {
+    include uwsgi_params;
+    uwsgi_pass unix:/var/run/uwsgi/app.sock;
+}
+```
+
+**Проверка:**
+```bash
+# Проверка доступности сокета
+ls -l /tmp/gunicorn.sock
+# → srw-rw-rw- 1 www-data www-data 0 Sep 22 12:00 /tmp/gunicorn.sock
+
+# Smoke-test
+curl -s -o /dev/null -w "%{http_code}" https://app.example.com/
+# → 200
+```
+
+### Сценарий 5: gRPC Интеграция
+
+Требует Nginx 1.13.10+ со стандартным модулем `ngx_http_grpc_module`.
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name grpc.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/grpc.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/grpc.example.com/privkey.pem;
+
+    location /api.v1.OrderService/ {
+        grpc_pass grpc://127.0.0.1:50051;
+        grpc_set_header Host $host;
+
+        error_page 502 = /error502grpc;
+    }
+
+    location = /error502grpc {
+        internal;
+        grpc_pass grpc://127.0.0.1:50051;
+    }
+}
+```
+
+**Важно:** HTTP/2 с TLS (`http2`) обязателен для работы `grpc_pass`. Для локальных бэкендов без TLS можно использовать `grpc_pass h2c://...`.
+
+---
+
+## Операции и команды
+
+### Валидация и применение конфигурации
+
+```bash
+# Проверка синтаксиса
+sudo nginx -t
+# → nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+# Просмотр объединенного конфига с подстановкой include
+sudo nginx -T | grep -n "fastcgi_pass\|proxy_pass\|uwsgi_pass\|grpc_pass"
+# → 45: fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+# → 52: proxy_pass http://127.0.0.1:3000;
+
+# Graceful reload — без потери соединений
+sudo nginx -s reload
+# → signal processed
+```
+
+### Проверка бэкенд-сервисов
+
+```bash
+# Проверка доступности сокета PHP-FPM
+ls -l /run/php/php8.3-fpm.sock
+# → srw-rw---- 1 www-data www-data 0 Sep 22 12:00 /run/php/php8.3-fpm.sock
+
+# Проверка статуса PHP-FPM
+sudo systemctl status php8.3-fpm
+# → Active: active (running) since ...
+
+# Проверка TCP-порта бэкенда
+ss -lnp | grep 3000
+# → LISTEN 0 128 127.0.0.1:3000 ...
+
+# Проверка DNS-разрешения upstream-хоста
+dig backend.example.com
+# → backend.example.com. 300 IN A 10.0.0.1
+```
+
+### Smoke-test через curl
+
+```bash
+# Проверка HTTP-кода
+curl -s -o /dev/null -w "%{http_code}" https://app.example.com/
+# → 200
+
+# Проверка заголовков проксирования
+curl -sI https://app.example.com/ | grep -i "x-real-ip\|x-forwarded"
+# → X-Real-IP: 192.168.1.100
+# → X-Forwarded-For: 192.168.1.100
+# → X-Forwarded-Proto: https
+
+# Проверка gRPC-эндпоинта (с использованием grpcurl)
+grpcurl -plaintext 127.0.0.1:50051 api.v1.OrderService/GetOrder
+# → {
+#     "order_id": "12345"
+#   }
+```
+
+### Управление правами и контекстом безопасности (sysadmin)
+
+```bash
+# Установка владельца для корневого каталога сайта
+sudo chown -R www-data:www-data /var/www/html
+
+# Установка прав: директории 755, файлы 644
+sudo find /var/www/html -type d -exec chmod 755 {} \;
+sudo find /var/www/html -type f -exec chmod 644 {} \;
+
+# Удаление прав на запись для группы и остальных
+sudo chmod -R go-w /var/www/html
+
+# Для каталогов с загрузкой пользователей (upload)
+sudo chmod 733 /var/www/uploads
+
+# Проверка контекста SELinux
+ls -Z /var/www/html/
+
+# Установка контекста для веб-контента (SELinux)
+sudo chcon -R -t httpd_sys_content_t /var/www/html/
+sudo chcon -R -t httpd_sys_rw_content_t /var/www/uploads/
+
+# AppArmor: проверка профиля Nginx
+sudo aa-status | grep nginx
+```
+
+### Ротация логов
+
+```bash
+# Проверка конфигурации logrotate
+cat /etc/logrotate.d/nginx
+
+# Принудительная ротация
+sudo logrotate -f /etc/logrotate.d/nginx
+
+# Проверка размера логов
+du -sh /var/log/nginx/*
+# → 12K    /var/log/nginx/access.log
+# → 4.0K   /var/log/nginx/error.log
+```
+
+---
+
+## Диагностика
+
+### Типовые ошибки и решения
+
+| Симптом | Причина | Решение |
+| :--- | :--- | :--- |
+| `502 Bad Gateway` | PHP-FPM не запущен, сокет не существует или неверный путь | `systemctl status php8.3-fpm`, проверить `fastcgi_pass` на соответствие `ls /run/php/` |
+| `502 Bad Gateway` | Бэкенд слушает другой адрес/порт | `ss -lnp \| grep 3000`, исправить `proxy_pass` |
+| `504 Gateway Timeout` | Бэкенд не ответил за `proxy_read_timeout` | Увеличить таймаут или оптимизировать бэкенд |
+| `403 Forbidden` на статику | Нет прав на чтение или `disable_symlinks` | `chmod o+r`, проверка `disable_symlinks` |
+| `404` на существующий PHP-файл | Неверный `fastcgi_param SCRIPT_FILENAME` | Проверить `$document_root$fastcgi_script_name` |
+| Пустой ответ / зависание | Неверный `proxy_http_version` или отсутствие `Connection` для keepalive | Установить `proxy_http_version 1.1;` и `proxy_set_header Connection "";` |
+| Ошибка `upstream sent too big header` | Бэкенд прислал слишком много заголовков | Увеличить `proxy_buffer_size` |
+| Ошибка `an upstream response is buffered to a temporary file` | Ответ не помещается в память | Увеличить `proxy_buffers` |
+
+### Диагностические команды
+
+```bash
+# Проверка активных соединений к бэкенду
+ss -tnp | grep nginx
+# → ESTAB 0 0 192.168.1.100:443 10.0.0.1:3000 users:(("nginx",pid=1234,fd=5))
+
+# Поиск ошибок 502/504 в логах
+grep -E "502|504" /var/log/nginx/error.log | tail -20
+# → 2026/09/22 12:00:00 [error] 1234#1234: *56 connect() to unix:/run/php/php8.3-fpm.sock failed (2: No such file or directory)
+
+# Проверка размера сокета и владельца
+ls -l /run/php/php8.3-fpm.sock
+# → srw-rw---- 1 www-data www-data 0 Sep 22 12:00 /run/php/php8.3-fpm.sock
+
+# Тraceroute до бэкенда (для TCP)
+tcping 10.0.0.1 3000
+# → 10.0.0.1:3000 - time=0.5ms
+```
+
+---
+
+## Лучшие практики
+
+### Эксплуатация (SRE / Sysadmin)
+
+1. **Верификация перед применением.** Всегда выполняйте `nginx -t` перед `nginx -s reload`. Ошибка в синтаксисе не затрагивает уже работающий Nginx — он продолжит работать со старой конфигурацией.
+
+2. **Версионирование конфигурации.** Храните конфиги в `git`, применяйте через CI/CD pipeline с автоматическим `nginx -t` и rollback.
+
+3. **Резервное копирование перед изменениями:**
+   ```bash
+   cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak.$(date +%Y%m%d%H%M%S)
+   ```
+
+4. **Используйте Unix sockets для локальных бэкендов.** Это снижает задержки и уменьшает нагрузку на сетевой стек. Убедитесь, что права на сокет позволяют пользователю Nginx читать и писать.
+
+5. **Передавайте обязательные заголовки.** `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto` — минимум для корректной работы бэкенда и последующей диагностики.
+
+6. **Разделяйте статику и динамику.** Статику отдавайте напрямую из `location` без проксирования. Динамику направляйте в отдельные `location` с явным `proxy_pass`.
+
+7. **Мониторинг upstream.** В логи добавьте переменные `$upstream_addr`, `$upstream_response_time`, `$upstream_status` для отслеживания состояния бэкендов:
+   ```nginx
+   log_format upstream_time '$remote_addr - $request_time $upstream_response_time $upstream_status';
+   ```
+
+8. **Ограничение размера тела запроса.** Устанавливайте `client_max_body_size` на уровне `location` или `server` в зависимости от требований приложения:
+   ```nginx
+   client_max_body_size 100M;
+   ```
+
+9. **Сокрытие служебных заголовков.** Для повышения безопасности скрывайте заголовки, раскрывающие детали реализации:
+   ```nginx
+   proxy_hide_header X-Powered-By;
+   proxy_hide_header Server;
+   ```
+
+10. **Graceful reload.** Используйте `nginx -s reload` для применения изменений без обрыва соединений. Для принудительной остановки (разрывает активные соединения) используйте `nginx -s stop` только при плановом обслуживании.
+
+### Безопасность
+
+1. **Блокируйте доступ к служебным файлам** на уровне `server`:
+   ```nginx
+   location ~ /\.(?!well-known) {
+       deny all;
+       access_log off;
+       log_not_found off;
+   }
+   ```
+
+2. **Проверяйте права на сокеты.** Сокет PHP-FPM должен быть доступен пользователю, от имени которого работает Nginx. При использовании кастомных пулов FPM настраивайте `listen.owner` и `listen.group` в `pool.d/www.conf`.
+
+3. **Используйте `limit_except`** для запрета нежелательных HTTP-методов на API-эндпоинтах:
+   ```nginx
+   location /api/ {
+       limit_except GET POST {
+           allow 192.168.1.0/24;
+           deny all;
+       }
+       proxy_pass http://backend_api;
+   }
+   ```
+
+4. **SELinux / AppArmor.** Если права на файлы корректны, но доступ закрыт, проверяйте контекст безопасности:
+   ```bash
+   # SELinux
+   getsebool -a | grep httpd
+   sudo setsebool -P httpd_can_network_connect on
+
+   # AppArmor
+   sudo aa-status | grep nginx
+   ```
+
+### Наблюдаемость
+
+1. **Кастомные заголовки для отладки:** Используйте `add_header X-Matched-Location "..." always;` для быстрой идентификации обрабатывающего блока в production.
+
+2. **Раздельные логи по типам:** Отдельные `log_format` для статики, API и ошибок.
+
+3. **Метрики upstream:** Подключите `stub_status` или расширенные решения для сбора метрик по бэкендам.
+
+---
+
+## Дополнительная информация
+
+### См. также
+
+- **[Директива location: основы и приоритеты](./basics.md)** — алгоритмы выбора и приоритеты.
+- **[Практическая конфигурация балансировки](../../Proxy/Load_Balancing/practical_configuration.md)** — продвинутые настройки проксирования, upstream, keepalive, failover.
+- **[Диагностика Nginx](../../Operations/nginx_troubleshooting.md)** — общие методы устранения ошибок.
+- **[FastCGI и PHP-FPM в Angie](../../../Angie/angie-fastcgi-php-fpm.md)** — детальная настройка пулов и параметров fastcgi.
+- **[Мониторинг PHP-FPM](../../../PHP/php-fpm-monitoring.md)** — метрики, диагностика медленных запросов и пулов.
+
+### Валидация конфигурации
+
+```bash
+nginx -t
+# → nginx: configuration file /etc/nginx/nginx.conf test is successful
+nginx -s reload
+# → graceful reload executed
+```

@@ -112,10 +112,9 @@ upstream cache_cluster {
 
 ```nginx
 upstream backend {
-    # Выбор по минимальному времени получения заголовков (только Angie/Plus)
-    least_time header;
-    server 10.0.0.1;
-    server 10.0.0.2;
+    server 10.0.0.1:8080;
+    server 10.0.0.2:8080 backup;
+    keepalive 32;
 }
 ```
 

@@ -1,5 +1,7 @@
 # Внешние системы управления секретами
 
+**Актуально для:** External Secrets Operator 2.12.x (октябрь 2026)
+
 ## Определения
 
 **Внешние менеджеры секретов (External Secret Managers)** — специализированные системы (HashiCorp Vault, AWS Secrets Manager, Google Secret Manager), интегрированные с Kubernetes для централизованного хранения, жизненного цикла и аудита конфиденциальных данных. В 2026 году использование внешних менеджеров является обязательным стандартом для сред с высокими требованиями к безопасности (Zero Trust).
@@ -65,7 +67,7 @@ ESO позволяет приложениям использовать стан�
 *   **ExternalSecret:** Определение маппинга внешних ключей в ключи нативного секрета.
 *   **refreshInterval:** Параметр, определяющий частоту опроса KMS для обнаружения изменений (drift detection).
 
-**Установка оператора (ESO 1.x):**
+**Установка оператора (ESO 2.12.x, 2026):**
 
 ```bash
 helm repo add external-secrets https://charts.external-secrets.io
@@ -73,16 +75,18 @@ helm install external-secrets external-secrets/external-secrets \
   -n external-secrets --create-namespace
 ```
 
-CRD устанавливаются чартом по умолчанию (`--set installCRDs=false` — если управляете ими отдельно). Проверка:
+CRD устанавливаются чартом по умолчанию (`installCRDs: true`). При мультикластерном управлении CRD установите `installCRDs: false` и applying CRD отдельно через `kubectl apply -f .../bundle.yaml --server-side` во избежание конфликтов версий при обновлении ESO в разных кластерах в разное время. CRD превысили лимит 256 KB — при ручном applying используйте `--server-side`. Проверка:
 
 ```bash
+kubectl get crd | grep external-secrets
+# → clustersecretstores.external-secrets.io
+# → externalsecrets.external-secrets.io
+# → secretstores.external-secrets.io
+# → clusterexternalsecrets.external-secrets.io (опционально)
 kubectl get pods -n external-secrets
-# → NAME                           READY   STATUS
-# → external-secrets-7d9f6c5c87   1/1     Running
-kubectl get crd externalsecrets.external-secrets.io
 ```
 
-> **Версия API (важно при обновлении):** начиная с релиза ESO 0.17 (2025) и в ESO 1.x используется стабильная версия `apiVersion: external-secrets.io/v1`; `v1beta1` больше не отдаётся сервером API по умолчанию. После обновления Helm-чарта старые манифесты дадут ошибку `no matches for kind "SecretStore" in version "external-secrets.io/v1beta1"` — исправление: перевести все ресурсы (SecretStore, ClusterSecretStore, ExternalSecret, ClusterExternalSecret) на `v1` до апгрейда.
+> **Версия API (важно при обновлении):** с ESO 0.17 (май 2025) и далее в стабильной ветке используется `apiVersion: external-secrets.io/v1`; `v1beta1` устарел и отключён по умолчанию в чарте ESO 2.x (`unsafeServeV1Beta1: false`, планируется к удалению 2026.05.01). Старые манифесты на `v1beta1` дадут ошибку `no matches for kind "SecretStore" in version "external-secrets.io/v1beta1"` — переведите все ресурсы (SecretStore, ClusterSecretStore, ExternalSecret, ClusterExternalSecret) на `v1` до апгрейда. Шаблонный движок v1 также устарел — по умолчанию используется engine v2, который поддерживает темplatating в `spec.target.template.metadata` и ключах `data`.
 
 **Сквозной пример: ClusterSecretStore + ExternalSecret (провайдер Vault, Kubernetes Auth):**
 
@@ -94,7 +98,7 @@ metadata:
 spec:
   provider:
     vault:
-      server: "https://vault.vault.svc.cluster.local:8200"
+      server: "http://vault.vault.svc.cluster.local:8200"
       path: "secret"                  # mount point движка KV v2
       version: "v2"
       auth:
@@ -139,6 +143,163 @@ kubectl get secret db-credentials -n prod
 # → NAME             TYPE     DATA   AGE
 # → db-credentials   Opaque   1      1m
 ```
+
+#### Формат пути KV v2
+
+В KV v2 путь API отличается от CLI-пути:
+
+- CLI: `vault kv get secret/app/db` (без префикса `data/`)
+- API/ESO: `secret/data/app/db` (с префиксом `data/`)
+
+На этом спотыкаются почти все в первый раз. Если ESO выдаёт `secret not found`, а `vault kv get` из командной строки работает — скорее всего, дело в формате пути.
+
+#### Синхронизация всех ключей из пути Vault
+
+Если в KV-пути Vault много полей, используйте `dataFrom` вместо перечисления каждого:
+
+```yaml
+spec:
+  dataFrom:
+    - extract:
+        key: secret/data/app/config
+```
+
+ESO создаёт Kubernetes Secret с записью на каждое поле секрета Vault. Если в секрете Vault есть поля `username`, `password` и `host`, в K8s Secret попадут все три.
+
+#### Переименование ключей
+
+Если имена полей в Vault не совпадают с ожидаемыми приложением в Kubernetes Secret:
+
+```yaml
+spec:
+  data:
+    - secretKey: DB_PASSWORD        # ключ K8s Secret
+      remoteRef:
+        key: secret/data/app/db
+        property: password          # имя поля Vault
+    - secretKey: DB_HOST
+      remoteRef:
+        key: secret/data/app/db
+        property: host
+```
+
+#### Синхронизация учётных credentials Docker registry
+
+У image pull secrets особый формат. ESO умеет формировать их напрямую:
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: registry-creds
+  namespace: app
+spec:
+  refreshInterval: 24h
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  target:
+    name: registry-creds
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/dockerconfigjson
+      data:
+        .dockerconfigjson: |
+          {"auths":{"registry.example.com":{"auth":"{{ .auth | b64enc }}"}}}
+  data:
+    - secretKey: auth
+      remoteRef:
+        key: secret/data/registry
+        property: auth
+```
+
+Или если полный dockerconfigjson хранится в Vault:
+
+```yaml
+spec:
+  data:
+    - secretKey: .dockerconfigjson
+      remoteRef:
+        key: secret/data/registry
+        property: dockerconfigjson
+  target:
+    template:
+      type: kubernetes.io/dockerconfigjson
+```
+
+#### Политики creationPolicy
+
+- **Owner** (рекомендуется): ESO владеет Secret. При удалении ExternalSecret Secret тоже удаляется. Secret нельзя изменить вручную — ESO перезапишет изменения при следующем refresh.
+- **Merge**: ESO добавляет ключи в существующий Secret. Полезно, когда Secret создаёт Helm-чарт, а из Vault нужно лишь дописать дополнительные ключи. Существующие ключи в Secret сохраняются.
+- **None**: ESO вообще не управляет жизненным циклом Secret — только создаёт его, если не существует, никогда не обновляет и не удаляет.
+
+#### Отладка синхронизации
+
+```bash
+# Проверить, успешно ли синхронизировался ESO
+kubectl get externalsecret -n app
+
+# Посмотреть статус последней синхронизации и ошибку
+kubectl describe externalsecret my-app-db-password -n app
+
+# Принудительная немедленная ресинхронизация
+kubectl annotate externalsecret my-app-db-password \
+  force-sync=$(date +%s) -n app --overwrite
+```
+
+Приём с аннотацией `force-sync` выручает, когда значение в Vault уже обновлено, а ждать следующего интервала синхронизации не хочется.
+
+**Проверка состояния ClusterSecretStore:**
+
+```bash
+kubectl get clustersecretstore vault-infra
+kubectl describe clustersecretstore vault-infra
+```
+
+Рабочий ClusterSecretStore показывает `Valid: True`. Частые причины Invalid:
+
+- Vault запечатан — проверьте `vault status`
+- Неправильно наconfigured роль аутентификации — проверьте `vault read auth/kubernetes/role/external-secrets`
+- Неправильный адрес Vault — проверьте поле `server` в ClusterSecretStore
+
+**Типичные сообщения об ошибках:**
+
+| Ошибка | Причина |
+| :--- | :--- |
+| `could not find key ...` | Поле `property` в `remoteRef` не существует в секрете Vault |
+| `secret not found` | Неправильный формат пути (забыт префикс `data/` для KV v2) |
+| `permission denied` | У роли Vault, которую использует ESO, нет прав чтения этого пути |
+| `connection refused` | Vault запечатан или неправильный URL в поле `server` |
+
+#### ESO с несколькими Vault namespace
+
+При использовании Vault Enterprise с namespaces добавьте `namespace` в ClusterSecretStore:
+
+```yaml
+spec:
+  provider:
+    vault:
+      server: "http://vault.vault.svc.cluster.local:8200"
+      namespace: "admin/dev"  # Vault Enterprise namespace
+      path: "secret"
+      version: "v2"
+```
+
+`path` указывается относительно namespace — префикс `namespace` в путь включать не нужно.
+
+#### ESO vs Sealed Secrets
+
+| Характеристика | ESO | SealedSecrets |
+| :--- | :--- | :--- |
+| Источник секретов | Vault, AWS SM, GCP SM и т.д. | Git (зашифрованный) |
+| Ротация | Автоматически по расписанию | Ручное перезапечатывание |
+| Audit trail | В Vault | В Git |
+| Air-gapped | Нужен доступ к Vault | Только Git |
+| Перезапечатывание при пересборке кластера | Нет | Да |
+| Работает без Vault | Нет | Да |
+| Первоначальный bootstrap | Нужны Vault + ESO сначала | Работает с нуля |
+
+Используем оба: SealedSecrets для bootstrap (kubeconfig, начальные учётные credentials registry, секреты инициализации Vault) и ESO для секретов приложений, которые живут в Vault и часто ротируются. Правило: всё, что нужно самому ESO для старта (адрес Vault, конфиг аутентификации), должно быть SealedSecret; всё остальное — ExternalSecret.
 
 Работа с ESO в GitOps-потоке, а также продвинутые возможности (`dataFrom`, шаблоны, `Generators`, `PushSecret`) — на примерах в [GitOps: управление секретами](../../../GitOps/secrets_encryption.md).
 
@@ -344,6 +505,10 @@ kubectl exec -n prod deploy/webapp -- ls -la /vault/secrets
 | `ExternalSecret` создан, но нативный `Secret` не появился | Ошибка аутентификации, политика Vault, недоступность `server` | `kubectl get externalsecret -o yaml` → `status.conditions`; проверить `ClusterSecretStore` и логи ESO |
 | Условие `RefreshFailed` / `SecretSyncError` | Отзыв токена/роли, изменение пути, rate limit хранилища | Проверить условия и события; скорректировать `refreshInterval` или креденшилы |
 | `no matches for kind "SecretStore" in version "external-secrets.io/v1beta1"` | Ресурс на старой API-версии (ESO ≥ 0.17 не отдаёт `v1beta1`) | Перевести манифесты на `external-secrets.io/v1` и обновить ресурсы до апгрейда |
+| `could not find key ...` | Поле `property` в `remoteRef` не существует в секрете Vault | Проверить имя поля в Vault через `vault kv get <path>` |
+| `secret not found` | Неправильный формат пути (забыт префикс `data/` для KV v2) | Использовать путь вида `secret/data/<...>` вместо CLI-пути `secret/<...>` |
+| `permission denied` | У роли Vault, которую использует ESO, нет прав чтения этого пути | Проверить политику Vault (`vault policy read`) и права на `secret/metadata/*` для list |
+| `connection refused` | Vault запечатан или неправильный URL в поле `server` | Проверить `vault status` и поле `server` в ClusterSecretStore |
 | CSI: том пуст или монтирование падает | Ошибки в `SecretProviderClass`, нет provider (`DaemonSet`), недоступен Vault | `kubectl describe pod` → события `FailedMount`; проверить SPC, логи провайдера на узле |
 | CSI: ротация не происходит | `enableSecretRotation=false` | Включить Helm-значение `enableSecretRotation` и настроить `rotationPollInterval` |
 | `failed to get node publish secret` | Нативному Secret с креденшилами не хватает метки | `kubectl label secret <name> secrets-store.csi.k8s.io/used=true` |
@@ -358,6 +523,8 @@ kubectl exec -n prod deploy/webapp -- ls -la /vault/secrets
 4.  Мониторите статус синхронизации (`Ready`/`RefreshFailed`), настраивайте алерты на долгое расхождение.
 5.  Храните `ExternalSecret`/`ClusterSecretStore` декларативно в Git ([GitOps: управление секретами](../../../GitOps/secrets_encryption.md)); учитывайте, что при стратегиях бэкапа публично доступны только определения, а не значения ([Бэкапы](../../Operations/backup-strategies.md)).
 6.  Тестируйте ротацию в staging-окружении, не логируйте значения секретов, периодически анализируйте Vault audit log.
+7.  **Bootstrap-паттерн (ESO + SealedSecrets):** всё, что нужно самому ESO для старта (адрес Vault, конфигурация аутентификации, начальные учётные credentials registry, секреты инициализации Vault) храните как SealedSecret — это работает с нуля без доступа к Vault. Всё остальное — через ExternalSecret. Секреты приложений, которые живут в Vault и часто ротируются, доставляйте через ESO.
+8.  При использовании Vault Enterprise с namespaces задавайте `namespace` в `ClusterSecretStore` отдельно от `path` — путь указывается относительно namespace.
 
 ### Выбор решения
 

@@ -47,7 +47,7 @@ curl -v -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
 
 ### Современные инструменты и процессы (2026)
 
-1. **Генерация**: **Syft v1.52+** и **Trivy** являются индустриальными стандартами. `docker buildx --sbom` интегрирует генерацию прямо в процесс сборки BuildKit.
+1. **Генерация**: **Syft v1.52+** и **Trivy** являются индустриальными стандартами. `docker buildx --sbom` интегрирует генерацию прямо в процесс сборки BuildKit. Для быстрого локального просмотра состава образа — `docker sbom <image>` (плагин Docker Desktop, на базе Syft; в Docker Engine standalone недоступен).
 2. **Аттестация и хранение**: SBOM подписывается через **Cosign** и хранится как аттестация. В 2026 году активно используется **OCI 1.1 Referrers API**, позволяющий прикреплять SBOM к образу без изменения его основного дайджеста.
 3. **Верификация (VSA)**: **Verification Summary Attestation** — итоговый документ, подтверждающий, что SBOM был сгенерирован и проверен сканерами в соответствии с политиками организации.
 4. **ASPM (Application Security Posture Management)**: Платформы типа **Docker Scout** или **Dependency-Track** агрегируют SBOM для непрерывного мониторинга новых CVE.

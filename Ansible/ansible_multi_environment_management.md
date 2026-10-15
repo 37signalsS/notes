@@ -417,7 +417,7 @@ ansible-playbook -i inventories/dev playbooks/deploy.yml \
 inventory = ./inventories/prod
 
 # Callback-плагины
-callback_enabled = timer, profile_tasks
+callbacks_enabled = timer, profile_tasks
 stdout_callback = yaml
 
 # Логирование

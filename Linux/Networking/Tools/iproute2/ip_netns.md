@@ -119,6 +119,9 @@ sudo ip netns delete mgmt_ns
 # Выполнение команды в контексте пространства имён
 sudo ip netns exec mgmt_ns ip address show
 
+# Быстрая проверка: создать netns и сразу посмотреть адреса
+ip netns add test && ip netns exec test ip -br a
+
 # Современный сокращенный способ (доступен в новых версиях iproute2)
 sudo ip -n mgmt_ns address show
 

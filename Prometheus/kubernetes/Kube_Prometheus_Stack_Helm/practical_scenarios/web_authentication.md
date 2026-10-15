@@ -572,7 +572,7 @@ prometheus:
 
 **Шаг 1: Создание SecretStore**
 ```yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: SecretStore
 metadata:
   name: vault-backend
@@ -591,7 +591,7 @@ spec:
 
 **Шаг 2: Создание ExternalSecret для Prometheus auth**
 ```yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: prometheus-web-config

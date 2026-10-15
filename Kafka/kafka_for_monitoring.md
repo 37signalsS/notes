@@ -453,7 +453,7 @@ groups:
           summary: "Растет задержка консьюмер-группы"
           description: "Группа {{ $labels.consumergroup }} в топике {{ $labels.topic }} стабильно отстает. Лаг: {{ $value }} сообщений."
 
-      - alert: KafkaConsumerGroupStalled
+- alert: KafkaConsumerGroupStalled
         expr: |
           (rate(kafka_consumergroup_current_offset[5m]) == 0)
           and
@@ -463,8 +463,112 @@ groups:
           severity: critical
         annotations:
           summary: "Консьюмер-группа полностью остановила чтение"
-          description: "Группа {{ $labels.consumergroup }} не коммитит офсеты при наличии лага ({{ $value }} сообщений). Возможен сбой или deadlock."
-```
+          description: "Группа {{ $labels.consumergroup }} не коммитит оффсеты при наличии лага ({{ $value }} сообщений). Возможен сбой или deadlock."
+
+      - alert: KafkaConsumerLagCritical
+        expr: sum(kafka_consumergroup_lag_sum{job="kafka"}) by (consumergroup) > 100000
+        for: 5m
+        labels:
+          severity: average
+          service: kafka
+        annotations:
+          summary: "Критический consumer lag"
+          description: >
+            Группа {{ $labels.consumergroup }}: суммарный лаг {{ $value }} сообщений
+            (выше порога 100 000) более 5 мин. Порог Depends от нагрузки:
+            при 10k msg/cек лаг 100k = ~10 секунд отставания (приемлемо);
+            при 100 msg/cек лаг 100k = ~1000 секунд (критично).
+
+      - alert: KafkaHighPriorityConsumerLag
+        expr: kafka_consumergroup_lag_sum{job="kafka", consumergroup="payment-processor"} > 500
+        for: 2m
+        labels:
+          severity: high
+        annotations:
+          summary: "Высокий приоритетный consumer lag"
+          description: >
+            Группа {{ $labels.consumergroup }}: лаг {{ $value }} сообщений более 2 мин.
+            Для критичных групп пороги задавайте индивидуально.
+
+      - alert: KafkaConsumerGroupStopped
+        expr: >
+          delta(kafka_consumergroup_lag_sum{job="kafka"}[5m]) > 1000
+          and
+          kafka_consumergroup_lag_sum{job="kafka"} > 1000
+        for: 5m
+        labels:
+          severity: high
+        annotations:
+          summary: "Консьюмер-группа перестала читать"
+          description: >
+            Группа {{ $labels.consumergroup }}: лаг вырос более чем на 1000
+            сообщений за 5 минут и не уменьшается. Консьюмер завис или упал.
+
+  - name: KafkaExporterHealth
+    rules:
+      - alert: KafkaExporterMissing
+        expr: absent(kafka_brokers{job="kafka"})
+        for: 5m
+        labels:
+          severity: high
+          service: kafka
+        annotations:
+          summary: "Kafka Exporter недоступен"
+          description: >
+            Серия kafka_brokers отсутствует — экспортёр может быть недоступен
+            или не может подключаться к Kafka. Без этого алерта KafkaDown
+            не сработаст: вместо значения 0 у Prometheus просто не будет данных.
+
+      - alert: KafkaBrokerCountChanged
+        expr: kafka_brokers{job="kafka"} < 3
+        for: 5m
+        labels:
+          severity: high
+        annotations:
+          summary: "Количество брокеров изменилось"
+          description: >
+            Ожидается 3 Kafka брокера, видно только {{ $value }}.
+            Возможен отказ брокера.
+
+  - name: KafkaResourceUsage
+    rules:
+      - alert: KafkaHighDiskUsage
+        expr: >
+          sum(kubelet_volume_stats_used_bytes{namespace="kafka"})
+            by (namespace, persistentvolumeclaim)
+          /
+          sum(kubelet_volume_stats_capacity_bytes{namespace="kafka"})
+            by (namespace, persistentvolumeclaim)
+          > 0.9
+        for: 15m
+        labels:
+          severity: warning
+          service: kafka
+        annotations:
+          summary: "Высокое использование диска Kafka"
+          description: >
+            Kafka PVC {{ $labels.persistentvolumeclaim }} заполнен более чем на 90%.
+            Рассмотрите уменьшение retention или добавление хранилища.
+          runbook: >
+            Для срочного решения уменьшите retention.ms на проблемных топиках:
+            kafka-configs.sh --bootstrap-server kafka:9092 \
+              --entity-type topics --entity-name my-topic \
+              --alter --add-config retention.ms=3600000
+
+      - alert: KafkaHighMemoryUsage
+        expr: process_resident_memory_bytes{job="kafka"} / 1024 / 1024 / 1024 > 4
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокое использование памяти Kafka"
+          description: >
+            Kafka broker {{ $labels.instance }} использует более 4 ГБ RSS
+            более 15 мин. RSS выше лимита heap обычно означает page cache,
+            но превышение лимита памяти контейнера приводит к OOM kill.
+          runbook: >
+            Задавайте размер heap явно: KAFKA_HEAP_OPTS="-Xmx2g -Xms2g"
+            и лимит памяти контейнера 4Gi (heap 2g + off-heap + накладные расходы).
 
 ---
 
@@ -725,6 +829,9 @@ kafka-consumer-groups.sh --bootstrap-server 127.0.0.1:9092 \
 | `UnderReplicatedPartitions > 0` | Сбой ноды брокера, деградация диска (I/O wait), сетевой jitter | `kafka-topics.sh --describe --under-replicated-partitions`; `iostat -xz 1` | Проверить логи `journalctl -u kafka`; заменить сбойный диск; проверить тайм-аут `replica.lag.time.max.ms`. |
 | Резкое падение `RequestHandlerAvgIdlePercent < 0.2` | Лавина мелких запросов (недостаточный батчинг), медленный диск PageCache | `RequestQueueTimeMs` в JMX; `vmstat 1` | Включить сжатие и батчинг на продюсерах (`linger.ms=20`, `batch.size=65536`); увеличить `num.io.threads`. |
 | Брокер самопроизвольно покидает кластер | Длинные паузы Stop-the-world JVM GC | Проверить `jvm_gc_collectiontime_ms` и журнал `/var/log/kafka/kafka-gc.log` | Настроить G1GC: `-XX:MaxGCPauseMillis=20`, увеличить кучу брокера до 8–10 ГБ (не выделять более 32 ГБ во избежание деградации Compressed OOPs). |
+| `KafkaExporterMissing` / `KafkaBrokerCountChanged` | Экспортёр упал или брокер недоступен | `curl http://localhost:9308/metrics \| grep kafka_brokers`; `kubectl logs -n kafka deployment/kafka-exporter` | Перезапустить экспортёр; проверить доступность брокеров по порту 9092; перезапустить брокер при необходимости. |
+| `KafkaHighDiskUsage` (PVC > 90%) | Слишком длинный retention или рост трафика | `kafka-log-dirs.sh --describe`; `kubectl get pv -o wide` | Уменьшить `retention.ms` на проблемных топиках; добавить хранилище или включить Tiered Storage. |
+| `KafkaHighMemoryUsage` (RSS > 4Gi) | Превышение лимита памяти контейнера | `kubectl top pod`; `jstat -gc <pid>` | Задать `KAFKA_HEAP_OPTS="-Xmx2g -Xms2g"` и лимит памяти 4Gi; page cache не ограничивать. |
 
 ---
 
@@ -785,6 +892,58 @@ kafka-consumer-groups.sh --bootstrap-server 127.0.0.1:9092 \
 
 ---
 
+#### 4. Kafka Exporter недоступен / брокер выпал (`KafkaExporterMissing`, `KafkaBrokerCountChanged`)
+**Симптомы:** Срабатывает `KafkaExporterMissing` — серия `kafka_brokers` отсутствует. Или `KafkaBrokerCountChanged` — видно меньше брокеров, чем ожидается (например, 2 из 3).
+
+**Диагностический алгоритм:**
+1. Проверить, запущен ли сам `kafka-exporter`: `kubectl logs -n kafka deployment/kafka-exporter` или `systemctl status kafka-exporter`.
+2. Проверить, может ли экспортёр подключаться к брокерам: `curl -s http://localhost:9308/metrics | grep kafka_brokers`. Если пусто — проблема в доступности брокеров или в сетевом доступе.
+3. Если экспортёр работает, но `kafka_brokers` не приходит — проверить доступность брокеров: `kafka-broker-api-broker.sh` или `telnet kafka.kafka.svc.cluster.local 9092`.
+4. При `KafkaBrokerCountChanged` — проверить количество подов брокеров: `kubectl get pods -n kafka | grep kafka-`.
+
+**Решение:**
+- Если экспортёр упал — перезапустить, проверить ресурсы (CPU/memory лимиты).
+- Если брокер упал — проверить логи, состояние диска, перезапустить брокер.
+- Если брокер удалён — запустить новый через оператор/Helm.
+
+---
+
+#### 5. Высокое использование диска (`KafkaHighDiskUsage`)
+**Симптомы:** Срабатывает алерт `KafkaHighDiskUsage` — PVC заполнен более чем на 90%.
+
+**Диагностический алгоритм:**
+1. Определить проблемный PVC: `kubectl get pv -o wide` или через Grafana.
+2. Проверить, какие топики占据了 больше всего места: `kafka-log-dirs.sh --describe --bootstrap-server kafka:9092`.
+3. Проверить retention.ms на problemных топиках: `kafka-configs.sh --bootstrap-server kafka:9092 --entity-type topics --entity-name <topic> --describe`.
+
+**Решение:**
+- Срочно: уменьшить retention.ms на проблемных топиках:
+  ```bash
+  kafka-configs.sh --bootstrap-server kafka:9092 \
+    --entity-type topics --entity-name my-topic \
+    --alter --add-config retention.ms=3600000  # 1 час
+  ```
+- В перспективе: добавить хранилище, увеличить PVC, или включить Tiered Storage (KIP-405) для архивных сегментов.
+- Проверить, что `cleanup.policy=delete` (не `compact`) для топиков, где это уместно.
+
+---
+
+#### 6. Превышение памяти брокером (`KafkaHighMemoryUsage`)
+**Симптомы:** Срабатывает алерт — RSS брокера превышает 4 ГБ более 15 мин.
+
+**Диагностический алгоритм:**
+1. Проверить фактическое использование памяти: `kubectl top pod kafka-0 -n kafka` или `jstat -gc <pid>`.
+2. Оценить, насколько RSS превышает heap: если heap ~2 ГБ, а RSS ~4 ГБ — это page cache, который не является проблемой.
+3. Критично, если RSS приближится к лимиту контейнера (4Gi) — риск OOM kill.
+
+**Решение:**
+- Явно задавайте размер heap: `KAFKA_HEAP_OPTS="-Xmx2g -Xms2g"`.
+- Лимит памяти контейнера должен быть heap (2g) + off-heap + накладные расходы ≈ 4Gi.
+- При постоянном росте RSS без роста heap — проверить негативное сжатие (compressed OOPs) при heap > 32 ГБ.
+- Page cache не нужно ограничивать — он используется для Zero-Copy чтения.
+
+---
+
 ## Лучшие практики
 
 ### Рекомендации по настройке топиков телеметрии
@@ -808,10 +967,16 @@ kafka-consumer-groups.sh --bootstrap-server 127.0.0.1:9092 \
    - Prometheus JMX Exporter используется **строго** для метрик брокера, JVM, дисков и кворума KRaft.
    - `kafka_exporter` используется **строго** для отслеживания Consumer Lag и офсетов групп. Это предотвращает перегрузку Java-потоков брокера сложными вычислениями смещений.
 2. **Алертинг по производным и времени вычитки, а не статичным порогам:**
-   - Не настраивайте жесткие триггеры на `lag > 1000`. Используйте связку: наличие лага + положительная производная (`deriv(lag[10m]) > 0`) + время вычитки (`Drain Time > 1800s`).
-3. **Резервирование дисковой ёмкости:**
+    - Не настраивайте жесткие триггеры на `lag > 1000`. Используйте связку: наличие лага + положительная производная (`deriv(lag[10m]) > 0`) + время вычитки (`Drain Time > 1800s`).
+3. **Четыре категории алертов для продакшена:**
+     - **Доступность брокеров** — `KafkaDown`, `KafkaExporterMissing`, `KafkaBrokerCountChanged`. `KafkaExporterMissing` через `absent()` ловит случай, когда сам экспортёр не может собирать метрики — без него `KafkaDown` никогда не сработаст (Prometheus просто не будет данных).
+     - **Состояние репликации** — `KafkaUnderReplicatedPartitions` (for: 10m, чтобы отфильтровать шум при rolling update и выборах лидера) и `KafkaOfflinePartitions` (for: 1m, severity: disaster).
+     - **Consumer lag** — `KafkaConsumerLagCritical` (суммарный порог 100k), перегруппированный `KafkaConsumerGroupStopped` по delta росту лага, и индивидуальные пороги для приоритетных групп (`KafkaHighPriorityConsumerLag`).
+     - **Насыщение ресурсов** — `KafkaHighDiskUsage` (PVC через kubelet, >90% 15m) и `KafkaHighMemoryUsage` (RSS >4Gi 15m).
+    4. **Метка `job="kafka"` критична для всех алертов.** Сервис-монитор `kafka-exporter` переопределяет `targetLabel: job` на `replacement: kafka` через relabelings. Без этого меткой `job` станет имя HelmRelease/ServiceMonitor, и выражения вроде `job="kafka"` не сработаст. Проверяйте relabelings при добавлении нового кластера.
+   5. **Резервирование дисковой ёмкости:**
    - Дисковые разделы данных Kafka (`log.dirs`) должны проектироваться с запасом 40% от максимального пикового суточного объема. При заполнении диска свыше 85% брокер останавливает прием данных.
-4. **Оптимизация операционной системы Linux:**
+6. **Оптимизация операционной системы Linux:**
    - Лимит открытых файлов в systemd: `LimitNOFILE=1000000`.
    - Запрет сброса грязных страниц операционной системы в фоновый режим с блокировкой:
      ```bash

@@ -641,6 +641,201 @@ buffer.when_full = "drop_newest"
 2. Проверить метрики: `curl http://localhost:9598/metrics`
 3. Проверить поступление логов в Loki через Grafana
 
+## Сценарий 9: Архитектура логирования с Elasticsearch, VictoriaLogs и Vector
+
+**Задача:** настроить централизованное логирование в Kubernetes, где логи приложений хранятся в Elasticsearch, а логи уровня кластера (ошибки и предупреждения) — в VictoriaLogs, используя Vector как единый коллектор.
+
+**Решение:** Развернуть Vector в качестве DaemonSet для сбора логов из Kubernetes, нормализовать метки Kubernetes, парсить JSON-логи и маршрутизировать данные в зависимости от неймспейса и уровня логирования — приложение логи в Elasticsearch, ошибки и предупреждения в VictoriaLogs.
+
+### Архитектура
+
+```
+Pod stdout/stderr
+       │
+       ▼
+  Vector DaemonSet
+       │
+  ┌────┴─────────────┐
+  │                  │
+  ▼                  ▼
+Elasticsearch    VictoriaLogs
+(app/aurora      (error + warn
+ namespaces)      из всех ns)
+```
+
+Vector работает как DaemonSet, читает из Kubernetes log API, парсит JSON-логи и маршрутизирует по неймспейсу и уровню логирования.
+
+### Кластер VictoriaLogs
+
+```yaml
+vlstorage:
+  replicaCount: 2
+  retentionPeriod: 30d
+  persistentVolume:
+    size: 10Gi
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+
+vlinsert:
+  replicaCount: 1
+
+vlselect:
+  replicaCount: 1
+```
+
+Три компонента: insert, select, storage. Две storage-реплики для отказоустойчивости. `vlinsert` и `vlselect` — stateless, масштабируются независимо.
+
+### Конфигурация Vector
+
+**Источники:**
+
+```yaml
+sources:
+  k8s:
+    type: kubernetes_logs
+    exclude_paths_glob_patterns:
+      - "/var/log/pods/observability_vector-*/**"
+  internal_metrics:
+    type: internal_metrics
+```
+
+**Трансформы — нормализация лейблов:**
+
+```yaml
+transforms:
+  dedot_labels:
+    type: remap
+    inputs: [k8s]
+    source: |
+      # Kubernetes labels используют точки, которые ломают JSON.
+      # Заменяем точки на подчёркивания во всех kubernetes.pod_labels.
+      .kubernetes.pod_labels = map_keys(.kubernetes.pod_labels) -> |k| {
+        replace(k, ".", "_")
+      }
+```
+
+**Трансформы — парсинг JSON:**
+
+```yaml
+  parser:
+    type: remap
+    inputs: [dedot_labels]
+    source: |
+      .log = parse_json(.message) ?? .message
+      ._msg = string(.log.message) ?? string(.log.msg) ?? string(.message) ?? ""
+      del(.message)
+```
+
+**Трансформы — маршрутизация в Elasticsearch:**
+
+```yaml
+  aurora_filter:
+    type: filter
+    inputs: [parser]
+    condition: |
+      includes(["app", "aurora"], .kubernetes.pod_namespace)
+```
+
+**Трансформы — маршрутизация в VictoriaLogs (только ошибки и предупреждения):**
+
+```yaml
+  error_filter:
+    type: filter
+    inputs: [parser]
+    condition: |
+      lvl = downcase(string(.log.level ?? .log.lvl ?? .log.severity ?? ""))
+      includes(["error", "warn", "warning", "fatal", "panic", "err"], lvl)
+```
+
+**Приёмники:**
+
+```yaml
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    inputs: [aurora_filter]
+    endpoints:
+      - "http://dev-master.elasticsearch.svc.cluster.local:9200"
+    index: "vector-%Y-%m-%d"
+    auth:
+      strategy: basic
+      user: elastic
+      password: "${ES_PASSWORD}"
+
+  victorialogs:
+    type: elasticsearch
+    inputs: [error_filter]
+    endpoints:
+      - "http://victoria-logs-vlinsert.observability.svc.cluster.local:9428/insert/elasticsearch"
+    mode: bulk
+```
+
+VictoriaLogs предоставляет совместимый с Elasticsearch bulk insert API — `elasticsearch`\-синк Vector работает без изменений.
+
+### Почему Vector, а не Fluentd или Filebeat
+
+| Функция | Vector | Fluentd | Filebeat |
+| --- | --- | --- | --- |
+| Память (DaemonSet) | ~50 МБ | ~200 МБ | ~100 МБ |
+| Язык конфигурации | VRL (функциональный) | Ruby DSL | YAML |
+| Мощность трансформов | Высокая | Средняя | Низкая |
+| Несколько выходов | Нативно | Через плагин copy | Ограничено |
+
+VRL (Vector Remap Language) читабельнее Fluentd `record_transformer`. Один тип синка `elasticsearch` покрывает и Elasticsearch, и VictoriaLogs.
+
+### Запросы в VictoriaLogs
+
+```bash
+kubectl port-forward -n observability svc/victoria-logs-vlselect 9471:9471
+# http://localhost:9471/select/vmui/
+```
+
+Примеры LogsQL:
+
+```
+# Все ошибки из неймспейса app за последний час
+kubernetes.pod_namespace: app AND level: error
+
+# Конкретный под
+kubernetes.pod_name: my-app-xxx AND level: error
+
+# Текстовый поиск
+"database connection refused"
+
+# Комбинированный
+kubernetes.pod_namespace: app AND "connection refused" AND _time: 1h
+```
+
+### Исключение логов самого Vector
+
+```yaml
+sources:
+  k8s:
+    type: kubernetes_logs
+    extra_label_selector: "vector.dev/exclude != true"
+```
+
+Без этого Vector логирует собственную работу — получается петля обратной связи, и хранилище заполняется его же debug-выводом.
+
+### Требования к ресурсам
+
+VictoriaLogs значительно легче Elasticsearch для того же объёма данных:
+
+| Стек | RAM (1M логов/день) | Диск (30 дней) |
+| --- | --- | --- |
+| Elasticsearch | 4–8 ГБ | ~100 ГБ |
+| VictoriaLogs | 512 МБ–1 ГБ | ~10 ГБ |
+
+Экономия диска — за счёт сжатия VictoriaLogs (~10x против ~3x у Elasticsearch).
+
+**Валидация:**
+1. Проверить статус Vector DaemonSet: `kubectl get ds -n observability | grep vector`
+2. Убедиться, что логи приложений поступают в Elasticsearch: выполнить запрос в Kibana для индекса `vector-*`
+3. Убедиться, что логи ошибок и предупреждений поступают в VictoriaLogs: выполнить LogsQL-запрос `level:error OR level:warn` в VMUI
+4. Проверить, что логи самого Vector не попадают в хранилища: отсутствие записей с `kubernetes.namespace: observability` в обоих хранилищах
+
 ## Диагностика и устранение неполадок
 
 | Проблема | Причина | Решение |

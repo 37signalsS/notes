@@ -253,14 +253,25 @@ kafka-topics.sh --bootstrap-server 10.0.10.11:9092 --describe --under-min-isr-pa
 kafka-topics.sh --bootstrap-server 10.0.10.11:9092 --alter --topic orders --partitions 24
 # → Updated partition count for topic orders.
 
-# 7. Проверка версий протокола API брокеров (совместимость клиентов)
+# 7. Удаление топика (необратимо: данные теряются; требует delete.topic.enable=true — default с 0.11)
+kafka-topics.sh --bootstrap-server 10.0.10.11:9092 --delete --topic orders
+# → Topic orders is marked for deletion.
+
+# 8. Проверка версий протокола API брокеров (совместимость клиентов)
 kafka-broker-api-versions.sh --bootstrap-server 10.0.10.11:9092 | head -n 5
 # → 10.0.10.11:9092 (id: 1 rack: rack-a): Produce(0): 0 to 12 [usable: 12]
 # → 10.0.10.11:9092 (id: 1 rack: rack-a): Fetch(1): 0 to 17 [usable: 17]
 
-# 8. Получение уникального Cluster ID
+# 9. Получение уникального Cluster ID
 kafka-cluster.sh cluster-id --bootstrap-server 10.0.10.11:9092
 # → Cluster ID: 5L6g3nShT-eMCtK--X86sw
+
+# 10. Watermarks партиции (earliest/latest offsets) — современная замена устаревшей
+#     форме kafka-run-class.sh kafka.tools.GetOffsetShell --broker-list ...
+kafka-get-offsets.sh --bootstrap-server 10.0.10.11:9092 --command-config client.properties \
+    --topic orders
+# → orders:0:185250
+# → orders:1:142100
 ```
 
 #### kcat

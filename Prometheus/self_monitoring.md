@@ -290,7 +290,7 @@ spec:
 | Симптом | Вероятная причина | Диагностика |
 |:---|:---|:---|
 | `up{job="prometheus"} == 0` | Под Prometheus не запущен или порт недоступен | `kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus` |
-| `prometheus_tsdb_head_series` растет | Взрыв кардинальности метрик | `curl -s localhost:9090/api/v1/label/__name__/values | wc -l` |
+| `prometheus_tsdb_head_series` растет | Взрыв кардинальности метрик | `curl -s localhost:9090/api/v1/label/__name__/values | wc -l`; кардинальность по job: `count by (job) ({__name__=~".+"})` |
 | `prometheus_remote_storage_queue_length` растет | LTS недоступен, сеть | `kubectl logs -n monitoring prometheus-main-0 | grep remote` |
 | `prometheus_config_last_reload_successful == 0` | Ошибка в prometheus.yaml | `promtool check config prometheus.yaml` |
 | `prometheus_rule_evaluation_failures_total > 0` | Ошибка в PromQL правиле | `promtool check rules rules.yaml` |

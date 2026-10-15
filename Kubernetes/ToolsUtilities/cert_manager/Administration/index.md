@@ -301,7 +301,7 @@ helm install sealed-secrets bitnami-labs/sealed-secrets \
 **External Secrets Operator (ESO)** — контроллер, синхронизирующий секреты из внешних хранилищ (AWS Secrets Manager, HashiCorp Vault, GCP Secret Manager) в Kubernetes Secrets.
 
 ```yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: letsencrypt-prod-account-key

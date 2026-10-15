@@ -788,15 +788,50 @@ kubectl get pods -A | grep -v "Running\|Completed"
 | Операция | Команда | Описание |
 | :--- | :--- | :--- |
 | **Проверка здоровья** | `flux check` | Проверка статуса подов, деплойментов и контроллеров Flux. |
+| **Сводка ресурсов** | `flux get all -A` | Kustomizations, HelmReleases и Sources со статусом синхронизации. |
 | **Список с ошибками** | `flux get all -A --status-selector ready=False` | Поиск всех сбойных источников, kustomization и helm-релизов. |
 | **Принудительная сверка** | `flux reconcile kustomization <name> --with-source` | Немедленный запуск сверки источника и применения манифестов. |
+| **Сверка HelmRelease** | `flux reconcile helmrelease <name> --with-source` | Немедленный цикл Helm install/upgrade с перечитыванием источника. |
+| **Перечитать git-источник** | `flux reconcile source git <name>` | Немедленная загрузка последнего коммита без касания зависимых кастомизаций. |
 | **Заморозка синхронизации** | `flux suspend kustomization <name>` | Временная остановка применения изменений и детекции дрейфа. |
 | **Возобновление** | `flux resume kustomization <name>` | Возобновление автоматического цикла сверки. |
-| **Трассировка объекта** | `flux trace kustomization <name>` | Вывод цепочки: источник → коммит → статус применения. |
+| **Трассировка объекта** | `flux trace <kind>/<name>` | Вывод цепочки: источник → коммит → статус применения. |
+| **Дерево управляемых объектов** | `flux tree kustomization <name>` | Все объекты, которыми владеет кастомизация, включая вложенные. |
+| **Хронология событий** | `flux events --for Kustomization/<name>` | История событий согласования объекта для диагностики дрейфа и сбоев. |
 | **Просмотр логов** | `flux logs --level=error --tail=100` | Вывод последних 100 строк ошибок всех контроллеров. |
 | **Локальная сборка** | `flux build kustomization <name> --path ./path` | Рендеринг манифестов локально без подключения к кластеру. |
 | **Сравнение дрейфа** | `flux diff kustomization <name> --path ./path` | Сравнение локальных манифестов с текущим состоянием в кластере. |
+| **Автоматизация образов** | `flux get images all -A` | Все ImageRepository, ImagePolicy и ImageUpdateAutomation по кластеру. |
+| **Экспорт конфига** | `flux export kustomization --all > clusters/cluster.yaml` | Бэкап текущих ресурсов Flux как YAML для бутстрапа другого кластера. |
+| **Удаление ресурса** | `flux delete kustomization <name>` | Удаление Kustomization или HelmRelease из кластера. |
 | **Удаление компонентов** | `flux uninstall --namespace=flux-system --crds` | Полное удаление контроллеров и CRD (нагрузки приложений сохраняются). |
+
+Создание ресурсов через CLI (альтернатива манифестам в Git):
+
+```bash
+# Источники: Git, Helm-репозиторий, OCI-артефакт по диапазону semver
+flux create source git <name> --url=https://github.com/org/repo --branch=main -n flux-system
+flux create source helm <name> --url=https://charts.example.com -n flux-system
+flux create source oci <name> --url=oci://reg/repo --tag-semver='>=1.0.0' --interval=5m
+
+# HelmRelease через Flux
+flux create helmrelease <name> --source=HelmRepository/<repo> --chart=<chart> --chart-version='>=1.0.0' -n <ns>
+
+# Кастомизация с порядком применения: ждёт Ready кастомизации infra
+flux create kustomization app --source=GitRepository/<name> --path=./app --depends-on=infra --prune=true --interval=10m
+
+# Автообновление тегов образов: политика отбора + автоматизация коммитов в Git
+flux create image policy <name> --image-ref=<image-repo> --select-semver='>=1.0.0' -n flux-system
+flux create image update <name> --git-repo-ref=<repo> --git-repo-path=./deploy --checkout-branch=main --push-branch=main -n flux-system
+
+# Бутстрап с GitHub (вместо bootstrap git)
+flux bootstrap github --owner=<org> --repository=<repo> --branch=main --path=clusters/production --personal
+
+# Оповещения: provider + alert; входящий webhook для мгновенной реконсиляции — receiver
+flux create provider slack --type slack --secret-ref webhook
+flux create alert prod --provider-ref slack --event-source 'Kustomization/*' --event-severity info
+flux create receiver github --type github --event github:push --secret-ref webhook-token --resource GitRepository/<name>
+```
 
 ---
 
@@ -820,7 +855,7 @@ kubectl get pods -A | grep -v "Running\|Completed"
    ```
 4. Изучение логов целевого контроллера:
    ```bash
-   flux logs --controller=kustomize-controller -n flux-system --level=error
+   flux logs --kind=kustomize-controller --flux-namespace=flux-system --level=error
    ```
 
 ### Матрица типовых неисправностей

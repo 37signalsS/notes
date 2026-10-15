@@ -421,6 +421,8 @@ kubectl logs <pod> -c istio-proxy -n prod | grep -i "traceparent\|tracestate"
 | **`istioctl proxy-config secret deploy/<name> -n <ns>`** | Просмотр сертификатов mTLS и их срока действия. |
 | **`kubectl logs <pod> -c istio-proxy`** | Логи Envoy (access-логи, ошибки фильтров). |
 | **`istioctl analyze -A`** | Автоматический анализ конфликтов в конфигурации меша. |
+| **`istioctl dashboard kiali`** | Открыть консоль Kiali в браузере (port-forward + UI). |
+| **`istioctl dashboard jaeger`** | Открыть UI Jaeger для трассировки. Требует установленного Jaeger; в большинстве современных инсталляций Jaeger заменён на Tempo (см. раздел «Компоненты»). |
 | **`kubectl top pods -n istio-system -l app=ztunnel`** | Использование ресурсов Ztunnel по нодам. |
 
 ### Интерпретация логов Envoy

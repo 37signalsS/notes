@@ -89,6 +89,25 @@ fio --name=rand_read --rw=randread --bs=4k --size=4G --filename=./testfile \
 # → Результат: IOPS=850k
 ```
 
+**Точные варианты из cheatsheet (для copy-paste):**
+
+```bash
+# Случайное чтение 4K IOPS (сырое устройство, iodepth=32, numjobs=4, group_reporting)
+fio --name=randread --filename=/dev/<id> --rw=randread --bs=4k --iodepth=32 --numjobs=4 --runtime=60 --time_based --direct=1 --group_reporting
+
+# Случайная запись 4K IOPS (файл, iodepth=64, numjobs=4, чистый тест без fsync)
+fio --name=randwrite --filename=/data/testfile --size=4G --rw=randwrite --bs=4k --iodepth=64 --numjobs=4 --runtime=60 --time_based --direct=1 --group_reporting
+
+# Последовательная пропускная способность (1M блоки, iodepth=16)
+fio --name=seqwrite --filename=/data/testfile --size=10G --rw=write --bs=1M --iodepth=16 --direct=1 --runtime=60 --time_based --group_reporting
+
+# Замер задержки при глубине 1 (percentile_list для p99/p99.9/p99.99)
+fio --name=latency --filename=/dev/<id> --rw=randread --bs=4k --iodepth=1 --numjobs=1 --runtime=30 --time_based --direct=1 --percentile_list=99:99.9:99.99
+
+# Смешанная нагрузка 70/30 (OLTP-реалистичная, 4K блоки)
+fio --name=mixed --filename=/data/testfile --size=8G --rw=randrw --rwmixread=70 --bs=4k --iodepth=32 --numjobs=4 --runtime=120 --time_based --direct=1 --group_reporting
+```
+
 ### Проверка целостности данных (Integrity Check)
 
 Используется для выявления проблем с памятью или контроллером диска.

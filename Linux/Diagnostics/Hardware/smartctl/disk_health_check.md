@@ -52,6 +52,22 @@ sudo update-smart-drivedb
 
 ## Практические сценарии
 
+### Quick Reference (cheatsheet-команды)
+
+```bash
+# Запуск короткого самотеста + чтение лога
+smartctl -t short /dev/sda && sleep 120 && smartctl -l selftest /dev/sda
+# (уже в §Глубокая диагностика, строки 112-119)
+
+# Разбор всех атрибутов SMART (сырые значения, форматированный вывод)
+smartctl -A /dev/sda | awk '$1~/^[0-9]+$/{printf "%-3s %-24s raw=%s\n",$1,$2,$10}'
+# →   5 Reallocated_Sector_Ct  raw=0
+# → 197 Current_Pending_Sector  raw=0
+
+# Полное здоровье и лог ошибок (-x = всё, -d auto = RAID/USB)
+smartctl -x -d auto /dev/sda | less
+```
+
 ### Предварительная подготовка и верификация
 
 Перед началом диагностики убедитесь, что устройство доступно и поддерживает SMART:

@@ -161,6 +161,57 @@ nc host_a_ip 9999
 # Ввод текста на любом хосте отображается на другом.
 ```
 
+### 11. Получение баннера сервиса (Banner Grabbing)
+
+Подключение к порту и чтение приветственного сообщения (баннера) для идентификации версии сервиса:
+
+```bash
+# Пример: SSH-баннер
+nc -v 192.168.1.1 22
+# → Connection to 192.168.1.1 22 port [tcp/ssh] succeeded!
+# → SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u3
+
+# Пример: SMTP-баннер
+nc -v mail.example.com 25
+# → 220 mail.example.com ESMTP Postfix
+
+# Пример: HTTP-сервер
+nc -v example.com 80
+# (после подключения вручную вводить: HEAD / HTTP/1.0 + Enter + Enter)
+```
+
+**Важно:** Флаг `-v` (verbose) показывает процесс подключения. Для автоматизации можно использовать:
+```bash
+# Получить баннер одной строкой (с таймаутом)
+timeout 3 nc -v 192.168.1.1 22 2>&1 | grep -E "succeeded|SSH-|ESMTP"
+```
+
+### 12. Простой HTTP-запрос (Raw HTTP)
+
+Отправка сырого HTTP-запроса через netcat для отладки веб-серверов:
+
+```bash
+# GET запрос (HTTP/1.0 — без keep-alive)
+echo -e "GET / HTTP/1.0\r\nHost: example.com\r\n\r\n" | nc example.com 80
+
+# GET запрос (HTTP/1.1 — с keep-alive, требует Connection: close)
+echo -e "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n" | nc example.com 80
+
+# HEAD запрос (только заголовки)
+echo -e "HEAD / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n" | nc example.com 80
+
+# POST запрос с телом
+echo -e "POST /api/data HTTP/1.1\r\nHost: api.example.com\r\nContent-Type: application/json\r\nContent-Length: 18\r\n\r\n{\"key\":\"value\"}" | nc api.example.com 80
+```
+
+**Интерпретация ответа:**
+- `200 OK` — успех
+- `301/302` — редирект (проверяйте `Location:`)
+- `404` — не найдено
+- `500/502/503` — ошибка сервера/прокси
+
+---
+
 ## Диагностика и отладка
 
 ### Проверка перед запуском nc

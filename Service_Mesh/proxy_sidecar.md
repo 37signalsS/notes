@@ -149,6 +149,11 @@ kubectl get pods -n my-app -o jsonpath='{.items[*].spec.initContainers[*].name}'
 # → linkerd-proxy (по умолчанию в Linkerd 2.20+ инжектируется как Native Sidecar)
 ```
 
+Ручная инъекция сайдкара в манифест (без аннотаций и без включённой автоинъекции):
+```bash
+kubectl get deploy my-app -o yaml | linkerd inject - | kubectl apply -f -
+```
+
 ### Диагностика и отладка трафика
 
 #### Envoy (Istio / Gateway API)
@@ -187,15 +192,25 @@ istioctl proxy-status
 
 Получение статистики по ресурсам в реальном времени:
 ```bash
-linkerd stat deploy -n my-app
+linkerd viz stat deploy -n my-app
 # → NAME     MESHED  SUCCESS      RPS  P99_LATENCY
 # → my-app      1/1  100.00%    10rps          5ms
 ```
 
+Топ живых запросов (аналог `top` по RPS и latency):
+```bash
+linkerd viz top deploy/my-app -n my-app
+```
+
 Глубокая диагностика трафика (tap):
 ```bash
-linkerd tap deploy/my-app -n my-app
+linkerd viz tap deploy/my-app -n my-app
 # → req id=0:1 proxy=in src=10.244.1.5:45678 dst=10.244.1.10:8080 method=GET path=/api/v1
+```
+
+Открыть веб-дашборд Linkerd (требуется установленный linkerd-viz):
+```bash
+linkerd viz dashboard
 ```
 
 ### Управление конфигурацией прокси без перезапуска пода
@@ -337,7 +352,7 @@ kubectl logs my-app-pod -c istio-proxy -n my-app | grep "GET /health"
 
 Трассировка ошибок (только запросы с 5xx кодами):
 ```bash
-linkerd tap deploy/my-app --error -n my-app
+linkerd viz tap deploy/my-app --error -n my-app
 ```
 
 Просмотр логов прокси-контейнера:

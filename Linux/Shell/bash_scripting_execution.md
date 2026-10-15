@@ -242,8 +242,11 @@ ionice -c2 -n7 -p 12345
 # Простой таймаут 10 секунд
 timeout 10s curl -s http://unresponsive-service:8080/health
 
-# SIGTERM через 5с, затем SIGKILL через 10с
+# SIGTERM через 10с, затем SIGKILL через 5с (short form: -k)
 timeout --kill-after=5s 10s long-running-task
+
+# Сокращённый синтаксис с -k: тот же эффект
+timeout -k 5s 30s ./long_task.sh || echo "timed out: $?"
 
 # Проверка кода возврата
 exit_code=$?
@@ -584,7 +587,7 @@ sudo setcap cap_net_bind_service=+ep /usr/bin/myapp
 6. **`BASH_ENV`** не читается при явном вызове `sh -c`, если переменная не установлена в окружении вызывающей оболочки.
 7. **`lastpipe`** работает только в неинтерактивных скриптах, не влияет на `-e` и недоступен в `zsh`/`dash`.
 8. **`set -m`** (job control) несовместим с некоторыми POSIX-скриптами и может нарушать pipe-пайплайны.
-9. **`timeout`** отправляет SIGTERM, затем SIGKILL через `--kill-after`. Процесс не может перехватить SIGKILL.
+9. **`timeout`** отправляет SIGTERM, затем SIGKILL через `--kill-after` (short form: `-k`). Процесс не может перехватить SIGKILL.
 10. **`env -i`** удаляет даже `PATH`. Если `PATH` не указан явно, команды по абсолютным путям или builtin'ы.
 
 ---

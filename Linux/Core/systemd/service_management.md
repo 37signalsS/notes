@@ -65,6 +65,13 @@ systemctl status nginx.service
 # →    CGroup: /system.slice/nginx.service
 ```
 
+**Мониторинг ресурсов через `status`:**
+
+```bash
+# Извлечение текущего использования памяти, CPU и задач из вывода status
+systemctl status myapp.service | grep -E 'Memory:|CPU:|Tasks:'
+```
+
 **Ключевые поля статуса:**
 * **`Loaded`** — путь к файлу на диске и статус автозагрузки (`enabled`/`disabled`).
 * **`Active`** — текущее состояние (например, `active (running)`, `failed`, `inactive (dead)`).
@@ -84,7 +91,15 @@ systemctl status nginx.service
 * **`systemctl is-failed <unit>`** — возвращает `failed`, если юнит завершился с ошибкой.
 * **`systemctl is-enabled <unit>`** — возвращает статус автозагрузки (`enabled`, `disabled`, `masked`, `static`, `indirect`).
 * **`systemctl is-system-running`** — возвращает общее состояние системы (`running`, `degraded`, `starting`, `stopping`).
-* **`systemctl show <unit>`** — выводит все внутренние свойства юнита в формате `Key=Value`.
+* **`systemctl show <unit>`** — выводит все внутренние свойства юнита в формате `Key=Value`. Используйте `-p` для выбора конкретного свойства:
+
+```bash
+# Переменные среды, переданные в сервис
+systemctl show myapp.service -p Environment
+
+# Живые метрики cgroup (MemoryCurrent — учтённый RSS процесса)
+systemctl show -p MainPID,MemoryCurrent,TasksCurrent myapp.service
+```
 
 ### Управление автозагрузкой и блокировка
 
@@ -125,6 +140,11 @@ systemctl list-units
 
 # Показать только юниты, завершившиеся с ошибкой
 systemctl --failed
+# Эквивалентно:
+systemctl list-units --state=failed
+
+# Показать только socket-юниты и их состояние
+systemctl list-units --type=socket --all
 
 # Показать зависимости службы
 systemctl list-dependencies nginx.service

@@ -704,8 +704,8 @@ kubectl exec -it -n argocd deploy/argocd-redis -- redis-cli info memory | grep u
 
 2. **Создание кластерного хранилища `ClusterSecretStore` с Kubernetes Auth:**
    ```yaml
-   apiVersion: external-secrets.io/v1beta1
-   kind: ClusterSecretStore
+apiVersion: external-secrets.io/v1
+    kind: ClusterSecretStore
    metadata:
      name: vault-backend
    spec:
@@ -730,8 +730,8 @@ kubectl exec -it -n argocd deploy/argocd-redis -- redis-cli info memory | grep u
 
 3. **Замена манифеста секрета с плейсхолдерами AVP на декларативный `ExternalSecret`:**
    ```yaml
-   apiVersion: external-secrets.io/v1beta1
-   kind: ExternalSecret
+apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
    metadata:
      name: billing-credentials-es
      namespace: production
