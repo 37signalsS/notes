@@ -424,7 +424,7 @@ spec:
   data:
     - secretKey: slack_url
       remoteRef:
-        key: secret/monitoring/alerts
+        key: monitoring/alerts
         property: slack_webhook
 ```
 

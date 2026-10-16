@@ -139,7 +139,7 @@ spec:
   data:
   - secretKey: users
     remoteRef:
-      key: secret/traefik
+      key: traefik
       property: admin-hash
 ```
 

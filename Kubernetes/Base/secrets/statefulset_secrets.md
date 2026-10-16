@@ -163,11 +163,11 @@ spec:
   data:
   - secretKey: postgres-password
     remoteRef:
-      key: secret/data/prod/postgres
+      key: prod/postgres
       property: admin-password
   - secretKey: replication-password
     remoteRef:
-      key: secret/data/prod/postgres
+      key: prod/postgres
       property: replication-password
 ---
 apiVersion: apps/v1

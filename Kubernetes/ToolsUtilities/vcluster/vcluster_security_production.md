@@ -185,11 +185,11 @@ spec:
   data:
     - secretKey: username
       remoteRef:
-        key: secret/data/team-alpha/database
+        key: team-alpha/database
         property: username
     - secretKey: password
       remoteRef:
-        key: secret/data/team-alpha/database
+        key: team-alpha/database
         property: password
 ---
 # secret-store.yaml

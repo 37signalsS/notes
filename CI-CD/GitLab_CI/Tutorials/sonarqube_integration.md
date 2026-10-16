@@ -338,15 +338,15 @@ spec:
   data:
     - secretKey: SONAR_DB_PASS
       remoteRef:
-        key: secret/infra/sonarqube
+        key: infra/sonarqube
         property: db_password
     - secretKey: SONAR_GITLAB_APP_ID
       remoteRef:
-        key: secret/infra/sonarqube
+        key: infra/sonarqube
         property: gitlab_app_id
     - secretKey: SONAR_GITLAB_SECRET
       remoteRef:
-        key: secret/infra/sonarqube
+        key: infra/sonarqube
         property: gitlab_secret
 ```
 

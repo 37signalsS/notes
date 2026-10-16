@@ -200,7 +200,7 @@ spec:
   data:
   - secretKey: password
     remoteRef:
-      key: secret/data/prod/myapp
+      key: prod/myapp
       property: password
 ```
 

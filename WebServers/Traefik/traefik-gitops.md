@@ -52,12 +52,11 @@ traefik config validate --configfile=/etc/traefik/traefik.yml
 ### Паттерны GitOps
 
 1. **Push-based**: CI пайплайн валидирует и применяет изменения.
-2. **Pull-based**: ArgoCD/Flux синхронизируют репозиторий с кластером.
+2. **Pull-based**: Argo CD синхронизирует репозиторий с кластером.
 
-### Интеграция с ArgoCD/Flux
+### Интеграция с Argo CD
 
-- **ArgoCD**: Application отслеживает Helm release или Kustomize overlay.
-- **Flux**: GitRepository + Kustomization или HelmRelease.
+- **Argo CD**: Application отслруживает Helm release или Kustomize overlay.
 
 ## Практические сценарии
 
@@ -164,38 +163,39 @@ spec:
     - CreateNamespace=true
 ```
 
-### Сценарий 4: Flux HelmRelease
+### Сценарий 4: Argo CD Application (Helm chart)
 
 ```yaml
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmRepository
+apiVersion: argoproj.io/v1alpha1
+kind: Application
 metadata:
   name: traefik
-  namespace: flux-system
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
-  interval: 10m
-  url: https://traefik.github.io/charts
----
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata:
-  name: traefik
-  namespace: traefik
-spec:
-  interval: 10m
-  chart:
-    spec:
-      chart: traefik
-      version: '>=34.0.0'
-      sourceRef:
-        kind: HelmRepository
-        name: traefik
-        namespace: flux-system
-  values:
-    deployment:
-      replicas: 2
-    service:
-      type: LoadBalancer
+  project: default
+  source:
+    repoURL: https://traefik.github.io/charts
+    chart: traefik
+    targetRevision: ">=34.0.0"
+    helm:
+      releaseName: traefik
+      values: |
+        deployment:
+          replicas: 2
+        service:
+          type: LoadBalancer
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: traefik
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
 ```
 
 ### Сценарий 5: Автоматический canary promotion (Flagger)
@@ -268,8 +268,7 @@ kubectl diff -f crds/
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
-| **ArgoCD не синхронизирует** | Репозиторий недоступен, ошибка в Helm values | Проверьте connectivity, `helm template` |
-| **Flux не применяет релиз** | HelmRepository не найден, chart версия неверна | Проверьте `helm search repo`, обновите версию |
+| **ArgoCD не синхронизирует** | Репозиторий недоступен, ошибка в Helm values | Проверьте connectivity, `argocd app diff traefik` |
 | **Валидация падает** | Ошибка в YAML, несуществующее поле | Проверьте `traefik config validate` вывод |
 | **Canary не продвигается** | Метрики не достигают порога | Проверьте SLO, настройте `threshold` |
 | **Pre-commit не работает** | Docker не запущен, volumes неверны | Запустите Docker, проверьте пути |
@@ -278,7 +277,7 @@ kubectl diff -f crds/
 
 - Валидация — обязательный шаг в CI перед любым применением.
 - Helm values разделяйте по окружениям (base + overlay).
-- Для ArgoCD/Flux используйте `CreateNamespace=true` и `selfHeal=true`.
+- Для Argo CD используйте `CreateNamespace=true` и `selfHeal=true`.
 - Canary promotion автоматизируйте через Flagger с четкими SLO.
 - Храните конфигурацию в Git, используйте PR/MR для изменений.
 - Для критических изменений используйте manual approval в ArgoCD.
@@ -290,5 +289,4 @@ kubectl diff -f crds/
 - [Gateway API Traefik](../../Kubernetes/Networking/gateway_api/traefik.md) — Gateway API deployment.
 - [Progressive Delivery в GitOps](../../GitOps/Concepts/progressive_delivery_gitops.md) — Flagger, Argo Rollouts.
 - [Helm installation](../../Kubernetes/Networking/Ingress/installation/helm-installation.md) — Helm commands.
-- [ArgoCD](https://argo-cd.readthedocs.io/) — документация ArgoCD.
-- [Flux](https://fluxcd.io/) — документация Flux.
+- [Argo CD](https://argo-cd.readthedocs.io/) — документация Argo CD.

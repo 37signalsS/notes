@@ -472,7 +472,7 @@ groups:
 3.  **Race Condition:** Параллельные задачи с одинаковым `grouping key` могут перезаписывать метрики друг друга.
 4.  **Large Payloads:** Очень большие payload (>10 MB) могут вызвать таймауты или утечки памяти.
 5.  **Secret Size Limit (Kubernetes):** Общая конфигурация Alertmanager, включая все `AlertmanagerConfig`, не должна превышать 1MB в Kubernetes Secret.
-6.  **No Built-in Receiver for Telegram:** Требуется промежуточный webhook-сервис.
+6.  **Telegram receiver (устаревший claim):** До Alertmanager 0.26 Telegram требовал промежуточный webhook. Начиная с 0.26 `telegram_configs` поддерживаются нативно. Современная версия (0.32.x+) использует `telegram_configs` напрямую — см. [Telegram в kube-prometheus-stack](./kubernetes/Kube_Prometheus_Stack_Helm/alertmanager_config.md).
 7.  **Split-brain возможен:** При разделении сети (split-brain) каждый сегмент кластера будет отправлять уведомления самостоятельно, что может привести к дублям.
 8.  **Empty `alertmanagerConfigSelector`:** В Helm-чарте `kube-prometheus-stack` параметр по умолчанию часто пуст `{}`, что означает, что Alertmanager не подхватывает никакие `AlertmanagerConfig`.
 

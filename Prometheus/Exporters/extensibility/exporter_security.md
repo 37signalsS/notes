@@ -67,7 +67,7 @@ spec:
   data:
     - secretKey: DATA_SOURCE_NAME
       remoteRef:
-        key: secret/data/monitoring/postgres-exporter
+        key: monitoring/postgres-exporter
         property: dsn
 
 ---
@@ -382,7 +382,7 @@ spec:
   data:
     - secretKey: data_source_name
       remoteRef:
-        key: secret/data/monitoring/postgres
+        key: monitoring/postgres
         property: dsn
 
 ---

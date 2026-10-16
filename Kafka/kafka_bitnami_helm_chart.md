@@ -456,34 +456,60 @@ config:
 
 Подробнее о принципах rack awareness — в [обзоре Kafka](kafka_overview.md).
 
-### Flux HelmRelease
+### Argo CD Application (GitOps)
 
 ```yaml
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
+apiVersion: argoproj.io/v1alpha1
+kind: Application
 metadata:
   name: kafka
-  namespace: kafka
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
-  interval: 10m
-  chart:
-    spec:
-      chart: ./kafka
-      sourceRef:
-        kind: GitRepository
-        name: infra-repo
-  valuesFrom:
-    - kind: Secret
-      name: kafka-sasl
-      valuesKey: saslPasswords
-      targetPath: sasl.clientPasswords
-  values:
-    controller:
-      replicaCount: 3
-      controllerOnly: true
-    broker:
-      replicaCount: 3
+  project: kafka
+  source:
+    repoURL: oci://registry-1.docker.io/bitnamicharts
+    chart: kafka
+    targetRevision: "32.x"
+    helm:
+      releaseName: kafka
+      valueFiles:
+        - $values/values/kafka-sasl.yaml    # values из Git
+      values: |
+        sasl:
+          client:
+            users:
+              - app-user
+              - monitoring-user
+            passwords: ""          # Подставляется через External Secret из Vault
+          existingSecret: kafka-sasl
+        controller:
+          replicaCount: 3
+          controllerOnly: true
+        broker:
+          replicaCount: 3
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kafka
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
 ```
+
+Для подстановки SASL-паролей из внешнего хранилища (Vault через External Secrets Operator) создаётся отдельный `ExternalSecret`, который генерирует Kubernetes `Secret` с ключами, используемыми в values:
 
 ---
 

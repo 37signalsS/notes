@@ -2,7 +2,7 @@
 
 ## Определения
 
-**GitOps для OpenTelemetry Collector** — это практика управления конфигурацией и развёртыванием Collector с использованием Git как единственного источника истины (Single Source of Truth). Основные инструменты: ArgoCD, Flux, Kustomize, Helm.
+**GitOps для OpenTelemetry Collector** — это практика управления конфигурацией и развёртыванием Collector с использованием Git как единственного источника истины (Single Source of Truth). Основные инструменты: Argo CD, Kustomize, Helm.
 
 В 2026 году GitOps является стандартом для управления инфраструктурой в Kubernetes, включая компоненты наблюдаемости.
 
@@ -13,7 +13,7 @@
 ```text
 Git Repository (конфигурация Collector)
         ↓
-ArgoCD/Flux (контроллер)
+Argo CD (контроллер)
         ↓
 Kubernetes (развёртывание Collector)
         ↓
@@ -30,7 +30,7 @@ OTel Operator (управление Collector)
 ### Компоненты
 
 1. **Git Repository** — хранит манифесты Kubernetes и конфигурацию Collector.
-2. **ArgoCD/Flux** — контроллер, следящий за изменениями в Git и применяющий их.
+2. **Argo CD** — контроллер, следящий за изменениями в Git и применяющий их.
 3. **OTel Operator** — управляет развёртыванием и конфигурацией Collector.
 4. **Kustomize/Helm** — инструменты шаблонизации манифестов.
 
@@ -121,45 +121,62 @@ argocd app get otel-collector
 kubectl get opentelemetrycollector -n opentelemetry
 ```
 
-### Сценарий 2: Flux + Helm
+### Сценарий 2: Argo CD + Helm (Operator через Helm)
 
-**Шаг 1: Добавление Helm-чарта в Flux**
+**Шаг 1: Добавление Helm-репозитория в Argo CD (опционально для публичных)**
+
+Для публичных Helm-репозиториев `argocd-repo-server` клонирует индекс автоматически. Для приватных — создаётся Secret:
 
 ```yaml
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmRepository
+apiVersion: v1
+kind: Secret
 metadata:
-  name: open-telemetry
-  namespace: flux-system
-spec:
-  interval: 1h
+  name: repo-open-telemetry
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+type: Opaque
+stringData:
+  type: helm
   url: https://open-telemetry.github.io/opentelemetry-helm-charts
+  name: open-telemetry
 ```
 
-**Шаг 2: Создание HelmRelease**
+**Шаг 2: Создание Application для Operator**
 
 ```yaml
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
+apiVersion: argoproj.io/v1alpha1
+kind: Application
 metadata:
   name: opentelemetry-operator
-  namespace: flux-system
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
-  interval: 1h
-  chart:
-    spec:
-      chart: opentelemetry-operator
-      version: "0.x.x"
-      sourceRef:
-        kind: HelmRepository
-        name: open-telemetry
-  values:
-    operator:
-      replicas: 1
-    collector:
-      image:
-        repository: otel/opentelemetry-collector-contrib
-        tag: "0.96.0"
+  project: default
+  source:
+    repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts
+    chart: opentelemetry-operator
+    targetRevision: "0.x.x"
+    helm:
+      values: |
+        operator:
+          replicas: 1
+        collector:
+          image:
+            repository: otel/opentelemetry-collector-contrib
+            tag: "0.96.0"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: opentelemetry-operator
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
 ```
 
 ### Сценарий 3: Kustomize для управления конфигурацией
@@ -227,7 +244,6 @@ spec:
 
 ### Ссылки
 
-- [ArgoCD Documentation](https://argo-cd.readthedocs.io/)
-- [Flux Documentation](https://fluxcd.io/docs/)
+- [Argo CD Documentation](https://argo-cd.readthedocs.io/)
 - [OTel Operator Helm Chart](https://github.com/open-telemetry/opentelemetry-helm-charts)
 - [Kustomize Documentation](https://kustomize.io/)

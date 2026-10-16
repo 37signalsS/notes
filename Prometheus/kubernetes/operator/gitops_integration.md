@@ -1,8 +1,8 @@
-# GitOps-интеграция (ArgoCD / Flux) с Prometheus Operator
+# GitOps-интеграция (Argo CD) с Prometheus Operator
 
 ## Определения
 
-**GitOps для Prometheus Operator** — подход, при котором вся конфигурация стека мониторинга (CRD, Rules, AlertmanagerConfig, NetworkPolicy, Secrets) хранится в Git и автоматически синхронизируется с кластером через GitOps-инструменты (ArgoCD или Flux). Operator управляет жизненным циклом Prometheus/Alertmanager, а GitOps — жизненным циклом самих CRD.
+**GitOps для Prometheus Operator** — подход, при котором вся конфигурация стека мониторинга (CRD, Rules, AlertmanagerConfig, NetworkPolicy, Secrets) хранится в Git и автоматически синхронизируется с кластером через GitOps-инструменты (Argo CD). Operator управляет жизненным циклом Prometheus/Alertmanager, а GitOps — жизненным циклом самих CRD.
 
 **Reconciliation Conflict** — конфликт, возникающий когда два контроллера (Operator и GitOps) пытаются управлять одним и тем же ресурсом. В контексте Prometheus Operator: ArgoCD может удалить/изменить ServiceMonitor, который Operator ожидает найти.
 
@@ -39,7 +39,7 @@ Git Repository
             ├── values-patch.yaml
             └── kustomization.yaml
             ↓
-ArgoCD / Flux
+Argo CD
     ↓ sync
 Kubernetes Cluster
     ↓ reconcile
@@ -107,28 +107,7 @@ spec:
         - /spec/clusterIP
 ```
 
-### Flux: Настройки для Operator
-
-```yaml
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: prometheus-operator
-  namespace: flux-system
-spec:
-  interval: 10m
-  path: ./overlays/prod
-  prune: false  # КРИТИЧНО
-  sourceRef:
-    kind: GitRepository
-    name: monitoring-manifests
-  healthChecks:
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: prometheus-operator
-      namespace: monitoring
-  timeout: 5m
-```
+### Сценарий: Argo CD — Настройки для Operator
 
 ---
 
@@ -190,7 +169,7 @@ spec:
   data:
     - secretKey: thanos.yaml
       remoteRef:
-        key: secret/monitoring/thanos
+        key: monitoring/thanos
         property: config
 ---
 apiVersion: external-secrets.io/v1
@@ -209,7 +188,7 @@ spec:
   data:
     - secretKey: url
       remoteRef:
-        key: secret/monitoring/alerts
+        key: monitoring/alerts
         property: slack_webhook
 ```
 
@@ -271,9 +250,6 @@ kubectl get servicemonitor -n monitoring -o json | \
 
 # 5. Проверка Events на предмет prune
 kubectl get events -n monitoring --field-selector reason=FailedCreate | tail -20
-
-# 6. Для Flux: проверка status
-kubectl get kustomization -n flux-system prometheus-operator -o yaml | grep -A5 status
 ```
 
 ---

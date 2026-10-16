@@ -225,6 +225,57 @@ alertmanager:
           - service_key: "YOUR-PAGERDUTY-KEY"
 ```
 
+### Конфигурация с Telegram (Alertmanager 0.26+)
+
+Начиная с Alertmanager 0.26, `telegram_configs` поддерживаются нативно. Ниже — пример маршрутизации по severity с отправкой в разные каналы Telegram.
+
+```yaml
+alertmanager:
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      group_by: ['alertname', 'job']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      receiver: 'telegram'
+      routes:
+        - matchers:
+            - severity = "critical"
+          receiver: 'telegram-critical'
+          repeat_interval: 1h
+    receivers:
+      - name: 'telegram'
+        telegram_configs:
+          - bot_token: "${TELEGRAM_BOT_TOKEN}"
+            chat_id: -123456789
+            message: |
+              {{ range .Alerts }}
+              {{ .Status | toUpper }}: {{ .Annotations.summary }}
+              {{ .Annotations.description }}
+              {{ end }}
+
+      - name: 'telegram-critical'
+        telegram_configs:
+          - bot_token: "${TELEGRAM_BOT_TOKEN}"
+            chat_id: -1122334455
+            message: |
+              {{ range .Alerts }}
+              🚨 CRITICAL: {{ .Annotations.summary }}
+              {{ .Annotations.description }}
+              {{ end }}
+```
+
+> **Важно:** `bot_token` и `chat_id` не должны храниться в `values.yaml` в открытом виде. Используйте переменные окружения (через `externalSecret` или `secret`) и ссылайтесь через `${TELEGRAM_BOT_TOKEN}`.
+
+**Получение `chat_id` для группы:**
+1. Добавьте бота в группу Telegram.
+2. Отправьте сообщение в группу, затем запросите:
+   ```bash
+   curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates" | jq '.result[-1].message.chat.id'
+   ```
+
 ### Использование AlertmanagerConfig для команд
 
 Пример манифеста для отдельного приложения, который будет автоматически включен в общую конфигурацию.

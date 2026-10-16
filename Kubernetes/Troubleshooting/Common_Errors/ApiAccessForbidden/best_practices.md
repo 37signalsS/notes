@@ -291,7 +291,7 @@ spec:
   data:
   - secretKey: db-password
     remoteRef:
-      key: secret/data/app/db
+      key: app/db
       property: password
 ```
 

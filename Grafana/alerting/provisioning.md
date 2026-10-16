@@ -259,6 +259,8 @@ contactPoints:
 
 ---
 
+> **Через Helm values (kube-prometheus-stack).** В стеке kube-prometheus-stack контакт-пойнты можно задать напрямую в `values.yaml` через ключ `grafana.alerting.contactpoints.yaml` — он рендерится в файл провиженинга `provisioning/alerting/contactpoints.yaml`. Подробнее: [Конфигурация Grafana в kube-prometheus-stack](../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/grafana_config.md#сценарий-8-провижининг-источников-данных-и-контакт-пойнтов-через-additionaldatasources).
+
 ## Шаблоны уведомлений (Templates)
 
 Группы Go-шаблонов выносятся в отдельный файл и могут переиспользоваться во многих контакт-пойнтах. Один файл содержит ключ `templates` — список групп, каждая со своим `name` и телом `template` (внутри — директивы `{{ define "..." }}`).
@@ -592,3 +594,4 @@ jobs:
 - [Рендеринг изображений](../grafana_image_rendering.md) — настройка скриншотов в уведомлениях.
 - [Мониторинг как код](../monitoring_as_code.md) — GitOps-подход к провиженинг-файлам.
 - [Провиженинг Grafana (общий)](../grafana_provisioning.md) — провиженинг дашбордов и источников данных.
+- [Конфигурация Grafana в kube-prometheus-stack](../Prometheus/kubernetes/Kube_Prometheus_Stack_Helm/grafana_config.md) — `grafana.alerting.contactpoints.yaml` через Helm values.

@@ -250,87 +250,126 @@ helm install blackbox prometheus-community/prometheus-blackbox-exporter \
   --namespace monitoring --create-namespace
 ```
 
-#### Развёртывание через Flux HelmRelease (GitOps)
+#### Развёртывание через Argo CD Application (GitOps)
 
-В GitOps-подходе (Flux CD) развёртывание blackbox exporter выполняется через `HelmRelease` — декларативный CRD, управляемый `helm-controller`. Манифесты хранятся в Git и применяются автоматически, исключяя ручные `helm install`.
+В GitOps-подходе (Argo CD) развёртывание blackbox exporter выполняется через `Application` — декларативный CRD, управляемый `argocd-application-controller`. Манифесты хранятся в Git и синхронизируются автоматически.
 
 **Расположение в репозитории:**
-- `HelmRelease` — в слое `base/monitoring/exporters/blackbox-exporter/`
-- `Probe` и `PrometheusRule` — в слое `spoke/monitoring/` (отдельная Kustomization `dev-monitoring-spoke`)
+- `Application` — в слое `argocd/applications/monitoring/exporters/`
+- `Probe` и `PrometheusRule` — в слое `spoke/monitoring/` (отдельное Application `dev-monitoring-spoke`)
 
 ```yaml
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
+apiVersion: argoproj.io/v1alpha1
+kind: Application
 metadata:
   name: blackbox-exporter
-  namespace: observability
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
-  chart:
-    spec:
-      chart: prometheus-blackbox-exporter
-      version: ">= 11.0.0"
-      sourceRef:
-        kind: HelmRepository
-        name: prometheus-community
-        namespace: flux-system
-  interval: 1h
-  values:
-    config:
-      modules:
-        http_2xx:
-          prober: http
-          timeout: 10s
-          http:
-            valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
-            valid_status_codes: [200, 301, 302]
-            follow_redirects: true
-            tls_config:
-              insecure_skip_verify: false
-        http_2xx_insecure:
-          prober: http
-          timeout: 10s
-          http:
-            valid_status_codes: [200]
-            tls_config:
-              insecure_skip_verify: true
-        tcp_connect:
-          prober: tcp
-          timeout: 5s
-    serviceMonitor:
-      enabled: true
-      labels:
-        release: kube-prom-stack  # должен совпадать с serviceMonitorSelector в ресурсе Prometheus
+  project: monitoring
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: prometheus-blackbox-exporter
+    targetRevision: ">= 11.0.0"
+    helm:
+      releaseName: blackbox-exporter
+      values: |
+        config:
+          modules:
+            http_2xx:
+              prober: http
+              timeout: 10s
+              http:
+                valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+                valid_status_codes: [200, 301, 302]
+                follow_redirects: true
+                tls_config:
+                  insecure_skip_verify: false
+            http_2xx_insecure:
+              prober: http
+              timeout: 10s
+              http:
+                valid_status_codes: [200]
+                tls_config:
+                  insecure_skip_verify: true
+            tcp_connect:
+              prober: tcp
+              timeout: 5s
+        serviceMonitor:
+          enabled: true
+          labels:
+            release: kube-prom-stack  # должен совпадать с serviceMonitorSelector в ресурсе Prometheus
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
 ```
 
 Два HTTP-модуля: `http_2xx` для эндпоинтов с публичными сертификатами и `http_2xx_insecure` для внутренних сервисов с самоподписанными сертификатами. Подробнее о модулях: [Конфигурация модулей](./blackbox_exporter_modules_configuration.md).
 
 > **Версия чарта:** Текущая версия `prometheus-blackbox-exporter` — 11.20.0 (октябрь 2026), `appVersion` `v0.28.0`. Ограничение `>= 11.0.0` согласуется с текущей линией версий. В production рекомендуется pinning конкретной версии.
 
-#### Порядок развёртывания: отдельная Kustomization для мониторинга
+#### Порядок развёртывания: Sync Waves вместо dependsOn
 
-Объекты `Probe` и `PrometheusRule` зависят от CRD `Probe`, который устанавливается вместе с `kube-prom-stack`. Если Kustomization мониторинга запустится одновременно с базовым слоем (`dev-spoke`), объекты `Probe` могут быть применены до создания CRD — это вызовит ошибку реконсиляции (`probe.monitoring.coreos.com not found`).
+Объекты `Probe` и `PrometheusRule` зависят от CRD `Probe`, который устанавливается вместе с `kube-prom-stack`. Если Application мониторинга запустится одновременно с базовым слоем (`dev-spoke`), объекты `Probe` могут быть применены до создания CRD — это вызовит ошибку реконсиляции (`probe.monitoring.coreos.com not found`).
 
-Параметр `dependsOn` в ресурсе `Kustomization` (Flux CD) формирует детерминированный граф развертывания: зависимый объект не начнёт реконсиляцию, пока родительский не перейдёт в `Ready=True`.
+В Argo CD порядок применения управляется через **Sync Waves** — аннотацию `argocd.argoproj.io/sync-wave: "<n>"`. Ресурсы применяются строго по возрастанию волн: сначала CRD (волна `-10`), затем `Probe` (волна `5`).
 
 ```yaml
-# Kustomization dev-monitoring-spoke
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
+# Application для CRD (волна -10)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
 metadata:
-  name: dev-monitoring-spoke
-  namespace: flux-system
+  name: monitoring-crds
+  namespace: argocd
 spec:
-  interval: 10m
-  path: ./fluxcd/projects/dev/kustomization/spoke/monitoring/
-  dependsOn:
-    - name: dev-spoke
-      namespace: dev
-  sourceRef:
-    kind: GitRepository
-    name: fleet-infra
+  source:
+    path: crds
+  syncPolicy:
+    syncOptions:
+      - ServerSideApply=true
+  # CRD применяются первыми через аннотацию sync-wave в манифестах
 ```
 
-Это гарантирует, что слой `spoke/monitoring/` (включая установку `kube-prom-stack` через `dev-spoke`) применяется **до** создания `Probe` и `PrometheusRule`. Подробнее о `dependsOn`: [Flux — обзор и ключевые концепции](../../../GitOps/flux.md).
+```yaml
+# Probe с sync-wave (волна 5)
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: external-website-check
+  namespace: monitoring
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  jobName: blackbox-http
+  module: http_2xx
+  prober:
+    url: blackbox-exporter.monitoring.svc.cluster.local:9115
+  targets:
+    staticConfig:
+      static:
+        - https://prometheus.io
+        - https://api.example.com
+  interval: 30s
+  timeout: 10s
+```
+
+Это гарантирует, что CRD `Probe` создаётся **до** создания объектов `Probe`. Подробнее о Sync Waves: [Argo CD: Синхронизация](../../GitOps/ArgoCD/synchronization.md).
 
 #### Отладка ошибок проб через port-forward
 

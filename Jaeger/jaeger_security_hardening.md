@@ -655,7 +655,7 @@ spec:
   data:
     - secretKey: CLICKHOUSE_WRITER_PASSWORD
       remoteRef:
-        key: secret/data/observability/clickhouse
+        key: observability/clickhouse
         property: writer_password
 ```
 

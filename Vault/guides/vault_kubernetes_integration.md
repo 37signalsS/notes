@@ -734,6 +734,20 @@ vault write auth/kubernetes/config \
    kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
 ```
 
+> **Именованный auth-mount и `kubectl create token`:** если Kubernetes Auth включён не на пути `kubernetes`, а на кастомном (например, `vault auth enable -path=kubernetes-infra kubernetes`), используйте `-path=` при конфигурации и роли. Для получения `token_reviewer_jwt` удобно применять `kubectl create token` — это безопаснее монтированного токена и работает в средах с bound service account token projection:
+>
+> ```bash
+> vault write auth/kubernetes-infra/config \
+>    kubernetes_host="https://kubernetes.default.svc" \
+>    kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+>    token_reviewer_jwt="$(kubectl create token -n external-secrets external-secrets)"
+> vault write auth/kubernetes-infra/role/external-secrets \
+>    bound_service_account_names=external-secrets \
+>    bound_service_account_namespaces=external-secrets \
+>    policies=infra-default \
+>    ttl=1h
+> ```
+
 **3. Роль и политика:**
 ```bash
 # Политика

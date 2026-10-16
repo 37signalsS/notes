@@ -184,6 +184,8 @@ grafana:
       labelValue: "1"
       searchNamespace: ALL
       folderAnnotation: "grafana_folder" # Поддержка папок
+      provider:
+        foldersFromFilesStructure: true # Создание папок по структуре ФС
     datasources:
       enabled: true
       label: grafana_datasource
@@ -297,6 +299,68 @@ data:
     }
 ```
 
+**Генерация ConfigMap через Kustomize.** В production-репозиториях дашборды обычно собираются через `configMapGenerator` с `disableNameSuffixHash: true` — без этого Kustomize добавляет хеш-суффикс к имени ConfigMap, и sidecar создаёт **новые** дашборды, не удаляя старые (дублирование после обновления).
+
+```yaml
+# kustomization.yaml
+configMapGenerator:
+  - name: grafana-dashboards-infra
+    namespace: observability
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"
+      annotations:
+        grafana_folder: "Infrastructure"
+    files:
+      - dashboards/cluster-overview.json
+      - dashboards/flux-reconciliation.json
+      - dashboards/elasticsearch-cluster.json
+```
+
+> **Важно:** при `disableNameSuffixHash: true` смена данных не вызовет автоматический rolling update. Для применения изменений используйте `kubectl rollout restart deployment/kube-prom-stack-grafana -n observability` вручную, либо используйте аннотацию `checksum/config` в шаблоне пода. Подробнее о паттерне: [Генераторы ConfigMap и Secret](../../Kubernetes/ToolsUtilities/kustomize/kustomize_generators.md#32-отключение-хеш-суффикса).
+
+**Подготовка JSON-дашбордов для Git.** Перед коммитом в репозиторий:
+
+1. **Удалите поле `id`** — оно специфично для конкретного кластера Grafana и приводит к конфликтам при переносе дашборда между инстансами.
+2. **Замените жёстко заданные UID datasource на переменную** — иначе дашборд будет привязан к конкретному источнику и не перенесётся между окружениями:
+
+```json
+{
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"}
+    }
+  ]
+}
+```
+
+**Структура папок по доменам:**
+
+```
+dashboards/
+  infrastructure/
+    cluster-overview.json
+    node-exporter.json
+  application/
+    apisix.json
+    elasticsearch.json
+  flux/
+    flux-control-plane.json
+    flux-reconciliation.json
+```
+
+С combined `foldersFromFilesStructure: true` и аннотацией `grafana_folder` папки создаются автоматически. При работе с Flux каждая директория или ConfigMap становится отдельным kustomize-источником, применяемым автоматически — никакого ручного импорта дашбордов из UI.
+
 ### Сценарий 5: Upgrade и Rollback релиза
 
 ```bash
@@ -354,6 +418,75 @@ kubectl delete pvc -n monitoring -l app.kubernetes.io/name=grafana
 kubectl delete namespace monitoring
 ```
 
+### Сценарий 8: Провижининг источников данных и контакт-пойнтов через additionalDataSources
+
+Параметр `grafana.additionalDataSources` в values.yaml kube-prometheus-stack позволяет добавлять источники данных сверх тех, что создаются автоматически (Prometheus, Loki, Alertmanager). Параметр `grafana.alerting.contactpoints.yaml` аналогично добавляет контакт-пойнты через Helm values. Оба параметра передаются в Grafana как файлы провижининга (см. [Файлы провиженинга источников данных](../../Grafana/grafana_provisioning.md#провиженинг-источников-данных-datasources)).
+
+```yaml
+# values.yaml
+grafana:
+  # Дополнительные источники данных (передаются в provisioning/datasources/*.yaml)
+  additionalDataSources:
+    - name: Prometheus-dev
+      type: prometheus
+      url: http://prometheus-operated.observability.svc.cluster.local:9090
+      isDefault: false
+      jsonData:
+        timeInterval: "30s"
+        exemplarTraceIdDestinations:
+          - name: trace_id
+            datasourceUid: tempo
+
+    - name: VictoriaMetrics
+      type: prometheus
+      url: http://victoria-metrics.observability.svc.cluster.local:8428
+      isDefault: false
+
+    - name: Elasticsearch
+      type: elasticsearch
+      url: http://elasticsearch-master.observability.svc.cluster.local:9200
+      jsonData:
+        index: "vector-*"
+        timeField: "@timestamp"
+        logMessageField: message
+
+    - name: Loki-VictoriaLogs
+      type: loki
+      url: http://victoria-logs.observability.svc.cluster.local:9428
+
+  # Контакт-пойнты через Helm values (передаются в provisioning/alerting/*.yaml)
+  alerting:
+    contactpoints.yaml:
+      apiVersion: 1
+      contactPoints:
+        - orgId: 1
+          name: Telegram
+          receivers:
+            - uid: telegram-receiver
+              type: telegram
+              settings:
+                bottoken: "${TELEGRAM_BOT_TOKEN}"
+                chatid: "${TELEGRAM_CHAT_ID}"
+```
+
+**Ожидаемый результат:** после `helm upgrade --install` контейнер sidecar копирует YAML-файлы в `/etc/grafana/provisioning/datasources` и `/etc/grafana/provisioning/alerting` соответственно; Grafana применяет их при старте и при hot reload.
+
+**Валидация:**
+```bash
+# Проверка источников данных
+kubectl exec -n observability deploy/kube-prom-stack-grafana -- \
+  curl -s -H "Authorization: Bearer <SA_TOKEN>" \
+  http://localhost:3000/api/datasources/uid/prometheus-dev | jq '.uid'
+# → "prometheus-dev"
+
+# Проверка логов sidecar
+kubectl logs -n observability deploy/kube-prom-stack-grafana -c grafana-sc-dashboard
+```
+
+**Типичные проблемы:**
+- Источник не появляется — проверьте, что `url` соответствует DNS-имени сервиса в нужном неймспейсе; проверьте через `kubectl exec` из пода Grafana: `curl -v http://prometheus-operated.observability.svc.cluster.local:9090`.
+- Контакт-пойнт не создаётся — убедитесь, что переменные окружения (`${TELEGRAM_BOT_TOKEN}`) переданы в контейнер Grafana через `env`/`envFrom`. Интерполяция выполняется только при загрузке файла; ротация требует рестарта.
+
 ## Дополнительная информация
 
 ### Подбираемые параметры ресурсов (эмпирически)
@@ -378,6 +511,7 @@ kubectl delete namespace monitoring
 | :--- | :--- | :--- |
 | **Pod CrashLoopBackOff** | Ошибка в `grafana.ini` или правах на PVC | Проверьте логи: `kubectl logs <pod> -c grafana`; проверьте SecurityContext и права на PVC |
 | **Дашборды не импортируются** | Отсутствует метка на ConfigMap или неверный JSON | Проверьте наличие label `grafana_dashboard: "1"`; валидируйте JSON-схему |
+| **Дублирование дашбордов после обновления** | Kustomize добавил хеш-суффикс к имени ConfigMap | Используйте `disableNameSuffixHash: true` в `configMapGenerator`; [подробности](../../Kubernetes/ToolsUtilities/kustomize/kustomize_generators.md#32-отключение-хеш-суфикса) |
 | **Sidecar не синхронизирует** | Неверная метка/неймспейс/путь | Сверьте `grafana_dashboard: "1"`, `searchNamespace`, путь назначения sidecar |
 | **ServiceMonitor не собирает метрики** | Несоответствие селекторов меток | Убедитесь, что метки в `serviceMonitor.labels` совпадают с ожидаемыми в Prometheus Operator |
 | **Grafana недоступна через Ingress** | Неверный `root_url` или проблемы с TLS | Проверьте `grafana.ini.server.root_url` и статус сертификата: `kubectl describe certificate` |
@@ -398,5 +532,9 @@ kubectl delete namespace monitoring
 - [Конфигурация компонентов](./other_components_config.md) — детализация разделов `values.yaml` (RBAC, reload, default rules, Thanos Ruler, Push Gateway).
 - [Конфигурация Alertmanager](./alertmanager_config.md) — routing, receivers, AlertmanagerConfig CRD.
 - [Конфигурация Grafana](../../../Grafana/grafana_provisioning.md) — провижининг, sidecar, дашборды.
+- [Источники данных Grafana](../../../Grafana/grafana_datasources.md) — параметры подключений к Prometheus, Loki, Elasticsearch.
+- [Контакт-пойнты и алертинг](../../../Grafana/alerting/provisioning.md) — файловый провиженинг контакт-пойнтов, политик, шаблонов.
+- [Monitoring as Code](../../../Grafana/monitoring_as_code.md) — GitOps, Git Sync, Flux, kustomize для дашбордов и алертинга.
+- [Генераторы ConfigMap и Secret](../../Kubernetes/ToolsUtilities/kustomize/kustomize_generators.md) — `configMapGenerator` с `disableNameSuffixHash`.
 - [Практические сценарии](./practical_scenarios.md) — специфические кейсы установки.
 - [Мониторинг etcd](./etcd-monitoring.md) — TLS, ServiceMonitor, EndpointSlice.

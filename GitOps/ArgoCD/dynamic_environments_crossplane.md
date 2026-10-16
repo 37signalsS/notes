@@ -711,7 +711,7 @@ spec:
   data:
     - secretKey: JWT_SECRET
       remoteRef:
-        key: secret/data/preview/common
+        key: preview/common
         property: jwt_secret
 ```
 

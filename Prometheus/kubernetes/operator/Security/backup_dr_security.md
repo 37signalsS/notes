@@ -150,7 +150,7 @@ spec:
   data:
     - secretKey: webhook-url
       remoteRef:
-        key: secret/data/monitoring/alertmanager
+        key: monitoring/alertmanager
         property: slack-webhook
 ```
 

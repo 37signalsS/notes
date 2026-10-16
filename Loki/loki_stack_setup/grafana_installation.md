@@ -76,6 +76,27 @@ datasources:
           httpMethod: POST
 ```
 
+**Вариант с `additionalDataSources` (Helm values) и интеграция с Jaeger:**
+
+Для Flux CD GitOps или упрощённой настройки через Helm `additionalDataSources`. Подходит для JSON-логов, где `traceId` встраивается в тело строки, и трейсы хранятся в Jaeger.
+
+```yaml
+additionalDataSources:
+  - name: Loki
+    type: loki
+    url: http://loki.observability.svc.cluster.local:3100
+    jsonData:
+      derivedFields:
+        - name: TraceID
+          matcherRegex: '"traceId":"(\w+)"'
+          url: "${__value.raw}"
+          datasourceUid: jaeger
+```
+
+- `matcherRegex: '"traceId":"(\w+)"'` извлекает 16- или 32-символьный `traceId` из JSON-полей
+- `${__value.raw}` формирует URL для Jaeger (например, `http://jaeger:16686/trace/<traceId>`)
+- `datasourceUid: jaeger` ссылается на зарегистрированный в Grafana источник Jaeger
+
 ### Сценарий 2: Оповещения на основе логов (Alerting)
 
 Создание алерта, который срабатывает при появлении критических ошибок в приложении.

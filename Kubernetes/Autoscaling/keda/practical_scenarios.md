@@ -210,7 +210,7 @@ spec:
   data:
     - secretKey: host
       remoteRef:
-        key: secret/data/production/rabbitmq
+        key: production/rabbitmq
         property: amqp_connection_uri
 ---
 apiVersion: keda.sh/v1alpha1

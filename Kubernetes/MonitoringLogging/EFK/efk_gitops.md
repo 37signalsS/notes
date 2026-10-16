@@ -6,9 +6,7 @@
 
 **ArgoCD** — континуативная доставка (CD) для Kubernetes, реализующая принципы GitOps. Автоматически синхронизирует желаемое состояние из Git с текущим состоянием кластера.
 
-**Flux** — набор инструментов для GitOps в Kubernetes, включающий Flux Daemon, Helm Controller, Kustomize Controller и Notification Controller.
-
-**Application** — CRD в ArgoCD, описывающий приложение: источник (Git/Helm),.destination (кластер/namespace), sync policy.
+**Application** — CRD в Argo CD, описывающий приложение: источник (Git/Helm), destination (кластер/namespace), sync policy.
 
 **AppProject** — CRD в ArgoCD для группировки приложений с общими ограничениями (источники, назначения, кластеры).
 
@@ -38,7 +36,7 @@
 │        └─ production/                                       │
 │              │                                              │
 │              ▼                                              │
-│  ArgoCD / Flux                                              │
+│  Argo CD                                                      │
 │  └─ Автоматическая синхронизация                            │
 │       │                                                     │
 │       ▼                                                     │
@@ -347,55 +345,7 @@ spec:
     warn: true
 ```
 
-### 6. Flux GitRepository и Kustomization
-
-```yaml
-# flux/efk-gitrepository.yaml
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: efk
-  namespace: flux-system
-spec:
-  interval: 1m
-  url: https://github.com/your-org/kubernetes.git
-  ref:
-    branch: main
-  secretRef:
-    name: git-credentials
-```
-
-```yaml
-# flux/efk-kustomization.yaml
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: efk
-  namespace: flux-system
-spec:
-  interval: 5m
-  path: ./kubernetes/efk/overlays/production
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: efk
-  healthChecks:
-  - apiVersion: apps/v1
-    kind: StatefulSet
-    name: elasticsearch
-    namespace: logging
-  - apiVersion: apps/v1
-    kind: DaemonSet
-    name: fluent-bit
-    namespace: logging
-  - apiVersion: apps/v1
-    kind: Deployment
-    name: kibana
-    namespace: logging
-  timeout: 3m
-```
-
-### 7. Автоматический скрытый деплой (Helm + ArgoCD)
+### 7. Автоматический скрытый деплой (Helm + Argo CD)
 
 ```yaml
 # argocd/efk-helm-application.yaml
@@ -498,23 +448,14 @@ kubectl get applications -n argocd
 argocd app list
 argocd app get efk-stack
 
-# Проверка Flux GitRepository
-kubectl get gitrepositories -n flux-system
-
-# Проверка Flux Kustomization
-kubectl get kustomizations -n flux-system
-
 # Просмотр логов ArgoCD
 kubectl logs -n argocd -l app.kubernetes.io/name=argocd-server
-
-# Просмотр логов Flux
-kubectl logs -n flux-system -l app=kustomize-controller
 ```
 
 ### Частые проблемы
 
 1. **Drift detected**: Проверьте, кто изменил ресурсы в кластере.
-2. **Sync failed**: Проверьте логи ArgoCD/Flux и исправьте конфигурацию.
+2. **Sync failed**: Проверьте логи ArgoCD и исправьте конфигурацию.
 3. **Health degraded**: Проверьте состояние подов и их готовность.
 4. **Permission denied**: Убедитесь, что ServiceAccount имеет достаточные права.
 
@@ -529,8 +470,7 @@ kubectl logs -n flux-system -l app=kustomize-controller
 
 ### Полезные ссылки
 
-- [ArgoCD Documentation](https://argo-cd.readthedocs.io/)
-- [Flux Documentation](https://fluxcd.io/docs/)
+- [Argo CD Documentation](https://argo-cd.readthedocs.io/)
 - [Kustomize Documentation](https://kubectl.docs.kubernetes.io/)
 - [GitOps Best Practices](https://opengitops.dev/)
 - [Elastic Cloud on Kubernetes](https://www.elastic.co/guide/en/cloud-on-k8s/current/index.html)

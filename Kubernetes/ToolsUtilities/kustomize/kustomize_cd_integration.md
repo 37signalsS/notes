@@ -658,7 +658,7 @@ spec:
   data:
     - secretKey: db-password
       remoteRef:
-        key: secret/data/billing/prod
+        key: billing/prod
         property: db_password
 ```
 

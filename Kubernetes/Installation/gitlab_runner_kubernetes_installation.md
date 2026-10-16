@@ -341,7 +341,7 @@ spec:
   data:
     - secretKey: token
       remoteRef:
-        key: secret/infra/gitlab-runner
+        key: infra/gitlab-runner
         property: registration_token
 ```
 

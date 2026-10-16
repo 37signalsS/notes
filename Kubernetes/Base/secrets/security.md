@@ -357,7 +357,7 @@ spec:
   data:
   - secretKey: password
     remoteRef:
-      key: secret/data/production/db
+      key: production/db
       property: password
 ```
 

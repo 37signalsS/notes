@@ -4,9 +4,7 @@
 
 **GitOps** — методология управления инфраструктурой, при которой Git-репозиторий является единственным источником истины (SSoT) для декларативного описания конфигурации системы. Изменения применяются автоматически при пуше в репозиторий.
 
-**ArgoCD** — GitOps-контроллер для Kubernetes, отслеживающий изменения в Git-репозитории и автоматически синхронизирующий конфигурацию в кластере. Поддерживает валидацию манифестов и визуализацию diff.
-
-**Flux** — набор GitOps-компонентов (Source Controller, Kustomize Controller, Helm Controller, Notification Controller) для Kubernetes. Официальный CNCF-проект для декларативного управления конфигурацией.
+**Argo CD** — GitOps-контроллер для Kubernetes, отслеживающий изменения в Git-репозитории и автоматически синхронизирующий конфигурацию в кластере. Поддерживает валидацию манифестов и визуализацию diff.
 
 **kubeconform** — быстрый, строгий валидатор манифестов Kubernetes, заменяющий устаревший kubeval. Поддерживает валидацию CRD через OpenAPI-схемы, включая Gateway API.
 
@@ -18,7 +16,7 @@
 |:---|:---|:---|
 | Kubernetes | 1.25+ | `kubectl version --short` |
 | Gateway API CRD | v1.0+ | `kubectl get crd gateways.gateway.networking.k8s.io` |
-| ArgoCD | 3.0+ (или Flux 2.x) | `kubectl get pods -n argocd` |
+| Argo CD | 3.0+ | `kubectl get pods -n argocd` |
 | kubeconform | 0.6+ | `kubeconform -v` |
 
 ## Базовые концепции
@@ -51,7 +49,7 @@ gitops-gateway-api/
 │       └── httproute.yaml
 ├── infrastructure/                # Инфраструктура
 │   ├── envoy-gateway/
-│   │   ├── helmrelease.yaml       # (для Flux) или Application.yaml (для ArgoCD)
+│   │   ├── application.yaml          # Application для Argo CD
 │   │   └── values.yaml
 │   └── monitoring/
 │       ├── servicemonitor.yaml
@@ -212,46 +210,6 @@ spec:
         maxDuration: 3m
 ```
 
-### Flux: Kustomization для Gateway API
-
-```yaml
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: gateway-api
-  namespace: flux-system
-spec:
-  interval: 5m
-  path: ./envs/production
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: gateway-api
-  healthChecks:
-  - apiVersion: gateway.networking.k8s.io/v1
-    kind: Gateway
-    name: external-gw
-    namespace: gateway-system
-  timeout: 3m
-```
-
-### Flux: GitRepository источник
-
-```yaml
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: gateway-api
-  namespace: flux-system
-spec:
-  interval: 1m
-  url: https://github.com/myorg/gitops-gateway-api.git
-  ref:
-    branch: main
-  secretRef:
-    name: git-credentials
-```
-
 ### Progressive Delivery с Flagger
 
 Flagger автоматизирует Canary/Blue-Green деплой через Gateway API:
@@ -308,7 +266,7 @@ spec:
 | Симптом | Причина | Решение |
 |:---|:---|:---|
 | ArgoCD не синхронизирует | Неверный path или branch | Проверить `spec.source.path` в Application |
-| Flux Kustomization в error | Health check не проходит | Проверить `healthChecks`, увеличить timeout |
+| Argo CD не синхронизирует | Health check не проходит | Проверить `resources-health`, увеличить timeout |
 | kubeconform не находит CRD | Отсутствуют Gateway API схемы | Добавить `-schema-location` с URL схем |
 | CI pipeline падает на validate | Синтаксическая ошибка YAML | Проверить манифесты: `kubectl apply --dry-run=client` |
 | Canary analysis fails | Метрики не доступны | Проверить Prometheus, ServiceMonitor |
@@ -330,19 +288,6 @@ argocd app sync gateway-api
 kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller --tail=100
 ```
 
-### Диагностика Flux
-
-```bash
-# Проверка статуса Kustomization
-kubectl get kustomization gateway-api -n flux-system
-
-# Просмотр событий
-kubectl describe kustomization gateway-api -n flux-system
-
-# Просмотр логов Flux
-kubectl logs -n flux-system -l app=kustomize-controller --tail=100
-```
-
 ## Best Practices
 
 ### Структура репозитория
@@ -362,7 +307,7 @@ kubectl logs -n flux-system -l app=kustomize-controller --tail=100
 
 ### Безопасность
 
-1. **RBAC для ArgoCD/Flux:**
+1. **RBAC для Argo CD:**
    - Ограниченные права на создание/изменение Gateway API ресурсов
    - Отдельный ServiceAccount для каждого контроллера
 
@@ -380,7 +325,7 @@ kubectl logs -n flux-system -l app=kustomize-controller --tail=100
 
 1. **Отслеживайте sync status:**
    - ArgoCD: `argocd app get gateway-api`
-   - Flux: `kubectl get kustomization -A`
+   - Argo CD: `argocd app get gateway-api`
 
 2. **Алерты на sync failure:**
    ```yaml
@@ -393,7 +338,7 @@ kubectl logs -n flux-system -l app=kustomize-controller --tail=100
 
 3. **Логируйте все изменения:**
    - Git commit history как аудит-лог
-   - Flux notifications в Slack/Teams
+   - Argo CD notifications в Slack/Teams
 
 ## Дополнительная информация
 

@@ -205,13 +205,38 @@ grafana:
     passwordKey: admin-password
 ```
 
-**Генерация секрета с рандомным паролем:**
+**Вариант A: Генерация секрета с рандомным паролем (imperative, для dev):**
 ```bash
 kubectl create secret generic grafana-admin-secret \
   --from-literal=admin-user="admin" \
   --from-literal=admin-password="$(openssl rand -base64 24)" \
   -n monitoring
 ```
+
+**Вариант B: Sealed Secrets (GitOps, production):**
+
+Пароль не должен храниться в Git в открытом виде. Используйте Sealed Secrets с офлайн-шифрованием через `kubeseal --cert`.
+
+```bash
+# 1. Получение сертификата контроллера
+kubeseal --fetch-cert \
+  --controller-name=sealed-secrets \
+  --controller-namespace=kube-system \
+  --cert pub-cert.pem
+
+# 2. Создание и шифрование Secret
+kubectl create secret generic grafana-admin-secret \
+  --from-literal=admin-user="admin" \
+  --from-literal=admin-password="$(openssl rand -base64 24)" \
+  --dry-run=client -o yaml \
+  | kubeseal --cert pub-cert.pem -o yaml \
+  > sealer-grafana-admin-secret.yaml
+
+# 3. Коммит SealedSecret в Git
+kubectl apply -f sealer-grafana-admin-secret.yaml
+```
+
+Контроллер Sealed Secrets автоматически расшифровывает `SealedSecret` в обычный `Secret` в кластере. Helm-чарт ссылается на него через `existingSecret`.
 
 **Проверка входа:**
 ```bash

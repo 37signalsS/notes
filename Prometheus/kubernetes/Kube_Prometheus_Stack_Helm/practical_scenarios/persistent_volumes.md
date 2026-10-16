@@ -156,6 +156,44 @@ prometheus:
 
 > **Важно:** Уменьшение размера PVC невозможно в большинстве СХД.
 
+### Сценарий 4.5: Расчёт размера хранилища и retention (medium cluster)
+
+**Задача:** Определить необходимый размер PVC и параметры retention на основе реальной нагрузки.
+
+**Расчёт для среднего кластера (50 нод, 200 подов):**
+
+1. **Входящий поток метрик:** ~10 МБ/с (сырой данных без сжатия).
+2. **Snappy-сжатие** (встроенный в TSDB): экономия ~70% диска.
+3. **Итого:** ~7,5 ГБ/день сжатых данных.
+4. **30 дней retention:** 30 × 7,5 ГБ ≈ 225 ГБ.
+
+**Вывод:** при `retention: 30d` и PVC 50 Gi диск заполнится за ~7 дней. Варианты решения:
+
+| Вариант | Когда | Как |
+|---|---|---|
+| **Уменьшить retention** | Данные не критичны для долгосрочной аналитики | `retention: 14d` |
+| **Увеличить PVC** | Нужен 30-дневный локальный доступ | `storage: 250Gi` |
+| **Remote Write → VictoriaMetrics** | Требуется долгосрочное хранилище (LTS) | `remoteWrite: - url: http://victoriametrics.vms.svc:8428/api/v1/write` |
+
+**Конфигурация с remote_write для LTS:**
+
+```yaml
+prometheus:
+  prometheusSpec:
+    retention: 14d          # локально
+    retentionSize: 100GB
+    remoteWrite:
+      - url: "http://vmsingle.victoriametrics.svc.cluster.local:8428/api/v1/write"
+        writeRelabelings:
+          - sourceLabels: [__name__]
+            regex: "go_.*|process_.*"
+            action: drop
+```
+
+> **Важно:** `retentionSize` (введён в Prometheus 2.40+) имеет приоритет над `retention`. Если размер превышен, старые данные удаляются независимо от срока хранения.
+
+---
+
 ### Сценарий 5: Local Path Provisioner (динамические локальные тома)
 
 **Задача:** Использовать Local Path Provisioner для динамического создания локальных PV без ручного управления нодами.

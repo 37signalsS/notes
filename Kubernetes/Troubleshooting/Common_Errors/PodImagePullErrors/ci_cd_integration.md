@@ -383,7 +383,7 @@ spec:
   data:
   - secretKey: .dockerconfigjson
     remoteRef:
-      key: secret/data/registry/production
+      key: registry/production
 ```
 
 **Расширенный шаблон (template) — формирование `dockerconfigjson` из отдельных полей:**
@@ -418,19 +418,19 @@ spec:
   data:
   - secretKey: server
     remoteRef:
-      key: secret/data/registry/production
+      key: registry/production
       property: host
   - secretKey: user
     remoteRef:
-      key: secret/data/registry/production
+      key: registry/production
       property: username
   - secretKey: pass
     remoteRef:
-      key: secret/data/registry/production
+      key: registry/production
       property: password
   - secretKey: email
     remoteRef:
-      key: secret/data/registry/production
+      key: registry/production
       property: email
 ```
 

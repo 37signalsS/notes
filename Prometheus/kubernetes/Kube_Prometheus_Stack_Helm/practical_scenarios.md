@@ -15,6 +15,7 @@
 ### Установка и базовое развертывание
 
 *   **[Онлайн-установка](./practical_scenarios/online_installation.md)** — стандартное развертывание в кластере с доступом к интернету. Включает быстрый старт, production-ready конфигурацию и валидацию установки.
+*   **[Argo CD (GitOps) установка](./practical_scenarios/argocd_installation.md)** — декларативное развёртывание через Application с GitOps workflow. Application для kube-prometheus-stack, управление секретами через Sealed Secrets.
 *   **[Offline (Air-gapped) установка](./practical_scenarios/offline_airgapped_installation.md)** — развертывание в изолированных контурах. Требует подготовки артефактов чарта и образов, настройки локального реестра.
 *   **[Настройка Persistent Volumes](./practical_scenarios/persistent_volumes.md)** — обеспечение сохранности данных TSDB. Динамическое и статическое provisioning, retention policy, онлайн-расширение PVC.
 
@@ -86,7 +87,7 @@ kubectl delete pvc -n monitoring -l app.kubernetes.io/instance=monitoring
 
 ## Выбор сценария
 
-1. **Новый кластер с доступом к интернету:** Начните с [Онлайн-установки](./practical_scenarios/online_installation.md). После установки переходите к настройке мониторинга инфраструктуры или приложений.
+1. **Новый кластер с доступом к интернету:** Начните с [Онлайн-установки](./practical_scenarios/online_installation.md) (Helm CLI) или [Argo CD установки](./practical_scenarios/argocd_installation.md) (GitOps). После установки переходите к настройке мониторинга инфраструктуры или приложений.
 2. **Закрытый контур (Air-gapped):** Используйте [Offline установку](./practical_scenarios/offline_airgapped_installation.md). Подготовьте локальный реестр и артефакты заранее.
 3. **Специальные требования к хранилищу:** Настройте [Persistent Volumes](./practical_scenarios/persistent_volumes.md) до установки стека.
 4. **Master-ноды не мониторятся:** Настройте [Мониторинг Master-нод](./practical_scenarios/master_nodes_monitoring.md) через tolerations Node Exporter.

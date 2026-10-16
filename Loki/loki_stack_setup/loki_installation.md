@@ -245,6 +245,99 @@ gateway:
 
 **Важно:** В Single Binary режиме filesystem не обеспечивает репликацию. При удалении PVC данные теряются безвозвратно. Не используйте этот режим для production.
 
+### Сценарий 2.1: GitOps через Argo CD (Application)
+
+Декларативная установка через Argo CD с использованием Custom Resource `Application` — предпочтительный подход для production-кластеров с GitOps workflow.
+
+**Файл `loki-application.yaml`:**
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: loki
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: logging
+  source:
+    repoURL: https://grafana-community.github.io/helm-charts
+    chart: loki
+    targetRevision: "6.x"
+    helm:
+      releaseName: loki
+      values: |
+        deploymentMode: SingleBinary
+        loki:
+          commonConfig:
+            replication_factor: 1
+          storage:
+            type: filesystem
+          auth_enabled: false
+          limits_config:
+            retention_period: 30d
+            ingestion_rate_mb: 16
+            ingestion_burst_size_mb: 32
+          singleBinary:
+            replicas: 1
+            persistence:
+              enabled: true
+              storageClass: local-path
+              size: 50Gi
+          monitoring:
+            serviceMonitor:
+              enabled: true
+              labels:
+                release: kube-prom-stack
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+```
+
+**Требования:**
+- Argo CD (версии 3.5+) с установленным `argocd-application-controller` и `argocd-repo-server`
+- Namespace `argocd` для размещения объектов `Application` и `AppProject`
+- Namespace, в котором будет создан `Application` (в примере — `observability`)
+- StorageClass с поддержкой динамического выделения PV (например, `local-path`, `cephfs`, `gp2`)
+
+**SingleBinary** запускает все компоненты в одном поде. Для production используйте `SimpleScalable` или `Distributed` с объектным хранилищем (S3/MinIO).
+
+**Валидация:**
+```bash
+# 1. Проверка статуса Application
+argocd app get loki
+# → Name:               loki
+# → Server:             https://kubernetes.default.svc
+# → Namespace:          observability
+# → Sync Status:        Synced to 6.x
+# → Health Status:      Healthy
+
+# 2. Проверка подов
+kubectl get pods -n observability -l app.kubernetes.io/name=loki
+# → loki-singleBINARY-xxx  Running
+
+# 3. Проверка readiness
+kubectl wait --for=condition=ready pod -n observability -l app.kubernetes.io/name=loki
+curl -s http://loki.observability.svc.cluster.local:3100/ready
+# → ready
+```
+
 ### Сценарий 3: Настройка безопасности и доступа
 
 Для работы с включенной мультиарендностью (`auth_enabled: true`), все запросы должны содержать заголовок `X-Scope-OrgID`.

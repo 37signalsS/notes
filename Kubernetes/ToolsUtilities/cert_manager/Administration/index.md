@@ -317,7 +317,7 @@ spec:
   data:
   - secretKey: account-key
     remoteRef:
-      key: secret/cert-manager/letsencrypt-prod
+      key: cert-manager/letsencrypt-prod
       property: account-key
 ```
 

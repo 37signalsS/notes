@@ -86,6 +86,35 @@ kubectl get crd | grep external-secrets
 kubectl get pods -n external-secrets
 ```
 
+**Установка через HelmRelease (Flux CD):** в GitOps-инфраструктурах, где Flux уже управляет приложениями, ESO разворачивается декларативно через `HelmRelease`. Это обеспечивает согласованность жизненного цикла с остальными компонентами кластера:
+
+```yaml
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: external-secrets
+  namespace: flux-system
+spec:
+  chart:
+    spec:
+      chart: external-secrets
+      version: "2.12.x"
+      sourceRef:
+        kind: HelmRepository
+        name: external-secrets
+        namespace: flux-system
+  values:
+    installCRDs: true
+    replicaCount: 1
+    serviceMonitor:
+      enabled: true
+      interval: 60s
+      labels:
+        release: kube-prom-stack
+```
+
+> **Версия chart:** `version` в `HelmRelease` должен соответствовать текущей линии ESO (см. scope-линию файла). При использовании `HelmRepository` с именем `external-secrets` убедитесь, что он настроен в namespace `flux-system`.
+
 > **Версия API (важно при обновлении):** с ESO 0.17 (май 2025) и далее в стабильной ветке используется `apiVersion: external-secrets.io/v1`; `v1beta1` устарел и отключён по умолчанию в чарте ESO 2.x (`unsafeServeV1Beta1: false`, планируется к удалению 2026.05.01). Старые манифесты на `v1beta1` дадут ошибку `no matches for kind "SecretStore" in version "external-secrets.io/v1beta1"` — переведите все ресурсы (SecretStore, ClusterSecretStore, ExternalSecret, ClusterExternalSecret) на `v1` до апгрейда. Шаблонный движок v1 также устарел — по умолчанию используется engine v2, который поддерживает темplatating в `spec.target.template.metadata` и ключах `data`.
 
 **Сквозной пример: ClusterSecretStore + ExternalSecret (провайдер Vault, Kubernetes Auth):**
@@ -128,11 +157,35 @@ spec:
   data:
   - secretKey: password               # ключ в целевом Secret
     remoteRef:
-      key: secret/data/production/db  # путь в Vault (KV v2)
+      key: production/db              # путь в Vault (KV v2, относительно mount point)
       property: password              # поле внутри секрета
 ```
 
 > **Примечание по Vault 1.21+:** при аутентификации через `kubernetes` роли обязаны содержать `audience`. Задавайте `audience` в роли Vault (`vault write auth/kubernetes/role/<role> audience=vault ...`) и, при необходимости, `audiences` в `serviceAccountRef`. Полные инструкции по Vault-стороне — в [Интеграции Vault с Kubernetes](../../../Vault/guides/vault_kubernetes_integration.md).
+
+> **Использование именованного auth-mount:** если Kubernetes Auth включён не на пути `kubernetes`, а на кастомном (например, `vault auth enable -path=kubernetes-infra kubernetes`), укажите путь в `mountPath`:
+
+```yaml
+spec:
+  provider:
+    vault:
+      auth:
+        kubernetes:
+          mountPath: "kubernetes-infra"   # кастомный путь auth-method
+          role: "external-secrets"
+          serviceAccountRef:
+            name: "external-secrets"
+            namespace: "external-secrets"
+```
+
+> **token_reviewer_jwt через `kubectl create token`:** при настройке Kubernetes Auth в Vault токен для `token_reviewer_jwt` можно получить одной командой, что удобно для одноразовой настройки или когда ServiceAccount Vault не монтирует токен:
+
+```bash
+vault write auth/kubernetes-infra/config \
+  kubernetes_host="https://kubernetes.default.svc" \
+  kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+  token_reviewer_jwt="$(kubectl create token -n external-secrets external-secrets)"
+```
 
 **Проверка синхронизации:**
 
@@ -149,7 +202,9 @@ kubectl get secret db-credentials -n prod
 В KV v2 путь API отличается от CLI-пути:
 
 - CLI: `vault kv get secret/app/db` (без префикса `data/`)
-- API/ESO: `secret/data/app/db` (с префиксом `data/`)
+- `remoteRef.key`: `app/db` — путь **относительно mount point** `secret`, без префикса `data/`
+
+ESO автоматически добавляет префикс `data/` при запросе к API Vault для KV v2. Если в `remoteRef.key` указать `secret/data/app/db` или `secret/app/db`, ESO сформирует путь `secret/data/secret/data/app/db` или `secret/data/secret/app/db` — и выдаст `secret not found`.
 
 На этом спотыкаются почти все в первый раз. Если ESO выдаёт `secret not found`, а `vault kv get` из командной строки работает — скорее всего, дело в формате пути.
 
@@ -161,7 +216,7 @@ kubectl get secret db-credentials -n prod
 spec:
   dataFrom:
     - extract:
-        key: secret/data/app/config
+        key: app/config
 ```
 
 ESO создаёт Kubernetes Secret с записью на каждое поле секрета Vault. Если в секрете Vault есть поля `username`, `password` и `host`, в K8s Secret попадут все три.
@@ -175,11 +230,11 @@ spec:
   data:
     - secretKey: DB_PASSWORD        # ключ K8s Secret
       remoteRef:
-        key: secret/data/app/db
+        key: app/db
         property: password          # имя поля Vault
     - secretKey: DB_HOST
       remoteRef:
-        key: secret/data/app/db
+        key: app/db
         property: host
 ```
 
@@ -209,7 +264,7 @@ spec:
   data:
     - secretKey: auth
       remoteRef:
-        key: secret/data/registry
+        key: registry
         property: auth
 ```
 
@@ -220,7 +275,7 @@ spec:
   data:
     - secretKey: .dockerconfigjson
       remoteRef:
-        key: secret/data/registry
+        key: registry
         property: dockerconfigjson
   target:
     template:
@@ -267,7 +322,7 @@ kubectl describe clustersecretstore vault-infra
 | Ошибка | Причина |
 | :--- | :--- |
 | `could not find key ...` | Поле `property` в `remoteRef` не существует в секрете Vault |
-| `secret not found` | Неправильный формат пути (забыт префикс `data/` для KV v2) |
+| `secret not found` | В `remoteRef.key` указан путь с префиксом `data/` или `secret/` | Указывайте путь относительно mount point, без `data/` |
 | `permission denied` | У роли Vault, которую использует ESO, нет прав чтения этого пути |
 | `connection refused` | Vault запечатан или неправильный URL в поле `server` |
 
@@ -301,6 +356,17 @@ spec:
 
 Используем оба: SealedSecrets для bootstrap (kubeconfig, начальные учётные credentials registry, секреты инициализации Vault) и ESO для секретов приложений, которые живут в Vault и часто ротируются. Правило: всё, что нужно самому ESO для старта (адрес Vault, конфиг аутентификации), должно быть SealedSecret; всё остальное — ExternalSecret.
 
+**Выбор стратегии по типу секрета:**
+
+| Случай | Sealed Secrets | External Secrets (ESO) |
+| :--- | :--- | :--- |
+| kubeconfig-файлы | ✓ | — |
+| Учётные credentials Docker registry | ✓ | — |
+| TLS-сертификаты | ✓ | — |
+| Общие учётные credentials (пароли БД) | — | ✓ |
+| Секреты, ротируемые командой безопасности | — | ✓ |
+| Секреты с аудит-логом | — | ✓ (через Vault audit) |
+
 Работа с ESO в GitOps-потоке, а также продвинутые возможности (`dataFrom`, шаблоны, `Generators`, `PushSecret`) — на примерах в [GitOps: управление секретами](../../../GitOps/secrets_encryption.md).
 
 ### Паттерн «IaC готовит, ExternalSecret доставляет»
@@ -330,7 +396,7 @@ spec:
   data:
   - secretKey: password
     remoteRef:
-      key: secret/data/prod/myapp
+      key: prod/myapp
       property: password
 ```
 
@@ -506,9 +572,10 @@ kubectl exec -n prod deploy/webapp -- ls -la /vault/secrets
 | Условие `RefreshFailed` / `SecretSyncError` | Отзыв токена/роли, изменение пути, rate limit хранилища | Проверить условия и события; скорректировать `refreshInterval` или креденшилы |
 | `no matches for kind "SecretStore" in version "external-secrets.io/v1beta1"` | Ресурс на старой API-версии (ESO ≥ 0.17 не отдаёт `v1beta1`) | Перевести манифесты на `external-secrets.io/v1` и обновить ресурсы до апгрейда |
 | `could not find key ...` | Поле `property` в `remoteRef` не существует в секрете Vault | Проверить имя поля в Vault через `vault kv get <path>` |
-| `secret not found` | Неправильный формат пути (забыт префикс `data/` для KV v2) | Использовать путь вида `secret/data/<...>` вместо CLI-пути `secret/<...>` |
+| `secret not found` | В `remoteRef.key` указан полный путь с префиксом `data/` или `secret/` — ESO добавляет `data/` сам | Убрать префикс: `key: app/db` вместо `key: secret/data/app/db`; путь указывается относительно mount point `secret` |
 | `permission denied` | У роли Vault, которую использует ESO, нет прав чтения этого пути | Проверить политику Vault (`vault policy read`) и права на `secret/metadata/*` для list |
 | `connection refused` | Vault запечатан или неправильный URL в поле `server` | Проверить `vault status` и поле `server` в ClusterSecretStore |
+| `SecretSyncedError` (status.Condition) | Vault запечатан (sealed) либо путь к секрету не существует | Проверить `vault status` на стороне Vault; `vault kv get secret/<path>` для проверки существования пути; если путь неверный — поправить `remoteRef.key` относительно mount point |
 | CSI: том пуст или монтирование падает | Ошибки в `SecretProviderClass`, нет provider (`DaemonSet`), недоступен Vault | `kubectl describe pod` → события `FailedMount`; проверить SPC, логи провайдера на узле |
 | CSI: ротация не происходит | `enableSecretRotation=false` | Включить Helm-значение `enableSecretRotation` и настроить `rotationPollInterval` |
 | `failed to get node publish secret` | Нативному Secret с креденшилами не хватает метки | `kubectl label secret <name> secrets-store.csi.k8s.io/used=true` |

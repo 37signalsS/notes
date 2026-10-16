@@ -579,11 +579,11 @@ spec:
   data:
     - secretKey: userID
       remoteRef:
-        key: secret/data/ceph
+        key: ceph
         property: userID
     - secretKey: userKey
       remoteRef:
-        key: secret/data/ceph
+        key: ceph
         property: userKey
 ```
 

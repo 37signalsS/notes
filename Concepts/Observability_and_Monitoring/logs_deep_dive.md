@@ -298,6 +298,8 @@ compactor:
 }
 ```
 
+Подробнее о механике ILM (фазы, действия, DLM, SLM), а также сценарии для single-node — в [Elasticsearch: Жизненный цикл индексов и политики хранения](../../ELK_Stack/Elasticsearch/elasticsearch_ilm_and_retention.md).
+
 **Рекомендации по retention:**
 
 | Тип данных | Срок хранения | Обоснование |
@@ -835,6 +837,8 @@ VictoriaLogs значительно легче Elasticsearch для того ж�
 2. Убедиться, что логи приложений поступают в Elasticsearch: выполнить запрос в Kibana для индекса `vector-*`
 3. Убедиться, что логи ошибок и предупреждений поступают в VictoriaLogs: выполнить LogsQL-запрос `level:error OR level:warn` в VMUI
 4. Проверить, что логи самого Vector не попадают в хранилища: отсутствие записей с `kubernetes.namespace: observability` в обоих хранилищах
+
+Для single-node Elasticsearch с Vector настройте ILM (политика, шаблон, bootstrap — сценарий в [Elasticsearch: Жизненный цикл индексов](../../ELK_Stack/Elasticsearch/elasticsearch_ilm_and_retention.md#7-ilm-для-одноузлового-кластера-с-vector)).
 
 ## Диагностика и устранение неполадок
 
