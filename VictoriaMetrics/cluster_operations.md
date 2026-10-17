@@ -1,5 +1,7 @@
 # Операции с кластером VictoriaMetrics (vmcluster)
 
+**Актуально для:** VictoriaMetrics v1.154.x (Community)
+
 ## Определения
 
 **VictoriaMetrics Cluster** — распределённая сборка VictoriaMetrics из независимых компонентов: `vminsert` (приём и шардирование), `vmstorage` (хранение, Shared-Nothing), `vmselect` (запросы и агрегация). Порты по умолчанию: `vminsert` — `8480`, `vmselect` — `8481`, `vmstorage` — `8482` (HTTP), `8400`/`8401` (TCP с vminsert/vmselect).
@@ -48,22 +50,31 @@ top-level vmselect  ── TCP 8401 (-storageNode) ──▶ second-level vmsele
 
 Аналогично `vminsert` с `-clusternativeListenAddr=:8400` может принимать данные от другого `vminsert` (репликация между AZ на верхнем уровне). Недостатки цепочки на vminsert: скорость ограничена самым медленным звеном, а при недоступности одной AZ данные на ней гэпают — поэтому для кросс-AZ используйте [vmagent](./vmagent_overview.md) с `-remoteWrite.shardByURL`/буферизацией впереди кластера.
 
+## Требования и предпосылки (Prerequisites)
+
+- **Минимальное число узлов:** 3 `vmstorage` для отказоустойчивости (RF≥2); 2 `vminsert` и 2 `vmselect` для HA концентраторов.
+- **Сеть:**  TCP 8400 (vminsert→vmstorage), 8401 (vmselect←vmstorage), 8480/8481/8482 (HTTP) должны быть доступны между всеми узлами кластера. Междатасковая задержка < 1–2 мс внутри DC.
+- **Синхронизация времени:** NTP обязательна — нарушение `ntp` вызывает переступление серий и `out of order` ошибки на запись.
+- **Хранилище:** каждый `vmstorage` — отдельный `-storageDataPath` на локальном SSD/NVMe или RAID (не NFS/CIFS).
+- **Kubernetes:** для HA — минимум 2 реплики на каждый Deployment, `PodDisruptionBudget` (PDB), `podAntiAffinity` на `vmstorage` (одна реплика на узел).
+- **Внешняя балансировка:** `vminsert` и `vmselect` ставятся за `vmauth` или L4-балансировщиком (HAProxy, nginx stream, kube-vip); прямой доступ к узлам извне не рекомендуется.
+
 ## Практические сценарии
 
 ### 1. Полный конфиг минимального HA-кластера (3 vmstorage, RF=2)
 
 ```bash
 # vmstorage × 3
-vmstorage -storageDataPath=/var/lib/vmstorage -httpListenAddr=:8482 -vminsertAddr=:8400 -vmselectAddr=:8401
+vmstorage -storageDataPath=/var/lib/vmstorage -httpListenAddr=:8482 -vminsertAddr=:8400 -vmselectAddr=:8401 -dedup.minScrapeInterval=15s
 
 # vminsert × 2 (с RF=2)
 vminsert -httpListenAddr=:8480 -storageNode=vmstorage-0:8400,vmstorage-1:8400,vmstorage-2:8400 -replicationFactor=2 -maxConcurrentInserts=128
 
-# vmselect × 2 (дедуп при чтении)
-vmselect -httpListenAddr=:8481 -storageNode=vmstorage-0:8401,vmstorage-1:8401,vmstorage-2:8401 -dedup.minScrapeInterval=15s
+# vmselect × 2 (дедуп при чтении; RF для корректной обработки реплик)
+vmselect -httpListenAddr=:8481 -storageNode=vmstorage-0:8401,vmstorage-1:8401,vmstorage-2:8401 -replicationFactor=2 -dedup.minScrapeInterval=15s
 ```
 
-> `-storageNode` указывает список storage-узлов (можно повторить флаг), DNS-имя может содержать несколько адресов. Для HA в Kubernetes — минимум 2 реплики на каждый сервис и PDB.
+> `-storageNode` указывает список storage-узлов (можно повторить флаг), DNS-имя может содержать несколько адресов. Для HA в Kubernetes — минимум 2 реплики на каждый сервис и PDB. Флаг `-dedup.minScrapeInterval` задаётся на `vmselect` и `vmstorage` одинаково — иначе запросы и фоновая компакция будут немного разны.
 
 ### 2. Мульти-тенантность
 
@@ -129,6 +140,35 @@ curl -s 'http://vmselect:8481/select/1/prometheus/api/v1/query?query=up' | jq '.
 - **Enterprise**: storage node groups — выделенные «изолированные» группы `vmstorage` для конкретных тенантов (данные физически не смешиваются на накопителях);
 - Глобальные лимиты кластера (`-maxLabelsPerTimeseries`, `-maxConcurrentInserts` и т.п.) — общие на всех тенантов.
 
+### 6. Rolling upgrade кластера (поэтапное обновление)
+
+Все компоненты корректно обновляются через graceful shutdown: отправьте процессу `SIGINT` (для systemd `systemctl stop` укладывается в эту схему), дождитесь завершения и запустите новую версию с новым конфигом. Перед обновлением сверьтесь с релизными заметками/CHANGELOG — совместимость версий компонентов проверяется по ним ([LTS-релизы](https://docs.victoriametrics.com/lts-releases/)).
+
+**Стратегия «без простоя» (no downtime).** Пошаговый рестарт, по одному узлу за раз, в рекомендованном порядке:
+
+1. `vmstorage`
+2. `vminsert`
+3. `vmselect`
+
+Стратегия работает, если выполняются **оба** условия:
+
+- в кластере достаточно ресурсов (CPU, RAM, дисковый IO, сеть), чтобы обслуживать нагрузку, пока любого одного узла любого типа временно нет;
+- новая версия/конфиг совместимы с остальными компонентами (см. CHANGELOG).
+
+Если хоть одно условие не выполняется — стратегия «минимальное простоя» (minimum downtime):
+
+1. Graceful-остановить все `vminsert` и `vmselect` параллельно.
+2. Graceful-перезапустить все `vmstorage` параллельно.
+3. Запустить все `vminsert` и `vmselect` параллельно.
+
+На время этих шагов кластер недоступен и для записи, и для чтения — согласуйте окно работ. Этот же выбор, когда ресурсов не хватает на rolling-обновление или узлы очень велики (долгий graceful-рестарт каждого).
+
+**Смягчение простоя записи.** На `vmstorage` доступен флаг `-storage.vminsertConnsShutdownDuration` (с v1.95.0): увеличивает интервал постепенного закрытия соединений с `vminsert` при graceful shutdown и снижает замедление ingestion во время рестарта.
+
+**VictoriaMetrics Operator (Kubernetes).** StatefulSet'ы `vmstorage` и `vmselect` создаются со стратегией обновления `OnDelete`: поды перезапускаются вручную по одному (удаление пода и ожидание Ready) в рекомендованном порядке — сначала `vmstorage`, затем `vmselect`, — что и реализует no-downtime-подход; `vminsert` как Deployment обновляется штатным rolling update Kubernetes. Скорость процесса задаётся переменными окружения оператора, ключевая — `VM_PODWAITREADYTIMEOUT` (в официальных документах — `80s`, предельное ожидание Ready пода). Поля `spec.rollingUpdateStrategy` / `rollingUpdateStrategyBehavior` позволяют делегировать перезапуск Kubernetes и ограничивать число одновременно недоступных подов (`maxUnavailable`).
+
+Проверка после обновления — раздел [Валидация установки](#валидация-установки) ниже; одноузловое обновление — [overview: Upgrade и обновление](./overview.md#upgrade-и-обновление).
+
 ## Валидация установки
 
 ```bash
@@ -143,6 +183,21 @@ curl -s 'http://vmselect:8481/select/0/prometheus/api/v1/query?query=up' | jq .
 # Метрики репликации/отказов
 curl -s http://vmstorage-0:8482/metrics | grep -E '^vm_(rows|parts|merges|isReadOnly)'
 ```
+
+## Операции и команды
+
+| Операция | Эндпоинт / команда | auth-ключ | Описание |
+| :--- | :--- | :--- | :--- |
+| Force merge (компакция) | `POST /internal/force_merge?partition_prefix=YYYYMMDD` на `vmstorage` | `-forceMergeAuthKey` | Слияние small parts в big внутри партиции |
+| Force flush | `POST /internal/force_flush` на `vmstorage` | `-forceFlushAuthKey` | Сброс in-memory parts на диск (перед остановкой) |
+| Снимок данных | `POST /snapshot/create` на `vmstorage` | `-snapshotAuthKey` | Создать снапшот для бэкапа |
+| Список снимков | `GET /snapshot/list` на `vmstorage` | `-snapshotAuthKey` | Показать доступные снапшоты |
+| Удалить снимок | `POST /snapshot/delete?snapshot=...` на `vmstorage` | `-snapshotAuthKey` | Удалить снапшот с диска |
+| Удалить все снимки | `POST /snapshot/delete_all` на `vmstorage` | `-snapshotAuthKey` | Массовое удаление всех снапшотов (для cleanup) |
+| Удалить серии | `POST /delete/<accountID>/<projectID>/api/v1/admin/tsdb/delete_series?match[]={__name__="..."}` на `vmselect` | `-deleteAuthKey` | Удалить временные ряды по запросу (GC при следующем merge) |
+| Graceful shutdown | `POST /internal/stop` на любом компоненте | — | Корректная остановка (для container orchestrator) |
+
+Все эндпоинты администрирования по умолчанию недоступны извне — ставьте их за `vmauth`/`nginx` с `-flagsAuthKey` или `-snapshotAuthKey`.
 
 ## Поиск и устранение неисправностей
 
@@ -180,4 +235,3 @@ curl -s http://vmstorage-0:8482/metrics | grep -E '^vm_(rows|parts|merges|isRead
 - [vmbackup/vmrestore](./vmbackup_restore.md) — бэкап vmstorage;
 - [DR: аварийное восстановление](./disaster_recovery.md) — сценарии потери нод/кластера;
 - [Enterprise: storage node groups](./enterprise_features.md) — изоляция тенантов на группах vmstorage.
-# force reindex test

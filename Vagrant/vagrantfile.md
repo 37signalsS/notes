@@ -1,10 +1,10 @@
 # Конфигурационный файл Vagrantfile
 
+**Актуально для:** Vagrant 2.4.x
+
 ## Определения
 
-**Vagrantfile** — основной конфигурационный файл проекта на языке Ruby, описывающий желаемое состояние виртуальных машин (ВМ) и их окружения. Он является декларативным описанием инфраструктуры (Infrastructure as Code) и позволяет воспроизводить идентичные окружения на разных машинах разработчиков.
-
-> **Синтаксис:** Ruby DSL (Domain-Specific Language). Актуальная и единственная поддерживаемая версия синтаксиса — `"2"`.
+**Vagrantfile** — основной конфигурационный файл проекта на языке Ruby, описывающий желаемое состояние виртуальных машин (ВМ) и их окружения. Он является декларативным описанием инфраструктуры (Infrastructure as Code) и позволяет воспроизводить идентичные окружения на разных машинах разработчиков. Синтаксис описания — Ruby DSL (Domain-Specific Language); поддерживается только версия API `"2"`, которая является текущей и единственной.
 
 ## Базовые концепции
 
@@ -74,13 +74,13 @@ end
 
 | **Образ** | `config.vm.box` | Имя базового образа (например, `bento/ubuntu-24.04`). |
 | | `config.vm.box_version` | Фиксация версии образа (`"~> 202501.0"`). |
-| | `config.vm.box_url` | URL для загрузки образа, если его нет в Atlas/Cloud. |
-| | `config.vm.box_check_update` | Проверка обновлений при каждом запуске (`true`/`false`). |
-| | `config.vm.box_download_checksum` | Хэш для верификации целостности скачиваемого образа. |
-| | `config.vm.box_download_checksum_type` | Алгоритм хэширования (`sha256`, `sha512`). |
-| | `config.vm.ignore_box_vagrantfile` | Игнорировать Vagrantfile, встроенный в образ. |
+| | `config.vm.box_url` | URL для загрузки образа, если он не в Vagrant Cloud. Может быть массивом. |
+| | `config.vm.box_check_update` | Проверка обновлений при каждом запуске (`true`/`false`, по умолчанию `true`). |
+| | `config.vm.box_download_checksum` | Хэш для верификации целостности скачиваемого образа. Требует `box_download_checksum_type`. |
+| | `config.vm.box_download_checksum_type` | Алгоритм хэширования: `md5`, `sha1`, `sha256`, `sha384`, `sha512`. |
+| | `config.vm.ignore_box_vagrantfile` | Игнорировать Vagrantfile, встроенный в образ (`true`/`false`, по умолчанию `false`). |
 | **ОС** | `config.vm.hostname` | Имя хоста внутри ВМ. |
-| | `config.vm.guest` | Тип гостевой ОС (например, `:linux`, `:ubuntu`). |
+| | `config.vm.guest` | Тип гостевой ОС (`:linux` — по умолчанию, `:ubuntu`, `:debian`, `:centos`, `:windows`). |
 | | `config.vm.boot_timeout` | Таймаут загрузки ВМ в секундах (по умолчанию `300`). Увеличивайте в CI. |
 | | `config.vm.graceful_halt_timeout` | Таймаут корректной остановки ВМ в секундах (по умолчанию `60`). |
 | **Сеть** | `config.vm.network` | Настройка портов (`forwarded_port`), частных (`private_network`) или публичных сетей. |
@@ -88,7 +88,15 @@ end
 | | `config.ssh.private_key_path` | Путь к приватному ключу SSH. |
 | | `config.ssh.forward_agent` | Проброс SSH-агента хоста в ВМ. |
 | | `config.ssh.insert_key` | Вставлять уникальный SSH-ключ при первом запуске (`true`/`false`). |
-| | `config.vm.communicator` | Тип коммуникатора: `ssh` (Linux/macOS) или `winrm` (Windows). |
+| | `config.ssh.forward_x11` | Проброс X11 (для GUI-приложений в ВМ). |
+| | `config.ssh.shell` | Оболочка для inline-провижининга (по умолчанию `bash -l`). |
+| **WinRM** | `config.winrm.username` | Имя пользователя для WinRM (по умолчанию `vagrant`). |
+| | `config.winrm.password` | Пароль для WinRM-аутентификации. |
+| | `config.winrm.transport` | Транспорт: `:negotiate` (по умолчанию), `:ssl`, `:plaintext`. |
+| | `config.winrm.port` | Порт WinRM (по умолчанию `5985`, с SSL — `5986`). |
+| | `config.winrm.ssl_peer_verification` | Проверка SSL-сертификата (`true` по умолчанию). |
+| | `config.winrm.basic_auth_only` | Использовать только Basic Auth (`false` по умолчанию). |
+| **Коммуникатор** | `config.vm.communicator` | Тип коммуникатора: `ssh` (Linux/macOS) или `winrm` (Windows). |
 | **Ресурсы** | `config.vm.provider` | Блок настроек гипервизора (память, CPU, специфические флаги). |
 | **Файлы** | `config.vm.synced_folder` | Синхронизация директорий хоста и ВМ (детали в [Vagrant Storage](./vagrant_storage_and_folders.md)). |
 | **Настройка**| `config.vm.provision` | Автоматизация установки ПО (Shell, Ansible, Docker). |
@@ -100,6 +108,31 @@ end
 
 ## Практические сценарии
 
+### Предварительные требования
+
+Перед написанием или изменения `Vagrantfile` убедитесь в наличии:
+
+| Компонент | Минимальная версия | Примечание |
+| :--- | :--- | :--- |
+| **Vagrant** | 2.4.0 | `config.vagrant.require_version ">= 2.4.0"` в файле фиксирует минимум. |
+| **Провайдер** | — | VirtualBox, Libvirt/KVM, VMware, QEMU или Hyper-V — в зависимости от хоста. |
+| **Box** | — | Образ в Vagrant Cloud или локальный `.box` с контрольной суммой. |
+| **Ruby** | 2.7+ | Vagrant поставляется со встроенным Ruby; используйте только стандартную библиотеку. |
+
+**Проверка готовности хоста:**
+```bash
+# Версия Vagrant
+vagrant --version
+# → Vagrant 2.4.9
+
+# Установленный провайдер (пример для Libvirt)
+virsh list --all
+# → список ВМ или пустой вывод без ошибок
+
+# Наличие необходимых плагинов
+vagrant plugin list
+```
+
 ### Сценарий 0: Работа с Windows и WinRM
 
 Для гостевых ОС Windows используется коммуникатор `winrm` вместо `ssh`. Vagrant автоматически настраивает WinRM при указании соответствующего коммуникатора.
@@ -108,8 +141,8 @@ end
 Vagrant.configure("2") do |config|
   config.vm.box = "gusztavvargadr/windows-server-2022"
   config.vm.communicator = "winrm"
-  config.vm.username = "vagrant"
-  config.vm.password = "vagrant"
+  config.winrm.username = "vagrant"
+  config.winrm.password = "vagrant"
 
   config.vm.provider "virtualbox" do |vb|
     vb.memory = 4096
@@ -119,9 +152,9 @@ end
 ```
 
 **Важные нюансы:**
+- WinRM встроен в Vagrant (начиная с версии 2.1.3); плагин `vagrant-winrm` устарел и его следует удалять (`vagrant plugin uninstall vagrant-winrm`).
 - WinRM требует предварительной настройки гостевой ОС (доверенные хосты, сертификаты).
-- Плагин `vagrant-winrm` может потребоваться для специфичных сценариев.
-- Атрибут `config.ssh.private_key_path` игнорируется при использовании WinRM.
+- Для WinRM используются параметры `config.winrm.*` (username, password, transport, ssl_peer_verification, port), а не `config.ssh.*`.
 
 ### Ruby DSL: расширенные возможности
 
@@ -193,8 +226,14 @@ end
 
 **Проверка соответствия:**
 ```bash
-# Получение контрольной суммы существующего box
-vagrant box list --checksum bento/ubuntu-24.04
+# Список локально установленных образов (имя, версия, провайдер)
+vagrant box list
+# → bento/ubuntu-24.04 (202501.0, virtualbox)
+
+# Проверка целостности при скачивании — флаг --checksum (только для box add)
+vagrant box add bento/ubuntu-24.04 \
+  --checksum sha256:256a80... \
+  --checksum-type sha256
 ```
 
 ### Ограничения и крайние случаи
@@ -314,15 +353,16 @@ vagrant up --no-provision  # Сначала ВМ, потом провижини�
 Vagrant.configure("2") do |config|
   config.vm.box = "bento/ubuntu-24.04"
   config.vm.box_version = "202501.0"
-  config.vm.box_download_checksum = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  config.vm.box_download_checksum = "a4a1e4d2b9c5f8e6a3d7b0c4e2f1a9d8e7b6c5a4d3e2f1b0a9d8e7c6f5b4a3"
   config.vm.box_download_checksum_type = "sha256"
 end
 ```
 
 **Проверка контрольной суммы существующего образа:**
 ```bash
-vagrant box list --checksum bento/ubuntu-24.04
-# → bento/ubuntu-24.04 (202501.0, virtualbox, sha256:e3b0c44298fc...)
+# Список локально установленных образов
+vagrant box list
+# → bento/ubuntu-24.04 (202501.0, virtualbox)
 ```
 
 ## Дополнительная информация

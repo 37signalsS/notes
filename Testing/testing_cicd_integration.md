@@ -1,5 +1,7 @@
 # Интеграция автоматизированных тестов в CI/CD
 
+**Актуально для:** GitLab CI, GitHub Actions, Jenkins (2026); k6 v2.3.x, pytest 8.x, Python 3.12, Testcontainers 1.x–4.x, OpenTelemetry 1.x
+
 ## 1. Определения
 
 **Quality Gates (Ворота качества)** — набор автоматизированных критериев и проверок в пайплайне, которые сборка должна успешно пройти для продвижения на следующий этап (например, из Test в Staging).
@@ -171,7 +173,7 @@ export default function () {
 performance-test:
   stage: verify-preview
   image: 
-    name: grafana/k6:latest
+    name: grafana/k6:2.3.0
     entrypoint: [""]
   variables:
     TARGET_URL: "https://$CI_COMMIT_REF_SLUG.example.com"
@@ -298,7 +300,7 @@ jobs:
       matrix:
         service: [postgres, redis, kafka]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -392,7 +394,84 @@ test:integration:
 4. **Пропуск дублирующих запусков:** В GitHub Actions используйте `concurrency` с `cancel-in-progress: true`. В GitLab CI — `interruptible: true`.
 5. **Сагрегированные запуски:** Ночные/периодические полные прогоны вместо запуска всего на каждый коммит.
 
-### 4. Дополнительная информация
+## 4. Устранение неполадок (Troubleshooting)
+
+### Типичные проблемы и диагностика
+
+| Симптом | Причина | Диагностика | Решение |
+| :--- | :--- | :--- | :--- |
+| **Тест падает с `timeout` в CI, локально проходит** | Медленная загрузка образов, resource contention на shared-раннере | `docker pull` timing в job logs, `nmon`/`htop` на раннере | Pre-pull образы (см. §3), использовать dedicated раннеры для тяжёлых тестов |
+| **OOMKill во время тестов** | Превышен лимит памяти контейнера/раннера | `dmesg \| grep -i kill`, метрика `container_memory_working_set_bytes` в cAdvisor | `withCreateContainerCmdModifier().withMemory(256*1024*1024)`, настройка `mem_limit` в `.gitlab-ci.yml` |
+| **Port conflict (Address already in use)** | Параллельные тесты используют статические порты | `docker ps`, логи теста с указанием порта | Testcontainers использует динамические порты автоматически; для ручных — `socket.getFreePort()` |
+| **`Connection refused` к зависимости в ephemeral env** | Сервис ещё не готов к accepting | `docker logs <container>`, проверка healthcheck | `Wait.forHttp("/health").forStatusCode(200)`, увеличить `withStartupTimeout(Duration.ofMinutes(2))` |
+| **Artifact upload timeout / `ERROR: Job failed: exit code 1`** | Артефакт слишком большой, artifact storage переполнен | `du -sh artifacts/`, логи GitLab Runner | `artifacts:exclude` для `node_modules/`, `.git/`; `expire_in: 7 days`; разбить на chunks |
+| **Flaky test только в CI** | Noisy neighbor, timezone drift, NTP | `timedatectl status`, `cat /proc/meminfo`, correlation с cAdvisor | Выделенные раннеры, UTC everywhere, Testcontainers для изоляции |
+| **Docker daemon `No space left on device`** | Накопились остановленные контейнеры/образы | `docker system df`, `du -sh /var/lib/docker` | `after_script: docker system prune -a -f --filter "label=com.testcontainers=true"`, `docker image prune` |
+| **Ryuk не удаляет контейнеры** | `TESTCONTAINERS_RYUK_DISABLED=true` или образ Ryuk недоступен | `docker logs` контейнера, проверка env-переменной | Убедиться, что Ryuk запущен; для CI — `after_script: docker rm -f $(docker ps -aq --filter "label=com.testcontainers=true") || true` |
+| **Rate-limiting Docker Hub при `docker pull`** | Превышен лимит анонимных запросов (100/6h) | Логи `docker pull` с `429 Too Many Requests` | Registry mirror, pre-pull образов, `TESTCONTAINERS_HOST_OVERRIDE` для локального registry |
+
+**DevOps/SRE диагностика в CI:**
+```bash
+# Pre-flight проверки перед прогоном тестов
+df -h /var/lib/docker /tmp
+free -m
+cat /proc/loadavg
+docker info | grep -E "Storage Driver|Cgroup"
+docker system df
+
+# Post-mortem: сбор логов всех контейнеров Testcontainers
+docker ps -a --filter "label=com.testcontainers=true" --format "{{.ID}}" | \
+  xargs -r docker logs --tail=100 > testcontainers-logs.txt
+
+# Cleanup в GitLab CI
+after_script:
+  - docker system prune -af --filter "label=com.testcontainers=true"
+  - docker volume prune -f
+```
+
+### Корреляция тестовых падений с метриками раннера
+
+Диагностика flaky тестов требует корреляции JUnit/JSON артефактов с метриками раннера. Подробности: **[Наблюдаемость пайплайнов](../CI-CD/Core_Concepts/pipeline_observability.md)** — схемы сбора OTel-трейсов, cAdvisor/node-exporter метрики, правила сопоставления `trace_id`.
+
+Для Testcontainers-специфичной наблюдаемости: **[Testcontainers: обзор](./testcontainers_overview.md#надёжность-и-наблюдаемость-sre)** — метрики `testcontainers_container_startup_seconds`, алертинг на Ryuk и диск, централизованное логирование через `com.testcontainers=true`.
+
+---
+
+## 5. Лучшие практики (Best Practices)
+
+### Проектирование тестов в CI
+
+- **Изоляция на уровне сети:** каждый pipeline использует отдельную Docker-сеть; Testcontainers создаёт изолированную сеть автоматически. Для ручных сценариев — `docker network create` в начале, `docker network rm` в `after_script`.
+- **Ephemeral окружения:** эфемерные раннеры (см. **[Управление парком раннеров](../CI-CD/runner-fleet-management.md)**) гарантируют чистое окружение. Для shared runners используйте `--max-concurrent=1` в конфигурации.
+- **Resource limits:** задавайте CPU и memory лимиты для тестовых контейнеров — это предотвращает OOMKill и noisy neighbor эффект. Пример: `withCreateContainerCmdModifier(cmd → cmd.withMemory(512*1024*1024L).withMemoryReservation(256*1024*1024L))`.
+
+### Оптимизация кэширования
+
+- **Кэш зависимостей:** `pip`, `npm`, `~/.m2`, `~/.gradle` — используйте `cache` в GitLab CI / `actions/cache` в GitHub Actions.
+- **Кэш Docker layers:** используйте Docker-in-Docker с shared cache volume или `buildkit` с `--cache-from`.
+- **Pre-pull Testcontainers образы:** на раннерах с ограниченной пропускной способностью Docker Hub добавляйте шаг `docker pull` в `before_script`.
+
+### Безопасность
+
+- **Секреты через env:** никогда не хардкодьте credentials; используйте CI-переменные (`DB_PASSWORD`, `API_TOKEN`).
+- **Секреты через файлы:** для legacy-приложений пишите секрет во временный файл с `0600` и удаляйте в `after_script`.
+- **Сокращение привилегий:** Testcontainers/Ryuk работают без `--privileged` (начиная с Ryuk 0.13.0 на базе `scratch`).
+
+### SRE-практики: мониторинг и очистка
+
+- **Periodic cleanup:** `docker system prune -a -f --filter "label=com.testcontainers=true"` в `after_script` или через cron на раннере.
+- **Resource alerts:** мониторинг `/var/lib/docker` (>85%), RAM (>90%), CPU steal в реальном времени (cAdvisor + Prometheus).
+- **Graceful shutdown:** раннеры должны обрабатывать `SIGTERM` — дать тесту шанс завершиться, иначе `docker rm -f` в `after_script`.
+
+### Release Validation (SRE)
+
+- **Pre-deployment smoke test:** перед деплоем в staging поднимайте через Testcontainers те же сервисы, что и в production (PostgreSQL, Redis, Kafka), применяйте миграции, выполняйте smoke-тесты.
+- **Canary validation:** используйте Testcontainers для проверки миграций на копии production-данных (с маскированием) перед реальным применением.
+- **Контрактное тестирование:** комбинируйте Testcontainers с Pact для проверки API-контрактов в эфемерной среде.
+
+---
+
+## 6. Дополнительная информация
 
 #### Управление нестабильностью тестов (Flaky Tests)
 
@@ -406,10 +485,11 @@ test:integration:
 
 ---
 
-### Связанные документы
+#### Связанные документы
 
 *   **[Виды тестов: Unit, Integration, E2E](./testing_types_unit_integration_e2e.md)** — база для выбора стратегии.
 *   **[Testcontainers: обзор](./testcontainers_overview.md)** — основа для интеграционных тестов в CI.
 *   **[Управление нестабильными тестами (Flaky Tests)](../CI-CD/Testing/flaky_test_management.md)** — детекция, карантин, retry.
 *   **[Наблюдаемость пайплайнов](../CI-CD/Core_Concepts/pipeline_observability.md)** — трассировка и метрики CI.
+*   **[Управление парком раннеров](../CI-CD/runner-fleet-management.md)** — эфемерные раннеры, автоскейлинг, очистка.
 *   **[Метрики тестового покрытия](./testing_coverage_metrics.md)** — глубокий анализ полноты проверок и связи с TIA.

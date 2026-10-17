@@ -76,7 +76,7 @@ Trivy Operator работает по принципу наблюдателя (wa
 
 - **Kubernetes 1.21+** (рекомендуется 1.27+ для поддержки всех фич)
 - **Helm 3.8+** для установки через Helm
-- **FluxCD 2.x** (опционально) для установки через GitOps
+- **Argo CD** (опционально) для установки через GitOps
 - **kube-prometheus-stack** (опционально) для 수 수бы мониторинга метрик
 
 ### Установка через Helm
@@ -92,48 +92,92 @@ helm install trivy-operator aquasecurity/trivy-operator \
 # → Release "trivy-operator" has been installed
 ```
 
-### Установка через FluxCD (HelmRelease)
+### Установка через Argo CD (Application)
+
+**Файл `trivy-operator-application.yaml`:**
 
 ```yaml
-# kustomization.yaml или отдельный манифест FluxCD
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
+# argo-application.yaml — манифест Argo CD Application
+apiVersion: argoproj.io/v1alpha1
+kind: Application
 metadata:
   name: trivy-operator
-  namespace: trivy-system
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
-  interval: 1h
-  chart:
-    spec:
-      chart: trivy-operator
-      version: "0.37.0"
-      sourceRef:
-        kind: HelmRepository
-        name: aquasecurity
-        namespace: flux-system
-  values:
-    operator:
-      vulnerabilityScannerEnabled: true
-      configAuditScannerEnabled: true
-      rbacAssessmentScannerEnabled: true
-      infraAssessmentScannerEnabled: true
-      metricsVulnIdEnabled: true
-      scanJobsConcurrentLimit: 2
-    trivy:
-      ignoreUnfixed: true
-      mode: Standalone
-      severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-    serviceMonitor:
-      enabled: true
-      labels:
-        release: kube-prom-stack
-    resources:
-      requests:
-        cpu: 100m
-        memory: 128Mi
-      limits:
-        cpu: 1000m
-        memory: 2048Mi
+  project: security
+  source:
+    repoURL: https://aquasecurity.github.io/helm-charts
+    chart: trivy-operator
+    targetRevision: "0.37.0"
+    helm:
+      releaseName: trivy-operator
+      values: |
+        operator:
+          vulnerabilityScannerEnabled: true
+          configAuditScannerEnabled: true
+          rbacAssessmentScannerEnabled: true
+          infraAssessmentScannerEnabled: true
+          metricsVulnIdEnabled: true
+          scanJobsConcurrentLimit: 2
+        trivy:
+          ignoreUnfixed: true
+          mode: Standalone
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+        serviceMonitor:
+          enabled: true
+          labels:
+            release: kube-prom-stack
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 1000m
+            memory: 2048Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: trivy-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+```
+
+**Требования:**
+- Argo CD (версии 2.11+) для управления объектом `Application`
+- Namespace `argocd` для размещения объекта `Application` и `AppProject` с именем `security`
+- Helm-репозиторий `https://aquasecurity.github.io/helm-charts` зарегистрирован в Argo CD
+- Namespace `trivy-system` для развертывания Trivy Operator
+- ServiceMonitor с меткой `release: kube-prom-stack` для сбора метрик через kube-prometheus-stack
+
+**Валидация:**
+```bash
+# 1. Проверка статуса Application
+argocd app get trivy-operator
+# → Name:               trivy-operator
+# → Server:             https://kubernetes.default.svc
+# → Namespace:          trivy-system
+# → Sync Status:        Synced to 0.37.0
+# → Health Status:      Healthy
+
+# 2. Проверка подов Trivy Operator
+kubectl get pods -n trivy-system -l app.kubernetes.io/name=trivy-operator
+# → trivy-operator-xxx   1/1   Running
+
+# 3. Проверка CRD и отчётов
+kubectl get crd vulnerabilityreports.aquasecurity.github.io
+kubectl get vulnerabilityreport -A --no-headers | wc -l
 ```
 
 **Ключевые параметры конфигурации:**
@@ -162,7 +206,7 @@ spec:
 
 ```yaml
 values:
-  excludeNamespaces: "kube-system,flux-system,cert-manager"
+  excludeNamespaces: "kube-system,argocd,cert-manager"
 ```
 
 Это снижает шум и убирает лишние джобы сканирования для инфраструктурных компонентов, которые управляются отдельно.
@@ -404,7 +448,7 @@ kubectl logs job/<scan-job-name> -n <namespace>
 
 1. **`ignoreUnfixed: true`** — всегда включайте. Уязвимости без исправлений не поддаются устранению и только забивают дашборды.
 2. **Ограничьте параллельность сканов** (`scanJobsConcurrentLimit: 2–3`) — без лимита оператор при первой установке одновременно запускает джобы на всех рабочих нагрузках, что может привести к нехватке ресурсов на нодах.
-3. **Исключайте инфраструктурные namespace'ы** (`excludeNamespaces: "kube-system,flux-system,cert-manager"`) — снижает шум и нагрузку.
+3. **Исключайте инфраструктурные namespace'ы** (`excludeNamespaces: "kube-system,argocd,cert-manager"`) — снижает шум и нагрузку.
 4. **Используйте `ClientServer` режим для больших кластеров** — централизованный Trivy Server экономит трафик и время на загрузку базы уязвимостей.
 5. **Настраивайте алерты только на реально эксплуатируемые CVE** — используйте EPSS-оценку или VEX-отчёты для приоритизации. См. [SBOM в продакшене](../../Security/Supply_Chain_Security/sbom_in_production.md).
 6. **Resource limits для scan job** — устанавливайте лимиты CPU и памяти, чтобы сканирование не перегружало кластер.

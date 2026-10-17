@@ -956,6 +956,8 @@ groups:
 - **[Loki: обзор](../../Loki/loki_overview.md)** — основное хранилище логов для Grafana.
 - **[VictoriaLogs: внутреннее устройство](../../VictoriaMetrics/victorialogs_internals.md)** — детальный разбор архитектуры и хранения.
 - **[Vector: обзор](../../Vector/vector_overview.md)** — современный агент для обработки телеметрии.
+- **[Vector Security](../../Vector/vector_security.md)** — TLS/mTLS, аутентификация, управление секретами, systemd hardening.
+- **[Vector Reliability](../../Vector/vector_reliability.md)** — retry policy, DLQ, circuit breaker, rate limiting, acknowledgements.
 - **[OpenTelemetry: сигналы](../../OpenTelemetry/architecture_signals.md)** — унификация логов, метрик и трейсов.
 - **[Системное логирование в Linux](../../Linux/SystemAdministration/Logging/logging_overview.md)** — базовые концепции логирования в Linux.
 - **[Централизованное логирование Docker](../../Docker/Docker_logs/docker_centralized_logging.md)** — лог-драйверы и агенты Docker.

@@ -1,5 +1,7 @@
 # Сравнение Istio и Linkerd
 
+**Актуально для:** Istio 1.31.x / Linkerd 2.20+
+
 ## Определения
 
 **Istio** и **Linkerd** — две ведущие реализации [Service Mesh](./service_mesh_concepts.md) для управления, обеспечения безопасности и наблюдения за микросервисными приложениями в Kubernetes. В 2026 году обе платформы достигли высокой зрелости, но продолжают следовать разным философиям: Istio как универсальный «швейцарский нож» для энтерпрайза и Linkerd как максимально производительное и простое в эксплуатации решение.
@@ -7,6 +9,25 @@
 **Istio (1.30+)** — полнофункциональная платформа, поддерживаемая Google и Red Hat. Стандартом де-факто в 2026 году стала архитектура **Ambient Mesh**, устраняющая необходимость в sidecar-контейнерах для большинства задач. В 1.30 конфигурация расширений прокси (Wasm/Lua) унифицирована через API `TrafficExtension`, заменяющий `WasmPlugin`.
 
 **Linkerd (2.20+)** — проект CNCF, ориентированный на минимальные задержки и безопасность. В последних версиях фокус сместился на **HAZL** (High Availability Zone Load Balancing, функция Buoyant Enterprise) с учётом rate-limit-ответов, автоматическую ротацию trust-якорей mTLS и нативные сайдкары Kubernetes, которые с v2.20 стали типом внедрения по умолчанию.
+
+---
+
+## Предварительные требования
+
+Общие требования для развертывания Service Mesh (Istio или Linkerd) в Kubernetes:
+
+- **Kubernetes:** версия 1.31+ (минимум для Linkerd 2.20). Рекомендуется 1.32–1.37.
+- **CNI-плагин:** работающий CNI (Calico, Cilium, Flannel, bridge/macvlan) — основной CNI должен загружаться перед istio-cni/linkerd-cni.
+- **Gateway API CRDs:** обязательны для управления трафиком через `HTTPRoute`/`Gateway`. Установить:
+  ```bash
+  kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.1/standard-install.yaml
+  kubectl get crd gateways.gateway.networking.k8s.io
+  # → True (Established)
+  ```
+- **Ядро Linux:** 5.13+ (для nftables); 5.10+ с eBPF-поддержкой (для ускорения через SOCKMAP/XDP).
+- **Доступ к API Kubernetes:** для проверки статуса подов, логов и конфигурации прокси.
+- **Ресурсы Control Plane:** для Istio — istiod 2+ реплики (500m CPU / 1Gi RAM на реплику); для Linkerd — 1–2 реплики control plane (100m CPU / 128Mi RAM на реплику).
+- **Сетевые политики:** при использовании NetworkPolicy убедитесь, что трафик между подами и control plane не блокируется.
 
 ---
 
@@ -24,7 +45,7 @@
 | **Наблюдаемость** | Глубокая интеграция с внешними системами через OpenTelemetry, Kiali. | Встроенный `linkerd-viz` и высокоскоростной `tap` для анализа трафика в реальном времени. |
 | **Производительность** | Ambient: < 0.5 мс (L4), ~2–4 мс (L7). Оверхед на память снижен до минимума. | Sidecar: ~1–2 мс задержка. Минимальное потребление CPU/RAM среди всех sidecar-решений. |
 | **Мультикластер** | Полнофункциональная поддержка через мульти-праймери или шлюзы (East-West). | Простая настройка через `linkerd-multicluster` и автоматическое зеркалирование сервисов. |
-| **Поддерживаемые версии (v2026)** | Kubernetes 1.32–1.36, Gateway API v1.6.x. | Kubernetes до 1.35, Gateway API до 1.5.x. |
+| **Поддерживаемые версии (v2026)** | Kubernetes 1.32–1.37, Gateway API v1.6.x. | Kubernetes 1.31–1.35, Gateway API до 1.5.x. |
 
 ### Архитектура Control Plane
 
@@ -59,7 +80,7 @@
 istiod выступает как единый CA, выпуская кратковременные X.509 сертификаты (SPIFFE ID на основе ServiceAccount). Ротация автоматическая; SDS (Secret Discovery Service) доставляет сертификаты в Ztunnel/Sidecar.
 
 **Linkerd:**
-Identity-компонент управляет доверенными якорями (trust anchors). В 2.20+ добавлена автоматическая ротация trust-якорей mTLS. Сертификаты распределяются через прокси без монтирования в том.
+Identity-компонент управляет доверенными якорями (trust anchors). В open-source Linkerd 2.20 ротация trust anchors остаётся ручной (`linkerd identity` / `linkerd upgrade --identity-trust-anchors-file`). **Автоматическая ротация trust-якорей** доступна в **Buoyant Enterprise for Linkerd (BEL) 2.20+** через встроенный rotation operator. Сертификаты распределяются через прокси без монтирования в том.
 
 ### Жизненный цикл и обновления
 
@@ -85,7 +106,7 @@ Identity-компонент управляет доверенными якоря
 | :--- | :--- | :--- |
 | **Разделение трафика** | Веса на уровне `HTTPRoute.rules.backendRefs`. | Веса на уровне `HTTPRoute` или `ServiceProfile`. |
 | **Ретраи и таймауты** | Настройка в `HTTPRoute.rules.filters` или VirtualService. | Настройка через `ServiceProfile` или Gateway API. |
-| **Зеркалирование** | Нативная поддержка через `RequestMirror` в `HTTPRoute`. | Поддерживается через `RequestMirror` в новых версиях Linkerd. |
+| **Зеркалирование** | Нативная поддержка через `RequestMirror` в `HTTPRoute` (Istio extension filter). | В open-source Linkerd 2.20 **нет** встроенной поддержки зеркалирования; используйте Sidecar с `TCP` mirroring или Buoyant Enterprise for Linkerd. |
 | **HAZL (Zone-aware)** | Реализуется через `LocalityLoadBalancerSetting`. | **HAZL**: автоматически удерживает трафик в зоне, учитывает rate-limit-ответы (`429`) и временно выводит перегруженные эндпоинты из пула. **Примечание:** HAZL — функция Buoyant Enterprise for Linkerd (BEL), не входит в open-source дистрибутив. |
 
 ### Сценарий: Канареечное развертывание через Gateway API
@@ -119,8 +140,8 @@ spec:
 
 ```bash
 # Скачать istioctl
-curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.32.0 sh -
-cd istio-1.32.0
+curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.31.2 sh -
+cd istio-1.31.2
 export PATH=$PWD/bin:$PATH
 
 # Установка istiod и CNI в режиме Ambient
@@ -128,8 +149,8 @@ istioctl install --set profile=ambient -y
 
 # Проверка установки
 istioctl version
-# → client version: 1.32.0
-# → control plane version: 1.32.0
+# → client version: 1.31.2
+# → control plane version: 1.31.2
 
 # Проверка DaemonSet ztunnel и istio-cni-node
 kubectl get pods -n istio-system -l app=ztunnel
@@ -159,21 +180,72 @@ linkerd check
 
 # Включение инъекции для namespace
 kubectl annotate namespace my-app linkerd.io/inject=enabled
+
+# Перезапуск подов для применения сайдкара
+kubectl rollout restart deployment -n my-app
 ```
 
-### Сценарий: Мультикластерная настройка Linkerd
+### Сценарий: Мультикластерная настройка Linkerd (2.20+)
+
+В Linkerd 2.20 мультикластерная связь настраивается через декларативный workflow с `link-gen` (заменяет устаревшие команды `link`/`connect`):
 
 ```bash
-# На primary-кластере: получить service-account токен
-linkerd multicluster link -n linkerd-multicluster --cluster-name west
+# На primary-кластере (west): установить multicluster control plane
+linkerd multicluster install | kubectl apply -f -
+linkerd multicluster check
+# → Linkerd multicluster is ready
 
-# На remote-кластере: применить токен
-linkerd multicluster connect -n linkerd-multicluster --api-server-advertise-ip <primary-ip>
+# Сгенерировать Link CR и секреты для связи с remote-кластером (east)
+linkerd --context=east multicluster link-gen --cluster-name east | \
+  kubectl --context=west apply -f -
 
-# Проверка зеркалирования сервисов
+# Проверить, что кластеры видят друг друга
 linkerd multicluster gateways
 # → CLUSTER   NAME               AGE
-# → west      linkerd-gateway    2m
+# → east      linkerd-gateway    2m
+
+# Экспортировать сервис для зеркалирования
+kubectl label svc my-service mirror.linkerd.io/exported=true
+```
+
+### Сценарий: Валидация установки и работоспособности меша
+
+После установки обеих платформ выполните комплексную проверку:
+
+**Istio (Ambient):**
+```bash
+# 1. Статус Control Plane
+istioctl proxy-status
+# → Все поды: SYNCED
+
+# 2. Участие пода в Ambient-меше
+istioctl x describe pod my-app-pod -n my-app
+# → L4 traffic handled by ztunnel on node-1
+
+# 3. Проверка mTLS между сервисами
+istioctl proxy-config secret my-app-pod -n my-app -o json | \
+  jq '.dynamicActiveSecrets[0].secret.tlsCertificate.certificateChain.inlineBytes' | \
+  base64 -d | openssl x509 -noout -subject
+# → subject: CN=spiffe://cluster.local/ns/my-app/sa/my-app
+
+# 4. Анализ конфигурации на ошибки
+istioctl analyze -A
+```
+
+**Linkerd:**
+```bash
+# 1. Полный чек здоровья
+linkerd check
+# → Linkerd core control plane is healthy
+
+# 2. Инъекция сайдкара подтверждена
+kubectl get pods -n my-app -o jsonpath='{.items[*].spec.initContainers[*].name}'
+# → linkerd-proxy (native sidecar, restartPolicy: Always)
+
+# 3. Проверка mTLS
+linkerd viz stat deploy -n my-app
+# → MESHED  SUCCESS      RPS  P99_LATENCY
+# → my-app      1/1  100.00%    25rps          2ms
 ```
 
 ### Сценарий: Бэкап и восстановление конфигурации Istio
@@ -188,6 +260,23 @@ kubectl get ns -l istio-injection=enabled -o yaml > istio-ns-backup-$(date +%F).
 # Восстановление
 kubectl apply -f istio-mesh-backup-2026-09-18.yaml
 kubectl apply -f istio-ns-backup-2026-09-18.yaml
+```
+
+### Сценарий: Бэкап и восстановление конфигурации Linkerd
+
+```bash
+# Экспорт конфигурации Linkerd (CRD, ServiceProfiles, метки namespace)
+kubectl get crd,serviceprofile,meshpolicy,server,serverauthorization -n linkerd -o yaml > linkerd-crds-backup-$(date +%F).yaml
+kubectl get ns -l linkerd.io/inject=enabled -o yaml > linkerd-ns-backup-$(date +%F).yaml
+
+# Экспорт trust anchor и issuer (critical для восстановления mTLS)
+kubectl -n linkerd get cm linkerd-config -ojsonpath="{.data.values}" | \
+  yq e .identityTrustAnchorsPEM - > linkerd-trust-anchors-$(date +%F).crt
+kubectl -n linkerd get secret linkerd-identity-issuer -o jsonpath='{.data.ca.crt}' | base64 -d > linkerd-issuer-$(date +%F).crt
+kubectl -n linkerd get secret linkerd-identity-issuer -o jsonpath='{.data.key.pem}' | base64 -d > linkerd-issuer-$(date +%F).key
+
+# Восстановление trust anchor bundle при ротации
+linkerd upgrade --identity-trust-anchors-file=bundle.crt | kubectl apply -f -
 ```
 
 ### Сценарий: Бенчмаркинг производительности
@@ -218,7 +307,7 @@ kubectl label namespace my-app istio-injection-
 kubectl rollout restart deployment/my-app -n my-app
 
 # 4. Проверить, что поды в Ambient-режиме
-istioctl experimental ambient describe pod my-app-pod -n my-app
+istioctl x describe pod my-app-pod -n my-app
 # → L4 traffic handled by ztunnel on node-1
 
 # 5. Если нужен L7 — создать waypoint
@@ -231,7 +320,7 @@ istioctl waypoint apply -n my-app --enroll-namespace
 Проверка участия пода в меше и его сетевого пути:
 
 ```bash
-istioctl experimental ambient describe pod my-app-pod -n prod
+istioctl x describe pod my-app-pod -n prod
 # → Pod is part of ambient mesh.
 # → L4 traffic handled by ztunnel on node-1.
 # → L7 traffic handled by Waypoint Proxy: waypoint-prod.
@@ -302,7 +391,7 @@ linkerd viz stat deploy -n my-app
 3. **Gateway API (GAMMA):** используйте `HTTPRoute` вместо `VirtualService`/`ServiceProfile` для обеспечения переносимости между мешами. Учитывайте поведение «reject by default».
 4. **eBPF Acceleration:** включайте SOCKMAP для обхода TCP-стека ядра (Istio CNI / Cilium). Снижает задержки на 15–20%.
 5. **Безопасность:** ограничивайте доступ к административному порту Envoy (15000) и Linkerd (4191) через NetworkPolicies.
-6. **Телеметрия:** отключайте детальные Access Logs в продакшене, используя `Telemetry` API (Istio) или `mirror` (Linkerd) для выборочного логирования.
+6. **Телеметрия:** отключайте детальные Access Logs в продакшене, используя `Telemetry` API (Istio) для выборочного логирования только ошибок и медленных запросов. Linkerd по умолчанию собирает лёгкие метрики (RPS, latency, success rate); избыточное логирование включайте через `linkerd tap` только для отладки.
 7. **Native Sidecar для Jobs/CronJobs:** всегда используйте нативный сайдкар для рабочих нагрузок с завершаемым выполнением.
 8. **Валидация после изменений:** после изменения ресурсов выполняйте `istioctl proxy-status` или `linkerd check`.
 9. **Мониторинг ресурсов:** настройте алерты на `envoy_server_memory_allocated` и `envoy_cluster_upstream_cx_active` (Istio) или `linkerd_proxy_latency` (Linkerd).

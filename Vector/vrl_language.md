@@ -1,5 +1,7 @@
 # VRL (Vector Remap Language)
 
+**Актуально для:** Vector 0.57.0 (текущая стабильная — 0.58.0, breaking VRL-изменений нет)
+
 ## Определения
 
 **VRL (Vector Remap Language)** — предметно-ориентированный язык (DSL), выражение-ориентированный, с сильной типизацией, предназначенный для безопасной и высокопроизводительной трансформации данных (логов, метрик, трассировок) внутри Vector.
@@ -29,9 +31,9 @@ VRL работает в контексте одного события (Event). 
 *   `.field[0]` — доступ к элементу массива по индексу.
 *   `.service.name` — навигация по вложенным полям.
 *   `del(.field)` — удаление поля.
-*   `@timestamp` — системные метаданные Vector (системные поля начинаются с `@`).
+*   `.@timestamp` — системное поле времени события (поля, начинающиеся с `@`, добавляет Vector для метаданных); `%` — корень метаданных события (например, `%metadata`).
 
-**Важная деталь:** точка (`.`) в начале выражения — это сокращение для `..` (текущее событие). Внутри замыканий (closures) `.` ссылается на аргумент замыкания, а не на событие. Для доступа к событию внутри замыкания используется `$` (например, `$.message`).
+**Важная деталь:** точка (`.`) всегда ссылается на корень события (`. =` полностью заменяет событие), а `%` — на его метаданные. Внутри замыканий (closures, например `for_each`) `.` по-прежнему указывает на событие, а аргументы замыкания (например `index`, `value`) — это локальные переменные, доступные по имени. Путаница между `.` и аргументами замыкания — частая причина багов.
 
 Программа — последовательность выражений, разделённых переносами строк или `;`.
 
@@ -49,6 +51,7 @@ VRL работает в контексте одного события (Event). 
 | :--- | :--- | :--- |
 | Присваивание | `.level = string!(.level)` | Запись значения в поле. |
 | Составное присваивание | `.count += 1` | То же, что `.count = .count + 1`. |
+| Слияние объектов (`\|=`) | `. \|= {"new": "field"}` | Глубокое слияние правого объекта с событием (аналог `merge`). |
 | Условный оператор | `if .level == "error" { … } else { … }` | Условный переход. С 2026 г. `else`/`else if` можно начинать с новой строки. |
 | Оператор `??` (coalescing) | `.msg ?? "default"` | Значение по умолчанию, если поле `null`. |
 | Логика и сравнение | `==`, `!=`, `<`, `>`, `<=`, `>=`, `&&`, `||`, `!` | Сравнение и булева логика. |
@@ -107,7 +110,7 @@ if err != null {
 **Progressive type safety в действии:**
 ```vrl
 .level = "info"        # .level теперь строка (тип выведен)
-.level = to_upper(.level)  # OK: строка → строка
+.level = upcase(.level)  # OK: строка → строка
 .level = 42            # ОШИБКА КОМПИЛЯЦИИ: несоответствие типов
 ```
 
@@ -175,20 +178,22 @@ VRL не имеет циклов `for`/`while`, но поддерживает и
 
 | Категория | Ключевые функции |
 | :--- | :--- |
-| **Парсинг** | `parse_json`, `parse_syslog`, `parse_common_log`, `parse_grok`, `parse_tokens`, `parse_yaml` (добавлена в 2026), `parse_regex`, `parse_url`, `parse_user_agent`, `parse_logfmt`, `parse_csv`, `parse_proto`. |
-| **Кодирование/декодирование** | `encode_json`, `encode_csv` (new), `encode_logfmt`, `encode_proto` (2026), `encode_key_value`, `encode_gzip`, `decode_gzip`, `encode_zstd`, `decode_zstd`, `encode_base64`, `decode_base64`. |
-| **Манипуляция объектами** | `map_keys`, `map_values`, `to_entries`, `from_entries` (2026), `merge` (shallow/deep), `flatten`, `compact`, `unflatten`. |
-| **Массивы** | `push`, `pop`, `append`, `unique`, `chunks`, `zip`. |
-| **Итерация/запросы** | `for_each`, `filter`, `values`, `find`. |
-| **Время** | `now`, `format_timestamp`, `parse_timestamp`, `to_unix_timestamp`, `from_unix_timestamp`. |
-| **Сравнение/математика** | `includes`, `contains`, `starts_with`, `ends_with`, `match`, `round`, `ceil`, `floor`, `mod`, `tally`. |
-| **Строковые операции** | `split`, `slice`, `replace`, `truncate`, `upcase`, `downcase`, `strip_ansi_escape_codes`, `redact`. |
-| **Хэширование и безопасность** | `md5`, `sha1`, `sha2`, `sha3`, `crc`, `xxhash`, `uuid_v4`, `uuid_v7` (2026), `decrypt`, `encrypt`, `encrypt_ip`, `decrypt_ip` (2026). |
-| **Специальные 2026** | `http_request` (выполнение HTTP-запроса из VRL), `haversine` (расстояние на сфере), `redact` (маскирование PII). |
-| **Мониторинг Vector** | `get_vector_metric`, `find_vector_metrics`, `aggregate_vector_metrics` (доступ к внутренним метрикам Vector). |
-| **Enrichment** | `get_enrichment_table_record`, `find_enrichment_table_records`; с 2026 добавлен фильтр дат `from`/`to` и wildcard-сопоставление. |
-| **Уверения/тесты** | `assert`, `assert_eq` (fallible). |
-| **Разное** | `get_env_var`, `get_hostname`, `basename`, `dirname`, `split_path` (2026+). |
+| **Парсинг** | `parse_json`, `parse_syslog`, `parse_common_log`, `parse_apache_log`, `parse_nginx_log`, `parse_grok`, `parse_groks`, `parse_tokens`, `parse_yaml`, `parse_regex`, `parse_regex_all`, `parse_url`, `parse_user_agent`, `parse_logfmt`, `parse_key_value`, `parse_csv`, `parse_proto`, `parse_cef`, `parse_dnstap`, `parse_xml`, `parse_cbor`, `parse_aws_alb_log`, `parse_aws_vpc_flow_log`, `parse_aws_cloudwatch_log_subscription_message`, `parse_glog`, `parse_klog`, `parse_linux_authorization`, `parse_influxdb`, `parse_query_string`, `parse_bytes`, `parse_duration`, `parse_int`, `parse_float`, `parse_etld`. |
+| **Кодирование/декодирование** | `encode_json`, `encode_csv`, `encode_logfmt`, `encode_key_value`, `encode_proto`, `encode_gzip`, `encode_lz4`, `encode_snappy`, `encode_zlib`, `encode_zstd`, `encode_base64`, `encode_base16`, `encode_charset`, `encode_percent`, `encode_punycode`, `decode_gzip`, `decode_lz4`, `decode_snappy`, `decode_zlib`, `decode_zstd`, `decode_base64`, `decode_base16`, `decode_charset`, `decode_percent`, `decode_punycode`, `decode_mime_q`. |
+| **Манипуляция объектами** | `map_keys`, `map_values`, `to_entries`, `from_entries`, `merge` (shallow/deep), `flatten`, `compact`, `unflatten`, `keys`, `values`, `set`, `remove`, `get`. |
+| **Массивы** | `push`, `pop`, `append`, `unique`, `chunks`, `zip`, `unnest`. |
+| **Итерация/запросы** | `for_each`, `filter`, `find`, `match_any`, `match_array`, `tally`, `tally_value`. |
+| **Время** | `now`, `format_timestamp`, `parse_timestamp`, `to_unix_timestamp`, `from_unix_timestamp`, `get_timezone_name`, `to_syslog_facility`, `to_syslog_level`, `to_syslog_severity`. |
+| **Сравнение/математика** | `includes`, `contains`, `starts_with`, `ends_with`, `match`, `abs`, `round`, `ceil`, `floor`, `mod`, `format_int`, `format_number`. |
+| **Строковые операции** | `split`, `slice`, `replace`, `replace_with`, `truncate`, `upcase`, `downcase`, `strip_ansi_escape_codes`, `strip_whitespace`, `strlen`, `snakecase`, `kebabcase`, `camelcase`, `pascalcase`, `screamingsnakecase`, `redact`. |
+| **Хэширование и безопасность** | `md5`, `sha1`, `sha2`, `sha3`, `crc`, `xxhash`, `seahash`, `hmac`, `shannon_entropy`, `community_id`, `uuid_v4`, `uuid_v7`, `reverse_dns`, `dns_lookup`, `encrypt`, `decrypt`, `encrypt_ip`, `decrypt_ip`, `validate_json_schema`. |
+| **IP-адреса** | `ip_aton`, `ip_ntoa`, `ip_pton`, `ip_ntop`, `ip_cidr_contains`, `ip_subnet`, `ip_to_ipv6`, `ipv6_to_ipv4`. |
+| **Типы и проверка** | `is_array`, `is_boolean`, `is_null`, `is_nullish`, `is_string`, `is_integer`, `is_float`, `is_object`, `is_regex`, `is_timestamp`, `is_ipv4`, `is_ipv6`, `is_json`, `to_bool`, `to_float`, `to_int`, `to_string`, `to_regex`, `int!`, `string!`, `float!`, `bool!`, `timestamp!`, `regex!`. |
+| **Векторные метрики** | `get_vector_metric`, `find_vector_metrics`, `aggregate_vector_metrics`. |
+| **Enrichment** | `get_enrichment_table_record`, `find_enrichment_table_records`. |
+| **Утверждения/тесты** | `assert`, `assert_eq` (fallible). |
+| **Специальные (2026)** | `http_request`, `haversine`. |
+| **Разное** | `get_env_var`, `get_hostname`, `basename`, `dirname`, `split_path`, `log`, `del`, `exists`, `length`, `join`, `random_bool`, `random_int`, `random_float`, `random_bytes`. |
 
 ### Производительность и модель памяти
 
@@ -319,23 +324,21 @@ inputs = ["journald"]
 source = '''
 # Journald помещает сообщение в .message, а приоритет в виде числа — в .priority
 # Нормализуем приоритет в текстовый уровень
-.level = case .priority {
-    0 => "emerg",
-    1 => "alert",
-    2 => "crit",
-    3 => "err",
-    4 => "warning",
-    5 => "notice",
-    6 => "info",
-    7 => "debug",
-    else => "info"
-}
+.level = if .priority == 0 { "emerg" }
+    else if .priority == 1 { "alert" }
+    else if .priority == 2 { "crit" }
+    else if .priority == 3 { "err" }
+    else if .priority == 4 { "warning" }
+    else if .priority == 5 { "notice" }
+    else if .priority == 6 { "info" }
+    else if .priority == 7 { "debug" }
+    else { "info" }
 
 # Формируем сервис из SYSLOG_IDENTIFIER или MESSAGE
 .service = .systemd_unit ?? .SYSLOG_IDENTIFIER ?? .MESSAGE
 
 # Удаляем служебные поля journald
-del(.["_PID", "_UID", "_GID", "_COMM", "_EXE", "priority", "SYSLOG_IDENTIFIER", "MESSAGE"])
+del(._PID, ._UID, ._GID, ._COMM, ._EXE, .priority, .SYSLOG_IDENTIFIER, .MESSAGE)
 '''
 ```
 
@@ -364,24 +367,24 @@ Jan 15 10:25:00 web-01 sshd[1235]: Failed password for invalid user test from 1.
 
 # Определяем тип события
 if .app == "sshd" {
-    if includes(.message, "Accepted") {
+    if contains(.message, "Accepted") {
         .event_type = "ssh_success"
-        # Извлекаем пользователя: "for <user>"
-        .user = capture(.message, r'for (\S+)')?.[0] ?? "unknown"
-        .source_ip = capture(.message, r'from (\S+)')?.[0] ?? "unknown"
-    } else if includes(.message, "Failed password") {
+        # Извлекаем пользователя и IP через именованные группы parse_regex
+        .user = parse_regex(.message, r'for (?P<user>\S+)')?.user ?? "unknown"
+        .source_ip = parse_regex(.message, r'from (?P<ip>\S+)')?.ip ?? "unknown"
+    } else if contains(.message, "Failed password") {
         .event_type = "ssh_failed"
-        .user = capture(.message, r'for (?:invalid user )?(\S+)')?.[0] ?? "unknown"
-        .source_ip = capture(.message, r'from (\S+)')?.[0] ?? "unknown"
+        .user = parse_regex(.message, r'for (?:invalid user )?(?P<user>\S+)')?.user ?? "unknown"
+        .source_ip = parse_regex(.message, r'from (?P<ip>\S+)')?.ip ?? "unknown"
     }
 } else if .app == "sudo" {
     .event_type = "sudo_session"
-    .user = capture(.message, r'session opened for user (\S+)')?.[0] ?? "unknown"
+    .user = parse_regex(.message, r'session opened for user (?P<user>\S+)')?.user ?? "unknown"
 }
 
 # Нормализуем время (syslog не содержит года — добавляем текущий)
 if !exists(.year) {
-    .timestamp = parse_timestamp!(strftime(now(), "%Y ") + .timestamp, "%Y %b %d %H:%M:%S")
+    .timestamp = parse_timestamp!(format_timestamp(now(), "%Y") + " " + .timestamp, "%Y %b %d %H:%M:%S")
 }
 ```
 
@@ -403,19 +406,19 @@ vector tap auth_transform
 
 ```vrl
 # Определяем шаблон (лучше вынести в переменную или использовать parse_grok)
-# Для стабильного формата можно использовать regex + capture
+# Для стабильного формата можно использовать regex + именованные группы
 pattern = r'^(?P<source_ip>\S+) \S+ \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) \S+" (?P<status>\d+) (?P<bytes>\d+) "(?P<referer>[^"]*)" "(?P<user_agent>[^"]*)"$'
 
-match = match(.message, pattern)
-if match != null {
-    .source_ip = match.source_ip
-    .timestamp = parse_timestamp!(match.timestamp, "02/Jan/2006:15:04:05 -0700")
-    .http_method = match.method
-    .url = match.path
-    .status = int!(match.status)
-    .bytes_sent = int!(match.bytes)
-    .referer = match.referer
-    .user_agent = match.user_agent
+parsed = parse_regex(.message, pattern)
+if parsed != null {
+    .source_ip = parsed.source_ip
+    .timestamp = parse_timestamp!(parsed.timestamp, "02/Jan/2006:15:04:05 -0700")
+    .http_method = parsed.method
+    .url = parsed.path
+    .status = int!(parsed.status)
+    .bytes_sent = int!(parsed.bytes)
+    .referer = parsed.referer
+    .user_agent = parsed.user_agent
     .event_type = "http_access"
 } else {
     # Если строка не совпала — помечаем и отбрасываем или отправляем в отдельный sink
@@ -436,20 +439,20 @@ if match != null {
 ```vrl
 # Предполагаем, что источник Vector уже добавил hostname
 # Добавляем системные метрики через get_vector_metric
-.cpu_usage = get_vector_metric!("vector_process_cpu_seconds_total")?[0] ?? null
-.memory_usage = get_vector_metric!("vector_process_memory_bytes")?[0] ?? null
+.cpu_usage = get_vector_metric("vector_process_cpu_seconds_total")?.value ?? null
+.memory_usage = get_vector_metric("vector_process_memory_bytes")?.value ?? null
 
 # Классифицируем уровень критичности
-if includes(.message, r'\[.*\].*(error|fail|critical|panic)') {
+if match(.message, r'\[.*\].*(error|fail|critical|panic)') {
     .severity = "critical"
-} else if includes(.message, r'\[.*\].*(warn|warning)') {
+} else if match(.message, r'\[.*\].*(warn|warning)') {
     .severity = "warning"
 } else {
     .severity = "info"
 }
 
 # Извлекаем имя модуля ядра (если есть)
-.module = capture(.message, r'(\w+):')?.[0] ?? "kernel"
+.module = parse_regex(.message, r'(?P<module>\w+):')?.module ?? "kernel"
 ```
 
 ### Сценарий 5: Маскирование чувствительных данных в системных логах
@@ -465,11 +468,10 @@ if includes(.message, r'\[.*\].*(error|fail|critical|panic)') {
 
 # Маскируем секреты, попавшие в stdout приложений
 .message = redact(.message,
-    patterns: [
+    filters: [
         r'(?i)(password|secret|token|api_key)\s*[=:]\s*\S+',
         r'\b[A-Za-z0-9._%+-]+@(corp\.local|internal)\b'
-    ],
-    redact: "[REDACTED]"
+    ]
 )
 ```
 
@@ -480,22 +482,20 @@ if includes(.message, r'\[.*\].*(error|fail|critical|panic)') {
 ```vrl
 level = downcase(string!(.level ?? .severity ?? .priority ?? "info"))
 
-.level = case level {
-    "emerg" => "emergency",
-    "alert" => "alert",
-    "crit" => "critical",
-    "critical" => "critical",
-    "err" => "error",
-    "error" => "error",
-    "warning" => "warning",
-    "warn" => "warning",
-    "notice" => "notice",
-    "info" => "info",
-    "debug" => "debug",
-    "trace" => "trace",
-    "fatal" => "critical",
-    else => "info"
-}
+.level = if level == "emerg" { "emergency" }
+    else if level == "alert" { "alert" }
+    else if level == "crit" { "critical" }
+    else if level == "critical" { "critical" }
+    else if level == "err" { "error" }
+    else if level == "error" { "error" }
+    else if level == "warning" { "warning" }
+    else if level == "warn" { "warning" }
+    else if level == "notice" { "notice" }
+    else if level == "info" { "info" }
+    else if level == "debug" { "debug" }
+    else if level == "trace" { "trace" }
+    else if level == "fatal" { "critical" }
+    else { "info" }
 ```
 
 ### Сценарий 7: Выявление аномалий по частоте ошибок
@@ -504,9 +504,10 @@ level = downcase(string!(.level ?? .severity ?? .priority ?? "info"))
 
 ```vrl
 # Используем встроенные метрики Vector для оценки нагрузки
-error_rate = get_vector_metric!("component_received_events_total{component_id=\"~\", level=\"error\"}")?[0] ?? 0
+# aggregate_vector_metrics суммирует значения counter по тегу level=error
+error_count = aggregate_vector_metrics("sum", "component_received_events_total", tags: {"level": "error"}) ?? 0
 
-if error_rate > 1000 {
+if error_count > 1000 {
     # Снижаем детализацию: отбрасываем DEBUG/INFO
     if .level == "debug" || .level == "info" {
         abort
@@ -515,7 +516,9 @@ if error_rate > 1000 {
 
 # Или динамическое сэмплирование на основе внешней переменной
 sampling_rate = 0.1  # Можно вынести в enrichment table
-if .level == "info" && random_float() > sampling_rate {
+# random_float требует аргументы min/max и является fallible (v0.57)
+sample_val, err = random_float(0.0, 1.0)
+if err == null && .level == "info" && sample_val > sampling_rate {
     abort
 }
 ```
@@ -532,7 +535,7 @@ if .level == "info" && random_float() > sampling_rate {
 | `type mismatch` | Присваивание значения несовместимого типа | Проверьте тип поля через `type()` или используйте приведение |
 | `field does not exist` | Обращение к несуществующему полю | Используйте `exists(.field)` или `?.field` |
 | `unresolved reference` | Использование переменной до присваивания | Убедитесь, что переменная объявлена в текущей области видимости |
-| `regex compilation failed` | Неверное регулярное выражение | Проверьте синтаксис regex через `vector vrl` REPL |
+| `regex compilation failed` | Неверное регулярное выражение | Проверьте синтаксис regex через `vector vrl` |
 
 ### Диагностика во время выполнения
 
@@ -543,8 +546,12 @@ vector validate --deny-warnings /etc/vector/vector.yaml
 # Просмотр событий на этапе трансформации
 vector tap <transform_name>
 
-# Режим отладки VRL в REPL
-vector vrl --expression 'parse_json!(.message)'
+# Отладка VRL
+vector vrl 'parse_json!(.message)'
+# или с входными данными из файла
+vector vrl --input '{"message":"{\\"status\\":200}"}' 'parse_json!(string!(.message))'
+# флаг --print-object выводит изменённый объект, а не результат последнего выражения
+vector vrl --print-object --input event.json 'del(.user_info); .'
 
 # Просмотр логов Vector для диагностики ошибок VRL
 journalctl -u vector -f | grep -i "vrl\|remap\|parse_error"
@@ -589,7 +596,16 @@ idx = find(.tags, "error")
 if idx == null { ... }
 ```
 
-### Best Practices
+### Ограничения и крайние случаи
+
+*   **Нет циклов:** если вы пытаетесь реализовать рекурсивный обход без ограничения глубины — это приведёт к падению по лимиту стека. Используйте `map_keys(recursive: true)` для рекурсии.
+*   **Нет пользовательских функций:** общая логика, повторяющаяся в нескольких программах, должна быть вынесена в шаблоны (например, через `include` в `source` или внешний файл).
+*   **`parse_grok` требует точных паттернов.** Неверный паттерн приведёт к тихому отбрасыванию событий. Всегда проверяйте на реальных данных через `vector vrl`.
+*   **`random_float()` не детернирован и требует аргументы.** Функция fallible: `random_float(min, max)` требует диапазон. Для воспроизводимых тестов мокайте значение.
+*   **`now()` возвращает время Vector, а не время события.** Для корреляции используйте поле `@timestamp` или парсите время из сырого лога.
+*   **`http_request` блокирует обработку.** Используйте только в `remap` с низким throughput или в режиме агрегатора с достаточным количеством реплик.
+
+## Лучшие практики
 
 1.  **Обрабатывайте все fallible-функции.** Даже если вы «уверены» в формате данных, добавляйте `!` или кортежную обработку. Это убережёт от падения Vector при изменении формата логов.
 2.  **Выносите длинные программы во внешние файлы.** Используйте `file: "/etc/vector/transforms/parse.vrl"`. Это упрощает версионность и тестирование.
@@ -639,24 +655,7 @@ vector test /etc/vector/vector.yaml
 # → 1 test(s) passed
 ```
 
-### Ограничения и крайние случаи
-
-*   **Нет циклов:** если вы пытаетесь реализовать рекурсивный обход без ограничения глубины — это приведёт к падению по лимиту стека. Используйте `map_keys(recursive: true)` для рекурсии.
-*   **Нет пользовательских функций:** общая логика, повторяющаяся в нескольких программах, должна быть вынесена в шаблоны (например, через `include` в `source` или внешний файл).
-*   **`parse_grok` требует точных паттернов.** Неверный паттерн приведёт к тихому отбрасыванию событий. Всегда проверяйте на реальных данных через `vector vrl`.
-*   **`random_float()` не детерминирован.** Для воспроизводимых тестов используйте фиксированный сид или мокайте значение.
-*   **`now()` возвращает время Vector, а не время события.** Для корреляции используйте поле `@timestamp` или парсите время из сырого лога.
-*   **`http_request` блокирует обработку.** Используйте только в `remap` с низким throughput или в режиме агрегатора с достаточным количеством реплик.
-
----
-
 ## Применение VRL в Vector (DevOps/SRE)
-
-### Внешние VRL-файлы и live-перезагрузка
-
-*   `file: "/paths/program.vrl"` в `remap` — вынести программу во внешний файл.
-*   `--watch-config` — слежение за изменениями внешних VRL-файлов.
-*   `SIGHUP` — перезагрузка внешних VRL-файлов без рестарта (начиная с 2026 г.).
 
 ### Мониторинг качества трансформаций
 
@@ -675,7 +674,7 @@ vector test /etc/vector/vector.yaml
 
 ### Инструменты разработки
 
-*   **`vector vrl`** — встроенный интерактивный REPL (начиная с v0.56 содержит полный набор функций, включая Vector-специфичные).
+*   **`vector vrl`** — утилита для выполнения и отладки VRL-выражений. Принимает программу как позиционный аргумент; объект можно передать через stdin или `--input`. Флаг `--print-object` выводит изменённый объект, а не результат последнего выражения. Поддерживает чтение программы из файла через `--program`.
 *   **VRL Playground ([vrl.dev](https://vrl.dev))** — онлайн-отладчик скриптов (с 2026 добавлен селектор таймзоны и замер производительности).
 *   **Unit-тестирование:** секция `[[tests]]` в конфигурации, сценарии input → output; VRL-условия включая `assert`/`assert_eq`, проверка количества событий через `expected_event_count`.
 
@@ -683,4 +682,6 @@ vector test /etc/vector/vector.yaml
 
 *   [Vector Overview](./vector_overview.md) — общая архитектура Vector.
 *   [Practical Scenarios](./practical_scenarios.md) — применение VRL в пайплайнах Kafka и OpenSearch.
+*   [Vector Security](./vector_security.md) — TLS, аутентификация, секреты для VRL-трансформ.
+*   [Vector Reliability](./vector_reliability.md) — error handling и DLQ для VRL.
 *   [Official VRL documentation](https://vector.dev/docs/reference/vrl/) — полный справочник функций и синтаксиса.

@@ -1,15 +1,15 @@
 # Deployment с GitOps
 
-**Актуально для:** Kubernetes 1.30+ / Argo CD 2.12+ / Flux v2.3+
+**Актуально для:** Kubernetes 1.30+ / Argo CD 2.12+
 
-Интеграция Kubernetes Deployment с GitOps: Git как единственный источник правды (SSoT), автоматическая синхронизация через Argo CD и Flux, разрешение конфликтов с HPA, безопасный выкат конфигураций и SRE-протоколы отката.
+Интеграция Kubernetes Deployment с GitOps: Git как единственный источник правды (SSoT), автоматическая синхронизация через Argo CD, разрешение конфликтов с HPA, безопасный выкат конфигураций и SRE-протоколы отката.
 
 ## Предварительные требования (Prerequisites)
 
 - Локальный или on-premise кластер Kubernetes (v1.30+).
-- Установленный GitOps-контроллер (Argo CD v2.12+ или Flux v2.3+).
+- Установленный GitOps-контроллер (Argo CD v2.12+).
 - Git-репозиторий с декларативными манифестами приложений (Kustomize или чистые манифесты).
-- Утилиты командной строки `kubectl`, а также `argocd` CLI или `flux` CLI.
+- Утилиты командной строки `kubectl` и `argocd` CLI.
 - Базовое понимание жизненного цикла и манифестов [Deployment](./index.md).
 
 ## 1. Определения
@@ -21,7 +21,7 @@
 - **Server-Side Apply (SSA)** — механизм Kubernetes API (активен по умолчанию начиная с 1.22), управляющий правами владения отдельными полями объектов через метаданные `metadata.managedFields`.
 - **Sync Waves & Hooks** — механизмы управления фазами и строгой очередностью развертывания ресурсов в GitOps (например, запуск миграции БД строго до обновления Deployment).
 
-> Общие концепции методологии GitOps, сравнение pull- и push-моделей см. в [GitOps Overview](../../../GitOps/GitOps_overview.md). Детальная архитектура контроллеров представлена в [Argo CD Overview](../../../GitOps/ArgoCD/argocd_overview.md) и [Flux](../../../GitOps/flux.md).
+> Общие концепции методологии GitOps, сравнение pull- и push-моделей см. в [GitOps Overview](../../../GitOps/GitOps_overview.md). Детальная архитектура контроллера представлена в [Argo CD Overview](../../../GitOps/ArgoCD/argocd_overview.md).
 
 ## 2. Базовые концепции
 
@@ -103,48 +103,7 @@ spec:
         - /spec/replicas
 ```
 
-### Сценарий 2: Flux Kustomization для Deployment
-
-Декларативное описание синхронизации через контроллеры Flux (`source-controller` и `kustomize-controller`) с проверкой здоровья выката.
-
-```yaml
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: billing-service
-  namespace: flux-system
-spec:
-  interval: 5m
-  retryInterval: 1m
-  timeout: 4m
-  prune: true
-  wait: true
-  sourceRef:
-    kind: GitRepository
-    name: internal-manifests
-  path: ./environments/production/billing-service
-  targetNamespace: billing
-  healthChecks:
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: billing-service
-      namespace: billing
-  patches:
-    # Исключение управления replicas при совместном использовании с HPA
-    - patch: |
-        $patch: delete
-        apiVersion: apps/v1
-        kind: Deployment
-        metadata:
-          name: billing-service
-        spec:
-          replicas: 1
-      target:
-        kind: Deployment
-        name: billing-service
-```
-
-### Сценарий 3: Разрешение конфликта между GitOps и HPA за `spec.replicas`
+### Сценарий 2: Разрешение конфликта между GitOps и HPA за `spec.replicas`
 
 Наиболее частая проблема SRE при переводе Deployment на GitOps: если в манифесте Git зафиксировано `replicas: 3`, а `HorizontalPodAutoscaler` смасштабировал нагрузку до 8 реплик при всплеске трафика, GitOps-контроллер с `selfHeal: true` воспримет это как дрейф и принудительно уменьшит количество реплик обратно до 3, вызывая деградацию сервиса.
 
@@ -185,7 +144,7 @@ spec:
 > [!IMPORTANT]
 > При использовании Argo CD необходимо активировать флаг `syncOptions: [RespectIgnoreDifferences=true]`, иначе фоновый цикл `selfHeal` проигнорирует директиву `ignoreDifferences` во время автоматического применения исправлений.
 
-### Сценарий 4: Автоматический перезапуск Deployment при обновлении ConfigMap и Secret
+### Сценарий 3: Автоматический перезапуск Deployment при обновлении ConfigMap и Secret
 
 В Kubernetes изменение содержимого `ConfigMap` или `Secret` **не инициирует** пересоздание подов в `Deployment`, если значения передаются через переменные окружения (`env`, `envFrom`) или монтируются через `subPath`. Для GitOps существует три надежных решения:
 
@@ -232,7 +191,7 @@ metadata:
 
 > Подробнее о работе контроллера перезапуска см. в [Обзор Reloader](../../../Kubernetes/ToolsUtilities/reloader/reloader_overview.md).
 
-### Сценарий 5: Порядок выката (Sync Waves & Hooks) для Deployment и миграций БД
+### Сценарий 4: Порядок выката (Sync Waves & Hooks) для Deployment и миграций БД
 
 В распределенных системах выкат новой версии Deployment требует предварительного применения миграций схемы базы данных. В Argo CD порядок задается волнами синхронизации:
 
@@ -291,7 +250,7 @@ spec:
 
 Если Job в Wave 1 завершится с ошибкой (non-zero exit code), Argo CD прерывает синхронизацию и **не запускает** Wave 2. Существующий Deployment продолжает обслуживать трафик на старой версии без простоя.
 
-### Сценарий 6: Процедуры отката (Rollback Runbooks)
+### Сценарий 5: Процедуры отката (Rollback Runbooks)
 
 #### Вариант 1: Штатный откат через Git Revert (Рекомендуется)
 Полностью сохраняет идеологию GitOps и аудит изменений в репозитории.
@@ -348,8 +307,6 @@ argocd app set billing-service --sync-policy automated --auto-prune --self-heal
 | Операция | Команда CLI | Назначение / Ожидаемый результат |
 |:---------|:------------|:---------------------------------|
 | **Проверка дрейфа** | `argocd app diff <app-name>` | Отображает разницу между Git и живым Deployment в кластере |
-| **Проверка состояния Flux** | `flux get kustomizations <app-name>` | Проверяет ревизию, статус применения и health check |
-| **Принудительная реконсиляция** | `flux reconcile kustomization <app-name> --with-source` | Заставляет Flux немедленно подтянуть изменения из Git |
 | **Принудительная синхронизация** | `argocd app sync <app-name> --force` | Принудительно применяет манифесты в обход зависших операций |
 | **Прерывание операции выката** | `argocd app terminate-op <app-name>` | Останавливает зависший sync при блокировке волны хуков |
 | **Проверка статуса подов** | `kubectl rollout status deployment/<app> -n <ns>` | Возвращает прогресс развертывания реплик |
@@ -378,14 +335,6 @@ argocd app get billing-service
 # → Path:               environments/production/billing-service
 # → Sync Status:        Synced to main (9f2b8a1)
 # → Health Status:      Healthy
-
-# 3. Ручной форсированный запуск синхронизации во Flux
-flux reconcile kustomization billing-service --with-source
-# → ► fetching GitRepository 'flux-system/internal-manifests'
-# → ✔ stored artifact for commit '9f2b8a1'
-# → ► reconciling Kustomization 'flux-system/billing-service'
-# → ✔ applied 3 resources
-# → ✔ health check passed for apps/v1/Deployment billing/billing-service
 ```
 
 ---
@@ -453,7 +402,7 @@ flux reconcile kustomization billing-service --with-source
 ### Сценарий 4: Конфликт владения полями Server-Side Apply (`ApplyPatchesConflict`)
 
 - **Симптомы:** Ошибка синхронизации `Apply failed with status 409: ApplyPatchesConflict`.
-- **Причина:** Другой контроллер или пользователь применил изменения через классический `kubectl apply` с менеджером полей `kubectl-client-side-apply`, перекрыв поля, которыми управляет GitOps (`argocd-application-controller` или `kustomize-controller`).
+- **Причина:** Другой контроллер или пользователь применил изменения через классический `kubectl apply` с менеджером полей `kubectl-client-side-apply`, перекрыв поля, которыми управляет GitOps (`argocd-application-controller`).
 - **Диагностика:**
   ```bash
   kubectl get deployment billing-service -n billing -o yaml | grep -A 10 managedFields
@@ -497,7 +446,7 @@ flux reconcile kustomization billing-service --with-source
 4. **Валидация манифестов в CI перед коммитом:**
    - Интегрируйте в pre-commit или pull-request проверки линтеры `kubeconform` со строгой валидацией Kubernetes OpenAPI схем, исключая синтаксические ошибки манифестов до их попадания в Git.
 5. **Согласование таймаутов:**
-   - Значение `spec.progressDeadlineSeconds` в манифесте Deployment (рекомендуется от 300 до 600 секунд) должно быть меньше общего таймаута синхронизации GitOps-оператора (`spec.timeout` во Flux или `retry.backoff.maxDuration` в Argo CD), чтобы контроллер успел получить достоверный статус ошибки выката до разрыва сессии.
+    - Значение `spec.progressDeadlineSeconds` в манифесте Deployment (рекомендуется от 300 до 600 секунд) должно быть меньше общего таймаута синхронизации GitOps-оператора (`retry.backoff.maxDuration` в Argo CD), чтобы контроллер успел получить достоверный статус ошибки выката до разрыва сессии.
 6. **Zero-Downtime параметры Deployment:**
    - Для гарантированной непрерывности обслуживания в производственной среде задавайте `strategy.rollingUpdate.maxUnavailable: 0` и `strategy.rollingUpdate.maxSurge: 25%` (или `1`), а также корректные `readinessProbe` и обработку сигнала `SIGTERM` в контейнерах (`terminationGracePeriodSeconds`).
 

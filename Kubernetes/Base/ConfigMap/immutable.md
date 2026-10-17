@@ -606,7 +606,7 @@ kubectl get configmaps -n production -o name | grep "app-config-" | wc -l
 
 Поскольку Kubernetes не очищает несвязанные ConfigMap автоматически, необходимо настроить процесс ротации:
 
-#### А. Автоматическая очистка средствами GitOps (Argo CD и Flux)
+#### А. Автоматическая очистка средствами GitOps (Argo CD)
 
 - **В Argo CD:** активируйте механизм автоматического удаления неиспользуемых ресурсов в `Application`:
   ```yaml
@@ -616,11 +616,7 @@ kubectl get configmaps -n production -o name | grep "app-config-" | wc -l
         prune: true     # Автоматически удаляет старые ConfigMap, исчезнувшие из Git
         selfHeal: true
   ```
-- **В Flux CD:** укажите флаг в ресурсе `Kustomization`:
-  ```yaml
-  spec:
-    prune: true
-  ```
+```
 
 #### Б. Эксплуатационный CronJob для очистки орфанных ConfigMap
 

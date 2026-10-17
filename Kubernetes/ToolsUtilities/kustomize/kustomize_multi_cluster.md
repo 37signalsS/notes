@@ -51,7 +51,7 @@ infra-repo/
 
 | Модель | Описание | Когда использовать |
 | :--- | :--- | :--- |
-| **Directory promotion** | Все среды в одной ветке, разные overlay'и | Стандартный GitOps (ArgoCD/Flux) |
+| **Directory promotion** | Все среды в одной ветке, разные overlay'и | Стандартный GitOps (ArgoCD) |
 | **Branch promotion** | Каждая среда — отдельная ветка | Простые пайплайны, малая команда |
 | **Tag promotion** | Git-tag определяет версию | Команды с semver-релизным циклом |
 | **Hub-and-Spoke** | Центральный ArgoCD управляет spoke-кластерами | 10–50 кластеров |
@@ -245,35 +245,7 @@ spec:
           - ServerSideApply=true
 ```
 
-### 3.3. Flux multi-cluster: pull-per-cluster
-
-```yaml
-# Каждый кластер имеет свою Kustomization
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps
-  namespace: flux-system
-spec:
-  interval: 10m
-  sourceRef:
-    kind: GitRepository
-    name: infra-gitops
-  path: ./clusters/prod-eu/apps
-  prune: true
-  wait: true
-  healthChecks:
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: web-server
-      namespace: web-server
-  postBuild:
-    substituteFrom:
-      - kind: ConfigMap
-        name: cluster-vars
-```
-
-### 3.4. Multi-tenancy:.namespace-per-team с RBAC
+### 3.4. Multi-tenancy: namespace-per-team с RBAC
 
 ```yaml
 # tenants/team-alpha/base/namespace.yaml
@@ -365,4 +337,4 @@ kubectl wait --for=condition=available deployment/web-server -n web-server --tim
 
 - [Multi-cluster паттерны в GitOps](../../../GitOps/Concepts/multi_cluster_patterns.md) — общая архитектура multi-cluster
 - [Multi-tenancy в Kubernetes](../../Concepts/multi-tenancy.md) — модели изоляции тенантов
-- [Интеграция в CD](./kustomize_cd_integration.md) — ArgoCD/Flux интеграция
+- [Интеграция в CD](./kustomize_cd_integration.md) — ArgoCD интеграция

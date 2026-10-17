@@ -1,4 +1,4 @@
-**Актуально для:** Argo CD v3.x, Flux v2.9.x, Kubernetes 1.29–1.36
+**Актуально для:** Argo CD v3.x, Kubernetes 1.29–1.36
 
 # GitOps для фронтенда
 
@@ -8,12 +8,12 @@
 - **Drift Detection** — обнаружение расхождений между состоянием в Git и реальным состоянием кластера.
 - **Progressive Delivery** — постепенная поставка: canary, blue-green, feature flags.
 - **Argo CD** — GitOps-контроллер для Kubernetes с веб-UI и RBAC.
-- **Flux CD** — GitOps-контроллер от CNCF, интегрированный с Kubernetes API.
 - **ApplicationSet** — Argo CD CRD для управления множеством приложений из одного манифеста.
 - **Image Updater** — Argo CD компонент для автоматического обновления тегов образов.
+- **ImageUpdater CR** — CRD `imageupdaters.argocd-image-updater.argoproj.io` v1.x для конфигурации политик обновления и Git write-back.
 - **Preview-окружение** — временный namespace/environment, создаваемый автоматически для каждого MR/PR.
 - **Sync wave** — механизм упорядочивания применения ресурсов в Argo CD.
-- **Ignore difference** — правило Argo CD/Flux для игнорирования управляемых полей (например, replicas, controlled by HPA).
+- **Ignore difference** — правило Argo CD для игнорирования управляемых полей (например, replicas, controlled by HPA).
 - **Fleet repository** — Git-репозиторий, содержащий все манифесты GitOps-контроллера.
 
 ---
@@ -22,12 +22,12 @@
 
 - **Kubernetes:** кластер v1.29+ с включёнными стабильными API-группами (`apps/v1`, `networking.k8s.io/v1`, `autoscaling/v2`).
 - **Argo CD:** v3.x установлен в namespace `argocd`; CLI `argocd` v3.x настроен (`argocd login`).
-- **Flux:** v2.9.x установлен в namespace `flux-system`; CLI `flux` v2.9.x настроен.
-- **Git-репозиторий:** HTTPS/SSH доступ для контроллера; deploy key или robot account с правами `read` на манифесты и `write` для Image Updater/Flux Image Automation.
+- **Argo CD Image Updater:** v1.x установлен в namespace `argocd` для автоматического обновления образов.
+- **Git-репозиторий:** HTTPS/SSH доступ для контроллера; deploy key или robot account с правами `read` на манифесты и `write` для Image Updater (Git write-back).
 - **Registry:** внутренний OCI-реестр с поддержкой digest и Referrers API; контроллеры имеют права на чтение образов.
 - **Ingress/Service:** базовый доступ к приложениям через Ingress или Gateway API для preview-окружений.
 - **CI/CD:** пайплайн собирает образ, генерирует digest, обновляет тег/манифест в Git или триггерит Image Updater.
-- **RBAC:** сервис-аккаунты Argo CD/Flux имеют минимальные права; namespace-изоляция для preview/production.
+- **RBAC:** сервис-аккаунты Argo CD имеют минимальные права; namespace-изоляция для preview/production.
 - **Сеть:** egress от контроллеров к registry, Git-хосту, Vault; ingress к UI Argo CD.
 
 ---
@@ -38,7 +38,7 @@
 
 Фронтенд имеет специфику, которая хорошо ложится на GitOps:
 - **Статика и манифесты:** `dist/`, `Ingress`, `ConfigMap` — всё declarative.
-- **Preview-окружения:** каждый MR → отдельное приложение в Argo CD/Flux; команда QA/дизайна видит изменения без ручного деплоя.
+- **Preview-окружения:** каждый MR → отдельное приложение в Argo CD; команда QA/дизайна видит изменения без ручного деплоя.
 - **Откат:** `git revert` + синхронизация — мгновенный откат без доступа к кластеру.
 - **Аудит:** история Git = история деплоев, каждый коммит привязан к MR/approval.
 - **Immutable артефакты:** фронтенд-сборка — это неизменяемый образ; версия в кластере = digest, а не тег.
@@ -52,12 +52,12 @@ CI (сборка образа, digest)
   │
   ├─► Манифест обновлён в Git (tag или digest)
   │     или
-  ├─► Image Updater / Flux Image Automation обновил тег в Git
+  ├─► Image Updater обновил тег в Git
   │
   ▼
 Git-репозиторий (fleet repo)
   │
-  ├─► Argo CD / Flux обнаруживает изменение
+  ├─► Argo CD обнаруживает изменение
   │     │
   │     ├─► Рендеринг манифестов (Kustomize/Helm/Jsonnet)
   │     │
@@ -82,9 +82,9 @@ Kubernetes (Deployment, Service, Ingress/Gateway, HPA, PDB)
 
 ### Drift Detection и auto-heal
 
-Argo CD и Flux сравнивают состояние кластера с Git:
+Argo CD сравнивает состояние кластера с Git:
+
 - **Argo CD:** `argocd app get frontend` → `OutOfSync` означает дрейф.
-- **Flux:** `flux get kustomizations` → статус `ReconciliationSucceeded/Failed`.
 - **Auto-heal:** автоматическое исправление дрейфа (опасно в production без approval).
 - **Manual:** дрейф зафиксирован, требуется ручное исправление через Git.
 
@@ -93,7 +93,7 @@ Argo CD и Flux сравнивают состояние кластера с Git:
 В GitOps образ — это артефакт между CI и CD:
 - **Digest pinning:** production использует `@sha256:...`; теги допустимы только для dev/staging.
 - **Referrers API:** attestation (SBOM, Cosign) прикрепляются к образу; контроллер проверяет подпись перед деплоем.
-- **Image Policy:** Flux или Argo CD Image Updater фильтруют допустимые теги (semver, regex).
+- **Image Policy:** Argo CD Image Updater фильтрует допустимые теги через `updateStrategy` и `allowTags`/`ignoreTags` в `ImageUpdater` CR (semver, regex).
 
 Детали — в **[GitOps: образы контейнеров и их жизненный цикл](../../GitOps/Concepts/containerization_and_image_storage.md)**.
 
@@ -186,67 +186,86 @@ spec:
 - *OutOfSync после rollout:* HPA управляет `replicas` → добавьте `ignoreDifferences` в ArgoCD.
 - *Self-heal конфликтует с manual deploy:* отключите `selfHeal` для production.
 
-### Сценарий 2: Flux Image Automation для автоматического обновления тегов
+### Сценарий 2: Argo CD Image Updater для автоматического обновления тегов
 
-```yaml
-# flux-image-automation.yaml
-apiVersion: image.toolkit.fluxcd.io/v1beta2
-kind: ImageUpdateAutomation
-metadata:
-  name: frontend
-  namespace: flux-system
-spec:
-  interval: 1m
-  sourceRef:
-    kind: GitRepository
-    name: frontend
-  git:
-    checkout:
-      ref:
-        branch: main
-    commit:
-      author:
-        email: flux@example.com
-        name: Flux
-      messageTemplate: "chore(frontend): update image to {{.NewVersion}}"
-  update:
-    path: ./k8s/production
-    strategy: Setters
----
-# flux-image-repository.yaml
-apiVersion: image.toolkit.fluxcd.io/v1beta2
-kind: ImageRepository
-metadata:
-  name: frontend
-  namespace: flux-system
-spec:
-  image: registry.example.com/frontend
-  interval: 1m
----
-# flux-image-policy.yaml
-apiVersion: image.toolkit.fluxcd.io/v1beta2
-kind: ImagePolicy
-metadata:
-  name: frontend
-  namespace: flux-system
-spec:
-  imageRepositoryRef:
-    name: frontend
-  policy:
-    semver:
-      range: ">=1.0.0 <2.0.0"
+Argo CD Image Updater автоматически сканирует реестр, выбирает целевой тег по semver-политике и коммитит обновление в Git через `ImageUpdater` CR — единый механизм для отслеживания образов, выбора тега и записи в Git.
+
+**1. Установка Argo CD Image Updater:**
+
+```bash
+helm repo add argo https://argoproj.github.io/argo-helm
+helm install argocd-image-updater argo/argocd-image-updater \
+  --namespace argocd \
+  --version 1.3.x
+# → NAME: argocd-image-updater
+# → STATUS: deployed
 ```
 
+**2. Конфигурация Git credentials для write-back:**
+
+```bash
+# Создание SSH deploy key с правами на push
+kubectl create secret generic git-ssh-deploykey \
+  --from-file=identity=/path/to/id_ed25519 \
+  --from-file=known_hosts=/path/to/known_hosts \
+  -n argocd
+```
+
+**3. ImageUpdater CR для frontend production:**
+
+```yaml
+# argocd-image-updater-frontend.yaml
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: frontend-prod-updater
+  namespace: argocd
+spec:
+  writeBackConfig:
+    method: "git"
+    gitConfig:
+      repository: "git@github.com:org/frontend-gitops.git"
+      branch: "main"
+      writeBackTarget: "helmvalues:./overlays/production/values.yaml"
+      user: "Argo CD Image Updater"
+      email: "argocd-image-updater@example.com"
+      commitUser: "git-ssh-deploykey"
+  applicationRefs:
+  - namePattern: "frontend-production"
+    images:
+    - alias: "frontend"
+      imageName: "registry.example.com/frontend/app:^1.0"
+      commonUpdateSettings:
+        updateStrategy: "semver"
+        allowTags: "^v?1\\.[0-9]+\\.[0-9]+$"
+        ignoreTags: ["*alpha*", "*beta*", "*rc*", "*dev*"]
+        pullSecret: "secret://argocd/registry-robot-secret"
+        platforms:
+          - "linux/amd64"
+```
+
+**Эквивалентность компонентов:**
+
+| Компонент | Конфигурация |
+| :--- | :--- |
+| `ImageRepository` | `ImageUpdater.spec.applicationRefs[].images[]` с `pullSecret` и `platforms` |
+| `ImagePolicy` | `commonUpdateSettings.updateStrategy` + `allowTags`/`ignoreTags` |
+| `ImageUpdateAutomation` | `writeBackConfig` (method: `git`, `gitConfig`) |
+| `GitRepository` | `Application.spec.source.repoURL` + `writeBackConfig.gitConfig.repository` |
+
+> **Примечание:** таблица показывает, как Flux-компоненты (`ImageRepository`, `ImagePolicy`, `ImageUpdateAutomation`, `GitRepository`) соответствуют параметрам `ImageUpdater` CR в Argo CD — удобно при миграции с Flux.
+
 **Валидация:**
-- `flux get image automations` — `frontend` имеет статус `Ready`.
-- После нового push образа в registry, через 1–2 минуты в Git появляется коммит с обновлённым тегом.
-- `flux get kustomizations` — kustomization production `ReconciliationSucceeded`.
+- `kubectl get imageupdater frontend-prod-updater -n argocd` — `ImageUpdater` CR применён.
+- `argocd app get frontend-production` — статус `Synced`, `Healthy`.
+- После нового push образа в registry, через 1–2 минуты Image Updater обновляет тег в `values.yaml` и Argo CD автоматически синхронизирует.
+- `kubectl describe imageupdater frontend-prod-updater -n argocd` — статус последнего сканирования и commit hash.
 
 **Troubleshooting:**
-- *Flux не обновляет тег:* проверьте `imageRepositoryRef`, registry credentials, `flux get sources git`.
-- *Неправильный тег:* проверьте `imagePolicy` semver range; используйте `latest` только для dev.
-- *Race condition:* два контроллера обновляют один файл → используйте `strategy: Setters` или разные пути.
-- *Interval слишком большой:* уменьшите `interval` в `ImageRepository` и `ImageUpdateAutomation`.
+- *Image Updater не обновляет тег:* проверьте `applicationRefs.namePattern` (должен совпадать с именем Argo CD Application), `imageName`, `pullSecret`, `argocd-image-updater` логи.
+- *Неправильный тег:* проверьте `allowTags`/`ignoreTags` regex и `updateStrategy`; используйте `newest-build` для простого latest.
+- *Git write-back fails:* проверьте SSH deploy key, права на запись в репо, `gitConfig.repository` URL.
+- *Commit race condition:* два updaters обновляют один файл → используйте отдельные `writeBackTarget` или отключите один из updaters.
 
 ### Сценарий 3: Drift Detection и manual reconciliation
 
@@ -265,23 +284,12 @@ argocd app sync frontend-production
 argocd app sync frontend-production --force
 ```
 
-```bash
-# Flux: проверка статуса
-flux get kustomizations
-# → production   ReconciliationSucceeded
-
-# Принудительная реконсиляция
-flux reconcile kustomization production --with-source
-```
-
 **Валидация:**
 - После `argocd app sync` статус → `Synced`, `Healthy`.
-- После `flux reconcile` kustomization переходит в `Reconciling` → `Succeeded`.
 
 **Troubleshooting:**
 - *Дрейф ConfigMap/Secret:* изменения в кластере не должны применяться императивно — всё через Git.
 - *Argo CD force sync не помогает:* проверьте `ignoreDifferences` и `resource.exclusions`.
-- *Flux постоянно OutOfSync:* проверьте патч `.spec.ignore` в Kustomization.
 
 ### Сценарий 4: Progressive Delivery через Argo Rollouts или Flagger
 
@@ -410,18 +418,14 @@ deploy_preview:
 | `argocd app history frontend-production` | История деплоев | # → список revision с изменениями |
 | `argocd app rollback frontend-production <revision>` | Откат к ревизии | # → rolled back |
 | `argocd app set frontend-production --ignore-diff 'spec.replicas'` | Игнорирование дрейфа | # → OutOfSync исчезнет для replicas |
-| `argocd delete app frontend-preview-42` | Удаление preview | # → app deleted |
-| `flux get kustomizations` | Статус Flux | # → ReconciliationSucceeded/Failed |
-| `flux get sources git` | Git-источники | # → Ready, последний коммит |
-| `flux reconcile kustomization production --with-source` | Принудительная реконсиляция | # → реконсиляция запущена |
-| `flux get image automations` | Image Automation | # → Ready, последний коммит |
+| `argocd app delete frontend-preview-42` | Удаление preview | # → app deleted |
+| `kubectl get imageupdaters -n argocd` | ImageUpdater CR | # → список конфигураций |
+| `kubectl describe imageupdater frontend-prod-updater -n argocd` | Статус Image Updater | # → статус последнего сканирования |
 | `kubectl-argo-rollouts get rollout frontend-ssr` | Статус Rollout | # → шаги canary, paused/running |
 | `kubectl-argo-rollouts abort rollout frontend-ssr` | Отмена rollout | # → aborted |
 | `kubectl-argo-rollouts promote frontend-ssr` | Продвижение шага | # → следующий шаг canary |
 | `kubectl get applications -n argocd` | Список приложений | # → Synced/OutOfSync |
 | `kubectl get appprojects -n argocd` | Проекты Argo CD | # → список проектов |
-| `kubectl get gitrepositories -n flux-system` | Git-репозитории Flux | # → Ready |
-| `kubectl get imagepolicies -n flux-system` | Image Policy | # → Ready |
 | `argocd admin settings rbac can role:dev get applications dev/*` | Проверка RBAC | # → yes/no |
 
 ---
@@ -431,8 +435,7 @@ deploy_preview:
 - **Argo CD UI:** приложение `frontend-production` имеет статус `Synced`, здоровье `Healthy`.
 - **Drift detection:** после ручного изменения ConfigMap в кластере Argo CD показывает `OutOfSync`.
 - **Preview apps:** для каждого MR создаётся приложение `frontend-preview-<number>`.
-- **Image Updater:** тег образа в Git обновляется автоматически при новом image push.
-- **Flux:** `flux get kustomizations` — все kustomizations имеют статус `ReconciliationSucceeded`.
+- **Image Updater:** тег образа в Git обновляется автоматически при новом image push (`ImageUpdater` CR в неймспейсе `argocd`).
 - **Auto-heal:** дрейф исправляется автоматически в течение 3 минут (sync interval).
 - **Rollout status:** `kubectl-argo-rollouts get rollout` показывает текущий шаг canary.
 - **RBAC:** `argocd admin settings rbac can` возвращает `yes` для разрешённых ролей.
@@ -446,16 +449,15 @@ deploy_preview:
 | :--- | :--- | :--- |
 | Argo CD показывает OutOfSync | Дрейф ConfigMap/Secret | Проверить diff, внести изменения в Git |
 | Preview app не создаётся | ApplicationSet не видит MR | Проверить GitHub token, permissions |
-| Image Updater не обновляет тег | Нет прав на запись в Git | Проверить service account, Git credentials |
-| Flux не подтягивает изменения | Interval слишком большой | Уменьшить `--watch-all` или interval |
-| Дрейф накапливается | Ручные изменения в кластере | Включить alerts на drift; `autoHeal: false` в prod |
+| Image Updater не обновляет тег | `applicationRefs` не совпадает с Application, либо нет прав на запись в Git | Проверить `namePattern`, Git credentials, `argocd-image-updater` логи |
+| Image Updater не сканирует образ | `pullSecret` или registry недоступен | Проверить `pullSecret`, `imageName`, registry connectivity |
+| Дрейф накапливается | Ручные изменения в кластере | Включить alerts на drift; `selfHeal: true` в prod |
 | Kustomize конфликтует | Слишком много оверлеев | Использовать Helm или Jsonnet для сложных случаев |
 | Argo CD UI не доступен | Ingress/сертификат | Проверить `argocd-server` service, cert-manager |
 | Медленная синхронизация | Большое количество файлов | Использовать `resource.exclusions` или Helm |
 | HPA конфликтует с GitOps | Git отслеживает `replicas` | Добавить `ignoreDifferences` в ArgoCD |
 | Canary зависает | Analysis template падает | Проверить Prometheus, пороговые значения |
 | Preview namespace не очищается | Нет TTL/Prune | Настроить `argocd-delete-preview` или cleanup job |
-| Flux Image Automation не коммитит | Git credentials истекли | Проверить secret с deploy key |
 | RBAC запрещает sync | AppProject ограничения | Проверить destination, source Whitelist |
 | Stale preview-окружения | MR закрыт без cleanup | Добавить webhook на merge/close для удаления |
 
@@ -476,12 +478,12 @@ deploy_preview:
 
 - **Graceful shutdown preview-окружений:** Argo CD при `Prune=true` удаляет namespace; убедитесь, что приложение корректно обрабатывает `SIGTERM` и `terminationGracePeriodSeconds`.
 - **ApplicationSet RBAC:** права на `applicationsets` должны быть только у администраторов; шаблон `project` не должен быть шаблонизирован из данных MR для недоверенных источников.
-- **Flux vs Argo CD для preview:** Argo CD ApplicationSet с `pullRequest` генератором — самый простой вариант для preview. Flux требует кастомного controller или Kustomization per branch.
-- **HPA и GitOps:** HPA управляет `replicas`; Git должен хранить статический `replicas` (например, 2), а не актуальный. Добавьте `ignoreDifferences` в Argo CD или `.spec.ignore` в Flux Kustomization.
+- **Argo CD для preview:** Argo CD ApplicationSet с `pullRequest` генератором — самый простой вариант для preview. Поддерживает TTL/Prune для автоочистки.
+- **HPA и GitOps:** HPA управляет `replicas`; Git должен хранить статический `replicas` (например, 2), а не актуальный. Добавьте `ignoreDifferences` в Argo CD для `spec.replicas`.
 - **Cache invalidation для статики:** при обновлении фронтенда CDN кэширует старые assets; используйте fingerprinting (contenthash) в именах файлов илиPurge CDN cache через webhook после успешного sync.
 - **Multi-cluster GitOps:** ApplicationSet с `Cluster Generator` или `Matrix Generator` для деплоя одного фронтенда на несколько кластеров (hub-spoke).
 - **Drift Detection в production:** включите алерты на `OutOfSync` в production; дрейф — симптом проблемы, а не решение.
-- **Флот (fleet) vs per-app репозиторий:** fleet repo хранит все приложения; per-app repo — для команд с полной автономией. Оба варианта поддерживаются Argo CD и Flux.
+- **Fleet (fleet) vs per-app репозиторий:** fleet repo хранит все приложения; per-app repo — для команд с полной автономией. Оба варианта поддерживаются Argo CD.
 - **Sync waves и hooks:** Argo CD поддерживает `wave` и `hook` для фронтенда, который зависит от backend (поднять backend API, затем frontend Ingress).
 - **SSO и RBAC:** Argo CD поддерживает Dex/GitLab/GitHub OIDC; RBAC в `argocd-rbac-cm` ограничивает доступ к namespace/project. Для фронтенд-команды — read-only доступ к production, write к dev/preview.
 
@@ -491,10 +493,10 @@ deploy_preview:
 
 1. Используйте Git как единственный источник истины; запретите `kubectl edit/apply` в production.
 2. Включите drift detection alerts; дрейф — симптом проблемы, а не решение.
-3. Для preview-окружений используйте Argo CD ApplicationSet с TTL/Prune; для Flux — кастомные генераторы или Kustomizations per branch.
+3. Для preview-окружений используйте Argo CD ApplicationSet с TTL/Prune (автоочистка preview после merge/close MR).
 4. Применяйте `autoHeal: false` в production; дрейф должен быть явно подтверждён через PR.
 5. Используйте digest pinning для production образов; теги — только для dev/staging.
-6. Настройте RBAC Argo CD/Flux: каждый проект имеет доступ только к своим namespace.
+6. Настройте RBAC Argo CD: каждый проект имеет доступ только к своим namespace.
 7. Для Progressive Delivery используйте Argo Rollouts или Flagger вместе с GitOps; для фронтенда это особенно полезно при SSR/SSG.
 8. Храните конфигурацию GitOps-контроллера в отдельном репозитории (fleet repo).
 9. Используйте ignore differences для managed полей (`replicas`, `status`, HPA-managed values).
@@ -512,3 +514,4 @@ deploy_preview:
 
 - **[GitOps: обзор](../../GitOps/GitOps_overview.md)** — принципы, паттерны, сравнение с классическим CD.
 - **[Прогрессивная доставка в GitOps](../../GitOps/Concepts/progressive_delivery_gitops.md)** — Argo Rollouts, Flagger, canary.
+- **[Argo CD Image Updater](../../GitOps/ArgoCD/argocd_image_updater.md)** — конфигурация автоматического обновления образов через `ImageUpdater` CR.

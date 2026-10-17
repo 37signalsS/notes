@@ -1,5 +1,7 @@
 # Входящий шлюз (Ingress Gateway) в Istio
 
+**Актуально для:** Istio 1.29.x / 1.30+ / 1.31
+
 ## Определения
 
 **Ingress Gateway** — выделенный экземпляр прокси Envoy на границе меша, принимающий внешний (north-south) трафик кластера (HTTP/HTTPS/gRPC, TCP/TLS) и направляющий его к сервисам внутри меша. В отличие от sidecar-прокси, который обслуживает только свою рабочую нагрузку, ingress gateway обслуживает всё внешнее «входящее» направление и сам является частью меша (он может применять к проходящему трафику те же политики, что и обычные сервисы).
@@ -239,7 +241,7 @@ spec:
     tls:
       mode: Passthrough
 ---
-apiVersion: gateway.networking.k8s.io/v1alpha2
+apiVersion: gateway.networking.k8s.io/v1
 kind: TLSRoute
 metadata:
   name: secure-app
@@ -372,7 +374,7 @@ istioctl proxy-config listener deploy/istio-ingressgateway -n istio-ingress
 istioctl proxy-config route deploy/istio-ingressgateway -n istio-ingress --name http.8080
 
 # Кластеры бэкендов
-istioctl proxy-config cluster deploy/istio-ingressgateway -n istio-ingress | grep -E "outbound|stricode"
+istioctl proxy-config cluster deploy/istio-ingressgateway -n istio-ingress | grep -E "outbound|static"
 
 # Логи запросов шлюза (access-логи)
 kubectl logs -n istio-ingress deploy/istio-ingressgateway --tail=50 | grep "app.example.com"
@@ -385,7 +387,7 @@ istioctl analyze
 
 ---
 
-## Типичные ошибки и устранение неполадок
+## Устранение неполадок
 
 | Симптом | Причина | Решение |
 | :--- | :--- | :--- |
@@ -399,6 +401,55 @@ istioctl analyze
 
 ---
 
+## Операции и команды
+
+### Управление ingress gateway
+
+| Действие | Команда |
+| :--- | :--- |
+| Развернуть шлюз через Helm | `helm install istio-ingress istio/gateway -n istio-ingress --create-namespace --set service.type=LoadBalancer` |
+| Развернуть через istioctl | `istioctl install --set profile=ingress --set components.ingressGateways[0].enabled=true -y` |
+| Статус подов | `kubectl get pods -n istio-ingress` |
+| Статус Gateway/HTTPRoute | `kubectl get gateway,httproute -A -o wide` |
+| Статус config distribution | `istioctl proxy-status deploy/istio-ingressgateway -n istio-ingress` |
+| Масштабирование HPA | `kubectl autoscale deploy/istio-ingressgateway -n istio-ingress --cpu-percent=70 --min=2 --max=10` |
+| PDB для обновлений | `kubectl apply -f ingress-gateway-pdb.yaml` (minAvailable: 1–2) |
+| Graceful shutdown drain | `istioctl experimental prestop --gateway=istio-ingress` |
+| Access логи | `kubectl logs -n istio-ingress deploy/istio-ingressgateway --tail=50 \| grep app.example.com` |
+| Секреты TLS | `istioctl proxy-config secret deploy/istio-ingressgateway -n istio-ingress` |
+
+---
+
+## Очистка и откат
+
+При удалении ingress gateway избавьтесь от всех созданных ресурсов:
+
+```bash
+# 1. Удаление HTTPRoute, Gateway, Certificate, Secret
+kubectl delete -f httproute.yaml -f gateway.yaml -f certificate.yaml 2>/dev/null
+kubectl delete secret app-tls-secret -n istio-ingress 2>/dev/null
+
+# 2. Удаление AuthorizationPolicy и прочих политик на шлюзе
+kubectl delete authorizationpolicy edge-ingress-policy -n istio-ingress 2>/dev/null
+kubectl delete peerauthentication default -n production 2>/dev/null
+
+# 3. Удаление Deployment/Service шлюза (если через Helm)
+helm uninstall istio-ingress -n istio-ingress
+
+# 4. Удаление HPA и PDB
+kubectl delete hpa istio-ingressgateway -n istio-ingress 2>/dev/null
+kubectl delete pdb istio-ingressgateway-pdb -n istio-ingress 2>/dev/null
+
+# 5. Проверка, что шлюз удалён
+kubectl get pods -n istio-ingress
+# → No resources found
+
+# 6. Проверка, что DNS больше не маршрутизируется к удалённому шлюзу
+kubectl exec -n production deploy/my-app -- curl -sS -o /dev/null -w "%{http_code}\n" http://app.example.com/
+# → connection refused или таймаут
+```
+
+---
 ## Лучшие практики эксплуатации
 
 1. **Правильное именование неймспейса**: выделяйте шлюзы в отдельный неймспейс (`istio-ingress`), чтобы политики приложений не влияли на границу.
@@ -407,7 +458,7 @@ istioctl analyze
 4. **`ReferenceGrant` для кросс-namespace сертификатов**: создавайте минимальные по привилегиям ReferenceGrant.
 5. **Масштабирование и HA**: снабдите ingress gateway HPA и `PodDisruptionBudget` (см. [istio_architecture.md](./istio_architecture.md)), мониторьте метрики шлюза (`requests`, `latency`, `5xx`).
 6. **Default-deny на шлюзе**: применяйте `AuthorizationPolicy` с `action: DENY`/ALLOW по `ipBlocks` на границе первым делом.
-7. **Мониторинг**: проверяйте `istioctl analyze` после каждого изменения; смотрите on-board-ent traffic в Kiali на неймспейсе шлюза.
+7. **Мониторинг**: проверяйте `istioctl analyze` после каждого изменения; смотрите входящий трафик в Kiali на неймспейсе шлюза.
 8. **SNI и wildcard**: используйте wildcard-сертификаты для группы одноимённых хостов, но держите их только в неймспейсах шлюза.
 9. **Логи**: включайте access-логи на шлюзе через `Telemetry API` (а не глобально), чтобы не захламлять storage; фильтруйте по path.
 

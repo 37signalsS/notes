@@ -940,7 +940,7 @@ OCI-реестры (Harbor) обеспечивают неизменяемост�
 
 **Связанные документы в базе знаний:**
 - [Сравнение с ArgoCD](./argo_vs_flux_manifests.md) — детальное архитектурное сравнение и сопоставление манифестов.
-- [Организация Flux CD monorepo: кейс](./Concepts/flux_monorepo_organization.md) — структура монорепозитория `clusters/` + `components/`, оверлеи и конвенции.
+- [Организация монорепозитория Argo CD: архитектурный паттерн](./Concepts/argocd_monorepo_organization.md) — структура монорепозитория `clusters/` + `components/`, оверлеи и конвенции.
 - [Управление секретами в GitOps](./secrets_encryption.md) — руководство по SOPS, age и Sealed Secrets.
 - [GitOps: Уведомления и алертинг](./gitops_notifications.md) — настройка Provider, Alert и Receiver во Flux.
 - [Обзор методологии GitOps](./GitOps_overview.md) — принципы OpenGitOps, сравнение pull/push моделей.

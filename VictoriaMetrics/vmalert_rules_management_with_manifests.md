@@ -525,6 +525,39 @@ spec:
         name: vmalert-manual-rules
 ```
 
+### Сценарий 7: Готовые пакеты правил из репозитория VictoriaMetrics
+
+Базовые алерты здоровья стека не пишутся с нуля — официальные пакеты лежат в каталоге [`deployment/docker/rules`](https://github.com/VictoriaMetrics/VictoriaMetrics/tree/master/deployment/docker/rules) репозитория VictoriaMetrics: здоровье (`alerts-health.yml`), single-node и кластер, vmagent/vmalert/vmauth, тесты. Состав, скачивание и проверка — [Самомониторинг: Официальные пакеты алертов](./self-monitoring.md#2-официальные-пакеты-алертов); алерты самого Alertmanager — [Prometheus: практические примеры alert rules](../Prometheus/installation/alert_rules_quickstart.md).
+
+**В bare-metal/kubernetesless** — скачать файлы и подключить wildcard-флагом:
+
+```bash
+mkdir -p /etc/vmalert/rules
+curl -sL https://raw.githubusercontent.com/VictoriaMetrics/VictoriaMetrics/master/deployment/docker/rules/alerts-health.yml \
+  -o /etc/vmalert/rules/alerts-health.yml
+curl -sL https://raw.githubusercontent.com/VictoriaMetrics/VictoriaMetrics/master/deployment/docker/rules/alerts-vmagent.yml \
+  -o /etc/vmalert/rules/alerts-vmagent.yml
+
+./vmalert -rule='/etc/vmalert/rules/*.yml' \
+  -datasource.url=http://vmsingle:8428 \
+  -remoteWrite.url=http://vmsingle:8428
+# → веб-UI: http://vmalert:8880
+```
+
+Обратите внимание на расширение: файлы пакета — `.yml`, поэтому glob должен быть `*.yml` (либо `*`), а не `*.yaml`.
+
+**В Kubernetes** — упаковать файлы в ConfigMap и подключить монтированием каталога (подробный пример — [Сценарий 2: Управление через ConfigMap](#сценарий-2-управление-через-configmap)):
+
+```bash
+kubectl -n monitoring create configmap vmalert-rules \
+  --from-file=alerts-health.yml --from-file=alerts-vmagent.yml
+# → configmap/vmalert-rules created
+```
+
+Альтернатива для новых проектов — обернуть те же файлы в CRD `VMRule` ([Сценарий 1](#сценарий-1-управление-через-vmrule-crd-рекомендуемый)); для Kubernetes-специфичных алертов (kube-state-metrics, cadvisor) — [Grafana: алерты для Kubernetes](../Grafana/alerting/kubernetes_alerts.md).
+
+Валидация после подключения — [Преддеплойная проверка](#преддеплойная-проверка) и [Unit-тестирование правил](#unit-тестирование-правил-vmalert-tool-test) в следующем разделе.
+
 ## 4. Валидация манифестов и CI/CD
 
 ### Преддеплойная проверка
@@ -873,4 +906,3 @@ A: Проверьте `type: vlogs` на уровне группы, наличи
 - [VMAlert Operator CRD Docs](https://docs.victoriametrics.com/operator/resources/vmalert/)
 - [VMRule CRD Docs](https://docs.victoriametrics.com/operator/resources/vmrule/)
 - [LogsQL Alerting Guide](https://docs.victoriametrics.com/victorialogs/vmalert/)
-# force reindex test

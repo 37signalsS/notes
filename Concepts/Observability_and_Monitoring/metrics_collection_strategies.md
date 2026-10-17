@@ -179,8 +179,8 @@ remote_write:
 
 | Метрика | Описание | Порог |
 | :--- | :--- | :--- |
-| `vmagent_remotewrite_queues_filled_percentage` | Заполнение очереди отправки | >80% -- тревога |
-| `vmagent_remotewrite_dropped_rows_total` | Потерянные строки | >0 -- критично |
+| `vmagent_remotewrite_queue_blocked` | Блокировка очереди отправки | ==1 — тревога |
+| `vmagent_remotewrite_samples_dropped_total` | Потерянные сэмплы | >0 -- критично |
 | `prometheus_remote_storage_samples_retried_total` | Повторные попытки | Рост -- проблема с сетью |
 
 ### Сценарий 3: Статическая инфраструктура (физические серверы, СХД, сетевое оборудование)
@@ -595,7 +595,7 @@ scrape_configs:
 | :--- | :--- | :--- |
 | `up` | Доступность цели скрейпинга | Prometheus |
 | `prometheus_scrape_duration_seconds` | Время скрейпинга | Prometheus |
-| `vmagent_remotewrite_queues_filled_percentage` | Заполнение очереди отправки | vmagent |
+| `vmagent_remotewrite_queue_blocked` | Блокировка очереди отправки | vmagent |
 | `otelcol_exporter_send_failed_spans` | Ошибки отправки OTel | OTel Collector |
 
 **Подробнее:** [Мета-мониторинг](./meta-monitoring.md).

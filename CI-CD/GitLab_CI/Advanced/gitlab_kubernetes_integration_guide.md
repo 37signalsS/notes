@@ -85,7 +85,7 @@ kubectl cluster-info
 | :--- | :--- | :--- | :--- |
 | **CI/CD Tunnel** | Push-модель | KAS + `kubectl`/`helm` | Динамический деплой, администрирование, Review Apps. |
 | **GitOps (Native)** | Pull-модель | KAS + Git Sync | Простая синхронизация манифестов из репозитория. |
-| **GitOps (Flux)** | Pull-модель | Flux v2 + GitLab UI | Enterprise-стандарт с визуализацией состояния в GitLab. |
+| **GitOps (Argo CD)** | Pull-модель | Argo CD + GitLab UI | Enterprise-стандарт с визуализацией состояния в GitLab. |
 | **OIDC (WIF)** | Push-модель | `id_tokens` + IAM | Максимальная безопасность в публичных облаках. |
 
 ### Контексты доступа и иерархия
@@ -289,20 +289,65 @@ deploy:aws:
     - helm upgrade --install my-app ./chart
 ```
 
-### Сценарий 3: Интеграция с Flux v2 (Enterprise GitOps)
+### Сценарий 3: Интеграция с Argo CD (Enterprise GitOps)
 
-GitLab v18.x обеспечивает нативную поддержку Flux с отображением ресурсов в UI.
+GitLab v18.x обеспечивает нативную поддержку Argo CD с отображением ресурсов в UI.
 
-1.  **Bootstrap Flux** в кластере (рекомендуется через GitLab Runner):
+1.  **Bootstrap Argo CD** в кластере через Helm (рекомендуется через GitLab CI/CD Tunnel):
+
     ```bash
-    flux bootstrap gitlab \
-      --owner=my-group \
-      --repository=infra-gitops \
-      --branch=main \
-      --path=clusters/prod-cluster \
-      --personal
+    # Добавление официального репозитория Argo CD
+    helm repo add argo https://argoproj.github.io/argo-helm
+    helm repo update
+
+    # Установка Argo CD в namespace argocd
+    helm install argo-cd argo/argo-cd \
+      --namespace argocd \
+      --create-namespace \
+      --set server.service.type=ClusterIP \
+      --wait --timeout 5m
+    # → NAME: argo-cd
+    # → LAST DEPLOYED: ...
+    # → STATUS: deployed
     ```
-2.  **Визуализация**: В интерфейсе GitLab перейдите в **Operate > Kubernetes clusters**. Выберите ваш агент для просмотра состояния синхронизации (Kustomizations, HelmReleases).
+
+2.  **Создание Application CR** для синхронизации манифестов из GitLab:
+
+    ```yaml
+    # manifest/argocd-application.yaml
+    apiVersion: argoproj.io/v1alpha1
+    kind: Application
+    metadata:
+      name: prod-cluster-apps
+      namespace: argocd
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      source:
+        repoURL: https://gitlab.example.com/my-group/infra-gitops.git
+        targetRevision: main
+        path: clusters/prod-cluster
+        directory:
+          recurse: true
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: default
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+    ```
+
+    ```bash
+    # Применение Application через CI/CD Tunnel
+    kubectl apply -f manifest/argocd-application.yaml
+    # → application.argoproj.io/prod-cluster-apps created
+    ```
+
+3.  **Визуализация**: В интерфейсе GitLab перейдите в **Operate > Kubernetes clusters**. Выберите ваш агент для просмотра состояния синхронизации Argo CD Applications.
 
 ### Сценарий 4: Деплой в несколько namespace с RBAC-изоляцией
 

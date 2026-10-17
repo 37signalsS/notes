@@ -1,16 +1,20 @@
 # Корректное завершение (Graceful Shutdown) и длинные соединения в Istio
 
+**Актуально для:** Istio 1.31.x
+
 ## Определения
 
 **Graceful Shutdown в mesh** — процесс остановки пода/прокси без обрыва активных запросов: сначала прекращается приём нового трафика (эндпоинт удаляется из реестра), затем обрабатываются in-flight-запросы, и только потом процесс завершается.
 
 **Drain (дренаж)** — период, в течение которого Envoy перестаёт принимать *новые* соединения (listener-ы переводятся в draining), но продолжает обслуживать уже установленные.
 
-**`terminationDrainDuration`** — длительность, на которую прокси продолжает обрабатывать активные запросы после получения SIGTERM, прежде чем завершиться. Задаётся глобально (`ProxyConfig`), через `proxy.istio.io/config` или env `TERMINATION_DRAIN_DURATION`.
+**`terminationDrainDuration`** — длительность, на которую прокси продолжает обрабатывать активные запросы после получения SIGTERM, прежде чем завершиться. По умолчанию `5s`. Задаётся глобально через `MeshConfig.defaultConfig` или аннотацией `proxy.istio.io/config` на поде.
 
 **`drainDuration`** — параметр bootstrap Envoy (ProxyConfig), управляющий фазой draining listener'ов при завершении (поведение модуля draining, выключение приёма новых соединений).
 
-**`EXIT_ON_ZERO_ACTIVE_CONNECTIONS`** — env istio-agent: прокси досрочно завершится, как только не останется активных соединений (после дренажа). Ускоряет завершение пода без потери in-flight-трафика.
+**`EXIT_ON_ZERO_ACTIVE_CONNECTIONS`** — env istio-agent: прокси досрочно завершится, как только не останется активных соединений (после дренажа). Ускоряет завершение пода без потери in-flight-трафика. Контролирует `downstream_cx_active` (входящие соединения к прокси); для Job/скрейперов с только исходящим трафиком используйте `MINIMUM_DRAIN_DURATION` и проверяйте `upstream_cx_active`.
+
+**`MINIMUM_DRAIN_DURATION`** — env istio-agent: минимальная задержка (по умолчанию `5s`) перед проверкой активных соединений при `EXIT_ON_ZERO_ACTIVE_CONNECTIONS`. Предотвращает преждевременный выход прокси до завершения начальной волны запросов.
 
 **preStop hook** — команда/сна в lifecycle контейнера, выполняемая kubelet до отправки SIGTERM; компенсирует запаздывание удаления эндпоинтов из сети (propagation delay).
 
@@ -38,6 +42,7 @@
 | `terminationDrainDuration` | `meshConfig.defaultConfig.terminationDrainDuration` или `proxy.istio.io/config` | Секунды на доводку in-flight запросов после SIGTERM |
 | `drainDuration` | `proxy.istio.io/config` (bootstrap) | Продолжительность draining-фазы listener'ов |
 | `EXIT_ON_ZERO_ACTIVE_CONNECTIONS` | env `istio-agent` (`kubectl set env` / `proxyMetadata`) | Выход сразу после обнуления активных соединений |
+| `MINIMUM_DRAIN_DURATION` | env `istio-agent` | Минимальная задержка перед проверкой активных соединений (по умолчанию `5s`); работает с `EXIT_ON_ZERO_ACTIVE_CONNECTIONS` |
 | `terminationGracePeriodSeconds` | Pod spec | Общее время на завершение пода (должно покрыть preStop + drain приложения + drain прокси) |
 
 ### Порядок завершения контейнеров (Native Sidecar)
@@ -122,7 +127,7 @@ spec:
       value: "true"
 ```
 
-Поведение: прокси завершится сразу, как только `upstream_cx_active == 0`, не дожидаясь таймаута.
+Поведение: прокси завершится, как только `downstream_cx_active` (входящие соединения) станет 0, не дожидаясь таймаута.
 
 Проверка активных соединений:
 
@@ -151,15 +156,15 @@ kubectl logs -n production deploy/my-app --previous -c istio-proxy | grep -c " 5
 ### Сценарий 4: Принудительный drain Envoy для диагностики
 
 ```bash
-# Перевести listener'ы в draining (заглушка приёма новых соединений)
+# Перевести listener'ы в draining с graceful drain period.
+# skip_exit: listener'ы продолжают принимать новые соединения, а существующие дренятся
+# (без skip_exit listener'ы останавливаются навсегда — вернуть их через admin API
+# невозможно, только перезапуск Envoy)
 kubectl exec -n production deploy/my-app -c istio-proxy -- \
-  curl -s -X POST 'localhost:15000/drain_listeners?inboundonly&graceful'
+  curl -s -X POST 'localhost:15000/drain_listeners?inboundonly&graceful&skip_exit'
 
 # Просмотр состояния активных соединений (меньше 1 → можно ждать выхода)
 kubectl exec -n production deploy/my-app -c istio-proxy -- curl -s localhost:15000/stats | grep "upstream_cx_active"
-
-# Вернуть listener'ы (для тестов)
-kubectl exec -n production deploy/my-app -c istio-proxy -- curl -s -X POST 'localhost:15000/drain_listeners?inboundonly&inhibit'
 ```
 
 ### Сценарий 5: Переподключение длинных gRPC-стримов
@@ -215,7 +220,7 @@ kubectl logs -n production deploy/my-app -c istio-proxy | grep -iE "drain|shutdo
 2. **Разделяйте drain приложения и прокси**: приложение закрывает сокеты по-своему, прокси — своим; не доверяйте одному параметру для обоих.
 3. **Включайте `EXIT_ON_ZERO_ACTIVE_CONNECTIONS` для**: Job, CronJob, скрейперов, подов без длинных стримов — ускоряет/упорядочивает завершение.
 4. **Глобальные значения в `proxy.istio.io/config`**: задавайте `terminationDrainDuration` и `concurrency` через аннотацию на подах, а не мутация во время эксплуатации.
-5. **Readiness !== для drain**: readiness-пробa прокси (15021) управляет попаданием трафика в под; drain управляет завершением. Настраивайте и то, и другое.
+5. **Readiness !== для drain**: readiness-проба прокси (15021) управляет попаданием трафика в под; drain управляет завершением. Настраивайте и то, и другое.
 6. **Мониторинг 5xx на деплоях**: алерт на `502`/`504` с флагом `UC` в access-логах (Upstream Connection failure) → признак неправильной остановки прокси.
 7. **Ambient**: не ждите per-pod drain — тестируйте перезапуски waypoint и следите за ретраями клиентов.
 8. **PDB для критичных workload**: ограничьте одновременное voluntary-terminating подов, чтобы не терять все копии стрим-сервиса разом.
@@ -237,4 +242,4 @@ kubectl logs -n production deploy/my-app -c istio-proxy | grep -iE "drain|shutdo
 - [Управление трафиком в Service Mesh](./traffic_management.md)
 - [Тюнинг производительности Istio](./istio-performance-tuning.md)
 
-Документация: [Istio: Lifecycle of the Envoy Proxy](https://istio.io/latest/docs/ops/deployment/lifecycle/).
+Документация: [Envoy: Lifecycle of the Envoy Proxy](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/operations/draining).

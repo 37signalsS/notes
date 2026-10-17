@@ -1,5 +1,7 @@
 # Провижининг в Vagrant
 
+**Актуально для:** Vagrant 2.4.x
+
 ## Определения
 
 **Provisioning (провижининг)** — механизм автоматической установки программного обеспечения, настройки конфигураций и выполнения произвольных задач при развёртывании виртуальной машины (ВМ). Это ключевая особенность Vagrant, обеспечивающая создание идентичных и воспроизводимых окружений (Infrastructure as Code) для всей команды разработки.
@@ -34,9 +36,10 @@
 | :--- | :--- | :--- | :--- |
 | **Shell** | Bash/PowerShell скрипты | Нет (требует проверок) | Bootstrap, простые задачи, установка зависимостей |
 | **Ansible** | Управление конфигурацией | Да (встроенная) | Сложная настройка ОС, кластеры, мульти-машины |
+| **Ansible Local** | Ansible внутри гостевой ОС | Да (встроенная) | Отсутствие Ansible на хосте, Windows-хосты |
 | **Docker** | Запуск контейнеров | Да (через образы) | Тестирование микросервисов, изоляция приложений |
 | **File** | Копирование файлов | Да | Перенос конфигов, ключей или бинарных файлов |
-| **Puppet / Chef**| Декларативная настройка | Да | Корпоративные стандарты инфраструктуры |
+| **Puppet / Chef** | Декларативная настройка | Да | Корпоративные стандарты инфраструктуры |
 
 ## Практические сценарии
 
@@ -64,6 +67,16 @@ end
 ```
 
 **Совет по написанию скриптов:** Используйте `set -e` в начале bash-скрипта, чтобы прерывать выполнение при любой ошибке.
+
+**Дополнительные параметры Shell-провижинера:**
+
+| Параметр | Тип | Значение по умолчанию | Описание |
+| :--- | :--- | :--- | :--- |
+| `binary` | `String` | `nil` | Путь к интерпретатору (например, `/bin/sh`). |
+| `keep_color` | `Boolean` | `false` | Сохранение цветовой разметки вывода. |
+| `sensitive` | `Boolean` | `false` | Не логировать содержимое скрипта в debug-режиме. |
+| `reboot` | `Boolean` | `false` | Перезагрузить ВМ после выполнения скрипта. |
+| `sha256` / `sha384` / `sha512` | `String` | `nil` | Контрольная сумма для внешнего скрипта. |
 
 ### Сценарий 2: Интеграция с Ansible (Remote и Local)
 
@@ -122,10 +135,22 @@ config.vm.provision "ansible_local" do |ansible|
   ansible.playbook = "ansible/site.yml"
   ansible.install = true          # доставить Ansible в гостя
   ansible.version = "latest"      # или "2.15.x" для пина версии
-  ansible.install_mode = "default"  # для pip установки: "pip"
+  ansible.install_mode = :default  # для pip установки: :pip
   ansible.playbook_command = "ansible-playbook"
 end
 ```
+
+> **Важно:** `ansible.version` применяется только при `install_mode = :pip`. При `install_mode = :default` (по умолчанию) Ansible устанавливается из репозиториев ОС, а параметр `version` игнорируется.
+
+**Дополнительные параметры Ansible-провижинера:**
+
+| Параметр | Тип | Описание |
+| :--- | :--- | :--- |
+| `provisioning_path` | `String` | Кастомный путь для каталога провижинга в госте (по умолчанию `/vagrant`). |
+| `pip_args` | `String` | Дополнительные аргументы для `pip install` (например, `--no-cache-dir`). |
+| `galaxy_role_file` | `String` | Путь к `requirements.yml` для `ansible-galaxy install`. |
+| `galaxy_roles_path` | `String` | Кастомный путь для установки ролей Galaxy. |
+| `raw_arguments` | `Array<String>` | Передача дополнительных флагов в `ansible-playbook` (например, `--check`). |
 
 Подробнее об использовании секретов: [Ansible Vault в Vagrant](../Ansible/Vault/examples.md), о самих playbook и инвентаре — [Ansible Playbook Execution](../Ansible/ansible_playbook_execution.md).
 
@@ -147,6 +172,13 @@ config.vm.provision "docker" do |d|
 end
 ```
 
+**Дополнительные параметры Docker-провижинера:**
+
+| Параметр | Тип | Описание |
+| :--- | :--- | :--- |
+| `images` | `Array<String>` | Список образов для предварительной загрузки. |
+| `post_install_provisioner` | `Proc` | Сhell-скрипт, выполняемый после установки Docker в госте. |
+
 ### Сценарий 4: Копирование файлов (File Provisioner)
 
 Простой способ перенести файлы без настройки общих папок.
@@ -154,6 +186,11 @@ end
 ```ruby
 config.vm.provision "file", source: "~/.ssh/id_rsa.pub", destination: "~/.ssh/authorized_keys"
 ```
+
+**Параметры File-провижинера:**
+- `source`: Путь к файлу или директории на хосте (относительно Vagrantfile).
+- `destination`: Путь назначения внутри ВМ.
+- `run: "always"`: Передача обновлённого файла при каждом провижининге.
 
 ### Сценарий 5: Совмещение нескольких провижинеров
 
@@ -174,42 +211,74 @@ Vagrant.configure("2") do |config|
 end
 ```
 
-## Дополнительная информация
-
-### Использование триггеров
-
-Триггеры позволяют выполнять действия до или после этапа провижининга на хосте или в ВМ.
-
-```ruby
-Vagrant.configure("2") do |config|
-  config.trigger.before :provision do |t|
-    t.info = "Очистка логов перед новым провижинингом..."
-    t.run_remote = { inline: "rm -rf /var/log/app/*" }
-  end
-
-  config.trigger.after :provision do |t|
-    t.info = "Проверка доступности сервиса..."
-    t.run_local = { inline: "curl -sI http://localhost:8080 | grep 200" }
-  end
-end
-```
-
-### Имена провижинеров и выборочный запуск
+### Выборочный запуск провижинеров
 
 Если дать провижинеру имя (первый аргумент), его можно запускать отдельно:
+
 ```bash
 # Запустить только провижинер с именем 'prep'
 vagrant provision --provision-with prep
+
+# Запустить несколько провижинеров по именам
+vagrant provision --provision-with prep,ansible
 ```
 
-### Отладка провижининга
+## Операции и команды
 
-Для глубокого анализа процесса разбора и выполнения используйте переменную окружения `VAGRANT_LOG`:
+| Команда | Описание | Пример |
+| :--- | :--- | :--- |
+| `vagrant provision` | Запуск всех провижинеров на работающей ВМ | `vagrant provision` |
+| `vagrant provision --provision-with <name>` | Запуск только именованного провижинера | `vagrant provision --provision-with prep` |
+| `vagrant up --provision` | Перезапуск ВМ и запуск провижинеров | `vagrant up --provision` |
+| `vagrant reload --provision` | Перезагрузка с запуском провижинеров | `vagrant reload --provision` |
+| `vagrant provision --debug` | Запуск с детальным логированием Ansible | `VAGRANT_LOG=debug vagrant provision` |
+| `vagrant destroy && vagrant up` | Полный переход к чистому состоянию | `vagrant destroy -f && vagrant up` |
+
+## Устранение неполадок
+
+Полный набор типовых проблем провижининга — в [Vagrant Troubleshooting: Практические сценарии](./vagrant_troubleshooting/practical_scenarios.md), Сценарий 11. Ниже — типовые ошибки, специфичные для провижининга.
+
+### Shell-провижинер
+
+| Симптом | Вероятная причина | Решение |
+| :--- | :--- | :--- |
+| `Command exited with non-zero status` | Скрипт завершился с ошибкой | Добавьте `set -e` и проверьте вывод; убедитесь что все команды идемпотентны |
+| `chmod: cannot access` | Путь `upload_path` недоступен | Убедитесь что `/tmp/vagrant-shell` существует (иногда требует ручного создания при кастомных образах) |
+| Скрипт не видит переменные окружения | `env` не передаётся корректно | Используйте `env: { "VAR" => "value" }` с строковыми значениями |
+| Скрипт выполняется несколько раз | `run: "always"` или повторный `provision` | Используйте `run: "once"` для однократных задач; добавьте проверки идемпотентности (`if [ ! -f /marker ]`) |
+
+### Ansible-провижинер
+
+| Симптом | Вероятная причина | Решение |
+| :--- | :--- | :--- |
+| `Connection refused` / `Connection timed out` | SSH недоступен или порт не проброшен | Увеличьте `config.vm.boot_timeout`; используйте `run_remote` в триггерах для проверки готовности |
+| `Permission denied (publickey)` | SSH-ключ рассинхронизирован | `vagrant reload`; либо удалите ключ: `rm -f .vagrant/machines/<name>/<provider>/private_key` |
+| `ansible: command not found` (ansible_local) | Ansible не установлен в госте | Убедитесь что `ansible.install = true`; проверьте `ansible.install_mode` и `ansible.playbook_command` |
+| Инвентарь содержит неверные IP | Автосгенерированный инвентарь устарел | Используйте `ansible.compatibility_mode = "2.0"`; либо задавайте кастомный `ansible.inventory_path` |
+| `galaxy` не устанавливает роли | `galaxy_role_file` не найден | Укажите абсолютный путь или используйте `ansible.galaxy_roles_path` |
+| Playbook не видит переменные | `extra_vars` имеет неверный формат | Проверьте типы: строки в кавычках, числа — без кавычек |
+
+### Docker-провижинер
+
+| Симптом | Вероятная причина | Решение |
+| :--- | :--- | :--- |
+| `Cannot connect to the Docker daemon` | Docker не запущен в госте | Используйте `d.run` с `daemon: true` или убедитесь что Docker стартует при загрузке |
+| `pull access denied` | Ошибка аутентификации в реестре | Используйте `d.run "app", image: "myapp:v2"` с предварительно `d.build_image`, либо `d.pull_images` с правильным тегом |
+
+### Общие рекомендации по диагностике
+
 ```bash
-VAGRANT_LOG=debug vagrant provision
+# Запуск провижининга с максимальной детализацией
+VAGRANT_LOG=debug vagrant provision 2>&1 | tee provision_debug.log
+
+# Ручной запуск для проверки
+vagrant ssh -c "sudo /vagrant/scripts/bootstrap.sh"
+
+# Проверка состояния ВМ
+vagrant status
 ```
 
-### Лучшие практики
+## Лучшие практики
 
 1.  **Идемпотентность:** Гарантируйте, что повторный запуск провижининга не приведет к ошибкам или дублированию данных.
     *   В Shell используйте `grep -q` или `if [ ! -f ... ]` перед внесением изменений.
@@ -220,10 +289,48 @@ VAGRANT_LOG=debug vagrant provision
     ```
 3.  **Логирование:** Для отладки используйте флаг `--debug`.
 4.  **Разделение ответственности:** Используйте Shell для базовой подготовки (bootstrap), а Ansible/Docker — для настройки приложения.
+5.  **Снимки перед провижинингом:** Используйте `vagrant snapshot save "clean-os"` перед запуском провижининга. При ошибке откатитесь: `vagrant snapshot restore "clean-os"`, исправьте код и повторите.
+
+## Дополнительная информация
+
+### Использование триггеров
+
+Триггеры позволяют выполнять действия до или после этапы провижининга на хосте или в ВМ.
+
+```ruby
+Vagrant.configure("2") do |config|
+  config.trigger.before :provision do |t|
+    t.info = "Очистка логов перед новым провижинингом..."
+    t.run_remote = { inline: "rm -rf /var/log/app/*" }
+  end
+
+  config.trigger.after :provision do |t|
+    t.info = "Проверка доступности сервиса..."
+    t.run = { inline: "curl -sI http://localhost:8080 | grep 200" }
+  end
+end
+```
+
+Подробнее о триггерах — в [Vagrant Advanced Usage](./vagrant_advanced_usage.md), раздел «Детальная настройка триггеров».
+
+### Отладка провижининга
+
+Для глубокого анализа процесса разбора и выполнения используйте переменную окружения `VAGRANT_LOG`:
+
+```bash
+VAGRANT_LOG=debug vagrant provision
+```
+
+Для сохранения лога в файл:
+
+```bash
+VAGRANT_LOG=debug VAGRANT_LOG_FILE=/tmp/vagrant_provision_debug.log vagrant provision
+```
 
 ### См. также
 
 - [Vagrantfile: Справочник параметров](./vagrantfile.md) — детальное описание синтаксиса.
 - [Vagrant Advanced Usage](./vagrant_advanced_usage.md) — мульти-машины и триггеры.
-- [Vagrant Troubleshooting](./vagrant_troubleshooting/practical_scenarios.md) — решение проблем при настройке.
+- [Vagrant Troubleshooting: Практические сценарии](./vagrant_troubleshooting/practical_scenarios.md) — решение проблем при настройке.
 - [Ansible Playbook Execution](../Ansible/ansible_playbook_execution.md) — подробнее о работе Ansible.
+- [Ansible Vault в Vagrant](../Ansible/Vault/examples.md) — работа с секретами.

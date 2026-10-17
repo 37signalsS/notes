@@ -1,12 +1,14 @@
 # Vault Agent Sidecar — динамическое обновление конфигурации
 
+> **Актуально для:** Vault 2.x (latest 2.1.2; ветка 1.21.x также поддерживается)
+
 ## Определения
 
 **Vault Agent Sidecar** — это архитектурный паттерн использования `vault-agent` в качестве постоянно работающего вспомогательного контейнера в Kubernetes-поде. Он отвечает за аутентификацию, получение секретов и их динамическое обновление в конфигурационных файлах основного приложения без перезапуска пода.
 
 **Динамическая ротация (Dynamic Rotation)** — процесс автоматического обновления секретов (например, паролей БД или сертификатов) в работающем приложении. Агент отслеживает изменения в Vault, перезаписывает файлы и отправляет сигнал приложению (обычно `SIGHUP`) для перечитывания конфигурации.
 
-**Native Sidecar Containers (K8s 1.29+)** — механизм Kubernetes (beta с 1.28, стабилен с 1.29, см. KEP-3839), позволяющий определять вспомогательные контейнеры в блоке `initContainers` с параметром `restartPolicy: Always`. Это гарантирует, что Vault Agent запустится раньше основного приложения (основные контейнеры стартуют только после перехода агента в состояние `Ready`), останется доступным на протяжении всего жизненного цикла пода и завершится **после** остановки основных контейнеров, получая `SIGTERM`. Ключевое отличие от обычного sidecar (контейнер в `containers`) — гарантированный порядок запуска и завершения, что устраняет race conditions при первичном рендеринге секретов.
+**Native Sidecar Containers (K8s 1.29+)** — механизм Kubernetes (alpha с 1.28, beta с 1.29, стабилен с 1.33, см. KEP-753), позволяющий определять вспомогательные контейнеры в блоке `initContainers` с параметром `restartPolicy: Always`. Это гарантирует, что Vault Agent запустится раньше основного приложения (основные контейнеры стартуют только после перехода агента в состояние `Ready`), останется доступным на протяжении всего жизненного цикла пода и завершится **после** остановки основных контейнеров, получая `SIGTERM`. Ключевое отличие от обычного sidecar (контейнер в `containers`) — гарантированный порядок запуска и завершения, что устраняет race conditions при первичном рендеринге секретов.
 
 **Persistent Cache (BoltDB)** — механизм сохранения токенов и аренд секретов во внутреннем хранилище агента (файл `cache.db`), активируемый блоком `cache { persist "kubernetes" { ... } }`. Позволяет агенту восстанавливать состояние после перезапуска контейнера без повторной аутентификации, что критично для сценариев с лимитированными `secret_id_ttl` или дорогой аутентификацией.
 
@@ -20,8 +22,8 @@
 
 1.  **Общий том (Shared Volume):** Используется `emptyDir` с типом `Memory` (tmpfs) для передачи секретов в виде файлов. Это исключает запись чувствительных данных на физический диск узла. Каталог монтируется в агент (запись) и в приложение (чтение).
 2.  **Сигнализация (Signaling):** Для отправки сигналов (например, `pkill -HUP`) между контейнерами используются следующие настройки:
-    *   **`shareProcessNamespace: true`**: Позволяет процессам в разных контейнерах одного пода видеть друг друга в общем PID-пространстве.
-    *   **`SYS_PTRACE` Capability**: Разрешает агенту отправлять сигналы процессам других контейнеров (требуется, если приложение не поддерживает перечитывание файла вручную).
+    *   **`shareProcessNamespace: true`**: Позволяет процессам в разных контейнерах одного пода видеть друг друга в общем PID-пространстве. Это необходимое и достаточное условие для отправки сигналов через `kill`/`pkill`.
+    *   **`SYS_PTRACE` Capability**: Может потребоваться в некоторых окружениях (например, с ограниченными security context или read-only `/proc`), чтобы гарантировать доступ агента к информации о процессах других контейнеров. Не является обязательным при `shareProcessNamespace: true` в стандартных конфигурациях.
 3.  **Идентификация пользователя (UID):** Для корректной работы сигналов и прав доступа к файлам рекомендуется запускать агента и приложение под одним `runAsUser`. Для секретов, монтируемых только на чтение, это не обязательно.
 4.  **Probe готовности (Readiness Probe):** На Vault Agent рекомендуется настраивать `readinessProbe`/`startupProbe`. С нативными сайдкарами основные контейнеры не начнут работу, пока агент не перейдёт в состояние `Ready`, что гарантирует готовность файлов с секретами до старта приложения.
 5.  **Лимиты ресурсов:** Ресурсы сайдкара суммируются с ресурсами основных контейнеров при расчёте лимитов пода, поэтому для агента всегда задаются явные `requests`/`limits` (CPU, память).
@@ -32,8 +34,9 @@
 
 *   **`ca_cert`** — путь к CA-сертификату Vault (монтируется через Secret). Если сертификат самоподписанный, укажите его явно; для публичных CA проверка встроена.
 *   **`client_cert` / `client_key`** — опциональная mTLS-аутентификация агента на уровне TLS (не путать с auth method внутри Vault). Используется, когда Vault требует сертификат клиента для принятия соединения.
+*   **`tls_server_name`** — имя сервера для проверки SNI при TLS-соединении (полезно при использовании LoadBalancer или SNI-прокси).
 *   **`tls_skip_verify = true`** — запрещён в production. Отключает проверку подлинности сертификата, что делает соединение уязвимым для MITM-атак.
-*   **`retry { ... }`** — поведение при недоступности Vault. `num_retries` задаёт количество попыток; `backoff` — стратегию задержки между ними. По умолчанию Agent выполняет 12 попыток с экспоненциальным backoff.
+*   **`retry { ... }`** — поведение при недоступности Vault. `num_retries` задаёт количество попыток (по умолчанию 12); при значении `0` используется значение по умолчанию, `-1` отключает retry. Стратегия экспоненциального backoff применяется внутренне и не может быть сконфигурирована пользователем.
 
 Для настройки TLS в Deployment:
 
@@ -84,7 +87,7 @@ volumes:
 | **Обнаруживаемость** | Читаемость манифеста | Скрыто в аннотациях |
 | **Версия образа** | Фиксируется явно в `image:` | Управляется чартом Vault |
 
-**Когда использовать ручной sidecar:** нужна нестандартная конфигурация агента (несколько Vault-инстансов, AppRole с внешним SecretID, кастомный `listener` для API Proxy), требуется полный контроль над probes и lifecycle, или Injector не развёрнут в кластере.
+**Когда использовать ручной sidecar:** нужна нестандартная конфигурация агента (несколько Vault-инстансов, AppRole с внешним SecretID, кастомный `listener` для API Proxy), требуется полный контроль над probes и lifecycle, или Injector не развёртывается в кластере.
 
 ## Практические сценарии
 
@@ -130,22 +133,25 @@ cache {
   persist "kubernetes" {
     path = "/tmp/vault-agent-cache"
     keep_after_import = true
+    exit_on_err = true
   }
 }
 
 template_config {
-  static_secret_render_interval = "10m" # KV v2: период перерисовки статики
+  static_secret_render_interval = "10m" # KV v2: период перерисовки статики (default 5m)
   exit_on_retry_failure = true
-  # Максимальное количество одновременных соединений с Vault
-  max_connections_per_host = 20
+  max_connections_per_host = 20  # limit connections to Vault host (default 10)
+  lease_renewal_threshold = 0.9 # доля lease duration для перезапроса dynamic-секретов
 }
 
 template {
   source      = "/vault/templates/db.ctmpl"
   destination = "/vault/secrets/config.yaml"
+  error_on_missing_key = true  # <no value> → ошибка
+  perms = "0640"              # права на файл с секретом
 
-  # Сигнал SIGHUP основному приложению. Устаревший синтаксис command заменён
-  # на блок exec (с Vault 1.19+ предпочтительно; требует shared PID-namespace).
+  # Сигнал SIGHUP основному приложению. Устаревший синтаксис command (string)
+  # заменён на блок exec (с Vault 1.10+ предпочтительно; требует shared PID-namespace).
   exec {
     command = ["pkill", "-HUP", "myapp"]
     timeout = "30s"
@@ -159,7 +165,7 @@ template {
 }
 ```
 
-> **Примечание (Vault 2.x):** версия сервера и образ агента указаны в примерах ниже. Актуальный стабильный релиз Vault на момент документирования — **2.0.x** (GA 14.04.2026); ветка 1.21.x остаётся поддерживаемой и совместимой.
+> **Примечание (Vault 2.x):** версия сервера и образ агента указаны в примерах ниже. Актуальный стабильный релиз Vault на март 2026 года — **2.1.2** (latest); ветка 2.0.x и 1.21.x остаются поддерживаемыми и совместимыми.
 
 ### Сценарий 2: Манифест Deployment с ручным Sidecar
 
@@ -199,7 +205,7 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 5
       - name: vault-agent
-        image: hashicorp/vault:1.21.4
+        image: hashicorp/vault:2.1.2
         args: ["agent", "-config=/etc/vault/agent-config.hcl"]
         volumeMounts:
         - name: secrets-volume
@@ -261,7 +267,7 @@ volumes:
     defaultMode: 0400
 containers:
 - name: vault-agent
-  image: hashicorp/vault:1.21.4
+  image: hashicorp/vault:2.1.2
   volumeMounts:
   - name: approle-credentials
     mountPath: /etc/vault/agent/approle
@@ -276,7 +282,7 @@ containers:
 
 ### Сценарий 4: Использование Native Sidecar (K8s 1.29+)
 
-Механизм исключает race conditions при старте приложения: основной контейнер стартует только после готовности агента. Агент объявляется как init-контейнер с `restartPolicy: Always` и остаётся жить весь жизненный цикл пода.
+Механизм исключает race conditions при старте приложения: основной контейнер стартует только после готовности агента. Агент объявляется как init-контейнер с `restartPolicy: Always` и остаётся жив весь жизненный цикл пода.
 
 ```yaml
 apiVersion: v1
@@ -296,7 +302,7 @@ spec:
       name: vault-agent-config
   initContainers:
   - name: vault-agent
-    image: hashicorp/vault:1.21.4
+    image: hashicorp/vault:2.1.2
     restartPolicy: Always # Делает контейнер нативным сайдкаром
     args: ["agent", "-config=/etc/vault/agent-config.hcl"]
     startupProbe:
@@ -347,7 +353,7 @@ spec:
       name: vault-agent-config
   initContainers:
   - name: vault-agent-init
-    image: hashicorp/vault:1.21.4
+    image: hashicorp/vault:2.1.2
     args: ["agent", "-config=/etc/vault/agent-config.hcl"]
     volumeMounts:
     - name: secrets-volume
@@ -363,7 +369,7 @@ spec:
       mountPath: /etc/app
       readOnly: true
   - name: vault-agent
-    image: hashicorp/vault:1.21.4
+    image: hashicorp/vault:2.1.2
     args: ["agent", "-config=/etc/vault/agent-config.hcl"]
     volumeMounts:
     - name: secrets-volume
@@ -381,6 +387,8 @@ spec:
 template {
   source      = "/vault/templates/db.ctmpl"
   destination = "/vault/secrets/db-config.yaml"
+  error_on_missing_key = true
+  perms = "0640"
 
   exec {
     command = ["pkill", "-HUP", "myapp"]
@@ -409,7 +417,7 @@ LEASE_DURATION={{ .LeaseData.lease_duration }}
 
 ### Сценарий 7: StatefulSet с Headless Service
 
-Для stateful-приложений (базы данных, очереди) требуется стабильный сетевой идентификатор и порядок запуска. Native Sidecar совместим с StatefulSet, но需要注意几点:
+Для stateful-приложений (базы данных, очереди) требуется стабильный сетевой идентификатор и порядок запуска. Native Sidecar совместим с StatefulSet, но необходимо учитывать следующее:
 
 *   Headless Service (`clusterIP: None`) обеспечивает DNS-записи вида `<pod-name>.<service-name>.<namespace>.svc.cluster.local`.
 *   `podManagementPolicy: Parallel` ускоряет запуск, но нарушает порядок; для Vault Agent лучше использовать `OrderedReady` (по умолчанию), чтобы агент в каждом поде успел аутентифицироваться до старта основного контейнера.
@@ -443,7 +451,7 @@ spec:
           name: vault-agent-config
       initContainers:
       - name: vault-agent
-        image: hashicorp/vault:1.21.4
+        image: hashicorp/vault:2.1.2
         restartPolicy: Always
         args: ["agent", "-config=/etc/vault/agent-config.hcl"]
         startupProbe:
@@ -472,6 +480,8 @@ spec:
 
 Если приложение работает с Vault напрямую (SDK, `vault` CLI) и не может читать файлы в shared volume, агент может выступить локальным API-прокси: блок `listener` поднимает эндпоинт `127.0.0.1:8200` внутри контейнера агента, а приложение обращается к нему через `VAULT_ADDR=http://127.0.0.1:8200`, используя общий сетевой namespace пода.
 
+> **Важно:** Встроенный API Proxy в Vault Agent **deprecated** с Q2 2026 и планируется к удалению. Для новых развёртываний используйте [Vault Proxy](https://developer.hashicorp.com/vault/docs/agent-and-proxy/proxy).
+
 ```hcl
 listener "tcp" {
   address     = "127.0.0.1:8200"
@@ -484,114 +494,35 @@ cache {
   use_auto_auth_token = true
   persist "kubernetes" {
     path = "/tmp/vault-agent-cache"
+    keep_after_import = true
+    exit_on_err = true
   }
 }
 ```
 
 Приложение выполняет `vault read secret/data/config` через прокси: запросы кэшируются, токен продлевается агентом, а доступ к серверу Vault скрыт из POD (не нужен Service Entry/endpoint). Подробнее о конфигурации — в [файле основ](./basics.md).
 
-## Дополнительная информация
+## Операции и команды
 
-### Мониторинг и наблюдаемость
-
-Vault Agent экспортирует метрики Prometheus на порту `9102` (по умолчанию), если настроен блок `telemetry` в конфигурации.
-
-```hcl
-telemetry {
-  prometheus_retention_time = "30s"
-  disable_hostname = true
-}
-```
-
-Для сбора метрик добавьте в Pod:
-
-```yaml
-- name: vault-agent
-  ports:
-  - containerPort: 9102
-    name: metrics
-```
-
-**Ключевые метрики:**
-
-| Метрика | Описание |
-| :--- | :--- |
-| `vault.agent.token.last_rotation_time` | Время последнего обновления токена |
-| `vault.agent.token.lease_duration` | TTL текущего токена |
-| `vault.agent.template.render_success` | Успешный рендеринг шаблона |
-| `vault.agent.template.render_failure` | Ошибка рендеринга (недоступность Vault, ошибка политики) |
-| `vault.agent.cache.entry_count` | Количество секретов в кэше |
-| `vault.agent.logical.database.total_lease_count` | Количество активных аренд (динамические секреты) |
-
-Для проверки метрик внутри пода:
+### Команды управления службой и диагностика
 
 ```bash
-kubectl exec -n prod deploy/webapp -- curl -s http://127.0.0.1:9102/metrics | grep vault_agent
-# → vault_agent_token_last_rotation_time 1700000000
-# → vault_agent_template_render_success 42
-```
-
-### Преимущества и недостатки
-
-| Характеристика | Преимущество | Недостаток |
-| :--- | :--- | :--- |
-| **Ротация** | Обновление секретов без рестарта подов. | Требует поддержки `SIGHUP` приложением или перечитывания файла. |
-| **Изоляция** | Секреты только в памяти (`tmpfs`), не в `etcd`. | `shareProcessNamespace` ослабляет изоляцию процессов. |
-| **Универсальность** | Работает в любом K8s без инжектора. | Требует ручного описания YAML для каждого Deployment. |
-| **Гарантии запуска** | Нативный сайдкар (K8s 1.29+) стартует до приложения и блокирует его до готовности. | Для классического sidecar (<1.29) нужны probes или init-контейнер для исключения race conditions. |
-| **Завершение пода** | Нативный сайдкар получает `SIGTERM` после основных контейнеров. | Классический sidecar завершается недетерминированно относительно приложения. |
-| **Совместимость** | Работает с любыми приложениями и legacy. | Требуется роль и политики в Vault (auth method `kubernetes` или `approle`). |
-
-### Рекомендации
-
-1.  **Лимиты ресурсов:** Всегда указывайте `resources.limits` для сайдкара, чтобы он не влиял на стабильность основного приложения. Ресурсы сайдкара суммируются с ресурсами остальных контейнеров при расчёте лимита пода.
-2.  **Persistent Cache:** Используйте BoltDB кэш в агенте (`cache { persist "kubernetes" { ... } }`) для мгновенного восстановления токена и аренды секретов при перезапуске контейнера агента без повторной аутентификации.
-3.  **Graceful Shutdown:** Настройте `terminationGracePeriodSeconds` (минимум 30 сек), чтобы агент успел корректно закрыть сессии и (при необходимости) отозвать токен.
-4.  **Безопасность:** Для агента используйте `runAsNonRoot: true`, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`; capability `SYS_PTRACE` добавляйте только там, где реально отправляются сигналы. В Vault 2.x контейнерные образы упакованы без capability `CAP_IPC_LOCK` — при запуске агента в контейнере задавайте `disable_mlock = true` (или добавьте capability при собственной сборке).
-5.  **Версия образа:** Фиксируйте точный тег (например, `hashicorp/vault:1.21.4`), не `latest`, для воспроизводимости и контроля обновлений. Ветка 2.0.x — актуальный стабильный релиз с 14.04.2026.
-6.  **Явные probes:** Для нативного сайдкара настраивайте `startupProbe`/`readinessProbe` агента — основной контейнер стартует только после готовности. Для классического sidecar организуйте readiness-проверку готовности файла секретов в приложении.
-7.  **Конфигурация через ConfigMap:** Храните `agent-config.hcl` в ConfigMap, а TLS-CA — в Secret; монтируйте их только на чтение (`readOnly: true`).
-8.  **Pod Disruption Budget:** если приложение чувствительно к прерываниям, настройте `PodDisruptionBudget` с `minAvailable: 1`, чтобы voluntary disruptions (например, `kubectl drain`) не удаляли под с работающим агентом.
-9.  **Валидация перед deploy:** используйте `kubectl apply --dry-run=server` для проверки манифеста и `kubectl get pod -w` после развёртывания, чтобы убедиться, что агент перешёл в состояние `Ready` до старта основного контейнера.
-
-### Диагностика
-
-| Проблема | Инструмент | Причина / Решение |
-| :--- | :--- | :--- |
-| Агент в `CrashLoopBackOff` | `kubectl logs <pod> -c vault-agent` | Ошибка аутентификации (роль/токен), недоступность Vault, неверный путь к конфигу. |
-| Секрет не появляется в `/vault/secrets` | `kubectl exec <pod> -c vault-agent -- cat /vault/secrets/...` | Синтаксис шаблона, отсутствие политики `read` на пути, `error_on_missing_key`. |
-| Приложение стартует раньше секретов | `kubectl describe pod` | Классический sidecar без probes/init — используйте нативный сайдкар или readiness. |
-| Приложение не получает `SIGHUP` | Проверка `shareProcessNamespace` и `SYS_PTRACE` | Не совпадает имя процесса, нет общего PID-namespace или capability. |
-| Токен/кэш теряется при перезапуске | Проверка `persist` в конфиге | Не настроен `persist "kubernetes"`, путь к тому агента не персистентный. |
-| Агент не продлевает токен | `kubectl logs <pod> -c vault-agent` | Истёк TTL токена, Vault недоступен для renew, конфиг `auto_auth` неверен. |
-| Динамический секрет (БД) не обновляется | Проверка `lease_duration` и логов | Истёк срок аренды, Vault недоступен, приложение не переподключается. |
-| Sidecar потребляет всю CPU | `kubectl top pod` | `static_secret_render_interval` слишком мал, или Vault недоступен (retry loop). |
-| Pod не удаляется (Terminating) | `kubectl get pod -o jsonpath='{.status.containerStatuses[*].state}'` | Native Sidecar не завершается — проверьте graceful shutdown, `terminationGracePeriodSeconds`. |
-| Метрики Prometheus не доступны | `kubectl exec -c vault-agent -- curl 127.0.0.1:9102/metrics` | Блок `telemetry` отсутствует в конфиге, или порт не открыт. |
-| `error_on_missing_key` блокирует рендеринг | Логи агента | В шаблоне используется ключ, которого нет в секрете. Используйте `default` или проверьте путь в Vault. |
-| `tls_skip_verify = true` в конфиге | Поиск по конфигу | Уязвимость для MITM. Замените на `ca_cert`. |
-
-### Валидация и отладка
-
-Перед развёртыванием проверьте:
-
-```bash
-# 1. Проверка синтаксиса HCL (опционально, если есть vault CLI)
+# Проверка синтаксиса HCL (опционально, если есть vault CLI)
 vault agent -config=/etc/vault/agent-config.hcl -exit-after-auth 2>&1 | head -20
 
-# 2. Проверка доступности Vault из пода
+# Проверка доступности Vault из пода
 kubectl exec -n prod deploy/webapp -c vault-agent -- \
   curl -s --cacert /etc/vault/agent/tls/tls-ca-cert.crt \
   https://vault.vault.svc.cluster.local:8200/v1/sys/health
 # → {"initialized":true,"sealed":false,...}
 
-# 3. Проверка аутентификации
+# Проверка аутентификации
 kubectl exec -n prod deploy/webapp -c vault-agent -- \
   vault login -method=kubernetes role=webapp-ms-role \
   jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
 # → Success! You are now authenticated.
 
-# 4. Проверка рендеринга секретов
+# Проверка рендеринга секретов
 kubectl exec -n prod deploy/webapp -c vault-agent -- \
   cat /vault/secrets/config.yaml
 # → DB_HOST=postgres.example.com
@@ -623,6 +554,101 @@ Deployment автоматически обновляет поды по одно�
 kubectl delete pod -l app=webapp -n prod
 # Deployment создаст новый Pod с новым ConfigMap
 ```
+
+## Устранение неполадок
+
+| Проблема | Инструмент | Причена / Решение |
+| :--- | :--- | :--- |
+| Агент в `CrashLoopBackOff` | `kubectl logs <pod> -c vault-agent` | Ошибка аутентификации (роль/токен), недоступность Vault, неверный путь к конфигу. |
+| Секрет не появляется в `/vault/secrets` | `kubectl exec <pod> -c vault-agent -- cat /vault/secrets/...` | Синтаксис шаблона, отсутствие политики `read` на пути, `error_on_missing_key`. |
+| Приложение стартует раньше секретов | `kubectl describe pod` | Классический sidecar без probes/init — используйте нативный сайдкар или readiness. |
+| Приложение не получает `SIGHUP` | Проверка `shareProcessNamespace` и `SYS_PTRACE` | Не совпадает имя процесса, нет общего PID-namespace или capability. |
+| Токен/кэш теряется при перезапуске | Проверка `persist` в конфиге | Не настроен `persist "kubernetes"`, путь к тому агента не персистентный. |
+| Агент не продлевает токен | `kubectl logs <pod> -c vault-agent` | Истёк TTL токена, Vault недоступен для renew, конфиг `auto_auth` неверен. |
+| Динамический секрет (БД) не обновляется | Проверка `lease_duration` и логов | Истёк срок аренды, Vault недоступен, приложение не переподключается. |
+| Sidecar потребляет всю CPU | `kubectl top pod` | `static_secret_render_interval` слишком мал, или Vault недоступен (retry loop). |
+| Pod не удаляется (Terminating) | `kubectl get pod -o jsonpath='{.status.containerStatuses[*].state}'` | Native Sidecar не завершается — проверьте graceful shutdown, `terminationGracePeriodSeconds`. |
+| Метрики Prometheus не доступны | `kubectl exec -c vault-agent -- curl 127.0.0.1:9102/agent/v1/metrics?format=prometheus` | Блок `telemetry` отсутствует в конфиге, или порт не открыт. |
+| `error_on_missing_key` блокирует рендеринг | Логи агента | В шаблоне используется ключ, которого нет в секрете. Используйте `default` или проверьте путь в Vault. |
+| `tls_skip_verify = true` в конфиге | Поиск по конфигу | Уязвимость для MITM. Замените на `ca_cert`. |
+
+Для валидации и проверки наличия секретов см. раздел [Операции и команды](#операции-и-команды).
+
+## Мониторинг и наблюдаемость
+
+Vault Agent экспортирует метрики Prometheus на эндпоинте `/agent/v1/metrics?format=prometheus` (требует токен с правом `sys/metrics:read`, либо `unauthenticated_metrics_access = true` на listener).
+
+```hcl
+telemetry {
+  prometheus_retention_time = "30s"
+  disable_hostname = true
+}
+
+# Отдельный listener только для метрик (не требует X-Vault-Request)
+listener "tcp" {
+  address = "127.0.0.1:9102"
+  tls_disable = true
+  role = "metrics_only"
+}
+```
+
+Для сбора метрик добавьте в Pod:
+
+```yaml
+- name: vault-agent
+  ports:
+  - containerPort: 9102
+    name: metrics
+```
+
+**Ключевые метрики (agent-specific, см. [документацию](https://developer.hashicorp.com/vault/docs/agent-and-proxy/agent)):**
+
+| Метрика | Описание | Тип |
+| :--- | :--- | :--- |
+| `vault.agent.authenticated` | Статус аутентификации (1 = валидный токен, 0 = нет) | gauge |
+| `vault.agent.auth.success` | Успешная аутентификация | counter |
+| `vault.agent.auth.failure` | Ошибка аутентификации | counter |
+| `vault.agent.cache.hit` | Попадание в кэш | counter |
+| `vault.agent.cache.miss` | Промах кэша (запрос к Vault) | counter |
+| `vault.agent.proxy.success` | Успешный прокси-запрос | counter |
+| `vault.agent.proxy.error` | Ошибка прокси-запроса | counter |
+
+Для проверки метрик внутри пода:
+
+```bash
+kubectl exec -n prod deploy/webapp -c vault-agent -- \
+  curl -s http://127.0.0.1:9102/agent/v1/metrics?format=prometheus | grep vault_agent
+# → # TYPE vault_agent_authenticated gauge
+# → vault_agent_authenticated 1
+# → vault_agent_auth_success 5
+# → vault_agent_cache_hit 42
+```
+
+## Лучшие практики
+
+1.  **Лимиты ресурсов:** Всегда указывайте `resources.limits` для сайдкара, чтобы он не влиял на стабильность основного приложения. Ресурсы сайдкара суммируются с ресурсами остальных контейнеров при расчёте лимита пода.
+2.  **Persistent Cache:** Используйте BoltDB кэш в агенте (`cache { persist "kubernetes" { ... } }`) для мгновенного восстановления токена и аренды секретов при перезапуске контейнера агента без повторной аутентификации.
+3.  **Graceful Shutdown:** Настройте `terminationGracePeriodSeconds` (минимум 30 сек), чтобы агент успел корректно закрыть сессии и (при необходимости) отозвать токен.
+4.  **Безопасность:** Для агента используйте `runAsNonRoot: true`, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`; capability `SYS_PTRACE` добавляйте только там, где реально отправляются сигналы. В Vault 2.0.2+ контейнерные образы не содержат capability `CAP_IPC_LOCK` — при запуске агента в контейнере задавайте `disable_mlock = true` (или добавьте capability при собственной сборке).
+5.  **Версия образа:** Фиксируйте точный тег (например, `hashicorp/vault:2.1.2`), не `latest`, для воспроизводимости и контроля обновлений. Ветка 2.x — актуальный стабильный релиз.
+6.  **Явные probes:** Для нативного сайдкара настраивайте `startupProbe`/`readinessProbe` агента — основной контейнер стартует только после готовности. Для классического sidecar организуйте readiness-проверку готовности файла секретов в приложении.
+7.  **Конфигурация через ConfigMap:** Храните `agent-config.hcl` в ConfigMap, а TLS-CA — в Secret; монтируйте их только на чтение (`readOnly: true`).
+8.  **Pod Disruption Budget:** если приложение чувствительно к прерываниям, настройте `PodDisruptionBudget` с `minAvailable: 1`, чтобы voluntary disruptions (например, `kubectl drain`) не удаляли под с работающим агентом.
+9.  **Валидация перед deploy:** используйте `kubectl apply --dry-run=server` для проверки манифеста и `kubectl get pod -w` после развёртывания, чтобы убедиться, что агент перешёл в состояние `Ready` до старта основного контейнера.
+10. **File permissions:** Устанавливайте `perms = "0640"` в блоках `template`, чтобы секреты на диске имели минимально необходимые права.
+
+## Дополнительная информация
+
+### Преимущества и недостатки
+
+| Характеристика | Преимущество | Недостаток |
+| :--- | :--- | :--- |
+| **Ротация** | Обновление секретов без рестарта подов. | Требует поддержки `SIGHUP` приложением или перечитывания файла. |
+| **Изоляция** | Секреты только в памяти (`tmpfs`), не в `etcd`. | `shareProcessNamespace` ослабляет изоляцию процессов. |
+| **Универсальность** | Работает в любом K8s без инжектора. | Требует ручного описания YAML для каждого Deployment. |
+| **Гарантии запуска** | Нативный сайдкар (K8s 1.29+) стартует до приложения и блокирует его до готовности. | Для классического sidecar (<1.29) нужны probes или init-контейнер для исключения race conditions. |
+| **Завершение пода** | Нативный сайдкар получает `SIGTERM` после основных контейнеров. | Классический sidecar завершается недетерминированно относительно приложения. |
+| **Совместимость** | Работает с любыми приложениями и legacy. | Требуется роль и политики в Vault (auth method `kubernetes` или `approle`). |
 
 ### Связанные документы
 

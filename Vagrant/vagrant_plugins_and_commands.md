@@ -1,5 +1,7 @@
 # Vagrant: экосистема плагинов и полезные команды
 
+**Актуально для:** Vagrant 2.4.x
+
 ## Определения
 
 **Плагин Vagrant** — Ruby-gem, расширяющий возможности CLI Vagrant: добавляет провайдеры, провижинеры, типы синхронизированных папок и утилиты. Ставится в `~/.vagrant.d/` и переживает перезапуски виртуальных машин.
@@ -8,7 +10,7 @@
 
 **Утилита-плагин** — упрощает частые операции: копирование файлов (`vagrant-scp`), синхронизация каталогов (`vagrant-sshfs`), изменение размера диска (`vagrant-disksize`), управление `/etc/hosts` (`vagrant-hostmanager`), часовым поясом гостя (`vagrant-timezone`).
 
-**Неосновные (non-primary) команды** — скрытые из базового `vagrant -h`, но рабочие команды (`docker-exec`, `rsync`, `upload` и т.д.). Полный список выдаёт `vagrant list-commands`.
+**Неосновные (non-primary) команды** — скрытые из базового `vagrant -h`, но рабочие команды (`docker-exec`, `docker-logs`, `docker-run`, `rsync`, `rsync-auto` и т.д.). Полный список выдаёт `vagrant list-commands`.
 
 ## Базовые концепции
 
@@ -153,7 +155,10 @@ vagrant plugin install vagrant-parallels
 vagrant up --provider=parallels
 
 # Podman как провайдер (аналог docker-провайдера на Apple Silicon)
-vagrant plugin install vagrant-podman
+# Требуется community-плагин: github.com/reiserfs/vagrant-podman
+# (Встроенный Podman — это provisioner, а не provider; об управлении
+# контейнерами через Podman provisioner — в [Vagrant Provisioning](./vagrant_provisioning.md))
+vagrant plugin install podman
 vagrant up --provider=podman
 ```
 
@@ -227,7 +232,7 @@ vagrant share --http 8080 --disable-https
 - Потребитель подключается через `vagrant connect` (для SSH — `vagrant connect --ssh <NAME>`).
 - Это инструмент для разработки и демонстраций, **не для продакшена**: туннель наружу поверх изолированного окружения. Для production-доступа используйте VPN или SSH-bastion, а не `vagrant share`.
 
-## Дополнительная информация
+## Устранение неполадок
 
 ### Типичные ошибки
 
@@ -239,7 +244,7 @@ vagrant share --http 8080 --disable-https
 | `sshfs` не монтируется | Нет `sshfs` в гостевой ОС или плагин macFUSE на хосте (macOS) | `apt install sshfs` / `brew install macfuse sshfs` |
 | `Vagrantfile` требует плагин у всех | Явная установка в `global` | Оберните в `if Vagrant.has_plugin?` или закоммитьте `plugins.txt` |
 
-### Лучшие практики
+## Рекомендации и лучшие практики
 
 1. **Минимизируйте плагины**: каждый — потенциальный источник несовместимости; предпочитайте функциональность ядра.
 2. **Фиксируйте состав плагинов**: `vagrant plugin list > plugins.txt` и восстанавливайте командой `xargs vagrant plugin install < plugins.txt`.
@@ -247,6 +252,8 @@ vagrant share --http 8080 --disable-https
 4. **Секреты — не в плагинах**: `vagrant-env` удобен, но не единственный путь; используйте переменные окружения CI секретов (`ENV`).
 5. **`vagrant validate`** — обязательный шаг перед коммитом и в CI (см. [Vagrant Basic Workflow](./vagrant_basic_workflow.md)).
 6. **Для автоматизации используйте `--machine-readable`**, а не текст: вывод стабилен, не зависит от локали и версии, парсится `awk`/`grep`.
+
+## Дополнительная информация
 
 ### См. также
 

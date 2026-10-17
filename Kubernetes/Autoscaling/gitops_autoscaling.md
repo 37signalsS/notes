@@ -1,10 +1,10 @@
 # GitOps для Autoscaling: управление HPA, VPA, KEDA и узлами через Git
 
-**Актуально для:** Kubernetes 1.28–1.32+, Argo CD 2.10–3.0+, Flux v2.3–v2.4+, KEDA 2.12–2.16+, Cluster API v1.7–v1.9+
+**Актуально для:** Kubernetes 1.28–1.32+, Argo CD 2.10–3.0+, KEDA 2.12–2.16+, Cluster API v1.7–v1.9+
 
 ## Определения
 
-**GitOps** — парадигма управления инфраструктурой и приложениями, при которой декларативное состояние кластера хранится в системе контроля версий Git как единственный источник истины (Single Source of Truth, SSoT), а автоматизированные контроллеры (Argo CD, Flux) непрерывно синхронизируют фактическое состояние (live state) с целевым состоянием (desired state).
+**GitOps** — парадигма управления инфраструктурой и приложениями, при которой декларативное состояние кластера хранится в системе контроля версий Git как единственный источник истины (Single Source of Truth, SSoT), а автоматизированные контроллеры (Argo CD) непрерывно синхронизируют фактическое состояние (live state) с целевым состоянием (desired state).
 
 **ignoreDifferences** — декларативный механизм в Argo CD, предписывающий контроллеру приложений игнорировать расхождения между Git и live-состоянием для конкретных JSON-путей (`jsonPointers`), выражений (`jqPathExpressions`) или менеджеров полей (`managedFieldsManagers`).
 
@@ -39,7 +39,7 @@
 │                                     ▼                               │                  │
 │                          ┌────────────────────┐          ┌──────────────────────┐      │
 │                          │  GitOps Controller │          │ Workload Autoscaler  │      │
-│                          │  (Argo CD / Flux)  │          │ (HPA / KEDA / VPA)   │      │
+│                          │  (Argo CD)  │          │ (HPA / KEDA / VPA)   │      │
 │                          └────────────────────┘          └──────────────────────┘      │
 │                                     │                               ▲                  │
 │                                     │ Сброс реплик до 2 (SelfHeal) │ Рост нагрузки:    │
@@ -50,12 +50,12 @@
 Если взаимодействие не настроено:
 1. При росте нагрузки HPA через подресурс `/scale` выставляет `spec.replicas: 10`.
 2. GitOps-контроллер обнаруживает расхождение с Git (`replicas: 2`).
-3. Механизм `selfHeal` (или очередная итерация сверки Flux) применяет патч, возвращая `spec.replicas: 2`.
+3. Механизм `selfHeal` контроллера GitOps применяет патч, возвращая `spec.replicas: 2`.
 4. Сервис испытывает деградацию (OOM, HTTP 502/504), HPA снова масштабирует поды вверх, порождая бесконечную нагрузку на API-сервер и флаппинг подов.
 
 ### Механизм владения полями (Server-Side Apply и managedFields)
 
-Современные версии Argo CD (v2.10+) и Flux v2 используют Server-Side Apply. Kubernetes API сохраняет информацию о том, кто модифицировал каждое поле, в секции `metadata.managedFields`:
+Современные версии Argo CD (v2.10+) используют Server-Side Apply. Kubernetes API сохраняет информацию о том, кто модифицировал каждое поле, в секции `metadata.managedFields`:
 
 ```yaml
 metadata:
@@ -82,7 +82,7 @@ metadata:
 | Стратегия | Реализация | Преимущества | Недостатки |
 |:---|:---|:---|:---|
 | **Omit Replicas (Рекомендуемая)** | Удаление поля `spec.replicas` из манифеста Deployment в Git | Нативная работа с SSA; отсутствие необходимости в сложных ignore-правилах; нулевой риск оверрайда | При первом деплое Deployment создается с 1 репликой по умолчанию (дефолт k8s) до реакции HPA |
-| **Ignore Differences** | Явное указание игнорирования `/spec/replicas` в Argo CD / Flux | В Git можно зафиксировать базовое/минимальное количество реплик; прозрачно для legacy-манифестов | Требует обязательного включения `RespectIgnoreDifferences=true`; возможны ошибки при опечатках в jsonPointer |
+| **Ignore Differences** | Явное указание игнорирования `/spec/replicas` в Argo CD | В Git можно зафиксировать базовое/минимальное количество реплик; прозрачно для legacy-манифестов | Требует обязательного включения `RespectIgnoreDifferences=true`; возможны ошибки при опечатках в jsonPointer |
 | **Managed Fields Exclusion** | Игнорирование по менеджеру `kube-controller-manager` | Игнорируются любые мутации, выполненные системным HPA-контроллером, без привязки к путям | Не защищает от конфликтов, если поле мутируется нестандартным оператором или вебхуком |
 
 ---
@@ -221,95 +221,7 @@ data:
 
 ---
 
-### Сценарий 2: Horizontal Pod Autoscaler (HPA) и Flux v2
-
-Flux v2 (контроллер `kustomize-controller`) применяет манифесты через Server-Side Apply по умолчанию.
-
-#### Вариант А: Исключение replicas в Kustomize
-
-В файлах `base/deployment.yaml` строка `replicas:` удаляется, а в `kustomization.yaml` не добавляются патчи с количеством реплик:
-
-```yaml
-# fleet/apps/order-api/base/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: order-api
-spec:
-  selector:
-    matchLabels:
-      app: order-api
-  template:
-    metadata:
-      labels:
-        app: order-api
-    spec:
-      containers:
-        - name: api
-          image: internal-registry.corp/apps/order-api:v1.8.2
-          resources:
-            requests:
-              cpu: 250m
-              memory: 256Mi
-```
-
-#### Вариант Б: Настройка ignore-правил в Kustomization CRD
-
-При включенной строгой проверке дрейфа (`spec.driftDetection.mode: enabled`):
-
-```yaml
-# fleet/clusters/prod-dc1/order-api-kustomization.yaml
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: order-api
-  namespace: flux-system
-spec:
-  interval: 5m
-  path: ./apps/order-api/overlays/production
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: fleet-infra
-  # Тонкий контроль дрейфа SSA
-  ignore:
-    - paths:
-        - /spec/replicas
-```
-
-#### Вариант В: HelmRelease в Flux v2
-
-При развертывании через `helm-controller` стандартные чарты включают встроенный HPA:
-
-```yaml
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata:
-  name: payment-gateway
-  namespace: production
-spec:
-  interval: 15m
-  chart:
-    spec:
-      chart: generic-service
-      version: "3.5.x"
-      sourceRef:
-        kind: HelmRepository
-        name: internal-charts
-        namespace: flux-system
-  values:
-    # При включении HPA чарт автоматически не рендерит поле replicaCount в Deployment
-    replicaCount: null
-    autoscaling:
-      enabled: true
-      minReplicas: 4
-      maxReplicas: 25
-      targetCPUUtilizationPercentage: 75
-```
-
----
-
-### Сценарий 3: KEDA (Event-Driven Autoscaling) в GitOps
+### Сценарий 2: KEDA (Event-Driven Autoscaling) в GitOps
 
 KEDA управляет ресурсами через собственный CRD `ScaledObject`. KEDA генерирует системный HPA под капотом и управляет подресурсом `/scale`.
 
@@ -393,7 +305,7 @@ spec:
 
 ---
 
-### Сценарий 4: Vertical Pod Autoscaler (VPA) в GitOps
+### Сценарий 3: Vertical Pod Autoscaler (VPA) в GitOps
 
 Существует два архитектурных паттерна работы VPA в GitOps-средах:
 
@@ -470,7 +382,7 @@ spec:
    - Считывает значение `target` из VPA.
    - Сравнивает с текущими значениями в Git-репозитории.
    - Если разница превышает порог (например, 20%), утилита (например, Kustomize/yq) обновляет значения `requests` в ветке и открывает Pull Request.
-3. SRE-инженер или лид команды аппрувит PR, и Argo CD/Flux штатно применяет изменения без дрейфа.
+3. SRE-инженер или лид команды аппрувит PR, и Argo CD штатно применяет изменения без дрейфа.
 
 ---
 
@@ -586,30 +498,7 @@ argocd app sync billing-service --respect-ignore-differences
 # → 2026-10-12T22:15:00+03:00   apps  Deployment  production       billing-service    Synced  Healthy              deployment.apps/billing-service unchanged
 ```
 
-### 3. Проверка дрейфа и реконсиляция во Flux v2
-
-Проверка планируемых изменений без их применения:
-
-```bash
-flux diff kustomization order-api --path ./apps/order-api/overlays/production
-```
-```
-# → ► inspecting diff for Kustomization order-api
-# → ✔ no changes detected
-```
-
-Принудительная реконсиляция Kustomization из источника:
-
-```bash
-flux reconcile kustomization order-api --with-source
-```
-```
-# → ► fetching at main:rev 8f4e2b1
-# → ✔ reconciliation finished in 1.42s, next run in 5m0s
-# → ✔ Applied revision: main@sha1:8f4e2b1
-```
-
-### 4. Инспекция статуса HPA и KEDA
+### 3. Инспекция статуса HPA и KEDA
 
 Проверка состояния HPA и привязки к рабочей нагрузке:
 
@@ -640,7 +529,7 @@ kubectl get scaledobject -n processing
 | Проблема / Симптом | Первопричина | Метод диагностики | Способ устранения |
 |:---|:---|:---|:---|
 | **Сброс масштабирования при пике нагрузки** (HPA поднял 20 реплик, Argo CD через 2 мин сбросил до 2; всплеск 502/OOM) | Включен `selfHeal`, в манифесте Git зафиксировано `replicas: 2`, отсутствует `RespectIgnoreDifferences=true` | `kubectl get events -n <ns> --field-selector reason=ScalingReplicaSet`<br>`argocd app get <app>` | 1. Удалить `replicas` из Git-манифеста.<br>2. Добавить `RespectIgnoreDifferences=true` в `syncOptions`. |
-| **Flapping реплик во Flux v2** (каждые `interval` поды скейлятся вниз и снова вверх) | В манифесте Kustomize жестко прописано `spec.replicas`, что заставляет SSA перехватывать владение | `flux logs --level=debug --kind=Kustomization`<br>Проверка `kubectl get deploy -o yaml \| grep -A 10 managedFields` | Удалить строку `replicas:` из исходного манифеста в Git; настроить `ignore` в `Kustomization`. |
+| **Flapping реплик** (каждые `interval` поды скейлятся вниз и снова вверх) | В манифесте Deployment жестко прописано `spec.replicas`, что заставляет SSA перехватывать владение | `argocd app diff <app>`<br>Проверка `kubectl get deploy -o yaml \| grep -A 10 managedFields` | Удалить строку `replicas:` из исходного манифеста в Git; настроить `ignoreDifferences` и `RespectIgnoreDifferences=true` в `Application`. |
 | **Петля KEDA при minReplicaCount: 0** (KEDA гасит поды до 0, GitOps создает 1 под) | GitOps-контроллер считает отсутствие реплик за дрейф относительно дефолтного значения 1 | `kubectl describe scaledobject <name>`<br>`argocd app diff <app>` | Настроить `ignoreDifferences` для менеджера `keda-operator` и пути `/spec/replicas`. |
 | **Вечный OutOfSync при включенном VPA** (приложение всегда в статусе OutOfSync) | VPA мутирует поля `requests`/`limits`, которые сверяются с исходными манифестами Git | `argocd app diff <app>` показывает расхождение в секции `resources` контейнеров | Использовать VPA в режиме `Off` (с Git Write-Back) либо настроить `jqPathExpressions` в `ignoreDifferences`. |
 | **Cluster Autoscaler удаляет узлы On-Premise** (CA расширяет пул CAPI, GitOps уменьшает) | GitOps управляет `MachineDeployment` со статическим полем `spec.replicas` | `kubectl logs -n kube-system -l app=cluster-autoscaler`<br>`kubectl describe machinedeployment` | Добавить игнорирование `spec.replicas` для CRD `MachineDeployment`. |
@@ -704,9 +593,8 @@ kubectl get scaledobject -n processing
 4. **Синхронизация через Sync Waves:** При использовании KEDA всегда выставляйте `sync-wave` для `ScaledObject` выше, чем для целевого `Deployment`, чтобы избежать ошибок валидации контроллера при первом развертывании.
 5. **Согласование HPA и PodDisruptionBudget:** Значение `minReplicas` в HPA должно быть строго больше, чем допустимый лимит вытеснения в PDB. Если `minReplicas: 1`, а PDB требует `minAvailable: 1`, Cluster Autoscaler или node drain никогда не смогут безопасно выселить этот под.
 6. **Запрет на прямое мутирование кластера по расписанию:** Не используйте `CronJob` с `kubectl patch` внутри кластера для тюнинга ресурсов. Все автоматизированные корректировки на основе рекомендаций (VPA, Right-Sizing) должны идти через Git (Git Write-Back via Pull Requests).
-7. **Алертинг на дрейф реплик и частоту синхронизаций:** Настройте Prometheus-алерты на метрики Argo CD и Flux для выявления скрытых петель:
+7. **Алертинг на дрейф реплик и частоту синхронизаций:** Настройте Prometheus-алерты на метрики Argo CD для выявления скрытых петель:
    - `rate(argocd_app_sync_total{phase="Failed"}[5m]) > 0`
-   - `rate(flux_kustomize_controller_reconcile_condition{type="Ready",status="False"}[5m]) > 0`
    - Аномально высокая частота `changes` для одного Deployment в kube-state-metrics (`rate(kube_deployment_status_replicas_updated[5m])`).
 
 ---
@@ -724,6 +612,5 @@ kubectl get scaledobject -n processing
 - [On-Premise Autoscaling](./on_premise_autoscaling.md) — особенности масштабирования узлов и подов в частных дата-центрах
 - [Cluster Autoscaler](./cluster_autoscaler_detailed.md) — детальная архитектура контроллера масштабирования узлов
 - [Argo CD: ignoreDifferences](../../GitOps/ArgoCD/synchronization/ignore_differences.md) — полный справочник по настройке игнорирования различий
-- [Flux v2](../../GitOps/flux.md) — архитектура и тонкая настройка контроллеров Flux
-- [Сравнение манифестов Argo CD и Flux](../../GitOps/argo_vs_flux_manifests.md) — сопоставление подходов к декларативному управлению
+- [Argo CD: ignoreDifferences](../../GitOps/ArgoCD/synchronization/ignore_differences.md) — полный справочник по настройке игнорирования различий
 

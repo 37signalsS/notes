@@ -58,7 +58,7 @@ Vagrant.configure("2") do |config|
 
     # 4. Ресурсы
     qemu.memory = "2G"
-    qemu.cpus = 2
+    qemu.smp = "cpus=2"    # ppggff/vagrant-qemu 0.6.0
   end
 
   # 5. Синхронизация папок

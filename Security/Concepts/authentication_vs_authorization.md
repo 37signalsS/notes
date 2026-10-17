@@ -1,5 +1,7 @@
 # Аутентификация против Авторизации
 
+> **Актуально для:** Linux (systemd 256+, PAM 1.7+, sudo 1.9+), OpenSSH 10.x, LDAP/LDAPS, Kerberos 5, OAuth 2.1, OIDC, SAML 2.0
+
 ## Определения
 
 В контексте системной безопасности **аутентификация** и **авторизация** — это два фундаментальных и взаимосвязанных, но принципиально разных процесса.
@@ -21,7 +23,7 @@
 - **Цель:** ограничение доступа к ресурсам и действиям на основе установленной личности.
 - **Механизмы:** роли ([RBAC](../../Kubernetes/Security/rbac/rbac_overview.md)), списки доступа (ACL), атрибуты (ABAC).
 - **Результат:** разрешение (`Allow`) или отказ (`Deny`) в доступе.
-- **Протоколы:** [OAuth 2.0](./oauth2_overview.md) (делегирование авторизации).
+- **Протоколы:** [OAuth 2.1](./oauth2_overview.md) (делегирование авторизации).
 
 ### Модели контроля доступа
 
@@ -59,7 +61,7 @@
 
 ### Уровни концепций аутентификации
 
-Basic Auth, API Key, Bearer Token, JWT, Session-based auth, OAuth2 и OpenID Connect нельзя складывать в один список как равнозначные «виды аутентификации» — это сущности разных уровней:
+Basic Auth, API Key, Bearer Token, JWT, Session-based auth, OAuth 2.1 и OpenID Connect нельзя складывать в один список как равнозначные «виды аутентификации» — это сущности разных уровней:
 
 | Уровень | Примеры |
 | :--- | :--- |
@@ -67,10 +69,10 @@ Basic Auth, API Key, Bearer Token, JWT, Session-based auth, OAuth2 и OpenID Con
 | Credential / секрет / идентификатор доступа | password, API key, access token, session id |
 | Формат токена | JWT |
 | Модель хранения состояния входа | session-based auth |
-| Фреймворк делегированного доступа | OAuth2 |
-| Identity layer поверх OAuth2 | OpenID Connect |
+| Фреймворк делегированного доступа | OAuth 2.1 |
+| Identity layer поверх OAuth 2.1 | OpenID Connect |
 
-Типичная ошибка — смотреть на список методов в инструменте и считать Basic Auth, Bearer Token, JWT, API Key и OAuth2 одним типом сущностей. Сначала определяется уровень термина, и только потом сравниваются плюсы, минусы и сценарии применения.
+Типичная ошибка — смотреть на список методов в инструменте и считать Basic Auth, Bearer Token, JWT, API Key и OAuth 2.1 одним типом сущностей. Сначала определяется уровень термина, и только потом сравниваются плюсы, минусы и сценарии применения.
 
 ### Credentials
 
@@ -85,6 +87,7 @@ Credentials — данные, с помощью которых клиент до
 | client secret | Приложение знает секрет клиента. |
 | SSH key | Клиент владеет приватным ключом, соответствующим доверенному публичному ключу. |
 | service account token | Машинная рабочая нагрузка удостоверена платформой. |
+| FIDO2/U2F security key | Физический токен (YubiKey, Nitrokey) доказывает владение аппаратным устройством. |
 
 ### Типичные смешения понятий
 
@@ -92,10 +95,34 @@ Credentials — данные, с помощью которых клиент до
 | :--- | :--- |
 | Bearer и JWT | Bearer говорит, *как передаётся* токен; JWT — *как он устроен внутри*. Bearer-токен может быть JWT, но не обязан — это может быть opaque token (случайная строка без claims). |
 | JWT и авторизация | JWT — формат токена, а не протокол авторизации; авторизация может использовать claims из JWT. Корректная формулировка: «Bearer authentication с JWT access token». |
-| JWT и OAuth2 | JWT — формат токена; OAuth2 — фреймворк получения и использования access token для делегированного доступа. |
-| OAuth2 и OpenID Connect | OAuth2 сам по себе не даёт стандартного способа сообщить приложению, кто пользователь; OIDC добавляет identity-слой и ID token. |
+| JWT и OAuth 2.1 | JWT — формат токена; OAuth 2.1 — фреймворк получения и использования access token для делегированного доступа. |
+| OAuth 2.1 и OpenID Connect | OAuth 2.1 сам по себе не даёт стандартного способа сообщить приложению, кто пользователь; OIDC добавляет identity-слой и ID token. |
 | Session id и access token | Session id — ключ к серверной сессии; access token — credential для доступа к защищённому ресурсу. |
 | API key и пользовательский логин | API key идентифицирует приложение/интеграцию/технического клиента; логин идентифицирует человека. |
+
+## Архитектура: конвейер аутентификации и авторизации в Linux
+
+Процесс входа и выдачи прав в Linux состоит из нескольких узлов, каждый из которых отвечает за свою задачу. Ниже — типичный конвейер для интерактивного входа по SSH с локальной авторизацией команд:
+
+```text
+Клиент (ssh)                 →  sshd                 →  PAM
+  SSH-ключ / сертификат          auth-модуль (pam_sss/pam_unix)
+                                   ↓
+                          account-модуль (pam_sss)   →  NSS (files → sssd → LDAP)
+                                   ↓
+                            Session-модуль           →  /etc/security/limits.conf
+                                   ↓
+                                  Shell               →  sudo / polkit
+                                   ↓
+                          Команда (systemctl ...)   →  systemd / RBAC
+```
+
+1. **Идентификация:** пользователь сообщает имя (`alice`).
+2. **Аутентификация:** PAM проверяет credentials (хэш пароля из `/etc/shadow`, SSH-ключ, TOTP через `pam_google_authenticator.so`, сертификат Kerberos).
+3. **Разрешение сессии:** PAM `account`-модуль проверяет срок действия учётной записи, а `session`-модуль применяет `pam_limits.so` и монтирует home-директорию.
+4. **Авторизация действий:** при вызове `sudo` или `pkexec` выполняется проверка прав через `/etc/sudoers` или Polkit-правила.
+
+Для сервисных (машинных) учётных записей конвейер упрощается — аутентификация происходит по service account token или сертификату, а авторизация через RBAC (Kubernetes) или роли (Vault). Подробнее в разделе **«Управление сервисными аккаунтами»** ниже.
 
 ## Локальная аутентификация и авторизация в Linux
 
@@ -139,6 +166,7 @@ auth       include   system-login
 - `pam_faillock.so` — блокировка после N неудачных попыток (замена `pam_tally2`)
 - `pam_sss.so` — аутентификация через SSSD/LDAP
 - `pam_google_authenticator.so` — MFA/TOTP
+- `pam_u2f.so` / `pam_fido2.so` — аппаратные токены FIDO2/U2F (YubiKey, Nitrokey)
 - `pam_access.so` — доступ по IP/хосту через `/etc/security/access.conf`
 
 Полное описание PAM, контрольные флаги и расширенный синтаксис: **[PAM — обзор](../../Linux/Security/pam_overview.md)**.
@@ -182,8 +210,8 @@ sudo visudo
 # Разрешить группе wheel без пароля для systemctl
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart *
 
-# Запретить удаление корневой директории
-Defaults !root_sudo_check
+# Prevents root from running sudo itself (root is already root)
+Defaults !root_sudo
 
 # Требовать TTY
 Defaults requiretty
@@ -204,12 +232,34 @@ Cmnd_Alias  NETWORKING = /sbin/route, /sbin/ifconfig, /usr/bin/ip
 ADMINS WEB_SERVERS = (DB_USERS) NETWORKING
 ```
 
-**doas** — минималистичная альтернатива `sudo` (OpenBSD, Alpine Linux). Конфигурация в `/etc/doas.conf`:
+**doas** — минималистичная альтернатива `sudo` (OpenBSD, Alpine Linux, Arch Linux). Конфигурация в одном файле `/etc/doas.conf`, значительно меньшая поверхность атаки благодаря упрощённому парсеру. В отличие от sudo, `doas` не поддерживает wildcard-сопоставление аргументов — аргументы после `cmd` сравниваются точечно:
+
 ```text
-permit nopass :wheel as root cmd /usr/bin/systemctl restart *
+# Разрешить группе wheel выполнять systemctl (любые подкоманды)
+permit nopass :wheel as root cmd /usr/bin/systemctl
+
+# Разрешить bob перезапускать nginx конкретно
+permit nopass bob as root cmd /usr/bin/systemctl restart nginx
 ```
 
-**Polkit** — гранулярная авторизация для системных действий (монтирование дисков, управление сетью) через DBus, без предоставления полного root-доступа. Используется в графических окружениях (`pkexec`).
+| Свойство | sudo | doas |
+| :--- | :--- | :--- |
+| Конфигурация | `/etc/sudoers` + `/etc/sudoers.d/` | `/etc/doas.conf` (один файл) |
+| Проверка синтаксиса | `visudo -c` | `doas -C /etc/doas.conf` |
+| Поддержка alias | Да (User_Alias, Cmnd_Alias, Host_Alias) | Нет (линейные правила) |
+| Аудит сессий | `iolog_dir`, `log_input/log_output` | Через `syslog` |
+
+**Polkit** — системная служба для гранулярной авторизации действий непривилегированных процессов через DBus. В отличие от sudo, Polkit не предоставляет полный root-доступ — он разрешает конкретные действия (монтирование дисков, управление сетью, перезагрузка) на уровне systemd/dbus. Правила находятся в `/etc/polkit-1/rules.d/*.rules` (JavaScript) и переопределяют стандартные разрешения из `/usr/share/polkit-1/actions/*.policy`. Пример разрешения действия для группы:
+
+```javascript
+// /etc/polkit-1/rules.d/10-admin.rules
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.login1.reboot" &&
+        subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});
+```
 
 Подробнее: **[Управление привилегиями: su, sudo и Polkit](../../Linux/SystemAdministration/privilege_management.md)**.
 
@@ -324,7 +374,7 @@ sudo last -ai /var/log/wtmp
 | Тип | Использование | Пример |
 | :--- | :--- | :--- |
 | **ServiceAccount (K8s)** | Автоматическая аутентификация подов к API-серверу | `system:serviceaccount:monitoring:prometheus` |
-| **Service Account (GCP/AWS)** | Идентификация рабочей нагрузки в облаке (вне облака — через Workload Identity Federation) | AWS IAM Role, GCP Service Account |
+| **Service Account (systemd)** | Идентичность для системных сервисов в Linux | `DynamicUser=yes` в unit-файле |
 | **AppRole (Vault)** | Динамическая аутентификация приложений с role_id + secret_id | `vault auth approve` для CI/CD |
 | **Machine user (GitHub/GitLab)** | API-доступ для автоматизации | PAT (Personal Access Token) с ограниченным scope |
 
@@ -333,6 +383,26 @@ sudo last -ai /var/log/wtmp
 - Разделение по окружениям: `deployer-prod` ≠ `deployer-staging`.
 - Минимальные привилегии (read-only для мониторинга, write только для deploy).
 - Хранение секретов во внешнем менеджере (Vault, SOPS), а не в репозитории.
+
+## Лучшие практики
+
+**Аутентификация:**
+1. **Пароли → ключи/токены:** Отключайте `PasswordAuthentication` в SSH; используйте Ed25519-ключи с passphrase и FIDO2-токены.
+2. **MFA обязательна:** Включайте TOTP или FIDO2 для всех интерактивных учётных записей (sudo, admin-доступы, CI/CD).
+3. **Короткие TTL токенов:** Service accounts получают токены на минуты/часы с автоматической ротацией (Vault AppRole, Kubernetes ServiceAccount token expiration).
+4. **Хранение секретов:** Никогда не храните в репозиториях. Используйте Vault, SOPS, или systemd-credentials с `LoadCredentialEncrypted`.
+5. **Break-glass контроль:** Аварийные аккаунты с TTL ≤ 72 часов, обязательный audit logging через `tlog`/`iolog_dir`, уведомление команды безопасности.
+
+**Авторизация:**
+6. **MAC > POSIX ACL > DAC:** Используйте SELinux/AppArmor для принудительного контроля доступа; не полагайтесь только на DAC.
+7. **RBAC с разделением по окружениям:** `deployer-prod` ≠ `deployer-staging`. Минимальные привилегии: read-only для мониторинга, write только для deploy.
+8. **Zero Trust:** Короткоживущие сертификаты (24h) для mTLS; атрибутивные политики через OPA/Gatekeeper.
+
+**Операционная безопасность:**
+9. **Аудит:** Логируйте все аутентификационные попытки (`journalctl -u sshd`, `auditd` на `/etc/sudoers`), sudo-команды, изменения в `~/.ssh/authorized_keys`.
+10. **Обнаружение сертификатов:** Автоматизированная инвентаризация (Ansible, Puppet) с алертом за 30 дней до истечения.
+11. **Ротация CA и корневых ключей:** Раз в 10–20 лет через cross-signing; план аварийного доступа без CA (автономный break-glass).
+12. **Оборудование:** FIDO2/U2F-токены для администрирования; HSM для корневых CA и production-ключей.
 
 ## Дополнительная информация
 
@@ -344,7 +414,7 @@ sudo last -ai /var/log/wtmp
 
 ### См. также
 
-- [OAuth 2.0 и OIDC](./oauth2_overview.md) — подробный разбор протоколов делегирования.
+- [OAuth 2.1 и OIDC](./oauth2_overview.md) — подробный разбор протоколов делегирования.
 - [MFA и TOTP](./mfa_totp.md) — усиление процесса аутентификации.
 - [PKI — инфраструктура открытых ключей](./pki_overview.md) — аутентификация через сертификаты.
 - [Kerberos](./kerberos.md) — сетевая аутентификация и SSO в enterprise.

@@ -1,5 +1,7 @@
 # Продвинутые сценарии использования Vagrant
 
+**Актуально для:** Vagrant 2.4.x
+
 ## Определения
 
 **Multi-Machine Vagrantfile** — конфигурация, описывающая группу взаимосвязанных виртуальных машин (ВМ) в рамках одного проекта. Позволяет моделировать сложные топологии: микросервисные архитектуры, кластеры баз данных и многоуровневые приложения (Frontend/Backend/DB).
@@ -15,6 +17,21 @@
 **Communicator (коммуникатор)** — программный мост, через который Vagrant отправляет команды внутрь ВМ. Основные типы: `ssh` (Linux/macOS) и `winrm` (Windows). От коммуникатора зависит этап провижининга и монтирования общих папок.
 
 **Suspend/Resume** — механизм сохранения полного состояния ВМ (ОЗУ, CPU, устройства) в файл на диске гипервизора. В отличие от `halt` (штатное завершение работы гостевой ОС), `suspend` замораживает ВМ и позволяет мгновенно возобновить работу без загрузки. Состояние переживает перезагрузку хоста.
+
+## Предварительные требования
+
+Для работы с продвинутыми сценариями Vagrant:
+
+1. **Vagrant 2.4.x** и совместимый гипервизор:
+   - **VirtualBox** 7.0+ (Windows, macOS, Linux)
+   - **Libvirt/QEMU** 6.0+ (Linux-only) — для сценариев с NUMA, CPU pinning, memory backing
+   - **Hyper-V** (Windows 10/11 Pro) — альтернативный провайдер для Windows-хостов
+2. **Плагины** (устанавливаются по необходимости):
+   - `vagrant-libvirt` — для Linux/libvirt сценариев
+   - `vagrant-hostmanager` — для управления `/etc/hosts` в multi-machine кластерах
+   - `vagrant-winrm` — для Windows-гостей через WinRM
+3. **Гостевые ОС** — образы box из Vagrant Cloud (рекомендуется `bento/ubuntu-24.04`, `bento/debian-12`).
+4. **Свободные ресурсы хоста** — рекомендуется минимум 8 ГБ ОЗУ для multi-machine кластеров.
 
 ## Базовые концепции
 
@@ -78,12 +95,18 @@ vagrant halt web db         # Выключить выбранные машины
 
 Триггеры обеспечивают глубокую интеграцию Vagrant с хост-системой и внешними инструментами.
 
-**Контексты и параметры выполнения:**
-- `run_local`: Команда выполняется на хост-машине.
-- `run_remote`: Команда выполняется внутри гостевой ОС (требует SSH).
-- `run`: Псевдоним для выполнения (по умолчанию `local`).
-- `abort: true`: Прерывает выполнение основной команды Vagrant, если триггер завершился с ошибкой.
-- `on_error: :continue`: Продолжает работу, даже если триггер упал.
+**Контексты и параметров выполнения:**
+- `run`: Блок с параметрами команды (`inline`, `path`, `args`, `env`). Выполняется на хост-машине. Является `attr_accessor`-ом объекта триггера.
+- `run_remote`: Блок с параметрами команды, выполняемой внутри гостевой ОС через SSH-коммуникатор.
+- `warn`: Выводит предупреждающее сообщение.
+- `ruby`: Выполняет блок Ruby-кода.
+- `exit_codes`: Хэш с картой кодов завершения и соответствующими сообщениями.
+- `only_on`: Выполняет триггер только для указанной машины по имени.
+- `ignore`: Игнорирует ошибку выполнения триггера.
+- `type`: Тип триггера (`:load` или `:always`).
+- `name`: Имя триггера для идентификации в логах.
+- `abort`: `attr_accessor`-отдельный флаг. Если `true`, прерывает выполнение основной команды Vagrant при ошибке триггера.
+- `on_error`: `attr_accessor`-отдельный флаг. Значение `:continue` продолжает работу даже при ошибке триггера (по умолчанию `:error` — прерывает).
 
 **События, на которые можно вешать триггеры:**
 - `:up` — перед/после запуска ВМ
@@ -91,6 +114,8 @@ vagrant halt web db         # Выключить выбранные машины
 - `:destroy` — перед/после удаления
 - `:provision` — перед/после провижининга
 - `:reload` — перед/после перезагрузки
+- `:suspend` — перед/после приостановки ВМ
+- `:resume` — перед/после возобновления ВМ
 
 **Пример сложной автоматизации:**
 
@@ -98,14 +123,15 @@ vagrant halt web db         # Выключить выбранные машины
 config.trigger.before :up do |trigger|
   trigger.name = "Pre-flight check"
   # Проверка наличия свободного места на хосте перед запуском
-  trigger.run_local = { inline: "bash scripts/check_host_resources.sh", abort: true }
+  trigger.run = { inline: "bash scripts/check_host_resources.sh" }
+  trigger.abort = true
 end
 
 config.trigger.after :up do |trigger|
   trigger.name = "Post-up DNS automation"
   
   # Локальное действие: обновление /etc/hosts на хосте
-  trigger.run_local = { 
+  trigger.run = { 
     inline: "echo '192.168.77.11 web-app.local' | sudo tee -a /etc/hosts" 
   }
   
@@ -118,7 +144,7 @@ end
 config.trigger.after :destroy do |trigger|
   trigger.name = "Cleanup"
   # Очистка временных файлов на хосте
-  trigger.run_local = { inline: "rm -f /tmp/vagrant-*" }
+  trigger.run = { inline: "rm -f /tmp/vagrant-*" }
 end
 ```
 
@@ -285,7 +311,7 @@ Vagrant.configure("2") do |config|
     lv.memballoon_enabled = false
 
     # Управление CPU
-    lv.cpu_affinity = "0-3"   # пиннинг vCPU на физические ядра
+    lv.cpuaffinitiy(0 => "0-3", 1 => "0-3")   # пиннинг vCPU на физические ядра
   end
 end
 ```
@@ -349,6 +375,8 @@ end
 | **`VAGRANT_NO_PARALLEL`** | Отключает параллельный запуск машин (полезно при дефиците ресурсов). |
 | **`VAGRANT_NO_TTY`** | Отключает интерактивный режим (обязательно для CI/CD). |
 | **`VAGRANT_BOX_UPDATE_CHECK`** | Отключает проверку обновлений box (ускоряет CI). |
+
+Полный список и справочник переменных — в [Базовый рабочий процесс в Vagrant](./vagrant_basic_workflow.md) — раздел «Окружающая среда» (авторитетный источник).
 
 **Пример использования в терминале:**
 ```bash
@@ -429,7 +457,7 @@ vagrant up
 ```ruby
 config.trigger.before :up do |trigger|
   trigger.name = "Pre-flight: disk space"
-  trigger.run_local = {
+  trigger.run = {
     inline: <<-BASH
       threshold=90
       usage=$(df -hT ~/.vagrant.d | awk 'NR==2 {print $5}' | tr -d '%')
@@ -444,7 +472,7 @@ end
 
 config.trigger.before :up do |trigger|
   trigger.name = "Pre-flight: RAM availability"
-  trigger.run_local = {
+  trigger.run = {
     inline: "free -m | awk 'NR==2 {exit ($7+0 < 2048)}' || (echo 'ERROR: Less than 2GB RAM free' && exit 1)"
   }
   trigger.abort = true
@@ -568,7 +596,7 @@ SHELL
 ```ruby
 config.trigger.before :up do |trigger|
   trigger.name = "Local: Ansible syntax check"
-  trigger.run_local = {
+  trigger.run = {
     inline: "ansible-playbook --syntax-check playbooks/site.yml"
   }
   trigger.abort = true
@@ -576,14 +604,14 @@ end
 
 config.trigger.after :up do |trigger|
   trigger.name = "Local: Update /etc/hosts"
-  trigger.run_local = {
+  trigger.run = {
     inline: "./scripts/update-hosts.sh"
   }
 end
 
 config.trigger.after :destroy do |trigger|
   trigger.name = "Local: Cleanup artifacts"
-  trigger.run_local = {
+  trigger.run = {
     inline: "rm -f /tmp/vagrant-*.log"
   }
 end
@@ -746,7 +774,7 @@ vagrant ssh-config web
 ### Лучшие практики
 
 1.  **Изоляция метаданных:** При запуске нескольких копий проекта (например, разные фичи-ветки) используйте `VAGRANT_DOTFILE_PATH`, чтобы состояния `.vagrant/` не пересекались.
-2.  **Безопасность триггеров:** Избегайте использования `sudo` в триггерах `run_local` без острой необходимости. Всегда проверяйте возвращаемые коды скриптов (`abort: true`).
+2.  **Безопасность триггеров:** Избегайте использования `sudo` в триггерах `run` без острой необходимости. Всегда проверяйте возвращаемые коды скриптов (`abort = true`).
 3.  **Именование в гипервизоре:** В мульти-машинных конфигурациях всегда задавайте уникальные `vb.name` или `lv.name`, чтобы избежать коллизий имен при запуске нескольких кластеров на одном хосте.
 4.  **Условная логика:** Используйте `if Vagrant.has_plugin?("...")` для настройки опций, зависящих от плагинов, чтобы файл оставался работоспособным у коллег без этих расширений.
 5.  **Версионирование:** Фиксируйте версию box (`config.vm.box_version`) и версию Vagrant (`config.vagrant.require_version`).

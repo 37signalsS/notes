@@ -135,8 +135,8 @@ istioctl install --set profile=remote \
 
 # 3. Настройка shared services
 kubectl apply -f - <<EOF
-apiVersion: networking.istio.io/v1beta1
-kind: ServiceEntry
+  apiVersion: networking.istio.io/v1
+  kind: ServiceEntry
 metadata:
   name: backend-cluster-b
   namespace: production

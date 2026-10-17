@@ -1,5 +1,7 @@
 # Методология тестирования производительности
 
+**Актуально для:** k6 v1.0.x, JMeter 5.7.x, wrk2 1.4, Grafana Pyroscope 0.37.x, Linux kernel 6.x, Prometheus 3.x
+
 ## 1. Определения и типы тестирования
 
 **Тестирование производительности** — это комплекс мероприятий, направленных на определение отзывчивости, масштабируемости, надежности и стабильности системы под заданной нагрузкой. В 2026 году оно рассматривается не как финальный этап перед релизом, а как непрерывный процесс (**Continuous Performance Testing**), интегрированный в CI/CD.
@@ -282,7 +284,7 @@ cat /sys/fs/cgroup/postgres/cpu.pressure
 docker run -d \
   -p 4040:4040 \
   -v /tmp/pyroscope:/tmp/pyroscope \
-  pyroscope/pyroscope:latest \
+  pyroscope/pyroscope:0.37.2 \
     pyroscope server
 
 # Инжекция агента в приложение (Go пример)

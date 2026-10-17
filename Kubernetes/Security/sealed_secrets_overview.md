@@ -200,8 +200,119 @@ helm install sealed-secrets sealed-secrets/sealed-secrets \
 kubeseal --controller-name=sealed-secrets --controller-namespace=sealed-secrets-system
 ```
 
-**Установка через HelmRelease в Flux CD (hub-and-spoke):**
-В Flux CD-топологии контроллер часто разворачивают в неймспейсе `flux-system` через `HelmRelease` CRD. Сертификат получают через `kubeseal --fetch-cert --controller-namespace=flux-system` и используют для офлайн-шифрования. Подробнее о паттерне hub-and-spoke с зашифрованными kubeconfigами spoke-кластеров — в [GitOps: Sealed Secrets с Flux CD](../../GitOps/secrets_encryption.md#сценарий-sealed-secrets-с-flux-cd-hub-and-spoke).
+**Установка через Argo CD Application (hub-and-spoke):**
+
+В Argo CD-топологии контроллер Sealed Secrets разворачивается через `Application` CR на hub-кластере в неймспейсе `argocd`. Это эквивалент Flux CD `HelmRelease`, но с использованием Argo CD `Application` и `AppProject` для управления жизненным циклом развертывания.
+
+**1. Создание AppProject для инфраструктурных компонентов:**
+
+```yaml
+# argocd/projects/infra-project.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: infra
+  namespace: argocd
+spec:
+  description: Инфраструктурные компоненты (Sealed Secrets контроллер, cert-manager и др.)
+  sourceRepos:
+  - https://bitnami.github.io/sealed-secrets
+  destinations:
+  - server: https://kubernetes.default.svc
+    namespace: kube-system
+  clusterResourceWhitelist:
+  - group: '*'
+    kind: '*'
+  namespaceResourceWhitelist:
+  - group: '*'
+    kind: '*'
+```
+
+**2. Создание Application для Sealed Secrets controller:**
+
+```yaml
+# argocd/projects/infra/applications/sealed-secrets.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sealed-secrets
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: infra
+  source:
+    repoURL: https://bitnami.github.io/sealed-secrets
+    chart: sealed-secrets
+    targetRevision: "2.x"
+    helm:
+      releaseName: sealed-secrets
+      values: |
+        fullnameOverride: sealed-secrets-controller
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+```
+
+> **Важно:** `fullnameOverride: sealed-secrets-controller` критически важен: `kubeseal` по умолчанию ищет контроллер с именем `sealed-secrets-controller`. Если release называется иначе, вы получите ошибку `controller not found` при запуске `kubeseal` без явного `--controller-name`.
+
+**Установка через Argo CD CLI:**
+
+```bash
+# Добавление Helm-репозитория в Argo CD (если ещё не добавлен)
+argocd repo add https://bitnami.github.io/sealed-secrets
+
+# Создание Application
+argocd app create sealed-secrets \
+  --repo https://bitnami.github.io/sealed-secrets \
+  --chart sealed-secrets \
+  --revision 2.x \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace kube-system \
+  --helm-set fullnameOverride=sealed-secrets-controller \
+  --sync-policy automated \
+  --auto-prune \
+  --self-heal
+
+# Синхронизация
+argocd app sync sealed-secrets
+```
+
+**Валидация:**
+
+```bash
+# Проверка статуса Application
+argocd app get sealed-secrets
+# → Name:               sealed-secrets
+# → Server:             https://kubernetes.default.svc
+# → Namespace:          kube-system
+# → Sync Status:        Synced to 2.x
+# → Health Status:      Healthy
+
+# Проверка подов контроллера
+kubectl get pods -n kube-system | grep sealed-secrets
+# → sealed-secrets-controller-xxx   1/1   Running
+
+# Проверка наличия ключа контроллера
+kubectl get secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-key
+```
+
+Контроллер создаёт ключевую пару RSA и сохраняет её в `Secret` с меткой `sealedsecrets.bitnami.com/sealed-secrets-key` в неймспейсе `kube-system`.
+
+Сертификат получают через `kubeseal --fetch-cert --controller-name=sealed-secrets-controller --controller-namespace=kube-system` и используют для офлайн-шифрования. Подробнее о паттерне hub-and-spoke с зашифрованными kubeconfigами spoke-кластеров — в [GitOps: Sealed Secrets с Argo CD](../../GitOps/secrets_encryption.md).
 
 **Резервное копирование мастер-ключа (КРИТИЧНО):**
 Если вы потеряете мастер-ключ, все ваши зашифрованные секреты в Git станут бесполезны.
@@ -331,14 +442,25 @@ roleRef:
 
 ### Сценарий 5: Интеграция с Argo CD
 
-При использовании Argo CD для синхронизации `SealedSecret`, важно настроить политику синхронизации:
+При использовании Argo CD для синхронизации `SealedSecret`, важно настроить политику синхронизации и понимать порядок применения ресурсов. Sealed Secrets создаются как обычные манифесты в Git-репозитории и синхронизируются Argo CD точно так же, как и другие Kubernetes-ресурсы.
+
+**Принцип работы:**
+1. Argo CD синхронизирует `SealedSecret` из Git в кластер.
+2. Контроллер Sealed Secrets обнаруживает `SealedSecret` и создаёт нативный `Secret`.
+3. Приложения, ссылающиеся на `Secret`, получают расшифрованные значения.
+
+**Application CR для приложения с Sealed Secrets:**
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: my-app
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
+  project: default
   source:
     repoURL: https://github.com/org/repo.git
     targetRevision: main
@@ -352,6 +474,23 @@ spec:
       selfHeal: true
     syncOptions:
     - CreateNamespace=true
+    - ServerSideApply=true
+```
+
+**Рекомендации по синхронизации:**
+- Используйте `ServerSideApply=true` для избежания конфликтов с изменениями, вносимыми контроллером.
+- Если `Secret` создаётся контроллером после `SealedSecret`, а приложение ссылается на него в `initContainers`, добавьте `sync waves` или аннотацию `argocd.argoproj.io/sync-wave` для упорядочивания.
+- `selfHeal: true` гарантирует, что удалённый вручную `Secret` будет восстановлен после повторного появления `SealedSecret` в Git.
+
+**Команды для диагностики:**
+
+```bash
+# Проверка синхронизации SealedSecret в приложении
+argocd app get my-app --refresh
+argocd app diff my-app
+
+# Принудительная синхронизация
+argocd app sync my-app --revision main
 ```
 
 ### Сценарий 6: Работа с Helm-чартами
@@ -503,16 +642,16 @@ Kubeconfig — это просто Secret с ключом файла. Запеч
 
 ```bash
 kubectl create secret generic dev-kubeconfig \
-  --namespace=flux-system \
+  --namespace=argocd \
   --from-file=value=.kubeconfigs/dev.yaml \
   --dry-run=client -o yaml \
 | kubeseal \
   --cert ~/.kube/sealed-secrets-infra.pem \
   --format yaml \
-  > fluxcd/dev-kubeconfig-sealed.yaml
+  > argocd/dev-kubeconfig-sealed.yaml
 ```
 
-Контроллер на infra расшифровывает его, Flux использует для обращения к dev. Обратите внимание: namespace — `flux-system`, что должно совпадать с namespace, где работает Kustomization, ссылающаяся на этот секрет.
+Контроллер на infra расшифровывает его, Argo CD использует для обращения к dev. Обратите внимание: namespace — `argocd`, что должно совпадать с namespace, где работает Application, ссылающийся на этот секрет.
 
 ### Сценарий 12: Запечатывание учётных данных container registry
 
@@ -582,7 +721,7 @@ kubectl get secret \
 
 Храните в менеджере паролей. Это самый чувствительный файл в вашей инфраструктуре — у кого есть этот файл, тот может расшифровать все SealedSecret в репо.
 
-Импортируйте ключ в новый кластер до того, как Flux начнёт реконсиляцию:
+Импортируйте ключ в новый кластер до того, как Argo CD начнёт синхронизацию:
 ```bash
 kubectl apply -f sealed-secrets-key-backup.yaml
 kubectl rollout restart deployment sealed-secrets-controller -n kube-system
@@ -655,10 +794,15 @@ kubectl get secret my-db-secret -n app -o yaml
 
 ```bash
 # Проверить, синхронизировался ли SealedSecret в настоящий Secret
+argocd app get my-app
+# → Sync Status: Synced (виден SealedSecret в Git)
+# → Health Status: Healthy (SealedSecret применён в кластере)
+
 kubectl get sealedsecret my-secret -n app
 kubectl get secret my-secret -n app
 
-# Если Secret не существует, проверить events
+# Если Secret не существует, проверить events и синхронизацию Argo CD
+argocd app diff my-app
 kubectl describe sealedsecret my-secret -n app
 ```
 
@@ -697,6 +841,11 @@ kubectl get secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-ke
 # Проверка версии контроллера
 kubectl get deployment -n kube-system -l app.kubernetes.io/name=sealed-secrets \
   -o jsonpath='{.items[0].spec.template.spec.containers[0].image}'
+
+# Проверка синхронизации SealedSecret через Argo CD
+argocd app get <application-name>
+argocd app diff <application-name>
+argocd app events <application-name>
 
 # Тест шифрования/расшифровки (проверка работы kubeseal)
 echo -n "test" | kubeseal --cert pub-cert.pem --format yaml | kubeseal --recovery-unseal \
@@ -759,5 +908,5 @@ echo -n "test" | kubeseal --cert pub-cert.pem --format yaml | kubeseal --recover
 - **[SOPS](../../Security/Tools/sops_overview.md)** — шифрование файлов с ключами AWS/GCP/Age без привязки к контроллеру.
 - **[Vault](../../Vault/zero_trust.md)** — полноценная система управления секретами.
 - Общий обзор стратегий — **[Secrets Management Overview](../../Security/Concepts/secrets_management_overview.md)**.
-- Пайплайны GitOps — **[GitOps Secrets Encryption](../../GitOps/secrets_encryption.md)**, включая сценарий [Sealed Secrets с Flux CD (hub-and-spoke)](../../GitOps/secrets_encryption.md#сценарий-sealed-secrets-с-flux-cd-hub-and-spoke) для управления kubeconfigами spoke-кластеров.
+- Пайплайны GitOps — **[GitOps Secrets Encryption](../../GitOps/secrets_encryption.md)**, включая сценарий [Sealed Secrets с Argo CD (hub-and-spoke)](../../GitOps/secrets_encryption.md#сценарий-sealed-secrets-с-argo-cd-hub-and-spoke) для управления kubeconfigами spoke-кластеров.
 - Паттерн динамической конфигурации — **[Application Secrets Management](./application_secrets_management.md)**.

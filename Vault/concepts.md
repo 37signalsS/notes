@@ -1,6 +1,16 @@
 # Архитектура и основные концепции
 
+**Актуально для:** Vault 2.x (latest 2.1.2; ветка 1.21.x поддерживается)
+
 Общее описание технологии — в [Vault Overview](overview.md).
+
+## Предварительные требования
+
+* **Vault:** развернутый кластер (OSS или Enterprise) версии 2.x или 1.16+ для использования всех описанных функций. Минимальная версия для базовых функций — 1.13+.
+* **TLS:** Production-развёртывание требует TLS для всех соединений (API, UI, межузловая коммуникация Raft).
+* **Audit logging:** включённый audit device (File или Syslog) обязателен для compliance и troubleshooting.
+* **Capabilities:** для выполнения сценариев в этом файле требуется token с `read` на `sys/mounts`, `sys/leader` и т.п. — или root-токен для тестовых целей.
+* **CLI:** Vault CLI версии 1.16+ для использования новых подкоманд (`vault transit`, `vault events`, `vault operator raft`).
 
 ## Определения
 
@@ -40,7 +50,7 @@ Vault имеет **плагинную архитектуру (Pluggable Architec
 
 Vault может находиться в одном из двух состояний:
 
-1.  **Запечатанное (Sealed):** Состояние по умолчанию при запуске. Vault знает расположение хранилища, но не может расшифровать данные. Все операции, кроме проверки статуса и распечатывания, заблокированы. Автоматически переходит в это состояние при каждом перезапуске.
+1.  **Запечатанное (Sealed):** Состояние по умолчанию при запуске с **Shamir seal** (без Auto-unseal). Vault знает расположение хранилища, но не может расшифровать данные. Все операции, кроме проверки статуса и распечатывания, заблокированы. С Shamir seal Vault автоматически переходит в это состояние при каждом перезапуске — требует ручного или автоматического (Auto-unseal) распечатывания. При **Auto-unseal** (через KMS/HSM) Vault автоматически распечатывается при старте, не требуя ручного ввода ключей.
 2.  **Распечатанное (Unsealed):** Рабочее состояние. Главный ключ (Master Key) или Ключ Барьера (Barrier Key) загружается в оперативную память для расшифровки данных и обслуживания запросов. Ключ никогда не хранится в постоянном хранилище и собирается при распечатывании.
 
 #### Как работает распечатывание: Алгоритм Шамира
@@ -107,13 +117,13 @@ Vault делегирует хранение зашифрованных данн�
 Vault является master-slave системой: одновременно только один узел кластера активен (Active) и обслуживает все запросы (чтение и запись).
 
 * **Active/Standby:** Остальные узлы кластера работают в режиме Standby и синхронизируются с лидером через Raft (Integrated Storage) или Consul. Standby-узлы автоматически берут на себя роль лидера при сбое текущего, перенаправляя при этом запросы на активный узел. Переход лидера не требует участия оператора.
-* **Performance Standby (Enterprise):** Узлы, которые обслуживают запросы на чтение (read-only) локально, не перенаправляя их лидеру; запросы на запись всё равно пересылаются на активный узел. Обеспечивают горизонтальное масштабирование операций чтения (KV, Transit). Функция доступна с Enterprise 0.11.
+* **Performance Standby (Enterprise):** Узлы, которые обслуживают запросы на чтение (read-only) локально, не перенаправляя их лидеру; запросы на запись всё равно пересылаются на активный узел. Обеспечивают горизонтальное масштабирование операций чтения (KV, Transit). Требует лицензии Vault Enterprise 2.x (в OSS недоступна).
 * **Репликация между кластерами (Enterprise):** два режима — **DR Replication** (аварийное восстановление во второй region) и **Performance Replication** (распределение чтения/записи по нескольким кластерам). Кластеры-реплики имеют те же механизмы распечатывания и политик, что и географический лидер.
 * **Namespace (Enterprise):** логическая изоляция сред внутри одного физического кластера — аналог мультиарендности, позволяющий разделять среды (dev/prod) и их политики и токены без развертывания отдельных кластеров.
 
 **Read Consistency:** Для операций чтения в кластере Raft Vault поддерживает два уровня:
 * **strong (по умолчанию):** запрос перенаправляется на лидера, гарантируя актуальность данных.
-* **stale:** запрос обслуживается локально standby-узлом, что снижает задержку, но позволяет получить устаревшие данные (до 100 мс отставания). Настраивается через заголовок `X-Vault-Stale-Read: true`.
+* **stale:** запрос обслуживается локально standby-узлом, что снижает задержку, но позволяет получить устаревшие данные (до 100 мс отставания). Заголовок `X-Vault-Stale-Read` не используется — stale reads достигаются простым запросом к standby-узлу.
 
 Подробнее о подходах высокой доступности при развертывании в Kubernetes — в [Руководстве по Kubernetes](./guides/vault_kubernetes_integration.md).
 
@@ -150,7 +160,7 @@ Vault выдает токены после успешной аутентифик
 
 **Workload Identity Federation (WIF):** Современный метод (Secret Zero), позволяющий Vault обмениваться OIDC-токенами с облачными провайдерами для получения временных прав доступа без использования статических "root" ключей провайдера.
 
-Подробнее о методах аутентификации для машин — в [Аутентификация через AppRole](./guides/vault_auth_approle.md).
+Подробнее о методах аутентификации — [AppRole](./guides/vault_auth_approle.md), [LDAP](./guides/vault-auth-ldap.md), [OIDC/SSO](./guides/vault-auth-oidc-sso.md), [MFA](./guides/vault-mfa.md).
 
 ### Авторизация и политики доступа (Policies)
 
@@ -158,7 +168,7 @@ Vault выдает токены после успешной аутентифик
 
 Основные механизмы:
 * **ACL-политики:** Управление доступом на основе путей и возможностей (`read`, `create`, `update`, `delete`, `list`, `sudo`, `deny`). Модель: Deny-by-default.
-* **Sentinel (Enterprise):** Управление доступом на основе логики (Policy as Code) с учетом контекста (время, IP, использование MFA).
+* **Sentinel (Enterprise):** Управление доступом на основе логики (Policy as Code) с учетом контекста (время, IP, использование MFA). Подробнее — [Sentinel-политики (RGP/EGP)](./guides/sentinel-policies.md).
 * **Control Groups (Enterprise):** Механизм многостороннего одобрения (принцип "четырех глаз") критических операций.
 
 Подробное описание — в разделе **[Авторизация в Vault](./authorization.md)**.
@@ -172,13 +182,15 @@ Vault выдает токены после успешной аутентифик
 | **`kv` (v1/v2)** | Статические секреты | Хранилище «ключ-значение». v2 поддерживает версионирование (по умолчанию 10 версий), мягкое удаление с восстановлением (`undelete`) и атрибуцию изменений (поле `created_by`, `deleted_by` в метаданных версии). |
 | **`database`** | Динамические секреты | Временные учётные данные для БД (PostgreSQL, MySQL, MongoDB, Oracle). Поддерживает статические (static) и динамические (dynamic) роли. Снижают риск: если пароль попадет в логи, он быстро истечет. |
 | **`pki`** | Динамические сертификаты | Внутренний CA для выдачи TLS-сертификатов. Поддерживает ACME. Позволяет использовать короткоживущие сертификаты (часы/минуты), упрощая процесс ротации. |
-| **`transit`** | Шифрование как сервис | Криптографические операции без хранения данных в Vault. Идеально для защиты **PII (Personal Identifiable Information)**: данные в БД остаются зашифрованными даже при компрометации доступа к ней. |
-| **`secrets-sync`** | Синхронизация | (1.16+) Перенос секретов в GitHub, Vercel и др. |
-| **`aws`/`gcp`/`azure`** | Облачные секреты | Временные IAM-учётные данные для облачных провайдеров. |
+| **`transit`** | Шифрование как сервис | Криптографические операции без хранения данных в Vault. Идеально для защиты **PII (Personal Identifiable Information)**: данные в БД остаютются зашифрованными даже при компрометации доступа к ней. |
+| **`aws`/`gcp`/`azure`** | Облачные секреты | Временные IAM-учётные данные для облачных провайдеров (только Enterprise). |
 | **`totp`** | Одноразовые пароли | Генерация и валидация TOTP-кодов для MFA. |
 | **`ssh`** | SSH-сертификаты | Управление SSH-ключами и сертификатами доступа. Динамическая генерация исключает использование одного долгоживущего `.pem` файла для всей инфраструктуры. |
 | **`rabbitmq`** | Очереди сообщений | Динамические credentials для RabbitMQ. |
 | **`kubernetes`** | K8s токены | Выдача токенов сервисных аккаунтов Kubernetes. |
+| **`kmip`** | Управление ключами | (Enterprise) Выдача и управление криптографическими ключами через KMIP-протокол. |
+
+> **Примечание:** **Secrets Sync** (синхронизация секретов в AWS Secrets Manager, Azure Key Vault, GCP Secret Manager, GitHub Actions, Vercel) — это функция Vault Enterprise (1.16+), а не mounted secrets engine. Она управляется через API `/sys/sync/destinations/*` и не включается через `vault secrets enable`. Подробности — в [SLM, Vault Radar, Secrets Sync](./guides/slm_radar_secrets_sync.md).
 
 **Сравнение моделей:**
 
@@ -189,16 +201,54 @@ Vault выдает токены после успешной аутентифик
 | Отзыв | Удаление/перезапись | Мгновенный revoke в целевой системе |
 | Ротация | Ручная/внешняя | Встроенная через роли |
 
+#### Управление версиями KV v2
+
+KV v2 хранит историю версий каждого секрета. Доступ к данным осуществляется через сегмент `/data/`, а метаданные — через `/metadata/`. Это важно для настройки ACL-политик (подробно — в [KV v2](./guides/kv-v2.md)):
+
+```bash
+# Запись новой версии (CAS — check-and-set, только если версия совпадает)
+vault kv put -mount=secret -cas=2 my-secret api_key="new_key"
+
+# Чтение последней версии
+vault kv get -mount=secret my-secret
+
+# Чтение конкретной версии
+vault kv get -mount=secret -version=1 my-secret
+
+# Список ключей (требует capability list на путь /metadata/)
+vault kv list -mount=secret
+
+# Просмотр метаданных (версии, времена, статус)
+vault kv metadata get -mount=secret my-secret
+```
+
+**Операции удаления** — три уровня:
+
+| Операция | CLI | API путь | Эффект |
+| :--- | :--- | :--- | :--- |
+| **Soft delete** | `vault kv delete -mount=secret -versions=2 my-secret` | `POST /:mount/delete/:path` | Помечает версию удалённой (deletion_time). Данные сохранены, можно восстановить через `undelete`. |
+| **Undelete** | `vault kv undelete -mount=secret -versions=2 my-secret` | `POST /:mount/undelete/:path` | Восстанавливает ранее soft-deleted версию. |
+| **Destroy (permanent)** | `vault kv destroy -mount=secret -versions=2 my-secret` | `POST /:mount/destroy/:path` | Полностью удаляет данные. Необратимо. |
+
+**Конфигурация KV v2:**
+
+| Параметр | Команда | Описание |
+| :--- | :--- | :--- |
+| `max_versions` | `vault write secret/config max_versions=20` | Максимум версий на ключ. Старше — автоматически уничтожаются. По умолчанию 10 (0 = неограниченно, но рекомендуется установить лимит для контроля роста хранилища). |
+| `cas_required` | `vault write secret/config cas_required=true` | Требовать CAS (check-and-set) для всех записей. Предотвращает случайные перезаписи. |
+| `delete_version_after` | `vault write secret/config delete_version_after="24h"` | Автоматически удалять (soft delete) версии старше указанного TTL. |
+
 ### Жизненный цикл: Токены, Lease и Revoke
 
 Любой динамический секрет или токен сопровождается **lease** (арендой) с ограничением по времени (TTL).
 
-* **Токены:** Основные объекты идентичности. Бывают `service` (стандартные, хранятся в индексе), `batch` (легковесные, без хранения в индексе и аудита), `periodic` (обновляются неограниченно, но без дочерних токенов).
+* **Токены:** Основные объекты идентичности. Бывают `service` (стандартные, хранятся в индексе), `batch` (легковесные, без хранения в индексе и аудита), `periodic` (обновляются неограниченно, но без дочерних токенов). Префиксы токенов: `hvs.` — service, `hvb.` — batch, `hvr.` — recovery (начиная с Vault 1.10+).
+* **Orphan Tokens (осиротевшие токены):** Токены без родителя — начало собственного дерева токенов. Не отзываются при истечении TTL родительского токена. Создаются через `/auth/token/create-orphan` (требует root/sudo) или `-orphan` флаг в CLI. Используются для долгоживущих сервисов (CI/CD, приложения), где родительский токен может быть отозван, но сервис должен продолжать работать.
 * **TTL и Max TTL:** Два связанных значения — `ttl` (изначальный срок жизни) и `max_ttl` (абсолютный потолок, который не преодолевается при повторных продлениях). Учёт через `vault read /auth/token/lookup-self` или `vault token lookup`.
-* **Accessor:** Публичный идентификатор токена. Позволяет проверять статус или отзывать токен, не передавая само секретное значение.
+* **Accessor:** Публичный идентификатор токена. Позволяет проверять статус или отзевать токен, не передавая само секретное значение.
 * **Локальные (Local) и глобальные (Global) токены:** Глобальные видны во всех кластерах DR Replication, локальные — только в текущем.
-* **Продление (Renew):** Увеличение TTL до максимально разрешенного значения.
-* **Отзыв (Revoke):** Досрочное аннулирование секрета, инициирующее удаление данных в целевой системе. Каскадная отмена действует на дочерние токены и связанные lease.
+* **Продление (Renew):** Увеличение TTL до максимально разрешенного значения. Periodic-токены могут продляться бесконечно (до `explicit_max_ttl`, если задан), service-токены — до `max_ttl`. Batch-токены не поддерживают продление.
+* **Отзыв (Revoke):** Досрочное аннулирование секрета, инициирующее удаление данных в целевой системе. Каскадная отмена действует на дочерние токены и связанные lease. Для отзыва токена без затрагивания дочерних — используйте `vault token revoke -mode=orphan <token>` (создаёт из дочерних токенов осиротевшие).
 * **Автоматическая очистка (Tidy):** Периодическая чистка истёкших lease и «осиротевших» токенов по истечении TTL для уменьшения хранилища.
 
 ### Обертывание ответов (Response Wrapping)
@@ -210,8 +260,9 @@ Vault выдает токены после успешной аутентифик
 
 ### Аудит и события (Vault Events)
 
-*   **Audit Devices (Устройства аудита):** Запись всех запросов и ответов (File, Syslog, Socket). Аналог камер видеонаблюдения: фиксируют, кто, когда и какой секрет запрашивал, включая ошибки. Рекомендуется минимум два устройства. Чувствительные данные в логах хэшируются с солью.
-*   **Vault Events (GA с 1.16+, бета в 1.15):** Позволяет внешним системам подписываться на события в Vault (создание секрета, изменение политики) через WebSocket-поток. Подписка выполняется через endpoint `/v1/sys/events/subscribe/{eventType}` (поддерживаются wildcard-паттерны, например `kv-v2/data-*`) или команду CLI `vault events subscribe`. По умолчанию события передаются в бинарном protobuf-формате, опционально — как JSON (`?json=true`). Для потребления событий без поля `path` требуется root-токен. События доступны только в разрешённом namespace и защищены политиками (capability `subscribe`, поле `subscribe_event_types`).
+*   **Audit Devices (Устройства аудита):** Запись всех запросов и ответов (File, Syslog, Socket). Аналог камер видеонаблюдения: фиксируют, кто, когда и какой секрет запрашивал, включая ошибки. Рекомендуется минимум два устройства. Чувствительные данные в логах хэшируются с солью (HMAC-SHA256).
+*   **Vault Events (Enterprise, GA с 1.16+, бета в 1.15):** Позволяет внешним системам подписываться на события в Vault (создание секрета, изменение политики) через WebSocket-поток. Подписка выполняется через endpoint `/v1/sys/events/subscribe/{eventType}` (поддерживаются wildcard-паттерны, например `kv-v2/data-*`) или команду CLI `vault events subscribe`. По умолчанию события передаются в бинарном protobuf-формате, опционально — как JSON (`?json=true`). Для потребления событий без поля `path` требуется root-токен. События доступны только в разрешённом namespace и защищены политиками (capability `subscribe`, поле `subscribe_event_types`).
+*   **Forensic analysis:** Audit логи позволяют трассировать цепочку доступа по `request.id` (связь request ↔ response), определять радиус поражения и находить аномалии (bulk-read, mass-revoke, root-токен из неизвестного IP). Подробности — в [Анализ audit логов](./guides/audit_log_analysis.md).
 
 ### Барьер и шифрование данных (Encryption at Rest)
 
@@ -242,6 +293,21 @@ vault auth disable ldap
 vault auth tune -path=approle token_type=batch token_ttl=1h
 vault secrets tune -path=secret max_lease_ttl_seconds=86400
 
+# KV v2: чтение, запись, CAS, удаление/восстановление/уничтожение
+vault kv get -mount=secret my-secret
+vault kv put -mount=secret -cas=1 my-secret key="value"
+vault kv delete -mount=secret -versions=1 my-secret
+vault kv undelete -mount=secret -versions=1 my-secret
+vault kv destroy -mount=secret -versions=1 my-secret
+vault kv list -mount=secret
+
+# Управление токенами
+vault token create -policy=app-policy -ttl=1h -max-ttl=24h
+vault token create -orphan -policy=ci-policy -ttl=30m
+vault token lookup <token_accessor>
+vault token revoke <token>
+vault token revoke -mode=orphan <token>  # отозвать токен, но не дочерние
+
 # Проверка работоспособности (health check)
 vault status
 # → Seal Type       shamir
@@ -266,6 +332,8 @@ vault operator raft list-peers
 2.  Лидер автоматически переключается на обновленную реплику.
 3.  Обновить бывшего лидера.
 4.  Проверить `vault status` и `vault operator raft list-peers`.
+
+Пошаговая процедура обслуживания (step-down, покатный апгрейд, коды `/sys/health`) — в [Обслуживание кластера](./guides/cluster-maintenance.md).
 
 **Seal Migration:** Переход между механизмами seal (например, Shamir → Auto-unseal) выполняется через `vault operator rekey` и `vault operator unseal -migrate` без потери данных и изменения корневого токена. Подробности — в [Руководстве по установке](./guides/vault_installation.md).
 
@@ -336,6 +404,99 @@ path "secret/data/{{identity.entity.metadata.team}}/*" {
 }
 ```
 
+### CI/CD интеграция (без облака)
+
+Vault полностью самостоятельно (self-hosted) подходит для CI/CD без привязки к облачным провайдерам. Два проверенных паттерна:
+
+#### Паттерн 1: AppRole для CI/CD раннеров
+
+```bash
+# 1. Создание политики для пайплайна
+vault policy write ci-deploy - <<EOF
+# Доступ только к своей ветке
+path "secret/data/ci/app/*" {
+  capabilities = ["read"]
+}
+path "database/creds/ci-role" {
+  capabilities = ["read"]
+}
+EOF
+
+# 2. Создание AppRole с коротким TTL
+vault write auth/approle/role/ci-deploy \
+    token_policies="ci-deploy" \
+    token_ttl=15m \
+    token_max_ttl=30m \
+    secret_id_ttl=30m \
+    secret_id_num_uses=1
+
+# 3. Получение RoleID (хранится в CI как static config)
+vault read auth/approle/role/ci-deploy/role-id
+# → role_id: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# 4. Получение SecretID с Response Wrapping (передаётся в CI безопасно)
+vault write -wrap-ttl=10m -f auth/approle/role/ci-deploy/secret-id
+# → wrapping_token: s.xxxxxxxx
+
+# 5. В CI/CD пайплайне (GitLab CI пример):
+#    1) vault unwrap $WRAPPING_TOKEN → SecretID
+#    2) vault write auth/approle/login role_id=$ROLE_ID secret_id=$SECRET_ID → токен
+#    3) vault kv get secret/ci/app/config → секреты
+#    4) Токен автоматически истекает через 15 мин
+```
+
+#### Паттерн 2: JWT/OIDC для self-hosted CI (GitLab, Jenkins)
+
+Для self-hosted CI, поддерживающего OIDC-выдачу (GitLab CI 16.0+, Jenkins с plugins), используется JWT auth method без облака:
+
+```bash
+# 1. Настройка JWT auth method (self-hosted OIDC provider)
+vault auth enable jwt
+
+# 2. Конфигурация с bounds на issuer и audience
+vault write auth/jwt/config \
+    jwks_url="https://gitlab.example.com/-/jwks" \
+    bound_issuer="https://gitlab.example.com/" \
+    default_role="ci-deploy"
+
+# 3. Роль с привязкой к CI-переменным (namespace, project)
+vault write auth/jwt/role/ci-deploy \
+    role_type="jwt" \
+    bound_audiences="https://gitlab.example.com" \
+    bound_claims='{"namespace":"production"}' \
+    token_policies="ci-deploy" \
+    token_ttl=15m \
+    token_max_ttl=30m \
+    claim_mappings='{"sub":"resource"}'
+
+# 4. В пайплайне: получить JWT от CI, войти в Vault через /auth/jwt/login
+#    vault write auth/jwt/login role=ci-deploy jwt=$CI_JOB_JWT
+```
+
+#### Управление токенами в production
+
+Для долгоживущих сервисов используйте комбинацию orphan + periodic токенов:
+
+```bash
+# Создание periodic orphan service token (для приложения без parent)
+vault token create \
+    -orphan \
+    -policy=app-policy \
+    -period=24h \
+    -max-leases-to-attach=0 \
+    -explicit-max-ttl=720h
+
+# Проверить статус токена (по accessor)
+vault token lookup -prefix=$(vault token lookup <token> -format=json | jq -r .data.accessor)
+# или по accessor напрямую:
+vault token lookup <accessor>
+```
+
+**Best practice для production:**
+- `batch`-токены для M2M (короткий TTL, без индексирования)
+- `service` + `orphan` + `periodic` для долгоживущих сервисов (самостоятельное продление через Vault Agent)
+- `explicit_max_ttl` для batch-токенов — ограничивает максимальный TTL даже с renew
+
 ### Ежедневные проверки работоспособности (Health Checks)
 
 SRE-практика предполагает автоматизированные проверки состояния Vault:
@@ -366,29 +527,229 @@ vault audit list
 
 Регулярно проверяйте целостность снапшотов Raft:
 
-```bash
-# Создание снапшота
-vault operator raft snapshot save /opt/vault/backups/vault-$(date +%Y%m%d-%H%M).snap
+Создание, проверка целостности (`snapshot inspect`) и тестовое восстановление покрыты в **[Стратегиях резервного копирования и восстановления Vault](./guides/backup_restore_strategies.md#сценарий-1-создание-и-хранение-snapshot)**.
 
-# Проверка целостности (read-only, не требует распечатывания)
-vault operator raft snapshot inspect /opt/vault/backups/vault-$(date +%Y%m%d-%H%M).snap
-# → Snapshot valid: true
-# → Entries: 1523
-# → Last Modified: 2026-09-20T...
+### Сисадмин операции (systemd, TLS, логи)
 
-# Тестовое восстановление (на выделенном стенде)
-vault operator raft snapshot restore /opt/vault/backups/vault-test.snap
+**systemd сервис для bare-metal / VM:**
+
+```ini
+# /etc/systemd/system/vault.service
+[Unit]
+Description=HashiCorp Vault
+Documentation=https://developer.hashicorp.com/vault/docs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=vault
+Group=vault
+ExecStart=/usr/local/bin/vault server -config=/etc/vault.d/vault.hcl
+ExecReload=/bin/kill -HUP $MAINPID
+CapabilityBoundingSet=CAP_IPC_LOCK
+SecureBits=lock:ptrace
+User=vault
+Group=vault
+NoNewPrivileges=yes
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+PrivateDevices=false
+PrivateUsers=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=
+ProtectKernelTunables=true
+RestrictRealtime=true
+RestrictNamespaces=true
+SystemCallFilter=@system-service
+SystemCallFilter=add_key
+SystemCallFilter=syslog
+SystemCallFilter=prctl
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+UAIMap=yes
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+TasksMax=infinity
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-### Типичные проблемы Seal/Unseal и способы восстановления
+**Включить и запустить:**
+```bash
+systemctl daemons-reload
+systemctl enable vault
+systemctl start vault
+systemctl status vault
+```
+
+**Ротация TLS-сертификатов для Vault:**
+
+Vault требует TLS для всех production-соединений. Ротация сертификата требует reload конфигурации:
+
+```bash
+# 1. Поместите новые сертификаты на диск
+cp new.crt /etc/vault.d/certs/tls.crt
+cp new.key /etc/vault.d/certs/tls.key
+
+# 2. Перезапустите Vault (reload TLS без полного restart)
+vault operator reload
+# → TLS certificates reloaded successfully
+```
+
+**Ротация audit-логов (logrotate):**
+
+```bash
+# /etc/logrotate.d/vault
+/var/log/vault/audit.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    postrotate
+        systemctl kill -s HUP vault.service
+    endscript
+}
+```
+
+**Емкость и планирование (capacity planning):**
+
+| Параметр | Минимум | Рекомендуется |
+| :--- | :--- | :--- |
+| Память | 4 ГБ | 8+ ГБ на узел |
+| CPU | 2 vCPU | 4+ vCPU на узел |
+| Диск (Raft) | 10 ГБ | 100+ ГБ (зависит от audit volume и KV версий) |
+| `max_lease_ttl_seconds` | — | Установите лимит, чтобы не допустить залипания долгоживущих lease |
+| `default_lease_ttl` | — | 1h для большинства динамических движков |
+| `disable_mlock` | false (Linux) | true (container), используйте `LimitMEMLOCK=infinity` |
+
+> **Примечание:** Vault использует `mlock`/`IPC_LOCK` для предотвращения выгрузки ключей в swap. В Linux-контейнерах используйте `securityContext.capabilities` с `IPC_LOCK`.
+
+**Настройка telemetry для SRE:**
+
+```hcl
+# /etc/vault.d/vault.hcl
+listener "tcp" {
+  address     = "0.0.0.0:8200"
+  tls_cert_file = "/etc/vault.d/certs/tls.crt"
+  tls_key_file  = "/etc/vault.d/certs/tls.key"
+}
+
+storage "raft" {
+  path    = "/opt/vault/data"
+  node_id = "vault-1"
+}
+
+telemetry {
+  prometheus_retention_time = "24h"
+  disable_hostname           = true
+  enable_hostname_as_label    = true
+  statsd_address              = "127.0.0.1:8125"
+  num_dimensions               = 1
+}
+
+api_addr = "https://vault.example.com:8200"
+cluster_addr = "https://vault.example.com:8201"
+cluster_name = "vault-cluster"
+```
+
+**Автоматическое резервное копирование (cron, OSS):**
+
+```bash
+# /etc/cron.d/vault-snapshot
+0 */6 * * * vault vault operator raft snapshot save /backup/vault-$(date +\%F).snap
+15 1 * * * vault vault operator raft snapshot inspect /backup/vault-$(date +\%F).snap
+```
+
+## Лучшие практики
+
+**Управление ключами:**
+* Never используйте root-токен для ежедневной работы. Генерируйте его однократно через `vault operator init`, сразу же создайте политику с ограниченными правами и используйте `vault token create -role=<role>` для регулярных токенов.
+* Root-токен храните в зашифрованном хранилище (например, через `ansible-vault` или HSM) и регулярно проверяйте его отсутствие в логах и CI-конфигурациях через Vault Radar.
+* Используйте Shamir с `key-shares=5, key-threshold=3` (или аналогичный quorum) и распределяйте Unseal Keys между разными ролями (Security Officer, Platform Admin, On-Call Engineer).
+
+**Аудит и compliance:**
+* Минимум **два** audit-устройства (File + Syslog/Socket) для защиты от потери логов при сбое одного из каналов.
+* Настраивайте аудит так, чтобы `raw` (plaintext values) хэшировались с солью — по умолчанию используется HMAC.
+* Регулярно проверяйте audit-логи на аномальные паттерны: bulk-read всех секретов, revoke всех токенов, доступ root-токеном из неизвестных IP.
+
+**Токены:**
+* Используйте `token_type=batch` для M2M-приложений (меньше следов в индексе, нечувствительны к перезапуску Active node).
+* Устанавливайте `max_ttl` жёстче, чем `ttl` для токенов приложений — это предотвращает бессрочное продление.
+* Используйте `token_bound_cidrs` для ограничения токенов конкретными подсетями (например, pod CIDR в Kubernetes).
+
+**Хранилище и резервные копии:**
+* Используйте Raft (Integrated Storage) — не требует внешних зависимостей, поддерживает `vault operator raft snapshot save` в OSS.
+* Автоматизируйте snapshot через cron (OSS) или Snapshot Agent (Enterprise): `vault operator raft snapshot save /backup/vault-$(date +%F).snap` каждые 6–12 часов.
+* Регулярно проверяйте снапшоты через `vault operator raft snapshot inspect /backup/vault-*.snap` и проводите тестовое восстановление в изолированном окружении.
+
+**Мониторинг (SRE):**
+* Настраивайте алерты на: `vault_core_leader_periodic_checkpoints`, `vault_rollback_attempt`, `vault_token_creation`, `vault_token_renew`.
+* Используйте `/v1/sys/health` для liveness (sealed=false) и readiness (standby_ok=true) probes в orchestrator.
+* Следите за метрикой `vault_threadcount_threshold_violated` — сигнал о необходимости увеличить worker threads.
+* Ключевые метрики для SLO 99.9%: `vault_core_unsealed` (availability), `vault_request_count` с `status=~"5.."` (error rate), `vault_raft_commitTime` (latency). Подробнее — в [Мониторинг и алертинг](./guides/monitoring_and_alerting.md).
+
+#### Валидация и проверка
+
+```bash
+# Проверить, что audit log включён и записывается
+vault audit list
+# → file/       file
+# → syslog/    syslog
+
+# Проверить, что TLS включён
+vault status | grep -i "tls"
+# → Seal Type       shamir
+
+# Проверить количество токенов в индексе (batch-токены не учитываются)
+vault read sys/internal/ui/mounts
+```
+
+#### Очистка и откат
+
+```bash
+# Отозвать все токены выданные определённой политикой (например, после компрометации)
+vault list sys/policies/token
+vault read sys/policies/token/<policy_name>/token-roles
+vault token revoke -mode=orphan <compromised_parent_token>
+
+# Очистить истёкшие lease и орфан-токены
+vault write sys/retention/sweep -f
+
+# Tidy для KV v2 (удаление soft-deleted версий, помеченных через delete_version_after)
+vault write sys/retention/sweep -scope=kv -f
+
+# Очистить старые token-lease, не связанные с активными сессиями
+vault write sys/retention/sweep -scope=auth/token -f
+```
+
+### Типичные ошибки и способы восстановления (Troubleshooting)
 
 | Проблема | Причина | Решение |
 | :--- | :--- | :--- |
 | **Sealed despite Auto-unseal** | KMS/HSM недоступен или изменён ключ. | Проверьте `vault status` (поле `Seal Type`) и логи KMS. |
-| **Raft Quorum Lost** | Потеря >50% узлов кластера. | Восстановление из снапшота или ручная правка `peers.json`. |
+| **Raft Quorum Lost** | Потеря более 50% узлов кластера. | Восстановление из снапшота или ручная правка `peers.json`. |
 | **Cannot unseal with -migrate** | Не совпадает порог key-shares/recovery-threshold. | Убедитесь, что подаётся правильное количество ключей. |
 | **Error locking memory** | Ошибка `mlock`. | Проверьте `CAP_IPC_LOCK` и `LimitMEMLOCK=infinity` в systemd. |
 | **Root token revoked** | Root-токен одноразовый для входа. | Генерируйте новый через `vault operator generate-root` с Recovery/Unseal Keys. |
+| **High API latency** | Перегрузка Active node или отсутствие Performance Standby. | Масштабируйте standby-узлы, включите Performance Standby (Enterprise). |
+| **Audit log not writing** | Audit device misconfiguration или недостаточно прав. | Проверьте `vault audit list`, права на файл/сокет, формат логов. |
+| **Token count high** | Приложения не отзывают токены после завершения работы. | Настройте токены с небольшим `ttl`, используйте `batch`-токены для M2M. |
+| **Snapshot fails / corrupt** | Диск переполнен или I/O errors. | Проверьте свободное место (`df -h`), используйте `snapshot inspect` для проверки целостности. |
+| **Performance Standby не работает** | В OSS-сборке или лицензия истекла. | Проверьте `vault license status` (Enterprise). Performance Standby доступна только в Enterprise. |
+| **Vault Events не доставляются** | Подписка не имеет capability `subscribe` или `subscribe_event_types` в политике. | Добавьте `subscribe` capability и `subscribe_event_types = ["*"]` в политику. Требуется root-токен для событий без `path`. |
+| **mlock ошибка в контейнере** | `IPC_LOCK` capability not granted. | В Kubernetes: `securityContext.capabilities.add: ["IPC_LOCK"]`. В systemd: `LimitMEMLOCK=infinity`. |
+| **Audit log переполняет диск** | Высокая нагрузка + file audit device без rotation. | Настройте logrotate с `postrotate` (SIGHUP), либо используйте syslog/socket. |
 
 ## Дополнительная информация
 
@@ -408,7 +769,7 @@ vault operator raft snapshot restore /opt/vault/backups/vault-test.snap
 * [SLM, Vault Radar, Secrets Sync](./slm_radar_secrets_sync.md) — Security Lifecycle Management.
 * [Производительность и тюнинг](./performance_tuning.md) — оптимизация для high-load.
 * [Vault API Reference](./vault_api_reference.md) — REST API и endpoints.
-* [Cubbyhole и Response Wrapping](./cubbyhole_response_wrapping.md) — безопасная доставка секретов.
+* [Cubbyhole и Response Wrapping](./guides/cubbyhole_response_wrapping.md) — безопасная доставка секретов.
 * [Control Groups](./control_groups.md) — multi-approval для критических операций.
 * [Стратегии бэкапов и восстановления](./backup_restore_strategies.md) — RPO/RTO, disaster recovery.
 * [Руководство по установке Vault](./guides/vault_installation.md) — развертывание и обслуживание.

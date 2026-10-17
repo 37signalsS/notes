@@ -1,5 +1,19 @@
 # Политики Transit Engine в Vault
 
+**Актуально для:** Vault 2.x (latest 2.1.2; ветка 1.21.x поддерживается)
+
+> **Статус:** Transit secrets engine доступен в OSS Vault. Функции BYOK (import/export), управление ключами через Managed Keys (`managed_key`), квантово-устойчивые алгоритмы (`ml-dsa`, `slh-dsa`, `hybrid`) и `aes*-cmac`/`aes*-cbc` доступны только в Vault Enterprise.
+
+## Предварительные требования
+
+- **Vault версии 1.15+ (рекомендуется 2.x)** — Transit secrets engine доступен в OSS.
+- **Enterprise** — для импорта/экспорта ключей (BYOK), Managed Keys, `aes*-cmac`/`aes*-cbc`/`ml-dsa`/`slh-dsa`/`hybrid` типов.
+- **TLS** — обязательна для production; все клиентские соединения к Transit должны использовать TLS 1.2+.
+- **Audit logging включён** — Transit операции логируются с хэшированными значениями; требуется минимум один audit device (file + syslog рекомендуется для отказоустойчивости).
+- **Политика доступа** — субъекту требуется минимум `update` capability на нужный путь (`transit/encrypt/<key>`, `transit/decrypt/<key>` и т.д.).
+- **Key derivation** — если используется `derived=true`, каждый запрос обязан передавать `context` (base64); контекст не должен повторяться для разных сущностей с тем же ключом (иначе нарушится изоляция).
+- **Конвергентное шифрование** — требует `derived=true` + `convergent_encryption=true` при создании ключа; каждая операция обязана передавать `context`.
+
 ## Определения
 
 **Transit Engine** — это движок секретов Vault, реализующий модель «криптография как сервис» (Cryptography as a Service, CaaS). Он позволяет приложениям выполнять шифрование, расшифровку, подписание данных и генерацию хэшей без прямого доступа к криптографическим ключам.
@@ -44,41 +58,82 @@
 | Путь | Операция | Capabilities | Описание |
 | :--- | :--- | :--- | :--- |
 | `transit/keys/<name>` | Управление | `create`, `read`, `update`, `delete`, `list` | Создание и настройка параметров ключа. |
-| `transit/keys/<name>/config` | Настройка | `update` | Изменение `min_decryption_version`, `min_encryption_version` и других параметров. |
+| `transit/keys/<name>/config` | Настройка | `update` | Изменение `min_decryption_version`, `min_encryption_version`, `deletion_allowed`, `exportable` и др. |
 | `transit/keys/<name>/rotate` | Ротация | `update` | Генерация новой версии ключа. |
-| `transit/keys/<name>/trim` | Очистка | `update` | Удаление старых версий ключа (опасно: данные старых версий нельзя будет расшифровать). |
-| `transit/keys/<name>/import` | Импорт | `update` | Импорт внешнего ключа (Enterprise, для HMAC-ключей доступен в OSS). |
-| `transit/keys/<name>/export` | Экспорт | `update` | Экспорт ключевого материала (Enterprise). |
-| `transit/encrypt/<name>` | Шифрование | `update` | Преобразование plaintext в ciphertext. |
-| `transit/decrypt/<name>` | Расшифровка | `update` | Преобразование ciphertext в plaintext. |
+| `transit/keys/<name>/trim` | Очистка | `update` | Удаление старых версий ключа (`min_available_version=<N>`); данные, зашифрованные удалёнными версиями, расшифровать невозможно. |
+| `transit/keys/<name>/import` | Импорт | `update` | Импорт внешнего ключа (BYOK). Enterprise; для `hmac`-ключей доступен в OSS. |
+| `transit/keys/<name>/import_version` | Добавление версии | `update` | Импорт новой версии в существующий ключ (Enterprise). |
+| `transit/wrapping_key` | Wrapping key | `read` | Чтение 4096-бит RSA public key для BYOK (Enterprise). |
+| `transit/export/<key_type>/<name>` | Экспорт | `read` | Экспорт ключевого материала (`key_type`: `encryption-key`, `signing-key`, `hmac-key`, `public-key`, `certificate-chain`, `cmac-key`). Требует `exportable=true`. Enterprise. |
+| `transit/encrypt/<name>` | Шифрование | `update` | Преобразование plaintext в ciphertext. Поддерживает `context`, `associated_data`, `batch_input`. |
+| `transit/decrypt/<name>` | Расшифровка | `update` | Преобразование ciphertext в plaintext. Поддерживает `context`, `batch_input`. |
 | `transit/rewrap/<name>` | Перешифрование | `update` | Перекодировка ciphertext на текущую версию ключа без возврата plaintext. |
-| `transit/datakey/plaintext/<name>` | Ключ данных (с открытым ключом) | `update` | Генерация ключа данных, зашифрованного Transit (паттерн envelope). |
-| `transit/datakey/wrapped/<name>` | Ключ данных (без открытого) | `update` | Создание ключа данных, возвращающего только шифротекст. |
-| `transit/hmac/<name>` | HMAC | `update` | Вычисление HMAC входных данных. |
+| `transit/datakey/plaintext/<name>` | Ключ данных (plaintext) | `update` | Генерация эфемерного ключа данных + шифротекст ключа (паттерн envelope). |
+| `transit/datakey/wrapped/<name>` | Ключ данных (wrapped) | `update` | Генерация эфемерного ключа данных — только шифротекст ключа. |
+| `transit/hmac/<name>[/sha2-256]` | HMAC | `update` | Вычисление HMAC входных данных. Алгоритм хэша в URL (`/sha2-256`, `/sha2-384`, `/sha2-512`). |
 | `transit/random` | Генерация | `update` | Генерация криптографически безопасного случайного набора байт. |
-| `transit/sign/<name>/<hash>` | Подписание | `update` | Создание цифровой подписи данных (hash: `sha2-256`, `sha2-384` и т.д.). |
-| `transit/verify/<name>/<hash>` | Проверка | `update` | Валидация цифровой подписи. |
+| `transit/sign/<name>[/<hash>]` | Подписание | `update` | Создание цифровой подписи (`hash`: `sha2-256`, `sha2-384`, `sha2-512` и т.д.). |
+| `transit/verify/<name>[/<hash>]` | Проверка | `update` | Валидация цифровой подписи. |
 
-> **Пакетные операции:** Шифрование, расшифровка, rewrap, подпись и HMAC поддерживают упаковку множества элементов в один запрос через «пакетный ввод» `batch_input` — массив объектов с `context`/`plaintext`/`ciphertext`. Ответ возвращается в `batch_results` с теми же идентификаторами в исходном порядке. При использовании `batch_input` параметры верхнего уровня (`plaintext`, `context`, `nonce`) игнорируются.
+> **Пакетные операции:** Шифрование, расшифровка, rewrap, подпись и HMAC поддерживают упаковку множества элементов в один запрос через «пакетный ввод» `batch_input` — массив объектов. Ответ возвращается в `batch_results` с теми же порядком элементов. При использовании `batch_input` параметры верхнего уровня (`plaintext`, `context`, `nonce`) игнорируются. Каждый элемент может содержать:
+> - `reference` — произвольная строка, возвращаемая в `batch_results` для сопоставления входа с результатом;
+> - `plaintext` / `ciphertext` — данные для обработки;
+> - `context` — base64 контекст для деривации;
+> - `nonce` — для convergent encryption (только ключи < Vault 0.6.2);
+> - `associated_data` — base64 AAD для AEAD-шифров (`aes*-gcm96`, `chacha20-poly1305`);
+> - `key_version` — явная версия ключа;
+> - `padding_scheme` — для RSA-CBC (`PKCS1v15`, `OAEP` и т.д.);
+> - `iv` — пользовательский IV для AES-CBC.
+> 
+> Если отдельный элемент завершается ошибкой, но другие успешны, по умолчанию HTTP-код ответа — 400 (Bad Request). Параметр `partial_failure_response_code` позволяет вернуть иной код (например, 200) для удобства пакетной обработки: если все элементы fail — всегда возвращается 400.
 
 > **Версионирование:** Все криптографические операции поддерживают параметр `version` для явного указания версии ключа. Если параметр опущен, используется `min_encryption_version` (для encrypt) или `min_decryption_version` (для decrypt). Это позволяет принудительно запретить использование устаревших версий для новых операций, сохраняя обратную совместимость для чтения старых данных.
+
+> **Associated Data (AAD):** Для AEAD-шифров (`aes128-gcm96`, `aes256-gcm96`, `chacha20-poly1305`) параметр `associated_data` (base64) позволяет аутентифицировать дополнительные данные без шифрования. AAD должен передаваться при каждом вызове encrypt и decrypt — при несовпадении операция завершится ошибкой. Добавьте `"associated_data" = []` в `allowed_parameters` политики, если приложение использует AAD.
+
+> **CLI `vault transit`:** Начиная с Vault 1.17, доступен подмнкож `vault transit` с подкомандами `import`/`import-version` (BYOK) и `envelope encrypt`/`envelope decrypt`/`envelope header` для файлового шифрования. Пример: `vault transit envelope encrypt transit/keys/my-key file.txt` — шифрует файл с использованием ключа Transit. Для операций encrypt/decrypt/sign на отдельных значениях используйте `vault write transit/encrypt/<key>`.
 
 ### Типы ключей
 
 При создании ключа параметр `type` определяет алгоритм и допустимые операции. Для современных инсталляций Transit Engine поддерживает:
 
-| `type` | Алгоритм | Операции |
-| :--- | :--- | :--- |
-| `aes256-gcm96` | AES-256-GCM, 96-бит nonce (по умолчанию) | Шифрование, расшифровка, деривация, конвергентное шифрование |
-| `aes128-gcm96` | AES-128-GCM, 96-бит nonce | Шифрование, расшифровка, деривация, конвергентное шифрование |
-| `chacha20-poly1305` | ChaCha20-Poly1305, 256-бит ключ | Шифрование, расшифровка, деривация, конвергентное шифрование |
-| `ed25519` | Ed25519 (асимметричный) | Подпись, проверка подписи, деривация |
-| `ecdsa-p256` / `p384` / `p521` | ECDSA на кривых NIST | Подпись, проверка подписи |
-| `rsa-2048` / `rsa-3072` / `rsa-4096` | RSA | Шифрование/расшифровка (OAEP), подпись/проверка (PSS, PKCS#1 v1.5) |
+| `type` | Алгоритм | Операции | Enterprise |
+| :--- | :--- | :--- | :--- |
+| `aes256-gcm96` | AES-256-GCM, 96-бит nonce (по умолчанию) | Шифрование, расшифровка, деривация, конвергентное шифрование | OSS |
+| `aes128-gcm96` | AES-128-GCM, 96-бит nonce | Шифрование, расшифровка, деривация, конвергентное шифрование | OSS |
+| `chacha20-poly1305` | ChaCha20-Poly1305, 256-бит ключ | Шифрование, расшифровка, деривация, конвергентное шифрование | OSS |
+| `ed25519` | Ed25519 (асимметричный) | Подпись, проверка подписи, деривация | OSS |
+| `ecdsa-p256` / `p384` / `p521` | ECDSA на кривых NIST | Подпись, проверка подписи | OSS |
+| `rsa-2048` / `rsa-3072` / `rsa-4096` | RSA | Шифрование/расшифровка (OAEP), подпись/проверка (PSS, PKCS#1 v1.5) | OSS |
+| `hmac` | HMAC (SHA-256 по умолчанию) | HMAC-генерация, HMAC-проверка, поддержка import в OSS | OSS |
+| `aes128-gcm96-nofallback` | AES-256-GCM без fallback | Шифрование, расшифровка | Enterprise |
+| `aes128-cbc` | AES-128-CBC | Шифрование, расшифровка (с padding scheme) | Enterprise (FIPS Inside) |
+| `aes256-cbc` | AES-256-CBC | Шифрование, расшифровка (с padding scheme) | Enterprise (FIPS Inside) |
+| `aes128-cmac` | AES-128-CMAC | CMAC-генерация, CMAC-проверка | Enterprise |
+| `aes192-cmac` | AES-192-CMAC | CMAC-генерация, CMAC-проверка | Enterprise |
+| `aes256-cmac` | AES-256-CMAC | CMAC-генерация, CMAC-проверка | Enterprise |
+| `managed_key` | Внешний ключ (HSM/KMS) | Зависит от backing solution | Enterprise |
+| `ml-dsa` | Квантово-устойчивый (CRYSTALS-Dilithium) | Подпись, проверка подписи | Enterprise |
+| `slh-dsa` | Квантово-устойчивый (SPHINCS+) | Подпись, проверка подписи | Enterprise |
+| `hybrid` | Комбинированный (классический + PQC) | Подпись, проверка подписи | Enterprise |
 
-Все типы ключей дополнительно получают отдельный случайный ключ для операций HMAC. Для асимметричных алгоритмов (кроме `ed25519`) перед подписью входные данные хэшируются.
+Все типы ключей дополнительно получают отдельный случайный ключ для операций HMAC.
 
-> **Примечание (режим FIPS 140-3):** алгоритмы `chacha20-poly1305` и `ed25519` не сертифицированы в FIPS 140-3 и не должны использоваться в строгом FIPS-окружении. Корпоративные сборки Vault Enterprise дополнительно поддерживают `aes*-cbc`, `aes*-cmac`, а также квантово-устойчивые сигнатуры `ml-dsa`, `slh-dsa` и комбинированный тип `hybrid`.
+> **Примечание (режим FIPS 140-3):** в FIPS 140-3 режиме следующие алгоритмы не сертифицированы и не должны использоваться: `chacha20-poly1305` и `ed25519`. Используйте `aes*-gcm96` для шифрования и `ecdsa-*` / `rsa-*` для подписи.
+
+> **Примечание (key_usages, Vault 2.2.0+):** начиная с Vault 2.2.0 каждый ключ имеет поле `key_usages`, выводимое в ответах `keys/`, `algorithm/` и `config/` endpoints. Это позволяет клиенту программно определять, какие операции поддерживает ключ:
+> 
+> | `key_usage` | Key Types |
+> | :--- | :--- |
+> | `aead-encryption` | `aes128-gcm96`, `aes256-gcm96`, `chacha20-poly1305` |
+> | `symmetric-encryption` | `aes128-cbc`, `aes256-cbc` |
+> | `digital-signature` | `ecdsa-p256`, `ecdsa-p384`, `ecdsa-p521`, `ed25519`, `ml-dsa`, `slh-dsa`, `hybrid`, `rsa-2048`, `rsa-3072`, `rsa-4096` |
+> | `asymmetric-encryption` | `rsa-2048`, `rsa-3072`, `rsa-4096` |
+> | `message-authentication` | `hmac`, `aes128-cmac`, `aes192-cmac`, `aes256-cmac` |
+> 
+> При ротации через `algorithm/` endpoint новый тип ключа должен иметь совместимый `key_usage`.
+
+Все типы ключей дополнительно получают отдельный случайный HMAC-ключ при создании и ротации, что позволяет выполнять HMAC-операции для любого типа ключа. Для асимметричных ключей (`ed25519`, `ecdsa-*`, `rsa-*`) перед подписью входные данные хэшируются (кроме `ed25519`, который выполняет Ed25519ph-хэширование внутри — для него `derived=true` даёт детерминированную подпись с тем же `context`).
 
 ### Паттерн Envelope Encryption (Data Key)
 
@@ -144,6 +199,27 @@ path "transit/decrypt/user-data" {
 *   Параметр `context` обязателен для деривации.
 *   Нет прав на управление ключом (создание, ротация, удаление).
 
+#### Валидация и проверка
+
+```bash
+# 1. Создать ключ с деривацией
+vault write -f transit/keys/user-data type=aes256-gcm96 derived=true
+
+# 2. Проверить, что приложение может шифровать
+vault write transit/encrypt/user-data \
+  plaintext=$(echo -n "test" | base64) \
+  context=$(echo -n "user-123" | base64)
+# → ciphertext: vault:v1:...
+
+# 3. Проверить, что приложение НЕ может создавать ключи
+vault write -f transit/keys/forbidden-type
+# → Error reading: forbidden
+
+# 4. Проверить, что приложение НЕ может экспортировать ключи
+vault read transit/export/encryption-key/user-data
+# → Forbidden
+```
+
 ### Сценарий 2: Политика администратора безопасности (Crypto Officer)
 
 Администратор может создавать ключи и проводить их ротацию, но не имеет прав на расшифровку данных (защита от инсайдера).
@@ -200,6 +276,28 @@ path "transit/decrypt/app-encryption" {
 3.  В хранилище сохраняются: `ciphertext` (зашифрованные данные) + `wrapped_data_key` + метаданные.
 4.  Для расшифровки приложение отправляет `wrapped_data_key` в `transit/decrypt/app-encryption` и получает `plaintext_data_key`.
 
+#### Валидация и проверка
+
+```bash
+# 1. Проверка наличия datakey endpoint в политике
+vault policy read app-transit-policy
+# → должна содержать путь transit/datakey/plaintext/app-encryption
+
+# 2. Проверка выдачи data key
+vault write transit/datakey/plaintext/app-encryption \
+  context=$(echo -n "app-context" | base64)
+# → plaintext_data_key: ...
+# → ciphertext: vault:v1:...
+
+# 3. Проверка обратимости: расшифровать data key и сравнить
+#    (plaintext_data_key используется локально, wrapped_data_key сохраняется)
+DECRYPTED=$(vault write transit/decrypt/app-encryption \
+  ciphertext="vault:v1:..." -format=json | jq -r .data.plaintext)
+[ "$DECRYPTED" = "$ORIGINAL_PLAINTEXT_KEY" ] && echo "Match OK"
+```
+
+> **Важно:** `plaintext_data_key` никогда не должен сохраняться в хранилище. Только `wrapped_data_key` сохраняется вместе с зашифрованными данными.
+
 ### Сценарий 4: Подписание и проверка подписи (Signing/Verification)
 
 Приложение подписывает отчёты, а проверка выполняется стороной. Ключ `report-signing` имеет тип `ed25519`.
@@ -236,6 +334,28 @@ path "transit/decrypt/report-signing" {
 ```
 
 > **Примечание:** Для асимметричных ключей путь подписи включает хэш-алгоритм (`/sha2-256`). При изменении алгоритма подписи потребуется обновить политику или разрешить несколько путей.
+
+#### Валидация и проверка
+
+```bash
+# 1. Создать ключ ed25519 для подписи
+vault write -f transit/keys/report-signing type=ed25519
+
+# 2. Подписать данные
+echo -n "important report content" | base64
+# → aW1wb3J0YW50IHJlcG9ydCBjb250ZW50
+
+SIGNATURE=$(vault write transit/sign/report-signing/sha2-256 \
+  input=aW1wb3J0YW50IHJlcG9ydCBjb250ZW50 -format=json | \
+  jq -r '.data.signature')
+# → signature: vault:v1:...
+
+# 3. Проверить подпись
+vault write transit/verify/report-signing/sha2-256 \
+  input=aW1wb3J0YW50IHJlcG9ydCBjb250ZW50 \
+  signature="$SIGNATURE"
+# → valid: true
+```
 
 ### Сценарий 5: Мониторинг, аудит и диагностика
 
@@ -432,21 +552,142 @@ sudo systemctl status vault
 vault status
 ```
 
-## Дополнительная информация
+## Лучшие практики
 
-### Рекомендации по эксплуатации
+### Управление ключами
 
 1.  **Base64 кодирование:** Все данные, передаваемые в параметры `plaintext` и `context`, должны быть закодированы в Base64.
 2.  **Версионность:** Регулярно проводите ротацию ключей (`/rotate`). Vault поддерживает расшифровку старыми версиями ключей автоматически. Используйте `min_encryption_version` для принудительного перехода на новую версию.
 3.  **Удаление ключей:** Всегда устанавливайте `deletion_allowed=false` для критически важных ключей, чтобы предотвратить случайное удаление данных.
-4.  **Аудит:** В логах аудита Vault криптографические операции помечаются хэшированными значениями, что позволяет отслеживать активность без раскрытия секретов.
-5.  **Разделение ключей:** Используйте разные ключи для разных окружений (dev/staging/prod) и классов данных (PII, финансы, логи). Это ограничивает взрывную радиус компрометации.
-6.  **Ротация по расписанию:** Настройте автоматическую ротацию ключей через cron или scheduler (например, ротация каждые 90 дней). Ротация не прерывает работу приложений, так как старые версии остаются доступными.
-7.  **Trim с осторожностью:** Перед trim убедитесь, что все потребители обновлены до работы с актуальной версией ключа. Trim удаляет старые версии безвозвратно.
-8.  **Контекстная изоляция:** Всегда передавайте уникальный `context` для каждого пользователя/сущности. Переиспользование контекста между разными сущностями сводит на нет изоляцию деривации ключей.
+4.  **Разделение ключей:** Используйте разные ключи для разных окружений (dev/staging/prod) и классов данных (PII, финансы, логи). Это ограничивает взрывной радиус компрометации.
+5.  **Ротация по расписанию:** Настройте автоматическую ротацию ключей через cron или scheduler (например, ротация каждые 90 дней). Ротация не прерывает работу приложений, так как старые версии остаются доступными.
+6.  **Trim с осторожностью:** Перед trim убедитесь, что все потребители обновлены до работы с актуальной версией ключа. Trim удаляет старые версии безвозвратно.
+7.  **Контекстная изоляция:** Всегда передавайте уникальный `context` для каждого пользователя/сущности. Переиспользование контекста между разными сущностями сводит на нет изоляцию деривации ключей.
+8.  **Конвергентное шифрование:** Используйте только для поиска по зашифрованным полям. Не используйте для шифрования данных, где безопасность важнее поиска — конвергентное шифрование ослабляет свойства случайности nonce.
+9.  **Envelope encryption:** Для больших объемов данных используйте datakey endpoints — plaintext_data_key сохранять НЕ должен.
+10. **Audit logging:** Всегда включайте минимум один audit device для операций Transit. Рекомендуется file + syslog для отказоустойчивости.
+
+#### Валидация и проверка
+
+```bash
+# Проверить, что ключ создан с ожидаемыми параметрами
+vault read transit/keys/my-key -format=json | jq '{
+  type: .data.type,
+  derived: .data.derived,
+  min_encryption_version: .data.min_encryption_version,
+  min_decryption_version: .data.min_decryption_version,
+  deletion_allowed: .data.deletion_allowed
+}'
+
+# Проверить, что политика разрешает нужные операции
+vault policy read my-app-policy
+# → должна содержать пути transit/encrypt/my-key и/или transit/decrypt/my-key
+
+# Проверить, что аудит включен
+vault audit list
+# → file/ и/или syslog/
+```
+
+#### Очистка и откат
+
+```bash
+# Отозвать все токены с политикой Transit (перед сменой ключа)
+vault list auth/token/lookup-accessor | tail -n +3 | while read accessor; do
+  info=$(vault token lookup -format=json "$accessor" 2>/dev/null)
+  policy=$(echo "$info" | jq -r '.data.policies' | grep -o 'transit-app' || true)
+  [ -n "$policy" ] && vault token revoke "$accessor"
+done
+
+# Удалить ключ (только если deletion_allowed=true)
+vault write transit/keys/my-key/config deletion_allowed=true
+vault delete transit/keys/my-key
+# → Откат: восстановление только из снапшота хранилища Vault
+
+# Остановить ротацию (если настроена автоматическая)
+# → удалить cron-задачу или oplog entry, отвечающий за ротацию
+```
+
+> **Предупреждение:** Trim и удаление ключей необратимы. Перед выполнением убедитесь, что данные, зашифрованные удаляемыми версиями, перешифрованы на актуальную версию (через rewrap).
+
+## Устранение неполадок
+
+### Типичные ошибки и решения
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `invalid request: key not found` | Ключ не создан или название указано неверно | `vault list transit/keys` — проверить существование ключа |
+| `permission denied` на `transit/encrypt/my-key` | Политика не привязана к токену или deny-правило | `vault token lookup` — проверить политики; `vault policy read <policy>` — проверить пути |
+| `missing context` при encrypt | Ключ создан с `derived=true`, но `context` не передан | Добавить `context=$(echo -n "user-123" | base64)` в запрос |
+| `ciphertext verification failed` при decrypt | Несовпадение `context` или повреждение ciphertext | Проверить, что `context` совпадает с тем, что использовался при encrypt |
+| `key version not found` | Версия ключа trim'нута или не существует | `vault read transit/keys/my-key` — проверить доступные версии; изменить `min_decryption_version` |
+| `deletion not allowed` при `vault delete ` | `deletion_allowed=false` в конфиге ключа | `vault write transit/keys/my-key/config deletion_allowed=true` — затем удалить |
+| `key type does not support this operation` | Например, `hmac`-операция на `ed25519`-ключ | Проверить тип ключа в `vault read transit/keys/my-key` и выбрать подходящий endpoint |
+| `export failed: key is not exportable` | `exportable=false` в конфиге ключа | Пересоздать ключ с `exportable=true` (изменить нельзя после создания) |
+| `associated_data required` / `associated_data mismatch` | AAD передан при encrypt, но не при decrypt (или наоборот) | Оба вызова должны передавать одинаковый `associated_data` |
+
+### Диагностика
+
+#### 1. Проверка статуса и смонтированных движков
+
+```bash
+vault status
+# → Sealed: false, HA enabled: true/false
+
+vault secrets list -detailed | grep transit
+# → transit/  transit  default  true  secrets/sync
+
+vault read transit/keys/my-key
+# → Key Type, Versions, Min Decryption/Encryption Version, Deletion Allowed
+```
+
+#### 2. Проверка политик
+
+```bash
+# Какие политики привязаны к токену
+vault token lookup -format=json | jq '.data.policies'
+
+# Содержимое конкретной политики
+vault policy read my-transit-policy
+
+# Онлайн-проверка: попытка выполнить операцию
+vault write transit/encrypt/my-key plaintext=$(echo -n "test" | base64) -tls-server-name=vault.example.com
+# → error или ciphertext
+```
+
+#### 3. Аудит операций
+
+```bash
+# Поиск операций Transit в audit log
+grep '"path":"transit/' /var/log/vault/audit.log | jq '{
+  time: .time, method: .request.operation, path: .request.path,
+  client: .request.client_token_identity_name
+}'
+
+# Фильтр по ключу и операции
+grep 'transit/encrypt/my-key' /var/log/vault/audit.log | jq .
+```
+
+### Ограничения
+
+- **Размер plaintext:** API Vault имеет лимит на размер тела HTTP-запроса (~10 МБ по умолчанию). Для больших данных используйте паттерн envelope encryption.
+- **Export один раз:** Параметр `exportable=true` нельзя отключить после установки. Пересоздайте ключ, если экспорт больше не нужен.
+- **Import (OSS):** В OSS доступен только импорт `hmac`-ключей. Импорт симметричных и асимметричных ключей требует Vault Enterprise.
+- **Ротация не перешифровывает:** Ротация создаёт новую версию ключа, но существующие ciphertext остаются на старой версии. Используйте rewrap для перешифровки.
+- **KMS-интеграция:** `managed_key` и квантово-устойчивые типы (`ml-dsa`, `slh-dsa`, `hybrid`) требуют Vault Enterprise + HSM/KMS.**
+
+## Дополнительная информация
+
+### Рекомендации по эксплуатации
+
+1.  **Разделение ключей:** Используйте разные ключи для разных окружений (dev/staging/prod) и классов данных (PII, финансы, логи). Это ограничивает взрывной радиус компрометации.
+2.  **Ротация по расписанию:** Настройте автоматическую ротацию ключей через cron или scheduler (например, ротация каждые 90 дней). Ротация не прерывает работу приложений, так как старые версии остаются доступными.
+3.  **Контекстная изоляция:** Всегда передавайте уникальный `context` для каждого пользователя/сущности. Переиспользование контекста между разными сущностями сводит на нет изоляцию деривации ключей.
+4.  **Размер plaintext:** Учитывайте лимиты на размер запроса Vault API (по умолчанию ~10 МБ). Для больших данных применяйте паттерн envelope encryption (datakey endpoints).
+5.  **Ротация HSM/KMS:** Если используется `managed_key`, настройте ротацию ключей в HSM/KMS в соответствии с политикой организации.
 
 ### См. также
 
-*   **[Авторизация и политики](../authorization.md)** — общие правила написания HCL.
-*   **[Основные концепции Vault](../concepts.md)** — архитектура движков и токенов.
+*   **[Авторизация и политики](../authorization.md)** — общие правила написания HCL, включая динамические пути с `{{identity.entity.metadata.*}}`.
+*   **[Основные концепции Vault](../concepts.md)** — архитектура движков секретов и токенов.
 *   **[Подход Zero Trust](../zero_trust.md)** — роль Transit в защите данных при передаче и хранении.
+*   **[Руководство по AppRole](./vault_auth_approle.md)** — аутентификация приложений для доступа к Transit.

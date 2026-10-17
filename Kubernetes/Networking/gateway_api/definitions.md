@@ -17,8 +17,8 @@
 **Status Conditions** — механизм обратной связи в Gateway API, предоставляющий информацию о состоянии ресурса через поле `status.conditions`. Каждое условие содержит тип (type), статус (status: True/False/Unknown) и причину (reason). Основные условия: `Accepted`, `Programmed`, `ResolvedRefs`.
 
 **Версионирование спецификации** — Gateway API использует систему каналов для управления стабильностью функций:
-- **Standard Channel (GA):** стабильные функции, гарантированно поддерживаемые всеми совместимыми контроллерами. Примеры: `HTTPRoute` (v1), `GatewayClass` (v1), `TCPRoute` (v1), `UDPRoute` (v1).
-- **Experimental Channel:** новые функции, находящиеся в стадии тестирования. Могут изменяться или удаляться. Для включения требуется установка CRD с флагом `experimentalChannel: true`. Примеры: `GRPCRoute` (v1), `BackendTLSPolicy` (v1alpha3), `ListenerSet` (v1).
+- **Standard Channel (GA):** стабильные функции, гарантированно поддерживаемые всеми совместимыми контроллерами. Примеры: `HTTPRoute` (v1), `GatewayClass` (v1), `GRPCRoute` (v1, с v1.1.0), `TCPRoute` (v1), `UDPRoute` (v1), `TLSRoute` (v1), `BackendTLSPolicy` (v1alpha3).
+- **Experimental Channel:** новые функции, находящиеся в стадии тестирования. Могут изменяться или удаляться. Для включения требуется установка CRD с флагом `experimentalChannel: true`. Примеры: `ListenerSet` (v1), `BackendTLSPolicy` (v1alpha3 — переходит в Standard).
 
 ## Базовые концепции
 
@@ -322,7 +322,7 @@ kubectl logs -n <namespace> -l app=<proxy-label> --tail=100 | grep <route-name>
 
 **Актуальность:** Проект `kubernetes/ingress-nginx` официально перешёл в статус **End of Life (EOL)** 24 марта 2026 года. Использование классического Ingress в новых проектах запрещено политиками безопасности; существующие инсталляции должны быть мигрированы.
 
-**Версионирование:** Актуальная версия Gateway API — v1.6.x (Standard Channel). Для получения новых функций (GRPCRoute, BackendTLSPolicy, ListenerSet) используйте Experimental Channel.
+**Версионирование:** Актуальная версия Gateway API — v1.6.x (Standard Channel). Для получения новых экспериментальных функций (например, `ListenerSet`) используйте Experimental Channel. `GRPCRoute`, `BackendTLSPolicy` и основные ресурсы (`HTTPRoute`, `TCPRoute`, `TLSRoute`, `UDPRoute`) входят в Standard с v1.1.0–v1.6.0.
 
 **Связанные ресурсы и руководства:**
 

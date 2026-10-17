@@ -237,59 +237,101 @@ helm install sonarqube sonarqube/sonarqube \
 >
 > Версию чарта уточняйте в [helm-chart-sonarqube](https://github.com/SonarSource/helm-chart-sonarqube) или через `helm search repo`; значения `sonarProperties`, `monitoringPasscode`, `caCerts`, `prometheusExporter.enabled` читайте в values.yaml соответствующей версии чарта.
 
-#### Вариант D: Kubernetes (HelmRelease с Flux)
+#### Вариант D: Kubernetes (Argo CD Application)
 
-Для GitOps-подхода с Flux можно использовать HelmRelease с теми же значениями, что и вручную через `helm install`.
+Для GitOps-подхода с Argo CD SonarQube разворачывается через `Application` CR в неймспейсе `argocd`. Значения идентичны тем, что используются вручную через `helm install` (см. Вариант C).
 
 ```yaml
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
+# argocd/projects/infra/applications/sonarqube.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
 metadata:
   name: sonarqube
-  namespace: infra
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
-  interval: 30m
-  chart:
-    spec:
-      chart: sonarqube
-      version: "2026.5.1001"
-      sourceRef:
-        kind: HelmRepository
-        name: sonarqube
-        namespace: flux-system
-  values:
-    community:
-      enabled: true
-      buildNumber: "26.10.0.133078"
-    jdbcOverwrite:
-      enabled: true
-      jdbcUrl: "jdbc:postgresql://postgres.infra.svc.cluster.local:5432/sonarqube"
-      jdbcUsername: sonarqube
-      jdbcPassword: "${SONAR_DB_PASS}"
-    sonarProperties:
-      sonar.forceAuthentication: "true"
-      sonar.auth.gitlab.enabled: "true"
-      sonar.auth.gitlab.url: "https://gitlab.example.com"
-      sonar.auth.gitlab.applicationId: "${SONAR_GITLAB_APP_ID}"
-      sonar.auth.gitlab.secret: "${SONAR_GITLAB_SECRET}"
-      sonar.auth.gitlab.allowUsersToSignUp: "true"
-    env:
-      - name: SONAR_WEB_JAVAOPTS
-        value: "-Xms512m -Xmx1536m"
-    persistence:
-      enabled: true
-      storageClass: local-path
-      size: 20Gi
-    resources:
-      requests:
-        cpu: 400m
-        memory: 1Gi
-      limits:
-        cpu: 2
-        memory: 2Gi
+  project: infra
+  source:
+    repoURL: https:// SonarSource.github.io/helm-chart-sonarqube
+    chart: sonarqube
+    targetRevision: "2026.5.1001"
+    helm:
+      values: |
+        community:
+          enabled: true
+          buildNumber: "26.10.0.133078"
+        jdbcOverwrite:
+          enabled: true
+          jdbcUrl: "jdbc:postgresql://postgres.infra.svc.cluster.local:5432/sonarqube"
+          jdbcUsername: sonarqube
+          jdbcPassword: "${SONAR_DB_PASS}"
+        sonarProperties:
+          sonar.forceAuthentication: "true"
+          sonar.auth.gitlab.enabled: "true"
+          sonar.auth.gitlab.url: "https://gitlab.example.com"
+          sonar.auth.gitlab.applicationId: "${SONAR_GITLAB_APP_ID}"
+          sonar.auth.gitlab.secret: "${SONAR_GITLAB_SECRET}"
+          sonar.auth.gitlab.allowUsersToSignUp: "true"
+        env:
+          - name: SONAR_WEB_JAVAOPTS
+            value: "-Xms512m -Xmx1536m"
+        persistence:
+          enabled: true
+          storageClass: local-path
+          size: 20Gi
+        resources:
+          requests:
+            cpu: 400m
+            memory: 1Gi
+          limits:
+            cpu: 2
+            memory: 2Gi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: infra
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
 ```
 
-> **Примечание:** Значения в `values` идентичны тем, что используются вручную через `helm install` (см. Вариант C). Секретные значения (например, `${SONAR_DB_PASS}`) должны быть предоставлены через механизмы секретов Kubernetes (например, External Secrets Operator, как описано ниже). В Flux подстановка `${SONAR_DB_PASS}` в values напрямую не работает — используйте `postBuild.substituteFrom` или подставляйте секрет через `jdbcOverwrite.existingSecret`.
+> **Важно:** в Arаrgo CD секретные значения (например, `${SONAR_DB_PASS}`) подставляются через `argocd-vault-plugin` или `External Secrets Operator`. Убедитесь, что `argocd-repo-server` имеет доступ к Vault или ESO синхронизирует секреты в неймспейс `infra` перед синхронизацией SonarQube.
+
+**Установка через CLI:**
+
+```bash
+# Добавление Helm-репозитория в Argo CD
+argocd repo add https:// SonarSource.github.io/helm-chart-sonarqube
+
+# Создание Application
+argocd app create sonarqube \
+  --repo https:// SonarSource.github.io/helm-chart-sonarqube \
+  --chart sonarqube \
+  --revision 2026.5.1001 \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace infra \
+  --helm-set community.enabled=true \
+  --helm-set community.buildNumber=26.10.0.133078 \
+  --set jdbcOverwrite.enabled=true \
+  --set jdbcOverwrite.jdbcUrl="jdbc:postgresql://postgres.infra.svc.cluster.local:5432/sonarqube" \
+  --set jdbcOverwrite.jdbcUsername=sonarqube \
+  --sync-policy automated \
+  --auto-prune \
+  --self-heal
+
+# Синхронизация
+argocd app sync sonarqube
+```
 
 #### Настройка внешних зависимостей
 

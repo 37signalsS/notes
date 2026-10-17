@@ -2,7 +2,7 @@
 
 ## Определения
 
-**Sidecar (ресурс)** — пользовательский ресурс Istio (`networking.istio.io/v1beta1`), позволяющий тонко настраивать поведение [сайдкар-прокси](./proxy_sidecar.md) для конкретных рабочих нагрузок или неймспейсов. В архитектуре 2026 года ресурс Sidecar остается основным инструментом оптимизации для классической модели инъекции, сосуществуя с [Ambient Mesh](./istio_architecture.md).
+**Sidecar (ресурс)** — пользовательский ресурс Istio (`networking.istio.io/v1`), позволяющий тонко настраивать поведение [сайдкар-прокси](./proxy_sidecar.md) для конкретных рабочих нагрузок или неймспейсов. В архитектуре 2026 года ресурс Sidecar остается основным инструментом оптимизации для классической модели инъекции, сосуществуя с [Ambient Mesh](./istio_architecture.md).
 
 **Egress Control (управление исходящим трафиком)** — механизм ограничения видимости сервисов для прокси. По умолчанию прокси знает обо всех эндпоинтах кластера, что создает нагрузку на Control Plane и увеличивает потребление RAM прокси-сервером.
 
@@ -36,7 +36,7 @@
 - Использование `holdApplicationUntilProxyStarts: true` (по умолчанию в 1.29+) для предотвращения race conditions.
 
 ### API и стабильность
-Ресурс `Sidecar` поддерживается в API `networking.istio.io/v1beta1`. В текущих версиях Istio 1.30+ API является стабильным и обратно совместимым. Прямое редактирование `spec` поля `egress` или `ingress` не требует перезапуска пода — `istiod` отправляет дельту xDS-конфигурации.
+Ресурс `Sidecar` поддерживается в API `networking.istio.io/v1` (в 1.30+ `v1beta1` и `v1alpha3` deprecated). В текущих версиях Istio 1.30+ API является стабильным и обратно совместимым. Прямое редактирование `spec` поля `egress` или `ingress` не требует перезапуска пода — `istiod` отправляет дельту xDS-конфигурации.
 
 ### Взаимодействие с MeshConfig и outboundTrafficPolicy
 Поведение прокси также зависит от глобального параметра `MeshConfig.outboundTrafficPolicy`:
@@ -78,7 +78,7 @@ metadata:
 Рекомендуется создать базовый ресурс `Sidecar` в неймспейсе `istio-system`. Он ограничит видимость для всех подов в кластере, у которых нет специфичных настроек.
 
 ```yaml
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: Sidecar
 metadata:
   name: default
@@ -94,7 +94,7 @@ spec:
 В этом примере поды в неймспейсе `payments` смогут обращаться только к сервисам в своем неймспейсе, в `istio-system` и в неймспейсе `app`.
 
 ```yaml
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: Sidecar
 metadata:
   name: default
@@ -115,7 +115,7 @@ spec:
 Позволяет переопределить способ обработки входящих соединений, например, для изоляции портов.
 
 ```yaml
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: Sidecar
 metadata:
   name: ingress-restriction
@@ -133,7 +133,7 @@ spec:
 Выборочное применение политики только к подам с определенной меткой.
 
 ```yaml
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: Sidecar
 metadata:
   name: restrict-test-egress
@@ -152,7 +152,7 @@ spec:
 Ограничение видимости для конкретного deployment в неймспейсе `prod` только его базой данных и Istio-компонентами. Это исключает утечку информации о других сервисах и снижает нагрузку на xDS.
 
 ```yaml
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: Sidecar
 metadata:
   name: payment-service-scope
@@ -186,7 +186,7 @@ meshConfig:
 
 ```yaml
 # Sidecar ресурс для namespace frontend
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: Sidecar
 metadata:
   name: default
@@ -204,7 +204,7 @@ spec:
 
 ```yaml
 # ServiceEntry для внешнего API
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: ServiceEntry
 metadata:
   name: external-api
@@ -221,7 +221,7 @@ spec:
 
 ```yaml
 # Sidecar ресурс с явным разрешением внешнего хоста
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: Sidecar
 metadata:
   name: default

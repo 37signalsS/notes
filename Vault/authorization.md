@@ -102,6 +102,8 @@ path "secret/data/teams/{{identity.entity.metadata.team}}/*" {
 *   **Endpoint Governing Policies (EGP):** Применяются ко всему эндпоинту независимо от токена. Переопределяют результат, полученный из ACL-политик токена.
 *   **Role Governing Policies (RGP):** Применяются к конкретным токенам, сущностям или ролям — добавляют дополнительные ограничения поверх ACL.
 
+Порядок оценки запросов (ACL → RGP → EGP), enforcement levels, механизм override и рабочие примеры правил — в [Sentinel-политики (RGP/EGP)](./guides/sentinel-policies.md).
+
 ### 4. Визуальный редактор и генератор политик (Vault 2.0+)
 
 Начиная с Vault 2.0.0+ доступны два способа создания политик через GUI без ручного написания HCL:
@@ -418,6 +420,6 @@ vault audit enable syslog tag="vault-audit" facility=AUTH
 *   **[SLM, Vault Radar, Secrets Sync](./slm_radar_secrets_sync.md)** — Security Lifecycle Management.
 *   **[Производительность и тюнинг](./performance_tuning.md)** — оптимизация для high-load.
 *   **[Vault API Reference](./vault_api_reference.md)** — REST API и endpoints.
-*   **[Cubbyhole и Response Wrapping](./cubbyhole_response_wrapping.md)** — безопасная доставка секретов.
+*   **[Cubbyhole и Response Wrapping](./guides/cubbyhole_response_wrapping.md)** — безопасная доставка секретов.
 *   **[Стратегии бэкапов и восстановления](./backup_restore_strategies.md)** — RPO/RTO, disaster recovery.
 *   **[Официальная документация по политикам](https://developer.hashicorp.com/vault/docs/concepts/policies)**

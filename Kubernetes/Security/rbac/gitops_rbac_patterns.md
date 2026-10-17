@@ -2,13 +2,13 @@
 
 ## Определения
 
-**GitOps RBAC** — подход к управлению ролями доступа в Kubernetes, при котором все манифесты RBAC (ClusterRole, Role, RoleBinding, ClusterRoleBinding) хранятся в Git-репозитории и применяются в кластер декларативно через GitOps-контроллер (Flux или Argo CD). Обеспечивает аудит изменений, peer review и воспроизводимость.
+**GitOps RBAC** — подход к управлению ролями доступа в Kubernetes, при котором все манифесты RBAC (ClusterRole, Role, RoleBinding, ClusterRoleBinding) хранятся в Git-репозитории и применяются в кластер декларативно через GitOps-контроллер (Argo CD). Обеспечивает аудит изменений, peer review и воспроизводимость.
 
 **Иерархическая модель ролей** — паттерн, при котором кастомные ClusterRole построены в виде иерархии через механизм агрегации: каждая роль наследует права родительской (например, `view` → `developer` → `devops`). Наследование работает через метки `aggregate-to-*` и поле `aggregationRule`. Подробнее о механизме агрегации: [Агрегируемые ClusterRole](./aggregation_scenarios.md).
 
 **Per-namespace роли** — развёртывание RoleBinding в каждом пространстве имён отдельно, что ограничивает права субъектов пределами namespace. Для переиспользования ClusterRole в разных namespace используется Kustomize-трансформер `namespace`.
 
-**Flux ServiceAccount Impersonation** — механизм, при котором `kustomize-controller` и `helm-controller` Flux выполняют запросы от имени указанного `ServiceAccount` (через `spec.serviceAccountName` в манифесте `Kustomization`/`HelmRelease`). Позволяет ограничить права GitOps-контроллера до прав тенанта. Подробнее: [Сценарий 5 в сравнении Argo CD и Flux](../../../GitOps/argo_vs_flux_manifests.md).
+**Argo CD ServiceAccount Isolation** — механизм, при котором контроллер приложений Argo CD выполняет запросы от имени указанного `ServiceAccount` (через `spec.destination.serviceAccountName` в манифесте `Application`). Позволяет ограничить права контроллера до прав тенанта, не выдавая `cluster-admin` для всех приложений. Подробнее: [Сценарий 5 в сравнении Argo CD и Flux](../../../GitOps/argo_vs_flux_manifests.md).
 
 ---
 
@@ -24,7 +24,7 @@
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  cluster-admin  (build-in)                                      │
-│  └─ только ServiceAccount Flux                                    │
+│  └─ только ServiceAccount Argo CD                                │
 ├─────────────────────────────────────────────────────────────────┤
 │  devops  (агрегирует aggregate-to-devops:"true")               │
 │  └─ developer  (aggregate-to-devops:"true")                     │
@@ -45,7 +45,7 @@
 |------|-------------|---------------------|------------------------------|
 | `view` (встроенная) | — | Read-only: pods, pods/log, events, services, configmaps | `aggregate-to-view: "true"` (системная) |
 | `developer` (кастомная) | `view` (через агрегацию) | `pods/exec`, `pods/portforward` | `rbac.example.com/aggregate-to-devops: "true"` |
-| `devops` (кастомная) | `developer` (через агрегацию) | deployments, statefulsets, daemonsets, configmaps, secrets, serviceaccounts, helmreleases | не применяется (агрегирующая роль) |
+| `devops` (кастомная) | `developer` (через агрегацию) | deployments, statefulsets, daemonsets, configmaps, secrets, serviceaccounts, applications | не применяется (агрегирующая роль) |
 | `cluster-admin` (встроенная) | — | Всё | — |
 
 ### Критическое ограничение: aggregationRule и правила
@@ -123,22 +123,22 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ```
 
-#### Модуль: devops-helmrelease (правила для работы с Flux HelmRelease)
+#### Модуль: devops-argoproj (правила для работы с Argo CD Application)
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: devops-helmrelease
+  name: devops-argoproj
   labels:
     rbac.example.com/aggregate-to-devops: "true"
 rules:
-  - apiGroups: ["helm.toolkit.fluxcd.io"]
-    resources: ["helmreleases"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications", "appprojects"]
     verbs: ["get", "list", "watch", "patch"]
 ```
 
-> **Проверка:** API-группа `helm.toolkit.fluxcd.io` и ресурс `helmreleases` подтверждены в `GitOps/argo_vs_flux_manifests.md:17` и `GitOps/flux.md:36`. Справка: `kubectl api-resources --api-group=helm.toolkit.fluxcd.io`.
+> **Проверка:** API-группа `argoproj.io` и ресурсы `applications`, `appprojects` являются стандартными CRD Argo CD. Справка: `kubectl api-resources --api-group=argoproj.io`.
 
 #### Агрегирующая роль: devops
 
@@ -156,19 +156,19 @@ aggregationRule:
 rules: []
 ```
 
-#### ClusterRoleBinding для ServiceAccount Flux
+#### ClusterRoleBinding для ServiceAccount Argo CD
 
 ```yaml
-# Только ServiceAccount Flux получает cluster-admin.
+# Только ServiceAccount Argo CD Application Controller получает cluster-admin.
 # Люди никогда не получают cluster-admin интерактивно.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: flux-cluster-admin
+  name: argocd-manager-cluster-admin
 subjects:
   - kind: ServiceAccount
-    name: flux
-    namespace: flux-system
+    name: argocd-manager
+    namespace: kube-system
 roleRef:
   kind: ClusterRole
   name: cluster-admin
@@ -298,7 +298,7 @@ kubectl auth can-i create deployments -n dev --as=developer-user
 # → yes
 
 # Проверка через SubjectAccessReview (программный аудит)
-kubectl auth can-i patch helmreleases -n dev --as=group:example/platform-team
+kubectl auth can-i patch applications -n dev --as=group:example/platform-team
 # → yes
 ```
 
@@ -336,7 +336,7 @@ kubectl get clusterrole devops -o jsonpath='{.rules}' | jq .
 | `rules` в агрегирующей роли перезаписываются контроллером | `aggregationRule` + явные `rules` в одной ClusterRole | Вынесите правила в отдельный модульный ClusterRole с меткой агрегации. См. [Сценарий 1](#сценарий-1-определение-иерархичных-clusterrole) |
 | `ClusterRoleBinding` вместо `RoleBinding` | Права выдаются во все namespace | Используйте `RoleBinding` для per-namespace доступа, даже если `roleRef` ссылается на `ClusterRole` |
 | `cluster-admin` для CI/CD | Избыточные права | CI/CD получает только те ресурсы, которые он управляет (см. [RBAC для CI/CD](./aggregation_scenarios.md#сценарий-9-агрегация-для-cicd-систем-github-actions-gitlab-ci)) |
-| Ручной `kubectl create rolebinding` | Не отслеживается в Git, перезатирается Flux | Управляйте всеми RBAC-манифестами через GitOps |
+| Ручной `kubectl create rolebinding` | Не отслеживается в Git, перезатирается Argo CD | Управляйте всеми RBAC-манифестами через GitOps |
 | `view` + `pods/exec` | `pods/exec` не входит во встроенную `view` | Добавьте отдельный модуль с меткой `aggregate-to-view: "true"` (как в [Сценарий 2](./aggregation_scenarios.md#сценарий-2-расширение-стандартной-роли-edit-для-отладки)) |
 
 ---
@@ -349,7 +349,7 @@ kubectl get clusterrole devops -o jsonpath='{.rules}' | jq .
 
 3. **Иерархия меток:** используйте иерархию меток (`aggregate-to-view` → `aggregate-to-developer` → `aggregate-to-devops`) для построения чёткой цепочки наследования. Избегайте одинаковых меток для разных уровней.
 
-4. **Flux ServiceAccount:** Flux Controller должен работать с `ServiceAccount`, имеющим минимальные права для управляемых namespace (через `spec.serviceAccountName` в `Kustomization`). `cluster-admin` для Flux нужен только для установки самого Flux, а не для daily-реконсиляции.
+4. **Argo CD ServiceAccount:** Argo CD Application Controller должен работать с `ServiceAccount`, имеющим минимальные права для управляемых namespace (через `spec.destination.serviceAccountName` в `Application`). `cluster-admin` для Argo CD нужен только для установки самого контроллера, а не для daily-синхронизации.
 
 5. **RBAC в Git:** все манифесты RBAC хранятся в Git и применяются через GitOps. Никогда не выдаёте права через ручной `kubectl create rolebinding` — изменения не отслеживаются и будут перезаписаны при следующем reconcile.
 
@@ -366,12 +366,12 @@ kubectl get clusterrole devops -o jsonpath='{.rules}' | jq .
 - **[Привязки ролей (RoleBinding)](./bindings.md)** — структура `roleRef`, субъекты, поведение при ссылке на агрегируемую ClusterRole
 - **[Роли (Role и ClusterRole)](./roles.md)** — структура правил, субресурсы (`pods/exec`, `pods/portforward`), ограничения `resourceNames`
 - **[RBAC в мультикластерных средах](./multi_cluster_rbac.md)** — синхронизация RBAC между кластерами, hub-and-spoke топология
-- **[Сценарий 5: Мультитенантность во Flux](../../../GitOps/argo_vs_flux_manifests.md)** — ServiceAccount Impersonation для изоляции прав команд
-- **[Обзор Flux](../../../GitOps/flux.md)** — архитектура Flux, мультитенантность, ServiceAccount Impersonation
+- **[Сценарий 5: Мультитенантность во Flux vs Argo CD](../../../GitOps/argo_vs_flux_manifests.md)** — ServiceAccount Impersonation (Flux) vs ServiceAccount Isolation (Argo CD) для изоляции прав команд
+- **[Обзор Argo CD](../../../GitOps/ArgoCD/argocd_overview.md)** — архитектура Argo CD, мультитенантность, ServiceAccount Isolation
 
 ### Внешние ресурсы
 
 - [Using RBAC Authorization — Kubernetes Documentation](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
 - [ClusterRole API reference](https://v1-34.docs.kubernetes.io/docs/reference/kubernetes-api/authorization-resources/cluster-role-v1/)
-- [Flux CD — Multi-tenancy and namespace isolation](https://fluxcd.io/flux/security/npm/)
+- [Argo CD — Multi-tenancy and RBAC](https://argo-cd.readthedocs.io/en/stable/operator-manual/security/rbac/)
 - [Kustomize — Namespace Transformer](https://kubectl.docs.kubernetes.io/references/kustomize/kustomization/namespace)

@@ -17,7 +17,7 @@
 - **Revision (Ревизия)** — сохраненный снимок шаблона пода (`spec.template`), материализованный в кластере в виде отдельного объекта `ReplicaSet` с уникальным селектором `pod-template-hash` и порядковым номером в аннотации `deployment.kubernetes.io/revision`.
 - **Automated Rollback (Автоматический откат)** — процедура отката, инициируемая автоматически CI/CD пайплайном, внешним оркестратором или системой мониторинга на основе превышения допустимого процента ошибок (5xx), роста латентности (P99/P95) или провала тестов приемки (Smoke/Synthetic checks).
 - **Blast Radius Control (Управление областью поражения)** — ограничение доли пользователей и ресурсов кластера, затронутых сбоем или процессом отката, за счет применения канареечных долей трафика, лимитов `maxUnavailable` и бюджетов доступности `PodDisruptionBudget`.
-- **GitOps Reconciliation Fight (Конфликт самоисцеления GitOps)** — состояние гонки, при котором оператор GitOps (ArgoCD / Flux) с включенным режимом `self-heal` или `prune` немедленно перезаписывает императивный откат, выполненный инженером через `kubectl rollout undo`, возвращая кластер в ошибочное состояние из Git.
+- **GitOps Reconciliation Fight (Конфликт самоисцеления GitOps)** — состояние гонки, при котором оператор GitOps (например, ArgoCD) с включенным режимом `self-heal` или `prune` немедленно перезаписывает императивный откат, выполненный инженером через `kubectl rollout undo`, возвращая кластер в ошибочное состояние из Git.
 - **Data/Schema Compatibility (Совместимость слоя данных)** — архитектурное состояние базы данных и постоянных хранилищ, при котором предыдущая версия кода приложения может продолжать работу с обновленной схемой БД без сбоев и потери консистентности.
 
 ## 2. Архитектура и механизм отката Deployment
@@ -201,7 +201,7 @@ kubectl scale deployment app-frontend-canary -n production --replicas=0
 
 ### Сценарий 4: Разрешение конфликта GitOps при аварийном откате (Break-Glass Runbook)
 
-Если кластер синхронизируется через ArgoCD или Flux с включенным `self-heal`, ручной `kubectl rollout undo` будет нейтрализован оператором в течение нескольких секунд. Для предотвращения этого применяется регламент аварийного вмешательства (Break-Glass).
+Если кластер синхронизируется через ArgoCD с включенным `self-heal`, ручной `kubectl rollout undo` будет нейтрализован оператором в течение нескольких секунд. Для предотвращения этого применяется регламент аварийного вмешательства (Break-Glass).
 
 #### Вариант А: Быстрый откат через Git (Рекомендуемый стандарт)
 
@@ -218,11 +218,6 @@ argocd app sync production-frontend --prune
 # → TIMESTAMP                  GROUP        KIND   NAMESPACE                  NAME    STATUS   HEALTH        HOOK  MESSAGE
 # → 2026-10-13T18:50:12+03:00  apps   Deployment  production          app-frontend  Syncing  Progressing         
 # → 2026-10-13T18:50:35+03:00  apps   Deployment  production          app-frontend   Synced       Synced
-
-# Для Flux:
-flux reconcile kustomization production-frontend --with-source
-# → ► annotating Kustomization production-frontend in flux-system namespace
-# → ✔ Kustomization reconciled successfully
 ```
 
 #### Вариант Б: Экстренная приостановка GitOps (Break-Glass для критических инцидентов)
@@ -232,11 +227,6 @@ flux reconcile kustomization production-frontend --with-source
 # В ArgoCD (отключение self-heal и auto-sync):
 argocd app set production-frontend --sync-policy none
 # → application 'production-frontend' updated
-
-# В Flux (приостановка reconciler):
-flux suspend kustomization production-frontend -n flux-system
-# → ► suspending kustomization production-frontend in flux-system namespace
-# → ✔ kustomization suspended
 
 # 2. Безопасное выполнение прямого отката в кластере
 kubectl rollout undo deployment/app-frontend -n production
@@ -249,8 +239,6 @@ git revert HEAD --no-edit && git push origin main
 # 4. Возобновление штатной работы GitOps
 # В ArgoCD:
 argocd app set production-frontend --sync-policy automated --auto-prune --self-heal
-# В Flux:
-flux resume kustomization production-frontend -n flux-system
 ```
 
 ### Сценарий 5: Обеспечение отката конфигураций (Иммутабельные ConfigMap)
@@ -313,7 +301,7 @@ kubectl get rs app-frontend-6b8f9b9c9f -n production -o jsonpath='{.spec.templat
 | `unable to find specified revision` | Целевой `ReplicaSet` был удален сборщиком мусора из-за превышения `revisionHistoryLimit`. | `kubectl get rs -n <ns> -l <selector>` | Откат невозможен через `rollout undo`. Выполнить повторный деплой манифеста из Git/архива. |
 | `Deployment is paused` (откат принят, но поды не меняются) | У Deployment выставлен флаг `spec.paused: true`. Контроллер заморозил reconcile-логику. | `kubectl get deploy <name> -o jsonpath='{.spec.paused}'` | Выполнить `kubectl rollout resume deployment/<name>`. |
 | `ImagePullBackOff` при откате к старой версии | Образ старой версии был вычищен из Container Registry или истек срок действия `imagePullSecrets`. | `kubectl describe pod <pod-name> \| grep -E "(Failed\|Error)"` | Восстановить образ в реестре, обновить секреты доступа или выполнить откат к альтернативной ревизии. |
-| GitOps перезаписывает откат через 5–15 секунд | Включен `self-heal` в ArgoCD или запущен reconciler Flux, признающий ручной откат дрифтом. | `argocd app get <name>` или `flux events` | Применить регламент Break-Glass (§3 Сценарий 4) или выполнить `git revert`. |
+| GitOps перезаписывает откат через 5–15 секунд | Включен `self-heal` в ArgoCD, признающий ручной откат дрифтом. | `argocd app get <name>` | Применить регламент Break-Glass (Сценарий 4) или выполнить `git revert`. |
 | Старый код падает после отката (`CrashLoopBackOff` / 500 ошибки) | Схема БД изменена без обратной совместимости, либо ConfigMap обновлен in-place. | `kubectl logs <pod-name> --previous` | Проверить совместимость схемы БД. Откатить ConfigMap вручную или вернуть миграцию (если предусмотрен down-скрипт). |
 | Откат завис в статусе масштабирования (`0 of N updated replicas`) | Блокировка со стороны `PodDisruptionBudget` (`minAvailable`) или нехватка ресурсов на нодах под `maxSurge`. | `kubectl describe pdb` и `kubectl get events` | Временно откорректировать PDB, освободить ресурсы узлов или изменить параметры `maxUnavailable`. |
 | `field is immutable: spec.selector` | Попытка отката к ревизии с другой структурой селектора меток. | `kubectl describe rs <old-rs>` | Селектор меток неизменяем. Требуется удаление Deployment с флагом `--cascade=orphan` и пересоздание. |
@@ -369,7 +357,7 @@ kubectl logs app-frontend-6b8f9b9c9f-x1z2a -n production --previous --tail=50
 - [Манифест Deployment и лучшие практики](./deployment_manifest.md) — эталонные production-манифесты, параметры безопасности и надежности.
 - [Диагностика и устранение неполадок](./troubleshooting.md) — общие сценарии сбоев в работе Deployment.
 - [Progressive Delivery](./progressive_delivery.md) — канареечные и Blue-Green релизы с использованием Argo Rollouts и Flagger.
-- [Deployment с GitOps](./deployment_with_gitops.md) — управление синхронизацией манифестов через ArgoCD и Flux.
+- [Deployment с GitOps](./deployment_with_gitops.md) — управление синхронизацией манифестов через ArgoCD.
 - [Инцидент-менеджмент в CI/CD](../../../CI-CD/GitLab_CI/Advanced/incident_response_cicd.md) — регламенты реагирования на сбои пайплайнов и деплоев.
 - [Обратно-совместимые миграции (Expand-Contract)](../../../Databases/Concepts/migrations/expand_contract.md) — методология сохранения совместимости слоя данных при откатах.
 - [Стратегии отката данных](../../../Databases/Concepts/rollback_strategies.md) — откат миграций, транзакции DDL и согласованность хранилищ.

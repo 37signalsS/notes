@@ -1,16 +1,30 @@
 # Производительность и репликация Vault
 
+> **Статус:** Performance Standby, Performance Replication и DR Replication — функции HashiCorp Vault Enterprise (требуется лицензия Enterprise или HCP Vault Dedicated). В OSS-сборках эти функции недоступны.
+
+**Актуально для:** Vault 2.x (latest 2.1.2)
+
+## Предварительные требования
+
+- **Vault Enterprise** (2.x) — Performance Standby, Performance Replication и DR Replication требуют Enterprise-лицензии. OSS-сборка не поддерживает репликацию и Performance Standby.
+- **Хранилище с транзакционной поддержкой:** Integrated Storage (Raft) или Consul. Репликация не работает с файловым (`file`) или другими транзакционно-неподдерживаемыми бэкендами.
+- **TLS:** все соединения между кластерами шифруются с использованием взаимной TLS-аутентификации. Сертификаты выпускаются Vault автоматически, но load balancer для cluster-порта (8201) не может终ировать TLS.
+- **Сеть:** latency между узлами кластера < 50ms для Raft; latency между дата-центрами — для DR/Performance Replication не критична (репликация асинхронна).
+- **CLI:** Vault CLI 2.x, `jq` для разбора JSON-ответов.
+- **Kubernetes (для Сценария 1):** `kubectl` для выполнения команд `vault operator unseal` на узлах StatefulSet.
+- **Согласованность версий:** secondary-кластер может работать на новой версии primary, но рекомендуется держать версии синхронными во время эксплуатации.
+
 ## Определения
 
 **Performance Standby** — режим работы standby-узлов в HA-кластере Vault Enterprise, при котором они обслуживают read-only запросы локально, не перенаправляя их лидеру. Обеспечивает горизонтальное масштабирование операций чтения (KV, Transit).
 
-**Stale Read** — режим чтения данных, при котором запрос обслуживается локально standby-узлом без перенаправления на лидера. Данные могут уставать до 100 мс. Настраивается через заголовок `X-Vault-Stale-Read: true`.
+**Stale Read** — режим чтения данных, при котором запрос обслуживается локально standby-узлом без перенаправления на лидера. Данные могут устаревать до 100 м с. Для read-after-write consistency используют заголовки `X-Vault-Forward: active-node` или `X-Vault-Inconsistent: forward-active-node` + `X-Vault-Index`.
 
 **Read Consistency (Strong vs Stale)** — уровень согласованности данных при чтении. Strong consistency гарантирует актуальность данных (запрос перенаправляется на лидера). Stale consistency снижает задержку, но позволяет получить устаревшие данные.
 
 **Performance Replication** — режим репликации между кластерами Vault Enterprise, распределяющий чтение и запись по нескольким кластерам в разных географических регионах. Кластеры-реплики имеют собственные лидеры и политики.
 
-**DR Replication (Disaster Recovery Replication)** — режим репликации Vault Enterprise для аварийного восстановления. DR Secondary клаuster находится в отдельном region/datacenter и получает асинхронную репликацию данных от основного (Performance) кластера. При отказе основного кластера DR Secondary может быть повышен до активного.
+**DR Replication (Disaster Recovery Replication)** — режим репликации Vault Enterprise для аварийного восстановления. DR Secondary кластер находится в отдельном region/datacenter и получает асинхронную репликацию данных от основного (Performance) кластера. При отказе основного кластера DR Secondary может быть повышен до активного.
 
 **Multi-DC (Multi-Datacenter)** — архитектура с несколькими кластерами Vault в разных дата-центрах, связанных репликацией. Обеспечивает отказоустойчивость и географическое распределение нагрузки.
 
@@ -32,8 +46,8 @@ Vault является master-slave системой:
 
 | Режим | Назначение | Согласованность | Failover |
 | :--- | :--- | :--- | :--- |
-| **DR Replication** | Аварийное восстановление | Асинхронная | Ручной (через Promote)
-| **Performance Replication** | Распределение нагрузки | Синхронная (в рамках cluster) | Автоматический |
+| **DR Replication** | Аварийное восстановление — полная репликация данных, включая токены и leases | Асинхронная (best-effort) | Ручной (через promote + `dr_operation_token`) |
+| **Performance Replication** | Горизонтальное масштабирование read-only нагрузки (KV, Transit). Secondary обслуживает чтения, write — пересылает на primary | Асинхронная (near real-time) | Ручной (через promote); read failover автоматический через LB |
 
 ### Жизненный цикл запроса
 
@@ -137,19 +151,27 @@ cluster_addr = "https://vault-0.example.com:8201"
 #### Использование через CLI
 
 ```bash
-# Strong consistency (по умолчанию)
+# Strong consistency (по умолчанию — запрос перенаправляется на active-лидер):
 vault kv get secret/data/myapp/config
 
-# Stale read (заголовок X-Vault-Stale-Read: true)
-vault kv get -ns=secret -address=https://vault-standby.example.com:8200 \
-    -header="X-Vault-Stale-Read: true" secret/data/myapp/config
+# Stale read — запрос к standby-узлу (данные могут устаревать до 100ms)
+# Заголовок X-Vault-Stale-Read НЕ существует в API Vault.
+# Stale reads достигаются простым запросом к standby-узлу:
+vault kv get -address=https://vault-standby.example.com:8200 \
+    secret/data/myapp/config
 ```
 
 #### Использование через API
 
 ```bash
+# Strong consistency — запрос к active-лидеру или через forwarding:
 curl -s -H "X-Vault-Token: $VAULT_TOKEN" \
-     -H "X-Vault-Stale-Read: true" \
+     -H "X-Vault-Forward: active-node" \
+     https://vault-standby.example.com:8200/v1/secret/data/myapp/config
+
+# Stale read — запрос к standby-узлу без специальных заголовков
+# (данные обслуживаются из локального состояния standby)
+curl -s -H "X-Vault-Token: $VAULT_TOKEN" \
      https://vault-standby.example.com:8200/v1/secret/data/myapp/config
 ```
 
@@ -160,10 +182,11 @@ import hvac
 
 client = hvac.Client(url='https://vault-standby.example.com:8200', token=token)
 
-# Stale read
-response = client.adapter.get(
-    '/v1/secret/data/myapp/config',
-    headers={'X-Vault-Stale-Read': 'true'}
+# Stale read — запрос к standby без специальных заголовков
+# (X-Vault-Stale-Read НЕ существует в Vault API)
+response = client.secrets.kv.v2.read_secret_version(
+    path='myapp/config',
+    mount='secret'
 )
 ```
 
@@ -172,15 +195,27 @@ response = client.adapter.get(
 #### Настройка Performance кластера (основной)
 
 ```bash
-# Включение Performance replication
+# Включение Performance replication на primary
 vault write -f sys/replication/performance/primary/enable
+```
+
+#### Генерация secondary activation token (на primary)
+
+```bash
+# secondary activation token — response-wrapped, требует аутентификации как root
+# Token следует переносить на secondary машину и использовать один раз
+SEC_BOOTSTRAP=$(vault write sys/replication/performance/primary/secondary-token id=secondary \
+    -format=json | jq -r '.wrap_info.token')
+echo "$SEC_BOOTSTRAP" > /secure/path/sec-bootstrap.token
 ```
 
 #### Настройка Performance Secondary кластера
 
 ```bash
-# Инициализация DR/Performance Secondary
+# Активация secondary на базе bootstrap token
+# token — обязательный параметр; primary_api_addr — опциональный override
 vault write -f sys/replication/performance/secondary/enable \
+    token="$(cat /secure/path/sec-bootstrap.token)" \
     primary_api_addr="https://vault-primary.example.com:8200"
 ```
 
@@ -190,14 +225,15 @@ vault write -f sys/replication/performance/secondary/enable \
 # На primary кластере
 vault read sys/replication/performance/status
 # → state                    | active
+# → mode                     | primary
 # → cluster_id               | xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-# → known_secondary_clusters | [secondary-cluster-id]
+# → known_secondaries        | [cd0463e0-a37f-7421-345e-aad53007479f]
 
 # На secondary кластере
 vault read sys/replication/performance/status
-# → state                    | running
+# → state                    | stream-wals
+# → mode                     | secondary
 # → primary_cluster_addr     | https://vault-primary.example.com:8200
-# → last_reindex_op          | 2026-09-24T10:00:00Z
 ```
 
 #### Failover для Performance Replication
@@ -210,6 +246,7 @@ vault write -f sys/replication/performance/secondary/promote
 # После promote: secondary становится primary
 vault read sys/replication/performance/status
 # → state | active
+# → mode  | primary
 ```
 
 ### Сценарий 4: DR Replication (Enterprise)
@@ -221,11 +258,23 @@ vault read sys/replication/performance/status
 vault write -f sys/replication/dr/primary/enable
 ```
 
+#### Генерация secondary activation token (на DR Primary)
+
+```bash
+# secondary activation token для DR — response-wrapped JWT
+# Token следует переносить на DR Secondary и использовать один раз
+DR_BOOTSTRAP=$(vault write sys/replication/dr/primary/secondary-token id=dr-secondary \
+    -format=json | jq -r '.wrap_info.token')
+echo "$DR_BOOTSTRAP" > /secure/path/dr-bootstrap.token
+```
+
 #### Настройка DR Secondary
 
 ```bash
 # На DR Secondary кластере
+# token — обязательный параметр
 vault write -f sys/replication/dr/secondary/enable \
+    token="$(cat /secure/path/dr-bootstrap.token)" \
     primary_api_addr="https://vault-primary.example.com:8200"
 ```
 
@@ -235,24 +284,33 @@ vault write -f sys/replication/dr/secondary/enable \
 # На primary
 vault read sys/replication/dr/status
 # → state                    | active
-# → dr_secondary_clusters    | [dr-secondary-cluster-id]
+# → mode                     | primary
+# → cluster_id               | xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+# → known_secondaries        | [dr-secondary-cluster-id]
 
 # На DR Secondary
 vault read sys/replication/dr/status
 # → state                    | running
+# → mode                     | secondary
 # → primary_cluster_addr     | https://vault-primary.example.com:8200
 ```
 
 #### Аварийное восстановление через DR Secondary
 
 ```bash
+# DR promote требует dr_operation_token (Vault 2.0.0+)
+# Сгенерировать DR operation token на primary:
+# vault write sys/replication/dr/secondary/generate-operation-token/attempt
+# (требует порог unseal/recovery ключей)
+
 # На DR Secondary кластере
-vault write -f sys/replication/dr/secondary/promote
-# → Success! Data written to: sys/replication/dr/secondary/promote
+vault write sys/replication/dr/secondary/promote \
+    dr_operation_token=<DR_OPERATION_TOKEN>
 
 # После promote: DR Secondary становится активным кластером
 vault read sys/replication/dr/status
 # → state | active
+# → mode  | primary
 ```
 
 #### Переключение трафика
@@ -288,7 +346,7 @@ curl -s https://vault.example.com:8200/v1/sys/metrics | grep vault_
 
 ```hcl
 # server.hcl
-metrics {
+telemetry {
   prometheus_enabled = true
   prometheus_retention_time = "30s"
 }
@@ -334,61 +392,59 @@ server {
 
 ### Сценарий 7: Graceful Degradation при потере кворума
 
-При потере >50% узлов кластер переходит в состояние Sealed:
-
-```bash
-# Проверка статуса
-vault status
-# → Sealed: true
-# → Error: cluster has lost quorum
-
-# Вариант 1: восстановление из снапшота (если есть)
-vault operator raft snapshot restore /opt/vault/backups/vault-latest.snap
-
-# Вариант 2: ручная правка peers.json
-# 1. Остановка Vault
-sudo systemctl stop vault
-
-# 2. Редактирование /opt/vault/data/raft/peers.json
-# Удалить недоступные узлы, оставить только доступные
-
-# 3. Запуск и распечатывание
-sudo systemctl start vault
-vault operator unseal <key_1>
-vault operator unseal <key_2>
-vault operator unseal <key_3>
-```
+При потере более половины узлов кластер теряет лидера и перестаёт обслужвать запросы (см. детали в [Сценарии 3: Восстановление после потери кворума](./backup_restore_strategies.md#сценарий-3-восстановление-после-потери-кворума)).
 
 ### Сценарий 8: Миграция с Consul на Raft
 
+Подробная инструкция по миграции с Consul backend на Raft — в **[Vault с Consul бэкендом](./vault_with_consul_backend.md#миграция-с-consul-на-raft)**. Кратко: создайте снапшот Consul (`consul snapshot save`), выполните `vault operator migrate -config=migrate.hcl` с остановленным Vault, затем запустите с конфигурацией `storage "raft"` и распечатайте узлы.
+
+#### Валидация и проверка
+
 ```bash
-# 1. Создание снапшота Consul (резервная копия)
-consul snapshot save /opt/consul/backups/backup-$(date +%Y%m%d).snap
+# Проверка состояния HA-кластера после всех настроек:
+vault status
+# → Sealed: false, HA Cluster: active (self), performance_standby: true
 
-# 2. Конфигурация миграции
-cat > migrate.hcl <<EOF
-storage_source "consul" {
-  address = "127.0.0.1:8500"
-  path    = "vault/"
-}
-
-storage_destination "raft" {
-  path    = "/opt/vault/raft/"
-  node_id = "vault-0"
-}
-
-cluster_addr = "https://vault-0.example.com:8201"
-EOF
-
-# 3. Выполнение миграции (Vault должен быть остановлен)
-vault operator migrate -config=migrate.hcl
-
-# 4. Запуск с новой конфигурацией
-sudo systemctl start vault
-vault operator unseal <key_1>
-vault operator unseal <key_2>
-vault operator unseal <key_3>
+# Проверка репликации:
+vault read sys/replication/performance/status | jq -r '.data.mode, .data.state'
+vault read sys/replication/dr/status | jq -r '.data.mode, .data.state'
 ```
+
+## Операции и команды
+
+### CLI: управление репликацией
+
+| Команда | Описание | Требования |
+| :--- | :--- | :--- |
+| `vault write -f sys/replication/performance/primary/enable` | Включить Performance Replication на primary | Enterprise, root |
+| `vault write sys/replication/performance/primary/secondary-token id=<id>` | Сгенерировать bootstrap token для secondary | Enterprise, root, response-wrapped |
+| `vault write -f sys/replication/performance/secondary/enable token=<token>` | Активировать secondary | Token от primary |
+| `vault write -f sys/replication/performance/secondary/promote` | Повысить secondary до primary | Enterprise, root |
+| `vault write -f sys/replication/performance/primary/disable` | Отключить Performance Replication на primary | Enterprise, root |
+| `vault write -f sys/replication/dr/primary/enable` | Включить DR Replication на primary | Enterprise, root |
+| `vault write sys/replication/dr/primary/secondary-token id=<id>` | Сгенерировать bootstrap token для DR secondary | Enterprise, root, response-wrapped |
+| `vault write -f sys/replication/dr/secondary/enable token=<token>` | Активировать DR secondary | Token от primary |
+| `vault write sys/replication/dr/secondary/promote dr_operation_token=<token>` | Повысить DR secondary до primary | Enterprise, root, dr_operation_token |
+| `vault write -f sys/replication/dr/secondary/reindex` | Переиндексировать DR secondary | Enterprise |
+
+### API endpoints репликации
+
+| Метод | Путь | Описание |
+| :--- | :--- | :--- |
+| `POST` | `/sys/replication/performance/primary/enable` | Включить Performance primary |
+| `POST` | `/sys/replication/performance/primary/secondary-token` | Сгенерировать bootstrap token |
+| `POST` | `/sys/replication/performance/secondary/enable` | Активировать Performance secondary |
+| `POST` | `/sys/replication/performance/secondary/promote` | Повысить Performance secondary |
+| `GET` | `/sys/replication/performance/status` | Статус Performance репликации |
+| `POST` | `/sys/replication/dr/primary/enable` | Включить DR primary |
+| `POST` | `/sys/replication/dr/primary/secondary-token` | Сгенерировать DR bootstrap token |
+| `POST` | `/sys/replication/dr/secondary/enable` | Активировать DR secondary |
+| `POST` | `/sys/replication/dr/secondary/promote` | Повысить DR secondary (требует `dr_operation_token`) |
+| `GET` | `/sys/replication/dr/status` | Статус DR репликации |
+| `GET` | `/sys/replication/status` | Общий статус репликации |
+| `POST` | `/sys/replication/recover` | Попытка восстановления при сбое репликации |
+| `POST` | `/sys/replication/reindex` | Переиндексация данных (требует sudo) |
+| `POST` | `/sys/replication/merkle-check` | Проверка целостности Merkle tree |
 
 ## Лучшие практики
 
@@ -401,13 +457,101 @@ vault operator unseal <key_3>
 7. **Репликация:** Для географически распределённых сред используйте Performance Replication. Для DR — DR Replication.
 8. **Graceful failover:** Планируйте процедуры failover и тестируйте их регулярно.
 
-## Ограничения и известные проблемы
+#### Валидация и проверка
+
+```bash
+# Проверка что репликация синхронизирована:
+vault read sys/replication/dr/status | jq -r '.data.secondaries[0].connection_status'
+# → connected
+
+# Проверка что Performance secondary обслуживает запросы:
+curl -s -H "X-Vault-Token: $VAULT_TOKEN" \
+    https://vault-secondary.example.com:8200/v1/secret/data/myapp/config
+# → {"data": {"data": {...}}}
+```
+
+#### Очистка и откат
+
+```bash
+# Отключение DR Replication (на DR Primary):
+vault write -f sys/replication/dr/primary/disable
+
+# Отключение Performance Replication (на Performance Primary):
+vault write -f sys/replication/performance/primary/disable
+
+# Отключение Performance Secondary (на бывшем secondary):
+vault write -f sys/replication/performance/secondary/disable
+
+# Удаление bootstrap token (одноразовое использование):
+shred -u /secure/path/sec-bootstrap.token /secure/path/dr-bootstrap.token
+
+# Ротация secondary activation token (security best practice):
+vault write sys/replication/performance/primary/secondary-token id=secondary-new \
+    -format=json | jq -r '.wrap_info.token'
+
+## Устранение неполадок
+
+### Типичные ошибки и решения
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `replication is already enabled` | Репликация уже включена на этом кластере | Выполнить `promote` вместо `enable`, либо `disable` и повторить |
+| `replication is not enabled` при `promote` | Кластер не настроен как secondary | Включить `secondary/enable` с корректным `token` |
+| `invalid secondary token` | Bootstrap token истёк или используется неверный token | Сгенерировать новый token на primary, убедиться что он не использован |
+| `dr_operation_token required` на promote | DR promote требует DR operation token | Сгенерировать через `sys/replication/dr/secondary/generate-operation-token/attempt` |
+| `merkle tree corruption` | Повреждение Merkle tree на secondary | Выполнить `vault write -f sys/replication/reindex` |
+| `connection refused` / `timeout` на secondary | Сетевые проблемы между кластерами | Проверить connectivity на cluster port (8201), firewall rules, TLS сертификаты |
+| `clock skew detected` | Расхождение времени между узлами | Синхронизировать время через NTP (chrony/systemd-timesyncd) |
+| `seal configuration mismatch` | Secondary использует другой seal | После включения replication seal конфигурация secondary заменяется на primary; при необходимости обновить recovery keys/unseal keys |
+
+### Диагностика
+
+#### 1. Проверка статуса репликации
+
+```bash
+# Полный статус (включает DR и Performance):
+vault read sys/replication/status -format=json | jq
+# → state, mode, connection_state, known_secondaries, primaries
+```
+
+#### 2. Проверка сети между кластерами
+
+```bash
+# Проверка cluster port (8201):
+nc -zv vault-primary.example.com 8201
+# → Connection to vault-primary.example.com port 8201 [TCP/*] succeeded!
+
+# Проверка TLS на cluster порту:
+openssl s_client -connect vault-primary.example.com:8201 -servername vault-primary.example.com
+```
+
+#### 3. Проверка Merkle tree перед reindex
+
+```bash
+# Рекомендуется перед perindex:
+vault write sys/replication/merkle-check
+# → merkle_corruption_report: { corrupted_root: false, ... }
+```
+
+#### 4. Аудит логов
+
+```bash
+# Поиск ошибок репликации в audit логах:
+vault audit list -format=json | jq -r '.[] | select(.request.path | contains("replication"))'
+
+# Journalctl (systemd):
+journalctl -u vault -n 100 --no-pager | grep -i replication
+```
+
+### Ограничения
 
 - **Raft и сетевая задержка:** Высокая латентность между узлами (>50ms) увеличивает время коммита и снижает производительность.
 - **Performance Standby (Enterprise):** Доступен только в Enterprise версии. В OSS standby-узлы не обслуживают read-запросы.
-- **Stale reads:** Данные могут уставать до 100ms. Не подходит для операций, требующих актуальных данных.
+- **Stale reads:** Данные могут устаревать до 100ms. Не подходит для операций, требующих актуальных данных.
 - **Потеря кворума:** При потере >50% узлов кластер переходит в Sealed. Восстановление возможно только из снапшота.
 - **Миграция Consul → Raft:** Требуется остановка кластера. Планируйте миграцию во время окна обслуживания.
+- **Version compatibility:** Secondary может работать на новой версии Vault, но работа на разных версиях дольше 1 недели не рекомендуется.
+- **Seal replacement:** При включении replication на secondary, его seal конфигурация заменяется конфигурацией primary.
 
 ## Дополнительная информация
 

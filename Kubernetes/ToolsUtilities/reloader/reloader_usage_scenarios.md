@@ -37,7 +37,7 @@ Reloader управляется через аннотации в метадан�
 
 -   **Явное указание (Explicit):** Аннотации `configmap.reloader.stakater.com/reload: "name"` или `secret.reloader.stakater.com/reload: "name"`. Позволяет точечно управлять перезапусками.
 -   **Автоматическое обнаружение (Auto):** Аннотация `reloader.stakater.com/auto: "true"`. Рекомендуется для большинства stateless-приложений.
--   **Стратегия обновления:** В 2026 году стандартом является использование `--reload-strategy=annotations` для совместимости с GitOps (ArgoCD/Flux), чтобы избежать конфликтов состояния (OutOfSync).
+-   **Стратегия обновления:** В 2026 году стандартом является использование `--reload-strategy=annotations` для совместимости с GitOps (ArgoCD), чтобы избежать конфликтов состояния (OutOfSync).
 -   **Глобальное переопределение (v1.4.19):** Флаг `--ignore-annotation` на уровне контроллера позволяет игнорировать аннотации запрета на уровне отдельных приложений, что полезно для соблюдения политик безопасности платформы.
 
 ### Полный справочник аннотаций
@@ -187,26 +187,6 @@ spec:
       kind: Deployment
       jsonPointers:
         - /spec/template/metadata/annotations/reloader.stakater.com~1last-reloaded-from
-```
-
-**Flux Kustomization:**
-
-```yaml
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: my-app
-  namespace: flux-system
-spec:
-  interval: 10m
-  path: ./kubernetes/apps/production
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-  postBuild:
-    substituteFrom:
-      - kind: ConfigMap
-        name: cluster-config
 ```
 
 ---

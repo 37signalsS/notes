@@ -1,5 +1,7 @@
 # Базовый рабочий процесс в Vagrant
 
+**Актуально для:** Vagrant 2.4.x
+
 ## Определения
 
 **Жизненный цикл Vagrant (Vagrant Workflow)** — стандартизированная последовательность этапов управления виртуальной средой: от инициализации проекта до полной очистки ресурсов.
@@ -18,6 +20,18 @@
 
 **Плагин (Plugin)** — расширение CLI для поддержки провайдеров, автоматизации (vbguest, proxyconf) или интеграции с внешними системами.
 
+## Предварительные требования
+
+Для применения базового рабочего процесса Vagrant в devops, SRE и администрировании:
+
+- **Vagrant 2.4.x** — установлен из [официальных пакетов](./vagrant_installation.md). Строка `Vagrant.configure("2")` в `Vagrantfile` определяет API-версию DSL.
+- **Провайдер (гипервизор)** — один из: VirtualBox 7.0+, Libvirt/QEMU 6.0+ (Linux), Hyper-V (Windows 10/11 Pro), VMware Desktop, QEMU. Vagrant абстрагирует выбор провайдера; для CI/CD предпочтительнее Libvirt/KVM или QEMU (headless, без GUI).
+- **Аппаратная виртуализация** — VT-x (Intel) или AMD-V (AMD) включены в BIOS/UEFI. Для вложенной виртуализации (nested) на Linux-хостах — `kvm_intel nested=1` или `kvm_amd nested=1`.
+- **Ruby 3.1+** — требуется для выполнения `Vagrantfile` и плагинов. На Windows/Mac поставляется вместе с Vagrant; на Linux — системный Ruby или Vagrant-portable.
+- **Свободные ресурсы хоста** — минимум 4 ГБ ОЗУ и 20 ГБ дискового пространства на одну тестовую ВМ. Для multi-machine кластеров — 8+ ГБ (см. [Advanced Usage](./vagrant_advanced_usage.md)).
+- **Сеть** — возможность исходящего доступа к `vagrantcloud.com` для загрузки box (для air-gapped сред — [troubleshooting: дополнительная информация](./vagrant_troubleshooting/additional_info.md)).
+- **Права пользователя** — доступ к устройствам гипервизора (в Linux: членство в группах `libvirt`/`kvm`; в Windows: права администратора для Hyper-V).
+
 ## Базовые концепции
 
 ### Основные команды управления
@@ -31,6 +45,9 @@
 | **`vagrant provision`**| Настройка | Запускает скрипты автоматизации на уже работающей ВМ. |
 | **`vagrant reload`** | Перезагрузка | Эквивалент `halt` + `up`. Требуется для применения изменений в сетях или ресурсах. |
 | **`vagrant halt`** | Остановка | Посылает сигнал завершения (ACPI) гостевой ОС. |
+| **`vagrant suspend`** | Приостановка | Сохраняет состояние ВМ (RAM + диск) на диск гипервизора. Возобновление мгновенное (`resume`). |
+| **`vagrant resume`** | Возобновление | Возвращает ВМ из suspended-состояния. Быстрее `vagrant up`. |
+| **`vagrant status`** | Статус | Показывает текущее состояние ВМ (`running`, `saved`, `poweroff`, `not created`). |
 | **`vagrant destroy`** | Удаление | Уничтожает ВМ и освобождает диск. Флаг `-f` отключает подтверждение. |
 
 ### Жизненный цикл команды `vagrant up`
@@ -96,24 +113,18 @@ tar -tzf custom-dev-box-2026.01.box | head -20
 
 ### Управление плагинами
 
-Плагины расширяют функциональность Vagrant (поддержка провайдеров, автоматизация, прокси).
+Плагины расширяют функциональность Vagrant (поддержка провайдеров, автоматизация, прокси). Основные команды:
 
 ```bash
-# Список установленных плагинов
-vagrant plugin list
-
-# Установка плагина
-vagrant plugin install vagrant-libvirt
-
-# Обновление всех плагинов
-vagrant plugin update
-
-# Удаление плагина
-vagrant plugin uninstall vagrant-old-plugin
-
-# Полный сброс плагинов (при повреждении зависимостей)
-vagrant plugin expunge --reinstall
+vagrant plugin list                      # список установленных плагинов
+vagrant plugin install vagrant-libvirt   # установка
+vagrant plugin update                    # обновление всех плагинов
+vagrant plugin uninstall <name>          # удаление
+vagrant plugin repair                    # проверка целостности зависимостей
+vagrant plugin expunge --reinstall       # полный сброс (при конфликтах)
 ```
+
+Подробнее: [Плагины и команды](./vagrant_plugins_and_commands.md) — жизненный цикл плагинов, проверка наличия через `Vagrant.has_plugin?`, `--machine-readable` в CI/CD.
 
 ### Снимки состояния (Snapshots)
 
@@ -297,26 +308,24 @@ vagrant ssh -c "run-tests.sh"
 vagrant destroy -f
 ```
 
-### Сценарий 11: Управление плагинами
+### Сценарий 11: Воспроизводимость плагинов в CI/CD
 
-Установка, обновление и удаление плагинов в рабочих окружениях:
+Команды управления плагинами описаны в [секции «Управление плагинами»](#управление-плагинами). Здесь — паттерн для воспроизводимых сред:
 
 ```bash
-# Установка провайдера
-vagrant plugin install vagrant-libvirt
-
-# Обновление всех плагинов
-vagrant plugin update
-
-# Проверка целостности зависимостей
-vagrant plugin repair
-
-# Полный сброс (при неразрешимых конфликтах)
-vagrant plugin expunge --reinstall
-
-# Экспорт списка плагинов для воспроизводимости
+# 1. Зафиксировать состав плагинов в репозитории
 vagrant plugin list > plugins.txt
+
+# 2. На CI-агенте восстановить плагины из списка
+xargs vagrant plugin install < plugins.txt
+
+# 3. При конфликтах зависимостей — полный сброс и переустановка
+vagrant plugin repair
+vagrant plugin expunge --reinstall
+xargs vagrant plugin install < plugins.txt
 ```
+
+> **Примечание:** каждый плагин — потенциальный источник несовместимостей. В CI предпочтительно свести количество плагинов к минимуму — используйте только провайдер и `--machine-readable` для парсинга (см. [Плагины и команды](./vagrant_plugins_and_commands.md)).
 
 ## Дополнительная информация
 
@@ -352,19 +361,59 @@ vagrant plugin list > plugins.txt
 | `No space left on device` | Переполнение `~/.vagrant.d/` или пула хранилища | `vagrant box prune`, проверьте `df -hT` |
 | `VT-x is not available` | Аппаратная виртуализация отключена или захвачена Hyper-V | Включите VT-x/AMD-V в BIOS; отключите Hyper-V |
 | `Machine not found` | State Desync: `.vagrant/` ссылается на несуществующую ВМ | `vagrant global-status --prune && vagrant up` |
+| `Port collision` | Хост-порт уже используется | Укажите уникальный `host:` в `forwarded_port`, либо `auto_correct: true` |
+
+### Методы валидации и диагностики
+
+Систематический подход к проверке состояния окружения (для devops/SRE):
+
+**1. Цепочка проверки статуса:**
+```bash
+vagrant status                   # → current state: running / poweroff / saved
+vagrant global-status            # → поиск "забытых" ВМ по всей системе
+vagrant ssh-config               # → проверка параметров подключения
+```
+
+**2. Техническая проверка гостя:**
+```bash
+# Проверка доступности SSH и загрузки
+vagrant ssh -c "uptime && free -m && df -h /"
+# → подтверждает: ВМ запущена, есть RAM и дисковое пространство
+
+# Проверка провижинга (идемпотентность)
+vagrant provision --debug 2>&1 | grep -i 'error\|fail'
+# → пустой вывод = успех
+```
+
+**3. Валидация Vagrantfile:**
+```bash
+vagrant validate                 # → Vagrantfile validated successfully
+VAGRANT_LOG=info vagrant status  # → проверка без запуска ВМ на ошибки логики
+```
+
+**4. Post-mortem:**
+```bash
+# Сохранение отладочного лога для анализа сбоя
+VAGRANT_LOG=debug VAGRANT_LOG_FILE=/tmp/vagrant-debug.log vagrant up
+# → лог содержит: timestamps, provider calls, communicator state
+```
 
 ### Рекомендации по эксплуатации
 
-1.  **Безопасность:** Не забывайте выполнять `vagrant destroy`, если проект больше не нужен, чтобы не хранить старые образы с потенциальными уязвимостями.
-2.  **Идемпотентность:** Всегда проверяйте, что `vagrant provision` можно запускать многократно без побочных эффектов.
-3.  **Локальный кэш:** Директория `~/.vagrant.d/` может занимать десятки гигабайт. Регулярно используйте `vagrant box prune`.
-4.  **Валидация:** Добавьте `vagrant validate` в pre-commit или CI для раннего обнаружения ошибок конфигурации.
-5.  **Отладка:** При «зависании» команд используйте уровни логирования: `VAGRANT_LOG=info vagrant up`.
+1.  **Безопасность:** Удаляйте ВМ через `vagrant destroy`, когда проект больше не нужен, чтобы не хранить образы с потенциальными уязвимостями. В production-образах заменяйте `insecure_private_key` на собственный ключ через `config.ssh.private_key_path` (см. [Advanced Usage](./vagrant_advanced_usage.md)).
+2.  **Верификация образов:** При добавлении box из внешних источников всегда указывайте `--checksum`/`--checksum-type` (SHA256) для предотвращения подмены образа.
+3.  **Идемпотентность:** Всегда проверяйте, что `vagrant provision` можно запускать многократно без побочных эффектов.
+4.  **Изоляция CI/CD:** В пайплайнах используйте `VAGRANT_DOTFILE_PATH=/tmp/vagrant-${CI_JOB_ID}` для изоляции состояний параллельных джобов. Отключайте проверку обновлений `VAGRANT_BOX_UPDATE_CHECK=0` для reproducible билдов.
+5.  **Локальный кэш:** Директория `~/.vagrant.d/` может занимать десятки гигабайт. Регулярно используйте `vagrant box prune` и `vagrant plugin expunge --reinstall` для очистки.
+6.  **Валидация:** Добавьте `vagrant validate` в pre-commit или CI для раннего обнаружения ошибок конфигурации.
+7.  **Отладка:** При «зависании» команд используйте уровни логирования: `VAGRANT_LOG=info vagrant up`. Для post-mortem — `VAGRANT_LOG_FILE=/tmp/vagrant-debug.log`.
+8.  **Управление состоянием:** Делайте `vagrant snapshot save` перед рискованными операциями (обновление kernel, установка тяжёлого ПО). Снимки — не backup: храните `.box`-архивы на отдельном носителе.
 
 ### См. также
 
 - [Конфигурация Vagrantfile](./vagrantfile.md) — детальный справочник параметров.
 - [Vagrant Provisioning](./vagrant_provisioning.md) — автоматизация настройки.
+- [Vagrant Providers](./vagrant_providers.md) — провайдеры, образы и управление хранилищами.
 - [Vagrant Troubleshooting](./vagrant_troubleshooting/basic_concepts.md) — глубокая отладка и логирование.
 - [Packer и Пайплайн box](./vagrant_packer_boxes.md) — сборка собственных `.box` и публикация.
 - [Плагины и команды](./vagrant_plugins_and_commands.md) — экосистема плагинов и вспомогательные команды.

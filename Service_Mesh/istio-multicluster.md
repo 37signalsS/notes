@@ -1,5 +1,7 @@
 # Мультикластерная и мультисетевая архитектура Istio
 
+**Актуально для:** Istio 1.30+
+
 ## Определения
 
 **Мультикластер (multi-cluster)** — единый логический service mesh, работающий поверх нескольких независимых Kubernetes-кластеров. Сервисы из разных кластеров обнаруживаются друг другом, общаются через mTLS и управляются общими политиками.
@@ -18,7 +20,23 @@
 
 ---
 
-## Основные концепции
+## Предварительные требования
+
+Перед развертыванием Istio в мультикластерной конфигурации:
+
+- **Kubernetes:** версия 1.32–1.37 для Istio 1.30+. Минимум — 1.31.
+- **Сетевая связность:** между кластерами должен быть L3/L4-канал (VPN, Direct Connect, VPC peering). Для multi-network без прямой связи используйте east-west gateway с LoadBalancer.
+- **kubeconfig:** доступ к API-серверам всех кластеров (context в `~/.kube/config` для каждого кластера).
+- **Доступ к образам:** container registry для istiod, ztunnel, gateway (обычно Docker Hub или приватный registry).
+- **DNS:** каждый кластер должен разрешать `*.svc.cluster.local` в своей сети; межкластерный DNS — через ServiceEntry или MCS API.
+- **Gateway API CRDs:** обязательны для управления east-west gateway:
+  ```bash
+  kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.1/standard-install.yaml
+  kubectl get crd gateways.gateway.networking.k8s.io
+  # → True (Established)
+  ```
+- **Сертификаты:** для сквозного mTLS все кластеры должны использовать один и тот же корневой сертификат (общий `cacerts` или shared trust anchor).
+- **Ресурсы:** istiod 2+ реплики при production-развёртывании (500m CPU / 1Gi RAM на реплику).
 
 ### Модели развертывания
 
@@ -33,7 +51,7 @@
 ### Как работает discovery между кластерами
 
 1. На кластере-источнике создаётся kubeconfig с минимальными правами (`system:node` / service-account read API endpoints).
-2. `istioctl x create-remote-secret` формирует Secret с этим kubeconfig.
+2. `istioctl create-remote-secret` формирует Secret с этим kubeconfig (без префикса `x` с Istio 1.19+).
 3. Secret применяется на primary (или на каждый кластер в multi-primary).
 4. istiod подписывается на изменения API-сервера remote-кластера и строит эндпоинты для сервисов, как если бы они были локальными.
 5. Сервисы remote-кластера становятся видимыми в `istioctl proxy-config endpoint` и Kiali.
@@ -66,29 +84,62 @@
 
 ## Практические сценарии
 
-### Сценарий 1: Primary-Remote (базовая конфигурация)
+### Сценарий 1: Primary-Remote (external istiod)**
 
-Первый кластер — primary (управляющий), второй — remote.
+Первый кластер — primary (управляющий), второй — remote. В Istio 1.30+ используется `externalIstiod: true` для внешнего Istiod.
 
 ```bash
-# 1. Установка primary (cluster-a)
-istioctl install --set profile=default \
-  --set values.global.meshID=mesh1 \
-  --set values.global.multiCluster.clusterName=cluster-a \
-  --set values.global.network=network1
+# 1. Установка primary (cluster1) с externalIstiod
+cat <<EOF | istioctl --context="${CTX_CLUSTER1}" install -y -f -
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  profile: default
+  values:
+    global:
+      meshID: mesh1
+      multiCluster:
+        clusterName: cluster1
+      network: network1
+      externalIstiod: true
+EOF
 
-# 2. Установка remote (cluster-b) — без собственного istiod (лёгкий)
-istioctl install --set profile=remote \
-  --set values.global.meshID=mesh1 \
-  --set values.global.multiCluster.clusterName=cluster-b \
-  --set values.global.network=network2
+# 2. Установка east-west gateway в primary (опционально — для multi-network)
+samples/multicluster/gen-eastwest-gateway.sh \
+    --network network1 | \
+    istioctl --context="${CTX_CLUSTER1}" install -y -f -
 
-# 3. Создание remote-secret на primary из контекста cluster-b
-istioctl x create-remote-secret --name=cluster-b --context=cluster-b | \
-  kubectl --context=cluster-a apply -f - -n istio-system
+# 3. Создание remote-secret на remote (cluster2) и применение на primary
+export DISCOVERY_ADDRESS=$(kubectl \
+    --context="${CTX_CLUSTER1}" \
+    -n istio-system get svc istio-eastwestgateway \
+    -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
-# 4. Проверка: сервис из cluster-b виден в cluster-a
-kubectl --context=cluster-a get endpoints -n istio-system | grep cluster-b
+cat <<EOF | istioctl --context="${CTX_CLUSTER2}" install -y -f -
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  profile: remote
+  values:
+    istiodRemote:
+      injectionPath: /inject/cluster/cluster2/net/network2
+    global:
+      remotePilotAddress: "${DISCOVERY_ADDRESS}"
+      multiCluster:
+        clusterName: cluster2
+      network: network2
+EOF
+
+# 4. Создание remote-secret (без экспериментального префикса)
+istioctl create-remote-secret \
+    --name=cluster2 \
+    --context="${CTX_CLUSTER2}" | \
+    kubectl apply -f - --context="${CTX_CLUSTER1}"
+
+# 5. Проверка: сервисы из cluster2 видны в cluster1
+istioctl remote-clusters --context="${CTX_CLUSTER1}"
+# → NAME      SECRET                                   STATUS
+# → cluster2  istio-system/istio-remote-secret-cluster2  synced
 ```
 
 ### Сценарий 2: Multi-Primary
@@ -98,28 +149,31 @@ kubectl --context=cluster-a get endpoints -n istio-system | grep cluster-b
 istioctl install --context=cluster-a --set profile=default \
   --set values.global.meshID=mesh1 \
   --set values.global.multiCluster.clusterName=cluster-a \
-  --set values.global.network=network1 --set values.global.trustDomain=cluster.local
+  --set values.global.network=network1 \
+  --set values.global.trustDomain=cluster.local
 
 istioctl install --context=cluster-b --set profile=default \
   --set values.global.meshID=mesh1 \
   --set values.global.multiCluster.clusterName=cluster-b \
-  --set values.global.network=network2 --set values.global.trustDomain=cluster.local
+  --set values.global.network=network2 \
+  --set values.global.trustDomain=cluster.local
 
 # Взаимные remote secrets (обязательно в обе стороны)
-istioctl x create-remote-secret --name=cluster-b --context=cluster-b | kubectl --context=cluster-a apply -f - -n istio-system
-istioctl x create-remote-secret --name=cluster-a --context=cluster-a | kubectl --context=cluster-b apply -f - -n istio-system
+istioctl create-remote-secret --name=cluster-b --context=cluster-b | kubectl --context=cluster-a apply -f - -n istio-system
+istioctl create-remote-secret --name=cluster-a --context=cluster-a | kubectl --context=cluster-b apply -f - -n istio-system
 ```
 
 ### Сценарий 3: East-West gateway для multi-network
 
 ```bash
-# Развертывание east-west gateway в КАЖДОМ кластере (пример из sample-скриптов Istio)
+# Развертывание east-west gateway в КАЖДОМ кластере
+# Только --network (флаги --mesh и --cluster устарели)
 samples/multicluster/gen-eastwest-gateway.sh \
-  --mesh mesh1 --cluster cluster-a --network network1 | istioctl install --manifest-files -
+    --network network1 | \
+    istioctl install -y -f -
 
-# Разрешение cross-network трафика через ServiceEntry/флаг
-# В MeshConfig обязательно указать serviceNetworks для сетей обоих кластеров
-istioctl install --set meshConfig.defaultConfig.proxyMetadata.ISTIO_META_NETWORK=network1
+# Для Ambient Mesh: добавьте --ambient (генерирует Gateway CR вместо Deployment)
+# samples/multicluster/gen-eastwest-gateway.sh --network network1 --ambient | istioctl install -y -f -
 ```
 
 ```bash
@@ -147,9 +201,9 @@ spec:
 ```
 
 ```bash
-# Настройка locality каждого кластера (пример через --set при установке)
---set meshConfig.outboundTrafficPolicy.mode=ALLOW_ANY \
---set values.pilot.autoscaleEnabled=true
+# Настройка locality каждого кластера при установке:
+# --set values.global.distributedWorkloadController.enabled=true
+# (или --set meshConfig.defaultConfig.proxyMetadata.ISTIO_META_NETWORK=network1)
 
 # Проверка, что эндпоинты обоих кластеров в одном cluster'е
 istioctl proxy-config endpoint deploy/client -n production | grep my-service
@@ -189,22 +243,59 @@ kubectl exec -n production deploy/client -- curl -s http://my-service.production
 ### Диагностика мультикластерности
 
 ```bash
-# 1. Remote secrets в primary
-kubectl get remoteistio -n istio-system
-# → NAME    STATUS
-# → empty   Configured
+# 1. Статус remote clusters через istiod (без экспериментального префикса)
+istioctl remote-clusters --context="${CTX_CLUSTER1}"
+# → NAME      SECRET                                   STATUS     REVISION
+# → cluster2  istio-system/istio-remote-secret-cluster2 synced     default
+# → cluster1                                           synced     default
 
-# 2. Видимость сервисов другого кластера
-kubectl --context=cluster-a get endpoints <service>.<ns> -n <ns>
+# 2. Проверка наличия remote secrets (старый способ)
+kubectl get secrets -n istio-system -l "istio/multiCluster=true"
 
-# 3. Синхронизация прокси
+# 3. Видимость сервисов другого кластера
+kubectl --context="${CTX_CLUSTER1}" get endpoints <service>.<ns> -n <ns>
+
+# 4. Синхронизация прокси
 istioctl proxy-status | grep -v SYNCED   # не должно быть NOT SYNCED
 
-# 4. Анализ конфигурации
+# 5. Анализ конфигурации
 istioctl analyze -A
 
-# 5. Логи istiod при ошибках discovery
+# 6. Логи istiod при ошибках discovery
 kubectl logs -n istio-system deploy/istiod --tail=200 | grep -iE "remote|cluster-b|error"
+```
+
+### Валидация установки и cross-cluster трафика
+
+После настройки multicluster выполните проверку, что трафик между кластерами работает:
+
+```bash
+# 1. Создать тестовый namespace с инъекцией в каждом кластере
+kubectl --context="${CTX_CLUSTER1}" create namespace sample
+kubectl --context="${CTX_CLUSTER2}" create namespace sample
+kubectl --context="${CTX_CLUSTER1}" label namespace sample istio-injection=enabled
+kubectl --context="${CTX_CLUSTER2}" label namespace sample istio-injection=enabled
+
+# 2. Запустить сервис в каждом кластере (v1 в cluster1, v2 в cluster2)
+kubectl --context="${CTX_CLUSTER1}" apply -f \
+    samples/helloworld/helloworld.yaml -l service=helloworld,version=v1 -n sample
+kubectl --context="${CTX_CLUSTER2}" apply -f \
+    samples/helloworld/helloworld.yaml -l service=helloworld,version=v2 -n sample
+
+# 3. Проверить статус подов
+kubectl --context="${CTX_CLUSTER1}" get pods -n sample -l app=helloworld
+# → helloworld-v1-xxx   2/2  Running   0   10s
+kubectl --context="${CTX_CLUSTER2}" get pods -n sample -l app=helloworld
+# → helloworld-v2-yyy   2/2  Running   0   10s
+
+# 4. Запустить curl-клиент в cluster1 и вызвать сервис несколько раз
+kubectl --context="${CTX_CLUSTER1}" apply -f samples/curl/curl.yaml -n sample
+CURL_POD=$(kubectl --context="${CTX_CLUSTER1}" -n sample -l app=curl -o jsonpath='{.items[0].metadata.name}')
+
+kubectl --context="${CTX_CLUSTER1}" exec -n sample "$CURL_POD" -c curl -- \
+    curl -sS helloworld.sample:5000/hello
+# → Hello version: v1, instance: 10.244.1.7:8080   (из cluster1)
+# → Hello version: v2, instance: 10.245.2.3:8080   (из cluster2 — cross-cluster LB работает)
 ```
 
 ---
@@ -213,7 +304,7 @@ kubectl logs -n istio-system deploy/istiod --tail=200 | grep -iE "remote|cluster
 
 | Симптом | Причина | Решение |
 | :--- | :--- | :--- |
-| Сервис remote не виден в primary | Нет RemoteSecret или права kubeconfig недостаточны | `istioctl x create-remote-secret` повторно; проверить Secret в `istio-system` |
+| Сервис remote не виден в primary | Нет RemoteSecret или права kubeconfig недостаточны | `istioctl create-remote-secret` повторно; проверить Secret в `istio-system` |
 | mTLS между кластерами не работает | Разные trustDomain/root CA | Установить совпадающий `trustDomain`/общий `ROOTCA`; при ином — федерация |
 | Slow connections между кластерами в разных сетях | Нет east-west gateway / serviceNetworks | Развернуть east-west gateway; указать `serviceNetworks` |
 | Эндпоинты видны, но `connection refused` | Отсутствует cross-network путь (VPN/overlay/NSG) | Проверить связность узлов/сетей; настроить network gateway |
@@ -250,4 +341,4 @@ kubectl logs -n istio-system deploy/istiod --tail=200 | grep -iE "remote|cluster
 - [Управление трафиком в Service Mesh](./traffic_management.md)
 - [Сравнение Istio и Linkerd](./istio_vs_linkerd.md)
 
-Документация: [Istio: Multicluster](https://istio.io/latest/docs/setup/install/multicluster/).
+Документация: [Istio: Multicluster](https://istio.io/latest/docs/setup/install/multicluster/), [Istio: Verify Multicluster Installation](https://istio.io/latest/docs/setup/install/multicluster/verify/).

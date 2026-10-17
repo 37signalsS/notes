@@ -52,7 +52,7 @@ Traefik **не выполняет** OIDC-диалог с IdP сам: он про
 ```yaml
 services:
   oauth2-proxy:
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.1
     restart: unless-stopped
     command:
       - --provider=oidc

@@ -1,5 +1,7 @@
 # JWT (JSON Web Token) — открытый стандарт токенов
 
+**Актуально для:** RFC 7519, RFC 8725 (Best Current Practices), RFC 9449 (DPoP), OAuth 2.1
+
 ## Определения
 
 **JWT (JSON Web Token)** — открытый стандарт ([RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519)) для компактной и безопасной передачи информации между сторонами в виде объекта JSON. Благодаря цифровой подписи данные в JWT являются доверенными и защищенными от подделки.
@@ -42,7 +44,7 @@ JWT состоит из трёх частей, разделённых точко
     *   `iss` (Issuer): Кто выпустил токен.
     *   `sub` (Subject): Идентификатор пользователя.
     *   `aud` (Audience): Для какого сервиса предназначен токен.
-    *   `exp` (Expiration): Время истечения (обязательно в 2026 году).
+    *   `exp` (Expiration): Время истечения. Обязательно для верификации (RFC 8725 §2); токен не должен приниматься после `exp`.
     *   `nbf` (Not Before): Токен не валиден до этого времени.
     *   `iat` (Issued At): Время выпуска.
     *   `jti` (JWT ID): Уникальный ID токена для защиты от атак повтора (Replay attacks).
@@ -73,7 +75,7 @@ JWT состоит из трёх частей, разделённых точко
 #### Grace Period при ротации
 
 При компрометации ключа или плановой ротации:
-1. Новый ключ добавляется в JWKS alongside старым.
+1. Новый ключ добавляется в JWKS вместе с старым.
 2. Старые токены, выданные на старый ключ, продолжают валидироваться до истечения `exp`.
 3. После grace period старый ключ удаляется из JWKS.
 
@@ -84,7 +86,7 @@ JWT состоит из трёх частей, разделённых точко
 Используется для минимизации рисков при stateless-аутентификации:
 1.  **Access Token:** Короткоживущий (5–15 мин). Передается в заголовке `Authorization: Bearer`.
 2.  **Refresh Token:** Долгоживущий (дни/недели). Используется только для получения нового Access Token.
-3.  **Rotation (Ротация):** При каждом использовании Refresh токена выдается новая пара. Старый Refresh токен аннулируется. Это позволяет обнаружить кражу токена (если кто-то пытается использовать старый Refresh токен дважды).
+3.  **Ротация:** При каждом использовании Refresh токена выдается новая пара. Старый Refresh токен аннулируется. Это позволяет обнаружить кражу токена (если кто-то пытается использовать старый Refresh токен дважды).
 
 ### Привязка токена (DPoP — RFC 9449)
 
@@ -138,6 +140,153 @@ except jwt.InvalidTokenError as e:
 **Grafana:** поддерживает аутентификацию по JWT-токену в заголовке (например, `X-JWT-Assertion`). Grafana проверяет подпись по JWKS IdP, кэширует ключи и сопоставляет claims с ролями. Подходит для machine-to-machine доступа и reverse-proxy сценариев. Детали — в [Enterprise SSO — SAML, JWT и расширенный LDAP](../../Grafana/grafana_sso_saml_jwt.md).
 
 **Prometheus Blackbox Exporter:** может опрашивать эндпоинты с передачей JWT в заголовке `Authorization: Bearer`. Позволяет проверять доступность внутренних сервисов, защищённых JWT-аутентификацией.
+
+#### Метрики JWT для observability
+
+Приложения и прокси должны экспортировать стандартные метрики аутентификации для построения SRE-дашбордов и алертинга:
+
+| Метрика | Описание | Критические метки |
+| :--- | :--- | :--- |
+| `auth_jwt_valid_total` | Количество успешно валидированных JWT | `audience`, `issuer` |
+| `auth_jwt_invalid_total` | Количество отклонённых JWT | `reason` (expired, bad_signature, invalid_claims, alg_none) |
+| `auth_jwt_validation_duration_seconds` | Latency валидации подписи JWT | `method` (local, jwks, introspection) |
+| `auth_jwt_jwks_fetch_total` | Количество запросов к JWKS-эндпоинту | `status` (2xx, 4xx, 5xx) |
+| `auth_jwt_jwks_cache_hit_ratio` | Доля запросов обслуженных из кэша JWKS | — |
+
+**Важно:** Не используйте `sub` или `jti` в метках метрик — высокая кардинальность приводит к problems с Prometheus. Используйте `issuer`/`audience` для агрегации по сервису.
+
+#### AlertManager правила для JWT
+
+```yaml
+# rules/jwt_rules.yml
+groups:
+- name: jwt_alerts
+  rules:
+  - alert: JWTInvalidTokensRate
+    expr: rate(auth_jwt_invalid_total{reason!="expired"}[5m]) > 10
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Высокая частота невалидных JWT (не из-за истечения)"
+      description: "{{ $value }} невалидных токенов/сек. Возможна атака или проблемы с JWKS."
+
+  - alert: JWTJwksEndpointDown
+    expr: up{job="auth-server"} == 0
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "JWKS эндпоинт недоступен"
+      description: "Сервис авторизации недоступен. JWT-валидация перестанет работать для новых ключей."
+
+  - alert: JWTJwksFetchFailures
+    expr: rate(auth_jwt_jwks_fetch_total{status=~"4..|5.."}[5m]) > 0
+    for: 3m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Ошибки получения JWKS"
+      description: "{{ $value }} ошибок/сек при получении JWKS."
+
+  - alert: JWTStaleCache
+    expr: auth_jwt_jwks_cache_hit_ratio < 0.5
+    for: 1m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Снижение эффективности кэша JWKS"
+      description: "Hit ratio < 50%. Увеличьте TTL кэша или проверьте доступность JWKS."
+```
+
+#### Аудит и беспрепятственное восстановление (SRE runbook)
+
+**Инцидент: JWKS эндпоинт недоступен (HTTP 5xx/таймаут)**
+
+1. Проверить доступность через `curl -sS -o /dev/null -w "%{http_code}" https://auth.example.com/.well-known/jwks.json`
+2. Проверить health check сервиса авторизации (`/healthz`, `/ready`)
+3. Если проблема в инфраструктуре — включить fallback: разослать JWKS напрямую через CDN/статический файл
+4. Если таймаут — проверить DNS, TLS-сертификаты, upstream
+5. Документировать в change log и выполнить post-mortem
+
+**Инцидент: Массовые JWT validation failures (401 для валидных токенов)**
+
+1. Проверить логи приложения: `grep "JWT validation error" /var/log/app.log`
+2. Проверить наличие в кэше старого `kid`: `redis-cli GET "jwks:cache:v1"`
+3. Проверить время сервера: `date -d @$(echo "eyJ..." | cut -d. -f2 | base64 -d | jq .iat)`
+4. Если проблема в ротации ключей — выполнить forced JWKS refresh: `curl -X POST http://app:8080/internal/reload-jwks`
+5. Если clock skew — синхронизировать NTP на всех узлах
+
+**Процедура ротации ключей (SRE playbook)**
+
+```bash
+#!/bin/bash
+# rotate-jwk.sh — ротация RSA/ECDSA ключа для подписи JWT
+# Использование: ./rotate-jwk.sh <key_id> <new_key_file>
+
+set -euo pipefail
+
+KEY_ID="$1"
+NEW_KEY_FILE="$2"
+JWKS_URL="https://auth.example.com/.well-known/jwks.json"
+JWKS_ADMIN_API="https://auth.example.com/admin/jwks"
+
+# 1. Сгенерировать новый ключ
+openssl ecparam -name prime256v1 -genkey -noout -out "$NEW_KEY_FILE"
+
+# 2. Добавить в JWKS (grace period — старый ключ остаётся)
+curl -X POST "$JWKS_ADMIN_API" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"kid\": \"$KEY_ID\", \"key_file\": \"$NEW_KEY_FILE\"}"
+
+# 3. Подождать, пока все активные токены с старым ключом истекнут
+sleep $((15 * 60))
+
+# 4. Удалить старый ключ
+curl -X DELETE "$JWKS_ADMIN_API/$KEY_ID" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+echo "Ротация завершена. Проверьте логи на ошибки валидации."
+```
+
+**Процедура экстренного отзова (break-glass)**
+
+Для немедленного отзова скомпрометированного токена или ключа:
+1. Добавить `jti` в Redis blacklist с TTL = `exp`:
+   ```bash
+   redis-cli SETEX "jwt:blacklist:${jti}" $(( exp - $(date +%s) )) "revoked"
+   ```
+2. Добавить проверку в валидацию:
+   ```python
+   if redis.exists(f"jwt:blacklist:{payload.get('jti')}"):
+       raise jwt.InvalidTokenError("Token revoked")
+   ```
+3. При компрометации ключа — удалить `kid` из JWKS и выполнить ротацию (см. playbook выше)
+
+#### Защита от brute-force атак на JWT
+
+**fail2ban:** Настройка фильтра для обнаружения массовых неудачных JWT-валидаций:
+
+```ini
+# /etc/fail2ban/filter.d/jwt-bruteforce.conf
+[Definition]
+failregex = ^.*jwt validation error.*Invalid token.*<HOST>.*$
+            ^.*HTTP/1\.1" 401.*Authorization: Bearer.*<HOST>.*$
+ignoreregex =
+
+# /etc/fail2ban/jail.local
+[jwt-bruteforce]
+enabled = true
+filter = jwt-bruteforce
+logpath = /var/log/app/auth.log
+maxretry = 20
+findtime = 60
+bantime = 3600
+action = iptables[name=JWT, port=http, protocol=tcp]
+```
+
+Валидация: `fail2ban-client status jwt-bruteforce`
 
 ### JWT в GitOps и CI/CD пайплайнах
 
@@ -197,7 +346,7 @@ echo "eyJhbG..." | cut -d. -f1-2 | openssl dgst -sha256 -hmac "secret" -binary |
 
 При компрометации приватного ключа или плановой ротации:
 
-1. **Grace Period:** Новый ключ добавляется в JWKS alongside старым. Старые токены продолжают работать до истечения `exp`.
+1. **Grace Period:** Новый ключ добавляется в JWKS вместе с старым. Старые токены продолжают работать до истечения `exp`.
 2. **Аннулирование:** Для немедленного отзыва используйте Redis-блокировку (`jti` отозванных токенов) до истечения `exp`.
 3. **Автоматизация:** Инструменты вроде `cert-manager` или `Vault` могут автоматически ротировать ключи и публиковать обновлённый JWKS.
 4. **Мониторинг:** Следите за временем истечения `exp` у активных токенов и временем удаления старых ключей из JWKS.
@@ -206,7 +355,7 @@ echo "eyJhbG..." | cut -d. -f1-2 | openssl dgst -sha256 -hmac "secret" -binary |
 
 - **Размер токена:** JWT в 3–5 раз больше opaque-токена из-за claims. При большом объёме claims (роли, permissions) токен может превышать 4 KB, что влияет на размер HTTP-заголовков. Решение: использовать короткие имена claims, хранить полные данные в introspection endpoint.
 - **JWKS кэширование:** JWKS должен кэшироваться на стороне потребителя (TTL 5–10 мин). При ротации ключей stale-кэш приводит к отказу валидных токенов.
-- **Локальная валидация vs Introspection:** Stateless JWT-валидация быстрее (нет сетевого запроса), но не позволяет мгновенно отозвать токен. Opaque token + introspection даёт мгновенный отзыв, но добавляет latency и SPOF.
+- **Локальная валидация vs Introspection:** Статическая JWT-валидация быстрее (нет сетевого запроса), но не позволяет мгновенно отозвать токен. Opaque token + introspection даёт мгновенный отзов, но добавляет latency и SPOF.
 - **Лимиты HTTP-серверов:** Nginx/Angie по умолчанию имеют `large_client_header_buffers` 8KB или 16KB. JWT > 4KB в заголовке `Authorization` потребует увеличения буферов.
 
 ### Альтернатива: PASETO
@@ -225,3 +374,5 @@ echo "eyJhbG..." | cut -d. -f1-2 | openssl dgst -sha256 -hmac "secret" -binary |
 - **[Grafana: SAML, JWT и LDAP](../../Grafana/grafana_sso_saml_jwt.md)** — практическая конфигурация JWT-аутентификации.
 - **[Vault: интеграция с Kubernetes](../../Vault/guides/vault_kubernetes_integration.md)** — аутентификация по ServiceAccount JWT.
 - **[Redis для кэширования и отзыва токенов](../../Databases/redis_overview.md)** — реализация списков отзыва (blacklist) и кэширования JWKS.
+
+- **[Fail2ban — защита от brute-force](../../Linux/Security/Tools/fail2ban.md)** — фильтры для обнаружения массовых неудачных JWT-валидаций.

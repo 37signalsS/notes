@@ -256,14 +256,13 @@ curl -s http://harbor-dev.corp.local:9090/metrics | grep harbor_replication_tota
 * **Concurrency и производительность**: дефолт `max_job_workers=10`. Для больших репликаций (сотни образов за раз) увеличьте до 20-50 в зависимости от CPU/сети. Мониторьте `harbor_task_queue_size` и `harbor_replication_duration_seconds`.
 * **Репликация в изолированные контуры (air-gapped)**: используйте pull-based с scheduled триггером; исходящие соединения инициирует изолированный Harbor. Event-based невозможен без входящей связи.
 
-## Harbor и автоматизация обновления образов (ArgoCD Image Updater / Flux)
+## Harbor и автоматизация обновления образов (ArgoCD Image Updater)
 
 Harbor часто выступает источником истины для версий образов: CI пушит образ в Harbor, а GitOps-инструмент отслеживает реестр и обновляет манифесты. Два механизма:
 
 | Механизм | Как работает | Интеграция с Harbor |
 | :--- | :--- | :--- |
-| **ArgoCD Image Updater v1.x** | CRD `ImageUpdater`; отслеживает теги/дайджесты в реестре и обновляет манифесты (Git write-back или API) | Регистр в `argocd-image-updater-config` ConfigMap (`registries.conf`); аутентификация — робот-аккаунт Harbor (Pull Secret) |
-| **Flux Image Automation** | `ImageRepository` + `ImagePolicy` + `ImageUpdateAutomation` контроллеры Flux | `ImageRepository` указывает на Harbor; секрет с робот-аккаунтом для приватных проектов |
+ | **ArgoCD Image Updater v1.x** | CRD `ImageUpdater`; отслеживает теги/дайджесты в реестре и обновляет манифесты (Git write-back или API) | Регистр в `argocd-image-updater-config` ConfigMap (`registries.conf`); аутентификация — робот-аккаунт Harbor (Pull Secret) |
 
 **Типовая схема (ArgoCD Image Updater v1.x — CRD-based):**
 
@@ -324,28 +323,11 @@ argocd-image-updater.argoproj.io/<alias>.update-strategy: latest
 #   формат логина: robot$myapp-prod+updater
 ```
 
-**Типовая схема (Flux):**
-
-```yaml
-apiVersion: image.toolkit.fluxcd.io/v1beta2
-kind: ImageRepository
-metadata:
-  name: myapp
-spec:
-  image: harbor.corp.local/myapp-prod/app
-  interval: 5m
-  secretRef:
-    name: harbor-robot-secret   # робот-аккаунт с правом Pull
-```
-
-**Webhook-ускорение:** вместо опроса реестра настройте webhook Harbor на событие `PUSH_ARTIFACT` (см. [usage.md, сценарий 7](./usage.md#сценарий-7-webhook-уведомления)) — webhook-receiver ArgoCD Image Updater или Flux реагирует на push немедленно, без ожидания `interval`.
-
 **Рекомендации по безопасности:**
-- Используйте отдельный робот-аккаунт для Image Updater/Flux с правами **Pull only** на нужных проектах
+- Используйте отдельный робот-аккаунт для Image Updater с правами **Pull only** на нужных проектах
 - Для приватных проектов создайте Kubernetes Secret с `username: robot$project+bot` и `password: <token>`
-- Включите `pin.digest=true` в ImagePolicy Flux для фиксации по дайджесту, а не тегу
 
-Полная практика обеих инструментов (установка, стратегии обновления, pin к digest, troubleshooting) — в [ArgoCD Image Updater](../../../GitOps/ArgoCD/argocd_image_updater.md) и [Flux](../../../GitOps/flux.md); теория образов как артефактов в GitOps — [Containerization and Image Storage](../../../GitOps/Concepts/containerization_and_image_storage.md).
+Полная практика обеих инструментов (установка, стратегии обновления, pin к digest, troubleshooting) — в [ArgoCD Image Updater](../../../GitOps/ArgoCD/argocd_image_updater.md); теория образов как артефактов в GitOps — [Containerization and Image Storage](../../../GitOps/Concepts/containerization_and_image_storage.md).
 
 ## Best Practices
 

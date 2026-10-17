@@ -1,5 +1,7 @@
 # Service Mesh: основные концепции
 
+**Актуально для:** Istio 1.31.x / Linkerd 2.20+
+
 ## Определения
 
 **Service Mesh (Сетка сервисов)** — выделенный инфраструктурный слой для управления сетевыми взаимодействиями между микросервисами на уровнях L4–L7. Основная задача — вынести сетевую логику (маршрутизацию, безопасность, наблюдаемость) из кода приложения на уровень платформы.
@@ -139,7 +141,7 @@ istioctl proxy-config route deploy/my-app -n my-app -o json | jq '.virtualHosts[
 ```bash
 # Для Istio: создание ServiceEntry для внешнего сервиса
 cat <<EOF | kubectl apply -f -
-apiVersion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1
 kind: ServiceEntry
 metadata:
   name: legacy-db
@@ -200,7 +202,7 @@ kubectl get pods -n istio-system -l app=istio-cni-node
 # Сбор метрик Ztunnel
 kubectl exec -n istio-system -l app=ztunnel -- curl -s localhost:15020/metrics | grep ztunnel
 
-# ПроверкаWaypoint Proxy (Ambient)
+# Проверка Waypoint Proxy (Ambient)
 istioctl waypoint list -n prod
 # → NAME              AGE
 # → namespace-waypoint   5d
@@ -212,7 +214,7 @@ istioctl waypoint list -n prod
 
 ```bash
 # 1. Убедиться, что кластер установлен в режиме Ambient
-istioctl install --set profile=ambient -y
+istioctl install --set profile=ambient --skip-confirmation
 
 # 2. Отключить automatic sidecar injection для namespace
 kubectl label namespace my-app istio-injection-
@@ -221,7 +223,7 @@ kubectl label namespace my-app istio-injection-
 kubectl rollout restart deployment/my-app -n my-app
 
 # 4. Проверить, что поды в Ambient-режиме
-istioctl experimental ambient describe pod my-app-pod -n my-app
+istioctl x describe pod my-app-pod -n my-app
 # → L4 traffic handled by ztunnel on node-1
 
 # 5. Если нужен L7 — создать waypoint
@@ -311,7 +313,7 @@ kubectl exec -n my-app deploy/my-app -- curl -s localhost:15090/stats/prometheus
 | **Waypoint не создаётся** | Нет Gateway API CRD или недостаточно прав | Установите CRD: `kubectl get crd gateways.gateway.networking.k8s.io`; проверьте RBAC istiod |
 | **Высокий CPU на ноде от Ztunnel** | Конфликт правил iptables/nftables | Переключите на `nftables` (`values.global.nativeNftables=true`); проверьте количество правил: `iptables -L -t nat -v | wc -l` |
 | **Сервис не обнаруживается (No Healthy Upstream)** | Эндпоинт не Ready или отсутствует в `egress.hosts` ресурса `Sidecar` | Проверьте readiness probe; добавьте namespace в `Sidecar.egress.hosts` |
-| **Сертификат истёк / mTLS не работает** | CA недоступен или trust bundle устарел | Проверьте `istioctl proxy-config secret`; перевыпустите trust anchors через `istioctl x create-credential` |
+| **Сертификат истёк / mTLS не работает** | CA недоступен или trust bundle устарел | Проверьте `istioctl proxy-config secret`; обновите Kubernetes Secret `cacerts` для ротации trust anchors |
 | **xDS не синхронизируется (NOT SYNCED)** | istiod перегружен или сетевой разрыв | Проверьте ресурсы istiod; убедитесь в отсутствии NetworkPolicy между istiod и подами |
 | **Зависание Pod при удалении (Terminating)** | Sidecar не завершается вовремя | Увеличьте `terminationGracePeriodSeconds` до 60s; проверьте `preStop` хук |
 | **Access-логи не пишутся** | Telemetry API не настроен или уровень логирования выключен | Примените ресурс `Telemetry` с `accessLogging`; проверьте `kubectl logs -c istio-proxy` |
@@ -345,7 +347,7 @@ kubectl exec -n my-app deploy/my-app -- curl -s localhost:15090/stats/prometheus
 
 ### Сложная маршрутизация между сервисами
 
-Service Mesh используется для настройки сложной маршрутизации между сервисами, которую стандартные Kubernetes-средства не могут реализовать: canary-развертывания с точной долей трафика, A/B-тестирование, межсервисная безопасность без изменения кода приложения. Mesh комбинируется с **Zero Trust Network Access (ZTNA)** — архитектурным подходом, при котором ни один пользователь, устройство или сервис не считаются доверенными по умолчанию. В контексте Kubernetes, ZTNA реализуется через mTLS (взаимная аутентификация), policy engine (Istio AuthorizationPolicy, Linkerd AuthorizationPolicy) и идентifiability (SPIFFE/SVID). Практический паттерн: Istio + ZTNA позволяет настроить маршрутизацию между сервисами и одновременно обеспечить безопасность по принципу «никогда не доверяй, всегда проверяй» — каждый запрос между сервисами аутентифицируется и авторизуется на основе политик, независимо от сетевого положения. Подробнее о ZTNA — в [Zero Trust (Нулевое доверие)](../Concepts/zero_trust_overview.md).
+Service Mesh используется для настройки сложной маршрутизации между сервисами, которую стандартные Kubernetes-средства не могут реализовать: canary-развертывания с точной долей трафика, A/B-тестирование, межсервисная безопасность без изменения кода приложения. Mesh комбинируется с **Zero Trust Network Access (ZTNA)** — архитектурным подходом, при котором ни один пользователь, устройство или сервис не считаются доверенными по умолчанию. В контексте Kubernetes, ZTNA реализуется через mTLS (взаимная аутентификация), policy engine (Istio AuthorizationPolicy, Linkerd AuthorizationPolicy) и идентifiability (SPIFFE/SVID). Практический паттерн: Istio + ZTNA позволяет настроить маршрутизацию между сервисами и одновременно обеспечить безопасность по принципу «никогда не доверяй, всегда проверяй» — каждый запрос между сервисами аутентифицируется и авторизуется на основе политик, независимо от сетевого положения. Подробнее о ZTNA — в [Zero Trust (Нулевое доверие)](../Networking/Concepts/zero_trust_overview.md).
 
 ### Актуальность
 
