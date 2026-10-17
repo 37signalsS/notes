@@ -1,221 +1,305 @@
 # Контроллеры допуска (Admission Controllers)
 
+**Актуально для:** Kubernetes 1.30 – 1.33
+
 ## Определения
 
-**Контроллер допуска (Admission Controller)** — это специализированный компонент API-сервера Kubernetes, который перехватывает запросы к кластеру после успешной аутентификации и авторизации, но до того как объект будет сохранен в `etcd`.
+**Контроллер допуска (Admission Controller)** — это специализированный подключаемый модуль API-сервера Kubernetes, который перехватывает HTTP-запросы к кластеру после успешной аутентификации (Authentication) и авторизации (Authorization), но строго до сохранения объекта в распределенное хранилище `etcd`.
 
-В отличие от RBAC, который проверяет права на *действие* (может ли пользователь создавать поды?), Admission Controllers выполняют «Content-aware» контроль — они проверяют *содержимое* объекта (например, соответствует ли спецификация пода стандартам безопасности или заданы ли лимиты ресурсов).
+В отличие от RBAC, который проверяет права субъекта на *действие* над ресурсом (например, разрешено ли сервисному аккаунту выполнять `POST /api/v1/namespaces/default/pods`), контроллеры допуска выполняют «Content-aware» инспекцию — они валидируют и при необходимости модифицируют *содержимое* самого объекта (спецификацию пода, параметры монтирования томов, запросы ресурсов, контекст безопасности).
 
-**Мутирующий контроллер (Mutating Admission Controller)** — изменяет (мутирует) объект запроса до его валидации. Примеры: подстановка ресурсов по умолчанию, внедрение sidecar-контейнеров (Istio, Linkerd) или инъекция секретов.
+**Мутирующий контроллер (Mutating Admission Controller)** — перехватывает запрос и может изменять (мутировать) спецификацию объекта перед его дальнейшей обработкой. Применяется для подстановки значений по умолчанию (например, дефолтных лимитов ресурсов), внедрения вспомогательных контейнеров (sidecar injection для Service Mesh) или проставления обязательных системных меток.
 
-**Валидирующий контроллер (Validating Admission Controller)** — проверяет запрос на соответствие политикам без права изменения объекта. Может разрешить или отклонить операцию.
+**Валидирующий контроллер (Validating Admission Controller)** — проверяет финальное состояние объекта на соответствие установленным политикам без права внесения изменений. Контроллер выносит вердикт: разрешить операцию (`Allow`) или отклонить ее (`Deny`) с возвратом клиенту HTTP-статуса 403 Forbidden и поясняющего сообщения.
 
-**Admission Webhook (Вебхук допуска)** — механизм расширения, позволяющий API-серверу вызывать внешние HTTP-сервисы (Webhook) для реализации кастомной логики.
+**Динамический контроль допуска (Dynamic Admission Webhook)** — механизм расширения, позволяющий API-серверу отправлять HTTP POST-запросы во внешние сервисы (Admission Webhooks) для выполнения кастомной логики валидации (`ValidatingWebhookConfiguration`) или мутации (`MutatingWebhookConfiguration`).
 
-**ValidatingAdmissionPolicy (VAP)** — современная альтернатива вебхукам (GA в v1.30), позволяющая описывать правила валидации декларативно с использованием языка **CEL (Common Expression Language)** непосредственно в манифестах Kubernetes.
+**AdmissionReview** — стандартная структура данных API `admission.k8s.io/v1`, используемая для сериализации запроса (`AdmissionRequest`) от API-сервера к вебхуку и получения ответа (`AdmissionResponse`) с решением, JSONPatch-мутациями, предупреждениями и аудиторскими аннотациями.
 
-**MutatingAdmissionPolicy (MAP)** — механизм мутации ресурсов на базе CEL (beta в v1.33). Позволяет декларативно описывать правила изменения объектов без написания внешних вебхуков.
+**ValidatingAdmissionPolicy (VAP)** — нативный декларативный механизм валидации ресурсов в ядре Kubernetes (статус GA начиная с версии v1.30), использующий встраиваемый язык выражений **CEL (Common Expression Language)**. Позволяет описывать политики валидации манифестами без развертывания и поддержки внешних вебхуков.
 
-**CEL (Common Expression Language)** — язык выражений, разработанный Google для безопасной оценки выражений в изолированном режиме (sandbox). Используется в VAP, MAP и других компонентах Kubernetes. Поддерживает типизацию, работу со строками, списками, картами и встроенными функциями (regex, datetime, existence checks). Выполняется внутри процесса API-сервера за микросекунды, в отличие от сетевых вызовов внешних вебхуков.
+**MutatingAdmissionPolicy (MAP)** — нативный декларативный механизм мутации ресурсов на базе CEL (статус Alpha в v1.32–v1.33 под feature-gate `MutatingAdmissionPolicy`). Позволяет выполнять мутации объектов через RFC 6902 JSONPatch или ApplyConfiguration прямо внутри процесса API-сервера.
+
+**CEL (Common Expression Language)** — строго типизированный, безопасный и неполный по Тьюрингу язык выражений, выполняемый внутри процесса `kube-apiserver`. Вычисление выражений занимает микросекунды и ограничено строгим лимитом вычислительной сложности (cost budget), что исключает блокировку или исчерпание ресурсов API-сервера.
+
+**Политика отказа (FailurePolicy)** — директива в конфигурации вебхука или VAP (`Fail` или `Ignore`), определяющая поведение API-сервера при недоступности внешнего сервиса, истечении таймаута или внутренней ошибке вычисления правила.
 
 ---
 
-## Основные концепции
+## Основные концепции и архитектура
 
 ### Место в цепочке обработки запроса
 
-Полный жизненный цикл API-запроса в Kubernetes:
+Жизненный цикл любого запроса на изменение состояния кластера (`CREATE`, `UPDATE`, `DELETE`, `CONNECT`) в `kube-apiserver` строго детерминирован:
 
 ```text
-ЗАПРОС КЛИЕНТА
+ЗАПРОС КЛИЕНТА (kubectl / CI/CD / Controller)
      ↓
-1. AUTHENTICATION (аутентификация) — проверка личности
+1. AUTHENTICATION (Аутентификация)
+   Проверка x509-сертификата, Bearer-токена, OIDC или Webhook Token Authenticator.
      ↓
-2. AUTHORIZATION (авторизация) — RBAC проверяет права
+2. AUTHORIZATION (Авторизация)
+   Проверка прав через Node, RBAC, Webhook Authorizer.
      ↓
-3. MUTATING ADMISSION (мутирующий контроль допуска)
-   ├── Встроенные контроллеры (LimitRanger, ServiceAccount, PSA)
-   ├── ValidatingAdmissionPolicy / MutatingAdmissionPolicy (CEL)
-   ├── Внешние MutatingWebhook (Kyverno, Istio Sidecar Injection)
-   └── Результат: модифицированный объект
+3. MUTATING ADMISSION (Фаза мутации)
+   ├── Встроенные мутирующие плагины (NamespaceLifecycle, LimitRanger, ServiceAccount)
+   ├── MutatingAdmissionPolicy (CEL, v1alpha1)
+   └── Внешние Mutating Webhooks (Sidecar injection, Vault Agent Injector)
+   └── Повторный прогон при необходимости (Re-invocation loop)
      ↓
-4. VALIDATING ADMISSION (валидирующий контроль допуска)
-   ├── Встроенные контроллеры (PodSecurity, NamespaceLifecycle, ResourceQuota)
-   ├── ValidatingAdmissionPolicy (CEL)
-   ├── Внешние ValidatingWebhook (OPA Gatekeeper, Kyverno)
-   └── Результат: Allow или 403 Forbidden
+4. OBJECT SCHEMA VALIDATION (Валидация схемы схемы объекта)
+   Проверка соответствия OpenAPI v3 схеме ресурса (типы полей, обязательные ключи).
      ↓
-5. СОХРАНЕНИЕ В etcd
+5. VALIDATING ADMISSION (Фаза валидации)
+   ├── Встроенные валидирующие плагины (PodSecurity, NodeRestriction, ResourceQuota)
+   ├── ValidatingAdmissionPolicy (CEL, in-process)
+   └── Внешние Validating Webhooks (OPA Gatekeeper, Kyverno)
+     ↓
+6. СОХРАНЕНИЕ В etcd
+   Сериализация объекта в Protocol Buffers и запись в транзакционный журнал etcd.
 ```
 
-### Фазы обработки
+### Фазы обработки: детальный механизм
 
-Процесс обработки запроса состоит из двух последовательных этапов:
+#### 1. Фаза мутации (Mutating phase)
+*   Выполняются строго **последовательно**. Порядок вызова встроенных плагинов и вебхуков имеет значение: изменения, внесенные одним контроллером, передаются на вход следующему.
+*   **Цикл повторного вызова (Re-invocation loop):** Если какой-либо мутирующий вебхук изменил спецификацию объекта, API-сервер запускает повторный цикл мутации для всех контроллеров, у которых задан параметр `reinvocationPolicy: IfNeeded`. Контроллеры с `reinvocationPolicy: Never` повторно не вызываются.
+*   **Защита от зацикливания:** В ядре `kube-apiserver` зашит лимит повторных итераций (максимум 12 проходов). Если мутирующие контроллеры продолжают бесконечно менять поля друг за другом, API-сервер прерывает обработку и возвращает клиенту ошибку `500 Internal Server Error`.
 
-1.  **Фаза мутации (Mutating phase):**
-    *   Выполняются мутирующие контроллеры (встроенные и внешние вебхуки).
-    *   Порядок выполнения имеет значение: изменения, внесенные одним контроллером, видны последующим.
-    *   **Re-invocation Policy (Повторный вызов):** Если мутирующие вебхуки изменили объект, API-сервер запускает цикл мутации повторно (за исключением уже выполненных контроллеров с `reinvocationPolicy: Never`), чтобы гарантировать, что все контроллеры согласны с финальным состоянием.
-2.  **Фаза валидации (Validating phase):**
-    *   Выполняются валидирующие контроллеры (встроенные, VAP и внешние вебхуки).
-    *   Запускаются параллельно для минимизации задержек (Latency).
-    *   Объекты на этом этапе доступны только для чтения.
+#### 2. Валидация схемы (Schema Validation)
+*   После завершения всех мутаций объект проверяется на структурную корректность.
+*   Если мутирующий контроллер добавил поле недопустимого типа или нарушил CRD-схему, запрос отклоняется еще до перехода к валидирующим контроллерам допуска.
 
-*Важно: Если любой из контроллеров на любой фазе отклоняет запрос, операция немедленно завершается с ошибкой 403 (Forbidden), и объект не сохраняется в кластере.*
+#### 3. Фаза валидации (Validating phase)
+*   Выполняются **параллельно** для снижения общей задержки (latency) API-вызова.
+*   Объект на этом этапе неизменяем (read-only).
+*   Если хотя бы один валидирующий контроллер (встроенный плагин, VAP или внешний вебхук) отклоняет запрос, запрос немедленно прерывается с кодом 403 Forbidden, в `etcd` ничего не записывается.
+*   Если контроллеры допуска формируют предупреждения (`warnings`), они упаковываются в HTTP-заголовки `Warning:` (RFC 7234) и передаются клиенту (`kubectl`), не блокируя выполнение операции.
 
-### Зачем нужны Admission Controllers?
+### Задачи контроллеров допуска в инфраструктуре DevOps и SRE
 
-1.  **Безопасность:** Запрет запуска контейнеров от `root`, требование подписей образов, ограничение доступа к `hostPath` или `hostNetwork`.
-2.  **Стандартизация и управление (Governance):** Принудительное добавление меток (labels), аннотаций или проверка наличия обязательных владельцев ресурсов.
-3.  **Автоматизация:** Внедрение Sidecar-контейнеров, инъекция переменных окружения из Vault или настройка прокси.
-4.  **Управление ресурсами:** Автоматическая коррекция лимитов и запросов (Requests/Limits) через **[VPA Admission Controller](../Autoscaling/vpa_detailed.md)** или принудительное исполнение `ResourceQuota`.
-
-### Сравнение подходов: Webhooks vs CEL
-
-| Критерий | Admission Webhooks | CEL (VAP/MAP) |
-| :--- | :--- | :--- |
-| **Задержка (Latency)** | 10-100мс (сетевой вызов) | Микросекунды (in-process) |
-| **Зависимость** | Внешний сервис доступен | Встроен в API-сервер |
-| **Риск блокировки кластера** | Высокий (при `failurePolicy: Fail`) | Минимальный |
-| **Гибкость** | Любая логика, внешние вызовы | Ограничена возможностями CEL |
-| **Состояние (State)** | Может хранить состояние | Stateless |
-| **Область применения** | Сложные политики с внешними вызовами | Простые правила на основе объекта |
-
-**Рекомендация:** Используйте CEL (VAP/MAP) как первый выбор для базовых политик. Webhooks — только для сценариев, требующих внешних вызовов (проверка подписей образов, обращение к внешним сервисам).
+1.  **Безопасность (Guardrails & Compliance):** Принудительный запрет запуска контейнеров от `root`, блокировка небезопасных capability (`CAP_SYS_ADMIN`), запрет небезопасных типов томов (`hostPath`), контроль сетевых параметров (`hostNetwork`, `hostPID`).
+2.  **Стандартизация и управление метаданными:** Проверка обязательного наличия меток окружения (`env`, `team`, `app.kubernetes.io/name`), валидация соглашений по именованию пространств имен и сервисов.
+3.  **Управление емкостью и стабильностью (SRE):** Принудительное выставление лимитов и запросов CPU/RAM (`LimitRanger`), ограничение суммарного потребления в неймспейсе (`ResourceQuota`), предотвращение деградации планировщика из-за аномальных подов.
+4.  **Автоматизация инфраструктуры:** Автоматическое монтирование служебных томов, инъекция сетевых прокси Service Mesh, добавление системных аннотаций аудита.
 
 ---
 
-## Популярные встроенные контроллеры
+## Архитектурное сравнение: Webhooks vs CEL (VAP/MAP)
 
-| Контроллер | Тип | Назначение |
+| Критерий | Внешние вебхуки (Webhooks) | Встроенный CEL (VAP / MAP) |
 | :--- | :--- | :--- |
-| **`NamespaceLifecycle`** | Validating | Запрещает создание ресурсов в удаляемых или несуществующих неймспейсах. |
-| **`LimitRanger`** | Mutating/Validating | Применяет ограничения ресурсов, заданные в `LimitRange` (подстановка `default` значений). |
-| **`ResourceQuota`** | Validating | Проверяет, не превышает ли новый ресурс квоты, заданные для неймспейса. |
-| **`ServiceAccount`** | Mutating | Автоматически внедряет `ServiceAccount` и монтирует токены доступа в поды. |
-| **`AlwaysPullImages`** | Mutating | Принудительно устанавливает `imagePullPolicy: Always` (важно для безопасности). |
-| **`PodSecurity`** | Validating | Реализует стандарты безопасности подов (**PSA**), заменяя устаревший PSP. |
-| **`NodeRestriction`** | Validating | Ограничивает права `kubelet`, позволяя ему изменять только свои узлы и поды. Подробнее: [Безопасность Kubelet](../Security/kubelet_security.md). |
-| **`MutatingAdmissionWebhook`** | Mutating | Обрабатывает внешние MutatingWebhookConfiguration. |
-| **`ValidatingAdmissionWebhook`** | Validating | Обрабатывает внешние ValidatingWebhookConfiguration. |
-| **`ValidatingAdmissionPolicy`** | Validating | Обрабатывает нативные VAP на базе CEL. |
+| **Среда выполнения** | Внешний Pod / HTTP-сервис в кластере | Внутри процесса `kube-apiserver` |
+| **Сетевые задержки (Latency)** | 10–150 мс на запрос (TCP, TLS, serialization) | Микросекунды (0.1–1 мс, in-memory) |
+| **Отказоустойчивость** | Зависит от CNI, CoreDNS, доступности Pod'ов | Максимальная (работает пока жив apiserver) |
+| **Риск блокировки кластера** | Высокий при сбое сети или падении вебхука | Исключен (изолированный sandbox с cost budget) |
+| **Вычислительные возможности** | Тьюринг-полный язык, доступ к БД, внешним API | Строго ограниченный sandbox, нет I/O |
+| **Инфраструктурные накладные расходы** | Генерация сертификатов, Deployment, Service, PDB | Отсутствуют (чистые манифесты Kubernetes) |
+| **Рекомендуемая сфера** | Проверка подписей образов (Cosign), сложные интеграции | 90% стандартных проверок безопасности и стандартов |
 
 ---
 
-## Язык CEL для Admission Controllers
+## Встроенные контроллеры допуска
 
-### Основные концепции CEL
+В исходный код `kube-apiserver` скомпилировано более 30 встроенных плагинов допуска. Список включенных по умолчанию плагинов строго выверен разработчиками ядра Kubernetes.
 
-CEL — нетьюринг-полный язык, разработанный для безопасной оценки в средах с ограниченными ресурсами. В Kubernetes используется для декларативного описания правил валидации и мутации.
+| Контроллер | Тип | Статус по умолчанию | Назначение |
+| :--- | :--- | :--- | :--- |
+| **`NamespaceLifecycle`** | Validating | Включен | Блокирует создание объектов в несуществующих или находящихся в статусе `Terminating` пространствах имен. Предотвращает удаление системных неймспейсов (`default`, `kube-system`, `kube-public`). |
+| **`LimitRanger`** | Mutating / Validating | Включен | Перехватывает создание подов и автоматически подставляет дефолтные запросы/лимиты ресурсов из объекта `LimitRange`, а также проверяет соответствие заданным минимальным/максимальным границам. |
+| **`ServiceAccount`** | Mutating / Validating | Включен | Автоматически назначает поду `ServiceAccount: default` (если не указан явно), проверяет существование указанного аккаунта и монтирует секрет с проекцией токена (`ProjectedVolume`). |
+| **`NodeRestriction`** | Validating | Включен в kubeadm | Ограничивает полномочия `kubelet`: узел может изменять только свой собственный объект `Node` и связанные с ним объекты `Pod`. Защищает кластер от компрометации control-plane через захваченный рабочий узел. Подробнее: [Безопасность Kubelet](../Security/kubelet_security.md). |
+| **`PodSecurity`** | Validating | Включен | Реализует стандарты безопасности подов (**Pod Security Standards — PSS**). Проверяет манифесты на уровни `privileged`, `baseline`, `restricted` на основе меток неймспейса. Заменяет удаленный в v1.25 `PodSecurityPolicy`. Подробнее: [Стандарты безопасности подов (PSA)](../Security/pod_security_context.md). |
+| **`ResourceQuota`** | Validating | Включен | Проверяет текущее суммарное потребление ресурсов в неймспейсе и отклоняет создание объектов, если операция приведет к превышению квоты. |
+| **`MutatingAdmissionWebhook`** | Mutating | Включен | Вызывает зарегистрированные внешние мутирующие вебхуки. |
+| **`ValidatingAdmissionPolicy`** | Validating | Включен (v1.30+) | Выполняет нативные декларативные политики на языке CEL. |
+| **`ValidatingAdmissionWebhook`** | Validating | Включен | Вызывает зарегистрированные внешние валидирующие вебхуки. |
+| **`AlwaysPullImages`** | Mutating | Отключен | Принудительно заменяет `imagePullPolicy` всех контейнеров на `Always`. Предотвращает несанкционированное использование локально закешированных образов на узлах. |
+| **`EventRateLimit`** | Validating | Отключен | Защищает `etcd` и `kube-apiserver` от атак типа «отказ в обслуживании» (DoS) путем ограничения скорости записи событий (`Events`) от клиентов или сбойных подов. |
+| **`ImagePolicyWebhook`** | Validating | Отключен | Передает метаданные образа во внешнюю систему проверки (проверка уязвимостей или подписи) до его запуска на узлах. |
 
-**Ключевые особенности:**
-- Безопасность: нет возможности выполнения произвольного кода
-- Производительность: оценка за микросекунды
-- Типизация: статическая проверка типов
-- Встроенные функции: работа со строками, списками, картами, регулярными выражениями
+---
 
-### Встроенные переменные CEL
+## Архитектура Dynamic Admission Webhooks
 
-| Переменная | Описание |
-| :--- | :--- |
-| `object` | Объект, создаваемый или обновляемый в запросе |
-| `oldObject` | Существующий объект (для операций UPDATE) |
-| `request` | Объект запроса, содержащий информацию о пользователе, операции и т.д. |
-| `params` | Параметры, переданные из ValidatingAdmissionPolicyBinding |
+### Протокол AdmissionReview v1
 
-### Основные функции CEL
+API-сервер взаимодействует с вебхуками по протоколу HTTPS, отправляя JSON-документ `AdmissionReview`.
+
+#### Пример запроса API-сервера к вебхуку (AdmissionRequest):
+```json
+{
+  "apiVersion": "admission.k8s.io/v1",
+  "kind": "AdmissionReview",
+  "request": {
+    "uid": "705ab4f5-6393-11e8-b7cc-42010a800002",
+    "kind": {"group": "", "version": "v1", "kind": "Pod"},
+    "resource": {"group": "", "version": "v1", "resource": "pods"},
+    "namespace": "production",
+    "operation": "CREATE",
+    "userInfo": {
+      "username": "developer@company.local",
+      "groups": ["system:authenticated", "dev-team"]
+    },
+    "object": {
+      "metadata": {"name": "frontend", "namespace": "production"},
+      "spec": {
+        "containers": [{"name": "nginx", "image": "nginx:latest"}]
+      }
+    },
+    "oldObject": null,
+    "dryRun": false
+  }
+}
+```
+
+#### Пример ответа валидирующего вебхука (AdmissionResponse с предупреждением):
+```json
+{
+  "apiVersion": "admission.k8s.io/v1",
+  "kind": "AdmissionReview",
+  "response": {
+    "uid": "705ab4f5-6393-11e8-b7cc-42010a800002",
+    "allowed": true,
+    "warnings": [
+      "Использование тега latest не рекомендуется для production-окружения."
+    ],
+    "auditAnnotations": {
+      "security.policy/inspection-engine": "custom-validator-v2"
+    }
+  }
+}
+```
+
+#### Пример ответа мутирующего вебхука (RFC 6902 JSONPatch):
+```json
+{
+  "apiVersion": "admission.k8s.io/v1",
+  "kind": "AdmissionReview",
+  "response": {
+    "uid": "705ab4f5-6393-11e8-b7cc-42010a800002",
+    "allowed": true,
+    "patchType": "JSONPatch",
+    "patch": "W3sib3AiOiAiYWRkIiwgInBhdGgiOiAiL21ldGFkYXRhL2xhYmVscy9pbmplY3RlZCIsICJ2YWx1ZSI6ICJ0cnVlIn1d"
+  }
+}
+```
+*Примечание: Поле `patch` содержит Base64-закодированный массив операций: `[{"op": "add", "path": "/metadata/labels/injected", "value": "true"}]`.*
+
+### Сетевая топология на On-Premise и Bare-Metal
+
+На физических серверах процесс `kube-apiserver` обычно функционирует в сетевом пространстве имен хоста (`hostNetwork: true`), тогда как сервис вебхука развернут внутри виртуальной сети подов (CNI overlay/underlay).
 
 ```text
-# Проверка существования поля
-has(object.spec.containers)
-
-# Итерация по списку
-object.spec.containers.all(c, has(c.resources.limits))
-
-# Регулярные выражения
-object.metadata.name.matches('^[a-z]([a-z0-9-]*[a-z0-9])?$')
-
-# Работа с количествами (quantity)
-quantity(object.spec.containers[0].resources.limits.memory).compareTo(quantity('1Gi'))
-
-# Условная логика
-request.namespace.startsWith('prod-') ? has(object.metadata.labels) : true
+[ Control Plane Node (hostNetwork) ]
+  kube-apiserver (IP хоста: 192.168.1.10)
+        │
+        ▼ HTTPS запрос на ClusterIP вебхука (10.96.120.45:443)
+┌─────────────────────────────────────────────────────────────┐
+│ Сетевой стек ядра: iptables / IPVS / eBPF (kube-proxy/CNI)  │
+└─────────────────────────────────────────────────────────────┘
+        │
+        ▼ Маршрутизация через оверлей (Calico, Cilium, Flannel)
+[ Worker Node (Pod Network) ]
+  Pod вебхука (IP пода: 10.244.2.85:8443)
 ```
 
-### Часто используемые паттерны CEL
+**Критические риски системного администратора:**
+1.  **Маршрутизация Host -> Pod:** Убедитесь, что сетевой плагин (CNI) настроен для маршрутизации трафика от хостовых процессов мастер-узлов в сеть подов. При использовании изоляции или файрволов трафик от API-сервера к портам вебхуков (часто 8443, 9443) должен быть явно разрешен.
+2.  **Петля зависимости DNS:** API-сервер не использует CoreDNS кластера по умолчанию для резолва доменных имен сервисов. При использовании `clientConfig.service` API-сервер напрямую разрешает эндпоинты через внутренние кэши. Если используется `clientConfig.url`, URL должен резолвиться системным DNS хоста.
 
-```yaml
-# Проверка наличия обязательных полей
-has(object.metadata.labels) && 'app' in object.metadata.labels
+---
 
-# Проверка всех контейнеров в поде
-object.spec.containers.all(c, has(c.resources) && has(c.resources.limits))
+## Язык выражений CEL в ValidatingAdmissionPolicy
 
-# Проверка отсутствия привилегий
-!has(object.spec.containers) || object.spec.containers.all(c,
-  !has(c.securityContext) || !c.securityContext.privileged == true
-)
+CEL исполняется в изолированной песочнице API-сервера без возможности выполнения системных вызовов, ввода-вывода или зацикливания.
 
-# Проверка имени по регулярному выражению
-object.metadata.name.matches('^[a-z]([a-z0-9-]*[a-z0-9])?$') &&
-object.metadata.name.size() <= 63
+### Доступные контекстные переменные
+
+| Переменная | Тип | Описание |
+| :--- | :--- | :--- |
+| `object` | `Object` | Текущий входящий объект (для `CREATE` и `UPDATE`). В операциях `DELETE` равен `null`. |
+| `oldObject` | `Object` | Предыдущая версия объекта (для `UPDATE` и `DELETE`). В операции `CREATE` равен `null`. |
+| `request` | `AdmissionRequest` | Метаданные запроса: `userInfo`, `operation`, `namespace`, `name`, `dryRun`. |
+| `params` | `Object` | Параметрический объект, переданный через `ValidatingAdmissionPolicyBinding` (ConfigMap или CRD). |
+| `authorizer` | `Authorizer` | Интерфейс встроенной авторизации (доступен в v1.31+). Позволяет проверить права субъекта запроса в теле CEL. |
+
+### Практические примеры CEL-выражений
+
+```text
+# 1. Проверка наличия меток и их непустого значения
+has(object.metadata.labels) && 'environment' in object.metadata.labels && object.metadata.labels['environment'].size() > 0
+
+# 2. Проверка всех контейнеров на обязательное наличие лимита памяти
+object.spec.containers.all(c, has(c.resources) && has(c.resources.limits) && 'memory' in c.resources.limits)
+
+# 3. Запрет использования конкретного тега образа
+object.spec.containers.all(c, !c.image.endsWith(':latest'))
+
+# 4. Сравнение единиц измерения ресурсов (Kubernetes Quantity)
+quantity(object.spec.containers[0].resources.limits.cpu).compareTo(quantity('4')) <= 0
+
+# 5. Проверка неизменяемости (Immutability) поля при операции UPDATE
+request.operation == 'UPDATE' ? object.spec.clusterIP == oldObject.spec.clusterIP : true
 ```
 
 ---
 
-## ValidatingAdmissionPolicy (VAP)
+## Практические сценарии настройки
 
-### Архитектура
+### Сценарий 1: Управление плагинами допуска в kubeadm на Bare-Metal
 
-VAP состоит из двух объектов:
-
-1. **ValidatingAdmissionPolicy** — определяет CEL-выражения для валидации
-2. **ValidatingAdmissionPolicyBinding** — связывает политику с конкретными ресурсами/неймспейсами
-
-### Пример: Требование ресурсных лимитов
+В self-hosted кластерах конфигурация контроллеров допуска выполняется через файл статического пода `/etc/kubernetes/manifests/kube-apiserver.yaml` или декларативно через `kubeadm-config.yaml`.
 
 ```yaml
+# kubeadm-config.yaml
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: "v1.32.0"
+apiServer:
+  extraArgs:
+    # Включение специфических плагинов сверх дефолтного набора
+    enable-admission-plugins: "NodeRestriction,AlwaysPullImages"
+    # Отключение ненужного встроенного плагина
+    disable-admission-plugins: ""
+    # Путь к файлу тонкой настройки плагинов
+    admission-control-config-file: "/etc/kubernetes/admission-control.yaml"
+  extraVolumes:
+  - name: admission-config
+    hostPath: "/etc/kubernetes/admission-control.yaml"
+    mountPath: "/etc/kubernetes/admission-control.yaml"
+    readOnly: true
+    pathType: File
+```
+
+Применение конфигурации на работающем мастере:
+```bash
+# Редактирование аргументов запущенного API-сервера
+sudo vim /etc/kubernetes/manifests/kube-apiserver.yaml
+
+# Kubelet автоматически перезапустит статический под API-сервера после сохранения файла
+# Проверка успешного старта процесса:
+sudo crictl ps --name kube-apiserver
+# → CONTAINER ID   IMAGE          CREATED          STATE     NAME
+# → 8e3c12a7d4b1   kube-apiserver  10 seconds ago   Running   kube-apiserver
+```
+
+### Сценарий 2: Развертывание ValidatingAdmissionPolicy (VAP) с параметризацией
+
+Создадим политику, которая проверяет, что образы контейнеров скачиваются только из доверенного корпоративного реестра, список которых хранится в отдельном `ConfigMap`.
+
+#### Шаг 1: Определение политики (ValidatingAdmissionPolicy)
+```yaml
+# policy-trusted-registry.yaml
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
-  name: require-resource-limits
-spec:
-  failurePolicy: Fail  # Fail или Ignore
-  matchConstraints:
-    resourceRules:
-    - apiGroups: [""]
-      apiVersions: ["v1"]
-      operations: ["CREATE", "UPDATE"]
-      resources: ["pods"]
-  validations:
-  - expression: "object.spec.containers.all(c, has(c.resources) && has(c.resources.limits))"
-    message: "Все контейнеры должны иметь определенные resource limits"
-    messageExpression: "'Контейнер ' + object.spec.containers[0].name + ' не имеет resource limits'"
-```
-
-```yaml
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicyBinding
-metadata:
-  name: require-resource-limits-binding
-spec:
-  policyName: require-resource-limits
-  validationActions: ["Deny"]  # Deny, Warn или Audit
-  matchResources:
-    namespaceSelector:
-      matchLabels:
-        environment: production
-```
-
-### Пример: Запрет привилегированных контейнеров
-
-```yaml
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicy
-metadata:
-  name: block-privileged-containers
+  name: check-trusted-registry
 spec:
   failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
   matchConstraints:
     resourceRules:
     - apiGroups: [""]
@@ -225,71 +309,127 @@ spec:
   validations:
   - expression: |
       object.spec.containers.all(c,
-        !has(c.securityContext) ||
-        !has(c.securityContext.privileged) ||
-        c.securityContext.privileged == false
+        params.data.allowedRegistries.split(',').exists(reg, c.image.startsWith(reg.trim()))
       )
-    message: "Привилегированные контейнеры запрещены"
-  - expression: "!has(object.spec.hostNetwork) || object.spec.hostNetwork == false"
-    message: "Доступ к host network запрещен"
-  - expression: "!has(object.spec.hostPID) || object.spec.hostPID == false"
-    message: "Доступ к host PID namespace запрещен"
+    message: "Образ контейнера скачивается из недоверенного реестра. Допустимые реестры указаны в политике."
 ```
 
-### Пример: Управление метками для production
-
+#### Шаг 2: Создание ConfigMap с параметрами реестров
 ```yaml
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicy
+# params-registries.yaml
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: require-labels-in-production
-spec:
-  failurePolicy: Fail
-  matchConstraints:
-    resourceRules:
-    - apiGroups: ["apps"]
-      apiVersions: ["v1"]
-      operations: ["CREATE"]
-      resources: ["deployments"]
-  validations:
-  - expression: |
-      request.namespace.startsWith('prod-') ?
-        has(object.metadata.labels) &&
-        'owner' in object.metadata.labels &&
-        'cost-center' in object.metadata.labels :
-        true
-    message: "Деплойменты в production неймспейсах должны иметь метки 'owner' и 'cost-center'"
+  name: allowed-registries-config
+  namespace: default
+data:
+  allowedRegistries: "registry.internal.company.com/,docker.io/library/"
 ```
 
-### validationActions
+#### Шаг 3: Связывание политики с ресурсами (Binding)
+```yaml
+# binding-trusted-registry.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: check-trusted-registry-binding
+spec:
+  policyName: check-trusted-registry
+  validationActions: [Deny, Warn]
+  paramRef:
+    name: allowed-registries-config
+    namespace: default
+    parameterNotFoundAction: Deny
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: NotIn
+        values: ["kube-system", "kube-public", "kube-node-lease"]
+```
 
-| Действие | Описание |
-| :--- | :--- |
-| `Deny` | Запрос отклоняется, возвращается ошибка 403 |
-| `Warn` | Запрос разрешается, но возвращается предупреждение клиенту |
-| `Audit` | Запрос разрешается, нарушение записывается в Audit-лог |
+#### Шаг 4: Применение и тестирование
+```bash
+# Применение манифестов
+kubectl apply -f policy-trusted-registry.yaml
+kubectl apply -f params-registries.yaml
+kubectl apply -f binding-trusted-registry.yaml
 
-**Рекомендация:** Начинайте с `Warn` или `Audit` для тестирования политик, затем переходите к `Deny`.
+# Тест: Попытка запуска пода с недоверенным реестром через dry-run
+kubectl run malicious-test --image=quay.io/unknown/app:v1 --dry-run=server
+# → Error from server (Forbidden): admission webhook "check-trusted-registry" denied the request:
+#   Образ контейнера скачивается из недоверенного реестра. Допустимые реестры указаны в политике.
 
----
+# Тест: Запуск пода с доверенным образом
+kubectl run valid-test --image=registry.internal.company.com/apps/web:1.0 --dry-run=server
+# → pod/valid-test created (server dry run)
+```
 
-## MutatingAdmissionPolicy (MAP)
+### Сценарий 3: Настройка внешнего Validating Webhook с фильтрацией через matchConditions
 
-MAP (beta в Kubernetes 1.33) позволяет декларативно описывать правила мутации объектов с использованием CEL.
-
-### Отличия от VAP
-
-- **VAP** только проверяет и разрешает/отклоняет запросы
-- **MAP** может изменять объекты перед сохранением в etcd
-
-### Пример: Добавление меток по умолчанию
+Использование выражений `matchConditions` (CEL) внутри конфигурации вебхука позволяет API-серверу производить отсечение запросов локально, не генерируя холостой сетевой трафик к подам вебхука.
 
 ```yaml
-apiVersion: admissionregistration.k8s.io/v1alpha1  # v1 в стабильной версии
+# validating-webhook-optimized.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: corporate-security-validator
+webhooks:
+- name: pod-security.company.local
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  timeoutSeconds: 3
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  clientConfig:
+    service:
+      namespace: security-tools
+      name: validator-svc
+      path: "/validate"
+      port: 8443
+    caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCg== # Base64 корневого CA
+  rules:
+  - apiGroups: [""]
+    apiVersions: ["v1"]
+    operations: ["CREATE", "UPDATE"]
+    resources: ["pods"]
+    scope: Namespaced
+  # Исключение системных неймспейсов
+  namespaceSelector:
+    matchExpressions:
+    - key: kubernetes.io/metadata.name
+      operator: NotIn
+      values: ["kube-system", "kube-node-lease", "security-tools"]
+  # CEL-фильтрация на уровне kube-apiserver:
+  matchConditions:
+  # Пропускать служебные поды сборщиков метрик без вызова вебхука
+  - name: exclude-prometheus-exporters
+    expression: "!has(object.metadata.labels) || !('app.kubernetes.io/component' in object.metadata.labels && object.metadata.labels['app.kubernetes.io/component'] == 'exporter')"
+  # Вызывать вебхук только если у пода есть тома типа hostPath
+  - name: check-hostpath-presence
+    expression: "has(object.spec.volumes) && object.spec.volumes.exists(v, has(v.hostPath))"
+```
+
+### Сценарий 4: Декларативная мутация через MutatingAdmissionPolicy (MAP)
+
+Механизм доступен в версиях Kubernetes 1.32+ в качестве Alpha-функционала.
+
+Включение в API-сервере:
+```text
+--feature-gates=MutatingAdmissionPolicy=true
+--runtime-config=admissionregistration.k8s.io/v1alpha1=true
+```
+
+Манифест политики мутации:
+```yaml
+# mutating-policy-labels.yaml
+apiVersion: admissionregistration.k8s.io/v1alpha1
 kind: MutatingAdmissionPolicy
 metadata:
-  name: add-default-labels
+  name: inject-workload-labels
 spec:
+  failurePolicy: Fail
   matchConstraints:
     resourceRules:
     - apiGroups: ["apps"]
@@ -300,353 +440,202 @@ spec:
   - patchType: JSONPatch
     patch: |
       [
-        {"op": "add", "path": "/metadata/labels/managed-by", "value": "platform"}
+        {"op": "add", "path": "/metadata/labels/managed-by", "value": "gitops"},
+        {"op": "add", "path": "/metadata/labels/audit-checked", "value": "true"}
       ]
 ```
 
-*Примечание: На момент написания MAP находится в beta. Синтаксис и API могут измениться в будущих версиях.*
-
 ---
 
-## Расширение через Вебхуки (Dynamic Admission)
+## Эксплуатация, мониторинг и SRE
 
-Kubernetes позволяет регистрировать собственные контроллеры через два типа ресурсов:
-*   `MutatingWebhookConfiguration`
-*   `ValidatingWebhookConfiguration`
+### Мониторинг метрик в Prometheus
 
-### Ключевые параметры конфигурации
+API-сервер экспортирует детальные метрики задержек и ошибок контроля допуска по эндпоинту `/metrics`.
 
-1.  **`failurePolicy` (Политика отказа):**
-    *   `Fail` (по умолчанию): Если вебхук недоступен или вернул ошибку, запрос к API блокируется. Рекомендуется для критических проверок безопасности.
-    *   `Ignore`: Если вебхук недоступен, запрос пропускается. Снижает риски блокировки кластера, но может нарушить комплаенс.
-2.  **`matchConditions` (CEL-фильтры):**
-    *   Позволяют выполнять предварительную фильтрацию запросов на стороне API-сервера с помощью CEL. Это исключает лишние сетевые вызовы к вебхуку (например, "вызывать вебхук только для подов, у которых нет метки `skip-scan`").
-3.  **`sideEffects`:**
-    *   Должен быть `None` или `NoneOnDryRun`. Указывает, есть ли у вебхука побочные эффекты вне API-сервера (например, запись в стороннюю БД).
-4.  **`timeoutSeconds`:**
-    *   Максимальное время ожидания ответа от вебхука (по умолчанию 10с). Слишком большие значения увеличивают Latency всего API.
-5.  **`matchPolicy`:**
-    *   `Exact`: Строгое соответствие версии API.
-    *   `Equivalent`: Обрабатывает запросы разных версий одного и того же ресурса (например, `v1` и `v1beta1`).
-6.  **`reinvocationPolicy`:**
-    *   `Never`: Вебхук не вызывается повторно после мутации другими контроллерами.
-    *   `IfNeeded`: Вебхук вызывается повторно, если объект был изменен другими мутирующими контроллерами.
+| Метрика | Тип | Описание |
+| :--- | :--- | :--- |
+| `apiserver_admission_webhook_admission_duration_seconds_bucket` | Histogram | Время ожидания ответа от внешних вебхуков (лейблы: `name`, `operation`, `type`, `rejected`). |
+| `apiserver_admission_webhook_rejection_count_total` | Counter | Количество отклоненных запросов вебхуками (лейблы: `name`, `operation`, `error_type`). |
+| `apiserver_admission_step_admission_duration_seconds_summary` | Summary | Задержка каждого встроенного шага фазы admission в микросекундах. |
+| `apiserver_validating_admission_policy_check_duration_seconds_bucket` | Histogram | Время выполнения нативных CEL-выражений внутри процесса API-сервера. |
 
-### Пример MutatingWebhookConfiguration
+#### PromQL запросы для мониторинга:
 
+```promql
+# 99-й перцентиль задержки внешних вебхуков (должен быть < 50 мс)
+histogram_quantile(0.99, sum(rate(apiserver_admission_webhook_admission_duration_seconds_bucket[5m])) by (le, name))
+
+# Частота ошибок и таймаутов вебхуков (ошибки вызова внешнего сервиса)
+sum(rate(apiserver_admission_webhook_rejection_count_total{error_type!="no_error"}[5m])) by (name, error_type)
+
+# Доля отклоненных запросов политиками VAP
+sum(rate(apiserver_validating_admission_policy_check_duration_seconds_count{validation_action="Deny"}[5m])) by (policy)
+```
+
+#### Правило алертинга (PrometheusRule):
 ```yaml
-apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingWebhookConfiguration
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
 metadata:
-  name: sidecar-injection.example.com
-webhooks:
-- name: inject-sidecar.example.com
-  admissionReviewVersions: ["v1", "v1beta1"]
-  sideEffects: None
-  failurePolicy: Fail
-  timeoutSeconds: 5
-  reinvocationPolicy: IfNeeded
-  matchPolicy: Equivalent
-  clientConfig:
-    service:
-      namespace: istio-system
-      name: istiod
-      path: "/inject"
-      port: 443
-    caBundle: <base64-encoded-ca-cert>
-  rules:
-  - apiGroups: [""]
-    apiVersions: ["v1"]
-    operations: ["CREATE"]
-    resources: ["pods"]
-    scope: Namespaced
-  namespaceSelector:
-    matchLabels:
-      istio-injection: enabled
-  objectSelector:
-    matchExpressions:
-    - key: sidecar.istio.io/inject
-      operator: NotIn
-      values: ["false"]
-```
-
-### Пример ValidatingWebhookConfiguration
-
-```yaml
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingWebhookConfiguration
-metadata:
-  name: validate-apps.example.com
-webhooks:
-- name: validate-deployments.example.com
-  admissionReviewVersions: ["v1", "v1beta1"]
-  sideEffects: None
-  failurePolicy: Fail
-  timeoutSeconds: 10
-  matchPolicy: Equivalent
-  clientConfig:
-    service:
-      namespace: validation-system
-      name: validation-webhook
-      path: "/validate/deployments"
-      port: 443
-    caBundle: <base64-encoded-ca-cert>
-  rules:
-  - apiGroups: ["apps"]
-    apiVersions: ["v1"]
-    operations: ["CREATE", "UPDATE"]
-    resources: ["deployments"]
-    scope: Namespaced
-  namespaceSelector:
-    matchLabels:
-      environment: production
-  matchConditions:
-  - expression: "!object.metadata.labels.containsKey('skip-validation')"
-    name: skip-validation-label-check
-```
-
-### Популярные движки политик
-*   **[Kyverno](../../Security/kyverno/concepts.md)** — написание политик на нативном YAML. Поддерживает мутации, валидации и генерацию ресурсов.
-*   **[OPA Gatekeeper](../../Security/rbac/limitations_opa.md)** — использование языка Rego. Позволяет создавать сложные политики, выходящие за рамки одного ресурса.
-
----
-
-## DryRun и Audit Annotations
-
-### DryRun для тестирования политик
-
-Флаг `--dry-run=server` позволяет проверить манифест через Admission Controllers без фактического сохранения в etcd:
-
-```bash
-# Проверка манифеста через все admission-контроллеры
-kubectl apply --dry-run=server -f deployment.yaml
-
-# Проверка только валидации (без мутации)
-kubectl create --dry-run=server -f pod.yaml -o yaml
-
-# Пример вывода при нарушении политики
-# Error: pods "test-pod" is forbidden: validation failed:
-#   - require-resource-limits: Все контейнеры должны иметь определенные resource limits
-```
-
-### Audit Annotations
-
-Admission Controllers могут добавлять аннотации к объектам для аудита:
-
-```yaml
-# Аннотации добавляются автоматически контроллерами
-metadata:
-  annotations:
-    # Информация о том, какой контроллер мутировал объект
-    admission.kubernetes.io/mutated-by: "limit-range-controller"
-    # Информация о проверке
-    admission.kubernetes.io/verified-by: "resource-quota-controller"
-```
-
----
-
-## Безопасность вебхуков
-
-Поскольку Admission Webhook получает содержимое всех объектов (включая `Secret`), его защита критична:
-1.  **HTTPS/TLS:** API-сервер взаимодействует с вебхуками только через HTTPS. CA-сертификат вебхука должен быть указан в `caBundle` конфигурации.
-2.  **NetworkPolicies:** Ограничьте доступ к вебхуку — он должен принимать запросы только от IP-адресов API-сервера.
-3.  **Аутентификация:** Используйте токены или сертификаты для проверки того, что запрос пришел именно от легитимного API-сервера.
-4.  **Автоматическая ротация сертификатов:** Настройте cert-manager или аналогичный инструмент для автоматического обновления сертификатов вебхуков.
-5.  **Ограничение scope:** Используйте `namespaceSelector` и `objectSelector` для минимизации количества перехватываемых запросов.
-
----
-
-## Практические сценарии
-
-### 1. Включение контроллеров
-
-В управляемых кластерах (EKS, GKE) список контроллеров управляется провайдером. В `kubeadm` список настраивается через флаг API-сервера:
-
-```bash
-# Включение конкретных контроллеров
---enable-admission-plugins=NodeRestriction,NamespaceLifecycle,LimitRanger,...
-
-# Просмотр включенных контроллеров
-kube-apiserver --help | grep enable-admission-plugins
-
-# Список доступных контроллеров (в конкретной версии)
-kube-apiserver --help | grep -A 50 "admission-plugins"
-```
-
-### 2. Создание ValidatingAdmissionPolicy через kubectl
-
-```bash
-# Создание политики
-kubectl apply -f policy.yaml
-
-# Проверка статуса
-kubectl get validatingadmissionpolicy
-kubectl get validatingadmissionpolicybindings
-
-# Просмотр деталей
-kubectl describe validatingadmissionpolicy require-resource-limits
-```
-
-### 3. Тестирование политик
-
-```bash
-# Тест 1: Манифест, соответствующий политике
-cat <<EOF | kubectl apply --dry-run=server -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: test-pod-with-limits
+  name: admission-webhook-alerts
+  namespace: monitoring
 spec:
-  containers:
-  - name: nginx
-    image: nginx:latest
-    resources:
-      limits:
-        memory: "128Mi"
-        cpu: "500m"
-      requests:
-        memory: "64Mi"
-        cpu: "250m"
-EOF
-# → Pod "test-pod-with-limits" created (dry run)
-
-# Тест 2: Манифест, нарушающий политику
-cat <<EOF | kubectl apply --dry-run=server -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: test-pod-without-limits
-spec:
-  containers:
-  - name: nginx
-    image: nginx:latest
-EOF
-# → Error: pods "test-pod-without-limits" is forbidden:
-#   require-resource-limits: Все контейнеры должны иметь определенные resource limits
+  groups:
+  - name: admission-controllers.rules
+    rules:
+    - alert: AdmissionWebhookHighLatency
+      expr: histogram_quantile(0.95, sum(rate(apiserver_admission_webhook_admission_duration_seconds_bucket[5m])) by (le, name)) > 1.0
+      for: 2m
+      labels:
+        severity: warning
+        tier: control-plane
+      annotations:
+        summary: "Вебхук допуска {{ $labels.name }} замедляет работу API-сервера"
+        description: "95-й перцентиль задержки вебхука {{ $labels.name }} превышает 1 секунду. Это приводит к задержкам вызовов kubectl и деградации контроллеров."
+    - alert: AdmissionWebhookFailureSpike
+      expr: sum(rate(apiserver_admission_webhook_rejection_count_total{error_type!="no_error"}[2m])) by (name) > 5
+      for: 1m
+      labels:
+        severity: critical
+        tier: control-plane
+      annotations:
+        summary: "Сбой связи с Admission Webhook {{ $labels.name }}"
+        description: "Вебхук недоступен или возвращает 5xx. При failurePolicy=Fail это полностью блокирует операции в кластере."
 ```
 
-### 4. Отладка вебхуков
+### Экстренное восстановление (Disaster Recovery & Break-Glass)
 
-Если создание ресурсов "зависает" или возвращает ошибки таймаута, проблема часто в недоступности Admission Webhook:
+Если сбойный вебхук с `failurePolicy: Fail` упал и заблокировал создание ресурсов в кластере (включая собственное пересоздание или работу операторов):
 
+#### Уровень 1: Штатное удаление через kubectl (если API доступен для типа конфигураций)
 ```bash
-# Поиск конфигураций вебхуков
-kubectl get mutatingwebhookconfigurations
+# Быстрый поиск и удаление проблемной конфигурации
 kubectl get validatingwebhookconfigurations
+kubectl get mutatingwebhookconfigurations
 
-# Просмотр конфигурации конкретного вебхука
-kubectl get mutatingwebhookconfigurations istio-sidecar-injector -o yaml
-
-# Проверка логов контроллера (например, Kyverno)
-kubectl logs -n kyverno -l app.kubernetes.io/name=kyverno -f
-
-# Проверка логов OPA Gatekeeper
-kubectl logs -n gatekeeper-system -l control-plane=controller-manager -f
-
-# Проверка доступности сервиса вебхука
-kubectl get endpoints -n istio-system istiod
-
-# Проверка сертификата
-kubectl get secret -n istio-system istiod-admission -o jsonpath='{.data.ca-cert\.pem}' | base64 -d
+# Немедленное удаление конфигурации с таймаутом ожидания 0
+kubectl delete validatingwebhookconfiguration corporate-security-validator --grace-period=0 --force
 ```
 
-### 5. Миграция с вебхуков на CEL (VAP)
+#### Уровень 2: Обход через флаги API-сервера на Control Plane (Break-Glass)
+Если вебхук перехватывает изменения конфигураций вебхуков или удаление неймспейсов и не позволяет удалить себя:
+1. Подключитесь по SSH на узел Control Plane:
+   ```bash
+   ssh root@cp-node-01.company.local
+   ```
+2. Отредактируйте манифест статического пода API-сервера:
+   ```bash
+   sudo vim /etc/kubernetes/manifests/kube-apiserver.yaml
+   ```
+3. В секцию `spec.containers.command` временно добавьте флаг:
+   ```yaml
+   - --disable-admission-plugins=MutatingAdmissionWebhook,ValidatingAdmissionWebhook
+   ```
+4. Сохраните файл. `kubelet` перезапустит `kube-apiserver` без поддержки внешних вебхуков.
+5. Выполните удаление сломанной конфигурации вебхука локально:
+   ```bash
+   kubectl --kubeconfig /etc/kubernetes/admin.conf delete validatingwebhookconfiguration corporate-security-validator
+   ```
+6. Верните флаги в `/etc/kubernetes/manifests/kube-apiserver.yaml` в исходное состояние.
 
-Если у вас есть валидирующий вебхук, который можно заменить CEL-политикой:
-
+#### Уровень 3: Прямое удаление ключа из etcd (при полной недоступности apiserver)
 ```bash
-# Шаг 1: Экспортируйте существующую логику вебхука
-kubectl get validatingwebhookconfigurations old-webhook -o yaml > old-webhook.yaml
-
-# Шаг 2: Создайте VAP на основе логики вебхука
-cat <<EOF | kubectl apply -f -
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicy
-metadata:
-  name: migrated-policy
-spec:
-  failurePolicy: Fail
-  matchConstraints:
-    resourceRules:
-    - apiGroups: [""]
-      apiVersions: ["v1"]
-      operations: ["CREATE", "UPDATE"]
-      resources: ["pods"]
-  validations:
-  - expression: "/* CEL-выражение, эквивалентное логике вебхука */"
-    message: "Нарушение политики"
-EOF
-
-# Шаг 3: Переключите сначала на Warn, затем на Deny
-kubectl patch validatingadmissionpolicy migrated-policy --type merge -p '
-spec:
-  validations:
-  - expression: "/* ваше выражение */"
-    message: "Нарушение политики"
-'
-# Обновите validationActions в Binding на Warn, затем Deny
-
-# Шаг 4: Удалите старый вебхук после проверки
-kubectl delete validatingwebhookconfigurations old-webhook
+# Подключение к локальному etcd на мастер-узле
+ETCDCTL_API=3 etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  del /registry/validatingwebhookconfigurations/corporate-security-validator
+# → 1 (успешно удален 1 ключ)
 ```
 
-### 6. Тестирование вебхуков в staging перед production
+---
 
+## Диагностика и устранение неисправностей (Troubleshooting)
+
+### Сводная таблица типовых аварий
+
+| Симптом | Первопричина | Метод диагностики | Способ устранения |
+| :--- | :--- | :--- | :--- |
+| `Internal error occurred: failed calling webhook: Post "https://...": context deadline exceeded` | Сетевая изоляция между хостом master-узла и сетью подов CNI; зависание пода вебхука | `kubectl logs -n kube-system kube-apiserver-...`, пинг Pod IP вебхука с master-узла | Настроить маршруты CNI хост-под, проверить `NetworkPolicy`, увеличить `timeoutSeconds` (но не > 5c). |
+| `x509: certificate signed by unknown authority` | Несоответствие между CA вебхука и полем `caBundle` в конфигурации вебхука | `kubectl get validatingwebhookconfigurations <name> -o jsonpath='{.webhooks[0].clientConfig.caBundle}' \| base64 -d \| openssl x509 -text -noout` | Обновить поле `caBundle` актуальным корневым сертификатом выпускающего центра (cert-manager CA). |
+| Кластер заблокирован после рестарта (Deadlock): поды вебхука не могут запуститься | Вебхук проверяет создание собственных подов или подов CNI/CoreDNS при `failurePolicy: Fail` | `kubectl describe pod -n <webhook-ns> <webhook-pod>` показывает ошибку вызова вебхука | Добавить в `namespaceSelector` исключение системных неймспейсов и неймспейса вебхука; применить Break-Glass процедуру. |
+| `mutation policy resulted in infinite loop` или HTTP 500 | Взаимный конфликт двух мутирующих вебхуков, циклически перезаписывающих поля друг друга | Логи `kube-apiserver` с уровнем `-v=4` по ключевому слову `re-invocation` | Установить на одном из вебхуков `reinvocationPolicy: Never` или согласовать алгоритмы мутации. |
+| `CEL expression evaluation error: no such key` | Выражение в VAP обращается к необязательному полю объекта без предварительной проверки функцией `has()` | Проверить текст ошибки в ответе `kubectl apply --dry-run=server` | Исправить CEL: заменить `object.spec.securityContext.runAsUser` на `has(object.spec.securityContext) && has(object.spec.securityContext.runAsUser)`. |
+
+### Пошаговый алгоритм расследования инцидентов
+
+#### 1. Проверка состояния конфигураций вебхуков и VAP
 ```bash
-# Разворачивание вебхука с failurePolicy: Ignore в staging
-cat <<EOF | kubectl apply -f -
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingWebhookConfiguration
-metadata:
-  name: staging-webhook
-webhooks:
-- name: validate-staging.example.com
-  failurePolicy: Ignore  # Безопасно для staging
-  # ... остальная конфигурация
-EOF
+# Получение списка всех вебхуков с подробностями
+kubectl get mutatingwebhookconfigurations,validatingwebhookconfigurations -o wide
 
-# После проверки — обновление на Fail для production
-kubectl patch validatingwebhookconfigurations staging-webhook --type merge -p '
-webhooks:
-- name: validate-staging.example.com
-  failurePolicy: Fail
-'
+# Проверка нативных CEL политик и их биндингов
+kubectl get validatingadmissionpolicies
+kubectl get validatingadmissionpolicybindings -o wide
+# → NAME                      POLICY                    VALIDATIONACTIONS   PARAMREF
+# → check-trusted-registry-b   check-trusted-registry    [Deny,Warn]         allowed-registries-config
 ```
+
+#### 2. Инспекция эндпоинтов сервиса вебхука
+```bash
+# Проверка доступности IP-адресов за сервисом вебхука
+kubectl get endpoints -n security-tools validator-svc
+# → NAME            ENDPOINTS                           AGE
+# → validator-svc   10.244.1.45:8443,10.244.2.112:8443   12d
+```
+*Если список ENDPOINTS пуст — поды вебхука упали, находятся в CrashLoopBackOff или не прошли readiness-пробу.*
+
+#### 3. Проверка логов пода вебхука
+```bash
+# Чтение логов с фильтрацией ошибок
+kubectl logs -n security-tools -l app.kubernetes.io/name=validator --tail=100 -f
+```
+
+#### 4. Проверка сертификата TLS в конфигурации вебхука
+```bash
+# Сравнение отпечатка сертификата в секрете и в конфигурации
+CERT_SECRET=$(kubectl get secret -n security-tools validator-tls -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -fingerprint -sha256)
+CERT_WEBHOOK=$(kubectl get validatingwebhookconfigurations corporate-security-validator -o jsonpath='{.webhooks[0].clientConfig.caBundle}' | base64 -d | openssl x509 -noout -fingerprint -sha256)
+
+echo "Secret:  $CERT_SECRET"
+echo "Webhook: $CERT_WEBHOOK"
+# Хеши должны совпадать. Если нет — обновите caBundle в конфигурации вебхука.
+```
+
+---
+
+## Рекомендации (Best Practices)
+
+1.  **Принцип «CEL-First»:** Для любых проверок валидации, которые могут быть описаны над метаданными или спецификацией объекта, используйте нативный `ValidatingAdmissionPolicy`. Это полностью исключает сетевой оверхед и риски недоступности внешних компонентов.
+2.  **Защита от самоблокировки (Deadlock Prevention):**
+    *   Всегда исключайте системные пространства имен (`kube-system`, `kube-node-lease`, `kube-public`) в блоке `namespaceSelector`.
+    *   Всегда исключайте пространство имен, в котором запущен сам вебхук (например, `security-tools`, `kyverno`, `gatekeeper-system`).
+3.  **Использование CEL-фильтрации через `matchConditions`:** Не направляйте в вебхук весь поток запросов кластера. Отсекайте нерелевантные ресурсы на стороне API-сервера до отправки HTTP-пакета.
+4.  **Ограничение таймаута (`timeoutSeconds`):** По умолчанию таймаут вебхука составляет 10 секунд. Для высоконагруженных кластеров это критически много (приводит к исчерпанию пула потоков apiserver). Выставляйте `timeoutSeconds: 2` или `3`.
+5.  **Высокая доступность вебхуков (HA):**
+    *   Разворачивайте поды вебхука минимум в 3 репликах с распределением по узлам через `topologySpreadConstraints` или `podAntiAffinity`.
+    *   Настраивайте `PodDisruptionBudget` (`minAvailable: 1` или `maxUnavailable: 1`).
+    *   Задавайте гарантированные ресурсы (Guaranteed QoS: `limits` равны `requests`).
+6.  **Поэтапный роллаут новых правил (Rollout Strategy):**
+    *   Никогда не применяйте новые правила сразу в режиме `Deny` / `failurePolicy: Fail`.
+    *   Этап 1: Развертывание с действием `Warn` или `Audit` (для VAP) либо временный `failurePolicy: Ignore` с мониторингом метрик отклонений.
+    *   Этап 2: Анализ логов аудита за несколько дней для исключения ложных срабатываний (False Positives).
+    *   Этап 3: Перевод политики в режим принудительного запрета (`Deny`).
+7.  **Надежная автоматизация сертификатов:** Используйте `cert-manager` с механизмом инъекции CA (`cainjector`) для автоматического обновления поля `caBundle` в конфигурациях вебхуков до истечения срока действия TLS-сертификатов.
 
 ---
 
 ## Дополнительная информация
 
-### Риски и ограничения
-*   **Производительность:** Каждый запрос к API-серверу должен пройти через все контроллеры. Медленные вебхуки увеличивают Latency управления кластером.
-*   **Блокировка кластера:** Если критический вебхук (например, валидирующий все поды) недоступен и настроен с `failurePolicy: Fail`, создание любых подов в кластере будет остановлено.
-*   **Циклическая зависимость:** Вебхук не должен зависеть от ресурсов, которые он же валидирует (например, вебхук, проверяющий ConfigMap, не должен загружать конфигурацию из ConfigMap).
-*   **Версионирование:** При обновлении Kubernetes API может потребоваться обновление вебхуков для поддержки новых версий ресурсов.
-
-### Troubleshooting: Частые ошибки
-
-| Симптом | Вероятная причина | Решение |
-| :--- | :--- | :--- |
-| `timeout` при создании подов | Вебхук недоступен | Проверьте логи контроллера, endpoints сервиса |
-| `connection refused` | Сервис вебхука не запущен | `kubectl get pods -n <ns> -l app=<webhook>` |
-| `certificate has expired` | Сертификат вебхука истек | Обновите сертификат через cert-manager |
-| `no such service` | Сервис не найден | Проверьте имя/неймспейс сервиса в конфигурации |
-| Запросы "зависают" | Медленный вебхук | Увеличьте `timeoutSeconds`, оптимизируйте логику |
-| `field reference not supported` | Ошибка CEL-выражения | Проверьте синтаксис через `kubectl apply --dry-run=server` |
-
-### Best Practices
-
-1. **Начинайте с Warn/Audit:** Перед включением `Deny` протестируйте политику в режиме предупреждений.
-2. **Используйте matchConditions:** Ограничьте область действия вебхуков с помощью CEL-фильтров.
-3. **Мониторьте Latency:** Отслеживайте метрику `apiserver_admission_webhook_admission_duration_seconds_bucket`.
-4. **Настройте timeoutSeconds:** Не используйте значения больше 10с без крайней необходимости.
-5. **Автоматизируйте ротацию сертификатов:** Используйте cert-manager для вебхуков.
-6. **Тестируйте в staging:** Разверните копию вебхука с `failurePolicy: Ignore` в staging-кластере.
-7. **Используйте PolicyReport:** Для мониторинга нарушений политик (особенно с Kyverno).
-
 ### См. также
 * [Взаимодействие с API Kubernetes](./api_interaction.md)
+* [Архитектура Control Plane в Kubernetes](./control_plane_architecture.md)
 * [Стандарты безопасности подов (PSA)](../Security/pod_security_context.md)
-* [Kyverno: Основные концепции](../../Security/kyverno/concepts.md)
+* [Безопасность Kubelet](../Security/kubelet_security.md)
+* [Ограничения RBAC, OPA Gatekeeper и Kyverno](../Security/rbac/limitations_opa.md)
+* [Kyverno: Архитектура и политики](../Security/kyverno/concepts.md)
 * [VPA Admission Controller](../Autoscaling/vpa_detailed.md)
-* [Ограничения RBAC и OPA/Kyverno](../../Security/rbac/limitations_opa.md)
+* [Мониторинг kube-apiserver](../MonitoringLogging/kube_apiserver_monitoring.md)

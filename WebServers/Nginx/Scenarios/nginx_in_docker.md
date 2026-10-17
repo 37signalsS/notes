@@ -783,6 +783,8 @@ volumes:
 
 ### Связанные документы
 
+- **[Nginx: развертывание SPA и шлюз API](nginx_spa_and_api_gateway.md)** — контейнеризация SPA с многоэтапной сборкой и проксированием API.
+- **[Nginx: шлюз централизованной аутентификации (Forward Auth / SSO)](nginx_forward_auth_sso_gateway.md)** — авторизация внутренних сервисов через OAuth2-Proxy в контейнерах.
 - **[Диагностика и устранение неисправностей Nginx](../Operations/nginx_troubleshooting.md)** — глубокая диагностика сетевого стека, epoll, дампов памяти и системных ошибок.
 - **[Настройка Let's Encrypt с Nginx](nginx_with_letsencrypt.md)** — автоматизация обновления сертификатов через ACME/Certbot в контейнерах.
 - **[Nginx как reverse proxy для Grafana](nginx_as_reverse_proxy_for_grafana.md)** — пример рабочего прокси-стека с WebSocket и буферизацией.

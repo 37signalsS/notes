@@ -877,6 +877,7 @@ sudo tar -czf certbot-backup-$(date +%F).tar.gz \
 ## См. также
 
 - **[Настройка HTTPS с помощью Let's Encrypt и Certbot](../../Concepts/https_with_certbot.md)** — архитектурные принципы ACME, лимиты запросов, устройство цепочек доверия.
+- **[acme.sh — ACME-клиент для TLS-сертификатов](../../Concepts/acme_sh.md)** — бессерверный легковесный ACME-клиент на чистом POSIX Shell без зависимостей Python.
 - **[Обзор TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md)** — архитектура TLS в Nginx, фазы рукопожатия, кэш сессий и kTLS.
 - **[Конфигурация виртуальных хостов TLS в Nginx](../Security/TLS_SSL/nginx_tls_virtual_host_config.md)** — детальная настройка директив `ssl_*`, ALPN, HTTP/2 и HTTP/3.
 - **[Nginx в Docker: Архитектура и эксплуатация](nginx_in_docker.md)** — развертывание Nginx в контейнерах, проброс портов и монтирование томов.

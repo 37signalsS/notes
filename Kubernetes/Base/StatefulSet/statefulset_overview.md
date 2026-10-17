@@ -1,420 +1,577 @@
 # StatefulSet: Обзор
 
+**Актуально для:** Kubernetes 1.30–1.37+ (Bare-Metal / On-Premise)
+
 ## Определения
 
-**StatefulSet** — специализированный контроллер Kubernetes для управления приложениями с состоянием (stateful), которым требуется сохранение уникальности и «личности» каждого экземпляра. В отличие от **[Deployment](../Deployment/index.md)**, где поды (Pods) являются взаимозаменяемыми и эфемерными, StatefulSet гарантирует стабильную идентичность, сетевое имя и привязку к конкретному хранилищу для каждой реплики.
+*   **StatefulSet** — специализированный контроллер рабочей нагрузки Kubernetes (входящий в группу API `apps/v1`), предназначенный для управления приложениями с отслеживанием состояния (stateful). Гарантирует уникальность, строгую очередность развертывания/масштабирования и сохранение стабильной идентичности (сетевого имени и привязанного хранилища) для каждого экземпляра.
+*   **Headless Service** — сервис Kubernetes с явно установленным полем `spec.clusterIP: None`. Не выполняет балансировку нагрузки через виртуальный ClusterIP, а возвращает через CoreDNS прямые `A`/`AAAA`-записи IP-адресов целевых подов, формируя индивидуальные FQDN для каждой реплики.
+*   **VolumeClaimTemplates** — декларативный шаблон внутри спецификации StatefulSet, по которому контроллер автоматически генерирует уникальный объект `PersistentVolumeClaim` (PVC) для каждого порядкового индекса пода.
+*   **ControllerRevision** — версионированный объект Kubernetes (`apps/v1`), сохраняющий снимок конфигурации шаблона (`spec.template`) StatefulSet для отслеживания истории изменений и детерминированного отката (`rollout undo`).
+*   **Sticky Storage (Липкое хранилище)** — архитектурный принцип StatefulSet, согласно которому сгенерированный PVC навсегда связывается с конкретным порядковым индексом пода (например, `data-db-0`). При перезапуске или перепланировании под с индексом 0 повторно монтирует строго свой исходный том.
+*   **Ordinal Index (Порядковый индекс)** — целочисленный идентификатор от `0` до `N-1` (или начиная со `spec.ordinals.start`), присваиваемый каждой реплике. Определяет сетевой FQDN, имя привязанного PVC и строгую очередность при создании, обновлении и удалении.
+*   **Split-brain (Расщепление мозга)** — критическая аварийная ситуация в кластерных системах с состоянием, при которой потеря сетевой связности приводит к разделению кластера на изолированные сегменты, каждый из которых считает себя лидером и одновременно пишет в общее хранилище, вызывая повреждение данных.
+*   **Non-Graceful Node Shutdown** — встроенный механизм Kubernetes (GA с v1.28), позволяющий безопасно сигнализировать о гарантированном выключении физического узла через наложение taint `node.kubernetes.io/out-of-service=nodeshutdown:NoExecute`, что инициирует принудительное отмонтирование томов (VolumeDetach) и безопасный перенос подов StatefulSet.
 
-Данный контроллер необходим приложениям, которым требуются:
-*   **Стабильные сетевые идентификаторы:** DNS-имена подов сохраняются при перезапусках, перепланировании на другие узлы и масштабировании.
-*   **Стабильное хранилище (Persistent Storage):** каждый под привязан к конкретному диску через **[PersistentVolumeClaim (PVC)](../../Storage/pv_and_pvc.md)**, который «переезжает» вместе с подом.
-*   **Упорядоченность операций:** строгий порядок развертывания, масштабирования (от 0 до N-1) и обновления.
+Сравнение с stateless-подходом см. в разделе **[Stateful vs Stateless](../../../Concepts/stateful_vs_stateless.md)**, а детальное сопоставление контроллеров — в **[StatefulSet vs Deployment](./statefulset_vs_deployment.md)**.
 
-Теоретические основы архитектур см. в разделе **[Stateful vs Stateless](../../../Concepts/stateful_vs_stateless.md)**.
+## Архитектура и основные концепции
 
-## Предварительные требования
+### Архитектурная триада
 
-Для практической работы с StatefulSet необходимо наличие:
+Функционирование StatefulSet в инфраструктуре опирается на взаимодействие трех ключевых компонентов:
 
-1.  **Рабочего кластера Kubernetes и kubectl** с корректно настроенным контекстом. Рекомендуемые стабильные релизы — v1.35–v1.37: часть описанных ниже возможностей (политика удержания PVC, `maxUnavailable`, стратегия `Recreate`) доступна только в новых версиях.
-2.  **RBAC-прав** на ресурсы: `apps/statefulsets`, `apps/controllerrevisions`, `pods`, `persistentvolumeclaims`, а для отладки — `pods/log`, `events`. Типовое развертывание выполняется от имени ServiceAccount с правами на указанные объекты в целевом Namespace.
-3.  **StorageClass с динамическим провижинингом** для работы `volumeClaimTemplates`. Без него создаваемые PVC останутся в статусе `Pending`. Подробнее: [StorageClass (классы хранения)](../../Storage/storageclass.md) и [PV и PVC](../../Storage/pv_and_pvc.md).
-4.  **Headless Service**, созданного до (или вместе с) StatefulSet — его имя указывается в поле `serviceName`. Без него поды не получат персональные DNS-записи. Подробнее: [Тип Service — Headless](../../Networking/Service/service_type_headless.md).
-5.  Понимания базовых объектов: [Pod](../Pod/pod_overview.md), Service, PVC, ConfigMap/Secret.
+```
++-----------------------------------------------------------------------------------+
+|                         kube-controller-manager                                   |
+|                        [StatefulSet Controller]                                   |
++-----------------------------------------------------------------------------------+
+             |                                                  |
+             | Управляет подами 0..N-1                          | Создает PVC по шаблону
+             v                                                  v
++-----------------------------+                    +--------------------------------+
+|        Поды (Pods)          |                    | PersistentVolumeClaims (PVC)   |
+|  - web-0 (10.244.1.15)      |                    |  - data-web-0  <---> [ PV-0 ]  |
+|  - web-1 (10.244.2.22)      |                    |  - data-web-1  <---> [ PV-1 ]  |
+|  - web-2 (10.244.3.40)      |                    |  - data-web-2  <---> [ PV-2 ]  |
++-----------------------------+                    +--------------------------------+
+             ^                                                  ^
+             | Резолвятся через                                 | Монтируются в
++-----------------------------------+                           | соответствующие поды
+|      Headless Service             |                           |
+|    (spec.clusterIP: None)         |---------------------------+
+|                                   |
+| web-0.web-svc.default.svc...      |
+| web-1.web-svc.default.svc...      |
++-----------------------------------+
+```
 
-## Основные концепции
-
-### Архитектурные компоненты
-
-Для полноценного функционирования StatefulSet требует взаимодействия следующих объектов:
-
-1.  **StatefulSet Controller:** Контроллер в `kube-controller-manager`, который управляет жизненным циклом подов на основе шаблона, поддерживает желаемое количество реплик и ведет историю ревизий (ControllerRevision).
-2.  **Headless Service:** Сервис без IP-адреса кластера (`clusterIP: None`), обеспечивающий создание индивидуальных DNS-записей для каждого пода. Подробнее: **[Headless Service](../../Networking/Service/service_type_headless.md)**.
-3.  **VolumeClaimTemplates:** Шаблон внутри спецификации StatefulSet, по которому контроллер автоматически создает уникальный PVC для каждого индекса пода.
-4.  **PersistentVolume (PV):** Реальные дисковые ресурсы, которые подключаются к PVC.
-
-### Ключевые поля спецификации (`.spec`)
-
-| Поле | Назначение | Примечания |
-| :--- | :--- | :--- |
-| `serviceName` | Имя Headless Service, обеспечивающего DNS-записи подов | Обязательно для сетевой идентификации |
-| `replicas` | Желаемое количество реплик | По умолчанию `1`; не задавайте вручную, если масштабирует HPA |
-| `selector.matchLabels` | Селектор подов | Обязателен; **иммутабелен** после создания |
-| `template` | Шаблон пода (синтаксис как в Deployment) | Изменение шаблона инициирует rollout |
-| `volumeClaimTemplates` | Шаблон создания PVC для каждого пода | Иммутабелен; изменение размера — отдельная процедура |
-| `podManagementPolicy` | Порядок создания/удаления: `OrderedReady` (по умолчанию) или `Parallel` | Влияет на скорость запуска и упорядоченность |
-| `updateStrategy` | Стратегия обновления: `RollingUpdate` (по умолчанию), `OnDelete`, `Recreate` (Alpha v1.37) | Подробнее в подразделе ниже |
-| `revisionHistoryLimit` | Сколько ревизий хранить для отката | По умолчанию `10`; `0` отключает откат |
-| `minReadySeconds` | Минимальное время, которое под должен оставаться `Ready` перед переходом к следующей реплике | По умолчанию `0`; стабильно с v1.25 |
-| `persistentVolumeClaimRetentionPolicy` | Политика удержания PVC при удалении и масштабировании | GA v1.32; по умолчанию `Retain`/`Retain` |
-| `ordinals.start` | Начальный индекс нумерации подов | GA v1.31 |
-| `template.spec.terminationGracePeriodSeconds` | Время на graceful-завершение пода (SIGTERM → SIGKILL) | Задается в шаблоне пода |
-
-Детальный разбор механизмов (идентификация, доставка тома, порядок операций) — в документе **[Ключевые концепции](./statefulset_core_concepts.md)**.
+1.  **StatefulSet Controller:** цикл согласования внутри `kube-controller-manager`. Обеспечивает строгий порядок запуска реплик, отслеживает готовность через Readiness Probe, генерирует PVC и управляет объектами `ControllerRevision`.
+2.  **Headless Service:** создает DNS-периметр для прямого сетевого взаимодействия узлов кластера между собой без NAT и проксирования kube-proxy. Подробнее: **[Headless Service](../../Networking/Service/service_type_headless.md)**.
+3.  **Хранилище (VolumeClaimTemplates + PV/CSI):** изолирует дисковое пространство для каждой реплики. Подробнее: [PV и PVC](../../Storage/pv_and_pvc.md) и [StorageClass (классы хранения)](../../Storage/storageclass.md).
 
 ### Сетевая идентификация и DNS
 
-Каждый под в StatefulSet получает предсказуемое имя формата `<имя-StatefulSet>-<индекс>` (например, `web-0`, `web-1`). При наличии Headless Service каждый экземпляр становится доступен по полному доменному имени (FQDN):
+Каждый под в составе StatefulSet получает предсказуемое имя формата `<имя-StatefulSet>-<индекс>` (например, `db-0`, `db-1`, `db-2`). При наличии связанного Headless Service каждый экземпляр регистрируется в CoreDNS кластера с персональным полным доменным именем (FQDN):
 
-`$(podname).$(service_name).$(namespace).svc.cluster.local`
+```
+$(pod-name).$(service-name).$(namespace).svc.cluster.local
+```
 
-**Пример:** под `db-0` в StatefulSet `postgres`, использующий сервис `pg-service` в неймспейсе `prod`, будет иметь DNS-имя `db-0.pg-service.prod.svc.cluster.local`.
+**Пример:** для StatefulSet `pg`, использующего Headless Service `pg-nodes` в пространстве имен `databases`, под с индексом 0 получает стабильный адрес:
+`pg-0.pg-nodes.databases.svc.cluster.local`.
 
-Полезные метки, которые контроллер добавляет к каждому поду:
+Системные метки, автоматически добавляемые контроллером к каждому поду:
+*   `statefulset.kubernetes.io/pod-name` — стабильное имя пода (`web-0`). Позволяет адресовать трафик стандартного ClusterIP Service или политик NetworkPolicy на конкретный экземпляр (например, направить запись строго на реплику-лидер).
+*   `apps.kubernetes.io/pod-index` — числовой индекс пода (`0`, `1`, `2`). Стабильно (GA) с Kubernetes v1.32. Используется для селекторов сервисов, маршрутизации телеметрии и фильтрации в мониторинге.
 
-*   `statefulset.kubernetes.io/pod-name` — имя пода (`web-0`). Позволяет нацелить Service или NetworkPolicy на конкретный экземпляр (например, только на мастера).
-*   `apps.kubernetes.io/pod-index` — порядковый индекс пода (`0`, `1`, ...). GA c v1.32. Удобна для фильтрации в мониторинге, при выборе подов в Service и при миграциях.
-
-Приложениям, которым на старте нужно обнаружить друг друга до прохождения Readiness Probe (бутстрап кворума ZooKeeper, Cassandra, Elasticsearch), требуется `spec.publishNotReadyAddresses: true` в Headless Service — иначе они не попадут в DNS, пока не стали `Ready` (проблема «курицы и яйца»). Подробнее: [Headless Service — publishNotReadyAddresses](../../Networking/Service/service_type_headless.md).
+> [!IMPORTANT]
+> **Проблема начального бутстрапа (Bootstrap Quorum):**
+> По умолчанию CoreDNS не создает DNS-записи для подов, пока те не пройдут проверку готовности (`Readiness Probe`). В распределенных системах (etcd, Cassandra, ZooKeeper, Patroni) ноды должны обнаружить друг друга по DNS еще до того, как база запустится и станет готовой. Для решения этой проблемы в манифесте Headless Service обязательно указывается:
+> ```yaml
+> spec:
+>   clusterIP: None
+>   publishNotReadyAddresses: true
+> ```
+> Подробнее: [Headless Service — publishNotReadyAddresses](../../Networking/Service/service_type_headless.md).
 
 ### Стабильное хранилище через VolumeClaimTemplates
 
-В отличие от Deployment, где все поды используют общий набор томов, StatefulSet создает **отдельный PVC для каждого индекса** автоматически:
+В отличие от Deployment, где все реплики монтируют одни и те же тома, StatefulSet создает **персональный PVC для каждого индекса**:
 
-*   **Именование:** `data-<имя-пода>` по шаблону `<имя-шаблона>-<pod-name>` (например, PVC `data-mysql-0` для пода `mysql-0`).
-*   **Привязка (Sticky Storage):** после удаления пода-реплики новый под с тем же индексом монтирует тот же самый PVC. Данные «следуют» за идентификатором.
-*   **Жизненный цикл:** по умолчанию PVC **не удаляются** ни при уменьшении реплик, ни при удалении StatefulSet. Это защита от случайной потери данных. Управляется политикой `persistentVolumeClaimRetentionPolicy` (`whenDeleted` / `whenScaled`, значения `Retain` или `Delete`, GA v1.32).
+*   **Шаблон именования:** `<имя-шаблона>-<имя-пода>` (например, `data-web-0`).
+*   **Иммутабельность:** секция `volumeClaimTemplates` валидируется API-сервером и запрещена к изменению после создания объекта. Изменение размера тома требует расширения через редактирование самих PVC.
+*   **Sticky Binding:** если под `web-0` удален или перенесен на другой рабочий узел из-за сбоя оборудования, вновь созданный под с именем `web-0` смонтирует строго PVC `data-web-0`. Данные не мигрируют между индексами.
+*   **Политика удержания (Retention Policy, GA v1.32):** управляется полем `spec.persistentVolumeClaimRetentionPolicy`. Позволяет определить, должны ли удаляться диски при уменьшении числа реплик (`whenScaled`) или при полном удалении StatefulSet (`whenDeleted`). Допустимые значения: `Retain` (по умолчанию) и `Delete`.
 
-Пример: для пода `web-1` с шаблоном `data` контроллер создаст PVC `data-web-1` и смонтирует его в путь из `volumeClaimTemplates[0].mountPath`. Механизм выделения и связывания томов описан в [PV и PVC](../../Storage/pv_and_pvc.md).
+### Порядок жизненного цикла (`podManagementPolicy`)
 
-### Стратегии обновления и управления
+Параметр `spec.podManagementPolicy` определяет правила параллелизма:
 
-| Параметр | Варианты | Описание |
-| :--- | :--- | :--- |
-| **updateStrategy** | `RollingUpdate` | (По умолчанию). Удаляет и пересоздает поды один за другим в обратном порядке (от N-1 до 0), ожидая перехода каждой реплики в `Running` и `Ready` (плюс `minReadySeconds`, если задан). |
-| | `OnDelete` | Контроллер не обновляет поды автоматически. Обновление происходит только после ручного удаления пода пользователем. Идеально для критических СУБД с плановым окном обслуживания. |
-| | `Recreate` | (Alpha v1.37, feature gate `StatefulSetRecreateStrategy`). Удаляет **все** поды сразу и только после полного завершения создает новые. Есть даунтайм, но старые и новые ревизии никогда не работают одновременно. |
-| **rollingUpdate.partition** | число | Обновляются только поды с индексом `>= partition`; поды с меньшим индексом остаются на старой ревизии и пересоздаются на ней же. Основной механизм канареечных (Canary) обновлений. |
-| **rollingUpdate.maxUnavailable** | число или % | Позволяет обновлять несколько подов одновременно (Beta v1.35, включено по умолчанию). **Не может быть `0`**. Ускоряет обновление больших кластеров, но может нарушить строгий порядок готовности. |
-| **podManagementPolicy** | `OrderedReady` | (По умолчанию). Поды запускаются/удаляются строго последовательно (0 → N-1 при создании, N-1 → 0 при удалении). Следующий под не создается, пока предыдущий не перейдет в состояние `Running` и `Ready`. |
-| | `Parallel` | Поды создаются и удаляются параллельно, без ожидания готовности соседей. Полезно для ускорения запуска, когда упорядоченность не требуется. |
+1.  **`OrderedReady` (по умолчанию):**
+    *   **Запуск:** поды создаются строго по возрастанию: `0` → `1` → `2`. Под `i` не начинает создаваться, пока под `i-1` не перейдет в состояние `Running` и `Ready`.
+    *   **Останов и масштабирование вниз:** поды удаляются строго в обратном порядке: `N-1` → `N-2` → `0`. Под `i-1` не завершается, пока под `i` полностью не остановится.
+2.  **`Parallel`:**
+    *   Контроллер инициирует создание или удаление всех реплик одновременно без ожидания готовности соседей.
+    *   Применяется для систем, где реплики полностью автономны или протокол кластеризации сам управляет синхронизацией (например, кэширующие пулы memcached или независимые воркеры с локальными дисками).
 
-**Порядок жизненного цикла:**
+### Стратегии обновления
 
-1.  **Создание:** пода `0`, затем после его `Ready` — пода `1` и так далее (в режиме `OrderedReady`).
-2.  **Обновление:** от максимального индекса к минимальному (N-1 → 0), по одному (или группами при `maxUnavailable > 1`). Историю ведет объект **ControllerRevision**.
-3.  **Масштабирование вниз:** удаляются поды с наибольшими индексами (N-1 → 0).
-4.  **Завершение:** на отправляемый `SIGTERM` приложение должно успеть сохранить состояние в течение `terminationGracePeriodSeconds`; затем пода завершает обработку `SIGKILL`.
+Управляются полем `spec.updateStrategy.type`:
 
-### Минимальный манифест
+| Стратегия | Доступность | Поведение | Риски и сценарии SRE |
+| :--- | :--- | :--- | :--- |
+| **`RollingUpdate`** | По умолчанию | Обновляет поды один за другим в обратном порядке от `N-1` к `0`. Контроллер удаляет под, дожидается создания новой ревизии и ее перехода в `Ready`, затем переходит к следующему. | Стандарт для production. При падении обновленного пода обновление блокируется. |
+| **`OnDelete`** | Стабильно | Контроллер не трогает работающие поды при изменении `spec.template`. Замена на новую ревизию происходит только в момент ручного удаления пода администратором. | Идеально для тяжелых СУБД (PostgreSQL/MySQL), где обновление версии бинарников требует ручного переключения репликации (failover/switchover). |
+| **`Recreate`** | Alpha v1.37 (`StatefulSetRecreateStrategy`) | Полностью останавливает и удаляет **все** поды контроллера, дожидается их полного завершения и только после этого создает все поды на новой версии. | Сопровождается полным даунтаймом. Применяется, когда протокол данных не допускает сосуществования старой и новой версий схемы в кластере. |
 
-Ниже — рабочий минимальный пример: Headless Service + StatefulSet из трех реплик Nginx с томом 1 GiB.
+**Тонкая настройка RollingUpdate:**
+*   `rollingUpdate.partition`: целочисленный барьер. Обновляются только поды с индексом `>= partition`. Поды с индексом `< partition` остаются на старой версии, даже если они были перезапущены. Инструмент для Canary-релизов.
+*   `rollingUpdate.maxUnavailable`: число или процент (Beta v1.35, включено по умолчанию в v1.37). Задает максимальное количество подов, которые могут быть недоступны во время обновления. По умолчанию `1`. **Не может быть равен `0`**. Позволяет ускорить обновление крупных инсталляций, но нарушает строгую очередность готовности.
+
+### Ключевые поля спецификации (`.spec`)
+
+| Поле | Тип | Обязательное | Назначение и эксплуатационные нюансы |
+| :--- | :--- | :--- | :--- |
+| `serviceName` | `string` | Да | Имя Headless Service. Должно быть создано до запуска подов, иначе не сформируются DNS FQDN. |
+| `replicas` | `integer` | Нет (default: 1) | Число реплик. Если используется HPA, не должно задаваться жестко в манифесте GitOps. |
+| `selector` | `LabelSelector` | Да | Селектор соответствия меток подов. **Иммутабелен** после создания объекта. |
+| `template` | `PodTemplateSpec` | Да | Шаблон конфигурации пода (контейнеры, volumes, probes, securityContext). |
+| `volumeClaimTemplates` | `[]PVC` | Нет | Шаблон создания хранилища. **Иммутабелен**. Редактирование схемы запрещено API. |
+| `podManagementPolicy` | `string` | Нет (default: `OrderedReady`) | Порядок запуска/останова: `OrderedReady` или `Parallel`. |
+| `updateStrategy` | `Object` | Нет | Конфигурация обновления: `type: RollingUpdate`, `partition`, `maxUnavailable`. |
+| `revisionHistoryLimit` | `integer` | Нет (default: 10) | Количество хранимых объектов `ControllerRevision` для отката. Значение `0` выключает откат. |
+| `minReadySeconds` | `integer` | Нет (default: 0) | Задержка в секундах, которую под обязан оставаться `Ready` перед тем, как контроллер продолжит rollout. |
+| `persistentVolumeClaimRetentionPolicy` | `Object` | Нет (GA v1.32) | Политики очистки PVC: поля `whenDeleted` и `whenScaled` со значениями `Retain` или `Delete`. |
+| `ordinals.start` | `integer` | Нет (GA v1.31) | Начальный номер индекса (по умолчанию `0`). Позволяет сегментировать кластер (например, 3..5). |
+
+Детальный архитектурный анализ каждого механизма приведен в документе **[Ключевые концепции](./statefulset_core_concepts.md)**.
+
+### Производственный манифест для On-Premise кластера
+
+Ниже представлен production-ready манифест для Bare-Metal окружения: Headless Service + StatefulSet на 3 реплики с локальным или блочным хранилищем (StorageClass `local-storage` или Ceph RBD с режимом `WaitForFirstConsumer`), жесткими лимитами ресурсов, проверками готовности/живучести и контекстом безопасности.
 
 ```yaml
 apiVersion: v1
 kind: Service
 metadata:
-  name: web-headless
+  name: storage-node-headless
+  namespace: default
+  labels:
+    app.kubernetes.io/name: storage-node
 spec:
-  clusterIP: None          # Headless: нет виртуального IP
+  clusterIP: None
+  publishNotReadyAddresses: true # Критично для начального бутстрапа кворума
   selector:
-    app: web
+    app.kubernetes.io/name: storage-node
   ports:
-  - port: 80
-    name: http
+  - port: 8080
+    name: http-traffic
+    targetPort: 8080
 ---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: web
+  name: storage-node
+  namespace: default
+  labels:
+    app.kubernetes.io/name: storage-node
 spec:
-  serviceName: "web-headless"   # совпадает с Headless Service
+  serviceName: "storage-node-headless"
   replicas: 3
+  podManagementPolicy: OrderedReady
+  revisionHistoryLimit: 10
+  minReadySeconds: 10
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
-      app: web                  # обязателен и иммутабелен
+      app.kubernetes.io/name: storage-node
   template:
     metadata:
       labels:
-        app: web
+        app.kubernetes.io/name: storage-node
     spec:
+      terminationGracePeriodSeconds: 60 # Время на сброс буферов БД на диск перед SIGKILL
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: "OnRootMismatch"
       containers:
-      - name: nginx
-        image: nginx:1.27
+      - name: server
+        image: nginx:1.27-alpine
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
         ports:
-        - containerPort: 80
-          name: http
+        - containerPort: 8080
+          name: http-traffic
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          failureThreshold: 30
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 2
         volumeMounts:
-        - name: data
-          mountPath: /usr/share/nginx/html
-  volumeClaimTemplates:         # иммутабельный шаблон PVC
+        - name: data-volume
+          mountPath: /var/lib/storage
+  volumeClaimTemplates:
   - metadata:
-      name: data
+      name: data-volume
     spec:
       accessModes: ["ReadWriteOnce"]
+      storageClassName: "local-storage" # On-prem класс с WaitForFirstConsumer
       resources:
         requests:
-          storage: 1Gi
+          storage: 20Gi
 ```
 
-Ключевые моменты:
+## Практические сценарии и конфигурация
 
-*   Поле `serviceName` должно указывать на реально существующий Headless Service с теми же labels, иначе DNS-идентификация не работает.
-*   Каждая реплика получит собственный PVC: `data-web-0`, `data-web-1`, `data-web-2`.
-*   Без указания `storageClassName` будет использован StorageClass по умолчанию (должен поддерживать динамический провижининг).
+### Предварительные требования для On-Premise инфраструктуры
 
-Пошаговые сценарии (персистентность, MySQL, миграция, изменение размера тома) — в **[Практическом руководстве](./statefulset_practical_guide.md)**.
+Перед развертыванием StatefulSet системный администратор и SRE обязаны обеспечить:
 
-## Практические сценарии
+1.  **Рабочий кластер Kubernetes (v1.30–v1.37+)** с функционирующим DNS-плагином (CoreDNS).
+2.  **StorageClass с динамическим провижинингом** на базе блочного CSI (Ceph RBD, TopoLVM, Linstor, Longhorn или Local Volume Provisioner). Режим привязки `volumeBindingMode: WaitForFirstConsumer` обязателен, чтобы PV создавался на том узле, куда планировщик поместил под с учетом доступных ресурсов. Подробнее: [StorageClass](../../Storage/storageclass.md).
+3.  **RBAC-полномочия:** доступ к API-группам `apps/statefulsets`, `apps/controllerrevisions`, `v1/pods`, `v1/persistentvolumeclaims` и права на просмотр `events`.
 
-### Когда выбирать StatefulSet
+### Матрица применимости рабочей нагрузки
 
-1.  **Распределенные СУБД:** PostgreSQL (в связке с Patroni/Stolon), MySQL (Galera), MongoDB (Replica Sets), Cassandra.
-2.  **Брокеры сообщений и очереди:** Kafka, RabbitMQ, ActiveMQ (требуют стабильных ID для идентификации в кластере).
-3.  **Системы консенсуса и координации:** ZooKeeper, etcd, Consul.
-4.  **Специфические нагрузки:** Приложения, использующие механизмы кворума или требующие привязки лицензий к статичному имени хоста.
+| Тип нагрузки | Рекомендуемый контроллер | Причина выбора |
+| :--- | :--- | :--- |
+| **Stateless API / Web-сервисы** | `Deployment` | Взаимозаменяемые поды, быстрый запуск, автоматический surge при rollout. См. [StatefulSet vs Deployment](./statefulset_vs_deployment.md). |
+| **СУБД с кворумом (Patroni, Galera, etcd)** | `StatefulSet` / специализированный `Operator` | Требуются стабильные сетевые имена для рафтинга/кворума и привязка персональных дисков с журналами WAL. |
+| **Брокеры очередей (Kafka, RabbitMQ)** | `StatefulSet` / `Operator` (Strimzi) | Идентификаторы брокеров (broker-id) жестко привязаны к порядковым номерам разделов и логов на диске. |
+| **Демоны мониторинга на узлах** | `DaemonSet` | Строгая привязка ровно одного экземпляра к каждому физическому серверу. |
 
-**Когда StatefulSet НЕ нужен:**
-
-*   **Stateless-микросервисы** и веб-API: хватит Deployment + Service (см. [StatefulSet vs Deployment](./statefulset_vs_deployment.md)).
-*   **Приложения с общим томом (RWX):** если все реплики читают одну директорию (CMS, файловое хранилище) и стабильные имена не важны — Deployment с одним PVC проще.
-*   **Критичные большие СУБД:** операторы (CloudNativePG, Strimzi, MongoDB Operator) поверх StatefulSet автоматизируют бэкапы и failover; часто разумнее вынести базу за пределы кластера. Рекомендации — в разделе [PV и PVC — запуск баз данных](../../Storage/pv_and_pvc.md).
-
-### Базовые операции управления
+### Базовые команды управления
 
 ```bash
-# Применение манифеста (создание или обновление)
+# Применение манифеста
 kubectl apply -f statefulset.yaml
-# → statefulset.apps/web created
+# → service/storage-node-headless created
+# → statefulset.apps/storage-node created
 
-# Просмотр списка, широкий вывод и детали
-kubectl get statefulset
-kubectl get statefulset web -o wide
-# → NAME   READY   AGE
-# → web    3/3     2m
-kubectl describe statefulset web
+# Просмотр статуса контроллера
+kubectl get statefulset storage-node -o wide
+# → NAME           READY   AGE   CONTAINERS   IMAGES
+# → storage-node   3/3     45s   server       nginx:1.27-alpine
 
-# Наблюдение за последовательным созданием подов и PVC
-kubectl get pods -w -l app=web
-# → web-0   0/1     Pending             0          0s
-# → web-0   0/1     ContainerCreating   0          0s
-# → web-0   1/1     Running             0          5s
-# → web-1   0/1     Pending             0          0s
-kubectl get pvc
-# → data-web-0   Bound   pvc-xxx   1Gi   RWO
+# Наблюдение за созданием подов с номерами и привязанных PVC
+kubectl get pods -l app.kubernetes.io/name=storage-node -L apps.kubernetes.io/pod-index
+# → NAME             READY   STATUS    RESTARTS   AGE   POD-INDEX
+# → storage-node-0   1/1     Running   0          50s   0
+# → storage-node-1   1/1     Running   0          35s   1
+# → storage-node-2   1/1     Running   0          20s   2
 
-# Получение FQDN и роли реплик (метки)
-kubectl get pods -l app=web -L apps.kubernetes.io/pod-index
+kubectl get pvc -l app.kubernetes.io/name=storage-node
+# → NAME                        STATUS   VOLUME       CAPACITY   ACCESS MODES   STORAGECLASS    AGE
+# → data-volume-storage-node-0  Bound    local-pv-01  20Gi       RWO            local-storage   52s
+# → data-volume-storage-node-1  Bound    local-pv-02  20Gi       RWO            local-storage   37s
+# → data-volume-storage-node-2  Bound    local-pv-03  20Gi       RWO            local-storage   22s
 ```
 
-Проверка прогресса и валидация (`kubectl rollout status`) разобрана в подразделе обновления ниже.
+### Канареечный релиз через `partition`
 
-### Обновление и откат версии приложения
+Механизм `spec.updateStrategy.rollingUpdate.partition` позволяет зафиксировать границу обновления по порядковому номеру:
 
 ```bash
-# Обновление образа (родственная команда для patch)
-kubectl set image statefulset/web web=nginx:1.27
-# → statefulset.apps/web image updated
+# Шаг 1: Установка partition на индекс 2 (обновится ТОЛЬКО под storage-node-2)
+kubectl patch statefulset storage-node -p '{"spec":{"updateStrategy":{"rollingUpdate":{"partition":2}}}}'
+# → statefulset.apps/storage-node patched
 
-# Отслеживание прогресса вращения (обновление идет от N-1 к 0)
-kubectl rollout status statefulset/web --timeout=180s
-# → waiting for statefulset rolling update to complete 0 pods at revision 2...
-# → statefulset rolling update complete
+# Шаг 2: Обновление версии образа приложения
+kubectl set image statefulset/storage-node server=nginx:1.27.4-alpine
+# → statefulset.apps/storage-node image updated
 
-# История ревизий
-kubectl rollout history statefulset/web
-# → statefulset.apps/web
+# Шаг 3: Проверка статуса (только storage-node-2 пересоздается на новой версии)
+kubectl rollout status statefulset/storage-node
+# → Waiting for partitioned rollout to finish: 1 out of 3 new pods have been updated...
+
+# Проверка версий образов по репликам
+kubectl get pods -l app.kubernetes.io/name=storage-node -o custom-columns=NAME:.metadata.name,IMAGE:.spec.containers[0].image
+# → NAME             IMAGE
+# → storage-node-0   nginx:1.27-alpine
+# → storage-node-1   nginx:1.27-alpine
+# → storage-node-2   nginx:1.27.4-alpine
+
+# Шаг 4: Снятие барьера (раскатка на поды 1 и 0)
+kubectl patch statefulset storage-node -p '{"spec":{"updateStrategy":{"rollingUpdate":{"partition":0}}}}'
+# → statefulset.apps/storage-node patched
+
+kubectl rollout status statefulset/storage-node
+# → statefulset rolling update complete 3 pods at revision storage-node-6f97d5b8c...
+```
+
+### Масштабирование и защита от конфликтов с HPA
+
+```bash
+# Масштабирование до 5 реплик (создаются по очереди 3, затем 4)
+kubectl scale statefulset storage-node --replicas=5
+# → statefulset.apps/storage-node scaled
+
+# Проверка соответствия готовых и запрошенных реплик
+kubectl get statefulset storage-node -o jsonpath='{.status.readyReplicas}/{"/"}{.spec.replicas}{"\n"}'
+# → 5/5
+```
+
+> [!WARNING]
+> Если в кластере используется `HorizontalPodAutoscaler` (HPA), поле `replicas` в манифесте репозитория GitOps (ArgoCD/Flux) должно быть исключено либо настроено игнорирование различий (`ignoreDifferences` по пути `/spec/replicas`). Иначе каждый GitOps-синк будет сбрасывать количество реплик к статическому числу в git.
+
+### Управление ревизиями и откат (Rollback)
+
+История конфигураций сохраняется в объектах `ControllerRevision`:
+
+```bash
+# Просмотр истории релизов
+kubectl rollout history statefulset/storage-node
+# → statefulset.apps/storage-node
 # → REVISION  CHANGE-CAUSE
 # → 1         <none>
-# → 2         kubectl set image statefulset/web web=nginx:1.27
+# → 2         kubectl set image statefulset/storage-node server=nginx:1.27.4-alpine
 
-# Откат к предыдущей ревизии
-kubectl rollout undo statefulset/web
-# → statefulset.apps/web rolled back
+# Просмотр физических объектов ревизий
+kubectl get controllerrevisions -l app.kubernetes.io/name=storage-node
+# → NAME                      CONTROLLER                     REVISION   AGE
+# → storage-node-5847dbbf78   statefulset.apps/storage-node   1          15m
+# → storage-node-6f97d5b8c    statefulset.apps/storage-node   2          5m
 
-# Откат к конкретной ревизии
-kubectl rollout undo statefulset/web --to-revision=1
-# → statefulset.apps/web rolled back
+# Откат на предыдущую стабильную ревизию
+kubectl rollout undo statefulset/storage-node --to-revision=1
+# → statefulset.apps/storage-node rolled back
 
-# Список ControllerRevision'ов (объекты истории)
-kubectl get controllerrevisions
+kubectl rollout status statefulset/storage-node --timeout=120s
+# → statefulset rolling update complete 3 pods at revision storage-node-5847dbbf78...
 ```
 
-**Меры предосторожности при обновлении:**
+### Плановое обслуживание узла (Drain) на Bare-Metal
 
-*   Используйте **Startup Probe** для приложений с длительной инициализацией (WAL replay), иначе Liveness-проба перезапустит под, а `RollingUpdate` застрянет на недоступной ревизии.
-*   Следите за `revisionHistoryLimit` (по умолчанию 10): при слишком частых деплоях старые ревизии вытесняются и откат «глубоко в историю» станет невозможен.
-
-**Канареечное обновление через `partition`:** сначала зафиксируйте обновление границей, раскатайте образ и проверьте единственный обновленный под, затем снимите границу:
+При плановом выводе сервера на обслуживание (замена RAM/диска, обновление ядра хоста) системный администратор переводит узел в режим обслуживания:
 
 ```bash
-# Заморозить обновление: применятся только индексы >= 2
-kubectl patch statefulset web -p '{"spec":{"updateStrategy":{"type":"RollingUpdate","rollingUpdate":{"partition":2}}}}'
-# → statefulset.apps/web patched
-
-kubectl set image statefulset/web web=nginx:1.28
-# → обновится только web-2
-
-# Проверка образов по репликам
-kubectl get pods -l app=web -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
-
-# Снять ограничение — продолжить обновление всех
-kubectl patch statefulset web -p '{"spec":{"updateStrategy":{"type":"RollingUpdate","rollingUpdate":{"partition":0}}}}'
+# 1. Запрет планирования новых подов и выселение существующих
+kubectl drain srv-worker-02 --ignore-daemonsets --delete-emptydir-data --timeout=10m
+# → node/srv-worker-02 cordoned
+# → evicting pod default/storage-node-1
+# → pod/storage-node-1 evicted
+# → node/srv-worker-02 drained
 ```
 
-Подробнее о стратегии и известных проблемах: **[Ключевые концепции](./statefulset_core_concepts.md)** и [Partition в Rolling Update StatefulSet](../../../CI-CD/Deployment_Strategies/rolling_update.md).
+**Эксплуатационная динамика SRE:**
+1.  API Eviction проверяет **[PodDisruptionBudget](../../Autoscaling/pod_disruption_budget.md)**. Если для StatefulSet из 3 реплик задан `minAvailable: 2`, а одна нода уже лежит, `drain` будет заблокирован, предотвращая потерю кворума.
+2.  Выселенный под `storage-node-1` удаляется на старом узле. CSI-драйвер и операционная система размонтируют том и освобождают блокировку (detach).
+3.  Планировщик размещает `storage-node-1` на другом узле `srv-worker-03`.
+4.  Том `data-volume-storage-node-1` монтируется на новый узел.
+5.  После завершения работ узел возвращается в строй:
+    ```bash
+    kubectl uncordon srv-worker-02
+    # → node/srv-worker-02 uncordoned
+    ```
 
-### Масштабирование
+Подробнее: **[Обслуживание узлов (Cordon/Drain)](../../Operations/node_maintenance.md)**.
 
-```bash
-# Увеличение/уменьшение количества реплик
-kubectl scale statefulset web --replicas=5
-# → statefulset.apps/web scaled
+### Аварийный отказ физического узла (SRE Drill)
 
-# Проверка актуального числа готовых реплик
-kubectl get statefulset web -o jsonpath='{.status.readyReplicas}/{.spec.replicas}{"\n"}'
-```
+В случае внезапного отключения питания или падения ядра физического узла Kubernetes **НЕ переносит поды StatefulSet автоматически** на другие серверы.
 
-Нюансы:
+**Почему это происходит:** Узел переходит в статус `NotReady`. Kubelet не отвечает мастер-нодам. Control Plane не знает, действительно ли сервер выключен, или произошла сетевая изоляция (network partition). Если бы контроллер запустил копию `storage-node-0` на другом сервере, а изолированный сервер продолжал работать, возникло бы состояние **Split-brain**: два процесса с одинаковой личностью одновременно писали бы в свои тома или в общее SAN-хранилище, безвозвратно разрушая базу данных.
 
-*   При масштабировании вниз удаляются реплики с наибольшими индексами; их PVC при политике по умолчанию `Retain` **сохраняются** (данные можно вернуть при подъеме).
-*   Для автоматической очистки дисков ненужных реплик задайте `persistentVolumeClaimRetentionPolicy.whenScaled: Delete` (например, для Elasticsearch).
-*   Если масштабирование управляется **HPA**, не задавайте `replicas` вручную в манифесте: повторный `kubectl apply -f statefulset.yaml` с фиксированным `replicas` перезапишет масштабирование, сделанное контроллером.
-
-### Плановая замена узла (Drain)
-
-Плановое обслуживание узла (обновление ядра, замена оборудования) выполняется командой `kubectl drain`:
+**Стандартный регламент действий инженера SRE:**
 
 ```bash
-kubectl drain node-1 --ignore-daemonsets --delete-emptydir-data --timeout=5m
-```
-
-Поведение StatefulSet при drain:
-
-1.  Поды выселяются через Eviction API с уважением к **PodDisruptionBudget** (при `minAvailable` из 3 реплик 2, drain заблокируется и будет ждать).
-2.  Контроллер пересоздает под на другом доступном узле с **тем же PVC**.
-3.  Для RWO-томов (блочные диски) новый под ждет, пока старый узел выполнит detach — задержка может достигать нескольких минут (в облачных средах 2–5 минут, локально меньше).
-4.  После работ узел возвращается через `kubectl uncordon node-1`.
-
-Детали команд, флагов и ограничений: **[Обслуживание узлов (Cordon/Drain)](../../Operations/node_maintenance.md)**, **[PodDisruptionBudget](../../Autoscaling/pod_disruption_budget.md)**.
-
-### Отказ узла (неплановый)
-
-При внезапном отказе узла Kubernetes **не переносит под StatefulSet автоматически** на другой узел. Это осознанная защита от разделения мозга (Split-brain): под `db-0` не должен запуститься в двух местах одновременно и писать в один диск.
-
-**Порядок действий для SRE:**
-
-```bash
-# 1. Диагностика: узел NotReady, под застрял в Terminating/Unknown
+# 1. Диагностика состояния узлов и подов
 kubectl get nodes
-kubectl get pod web-0 -o wide
+# → NAME            STATUS     ROLES    AGE   VERSION
+# → srv-worker-01   NotReady   worker   45d   v1.32.1
 
-# 2. Если узел уже восстановился — под вернется сам, PVC не пострадал.
-#    Проверьте статус и события.
-kubectl get events --field-selector involvedObject.name=web-0
+kubectl get pods -l app.kubernetes.io/name=storage-node -o wide
+# → NAME             READY   STATUS        NODE
+# → storage-node-0   1/1     Terminating   srv-worker-01
+# → storage-node-1   1/1     Running       srv-worker-02
+# → storage-node-2   1/1     Running       srv-worker-03
 
-# 3. Если узел не вернется в кластер — безопасно подтвердите его недоступность
-#    (Non-Graceful Node Shutdown, GA v1.28).
-kubectl patch node node-1 -p '{"metadata":{"labels":{"node.kubernetes.io/out-of-service":"nodeshutdown"}}}'
-# → Контроллер безопасно отмонтирует тома и пересоздаст под на другом узле
+# 2. Аппаратное подтверждение (Fencing / IPMI / BMC):
+# Убедитесь через iLO / iDRAC / PDU, что сервер srv-worker-01 физически выключен!
+
+# 3. Наложение официального taint Non-Graceful Node Shutdown (GA с K8s v1.28):
+kubectl taint nodes srv-worker-01 node.kubernetes.io/out-of-service=nodeshutdown:NoExecute
+# → node/srv-worker-01 tainted
+
+# Результат: контроллер Kubernetes принудительно удаляет зависший под в статусе Terminating,
+# CSI-контроллер принудительно очищает VolumeAttachment, и storage-node-0 поднимается на srv-worker-03.
+
+# 4. После восстановления/замены оборудования и ПЕРЕД включением сервера — обязательно снимите taint:
+kubectl taint nodes srv-worker-01 node.kubernetes.io/out-of-service:NoExecute-
+# → node/srv-worker-01 untainted
 ```
 
-**Принудительное удаление — крайняя мера:**
+> [!CAUTION]
+> **Опасность `kubectl delete pod --force --grace-period=0`:**
+> Выполнение принудительного удаления пода без предварительного наложения `out-of-service` taint или без аппаратного подтверждения отключения питания (STONITH) категорически запрещено на блочных сетевых хранилищах (iSCSI, FC, Ceph RBD). Это приводит к ошибке `Multi-Attach error for volume` и повреждению файловой системы тома.
+
+### Безопасное удаление и зачистка ресурсов
 
 ```bash
-# НЕ использовать без понимания последствий: может привести к Multi-Attach
-# и повреждению данных, если старый узел все еще жив.
-kubectl delete pod web-0 --force --grace-period=0
+# 1. Штатное удаление контроллера (поды удаляются, PVC по умолчанию СОХРАНЯЮТСЯ)
+kubectl delete statefulset storage-node
+# → statefulset.apps "storage-node" deleted
+
+# 2. Каскадное удаление контроллера с СОХРАНЕНИЕМ работающих подов (Orphan mode):
+kubectl delete statefulset storage-node --cascade=orphan
+# → statefulset.apps "storage-node" deleted
+# Поды storage-node-0, storage-node-1 продолжают работать без контроллера.
+
+# 3. Ручное удаление отдельных PVC после переноса или архивации данных:
+kubectl delete pvc data-volume-storage-node-0 data-volume-storage-node-1 data-volume-storage-node-2
+# → persistentvolumeclaim "data-volume-storage-node-0" deleted
+# → persistentvolumeclaim "data-volume-storage-node-1" deleted
+# → persistentvolumeclaim "data-volume-storage-node-2" deleted
 ```
 
-`--force` допустим только когда узел гарантированно не вернется и отмонтирование подтверждено. Подробнее о безопасном force-delete и разборе `Terminating`: **[Практическое руководство](./statefulset_practical_guide.md)**, **[Высокая доступность](../high_availability.md)**.
+### Резервное копирование и Disaster Recovery (DR)
 
-### Очистка и удаление
+Для On-Premise инфраструктуры резервное копирование StatefulSet разделяется на два уровня:
 
-```bash
-# Удаление StatefulSet: поды удаляются, PVC по умолчанию СОХРАНЯЮТСЯ.
-kubectl delete statefulset web
-# → statefulset.apps "web" deleted
+1.  **Уровень метаданных (Декларативное состояние):** Манифесты StatefulSet, Headless Service, ConfigMap и Secret хранятся в репозитории Git (GitOps). Состояние кластера etcd регулярно бэкапится утилитой `etcdctl snapshot save`. Подробнее: **[Резервное копирование и аварийное восстановление в Kubernetes](../../Operations/backup-strategies.md)**.
+2.  **Уровень данных (Хранилище PVC):**
+    *   **CSI VolumeSnapshots:** создание консистентных снимков дисков через Kubernetes API (`VolumeSnapshot` / `VolumeSnapshotClass`).
+    *   **Утилиты резервного копирования:** Velero с плагинами CSI для On-Premise S3/NFS хранилищ. Обязательно использование `pre-backup` и `post-backup` хуков (например, выполнение `fsync` и перевод БД в режим `pg_start_backup`).
+    *   **Логические дампы:** выделенные CronJob с выгрузкой дампов (`pg_dump`, `mariadb-dump`) на внешние S3/NFS хранилища.
 
-# Удаление «осиротевшего» контроллера с сохранением работающих подов:
-kubectl delete statefulset web --cascade=orphan
+## Диагностика и устранение неполадок
 
-# Удаление отдельного пода: контроллер пересоздаст его с тем же именем и PVC
-kubectl delete pod web-0
+### Матрица диагностических сценариев SRE
 
-# Удаление PVC (данные уничтожаются вместе с PV при reclaimPolicy: Delete)
-kubectl delete pvc data-web-0
-```
-
-Рекомендации для Production:
-
-*   Перед удалением StatefulSet всегда проверяйте политику `persistentVolumeClaimRetentionPolicy.whenDeleted` (по умолчанию `Retain` — диски останутся).
-*   Для полной очистки окружения удаляйте в порядке «StatefulSet → PVC» и, при необходимости, снапшоты и PV.
-*   При GitOps-подходе удаление выполняется через CR по намерению репозитория, а не ручными командами.
-
-### Резервное копирование и аварийное восстановление
-
-Состояние StatefulSet-приложения лежит в PVC, поэтому резервное копирование должно сочетать **данные и метаданные**:
-
-*   **Метаданные кластера:** бэкап etcd или декларативное состояние в Git (GitOps). StatefulSet, PVC, CDR и политики восстанавливаются из кода.
-*   **Данные PVC:** CSI-снапшоты (`VolumeSnapshot`), логические дампы (`pg_dump`, `mysqldump`) или Velero/Kasten с хуками консистентности (pre/post-backup).
-*   **Кросс-кластерная миграция:** поле `spec.ordinals.start` позволяет переносить тяжелые БД частями — сначала реплики 3–5, затем 0–2, чтобы не поднимать весь кластер разом.
-
-Полная методология и сценарии: **[Резервное копирование и аварийное восстановление в Kubernetes](../../Operations/backup-strategies.md)** и **[Внутренние механизмы и снапшоты PV/PVC](../../Storage/pv_and_pvc.md)**.
-
-### Мониторинг и алертинг
-
-Для контроля доступности и хода обновлений через `kube-state-metrics` отслеживайте количество готовых реплик, застрявшие обновления (`observed_generation` vs `updated_replicas`) и рост числа ControllerRevision. Набор готовых Prometheus-алертов и ServiceMonitor — в **[Лучших практиках](./statefulset_best_practices.md)**.
-
-### Диагностика и устранение неполадок
-
-| Симптом | Вероятная причина | Первичная проверка и решение |
+| Симптом | Первопричина | Порядок проверки и решение |
 | :--- | :--- | :--- |
-| Под в `Pending` | PVC в `Pending` (нет StorageClass/свободного PV), не выполнены требования планировщика, уперлись в анти-аффинити | `kubectl get pvc` → `kubectl describe pvc <имя>` → `describe pod`; проверить StorageClass. Подробнее: [Проблемы с PVC](../../Troubleshooting/Common_Errors/CreateContainerConfigError/pvc_issues.md), [PV и PVC](../../Storage/pv_and_pvc.md) |
-| Под в `ContainerCreating` | Долгий attach/detach RWO-тома, Multi-Attach (диск занят старым подом), сбой CSI | `kubectl describe pod <имя>` (события); убедиться, что старый под полностью удален |
-| `CrashLoopBackOff` | Ошибка приложения, неверные права на том (`fsGroup`), некорректные пробы | `kubectl logs <под>`; проверить пробы: [Пробы (Probes)](../probes.md) |
-| RollingUpdate застрял | Обновленный под никогда не становится `Ready` (плохой образ/конфиг) | Вернуть шаблон (`rollout undo`) **и вручную удалить** поды с плохой ревизией (`kubectl delete pod <имя>`). Известный баг #67250 |
-| Под вечно в `Terminating` | Узел недоступен, том не отмонтируется | Пометка узла `out-of-service` (v1.28+) с последующим безопасным пересозданием; force-delete — только как крайняя мера (раздел «Отказ узла» выше) |
-| Нет DNS-имени у пода | Headless Service не создан, неверный `serviceName`, не совпадают labels, поды не публикуются до Ready | `nslookup`/`dig` из debug-пода; проверить `publishNotReadyAddresses` для бутстрапа. Подробнее: [Headless Service](../../Networking/Service/service_type_headless.md) |
-| PVC не удаляется после scale-down | Политика по умолчанию `Retain` у `whenScaled` | Это безопасное поведение; для автоочистки задать `whenScaled: Delete` |
-| Ошибки `CreateContainerConfigError` | Отсутствует ConfigMap/Secret, не хватает RBAC | [ConfigMap](../../Troubleshooting/Common_Errors/CreateContainerConfigError/configmap_issues.md), [Secret](../../Troubleshooting/Common_Errors/CreateContainerConfigError/secret_issues.md), [RBAC](../../Troubleshooting/Common_Errors/CreateContainerConfigError/rbac_issues.md) |
-| `kubectl apply` отклоняет манифест | Изменены иммутабельные поля: `selector`, `volumeClaimTemplates` | Пересоздать объект после переноса данных или выполнить процедуру изменения размера тома (см. [Практическое руководство](./statefulset_practical_guide.md)) |
+| **Под застрял в `Pending`** | 1. PVC не привязался (нет свободных PV, не совпал StorageClass).<br>2. `WaitForFirstConsumer`: том ждет планирования пода, но планировщик не может найти ноду по `podAntiAffinity` или нехватке CPU/RAM. | 1. `kubectl describe pod <имя>` → смотрим секцию Events.<br>2. `kubectl get pvc -l app=...` → если PVC в `Pending`, делаем `kubectl describe pvc <имя>`.<br>3. Проверить доступность дискового пула на хостах и ресурсы нод: [Проблемы с PVC](../../Troubleshooting/Common_Errors/CreateContainerConfigError/pvc_issues.md). |
+| **Под в `ContainerCreating` / `FailedAttachVolume`** | Блокировка тома старым узлом (Multi-Attach). Старый под не завершился, а том уже пытается подключиться к новому серверу. | 1. Проверить статус объектов `VolumeAttachment`: `kubectl get volumeattachments`.<br>2. На упавшем узле принудительно применить taint `node.kubernetes.io/out-of-service=nodeshutdown:NoExecute`. |
+| **`CrashLoopBackOff` с `Permission Denied`** | Пользователь контейнера (`runAsUser: 10001`) не имеет прав на запись в смонтированный том (владелец тома `root:root`). | Задать в `spec.template.spec.securityContext` параметр `fsGroup: 10001` и `fsGroupChangePolicy: "OnRootMismatch"`. Kubelet автоматически выставит владельца на корень смонтированного диска. |
+| **Зависший `RollingUpdate`** | Обновленный под `web-2` падает или не проходит Readiness Probe. Контроллер ждет его готовности и не идет обновлять `web-1` и `web-0`. | 1. Снять логи сбойного пода: `kubectl logs web-2`.<br>2. Откатить манифест: `kubectl rollout undo statefulset/web`.<br>3. **Критический нюанс (баг [#67250](https://github.com/kubernetes/kubernetes/issues/67250)):** если сбойный под находится в CrashLoop, после отката контроллер не всегда перезапускает его автоматически — выполните ручной `kubectl delete pod web-2`. |
+| **Под застрял в `Terminating`** | Узел потерял связь с Control Plane; unmount тома заблокирован зависшим вводом-выводом (I/O hang на уровне ядра/NFS/CSI). | Ни в коем случае не удалять force сразу! Выполнить протокол `out-of-service` taint после подтверждения остановки ОС на сервере. |
+| **Нет DNS-записи у пода** | 1. Headless Service не создан или его `metadata.name` не совпадает с `spec.serviceName` в StatefulSet.<br>2. Поды не стартовали, а `publishNotReadyAddresses: true` не выставлен. | Проверить соответствие `spec.serviceName` и наличие Headless Service: `kubectl get svc <serviceName>`. Проверить DNS-записи через утилиту `dig` из временного отладочного пода: `kubectl run debug --rm -it --image=alpine -- nslookup <pod>.<svc>`. |
+| **Ошибка при `kubectl apply`:** `field is immutable` | Попытка изменить иммутабельные поля: `spec.volumeClaimTemplates` или `spec.selector`. | Kubernetes API запрещает изменение этих полей на лету. Изменение размера диска выполняется через редактирование существующих PVC; изменение селектора требует пересоздания объекта с миграцией данных. |
+
+### Полезные команды глубокой диагностики
+
+```bash
+# Просмотр событий жизненного цикла пода и блокировок хранилища
+kubectl get events --field-selector involvedObject.name=storage-node-0 --sort-by='.lastTimestamp'
+
+# Проверка существующих связок томов и нод на уровне CSI
+kubectl get volumeattachments -o wide
+
+# Проверка внутреннего разрешения DNS из кластера
+kubectl run -it --rm debug-dns --image=curlimages/curl --restart=Never -- \
+  nslookup storage-node-0.storage-node-headless.default.svc.cluster.local
+# → Server:    10.96.0.10
+# → Address:   10.96.0.10#53
+# → Name:      storage-node-0.storage-node-headless.default.svc.cluster.local
+# → Address:   10.244.1.15
+```
+
+## Рекомендации и Best Practices
+
+### 1. Хранилище на Bare-Metal / On-Premise
+
+*   **Всегда используйте `volumeBindingMode: WaitForFirstConsumer`** в StorageClass. Без этого PVC связывается с PV на произвольной ноде еще до того, как планировщик вычислит свободную память или сработает `podAntiAffinity`, что приведет к вечному статусу `Pending`.
+*   **Изоляция дискового ввода-вывода:** Для баз данных с интенсивной записью WAL (PostgreSQL, Kafka, etcd) выделяйте физические NVMe-накопители с прямым пробросом через Local Volume Provisioner или TopoLVM. Избегайте использования сетевых файловых систем (NFS) для транзакционных СУБД из-за рисков рассинхронизации блокировок POSIX и деградации производительности `fsync`. Подробнее: **[Local PV vs CSI](./statefulset_local_pv_vs_csi.md)**.
+*   **Контроль размера PVC:** Заранее планируйте расширение дисков (`allowVolumeExpansion: true` в StorageClass).
+
+### 2. Высокая доступность и планирование подов
+
+*   **Распределение по серверам (Anti-Affinity):** Никогда не размещайте реплики одного StatefulSet на одном физическом сервере.
+    ```yaml
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values: ["storage-node"]
+          topologyKey: "kubernetes.io/hostname"
+    ```
+*   **Распределение по стойкам / серверам питания:** Используйте `topologySpreadConstraints` с топологическими ключами физической инфраструктуры (`topology.kubernetes.io/zone` или кастомными метками серверных шкафов `rack: rack-1`).
+*   **Защита кворума через PDB:** Создавайте манифест `PodDisruptionBudget` для каждого StatefulSet. Для кластера из 3 реплик задавайте `maxUnavailable: 1` или `minAvailable: 2`. Это защитит кластер от разрушения кворума при одновременном выполнении drain на нескольких узлах. Подробнее: **[PodDisruptionBudget](../../Autoscaling/pod_disruption_budget.md)**.
+
+### 3. Пробы и Graceful Shutdown
+
+*   **Startup Probe для тяжелого старта:** Для баз данных, выполняющих проверку целостности или накат журнала WAL при перезапуске, обязательна `startupProbe` с большим порогом ошибок (`failureThreshold: 30`, `periodSeconds: 10`). Без нее стандартная `livenessProbe` начнет убивать под во время восстановления данных, создавая бесконечный цикл перезапусков.
+*   **Увеличенный `terminationGracePeriodSeconds`:** Значение по умолчанию (30 секунд) недостаточно для корректной остановки СУБД. Выставляйте от 60 до 300 секунд, чтобы база успела сбросить грязные страницы памяти на диск и корректно закрыть клиентские соединения.
+*   **Использование `preStop` хуков:** Для баз данных с репликацией запускайте в `preStop` скрипт понижения статуса мастера (demote/failover), чтобы передать роль лидера до того, как текущий под перестанет отвечать.
+
+### 4. Безопасность и разграничение прав
+
+*   **Не запускайте поды от `root`:** Указывайте `runAsNonRoot: true` и фиксированный `runAsUser`.
+*   **Управление правами на смонтированный том:** Всегда декларируйте `fsGroup` в `securityContext` пода. Это гарантирует, что том, смонтированный от блочного CSI, получит нужные права доступа для приложения.
+*   **Политика `fsGroupChangePolicy: "OnRootMismatch"`:** Предотвращает медленный рекурсивный `chown` миллионов файлов на диске при каждом перезапуске пода, сокращая время старта контейнера с десятков минут до секунд.
+
+### 5. Эксплуатация в GitOps (ArgoCD / Flux)
+
+*   **Исключение `spec.replicas`:** При динамическом масштабировании настраивайте `ignoreDifferences` в ArgoCD Application, чтобы контроллер непрерывной доставки не откатывал число подов назад.
+*   **Управление ревизиями:** Не редактируйте объекты `ControllerRevision` вручную. Все обновления конфигураций шаблона должны проводиться через единый источник правды (git commit).
+
+Подробный разбор практик см. в документе **[Лучшие практики StatefulSet](./statefulset_best_practices.md)**.
 
 ## Дополнительная информация
 
-### Возможности и изменения по версиям
+### Возможности и хронология развития механизма в Kubernetes
 
-*   **`minReadySeconds`** (стабильно v1.25): задержка между сменой подов при обновлении, позволяющая отсекать «разогревающиеся» реплики.
-*   **Non-Graceful Node Shutdown** (GA v1.28): безопасное подтверждение недоступности узла через метку `node.kubernetes.io/out-of-service` — решает проблему зависших томов RWO.
-*   **Произвольный старт индексов (`ordinals`)** (GA v1.31): возможность начать нумерацию подов не с 0, а с другого числа — для миграции между кластерами и частичного переноса тяжелых БД.
-*   **Очистка PVC (`persistentVolumeClaimRetentionPolicy`)** (GA v1.32): автоматическое удаление дисков при удалении StatefulSet (`whenDeleted`) или уменьшении реплик (`whenScaled`). По умолчанию `Retain` (сохранять).
-*   **Метка индекса пода** `apps.kubernetes.io/pod-index` (GA v1.32): автоматически добавляется к каждому поду; удобна для фильтрации конкретных экземпляров в Service, мониторинге или логах.
-*   **Параллельное обновление (`rollingUpdate.maxUnavailable`)** (Beta v1.35, включено по умолчанию): позволяет RollingUpdate обновлять несколько подов одновременно, сокращая время простоя при больших масштабах. Не путать с `maxSurge` из Deployment — лишние экземпляры создавать нельзя из-за привязки к дискам.
-*   **Стратегия обновления `Recreate`** (Alpha v1.37, за feature gate `StatefulSetRecreateStrategy`): одновременное удаление всех подов с последующим пересозданием — для приложений, несовместимых с двумя параллельными ревизиями.
+*   **`minReadySeconds`** (GA v1.25): обязательная пауза между обновлением подов для стабилизации прогрева кэшей и репликации.
+*   **Non-Graceful Node Shutdown** (GA v1.28): штатная обработка аварийного падения серверов через taint `node.kubernetes.io/out-of-service=nodeshutdown:NoExecute` с автоматической очисткой томов CSI.
+*   **Произвольный стартовый индекс (`ordinals.start`)** (GA v1.31): возможность задавать начальный номер подов (например, реплики 3..5), что упрощает миграцию шардов между кластерами.
+*   **Политика сохранения PVC (`persistentVolumeClaimRetentionPolicy`)** (GA v1.32): декларативное управление удалением PVC при `whenDeleted` и `whenScaled`.
+*   **Метка индекса пода (`apps.kubernetes.io/pod-index`)** (GA v1.32): системная метка для прямой адресации трафика и алертинга.
+*   **Параллельное обновление (`maxUnavailable`)** (Beta v1.35, дефолт `1` в v1.37): контролируемое ускорение rollout для больших кластеров.
+*   **Стратегия `Recreate`** (Alpha v1.37, gate `StatefulSetRecreateStrategy`): полная остановка всех подов перед созданием новых для несовместимых версий ПО.
 
-### Ограничения и особенности
+### Архитектурные ограничения и подводные камни
 
-*   **Защита от повреждения данных:** При падении узла Kubernetes не переносит поды StatefulSet автоматически. Это сделано для исключения ситуации "Split-brain", когда два пода могут пытаться писать на один диск одновременно.
-*   **Ручное вмешательство:** В случае отказа узла может потребоваться удаление пода вручную или использование механизма **Non-Graceful Node Shutdown** для принудительного переноса.
-*   **Headless Service:** Создание StatefulSet без указания `serviceName` и наличия соответствующего Headless Service лишает его преимуществ стабильной DNS-идентификации.
-*   **Иммутабельные поля:** `selector.matchLabels` и `volumeClaimTemplates` нельзя изменить после создания. Изменение размера тома выполняется каскадно (патч PVC + пересоздание контроллера) — см. [Практическое руководство](./statefulset_practical_guide.md).
-*   **`maxUnavailable > 1`** ускоряет обновление, но нарушает строгую упорядоченность готовности реплик — не подходит для систем с требованием строгой очередности (синхронная репликация, каскадный bootstrap).
-*   **Координатор в индексе 0:** в большинстве распределенных систем роль лидера/координатора привязана к поду с индексом 0. При масштабировании вниз он удаляется последним, но после полного останова кластера восстановление кворума начинается именно с него.
-*   **HPA и `replicas`:** если масштабированием управляет HorizontalPodAutoscaler, не указывайте `replicas` в манифестах — `kubectl apply` перезапишет текущее масштабирование.
-*   **ControllerRevision:** объекты истории служат только для отслеживания и отката. Не редактируйте их вручную и не используйте как бэкап; `revisionHistoryLimit: 0` полностью отключает возможность отката.
-*   **StorageClass:** для `volumeClaimTemplates` требуется динамический провижининг; для больших OLTP-нагрузок предпочтительны локальные диски и `volumeBindingMode: WaitForFirstConsumer` (см. [Лучшие практики](./statefulset_best_practices.md)).
+1.  **Отсутствие автоматического Failover при падении ноды:** StatefulSet проектировался исходя из приоритета **целостности данных (Consistency)** над доступностью (Availability) согласно CAP-теореме. Автоматический перенос пода без аппаратного подтверждения отключения старого узла запрещен для предотвращения Split-brain.
+2.  **Иммутабельность `volumeClaimTemplates`:** Шаблоны PVC нельзя модифицировать после применения. Если требуется сменить StorageClass или базовую конфигурацию дисков, требуется миграция данных или воссоздание объекта с сохранением существующих PV.
+3.  **Смерть лидера с индексом `0`:** Во многих самописных скриптах роль мастера жестко завязана на под `*-0`. При обновлении по стратегии `RollingUpdate` под `0` обновляется **последним**, но при начальном запуске создается первым. Архитектура распределенного софта должна опираться на динамические выборы лидера (etcd, Raft, Paxos), а не на хардкод индекса.
+4.  **Сложность изменения размера томов:** Увеличение размера PVC поддерживается современными CSI-драйверами онлайн, но сам манифест StatefulSet не принимает новое значение `spec.volumeClaimTemplates.resources.requests.storage`. Процедура выполняется редактированием конкретных объектов PVC и каскадным пересозданием StatefulSet при необходимости.
+
+### Чек-лист проверки готовности StatefulSet к Production
+
+Перед запуском критичных баз данных и брокеров в On-Premise кластере убедитесь, что:
+
+- [ ] Создан Headless Service (`clusterIP: None`) с флагом `publishNotReadyAddresses: true`.
+- [ ] В StorageClass используется режим `volumeBindingMode: WaitForFirstConsumer`.
+- [ ] Настроены жесткие `resources.requests` и `resources.limits` по CPU и Memory (QoS: Guaranteed).
+- [ ] Настроена `startupProbe` для предотвращения рестарта подов во время восстановления данных и WAL replay.
+- [ ] Значение `terminationGracePeriodSeconds` увеличено до 60–300 секунд под требования СУБД.
+- [ ] В `securityContext` пода заданы `fsGroup` и `fsGroupChangePolicy: "OnRootMismatch"`.
+- [ ] Настроен `podAntiAffinity` для запрета запуска двух реплик на одном физическом сервере.
+- [ ] Создан `PodDisruptionBudget` с защитой кворума (`maxUnavailable: 1` или `minAvailable: 2`).
+- [ ] Протестирован сценарий планового обслуживания (`kubectl drain`) узла.
+- [ ] Отработан регламент аварийного восстановления упавшего сервера с использованием `out-of-service` taint.
+- [ ] Регламентировано резервное копирование (CSI VolumeSnapshots + логические дампы баз данных).
 
 ### См. также
 
-*   **[Ключевые концепции](./statefulset_core_concepts.md)** — глубокий разбор механизмов идентификации, хранения и стратегий обновления.
-*   **[StatefulSet vs Deployment](./statefulset_vs_deployment.md)** — подробная таблица сравнения и критерии выбора контроллера.
-*   **[Лучшие практики](./statefulset_best_practices.md)** — рекомендации по настройке HA, безопасности и мониторинга.
-*   **[Практическое руководство](./statefulset_practical_guide.md)** — пошаговое развертывание с примерами YAML и устранением неполадок.
-*   **[Local PV vs CSI](./statefulset_local_pv_vs_csi.md)** — выбор хранилища для БД.
-*   **[Exporter Sidecar](./statefulset_exporter_sidecar.md)** — мониторинг БД через Prometheus.
-
-### Чек-лист понимания StatefulSet
-
-Перед работой с StatefulSet в production убедитесь, что вы можете:
-
-1.  **Объяснить разницу** Deployment vs StatefulSet конкретными примерами
-2.  **Нарисовать архитектуру**: StatefulSet + Headless Service + PVC + StorageClass
-3.  **Описать жизненный цикл** пода: создание → Ready → обновление → завершение
-4.  **Объяснить, почему** StatefulSet не делает automatic failover (защита от Split-brain)
-5.  **Назвать 3 стратегии** обновления и их trade-offs (RollingUpdate, OnDelete, Recreate)
-6.  **Описать процедуру** безопасного обновления PostgreSQL
-7.  **Объяснить роль** PDB и anti-affinity в HA
-8.  **Настроить Canary-обновление** через `partition`
-9.  **Описать процедуру** восстановления после падения узла (taint `out-of-service`)
-10. **Назвать отличия** `maxSurge` (Deployment) и `maxUnavailable` (StatefulSet)
-11. **Объяснить, когда** нужен Operator, а когда достаточно голого StatefulSet
-12. **Описать, как** интегрировать StatefulSet с GitOps (ArgoCD/Flux) без потери данных
+*   **[Ключевые концепции StatefulSet](./statefulset_core_concepts.md)** — архитектурные механизмы идентификации, сетевые FQDN, жизненный цикл и спецификация.
+*   **[StatefulSet vs Deployment](./statefulset_vs_deployment.md)** — детальный сравнительный анализ, матрица выбора и сценарий миграции нагрузки.
+*   **[Лучшие практики StatefulSet](./statefulset_best_practices.md)** — руководство по обеспечению высокой доступности, безопасности и мониторингу в On-Premise кластерах.
+*   **[Практическое руководство](./statefulset_practical_guide.md)** — развертывание кластеров Nginx и MySQL, изменение размера томов и force-delete учения.
+*   **[Local PV vs CSI](./statefulset_local_pv_vs_csi.md)** — выбор между локальными дисками и распределенным сетевым хранилищем.
+*   **[Sidecar-контейнеры экспортеров](./statefulset_exporter_sidecar.md)** — интеграция Prometheus-экспортеров с подами StatefulSet.
+*   **[Headless Service](../../Networking/Service/service_type_headless.md)** — принципы функционирования headless-сервисов и CoreDNS.
+*   **[Обслуживание узлов (Cordon/Drain)](../../Operations/node_maintenance.md)** — регламент вывода физических серверов на техническое обслуживание.
+*   **[PodDisruptionBudget](../../Autoscaling/pod_disruption_budget.md)** — защита кворума и допустимый уровень недоступности подов.
+*   **[Резервное копирование и аварийное восстановление](../../Operations/backup-strategies.md)** — стратегии создания бэкапов etcd и дисков PVC.

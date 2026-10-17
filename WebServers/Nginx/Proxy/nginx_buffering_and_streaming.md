@@ -688,6 +688,8 @@ nginx: [emerg] "proxy_busy_buffers_size" must be less than the size of all "prox
 
 ### Взаимосвязи в базе знаний
 
+- **[Архитектура и ядро HTTP Reverse Proxy](./nginx_reverse_proxy_core.md)** — фундаментальные правила `proxy_pass`, трансформация URI, сброс наследования заголовков, куки и UDS.
+- **[Разделение трафика и теневое зеркалирование](./nginx_traffic_mirroring_and_splitting.md)** — канареечные релизы (`split_clients`) и теневой трафик (`mirror`).
 - **[Практическая конфигурация балансировки](./Load_Balancing/practical_configuration.md)** — реализация балансировки нагрузки upstream, пулы `keepalive` и тайм-ауты соединений.
 - **[Обзор концепций балансировки L7](./Load_Balancing/overview_concepts.md)** — архитектура обработки запросов на прикладном уровне L7 и жизненный цикл соединений.
 - **[Проверка состояния и мониторинг балансировки](./Load_Balancing/health_checks_and_monitoring.md)** — поведение директивы `proxy_next_upstream` и влияние буферизации на отказоустойчивость.

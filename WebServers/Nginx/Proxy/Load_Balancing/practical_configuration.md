@@ -700,6 +700,8 @@ for pid in $(pgrep -f "nginx: worker"); do cat /proc/$pid/limits | grep "Max ope
 ### См. также
 
 - [Обзор концепций балансировки L7](./overview_concepts.md) — базовые архитектурные принципы, событийно-ориентированная модель и жизненный цикл запросов.
+- [Архитектура и ядро HTTP Reverse Proxy](../nginx_reverse_proxy_core.md) — фундаментальные правила `proxy_pass`, трансформация URI, сброс наследования заголовков, куки и UDS.
+- [Разделение трафика и теневое зеркалирование](../nginx_traffic_mirroring_and_splitting.md) — канареечные релизы (`split_clients`) и теневой трафик (`mirror`).
 - [Алгоритмы балансировки нагрузки Nginx](./algorithms.md) — математика и конфигурация Round Robin, Least Connections, Hash, IP Hash, Random.
 - [Health Checks и мониторинг](./health_checks_and_monitoring.md) — пассивные и активные проверки жизнеспособности серверов, телеметрия VTS и Prometheus.
 - [Динамическое разрешение DNS в Upstream](./dynamic_dns_resolution.md) — отслеживание динамических IP-адресов через директивы `resolver` и `resolve`.

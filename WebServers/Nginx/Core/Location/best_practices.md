@@ -258,6 +258,75 @@ location /uploads/ {
 }
 ```
 
+#### Архитектурная проблема «If is Evil» внутри location
+
+Использование директивы `if` внутри блока `location` — один из наиболее критичных архитектурных антипаттернов в Nginx (подробнее — в **[Правила перезаписи и try_files в Nginx](../nginx_rewrite_rules_and_try_files.md)**).
+
+**Механизм дефекта:**
+Директива `if` принадлежит модулю `ngx_http_rewrite_module` и отрабатывает на фазе `REWRITE`. Помещенная внутрь `location`, она создает **скрытый неявный вложенный location**. При истинности условия запрос переносится в этот скрытый блок, где:
+- Директивы генерации контента (`proxy_pass`, `fastcgi_pass`, `try_files`, `alias`) родительского блока не наследуются предсказуемым образом;
+- Поведение Nginx становится недетерминированным: от игнорирования директив и отдачи 404 до аварийного завершения рабочего процесса (Segmentation Fault) из-за повреждения структур памяти `ngx_http_request_t`.
+
+**Правило безопасности:**
+Внутри блока `location` в теле `if` **допустимо использовать исключительно две директивы:**
+1. `return ...;`
+2. `rewrite ... last/break;`
+
+Любые попытки поместить внутрь `if` директивы `proxy_pass`, `try_files` или `add_header` в промышленной эксплуатации категорически запрещены. Для разветвления логики следует использовать декларативные блоки `map` на уровне `http` либо разделять конфигурацию на независимые блоки `location`.
+
+#### Смешанная авторизация через `satisfy any`
+
+По умолчанию в Nginx активен режим `satisfy all;`, требующий успешного прохождения проверок всех активных модулей доступа (и IP-фильтрации `allow/deny`, и аутентификации `auth_basic`).
+
+Для сценариев, когда служебные эндпоинты (`/admin`, `/metrics`, `/debug`) должны быть доступны доверенным подсетям без пароля, но требовать HTTP Basic Auth для внешних подключений, используется директива `satisfy any;` (подробнее — в **[Руководство по безопасности Nginx](../../Security/nginx_security_guide.md)**):
+
+```nginx
+location /internal-portal/ {
+    satisfy any;
+
+    # Доверенные офисные сети и локалхост проходят без пароля
+    allow 127.0.0.1;
+    allow 192.168.10.0/24;
+    allow 10.50.0.0/16;
+    deny all;
+
+    # Для всех остальных источников обязателен ввод пароля
+    auth_basic           "Internal Restricted Area";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    proxy_pass http://internal_service;
+}
+```
+
+#### Риски ReDoS (Regular Expression Denial of Service) в воркерах
+
+Архитектура Nginx построена на однопоточном неблокирующем цикле событий (Event Loop на базе `epoll` в Linux). Если в блоке `location ~` используется сложное регулярное выражение с вложенными квантификаторами и неоднозначностями (например, `^/api/(.+)+$`), библиотека PCRE переходит в режим катастрофического возврата (Catastrophic Backtracking).
+
+**Последствия для SRE/DevOps:**
+- Вычисление регулярного выражения выполняется **синхронно в главном потоке воркера**;
+- Процесс утилизирует 100% CPU одного ядра на десятки секунд или минут;
+- Воркер полностью блокируется и перестает обрабатывать сетевые события epoll для тысяч других подключенных клиентов (Denial of Service всего инстанса).
+
+**Меры защиты:**
+1. Избегать жадных квантификаторов `.*` и вложенных групп `(a+)+`.
+2. Включать JIT-компиляцию регулярных выражений: `pcre_jit on;` в глобальном контексте.
+3. Везде, где это возможно, заменять регулярные выражения на префиксные блоки `location ^~ /path/`.
+
+#### Восстановление Real IP (`real_ip_header`) для списков доступа
+
+Если Nginx размещен за L4/L7-балансировщиком, WAF или проксирующим шлюзом, переменная `$remote_addr` по умолчанию содержит IP-адрес этого балансировщика, а не клиента.
+
+**Риски в `location`:**
+- Директивы `allow` и `deny` внутри `location` проверяют `$remote_addr`. Без настройки модуля `ngx_http_realip_module` правила `allow 192.168.1.50; deny all;` заблокируют доверенного клиента или откроют доступ всему миру через адрес балансировщика.
+- Зоны ограничения частоты `limit_req_zone $binary_remote_addr` объединят весь входящий трафик компании в один общий бакет и вызовут массовый отказ в обслуживании (HTTP 429).
+
+Обязательная настройка (подробнее — в **[Руководство по безопасности Nginx](../../Security/nginx_security_guide.md)**):
+```nginx
+set_real_ip_from 10.0.0.0/8;        # Доверенная подсеть балансировщиков
+real_ip_header   X-Forwarded-For;   # Источник клиентского IP
+real_ip_recursive on;               # Игнорирование доверенных промежуточных узлов
+```
+
 ---
 
 ### Управление конфигурацией
@@ -447,24 +516,36 @@ done | sort | uniq -c
 
 ### Сценарий 3: Защищенный Healthcheck-эндпоинт для мониторинга (SRE)
 
-**Контекст:** Мониторинг жизнеспособности (liveness probe) узла Nginx системами Prometheus/Zabbix. Эндпоинт должен быть легковесным, не писать в access-лог и быть изолированным от внешнего мира.
+**Контекст:** Мониторинг жизнеспособности (liveness probe) узла Nginx системами Prometheus/Zabbix. Эндпоинт должен быть легковесным, не засорять дисковую подсистему успешными 200 OK записями (условное логирование), разрешать доверенной сети доступ без пароля, а внешним агентам — только по Basic Auth (`satisfy any`).
 
 **Конфигурация `/etc/nginx/conf.d/healthcheck.conf`:**
 
 ```nginx
+# В контексте http (или в начале файла):
+# Условное логирование: отсекаем успешные 2xx и 3xx ответы, логируем только сбои (4xx, 5xx)
+map $status $health_loggable {
+    ~^[23]  0;
+    default 1;
+}
+
 server {
     listen 80 default_server;
     server_name _;
 
     # Изолированный healthcheck с точным модификатором =
     location = /healthz {
-        # Запрет логирования регулярных проб мониторинга для экономии I/O
-        access_log off;
+        # Логирование только при возникновении сбоев
+        access_log /var/log/nginx/health_errors.log combined if=$health_loggable;
 
-        # Ограничение доступа: только localhost и подсеть мониторинга
+        # Смешанный доступ: подсеть кластера проходит без пароля,
+        # внешние зонды проверки обязаны передать Basic Auth
+        satisfy any;
         allow 127.0.0.1;
         allow 10.100.0.0/16;
         deny all;
+
+        auth_basic           "Monitoring Probe Auth";
+        auth_basic_user_file /etc/nginx/.htpasswd_monitor;
 
         default_type text/plain;
         return 200 "OK\n";
@@ -474,9 +555,14 @@ server {
     location = /nginx_status {
         stub_status;
         access_log off;
+
+        satisfy any;
         allow 127.0.0.1;
         allow 10.100.0.0/16;
         deny all;
+
+        auth_basic           "Prometheus Exporter Access";
+        auth_basic_user_file /etc/nginx/.htpasswd_monitor;
     }
 }
 ```
@@ -679,6 +765,95 @@ nginx -s reload
 
 ---
 
+### Сценарий 7: Кросс-доменные запросы (CORS) в блоке location с Preflight и валидацией Origin
+
+**Контекст:** Публичный шлюз API обслуживает SPA-фронтенды с различных доменов. Требуется настроить обработку предварительных запросов `OPTIONS` (Preflight), динамически разрешать только доверенные `Origin`, поддерживать аутентификацию по cookies (`Access-Control-Allow-Credentials`) и предотвратить затирание заголовков безопасности `add_header` (подробнее — в **[Руководство по CORS в Nginx](../../Security/nginx_cors_guide.md)**).
+
+**Конфигурация `/etc/nginx/conf.d/cors_api.conf`:**
+
+```nginx
+# В контексте http: безопасный белый список источников (Origin Whitelist)
+map $http_origin $cors_allowed_origin {
+    default                             "";
+    "https://app.company.ru"            "$http_origin";
+    "https://admin.company.ru"          "$http_origin";
+    "~^https://.*\.partner\.com$"       "$http_origin";
+    "http://localhost:3000"             "$http_origin"; # Локальная разработка
+}
+
+server {
+    listen 443 ssl;
+    server_name api.company.ru;
+
+    ssl_certificate     /etc/ssl/certs/api.crt;
+    ssl_certificate_key /etc/ssl/private/api.key;
+
+    # Базовые заголовки безопасности виртуального хоста
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+
+    location /api/v1/ {
+        # 1. Защита от дублирования CORS-заголовков бэкенда
+        proxy_hide_header Access-Control-Allow-Origin;
+        proxy_hide_header Access-Control-Allow-Credentials;
+        proxy_hide_header Access-Control-Allow-Methods;
+        proxy_hide_header Access-Control-Allow-Headers;
+
+        # 2. Обработка Preflight-запроса OPTIONS
+        if ($request_method = 'OPTIONS') {
+            add_header Access-Control-Allow-Origin $cors_allowed_origin always;
+            add_header Access-Control-Allow-Credentials "true" always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept, Origin, X-Requested-With, X-Request-ID" always;
+            add_header Access-Control-Max-Age 86400 always; # Кэширование preflight на 24 часа
+            add_header Content-Length 0 always;
+            add_header Content-Type "text/plain; charset=utf-8" always;
+            return 204;
+        }
+
+        # 3. CORS-заголовки для фактических рабочих запросов (GET, POST, PUT, DELETE)
+        add_header Access-Control-Allow-Origin $cors_allowed_origin always;
+        add_header Access-Control-Allow-Credentials "true" always;
+        add_header Access-Control-Expose-Headers "Content-Length, Content-Range, X-Request-ID" always;
+
+        # 4. Восстановление заголовков безопасности (так как локальный add_header аннулирует родительские)
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+
+        proxy_pass http://api_backend_pool;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+**Проверка работы Preflight и Actual запросов:**
+
+```bash
+# 1. Проверка preflight-запроса OPTIONS
+curl -k -i -X OPTIONS https://api.company.ru/api/v1/users \
+  -H "Origin: https://app.company.ru" \
+  -H "Access-Control-Request-Method: DELETE" \
+  -H "Access-Control-Request-Headers: Authorization, X-Request-ID"
+# → HTTP/1.1 204 No Content
+# → Access-Control-Allow-Origin: https://app.company.ru
+# → Access-Control-Allow-Credentials: true
+# → Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS
+# → Access-Control-Max-Age: 86400
+
+# 2. Проверка недоверенного Origin (заголовки CORS не должны отдаваться)
+curl -k -i -X OPTIONS https://api.company.ru/api/v1/users \
+  -H "Origin: https://evil.attacker.com" \
+  -H "Access-Control-Request-Method: GET"
+# → HTTP/1.1 204 No Content
+# → (Заголовок Access-Control-Allow-Origin отсутствует в выводе)
+```
+
+---
+
 ## Операции и команды
 
 ### Валидация и применение конфигурации
@@ -821,6 +996,9 @@ du -sh /var/log/nginx/*
 | Ошибка `403 Forbidden` на существующие статические файлы | Ограничения `disable_symlinks`, отсутствие прав `o+r` на файл или блокирующий контекст SELinux | `grep "denied" /var/log/nginx/error.log` и проверка SELinux `ausearch -m avc -ts recent` | Назначить права `chmod 644`, проверить владельцев или выполнить `restorecon -Rv` |
 | При проксировании через fallback теряются параметры строки запроса (`query string`) | В директиве `proxy_pass` внутри fallback-локации указан URI без передачи аргументов | `tcpdump -nn -s 0 -A 'tcp port 8080'` или инспекция логов бэкенда | Использовать переменную `$request_uri` или `$is_args$args`: `proxy_pass http://backend$request_uri;` |
 | Ошибка `429 Too Many Requests` у легитимных пользователей | Слишком низкий лимит `rate` или недостаточный буфер `burst` в директиве `limit_req` | Анализ поля `$limit_req_status` в журнале `access.log` | Увеличить `burst`, добавить параметр `nodelay` или перевести в `limit_req_dry_run on;` для калибровки |
+| Worker Nginx зависает на 100% CPU одного ядра, latency остальных запросов резко растет | ReDoS (катастрофический возврат PCRE) в неоптимизированном regex `location ~` | `top -H`, `perf top` или `pstack <worker_pid>` (активность в `pcre_exec`) | Заменить regex на префиксный `location ^~` или оптимизировать регулярное выражение, исключив вложенные квантификаторы `(a+)+` |
+| Ошибка CORS `Response to preflight request doesn't pass access control check: 405 Method Not Allowed` | Preflight-запрос `OPTIONS` уходит на бэкенд, который не поддерживает метод | `curl -i -X OPTIONS ...` возвращает 405 | Добавить в `location` обработку `if ($request_method = 'OPTIONS') { ... return 204; }` |
+| Внутренние IP-адреса требуют ввода пароля при наличии директив `allow` и `auth_basic` | По умолчанию активен режим `satisfy all;`, требующий совпадения обоих модулей | Лог `error.log`: сообщение `user ...: password mismatch` для разрешенного IP | Добавить директиву `satisfy any;` в блок `location` |
 
 ---
 
@@ -926,5 +1104,6 @@ location @backend {
 - **[Перенаправления и перезапись URI в Nginx](../nginx_rewrite_rules_and_try_files.md)** — манипуляция путями запросов через `rewrite`, `return` и каскадную проверку `try_files`.
 - **[Диагностика и устранение неисправностей Nginx](../../Operations/nginx_troubleshooting.md)** — методы анализа дампов процессов, системных ресурсов и общих сбоев сервера.
 - **[Руководство по безопасности Nginx](../../Security/nginx_security_guide.md)** — комплексное руководство по харденингу веб-сервера, защите от атак и настройке TLS.
+- **[CORS в Nginx](../../Security/nginx_cors_guide.md)** — архитектура настройки Cross-Origin Resource Sharing, обработка preflight OPTIONS и валидация Origin.
 - **[Канареечное развертывание (Canary Deployment)](../../../../CI-CD/Deployment_Strategies/canary_deployment.md)** — теория, паттерны и методы постепенного развертывания версий в продакшене.
 - **[Переменные в Angie](../../../Angie/angie_variables.md)** — расширенные возможности работы с директивами `map`, `split_clients` и переменными окружения.

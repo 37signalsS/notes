@@ -1,286 +1,625 @@
 # Пробы в Kubernetes (Probes)
 
+**Актуально для:** Kubernetes 1.30–1.35+
+
 ## Определения
 
-**Пробы (Probes)** (в профессиональной среде часто называемые **зонды**) — это механизмы, которые агент `kubelet` использует для периодической проверки состояния контейнера. Они позволяют оркестратору понимать, работает ли приложение корректно, готово ли оно принимать сетевой трафик или успешно ли завершился процесс его запуска.
+* **Пробы (Probes / Зонды)** — диагностические механизмы локального агента узла `kubelet`, выполняющие периодические проверки состояния и работоспособности контейнеров на основе сетевых вызовов или локального выполнения команд.
+* **`livenessProbe` (Проба живучести)** — зонд, определяющий жизнеспособность процесса внутри контейнера. При переходе в состояние сбоя (`Failure`) `kubelet` принудительно завершает контейнер согласно политике `restartPolicy` (отправка `SIGTERM`, затем `SIGKILL` по истечении тайм-аута). Служит для вывода из состояния дедлока, зависания потоков или утечки памяти, когда процесс формально существует, но не способен выполнять задачи.
+* **`readinessProbe` (Проба готовности)** — зонд, определяющий готовность контейнера принимать входящий пользовательский трафик. При сбое контейнер **не перезапускается**, но контроллеры `Endpoints` и `EndpointSlice` исключают IP-адрес пода из списков балансировки всех ассоциированных объектов `Service`. Применяется при прогреве кэшей, миграции локальных схем, перегрузке или временной потере внутренних ресурсов.
+* **`startupProbe` (Проба запуска)** — специализированный зонд начальной инициализации приложения. При наличии `startupProbe` выполнение `livenessProbe` и `readinessProbe` полностью блокируется до первого успешного завершения `startupProbe`. Предотвращает ложное срабатывание `livenessProbe` и цикличные перезапуски (`CrashLoopBackOff`) тяжело стартующих приложений.
+* **`kube-prober` (Prober Manager)** — внутренний компонент `kubelet`, управляющий пулом воркеров для асинхронного выполнения проверок каждого контейнера и передающий результаты в `Status Manager`.
+* **Readiness Gates (Врата готовности)** — расширение спецификации Pod (`spec.readinessGates`), позволяющее внешним сетевым контроллерам (Ingress-контроллеры, Service Mesh, аппаратные L4/L7-балансировщики) удерживать условие `Ready: False` независимо от внутренних контейнерных зондов до завершения сетевой конвергенции.
+* **Статусы результатов пробы**:
+  * `Success` — проверка успешно пройдена;
+  * `Failure` — проверка завершилась ошибкой или нарушен лимит тайм-аута;
+  * `Unknown` — `kubelet` не смог выполнить пробу (ошибка рантайма CRI, зависание сокета рантайма, сбой узловых подсистем).
+* **Начальные состояния проб:** До первого успешного ответа зонды `liveness` и `readiness` находятся в состоянии `Failure` (что гарантирует немедленное исключение пода из балансировки до подтверждения готовности), а `startupProbe` инициализируется в состоянии `Unknown`.
 
-В Kubernetes существует три основных типа проб (зондов):
+---
 
-1. **`livenessProbe` (зонды жизнеспособности):** проверяет, работает ли контейнер. Если проба завершается неудачно, `kubelet` завершает работу контейнера, и он перезапускается согласно `restartPolicy`. Предназначена для исправления зависаний, дедлоков и состояний «зомби», когда процесс жив, но не выполняет полезную работу.
-2. **`readinessProbe` (зонды готовности):** проверяет, готово ли приложение обслуживать запросы. Если проба проходит успешно, под добавляется в `Endpoints` и `EndpointSlice` соответствующих сервисов. Если проба не проходит `failureThreshold` раз, под исключается из балансировки. Контейнер **не перезапускается**. Используется для временной неготовности (прогрев кэша, загрузка данных, перегрузка).
-3. **`startupProbe` (зонды запуска):** проверяет, успешно ли запустилось приложение. Пока эта проба не прошла, остальные проверки (`liveness` и `readiness`) **отключены** (откладываются). Защищает медленно стартующие приложения от преждевременного перезапуска по `livenessProbe`.
+## Базовые концепции и архитектура
 
-**Важный нюанс начальных значений результатов:** `liveness`/`readiness` до первого успешного ответа считаются в состоянии `Failure` (потому `readiness` исключает под из трафика до первого успеха), а `startup` изначально находится в состоянии `Unknown`. Если `startupProbe` исчерпала `failureThreshold` — все пробы контейнера приостанавливаются до его перезапуска, что предотвращает лишние попытки зондов в момент, когда контейнер уже «приговорён» к kill (фикс #117153).
+### 1. Архитектура исполнения проверок в kubelet
 
-## Основные концепции
+В архитектуре Kubernetes проверки здоровья исполняются децентрализованно — непосредственно агентом `kubelet` на том узле, где запущен под, без участия `kube-apiserver` в цикле опроса:
 
-### Механизмы проверок
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│ Worker Node (Kubelet Process)                                          │
+│                                                                        │
+│   ┌──────────────────────────────────────────────────────────────┐     │
+│   │ kube-prober (Worker Pool)                                    │     │
+│   │                                                              │     │
+│   │  ┌────────────────┐   ┌────────────────┐   ┌──────────────┐  │     │
+│   │  │ startupWorker  │   │ livenessWorker │   │readinessWork.│  │     │
+│   │  └───────┬────────┘   └───────┬────────┘   └──────┬───────┘  │     │
+│   └──────────┼────────────────────┼───────────────────┼──────────┘     │
+│              │                    │                   │                │
+│       CRI / Network        CRI / Network        CRI / Network          │
+│              ▼                    ▼                   ▼                │
+│   ┌──────────────────────────────────────────────────────────────┐     │
+│   │ Pod Sandbox (Container)                                      │     │
+│   │ - HTTP /livez, /readyz                                       │     │
+│   │ - TCP Socket                                                 │     │
+│   │ - exec CRI ExecSync                                          │     │
+│   │ - gRPC Health Check                                          │     │
+│   └──────────────────────────────────────────────────────────────┘     │
+│              │                                        │                │
+│   Failure (Threshold reached)              Failure (Threshold reached) │
+│              ▼                                        ▼                │
+│   Container Kill & Restart                 Kubelet Status Manager      │
+│   (SIGTERM -> SIGKILL)                                │                │
+└───────────────────────────────────────────────────────┼────────────────┘
+                                                        ▼
+                                             Kube-API-Server (Pod Status)
+                                                        │
+                                                        ▼
+                                             EndpointSlice Controller
+                                             (Исключение IP из Service)
+```
 
-Kubernetes поддерживает четыре способа выполнения проверок здоровья:
+1. **Изоляция исполнения:** Для каждого зонда каждого контейнера `kubelet` создает независимый поток/воркер. Проверки выполняются периодически с интервалом `periodSeconds`.
+2. **Маршрутизация сетевых запросов:** Запросы `httpGet` и `tcpSocket` отправляются `kubelet` непосредственно на сетевой интерфейс пода (Pod IP). `kubelet` выступает клиентом соединения.
+3. **Обработка сбоя `livenessProbe`:**
+   * При фиксации `Failure` подряд в количестве `failureThreshold` агент `kubelet` инициирует процедуру остановки контейнера: выполняется хук `preStop` (если задан), посылается сигнал `SIGTERM`, выжидается период `terminationGracePeriodSeconds`, после чего процесс уничтожается по `SIGKILL`.
+   * Контейнер перезапускается в соответствии с `spec.restartPolicy` (`Always`, `OnFailure`).
+4. **Обработка сбоя `readinessProbe`:**
+   * При превышении `failureThreshold` агент `kubelet` мутирует локальный статус пода, выставляя условие `Ready: False` и `ContainersReady: False`.
+   * Изменение транслируется в `kube-apiserver`, где `EndpointSlice Controller` и `Endpoints Controller` мгновенно удаляют IP-адрес пода из списков активных точек назначения.
+   * Контейнер продолжает функционировать, сохраняя память, подключения и файлы.
 
-1. **`httpGet`**: Выполняет HTTP GET-запрос к указанному порту и пути.
-    * **Успех:** Код состояния от `200` до `399`.
-    * **Поддержка:** Можно передавать `httpHeaders` (например, `User-Agent` или `Authorization`) и `scheme` (HTTP или HTTPS). Порт можно указывать числом или **именем** (`port: http`), тогда он резолвится из объявленных `containerPort` контейнера — это делает манифест устойчивым к смене фактического номера порта.
-    * **HTTP/2 (h2c):** для приложений, отдающих health-эндпоинт только по HTTP/2 без TLS (h2c), добавлено поле `protocol: HTTP2` в `httpGet` (фича-гейт `HTTPProbeProtocol`, alpha). Риск: если сервер не понимает h2c, проверка будет стабильно падать, вызывая лишние перезапуски, — пробы вида «на каждый протокол» несовместимы.
-2. **`tcpSocket`**: Проверка открытия TCP-порта.
-    * **Успех:** Порт принимает соединения.
-    * **Внимание:** Сокет открывается ОС сразу после bind, часто задолго до готовности приложения (пулы соединений, кеши). Поэтому TCP-проба «зеленеет» слишком рано и не годится как `readiness` для точного контроля — предпочитайте HTTP.
-3. **`exec`**: Выполняет команду внутри контейнера.
-    * **Успех:** Код выхода `0`.
-    * **Внимание:** Создает новый процесс (fork). Избегайте тяжелых команд в высокочастотных пробах, так как это увеличивает нагрузку на узел. `exec`-пробы **не** имеют доступа к переменным окружения пода и к `downwardAPI` — только к окружению самого процесса.
-    * **Ошибки исполнения:** Если команда не найдена или упала по ошибке исполнения (а не по коду выхода > 0), исторически kubelet молча «пропускал» результат: контейнер не перезапускался, хотя при этом генерировались события `Unhealthy`. Сравнительно новое поведение переводится фича-гейтом `ProbeErrorAsFailure` (alpha), который трактует такие ошибки как сбой пробы. При диагностике «здоровья, которое спасает сломанная команда пробы» это ключевой момент.
-4. **`grpc`**: (GA в v1.27) Выполняет gRPC-вызов к сервису проверки здоровья.
-    * **Успех:** Статус ответа `SERVING`.
-    * **Поле `service`**: Позволяет указать имя проверяемого gRPC-сервиса. Не требует наличия бинарного файла `grpc-health-probe` в образе.
-    * **Замечание по CRI:** gRPC-проба требует от CRI-рантайма поддержки исполнения gRPC-вызовов (в containerd поддерживается «нативно», в `cri-dockerd` — через проксирование вспомогательным бинарём). При использовании ненативного CRI gRPC-пробы могут падать, хотя само приложение здорово.
+### 2. Механизмы проверок
 
-### Параметры конфигурации
+Kubernetes поддерживает четыре механизма зондирования:
 
-* **`initialDelaySeconds`**: Пауза перед первой проверкой после старта контейнера. При использовании `startupProbe` этот параметр часто устанавливается в 0.
-* **`periodSeconds`**: Интервал между проверками (по умолчанию 10с). Для `exec` проб интервал считается **включая** время выполнения команды: если команда исполняется дольше `periodSeconds`, проверки фактически следуют «вплотную», что создаёт избыточную нагрузку на контейнер.
-* **`timeoutSeconds`**: Таймаут ожидания ответа (по умолчанию 1с). Для `exec` проб таймаут включает время выполнения команды. **Известная особенность:** исторически kubelet не всегда корректно учитывал `timeoutSeconds` для `exec`-проб (ведёл себя как «без таймаута» до стабилизации под фича-гейтом `ExecProbeTimeout`); при диагностике «проб, которые долго висят» это первое, что нужно проверять.
-* **`failureThreshold`**: Кол-во неудач подряд до признания пробы проваленной (по умолчанию 3).
-* **`successThreshold`**: Кол-во успехов подряд для возврата в здоровое состояние. Для `liveness` и `startup` этот параметр **обязан** быть равен 1. Для `readiness` `successThreshold > 1` позволяет требовать несколько успешных ответов подряд, прежде чем вернуть под в трафик (полезно для восстановления после всплеска нагрузки, но замедляет повторное включение).
-* **`terminationGracePeriodSeconds`**: (v1.28+) Позволяет задать специфическое время изящного завершения только для случая, когда контейнер убивается по неудачной `livenessProbe`. Это позволяет дать приложению больше времени на сохранение состояния или снятие дампа памяти перед перезапуском. Аналогичное поле на уровне контейнера управляет общим протоколом завершения (`preStop` + `SIGTERM` → `SIGKILL`) для всех сценариев завершения.
+| Механизм | Синтаксис спецификации | Критерий успеха | Специфика реализации и архитектурные ограничения |
+| :--- | :--- | :--- | :--- |
+| **`httpGet`** | `path`, `port`, `host`, `scheme`, `httpHeaders` | HTTP-код `200 <= status < 400` | Выполняется сетевой запрос. Редиректы (3xx) считаются успехом. Поддерживает имена портов (`port: http`). По умолчанию сертификаты TLS при `scheme: HTTPS` **не проверяются** (`InsecureSkipVerify: true`). Поле `host` по умолчанию равно IP пода (не рекомендуется указывать `localhost` во избежание провала на многосетевых узлах). |
+| **`tcpSocket`** | `port`, `host` | Успешное завершение 3-way TCP handshake (SYN-ACK) | **Внимание:** Ядро Linux отвечает SYN-ACK сразу после вызова `listen()`, когда сокет помещен в очередь соединений (backlog), задолго до инициализации пулов потоков, соединений с БД или кэшей. Не отражает реальную готовность бизнес-логики. |
+| **`exec`** | `command: [arg1, arg2]` | Код возврата процесса `0` | Выполняется внутри контейнера через вызов CRI `ExecSync`. Порождает процесс через `fork/exec`. **Накладные расходы:** регулярный вызов тяжелых утилит вызывает скачки CPU, контекстные переключения и исчерпание пула PID (`kernel.pid_max`). |
+| **`grpc`** | `port`, `service` (опционально) | Статус ответа `SERVING` | Встроенный механизм (GA с v1.27). Реализует официальный gRPC Health Checking Protocol (`grpc.health.v1`). Не требует включения сторонних утилит (`grpc-health-probe`) в минималистичные образы. |
 
-**Формула окна пробы:** суммарное время, которое даётся пробе на «пенальти», равно `initialDelaySeconds + (failureThreshold - 1) * periodSeconds` (последняя проверка в каждой фазе не ждёт ещё одного интервала). Эту формулу удобно использовать при расчёте `startupProbe` для медленных стартов, чтобы осознанно подобрать `failureThreshold` и `periodSeconds` (например, `failureThreshold: 30, periodSeconds: 10` → окно 300с).
+#### Тонкости механизмов:
+* **HTTP/2 (h2c):** Поле `protocol: HTTP2` в `httpGet` (фича-гейт `HTTPProbeProtocol`) позволяет опрашивать сервисы, отдающие эндпоинты исключительно по HTTP/2 Cleartext без TLS. Если сервер не поддерживает h2c, проба стабильно завершается ошибкой.
+* **Обработка ошибок выполнения `exec` (`ProbeErrorAsFailure`):** До стабилизации фичи `ProbeErrorAsFailure` (GA с v1.31) в случае, если указанный в пробе бинарный файл отсутствовал в контейнере (ошибка исполнения CRI, код выхода не получен), `kubelet` мог оставлять статус неопределенным без фиксации сбоя. В актуальных версиях любая системная ошибка запуска расценивается как `Failure`.
+* **Тайм-аут `exec`-проб (`ExecProbeTimeout`):** Механизм тайм-аута (GA с v1.20) гарантирует принудительное уничтожение зависшей команды `exec` по истечении `timeoutSeconds`.
 
-### Продвинутые механизмы
+### 3. Параметры конфигурации и расчет временного окна
 
-* **Readiness Gates**: Позволяют внешним системам (например, облачным балансировщикам) влиять на готовность пода. Под считается готовым только тогда, когда все контейнеры готовы **и** все Readiness Gates имеют статус `True`. Полное описание, примеры и сравнение с `readinessProbe` и Scheduling Gates см. в [Продвинутых темах Pod](./Pod/pod_advanced_topics.md#врата-готовности-readiness-gates).
-* **Взаимодействие с Native Sidecars (v1.29+)**: Если контейнер помечен как sidecar (через `restartPolicy: Always` в блоке `initContainers`), основные контейнеры не начнут запуск, пока все нативные sidecar-контейнеры не пройдут свою пробу готовности или не станут `Ready`.
-* **Отключение проверок при проблемах с CRI-рантаймом:** при поломке или замятии контейнерного рантайма зонды не могут выполниться и возвращают `Unknown` — это важно отличать от реального падения сервиса при чтении дашбордов.
+Каждая проба настраивается следующими директивами:
 
-## Практические сценарии
+* **`initialDelaySeconds`** (по умолчанию `0`, минимум `0`): Время ожидания в секундах перед отправкой первой проверки после старта контейнера.
+* **`periodSeconds`** (по умолчанию `10`, минимум `1`): Интервал между последовательными проверками.
+* **`timeoutSeconds`** (по умолчанию `1`, минимум `1`): Предельное время ожидания ответа. При превышении проба считается неуспешной.
+* **`failureThreshold`** (по умолчанию `3`, минимум `1`): Количество последовательных неудачных проверок, необходимое для признания сбоя.
+* **`successThreshold`** (по умолчанию `1`, минимум `1`): Количество последовательных успешных проверок для перевода пробы из состояния сбоя в здоровое. **Ограничение ядра:** для `livenessProbe` и `startupProbe` значение **обязано** равняться `1` (валидатор API отклонит иное значение). Для `readinessProbe` допускается значение `> 1` (гистерезис для защиты от дребезга при нестабильной сети).
+* **`terminationGracePeriodSeconds`** (опционально, GA с v1.28): Специфический тайм-аут изящного завершения контейнера, применяемый **только** при его остановке вследствие сбоя `livenessProbe`. Позволяет сократить время ожидания зависшего пода при обычной ротации, но выделить достаточно времени на генерацию heap dump при срабатывании liveness.
 
-### Настройка для Java/Spring Boot приложения
+#### Математика окна живучести и старта
 
-Приложения на Java часто имеют долгое время холодного старта. Использование `startupProbe` позволяет избежать настройки огромных `initialDelaySeconds` для `livenessProbe`.
+Суммарное время ($T_{\text{budget}}$), выделяемое приложению до момента первой инициации рестарта при старте:
+
+$$T_{\text{startup}} = \text{initialDelaySeconds} + (\text{failureThreshold} - 1) \times \text{periodSeconds} + \text{timeoutSeconds}$$
+
+> [!NOTE]
+> Последняя проверка в цикле не ждет завершения полного интервала `periodSeconds` перед фиксацией отказа: при получении отказа на шаге `failureThreshold` действие (перезапуск или снятие с балансировки) инициируется немедленно после фиксации тайм-аута или кода ошибки.
+
+### 4. Взаимодействие со смежными подсистемами ядра
+
+* **Врата готовности (Readiness Gates):** Если в `spec.readinessGates` заданы внешние условия, под считается готовым (`Ready: True`) **только** тогда, когда все контейнеры пода готовы по своим `readinessProbe` **И** все внешние условия в `status.conditions` переведены управляющими контроллерами в статус `True`. Архитектурные детали см. в [Продвинутых темах Pod](./Pod/pod_advanced_topics.md#2-врата-готовности-readiness-gates).
+* **Native Sidecar контейнеры (GA с v1.33):** Контейнеры в блоке `initContainers`, у которых задан параметр `restartPolicy: Always`, являются нативными сайдкарами. Основные контейнеры приложения не начнут запуск до тех пор, пока каждый sidecar-контейнер не пройдет проверку готовности (`readinessProbe` перейдет в `Success`). Подробнее см. в [Паттернах Sidecar](./Pod/pod_sidecar_patterns.md).
+* **Горизонтальное авто масштабирование (HPA):** Поды, находящиеся в состоянии `Ready: False` (провалившие `readinessProbe`), временно исключаются из расчета средних метрик утилизации CPU/Memory в алгоритме `kube-controller-manager`, предотвращая искажение метрик во время масштабирования.
+
+---
+
+## Практические сценарии и конфигурация
+
+### Сценарий 1: Высоконагруженный Web/API микросервис (Zero-Downtime Rolling Update)
+
+Обеспечение нулевого времени простоя (Zero Downtime) при ротации подов в условиях плотного сетевого трафика на bare-metal инсталляциях:
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: spring-app
+  name: api-gateway
+  namespace: production
 spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api-gateway
     spec:
       containers:
-      - name: java-app
-        image: spring-boot-app:3.2
+      - name: gateway
+        image: internal-registry.local/web/api-gateway:v2.4.1
         ports:
-        - name: http
+        - name: http-web
           containerPort: 8080
+        lifecycle:
+          preStop:
+            exec:
+              # Даем 10 секунд на удаление IP пода из iptables/IPVS/eBPF всех узлов до отправки SIGTERM
+              command: ["/bin/sh", "-c", "sleep 10"]
         
-        # Режим запуска: даем 120 секунд (12 попыток по 10с)
+        # Защита от долгой инициализации роутов и парсинга конфигов
+        startupProbe:
+          httpGet:
+            path: /healthz/startup
+            port: http-web
+          failureThreshold: 15
+          periodSeconds: 2
+          timeoutSeconds: 2
+
+        # Проверка дедлоков (только внутреннее состояние процесса)
+        livenessProbe:
+          httpGet:
+            path: /healthz/liveness
+            port: http-web
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 3
+          # Быстро освобождаем ресурсы, если процесс завис
+          terminationGracePeriodSeconds: 15
+
+        # Управление допуском трафика
+        readinessProbe:
+          httpGet:
+            path: /healthz/readiness
+            port: http-web
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 2
+          successThreshold: 2  # Гистерезис: возврат в трафик только после 2 стабильных успехов
+```
+
+### Сценарий 2: Java / Spring Boot с прогревом JVM
+
+Для JVM-приложений с долгим холодным стартом и компиляцией JIT `startupProbe` предотвращает убийство контейнера, а раздельные эндпоинты Actuator исключают каскадные сбои:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-service
+  namespace: finance
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: billing-service
+  template:
+    metadata:
+      labels:
+        app: billing-service
+    spec:
+      containers:
+      - name: spring-app
+        image: internal-registry.local/finance/billing-service:3.3.0
+        ports:
+        - name: mgmt-http
+          containerPort: 8081
+        
+        # Бюджет на запуск: 30 попыток * 5 сек = 150 секунд на старт JVM и инициализацию контекста
         startupProbe:
           httpGet:
             path: /actuator/health/liveness
-            port: http
-          failureThreshold: 12
-          periodSeconds: 10
+            port: mgmt-http
+          failureThreshold: 30
+          periodSeconds: 5
+          timeoutSeconds: 3
 
-        # Проверка зависаний: включается только ПОСЛЕ успеха startupProbe
         livenessProbe:
           httpGet:
             path: /actuator/health/liveness
-            port: http
-          periodSeconds: 20
-          # v1.28+: даем 60с на дамп памяти при сбое liveness
+            port: mgmt-http
+          periodSeconds: 15
+          timeoutSeconds: 3
+          failureThreshold: 3
+          # Выделяем 60 секунд на сброс Heap Dump скриптом перед SIGKILL
           terminationGracePeriodSeconds: 60
 
-        # Управление трафиком
         readinessProbe:
           httpGet:
             path: /actuator/health/readiness
-            port: http
+            port: mgmt-http
           periodSeconds: 10
+          timeoutSeconds: 3
           failureThreshold: 3
 ```
 
-### Проверка gRPC сервиса
+### Сценарий 3: gRPC микросервис с нативной проверкой здоровья
 
-Использование встроенного механизма gRPC (v1.27+).
-
-```yaml
-livenessProbe:
-  grpc:
-    port: 9000
-    service: my-service-name # Опционально: имя конкретного сервиса
-  initialDelaySeconds: 5
-```
-
-### Использование exec для сложных проверок
-
-Когда необходимо проверить не только порт, но и внутреннее состояние через скрипт.
+Использование встроенного протокола проверки здоровья без сторонних бинарников (v1.27+ GA):
 
 ```yaml
-readinessProbe:
-  exec:
-    command:
-    - /bin/sh
-    - -c
-    - |
-      curl -s http://localhost:8080/internal/status | grep "OK"
-  periodSeconds: 15
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-auth-service
+  namespace: core
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-auth
+  template:
+    metadata:
+      labels:
+        app: user-auth
+    spec:
+      containers:
+      - name: auth-server
+        image: internal-registry.local/core/auth-grpc:v1.12.0
+        ports:
+        - name: grpc-port
+          containerPort: 50051
+        
+        startupProbe:
+          grpc:
+            port: 50051
+            service: auth.v1.AuthService
+          failureThreshold: 10
+          periodSeconds: 3
+          timeoutSeconds: 2
+
+        livenessProbe:
+          grpc:
+            port: 50051
+            service: auth.v1.AuthService
+          periodSeconds: 10
+          timeoutSeconds: 2
+
+        readinessProbe:
+          grpc:
+            port: 50051
+            service: auth.v1.AuthService
+          periodSeconds: 5
+          timeoutSeconds: 2
 ```
 
-## Мониторинг и алертинг проб (SRE/DevOps)
+### Сценарий 4: База данных PostgreSQL (StatefulSet) с безопасным зондом
 
-Зонды исполняются `kubelet` на узле, поэтому их метрики отдаются напрямую kubelet-эндпоинтом `/metrics/probes` (сбор через ServiceMonitor/target на `kubelet:10250/metrics/probes`), а не через kube-state-metrics. Основные метрики kubelet-процесса `kube-prober`:
+Использование легковесной проверки через локальный сокет UNIX без создания накладных расходов от сетевого парсинга:
 
-| Метрика | Тип | Смысл | Назначение |
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-db
+  namespace: data
+spec:
+  serviceName: postgres-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgresql
+        image: internal-registry.local/db/postgresql:16.4
+        ports:
+        - name: postgres
+          containerPort: 5432
+        
+        startupProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "pg_isready -h 127.0.0.1 -p 5432 -U postgres -q"
+          initialDelaySeconds: 10
+          failureThreshold: 30
+          periodSeconds: 5
+          timeoutSeconds: 2
+
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "pg_isready -h 127.0.0.1 -p 5432 -U postgres -q"
+          periodSeconds: 15
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            # Проверяем не только готовность демона принимать сокет, но и отсутствие блокировки recovery
+            - "psql -h 127.0.0.1 -U postgres -d postgres -tAc 'SELECT 1' | grep -q 1"
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 2
+```
+
+### Сценарий 5: Native Sidecar с порядковой синхронизацией старта
+
+Вспомогательный контейнер (прокси или сервис авторизации) поднимается строго до основного контейнера:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-with-sidecar
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: app-with-sidecar
+  template:
+    metadata:
+      labels:
+        app: app-with-sidecar
+    spec:
+      initContainers:
+      - name: local-proxy
+        image: internal-registry.local/net/local-proxy:v1.0
+        restartPolicy: Always  # Объявляет init-контейнер нативным сайдкаром (v1.29+)
+        ports:
+        - name: proxy-port
+          containerPort: 9001
+        startupProbe:
+          tcpSocket:
+            port: 9001
+          failureThreshold: 10
+          periodSeconds: 1
+        readinessProbe:
+          httpGet:
+            path: /proxy/ready
+            port: proxy-port
+          periodSeconds: 2
+
+      containers:
+      - name: main-business-logic
+        # Запустится ТОЛЬКО после того, как local-proxy перейдет в статус Ready: True
+        image: internal-registry.local/apps/backend:v1.0
+        ports:
+        - name: app-port
+          containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: app-port
+          periodSeconds: 5
+```
+
+---
+
+## Операции и команды
+
+Сводка команд системного инженера для оперативного извлечения конфигураций, инспекции состояния и проверки сетевых проб:
+
+```bash
+# 1. Сводное извлечение параметров всех проб по всем контейнерам пода
+kubectl get pod <pod-name> -n <namespace> -o jsonpath='{range .spec.containers[*]}{"Container: "}{.name}{"\n  Startup:   "}{.startupProbe}{"\n  Liveness:  "}{.livenessProbe}{"\n  Readiness: "}{.readinessProbe}{"\n"}{end}'
+# → Container: gateway
+# →   Startup:   {"failureThreshold":15,"httpGet":{"path":"/healthz/startup","port":"http-web","scheme":"HTTP"},"periodSeconds":2,"timeoutSeconds":2}
+# →   Liveness:  {"failureThreshold":3,"httpGet":{"path":"/healthz/liveness","port":"http-web","scheme":"HTTP"},"periodSeconds":10,"terminationGracePeriodSeconds":15,"timeoutSeconds":2}
+# →   Readiness: {"failureThreshold":2,"httpGet":{"path":"/healthz/readiness","port":"http-web","scheme":"HTTP"},"periodSeconds":5,"successThreshold":2,"timeoutSeconds":2}
+
+# 2. Быстрая проверка причин завершения контейнера (Termination Details & Exit Code)
+kubectl get pod <pod-name> -n <namespace> -o jsonpath='{range .status.containerStatuses[*]}{"Container: "}{.name}{"\n  State:     "}{.state}{"\n  LastState: "}{.lastState.terminated}{"\n  Restarts:  "}{.restartCount}{"\n"}{end}'
+# → Container: gateway
+# →   State:     {"running":{"startedAt":"2026-10-17T20:10:00Z"}}
+# →   LastState: {"exitCode":137,"finishedAt":"2026-10-17T20:09:50Z","reason":"Error","startedAt":"2026-10-17T19:50:00Z"}
+# →   Restarts:  1
+
+# 3. Фильтрация событий ядра кластера по сбоям зондов
+kubectl get events -n <namespace> --field-selector involvedObject.name=<pod-name> --sort-by='.metadata.creationTimestamp' | grep -iE 'Unhealthy|Killing|ProbeWarning'
+# → 2m   Warning   Unhealthy   pod/api-gateway-7b9   Readiness probe failed: HTTP probe failed with statuscode: 503
+# → 1m   Warning   Unhealthy   pod/api-gateway-7b9   Liveness probe failed: Get "http://10.244.2.45:8080/healthz/liveness": context deadline exceeded (Client.Timeout exceeded)
+# → 1m   Normal    Killing     pod/api-gateway-7b9   Container gateway failed liveness probe, will be restarted
+
+# 4. Проверка фактического присутствия пода в сетевых эндпоинтах сервиса
+kubectl get endpointslice -n <namespace> -l kubernetes.io/service-name=<service-name> -o wide
+# → NAME                 ADDRESSTYPE   PORTS   ENDPOINTS                            AGE
+# → api-service-8fd9x    IPv4          8080    10.244.2.45 (Ready: false), 10.244.3.12 (Ready: true)   12d
+
+# 5. Ручная валидация HTTP-ответа пробы изнутри пода с отображением HTTP-кода и времени
+kubectl exec -it <pod-name> -n <namespace> -c <container-name> -- curl -s -o /dev/null -w "HTTP_CODE: %{http_code} | TOTAL_TIME: %{time_total}s\n" http://127.0.0.1:8080/healthz/readiness
+# → HTTP_CODE: 200 | TOTAL_TIME: 0.004s
+
+# 6. Валидация gRPC-сервиса через эфемерный отладочный контейнер (без curl/grpc_health_probe в образе)
+kubectl debug -it <pod-name> -n <namespace> --image=internal-registry.local/tools/grpc-health-probe:v0.4.28 --target=<container-name> -- /ko-app/grpc-health-probe -addr=127.0.0.1:50051 -service=auth.v1.AuthService
+# → status: SERVING
+
+# 7. Чтение системного журнала агента Kubelet на проблемном worker-узле (фильтрация работы prober)
+journalctl -u kubelet -n 100 --no-pager | grep -iE "probe|unhealthy|failed liveness"
+# → Oct 17 21:00:15 node-02 kubelet[1842]: I1017 21:00:15.112 prober.go:124] "Probe failed" probeType="liveness" pod="production/api-gateway-7b9" error="command timed out"
+```
+
+---
+
+<a id="диагностика-и-устранение-неисправностей"></a>
+## Диагностика и устранение неполадок
+
+### Матрица симптомов и первопричин сбоев
+
+| Симптом | Поведение системы | Первопричина | Метод локализации и решение |
 | :--- | :--- | :--- | :--- |
-| `prober_probe_total` | Counter (BETA) | Число выполненных проверок по результату | Счётчик отказов/успехов проб |
-| `prober_probe_duration_seconds` | Histogram (ALPHA) | Длительность ответа на пробу | Контроль деградации (латентность проб) |
+| **`CrashLoopBackOff` сразу после развертывания** | Под непрерывно перезапускается; счетчик `Restarts` растет | Отсутствует `startupProbe`. `livenessProbe` падает во время медленного старта приложения (JIT, прогрев кэшей). | Проверить `kubectl describe pod` на наличие `Liveness probe failed`. Настроить `startupProbe` с достаточным `failureThreshold * periodSeconds`. |
+| **Под в фазе `Running`, но `READY: 0/1`** | Трафик не поступает на под; отсутствует в `EndpointSlice` | `readinessProbe` возвращает ошибку (например, HTTP 500/503) или не отвечает в пределах `timeoutSeconds`. | Выполнить `kubectl exec -- curl -v http://localhost:<port>/<path>`. Проверить доступность внутренних зависимостей сервиса. |
+| **Спорадические рестарты при высокой нагрузке** | Рестарты происходят при всплесках трафика; статус `LastState: terminated exitCode: 137` | CPU Throttling из-за исчерпания CFS Quota или блокировка Event Loop приложения. Проба не успевает ответить за `timeoutSeconds`. | Проверить метрику `container_cpu_cfs_throttled_periods_total`. Увеличить `timeoutSeconds` или поднять CPU Limits / отключить лимиты CPU. |
+| **Отказ пробы с результатом `Unknown`** | Статус пода не обновляется; в событиях ошибки взаимодействия с рантаймом | Зависание демона CRI (containerd/CRI-O), исчерпание дескрипторов узла или перегрузка I/O диска узла. | Проверить статус рантайма: `systemctl status containerd`. Проверить системные вызовы `crictl ps` и нагрузку I/O (`iostat -x 1`). |
+| **Рестарт по `livenessProbe` во время завершения пода** | Под долго висит в `Terminating`, рестартует и падает по `CrashLoopBackOff` | `kubelet` продолжает выполнять `livenessProbe` в процессе Terminating, а приложение уже закрыло слушающий порт при получении `SIGTERM`. | Настроить приложение так, чтобы при получении `SIGTERM` закрывался только порт `readiness`, а эндпоинт `liveness` продолжал отвечать `200 OK` до выхода. |
 
-Лейблы `prober_probe_total`: `container`, `namespace`, `pod`, `pod_uid`, `probe_type` (`liveness`/`readiness`/`startup`), `result` (`success`/`failure`/`unknown`). Результат `unknown` (не `failure`) означает, что проба не смогла выполниться (например, проблемы с CRI-рантаймом) — это отдельный класс инцидента, а не сбой приложения.
+---
 
-Пример алертов на сбой проб:
+<a id="антипаттерны"></a>
+### Антипаттерны конфигурации (Production SRE Anti-patterns)
+
+#### 1. Проверка внешних зависимостей в `livenessProbe` (Каскадный коллапс кластера)
+* **Антипаттерн:** Включение проверок доступности базы данных, внешнего кэша Redis или брокера сообщений Kafka в эндпоинт `livenessProbe`.
+* **Механика катастрофы:** При временной недоступности или кратковременном сетевом разделении (Network Partition) между подами и БД `livenessProbe` одновременно падает на **всех** подах сервиса во всем кластере. `kubelet` начинает синхронно перезапускать сотни подов. При одновременном рестарте поды создают лавинообразную волну подключений («громовое стадо» / Thundering Herd) к только что восстановившейся БД, снова выводя её из строя.
+* **Правило:** `livenessProbe` обязана проверять **исключительно** внутреннее состояние процесса (отсутствие deadlock, ответ внутреннего пула потоков). Зависимости проверяются **только** в `readinessProbe`.
+
+#### 2. Дублирование единого пути проверки (`/health` для liveness и readiness)
+* **Антипаттерн:** Назначение одного и того же эндпоинта (например, `/healthz`) одновременно в `livenessProbe` и `readinessProbe`.
+* **Механика катастрофы:** Если приложение испытывает пиковую нагрузку или пулы очередей заполнены, оно должно временно исключиться из балансировки (что делает `readinessProbe`), чтобы штатно дообработать накопленные запросы. Если в этот момент срабатывает `livenessProbe` на том же эндпоинте, процесс принудительно убивается, обрывая тысячи активных клиентских TCP-сессий и порождая HTTP 502/504 на Ingress.
+* **Правило:** Использовать строго изолированные эндпоинты: `/healthz/live` (всегда возвращает 200, если процесс жив) и `/healthz/ready` (возвращает 503 при насыщении пулов или прогреве).
+
+#### 3. «Спираль смерти» (Death Spiral) при авто масштабировании
+* **Антипаттерн:** Реализация проверки `readinessProbe` через выполнение некэшируемых «тяжелых» запросов к базе данных (например, `SELECT count(*) FROM users` или `ping` с открытием новой TCP-сессии).
+* **Механика катастрофы:**
+  1. При росте клиентского трафика HPA создает новые поды.
+  2. Каждая новая реплика начинает опрашивать БД с интервалом `periodSeconds: 2`.
+  3. Соединения с БД исчерпываются (`max_connections reached`), БД замедляет ответы.
+  4. Проверки `readiness` начинают падать по тайм-ауту не только на новых, но и на старых подах.
+  5. Поды массово выпадают из сервиса, оставшиеся реплики принимают еще больше трафика и падают следом.
+* **Правило:** Проверять соединения через пул (Connection Pool Health) в фоновом потоке приложения с кэшированием статуса на 3–5 секунд, не создавая транзакций на каждый запрос пробы.
+
+#### 4. Использование тяжелых скриптов в `exec`-пробах
+* **Антипаттерн:** Использование `exec: command: ["/bin/bash", "-c", "curl ... | jq ..."]` с интервалом в 2–3 секунды на высокоплотных нодах.
+* **Механика катастрофы:** Запуск подпроцесса через CRI требует создания структур в ядре Linux, выделения PID и загрузки библиотек. При размещении 100 контейнеров на узле с такими пробами узел генерирует сотни процессов `fork` в секунду, вызывая деградацию подсистемы планирования ядра (`kswapd`, переключение контекстов) и исчерпание лимита процессов (`PID starvation`).
+
+---
+
+### Пошаговый алгоритм локализации сбоя (Runbook)
+
+```
+Шаг 1: Чтение системных событий пода
+  └─ $ kubectl describe pod <pod-name> -n <ns>
+       ├─ Есть событие "Killing"? → Сбой livenessProbe (проверить LastState и логи перед смертью)
+       ├─ Есть событие "Unhealthy"? → Сбой readinessProbe или startupProbe
+       └─ Событий нет? → Проблема не в пробах (проверить OOMKilled, Evicted, Node Pressure)
+
+Шаг 2: Проверка логов предыдущего запуска (Crash Forensics)
+  └─ $ kubectl logs <pod-name> -n <ns> --previous --tail=100
+       ├─ Поиск паники приложения, OutOfMemoryError, фатальных исключений
+       └─ Проверка момента поступления сигнала SIGTERM/SIGKILL
+
+Шаг 3: Проверка доступности портов и адресов
+  └─ $ kubectl get pod <pod-name> -n <ns> -o jsonpath='{.status.podIP}'
+  └─ $ kubectl exec -it <pod-name> -n <ns> -- netstat -tlpn (или ss -tlpn)
+       └─ Убедиться, что процесс слушает именно тот порт и интерфейс (0.0.0.0, а не 127.0.0.1 при опросе по Pod IP)
+
+Шаг 4: Анализ системного троттлинга CPU (CFS Quota)
+  └─ $ kubectl top pod <pod-name> -n <ns>
+  └─ Анализ метрики container_cpu_cfs_throttled_periods_total в Prometheus
+       └─ Если троттлинг > 20%, пробы зависают из-за нехватки процессорного кванта
+```
+
+#### Экстренная стабилизация при аварии (Hotfix в Production)
+
+Если некорректно настроенная `livenessProbe` циклически уничтожает критичный сервис при инциденте, системный администратор может временно отключить зонд без полной остановки пода:
+
+```bash
+# 1. Сохранение исходного манифеста
+kubectl get deployment <deploy-name> -n <ns> -o yaml > deploy-backup.yaml
+
+# 2. Удаление блока livenessProbe на лету через JSON Patch (инициирует ротацию с отключенной пробой)
+kubectl patch deployment <deploy-name> -n <ns> --type='json' -p='[{"op": "remove", "path": "/spec/template/spec/containers/0/livenessProbe"}]'
+
+# 3. После стабилизации ситуации и выкатки фикса приложения вернуть пробу
+kubectl apply -f deploy-backup.yaml
+```
+
+---
+
+## Лучшие практики
+
+### Чек-лист проектирования проб для SRE и DevOps
+
+1. **Изоляция ответственности проверок:**
+   * `startupProbe`: Защита от долгой загрузки (чтение больших файлов, warmup JIT, прогрев кэшей).
+   * `livenessProbe`: Детектирование внутреннего тупика (Deadlock, утечка потоков, блокировка Event Loop). Никаких проверок баз данных и внешних API!
+   * `readinessProbe`: Проверка готовности обслуживать клиентов (прогреты кэши, установлены соединения к внутренним шинам, нет переполнения локальных очередей).
+2. **Баланс интервалов и тайм-аутов:**
+   * Правило: `timeoutSeconds` всегда должен быть строго меньше `periodSeconds`. Рекомендуемое соотношение: `timeoutSeconds <= 0.5 * periodSeconds`.
+   * Для предотвращения ложных срабатываний при кратковременных нагрузках устанавливайте `failureThreshold` не менее `3`.
+3. **HTTP вместо TCP:**
+   * Избегайте использования `tcpSocket` для проверки HTTP/REST/gRPC приложений. TCP-сокет рапортует об успехе на уровне ядра до инициализации прикладных фреймворков.
+4. **Связка с Graceful Shutdown и сетевыми задержками:**
+   * Во время ротации подов удаление IP из iptables/IPVS на узлах кластера происходит с задержкой в 1–5 секунд.
+   * Обязательно используйте хук `preStop: exec: command: ["/bin/sh", "-c", "sleep 10"]`, чтобы под продолжал отвечать на остаточные сетевые запросы до фактической отправки `SIGTERM`.
+5. **Использование именованных портов:**
+   * Задавайте `port: http-web` вместо явного числа `8080`. Это предотвращает рассинхронизацию манифестов при изменении конфигурации порта в контейнере.
+6. **Выделенные пулы и изоляция памяти:**
+   * Эндпоинты проверок здоровья должны выполняться в отдельных изолированных легковесных пулах или выделенных корутинах, чтобы исчерпание пула клиентских рабочих потоков не блокировало ответ на пробу.
+
+---
+
+### Мониторинг и алертинг (SRE Observability)
+
+Зонды исполняются демоном `kubelet`, поэтому сбор телеметрии ведется напрямую с порта `kubelet:10250` по пути `/metrics/probes`. Метрики не зависят от `kube-state-metrics`.
+
+#### Ключевые метрики процесса kube-prober:
+
+| Метрика | Тип | Лейблы | Назначение |
+| :--- | :--- | :--- | :--- |
+| `prober_probe_total` | Counter | `container`, `namespace`, `pod`, `probe_type`, `result` | Общее количество выполненных проверок. Значение `result` может принимать значения `success`, `failure`, `unknown`. |
+| `prober_probe_duration_seconds` | Histogram | `container`, `namespace`, `pod`, `probe_type` | Время выполнения проверки в секундах. Позволяет выявлять деградацию до отказа. |
+
+#### Правила алертинга Prometheus (Alertmanager Rules):
 
 ```yaml
 groups:
-- name: pod-probes
+- name: kubernetes-probes-alerts
   rules:
-  # Постоянные сбои readiness — сервис выпадает из трафика (серьёзно)
-  - alert: ReadinessProbeFailing
+  # Частые отказы readinessProbe — деградация сервиса и исключение из балансировки
+  - alert: KubernetesContainerReadinessFailing
     expr: |
-      increase(prober_probe_total{probe_type="readiness", result="failure"}[10m]) > 30
-    for: 5m
+      increase(prober_probe_total{probe_type="readiness", result="failure"}[5m]) > 10
+    for: 3m
     labels:
       severity: warning
+      tier: platform
     annotations:
-      summary: "Readiness probe пода часто падает: {{ $labels.namespace }}/{{ $labels.pod }}"
-  # Лавина перезапусков из-за liveness — индикатор сломанного сервиса или пробы
-  - alert: LivenessProbeFailingHigh
+      summary: "Контейнер {{ $labels.container }} в поде {{ $labels.namespace }}/{{ $labels.pod }} проваливает readinessProbe"
+      description: "За последние 5 минут зафиксировано {{ $value }} сбоев готовности. Под выпадает из балансировщика Service."
+
+  # Отказы livenessProbe — угроза циклических аварийных перезапусков
+  - alert: KubernetesContainerLivenessFailing
     expr: |
-      increase(prober_probe_total{probe_type="liveness", result="failure"}[10m]) > 30
-    for: 5m
+      increase(prober_probe_total{probe_type="liveness", result="failure"}[5m]) > 5
+    for: 2m
     labels:
       severity: critical
+      tier: platform
     annotations:
-      summary: "Liveness probe пода падает: {{ $labels.namespace }}/{{ $labels.pod }}"
-  # Медленные пробы — начало деградации до полного падения
-  - alert: ProbeSlow
+      summary: "Критический сбой livenessProbe: {{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }})"
+      description: "Контейнер систематически проваливает проверки жизнеспособности и будет принудительно перезапущен Kubelet."
+
+  # Аномальная латентность ответов проб (предвестник деградации)
+  - alert: KubernetesProbeDurationHigh
     expr: |
-      histogram_quantile(0.95, rate(prober_probe_duration_seconds_bucket[5m])) > 5
-    for: 10m
+      histogram_quantile(0.95, sum(rate(prober_probe_duration_seconds_bucket[5m])) by (le, namespace, pod, probe_type)) > 2
+    for: 5m
     labels:
       severity: warning
+      tier: platform
     annotations:
-      summary: "Проба {{ $labels.probe_type }} пода отвечает замедленно (> 5s p95)"
+      summary: "Высокая латентность {{ $labels.probe_type }}-пробы на поде {{ $labels.namespace }}/{{ $labels.pod }}"
+      description: "95-й перцентиль времени ответа пробы превышает 2 секунды (p95 = {{ $value }}s). Риск ложного срабатывания таймаута."
 ```
 
-**Важно для алертинга:** kube-state-metrics **не** публикует результат проб, поэтому алертить нужно именно на `prober_*`-метрики, собранные с kubelet. Учитывайте, что метрика `prober_probe_total` у узла обнуляется при рестарте kubelet — для подсчёта используйте `increase()` за окно. Pull-модель с `/metrics/probes` можно подключать как отдельный scrape-таргет либо через ServiceMonitor (Prometheus Operator).
-
-## Диагностика проб через kubectl (DevOps/на практике)
-
-Дополнительно к событиям в `kubectl describe pod`, полезно уметь быстро читать конфигурацию и состояние проб машинным способом:
-
-```bash
-# Вывести все пробы первого контейнера пода (для проверки значений параметров)
-kubectl get pod <pod-name> -o jsonpath='{.spec.containers[0].livenessProbe}'
-kubectl get pod <pod-name> -o jsonpath='{.spec.containers[0].readinessProbe}'
-kubectl get pod <pod-name> -o jsonpath='{.spec.containers[0].startupProbe}'
-
-# Причина убийства контейнера (exit reason/reason killing)
-kubectl get pod <pod-name> -o jsonpath='{.status.containerStatuses[0].lastState}'
-kubectl logs <pod-name> --previous | tail -50
-
-# Проверить, что удалось попасть в эндпоинты Service
-kubectl get endpoints <service-name>
-kubectl get endpointslice -l kubernetes.io/service-name=<service-name>
-
-# Хронология сбоев проб (компактнее describe)
-kubectl get events --field-selector involvedObject.name=<pod-name>
-```
-
-**Самопроверка при отладке:** сравните значения `initialDelaySeconds`/`failureThreshold`/`periodSeconds` в манифесте с фактическим поведением. Частая причина «Ready 0/1» — путь или порт пробы не совпадает с эндпоинтом, который реально слушает приложение (см. HTTP вместо TCP выше) либо `failureThreshold` перекрыт тяжёлой командой `exec`.
+---
 
 ## Дополнительная информация
 
-### Диагностика и устранение неисправностей
-
-| Тип пробы | Симптом | Поведение системы |
-| :--- | :--- | :--- |
-| **Liveness** | Цикличные перезапуски (`Restarts > 0`) | Контейнер убивается `kubelet`. Причина в `kubectl describe pod` — `Unhealthy`. |
-| **Readiness** | Под `Running`, но `READY 0/1` | Под исключается из `Endpoints`. Трафик не идет. |
-| **Startup** | Под висит в `Running`, не переходит в `Ready` | Остальные пробы заблокированы. При сбое — перезапуск контейнера. |
-
-### Типичные ошибки (DKT 2026 Insights)
-
-1.  **Проверка внешних зависимостей (Cascading Failure):** Включение проверки БД или внешнего API в `livenessProbe`. Если база данных временно недоступна, Kubernetes начнет массово перезапускать все поды сервиса, что создаст лавинообразную нагрузку на БД при их одновременном старте и не решит проблему. **Правило:** Зависимости проверяются только в `readinessProbe`.
-2.  **Общий эндпоинт для всех проб:** Использование одного и того же `/health` эндпоинта для `liveness` и `readiness`. В случае высокой нагрузки под может начать отвечать медленно. `readinessProbe` должна временно вывести его из балансировки (503 или таймаут), но `livenessProbe` на том же эндпоинте приведет к убийству и перезапуску пода, что уничтожит все текущие обрабатываемые запросы и усугубит инцидент.
-3.  **«Спираль смерти» (Death Spiral) при масштабировании:** Реализация `readinessProbe` через тяжелые запросы в общую БД (например, `SELECT *`). 
-    *   **Сценарий:** При росте нагрузки HPA создает новые поды. Каждая новая реплика при старте начинает «бомбардировать» БД тяжелыми запросами проверки готовности. 
-    *   **Последствие:** База упирается в лимиты (CPU или Connections), из-за чего уже работающие поды также перестают проходить проверку готовности и исключаются из трафика. Система «закапывает» сама себя.
-4.  **Измерение «не того» показателя:** Проверка времени отклика приложения через `livenessProbe`. Если приложение начинает отвечать медленно (high latency) из-за нагрузки, оно будет убито и перезапущено, что только усугубит ситуацию. `livenessProbe` должна проверять только факт того, что процесс не «завис» (deadlock).
-5.  **Игнорирование времени прогрева (Warmup):** Установка слишком коротких таймаутов для приложений, которым требуется время на прогрев кэша или установку соединений (например, Java/JVM). Без `startupProbe` такие поды попадают в бесконечный цикл перезапусков (`CrashLoopBackoff`).
-
-#### Алгоритм диагностики
-
-1.  **Проверка событий (Events):**
-    ```bash
-    kubectl describe pod <pod-name>
-    ```
-    Ищите ошибки зондов в секции `Events`. Причины `Unhealthy` могут включать таймауты из-за перегрузки CPU (Context Switching) или троттлинга. Типичные события: `Unhealthy` (проба не прошла), `Killing` (контейнер убит по неудачной `liveness`), `Started` (контейнер перезапущен).
-2.  **Проверка изнутри:**
-    ```bash
-    kubectl exec <pod-name> -- curl -v http://localhost:8080/health
-    ```
-    Повторите ровно те условия, что заданы в пробе (тот же путь, порт, заголовки, схема), чтобы понять, отвечает ли сам контейнер.
-3.  **Проверка restarts и причин:** `kubectl get pod -o wide` (колонка `RESTARTS`) и `kubectl describe pod` → `State: Terminated` → `Reason`. Для точного анализа прошлого запуска: `kubectl logs <pod> --previous`.
-4.  **Логи kubelet:**
-    Если проба `exec` ведет себя странно, проверьте логи системного агента на узле. Для containerd/kubelet:
-    ```bash
-    # На узле
-    journalctl -u kubelet -f | grep -iE "probe|unhealthy"
-    ```
-5.  **Временное «маскирование» пробы при инциденте:**
-    Если проба сломана и вызывает лавину перезапусков, её можно временно отключить (патч на проду), чтобы стабилизировать сервис, пока причина не устранена:
-    ```bash
-    # Грубо отключить livenessProbe (заменить объект пробы на пустой нельзя — только убрать блок).
-    # Сохраните оригинальный манифест! После исправления верните пробу.
-    kubectl get deploy <name> -o yaml > deploy-backup.yaml
-    ```
-    Точечный запрет на вмешательство: правки проб = новая ревизия ReplicaSet (см. управление жизненным циклом Deployment), поэтому после маскировки инициируют полный rollout.
-
-### Лучшие практики (DKT 2026 Check-list)
-
-1.  **Разделение логики:** `readinessProbe` может проверять зависимости (БД, кэш), `livenessProbe` — **никогда**. Сбой БД не должен приводить к перезапуску приложения.
-2.  **Легковесность:** Проверки выполняются часто. Избегайте тяжелых SQL-запросов. Используйте `TCP Socket` для `livenessProbe` или максимально простые HTTP-запросы.
-3.  **Соответствие таймингов:** `timeoutSeconds` всегда должен быть меньше `periodSeconds`. Помните, что при сильной загрузке CPU таймауты проб могут срабатывать ложно.
-4.  **HTTP вместо TCP:** TCP-пробы часто «зеленеют» слишком рано (сокет открыт ОС, но приложение не готово). Используйте **HTTP-пробы** на специализированный `/readyz` эндпоинт.
-5.  **Graceful Shutdown и сетевые задержки:** Использование **`preStop sleep`** является обязательным для компенсации времени обновления эндпоинтов в сети, чтобы избежать 503 ошибок при удалении пода. При получении `SIGTERM` приложение должно начать возвращать ошибку в `readinessProbe`. Однако это не спасает от «гонки» обновлений эндпоинтов, поэтому использование **`preStop sleep`** является обязательным дополнением для исключения из трафика без потерь.
-6.  **Startup Probe как стандарт:** Для любого приложения с временем старта > 10 секунд всегда используйте `startupProbe`, чтобы не раздувать `initialDelaySeconds` у основных проб. После прохождения `startupProbe` `initialDelaySeconds` уже не нужен для этого окна.
-7.  **Управление соединениями (Pools):** Если пробы ходят в БД, выделите для них отдельный пул соединений (например, через PG Bouncer), чтобы нагрузка от приложения не блокировала диагностические запросы.
-8.  **Используйте именованные порты:** задавайте `port: http`/`port: grpc` вместо чисел — это делает пробы устойчивыми к смене номера порта и самодокументируется.
-9.  **Раздельные эндпоинты:** `/health` (выживаемость, без зависимостей) и `/readyz` (готовность, с зависимостями) — никогда не сводите их к одному пути.
-
-#### Проверка результата (Validation)
-
-После настройки проб убедитесь в корректности поведения:
-
-```bash
-# Под должен стать Ready и попасть в Service
-kubectl get pod <pod-name>            # READY 1/1
-kubectl get endpoints <service-name>  # IP пода в списке адресов
-
-# Имитация сбоя пробы (параллельно смотри вывод kubectl get pod -w)
-kubectl exec <pod-name> -- sh -c 'kill -STOP 1'   # зависший контейнер (для liveness)
-kubectl get pod <pod-name> -w                      # RESTARTS растёт при сбое liveness
-
-# Проверить, что старт не «убивается» ожиданием большой initialDelay
-kubectl logs <pod-name> --previous | grep -i startup
-```
-
-Ожидаемый результат: при зависании PID 1 контейнер перезапускается kubelet (событие `Killing`), а при недоступности — под исключается из `Endpoints`/`EndpointSlice` без перезапуска (readiness).
-
-## См. также
-
-* **[Жизненный цикл пода](./Pod/pod_lifecycle_and_state.md)**
-* **[Горячий старт Java-приложений](../Scheduling/java-startup-cpu-boost.md)** — ускорение старта через `startupProbe` + динамические CPU-лимиты.
-* **[Траблшутинг Kubernetes](../Troubleshooting/troubleshooting_overview.md)**
-* **[Native Sidecar контейнеры](./Pod/pod_sidecar_patterns.md)**
-* **[Проверки здоровья в CI/CD](../../CI-CD/Deployment_Strategies/deployment_health_checks_and_rollback.md)**
-* **[Управление эндпоинтами](../Networking/Service/service_overview.md)**
+* **[Жизненный цикл и состояния Pod](./Pod/pod_lifecycle_and_state.md)** — фазы пода, хуки жизненного цикла (`postStart`, `preStop`) и порядок остановки.
+* **[Продвинутые темы Pod](./Pod/pod_advanced_topics.md)** — архитектура `Readiness Gates`, `Scheduling Gates` и мутируемые поля спецификации.
+* **[Паттерны Sidecar в Kubernetes](./Pod/pod_sidecar_patterns.md)** — нативные sidecar-контейнеры (`restartPolicy: Always`), координация старта и завершения.
+* **[Перезапуск Pod в Kubernetes](./Pod/pod_restarts.md)** — детальный разбор механики перезапусков, `restartPolicy` и кодов возврата процессов.
+* **[Управление жизненным циклом Deployment](./Deployment/lifecycle_management.md)** — математика ротации реплик `maxSurge`/`maxUnavailable` и бесшовные релизы.
+* **[Обзор сервисов и управление эндпоинтами](../Networking/Service/service_overview.md)** — синхронизация `Endpoints` и `EndpointSlice` при изменении статусов готовности.
+* **[Поиск и устранение неисправностей (Troubleshooting)](../Troubleshooting/troubleshooting_overview.md)** — комплексная методология локализации сетевых и прикладных сбоев.
+* **[Горячий старт Java-приложений](../Scheduling/java-startup-cpu-boost.md)** — тюнинг `startupProbe` в сочетании с динамическим выделением ресурсов CPU.

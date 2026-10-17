@@ -30,37 +30,74 @@
 
 ### Архитектура сопоставления и фазы обработки
 
-Маршрутизация запроса по блокам `location` выполняется на фазе `NGX_HTTP_FIND_CONFIG_PHASE` одиннадцатифазного жизненного цикла HTTP-запроса в Nginx. 
+Маршрутизация запроса по блокам `location` выполняется на фазе `NGX_HTTP_FIND_CONFIG_PHASE` одиннадцатифазного жизненного цикла HTTP-запроса в Nginx (подробнее об архитектуре ядра — в **[Обзор архитектуры Nginx](../nginx_overview.md)**).
 
 ```
-[Клиентский запрос]
+[Клиентский запрос из сетевого сокета]
          │
          ▼
-[NGX_HTTP_POST_READ_PHASE]      (Чтение заголовков)
+ 1. [NGX_HTTP_POST_READ_PHASE]      (Чтение заголовков, восстановление real_ip)
          │
          ▼
-[NGX_HTTP_SERVER_REWRITE_PHASE] (rewrite на уровне server до выбора location)
+ 2. [NGX_HTTP_SERVER_REWRITE_PHASE] (rewrite на уровне блока server до выбора location)
          │
          ▼
-[NGX_HTTP_FIND_CONFIG_PHASE]    ◄── ВЫБОР LOCATION (Нормализация URI -> Trie -> Regex)
+ 3. [NGX_HTTP_FIND_CONFIG_PHASE]    ◄── ВЫБОР LOCATION (Нормализация URI -> Trie -> Regex)
          │
          ▼
-[NGX_HTTP_REWRITE_PHASE]        (rewrite внутри выбранного location)
+ 4. [NGX_HTTP_REWRITE_PHASE]        (rewrite, set, return внутри выбранного location)
          │
          ▼
-[NGX_HTTP_POST_REWRITE_PHASE]   (Проверка необходимости повторной маршрутизации)
+ 5. [NGX_HTTP_POST_REWRITE_PHASE]   (Проверка циклов редиректа: лимит до 10 переходов)
          │
          ▼
-[NGX_HTTP_PREACCESS_PHASE]      (Ограничения: limit_req, limit_conn)
+ 6. [NGX_HTTP_PREACCESS_PHASE]      (Ограничения частоты и соединений: limit_req, limit_conn)
          │
          ▼
-[NGX_HTTP_ACCESS_PHASE]         (Авторизация: auth_basic, allow/deny)
+ 7. [NGX_HTTP_ACCESS_PHASE]         (Авторизация: allow, deny, auth_basic, auth_request)
          │
          ▼
-[NGX_HTTP_CONTENT_PHASE]        (Генерация ответа: root, proxy_pass, fastcgi_pass)
+ 8. [NGX_HTTP_POST_ACCESS_PHASE]    (Агрегация прав доступа: директива satisfy any|all)
+         │
+         ▼
+ 9. [NGX_HTTP_PRECONTENT_PHASE]     (Предварительные действия: mirror, try_files)
+         │
+         ▼
+10. [NGX_HTTP_CONTENT_PHASE]        (Генерация ответа: ровно один content handler)
+         │                           (proxy_pass, fastcgi_pass, root/static, autoindex)
+         ▼
+11. [NGX_HTTP_LOG_PHASE]            (Запись в access_log после отправки клиенту)
+         │
+         ▼
+    [Фильтры вывода (Output Filters)] (add_header, gzip, sub_filter)
 ```
 
-Если директивы `rewrite` в контексте `server` изменяют URI, поиск `location` на фазе `NGX_HTTP_FIND_CONFIG_PHASE` производится уже по новому, модифицированному значению.
+Если директивы `rewrite` в контексте `server` изменяют URI, поиск `location` на фазе `NGX_HTTP_FIND_CONFIG_PHASE` производится уже по новому, модифицированному значению пути.
+
+#### Порядок директив внутри location: декларативность против процедурности
+
+Ключевой вопрос на технических собеседованиях:
+*«Имеет ли значение порядок строк внутри блока `location`? Что выполнится раньше, если написать `proxy_pass` на первой строке, а строкой ниже — `return 301`?»*
+
+**Ответ:** Nginx **декларативен**, а не процедурен. Инструкции внутри `location` не выполняются как скрипт сверху вниз, а привязываются к соответствующим фазам конвейера обработки запроса:
+1. Директивы модуля rewrite (`set`, `rewrite`, `return`) регистрируются на фазе `REWRITE_PHASE` (Фаза 4).
+2. Директивы контроля доступа (`allow`, `deny`) регистрируются на фазе `ACCESS_PHASE` (Фаза 7).
+3. Обработчики контента (`proxy_pass`, `root`, `fastcgi_pass`) регистрируются на фазе `CONTENT_PHASE` (Фаза 10).
+4. Заголовки `add_header` внедряются на этапе фильтрации заголовков (Output Header Filter).
+
+Следовательно, директива `return` **всегда выполнится раньше**, чем `proxy_pass` или `root`, независимо от того, в какой строке блока `location` она физически записана. Запрос мгновенно завершится отправкой ответа клиенту, а фаза генерации контента даже не начнется.
+
+*Исключение:* Директивы, принадлежащие одному и тому же модулю и фазе (например, последовательность инструкций `rewrite` или цепочка правил `allow` и `deny`), выполняются строго последовательно в порядке записи в файле.
+
+#### Принцип единственного обработчика контента (Single Content Handler)
+
+В структуре внутреннего запроса Nginx (`ngx_http_request_t`) поле `r->content_handler` представляет собой указатель ровно на одну функцию-генератор. На фазе `NGX_HTTP_CONTENT_PHASE` у блока `location` может быть **только один обработчик контента**:
+- Либо обратный прокси (`proxy_pass`);
+- Либо шлюз приложений (`fastcgi_pass`, `uwsgi_pass`, `scgi_pass`, `grpc_pass`);
+- Либо статический файловый обработчик (`ngx_http_static_handler`, активируемый через `root` или `alias`);
+- Либо служебный генератор (`stub_status`, `autoindex`).
+
+Попытка указать в одном `location` одновременно `proxy_pass` и `fastcgi_pass` приведет к ошибке компиляции конфигурации (`nginx: [emerg] "fastcgi_pass" directive is duplicate`). При совмещении `root` и `proxy_pass` директива `proxy_pass` перехватывает управление, а `root` игнорируется (за исключением редких директив вроде `open_file_cache`).
 
 ---
 
@@ -153,6 +190,32 @@ location ~* \.json$ {
 - При запросе `/app/info.html` самый длинный совпавший префикс — `/app/` (`^~`). Проверка регулярных выражений **блокируется**, запрос обрабатывается в `location ^~ /app/`.
 - При запросе `/app/data/schema.json` самый длинный совпавший префикс — `/app/data/` (10 символов против 5). Так как префикс `/app/data/` не имеет модификатора `^~`, Nginx **переходит к проверке регулярных выражений** (Шаг 4). Шаблон `~* \.json$` совпадает, и запрос уходит в regex-локейшен, а не в `/app/data/`!
 
+#### Ловушка нестрогого префикса (Substring Match Trap)
+
+Распространенная ошибка проектирования — объявление префикса без завершающего слэша (`location /api` вместо `location /api/`).
+
+**Механизм работы:**
+Префиксное сопоставление в Nginx работает как **строковое сравнение с начала строки**, а не как покомпонентный разбор дерева каталогов:
+- Блок `location /api` совпадет со следующими запросами:
+  - `/api` — совпадает;
+  - `/api/` — совпадает;
+  - `/api/v1/users` — совпадает;
+  - `/api-docs` — **совпадает!** (начинается с `/api`);
+  - `/application` — **совпадает!**;
+  - `/api_secret_key` — **совпадает!**.
+
+**Продакшен-инцидент (Access Control Bypass / Routing Collision):**
+Если администратор закрывает закрытый раздел правилом:
+```nginx
+location /admin {
+    allow 10.0.0.0/8;
+    deny all;
+}
+```
+А публичная страница справочника называется `/admin-help` или `/admin_public`, доступ к ней будет неожиданно заблокирован для всех клиентов. В обратной ситуации, если защищен только `location /admin/`, злоумышленник может обойти ограничение через обращение к `/admin`.
+
+**Правило:** Всегда завершайте префиксные блоки слэшем (`location /api/`), если цель — накрыть каталог или группу эндпоинтов. Если требуется совпадение ровно с одним эндпоинтом, используйте точный модификатор `location = /api`.
+
 ---
 
 ### Семантика `proxy_pass` и трансформация URI
@@ -211,9 +274,20 @@ location ~ ^/service-[a-z]+/(.*)$ {
 location /forward/ {
     resolver 127.0.0.1 valid=30s;
     set $target_backend "app.internal.domain:8080";
-    proxy_pass http://$target_backend$uri;
+    # ВНИМАНИЕ: $uri передает нормализованный путь БЕЗ query string ($args)!
+    proxy_pass http://$target_backend$request_uri;
 }
 ```
+
+#### 5. Подводный камень нормализации и декодирования `%2F` в `proxy_pass`
+
+Один из самых коварных инцидентов в REST API за Nginx:
+- При директиве с URI `proxy_pass http://backend/;` Nginx отправляет бэкенду нормализованный `$uri`. На этапе нормализации код `%2F` преобразуется в реальный слэш `/`, а `%20` — в пробел.
+- Если клиент запрашивает ресурс с закодированным путем (например, в GitLab/Artifactory/S3: `GET /api/v1/repos/group%2Fproject`), бэкенд получает `GET /v1/repos/group/project` — структура пути ломается, и сервер возвращает `404 Not Found`.
+
+**Решение:**
+1. Если подмена пути не требуется: использовать `proxy_pass http://backend;` (строго **без** завершающего слэша). В этом режиме Nginx передает оригинальный сырой `RAW URI` клиента из сокета без декодирования.
+2. При динамическом роутинге: всегда передавать переменную `$request_uri` (`proxy_pass http://$upstream$request_uri;`), которая хранит точный исходный URI вместе с аргументами и закодированными символами.
 
 ---
 
@@ -224,6 +298,21 @@ location /forward/ {
 2. Если используется стандартный `proxy_pass http://backend/;`, Nginx аналогично генерирует внутренний или внешний 301-редирект на URI со слэшем для предотвращения поломки относительных путей в веб-интерфейсе.
 
 При использовании `try_files` автоматический 301-редирект не инициируется, если в явном виде не указан маркер `$uri/`.
+
+#### Взаимодействие с `proxy_redirect` и статус-кодами 301 vs 308 в REST API
+
+1. **Модификация заголовка `Location` (`proxy_redirect`):**
+   Когда бэкенд возвращает редирект на свой внутренний сокет (`Location: http://10.0.0.5:8080/auth`), Nginx по умолчанию (`proxy_redirect default;`) переписывает заголовок, подставляя внешний префикс текущего `location`. Подробнее о предотвращении утечек портов и циклов редиректа — в **[Редиректы и proxy_redirect](../../Proxy/nginx_proxy_redirects.md)**.
+
+2. **Проблема потери тела запроса (301/302 vs 307/308):**
+   Исторически браузеры и HTTP-клиенты при получении редиректов `301 Moved Permanently` и `302 Found` **изменяют HTTP-метод запроса на `GET` и отбрасывают тело запроса** (`POST`/`PUT` payload).
+   - В REST API при перенаправлениях (на HTTPS или завершающий слэш) необходимо использовать коды `307 Temporary Redirect` или `308 Permanent Redirect` (RFC 9110), которые строго предписывают клиенту повторить запрос с тем же методом и телом:
+   ```nginx
+   # Для API обязательно использовать 308 вместо 301:
+   location = /api/v1/orders {
+       return 308 /api/v1/orders/;
+   }
+   ```
 
 ---
 
@@ -240,6 +329,40 @@ location /api/write/ {
         deny  all;             # POST, PUT, DELETE, PATCH запрещены для остальных
     }
     proxy_pass http://api_backend;
+}
+```
+
+#### Архитектурное ограничение `limit_except` и возврат HTTP 405
+
+Частая ошибка на собеседованиях и в конфигурации — попытка вернуть клиенту `405 Method Not Allowed` через `limit_except`:
+```nginx
+# ОШИБКА: Синтаксический сбой при nginx -t
+limit_except GET POST {
+    return 405; # Запрещено! Директива return недопустима внутри limit_except
+}
+```
+
+Директива `limit_except` поддерживает внутри своего контекста **только директивы модулей доступа** (`allow`, `deny`, `auth_basic`). При попытке поместить туда `return`, `rewrite` или `proxy_pass` Nginx завершится с ошибкой `nginx: [emerg] "return" directive is not allowed here`.
+
+**Продакшен-паттерн возврата HTTP 405 через `map`:**
+Для корректного отклонения неразрешенных методов с отдачей стандарта HTTP 405 используется декларативная таблица `map` на уровне `http`:
+
+```nginx
+# В контексте http:
+map $request_method $is_disallowed_api_method {
+    default         1;
+    GET             0;
+    POST            0;
+    HEAD            0;
+    OPTIONS         0;
+}
+
+# В контексте server / location:
+location /api/v1/payments/ {
+    if ($is_disallowed_api_method) {
+        return 405 "Method Not Allowed\n";
+    }
+    proxy_pass http://payment_backend;
 }
 ```
 
@@ -687,6 +810,9 @@ curl -sI "http://localhost/docs"
 | Статический файл (CSS/JS) в директории `/static/` возвращает ошибку 502 или уходит в бэкенд | Запрос перехвачен регулярным выражением (`location ~ \.(css\|js)$` или PHP) | `nginx -T`, поиск regex с `~` | Добавить модификатор `^~` в префикс статики: `location ^~ /static/` |
 | Ошибка `[emerg] "proxy_pass" cannot have URI part in location given by regular expression` | Указан путь в `proxy_pass` внутри regex-локейшена или `@name` | `nginx -t` | Удалить путь из `proxy_pass` и использовать `rewrite ... break` |
 | Утечка файлов родительского каталога (Directory Traversal) через `alias` | Несогласованный слэш (Off-by-slash: `location /files` и `alias /data/files/`) | Аудит `nginx -T`, `curl http://host/files../` | Добавить завершающий слэш в `location`: `location /files/` |
+| Префикс `location /api` перехватывает запросы к сторонним сервисам (`/api-docs`, `/application`) | Префиксное сопоставление в Nginx выполняется по строковому совпадению подстроки с начала пути | Анализ access-логов и трассировка сопоставления | Добавить завершающий слэш `location /api/` либо использовать точный модификатор `location = /api` |
+| Запросы REST API с закодированными слэшами (`%2F`) падают с 404 на бэкенде | В `proxy_pass` указан URI (`proxy_pass http://b/;`), что форсирует декодирование `%2F` в `/` через `$uri` | Инспекция логов бэкенда: приход пути с реальным слэшем вместо `%2F` | Убрать URI из `proxy_pass http://backend;` или передавать сырой `$request_uri` |
+| Ошибка `[emerg] "return" directive is not allowed here` | Попытка вернуть HTTP 405 внутри директивы `limit_except` | `nginx -t` при валидации конфигурации | `limit_except` работает только с модулями доступа; отдачу 405 реализовывать через `map` |
 | `location /search?q=1` никогда не срабатывает | Query string исключается из `$uri` до сопоставления с `location` | Проверка URI в access-логе | Использовать `location /search` и проверять параметры через `if ($arg_q)` или директиву `map` |
 | Ошибка `500 Internal Server Error`, сообщение `rewrite or internal redirection cycle` | Бесконечный цикл в `try_files` или `error_page` (более 10 переходов) | Просмотр `/var/log/nginx/error.log` | Использовать именованный location `@fallback` в конце цепочки `try_files` |
 | Ошибка `403 Forbidden` при обращении к каталогу без файла индекса | Отсутствует файл из директивы `index` и выключен `autoindex` | Просмотр `/var/log/nginx/error.log`: `directory index of "/path/" is forbidden` | Создать `index.html` или включить `autoindex on;` |
@@ -790,3 +916,5 @@ location @fallback {
 - **[Предикатные локейшены и продвинутая маршрутизация API-трафика](./predicate_locations.md)** — маршрутизация по переменным, заголовкам и телу запроса в Nginx 1.31.5+.
 - **[Nginx location: примеры интеграции](./integration_examples.md)** — сопряжение Nginx с PHP-FPM, uWSGI, gRPC и Node.js.
 - **[Перенаправления и перезапись URI в Nginx](../nginx_rewrite_rules_and_try_files.md)** — директивы `rewrite`, `return`, флаги `last` / `break` и взаимодействие с фазой поиска `location`.
+- **[Редиректы и proxy_redirect в Nginx](../../Proxy/nginx_proxy_redirects.md)** — управление редиректами бэкендов, коды 301/302 vs 307/308 и абсолютные/относительные перенаправления.
+- **[CORS в Nginx](../../Security/nginx_cors_guide.md)** — архитектура настройки Cross-Origin Resource Sharing, Preflight OPTIONS и белый список Origin.

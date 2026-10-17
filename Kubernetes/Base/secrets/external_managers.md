@@ -1,118 +1,212 @@
 # Внешние системы управления секретами
 
-**Актуально для:** External Secrets Operator 2.12.x (октябрь 2026)
+**Актуально для:** Kubernetes 1.30–1.34+, External Secrets Operator v0.14+ / Helm-чарт 2.13.x (API external-secrets.io/v1), Secrets Store CSI Driver v1.6.x, HashiCorp Vault 1.18–1.21 / OpenBao 2.x (on-premise / bare-metal)
 
 ## Определения
 
-**Внешние менеджеры секретов (External Secret Managers)** — специализированные системы (HashiCorp Vault, AWS Secrets Manager, Google Secret Manager), интегрированные с Kubernetes для централизованного хранения, жизненного цикла и аудита конфиденциальных данных. В 2026 году использование внешних менеджеров является обязательным стандартом для сред с высокими требованиями к безопасности (Zero Trust).
+- **Внешние менеджеры секретов (External Secret Managers)** — централизованные платформы управления жизненным циклом конфиденциальных данных (HashiCorp Vault, OpenBao, Infisical), развернутые в локальной или гибридной инфраструктуре для безопасного хранения, генерации, аудита и динамической ротации ключей, токенов и паролей.
+- **External Secrets Operator (ESO)** — Kubernetes-оператор, реализующий модель асинхронной синхронизации (Pull-модель): считывает конфиденциальные данные из внешнего API хранилища и материализует/обновляет нативные объекты `Secret` внутри кластера. Приложения работают со стандартными механизмами Kubernetes (переменные окружения `envFrom`, тома `volumeMounts`) и не требуют внедрения внешних SDK.
+- **Secrets Store CSI Driver** — драйвер интерфейса CSI (Container Storage Interface), реализующий доставку секретов «по требованию» (On-demand): секреты монтируются непосредственно в файловую систему Pod в момент его монтирования как виртуальный том `tmpfs`, не сохраняясь в базе данных `etcd` в виде нативных объектов `Secret`.
+- **Vault Secrets Operator (VSO)** — нативный оператор для Kubernetes от HashiCorp/OpenBao, управляющий синхронизацией статических (`VaultStaticSecret`), динамических (`VaultDynamicSecret`) и PKI-сертификатов (`VaultPKISecret`) из Vault с поддержкой автоматического обновления и инициирования rollout-restart рабочих нагрузок.
+- **OpenBao** — открытая реализация платформы управления секретами под эгидой Linux Foundation (форк Vault, созданный после смены лицензии на BSL). Сохраняет полную совместимость с API HashiCorp Vault v1/v2 и является основным выбором для полностью открытых локальных сред без коммерческих подписок.
+- **SecretStore / ClusterSecretStore** — Custom Resource Definitions (CRD) оператора ESO, определяющие конфигурацию подключения, адрес сервера и метод аутентификации во внешнем хранилище. `SecretStore` изолирован пространством имен (namespace-scoped), `ClusterSecretStore` доступен во всем кластере.
+- **ExternalSecret** — декларативный ресурс ESO, описывающий маппинг внешних путей и ключей хранилища в нативный объект `Secret` Kubernetes с заданным интервалом проверки изменений (`refreshInterval`).
+- **PushSecret** — ресурс ESO, обеспечивающий обратную синхронизацию: отправку сгенерированных внутри кластера секретов (или результатов генераторов паролей) во внешнее хранилище Vault для интеграции с внешними сервисами.
+- **SecretProviderClass (SPC)** — CRD драйвера Secrets Store CSI, декларирующий схему извлечения секретов из конкретного провайдера (например, Vault Provider), параметры путей и формат маппинга файлов.
+- **Projected ServiceAccount Token (TokenRequest API)** — короткоживущий криптографический JWT-токен пода с ограниченной областью действия (`audience`) и временным сроком жизни, монтируемый ядром kubelet для аутентификации компонентов в локальном Vault без использования устаревших статических токенов.
+- **Дрейф секретов (Drift Detection)** — процесс выявления расхождений между актуальным значением секрета во внешнем хранилище и его копией в нативном `Secret` кластера, выполняемый контроллером оператора по расписанию.
+- **Цикл согласования (Reconciliation Loop)** — периодический цикл контроллера Kubernetes, в рамках которого проверяется состояние целевого ресурса, опрашивается источник истины и устраняются расхождения между декларативным состоянием и реальным кластером.
 
-**External Secrets Operator (ESO)** — Kubernetes-оператор, реализующий модель периодического Pull-синхронизации: он считывает данные из внешнего API и создаёт/обновляет нативные объекты `Secret` в кластере (с точки зрения кластера такую доставку можно описать как Push). Приложения работают со стандартными механизмами Kubernetes (ENV, Volumes) и не знают о внешнем хранилище.
+---
 
-**Secrets Store CSI Driver** — интерфейс, реализующий "On-demand модель". Секреты монтируются напрямую в файловую систему Pod в момент его запуска, не сохраняясь в `etcd` в виде объектов `Secret`.
+## Архитектура и базовые концепции
 
-**Vault Secrets Operator (VSO)** — нативный оператор от HashiCorp (актуален в 2026 году), объединяющий преимущества ESO и прямой интеграции с Vault API. Синхронизирует статические (`VaultStaticSecret`), динамические (`VaultDynamicSecret`) и PKI-секреты (`VaultPKISecret`), поддерживает автоматическую ротацию и rollout-restart приложений.
+### Зачем нужны внешние менеджеры в On-Premise инфраструктуре
 
-**PushSecret** — обратный сценарий синхронизации ESO: публикация значения (например, автоматически сгенерированного пароля через `Generators`) из кластера во внешнее хранилище. Применяется в GitOps-потоках и взаимной синхронизации приложений с KMS.
+Хранение конфиденциальных данных в стандартных объектах Kubernetes `Secret` создает критические риски в локальных дата-центрах и bare-metal инсталляциях:
 
-**OpenBao** — открытая сборка Vault под эгидой Linux Foundation (форк, созданный после перевода HashiCorp Vault на лицензию BUSL). Совместима с API Vault и подходит для полностью самохостящихся сред без коммерческой лицензии.
-
-## Основные концепции
-
-### Преимущества внешних систем
-
-1.  **Безопасность etcd:** Минимизация или полное исключение хранения секретов в базе данных кластера. При использовании CSI Driver секреты находятся только в оперативной памяти (`tmpfs`) узла.
-2.  **Аудит и комплаенс:** Внешние системы предоставляют детальные логи (кто, когда и какой секрет получил), что критично для стандартов PCI DSS и SOC2.
-3.  **Динамическая ротация:** Возможность автоматического обновления паролей баз данных или сертификатов без ручного вмешательства в манифесты Kubernetes.
-4.  **Workload Identity:** Использование облачных идентичностей (IAM Roles for Service Accounts — IRSA, Azure Workload Identity) вместо долгоживущих статических токенов для доступа к KMS.
+1. **Изоляция базы данных etcd:** Нативные секреты сериализуются в Base64 и без активации KMS-плагина сохраняются в открытом виде в `etcd`. Внешний менеджер секретов позволяет минимизировать количество чувствительных данных в etcd либо исключить их хранение полностью (при использовании Secrets Store CSI Driver все данные живут исключительно в оперативной памяти `tmpfs` рабочего узла).
+2. **Централизация и единый аудит (Zero Trust):** Жизненный цикл паролей баз данных, приватных ключей и токенов API управляется в одном месте. Системы класса HashiCorp Vault / OpenBao обеспечивают неизменяемый журнал аудита (кто, в какое время, с какого ServiceAccount и какой секрет прочитал).
+3. **Динамические учетные записи и короткий TTL:** Вместо бессрочных статических паролей внешние системы позволяют генерировать одноразовые учетные записи баз данных со сроком жизни от нескольких минут до нескольких часов, автоматически удаляя их по истечении аренды (lease).
+4. **Устранение «отравленной истории» в GitOps:** В репозиторий Git коммитятся только декларативные ссылки на пути (`ExternalSecret`, `SecretProviderClass`), а сами секреты никогда не покидают периметр защищенного хранилища.
 
 ### Модели доставки секретов
 
-С точки зрения способа доставки данных в приложение выделяют три модели (сравнение Push/Pull разобрано подробнее в [Управлении секретами приложений](../../Security/application_secrets_management.md)):
+В Kubernetes выделяют три ключевые модели взаимодействия с внешними хранилищами:
 
--   **Pull/Push (ESO):** постоянно работающий оператор периодически читает внешнее хранилище и синхронизирует значения в нативные `Secret`. Приложение ничего не знает о внешней системе и использует привычные ENV/Volumes.
--   **On-demand (Secrets Store CSI Driver):** значение извлекается из хранилища в момент старта Pod и монтируется как файловый том (секрет не становится объектом Kubernetes).
--   **Direct (Vault Agent Sidecar, VSO):** агент или оператор отдают секрет напрямую — файлы из общего тома (`emptyDir`/`tmpfs`) либо нативный `Secret` с автоматической ротацией.
+```
+[Внешнее хранилище: HashiCorp Vault / OpenBao]
+       │                           │                           │
+  (1) Pull / Sync            (2) On-Demand              (3) Sidecar / Direct
+       │                           │                           │
+       ▼                           ▼                           ▼
+[External Secrets Op]    [Secrets Store CSI]        [Vault Agent Container]
+       │                           │                           │
+       ▼                           ▼                           ▼
+[etcd: Secret K8s]        [Узел K8s: tmpfs]          [Shared Volume: tmpfs]
+       │                           │                           │
+       ▼                           ▼                           ▼
+[Pod: ENV / Volume]       [Pod: Mount Volume]        [Pod: Mount Volume]
+```
 
-### Сравнение подходов (2026)
+1. **Синхронизация через оператор (Pull/Sync — ESO / VSO):** Фоновый оператор периодически считывает данные из Vault по протоколу HTTPS и создает/обновляет стандартные объекты `Secret` в Kubernetes. Приложения получают данные привычным способом (через `env`, `envFrom` или `secretVolume`).
+2. **Монтирование по требованию (On-Demand — Secrets Store CSI Driver):** Том монтируется kubelet в момент создания Pod. Драйвер CSI перехватывает системный вызов `NodePublishVolume`, связывается с провайдером Vault, считывает секрет и монтирует виртуальную файловую систему в оперативную память контейнера. Секрет не появляется в `etcd`.
+3. **Прямое внедрение (Direct / Sidecar Injection — Vault Agent):** В Pod через Mutating Admission Webhook внедряется служебный контейнер (в современных кластерах — Native Sidecar Container). Агент самостоятельно аутентифицируется в Vault, выполняет рендеринг конфигурационных файлов по шаблонам Consul-Template и обновляет их при изменении.
 
-| Характеристика | External Secrets (ESO) | Secrets Store CSI | Vault Sidecar / VSO |
-| :--- | :--- | :--- | :--- |
-| **Хранение в etcd** | Да (синхронизация) | Нет (только RAM) | Опционально |
-| **Способ доставки** | Переменные окружения и файлы | Только файлы (по умолчанию) | Файлы или API |
-| **Автообновление** | По `refreshInterval` | При ротации в KMS | Динамическое |
-| **Сложность** | Средняя | Высокая | Средняя/Высокая |
-| **Совместимость** | Максимальная (любые приложения) | Приложения, читающие файлы | Cloud-native приложения |
-| **Компоненты в кластере** | Оператор (`Deployment`) + CRD | CSI-драйвер и provider (`DaemonSet`) на каждом узле | Per-Pod контейнеры либо оператор (VSO) |
-| **Динамические секреты** | Периодический Pull, без управления арендами | Обычно нет (статические KV) | Да (`VaultDynamicSecret`, шаблоны + TTL) |
-| **Аутентификация** | Конфигурируется в `SecretStore` (Kubernetes Auth, AppRole, токен) | Параметры provider + `nodePublishSecretRef` | Kubernetes Auth / `VaultAuth` (VSO) |
-| **Наблюдаемость** | `status.conditions` ресурсов ESO | `SecretProviderClassPodStatus`, события kubelet | Логи Vault Agent / `status` CRD VSO |
+### Сравнительный анализ моделей доставки секретов (On-Premise)
 
-### Жизненный цикл синхронизации в ESO (Pull-модель)
+| Критерий | External Secrets Operator (ESO) | Secrets Store CSI Driver | Vault Agent (Native Sidecar) | Vault Secrets Operator (VSO) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Хранение в etcd** | Да (создает нативный `Secret`) | **Нет** (только оперативная память `tmpfs`) | **Нет** (только общий том `emptyDir/tmpfs`) | Да (создает нативный `Secret`) |
+| **Способ передачи в приложение** | Переменные окружения (ENV) и файлы | **Только файлы** (или опциональный sync в Secret) | Файлы произвольного формата (шаблоны) | Переменные окружения (ENV) и файлы |
+| **Совместимость с ПО** | **Абсолютная** (любые legacy и cloud-native сервисы) | Приложения, умеющие читать файлы конфигурации | Приложения, читающие файлы на диске | **Абсолютная** (нативные объекты K8s) |
+| **Компоненты в кластере** | `Deployment` контроллера + CRD | `DaemonSet` драйвера + `DaemonSet` провайдера на каждом узле | Sidecar-контейнер в каждом целевом Pod | `Deployment` контроллера + CRD |
+| **Потребление ресурсов** | Минимальное (один оператор на кластер) | Среднее (DaemonSet агентов на каждом узле) | Высокое (дополнительный контейнер на каждый Pod) | Минимальное (один оператор на кластер) |
+| **Динамические секреты (DB lease)** | Ограниченно (периодический Pull статических KV) | Нет (ориентирован на KV) | **Да** (полноценное продление аренды и рендеринг) | **Да** (`VaultDynamicSecret`, `VaultPKISecret`) |
+| **Ротация в приложении** | Требует перезапуска пода (Reloader) | Автоматически обновляет файл на `tmpfs` | Автоматически обновляет файл + отправка `SIGHUP` | Автоматический `rolloutRestartTargets` |
+| **Аутентификация** | TokenRequest API / AppRole / mTLS | TokenRequest API пода / SecretRef | TokenRequest API пода (Auto-Auth) | TokenRequest API / AppRole |
 
-1.  **Создание `ExternalSecret`:** пользователь декларативно описывает, откуда и какие ключи читать и в какой нативный `Secret` их положить.
-2.  **Reconcile loop:** оператор следит за ресурсами `ExternalSecret`, `SecretStore`/`ClusterSecretStore` и каждые `refreshInterval` заново опрашивает внешний API (drift detection — обнаружение изменений во внешнем хранилище).
-3.  **Доступ к хранилищу:** оператор получает credentials через `ClusterSecretStore` (Kubernetes Auth, AppRole, статический токен и др.), читает значения и формирует целевой `Secret`.
-4.  **Создание/обновление `Secret`:** с учётом `target.name` (имя может быть шаблоном), `target.template` (добавление метаданных/аннотаций), `data` vs `dataFrom` (выборка конкретных полей или всего секрета).
-5.  **Удаление/пересоздание:** `creationPolicy` определяет право собственности (`Owner` — оператор управляет объектом, `Orphan` — не управляет, `Merge` — сливает с существующим); `deletionPolicy` — что случится с целевым `Secret` при удалении `ExternalSecret` (`Retain` / `Delete`).
-6.  **Статус:** результат каждой синхронизации отражается в `status.conditions` ресурса (`Ready`, `Sync`, `RefreshFailed`) и в событиях (events) объекта.
+### Архитектура и жизненный цикл согласования ESO
+
+В основе работы External Secrets Operator лежит контроллер с циклом согласования (Reconciliation Loop):
+
+1. **Декларация `ExternalSecret`:** Разработчик или администратор описывает манифест `ExternalSecret`, указывая ссылку на хранилище (`secretStoreRef`), список извлекаемых ключей (`data` / `dataFrom`), и параметры целевого секрета (`target`).
+2. **Периодический опрос (Drift Detection):** Каждые `refreshInterval` контроллер инициирует проверку внешнего источника. Если значение в Vault изменилось, оператор формирует обновление для кластера.
+3. **Безопасная аутентификация:** Контроллер генерирует или извлекает проекционный JWT ServiceAccount для аутентификации в Vault по методу `kubernetes`, получая временный клиентский токен с жестко ограниченным TTL.
+4. **Применение политик создания (`creationPolicy`):**
+   - `Owner` (рекомендуется): Оператор полностью управляет нативным `Secret`. Ручные правки в объекте Kubernetes перезаписываются оператором при следующем цикле.
+   - `Merge`: Оператор дописывает свои ключи в уже существующий `Secret`, не затирая данные, созданные другими процессами (например, Helm-релизом).
+   - `Orphan`: Оператор создает `Secret`, но не связывает его жизненный цикл с `ExternalSecret`.
+5. **Применение политик удаления (`deletionPolicy`):**
+   - `Retain` (по умолчанию): При удалении ресурса `ExternalSecret` целевой нативный `Secret` в Kubernetes сохраняется, предотвращая немедленный отказ приложений.
+   - `Delete`: При удалении `ExternalSecret` нативный объект `Secret` немедленно удаляется.
+6. **Трансляция статуса в API:** Результат согласования фиксируется в блоке `status.conditions` (`Ready`, `SecretSynced`, `RefreshFailed`). Это позволяет SRE-командам строить мониторинг и алертинг на основе метрик Prometheus.
+
+### Модель безопасности и идентификация в On-Premise (Zero Trust)
+
+В полностью закрытом локальном контуре (без облачных IAM-ролей) доверие между кластером Kubernetes и Vault строится на базе **Kubernetes TokenReview API**:
+
+1. Pod или оператор ESO использует проецируемый токен ServiceAccount (`/var/run/secrets/kubernetes.io/serviceaccount/token`), выпускаемый kube-apiserver через механизм `TokenRequest`.
+2. При создании токена обязательно задается атрибут `audience` (например, `audience: "vault"`), что предотвращает использование токена в других сервисах в случае его утечки.
+3. Клиент отправляет JWT в Vault по пути `v1/auth/kubernetes/login`.
+4. Vault обращается к `TokenReview` API кластера Kubernetes по защищенному каналу с проверкой валидности подписи, срока действия токена, имени ServiceAccount и его namespace.
+5. При успешной проверке Vault сопоставляет ServiceAccount с ролью Vault Role и выпускает кратковременный токен доступа с привязанными политиками ACL.
+
+---
 
 ## Практические сценарии
 
-### Использование External Secrets Operator (ESO)
+### 1. Развертывание External Secrets Operator в отказоустойчивой конфигурации (HA)
 
-ESO позволяет приложениям использовать стандартные механизмы Kubernetes (ENV, Volumes), при этом данные поступают из защищенного хранилища.
+В production-окружениях bare-metal кластеров ESO должен развертываться в режиме высокой доступности (HA) с резервированием контроллеров, лидер-выборами (Leader Election) и экспортом метрик для Prometheus.
 
-**Архитектура:**
-*   **SecretStore / ClusterSecretStore:** Настройка аутентификации в KMS (например, через ServiceAccount JWT или IAM Role). `SecretStore` действует в пределах одного namespace, `ClusterSecretStore` — в пределах всего кластера (для инфраструктурных сервисов).
-*   **ExternalSecret:** Определение маппинга внешних ключей в ключи нативного секрета.
-*   **refreshInterval:** Параметр, определяющий частоту опроса KMS для обнаружения изменений (drift detection).
+#### Установка через Helm (ESO 2.13.x)
 
-**Установка оператора (ESO 2.12.x, 2026):**
+Создайте файл настроек `eso-values.yaml`:
+
+```yaml
+# eso-values.yaml
+replicaCount: 2
+
+leaderElect: true
+
+installCRDs: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: external-secrets
+          topologyKey: kubernetes.io/hostname
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  additionalLabels:
+    prometheus: k8s
+
+webhook:
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+certController:
+  replicaCount: 1
+```
+
+Выполните установку:
 
 ```bash
 helm repo add external-secrets https://charts.external-secrets.io
-helm install external-secrets external-secrets/external-secrets \
-  -n external-secrets --create-namespace
+helm repo update
+helm upgrade --install external-secrets external-secrets/external-secrets \
+  --namespace external-secrets \
+  --create-namespace \
+  -f eso-values.yaml
+# → Release "external-secrets" has been upgraded. Happy Helming!
 ```
 
-CRD устанавливаются чартом по умолчанию (`installCRDs: true`). При мультикластерном управлении CRD установите `installCRDs: false` и applying CRD отдельно через `kubectl apply -f .../bundle.yaml --server-side` во избежание конфликтов версий при обновлении ESO в разных кластерах в разное время. CRD превысили лимит 256 KB — при ручном applying используйте `--server-side`. Проверка:
+Проверка состояния развернутых компонентов:
 
 ```bash
-kubectl get crd | grep external-secrets
+kubectl get pods -n external-secrets -o wide
+# → NAME                                                READY   STATUS    RESTARTS   AGE
+# → external-secrets-7d84878b68-b7l89                   1/1     Running   0          45s
+# → external-secrets-7d84878b68-x9k2p                   1/1     Running   0          45s
+# → external-secrets-cert-controller-584768846c-k4m2w   1/1     Running   0          45s
+# → external-secrets-webhook-6577889759-9f7w8           1/1     Running   0          45s
+# → external-secrets-webhook-6577889759-q8z1z           1/1     Running   0          45s
+
+kubectl get crd | grep external-secrets.io
+# → clusterexternalsecrets.external-secrets.io
 # → clustersecretstores.external-secrets.io
 # → externalsecrets.external-secrets.io
+# → pushsecrets.external-secrets.io
 # → secretstores.external-secrets.io
-# → clusterexternalsecrets.external-secrets.io (опционально)
-kubectl get pods -n external-secrets
 ```
 
-**Установка через Argo CD Application:** в GitOps-инфраструктурах, где Argo CD управляет приложениями, ESO разворачивается декларативно через `Application` CR в неймспейсе `argocd`. Это обеспечивает согласованность жизненного цикла с остальными компонентами кластера:
+#### Развертывание через Argo CD Application (GitOps)
+
+В GitOps-контуре развертывание ESO осуществляется манифестом `Application`:
 
 ```yaml
-# argocd/projects/infra/applications/external-secrets.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: external-secrets
+  name: external-secrets-operator
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  project: infra
+  project: default
   source:
     repoURL: https://charts.external-secrets.io
     chart: external-secrets
-    targetRevision: "2.12.x"
+    targetRevision: 2.13.0
     helm:
       releaseName: external-secrets
       values: |
+        replicaCount: 2
+        leaderElect: true
         installCRDs: true
-        replicaCount: 1
         serviceMonitor:
           enabled: true
-          interval: 60s
-          labels:
-            release: kube-prom-stack
   destination:
     server: https://kubernetes.default.svc
     namespace: external-secrets
@@ -123,545 +217,630 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
-    retry:
-      limit: 5
-      backoff:
-        duration: 5s
-        factor: 2
-        maxDuration: 3m
 ```
 
-> **Версия chart:** `targetRevision` в `Application` должен соответствовать текущей линии ESO (см. scope-линию файла). Убедитесь, что Helm-репозиторий `https://charts.external-secrets.io` зарегистрирован в Argo CD.
+---
 
-**Установка через Argo CD CLI:**
+### 2. Настройка подключения к локальному HashiCorp Vault / OpenBao
+
+#### Шаг 1: Конфигурация Kubernetes Auth на стороне Vault
+
+На управляющем сервере Vault активируйте метод аутентификации `kubernetes` и настройте валидацию токенов кластера:
 
 ```bash
-# Добавление Helm-репозитория в Argo CD
-argocd repo add https://charts.external-secrets.io
+# Активация метода аутентификации
+vault auth enable -path=kubernetes kubernetes
+# → Success! Enabled kubernetes auth method at: kubernetes/
 
-# Создание Application
-argocd app create external-secrets \
-  --repo https://charts.external-secrets.io \
-  --chart external-secrets \
-  --revision 2.12.x \
-  --dest-server https://kubernetes.default.svc \
-  --dest-namespace external-secrets \
-  --helm-set installCRDs=true \
-  --helm-set serviceMonitor.enabled=true \
-  --sync-policy automated \
-  --auto-prune \
-  --self-heal
-
-# Синхронизация
-argocd app sync external-secrets
+# Передача CA-сертификата кластера и адреса API сервера Kubernetes
+vault write auth/kubernetes/config \
+  kubernetes_host="https://kubernetes.default.svc:443" \
+  kubernetes_ca_cert=@/etc/kubernetes/pki/ca.crt
+# → Success! Data written to: auth/kubernetes/config
 ```
 
-**Валидация:**
+Создайте политику ACL для ESO, ограничивающую доступ только к чтению секретов сервисов:
+
+```hcl
+# /etc/vault/policies/eso-policy.hcl
+path "secret/data/production/*" {
+  capabilities = ["read"]
+}
+path "secret/metadata/production/*" {
+  capabilities = ["read", "list"]
+}
+```
+
+Примените политику и создайте привязку к ServiceAccount:
 
 ```bash
-# Проверка статуса Application
-argocd app get external-secrets
-# → Sync Status: Synced to 2.12.x
-# → Health Status: Healthy
+vault policy write eso-policy /etc/vault/policies/eso-policy.hcl
+# → Success! Uploaded policy: eso-policy
 
-# Проверка CRD и подов оператора
-kubectl get crd | grep external-secrets
-# → clustersecretstores.external-secrets.io
-# → externalsecrets.external-secrets.io
-kubectl get pods -n external-secrets
+vault write auth/kubernetes/role/eso-role \
+  bound_service_account_names=eso-sa \
+  bound_service_account_namespaces=external-secrets \
+  policies=eso-policy \
+  audience="vault" \
+  ttl=1h
+# → Success! Data written to: auth/kubernetes/role/eso-role
 ```
 
-> **Версия API (важно при обновлении):** с ESO 0.17 (май 2025) и далее в стабильной ветке используется `apiVersion: external-secrets.io/v1`; `v1beta1` устарел и отключён по умолчанию в чарте ESO 2.x (`unsafeServeV1Beta1: false`, планируется к удалению 2026.05.01). Старые манифесты на `v1beta1` дадут ошибку `no matches for kind "SecretStore" in version "external-secrets.io/v1beta1"` — переведите все ресурсы (SecretStore, ClusterSecretStore, ExternalSecret, ClusterExternalSecret) на `v1` до апгрейда. Шаблонный движок v1 также устарел — по умолчанию используется engine v2, который поддерживает темplatating в `spec.target.template.metadata` и ключах `data`.
+#### Шаг 2: Создание ServiceAccount и ClusterSecretStore
 
-**Сквозной пример: ClusterSecretStore + ExternalSecret (провайдер Vault, Kubernetes Auth):**
+Создайте выделенный ServiceAccount в кластере Kubernetes:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: eso-sa
+  namespace: external-secrets
+```
+
+Определите манифест `ClusterSecretStore` с защитой по mTLS и указанием доверенного корпоративного Root CA:
 
 ```yaml
 apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:
-  name: vault-backend
+  name: vault-cluster-backend
 spec:
   provider:
     vault:
-      server: "http://vault.vault.svc.cluster.local:8200"
-      path: "secret"                  # mount point движка KV v2
-      version: "v2"
-      auth:
-        kubernetes:                   # auth method "kubernetes" в Vault
-          mountPath: "kubernetes"
-          role: "eso-role"            # Vault-роль (bound SA + policies + audience)
-          serviceAccountRef:
-            name: "eso-sa"            # SA, чей токен предъявляется Vault
-            namespace: "external-secrets"   # для ClusterSecretStore требуется namespace
-```
-
-```yaml
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata:
-  name: db-credentials
-  namespace: prod
-spec:
-  refreshInterval: 1h
-  secretStoreRef:
-    name: vault-backend
-    kind: ClusterSecretStore
-  target:
-    name: db-credentials              # имя нативного Secret
-    creationPolicy: Owner             # ESO владеет объектом (обновляет и удаляет)
-    deletionPolicy: Retain            # при удалении ExternalSecret целевой Secret остаётся
-  data:
-  - secretKey: password               # ключ в целевом Secret
-    remoteRef:
-      key: production/db              # путь в Vault (KV v2, относительно mount point)
-      property: password              # поле внутри секрета
-```
-
-> **Примечание по Vault 1.21+:** при аутентификации через `kubernetes` роли обязаны содержать `audience`. Задавайте `audience` в роли Vault (`vault write auth/kubernetes/role/<role> audience=vault ...`) и, при необходимости, `audiences` в `serviceAccountRef`. Полные инструкции по Vault-стороне — в [Интеграции Vault с Kubernetes](../../../Vault/guides/vault_kubernetes_integration.md).
-
-> **Использование именованного auth-mount:** если Kubernetes Auth включён не на пути `kubernetes`, а на кастомном (например, `vault auth enable -path=kubernetes-infra kubernetes`), укажите путь в `mountPath`:
-
-```yaml
-spec:
-  provider:
-    vault:
-      auth:
-        kubernetes:
-          mountPath: "kubernetes-infra"   # кастомный путь auth-method
-          role: "external-secrets"
-          serviceAccountRef:
-            name: "external-secrets"
-            namespace: "external-secrets"
-```
-
-> **token_reviewer_jwt через `kubectl create token`:** при настройке Kubernetes Auth в Vault токен для `token_reviewer_jwt` можно получить одной командой, что удобно для одноразовой настройки или когда ServiceAccount Vault не монтирует токен:
-
-```bash
-vault write auth/kubernetes-infra/config \
-  kubernetes_host="https://kubernetes.default.svc" \
-  kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
-  token_reviewer_jwt="$(kubectl create token -n external-secrets external-secrets)"
-```
-
-**Проверка синхронизации:**
-
-```bash
-kubectl get externalsecret db-credentials -n prod -o jsonpath='{.status.conditions}'
-# → [{"type":"Ready","status":"True","reason":"SecretSynced",...}]
-kubectl get secret db-credentials -n prod
-# → NAME             TYPE     DATA   AGE
-# → db-credentials   Opaque   1      1m
-```
-
-#### Формат пути KV v2
-
-В KV v2 путь API отличается от CLI-пути:
-
-- CLI: `vault kv get secret/app/db` (без префикса `data/`)
-- `remoteRef.key`: `app/db` — путь **относительно mount point** `secret`, без префикса `data/`
-
-ESO автоматически добавляет префикс `data/` при запросе к API Vault для KV v2. Если в `remoteRef.key` указать `secret/data/app/db` или `secret/app/db`, ESO сформирует путь `secret/data/secret/data/app/db` или `secret/data/secret/app/db` — и выдаст `secret not found`.
-
-На этом спотыкаются почти все в первый раз. Если ESO выдаёт `secret not found`, а `vault kv get` из командной строки работает — скорее всего, дело в формате пути.
-
-#### Синхронизация всех ключей из пути Vault
-
-Если в KV-пути Vault много полей, используйте `dataFrom` вместо перечисления каждого:
-
-```yaml
-spec:
-  dataFrom:
-    - extract:
-        key: app/config
-```
-
-ESO создаёт Kubernetes Secret с записью на каждое поле секрета Vault. Если в секрете Vault есть поля `username`, `password` и `host`, в K8s Secret попадут все три.
-
-#### Переименование ключей
-
-Если имена полей в Vault не совпадают с ожидаемыми приложением в Kubernetes Secret:
-
-```yaml
-spec:
-  data:
-    - secretKey: DB_PASSWORD        # ключ K8s Secret
-      remoteRef:
-        key: app/db
-        property: password          # имя поля Vault
-    - secretKey: DB_HOST
-      remoteRef:
-        key: app/db
-        property: host
-```
-
-#### Синхронизация учётных credentials Docker registry
-
-У image pull secrets особый формат. ESO умеет формировать их напрямую:
-
-```yaml
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata:
-  name: registry-creds
-  namespace: app
-spec:
-  refreshInterval: 24h
-  secretStoreRef:
-    name: vault-backend
-    kind: ClusterSecretStore
-  target:
-    name: registry-creds
-    creationPolicy: Owner
-    template:
-      type: kubernetes.io/dockerconfigjson
-      data:
-        .dockerconfigjson: |
-          {"auths":{"registry.example.com":{"auth":"{{ .auth | b64enc }}"}}}
-  data:
-    - secretKey: auth
-      remoteRef:
-        key: registry
-        property: auth
-```
-
-Или если полный dockerconfigjson хранится в Vault:
-
-```yaml
-spec:
-  data:
-    - secretKey: .dockerconfigjson
-      remoteRef:
-        key: registry
-        property: dockerconfigjson
-  target:
-    template:
-      type: kubernetes.io/dockerconfigjson
-```
-
-#### Политики creationPolicy
-
-- **Owner** (рекомендуется): ESO владеет Secret. При удалении ExternalSecret Secret тоже удаляется. Secret нельзя изменить вручную — ESO перезапишет изменения при следующем refresh.
-- **Merge**: ESO добавляет ключи в существующий Secret. Полезно, когда Secret создаёт Helm-чарт, а из Vault нужно лишь дописать дополнительные ключи. Существующие ключи в Secret сохраняются.
-- **None**: ESO вообще не управляет жизненным циклом Secret — только создаёт его, если не существует, никогда не обновляет и не удаляет.
-
-#### Отладка синхронизации
-
-```bash
-# Проверить, успешно ли синхронизировался ESO
-kubectl get externalsecret -n app
-
-# Посмотреть статус последней синхронизации и ошибку
-kubectl describe externalsecret my-app-db-password -n app
-
-# Принудительная немедленная ресинхронизация
-kubectl annotate externalsecret my-app-db-password \
-  force-sync=$(date +%s) -n app --overwrite
-```
-
-Приём с аннотацией `force-sync` выручает, когда значение в Vault уже обновлено, а ждать следующего интервала синхронизации не хочется.
-
-**Проверка состояния ClusterSecretStore:**
-
-```bash
-kubectl get clustersecretstore vault-infra
-kubectl describe clustersecretstore vault-infra
-```
-
-Рабочий ClusterSecretStore показывает `Valid: True`. Частые причины Invalid:
-
-- Vault запечатан — проверьте `vault status`
-- Неправильно наconfigured роль аутентификации — проверьте `vault read auth/kubernetes/role/external-secrets`
-- Неправильный адрес Vault — проверьте поле `server` в ClusterSecretStore
-
-**Типичные сообщения об ошибках:**
-
-| Ошибка | Причина |
-| :--- | :--- |
-| `could not find key ...` | Поле `property` в `remoteRef` не существует в секрете Vault |
-| `secret not found` | В `remoteRef.key` указан путь с префиксом `data/` или `secret/` | Указывайте путь относительно mount point, без `data/` |
-| `permission denied` | У роли Vault, которую использует ESO, нет прав чтения этого пути |
-| `connection refused` | Vault запечатан или неправильный URL в поле `server` |
-
-#### ESO с несколькими Vault namespace
-
-При использовании Vault Enterprise с namespaces добавьте `namespace` в ClusterSecretStore:
-
-```yaml
-spec:
-  provider:
-    vault:
-      server: "http://vault.vault.svc.cluster.local:8200"
-      namespace: "admin/dev"  # Vault Enterprise namespace
+      server: "https://vault.internal.corp:8200"
       path: "secret"
       version: "v2"
+      caProvider:
+        type: ConfigMap
+        name: internal-ca-bundle
+        key: ca.crt
+        namespace: external-secrets
+      auth:
+        kubernetes:
+          mountPath: "kubernetes"
+          role: "eso-role"
+          serviceAccountRef:
+            name: "eso-sa"
+            namespace: "external-secrets"
+            audiences:
+              - "vault"
 ```
 
-`path` указывается относительно namespace — префикс `namespace` в путь включать не нужно.
+Проверка статуса подключения к Vault:
 
-#### ESO vs Sealed Secrets
+```bash
+kubectl get clustersecretstore vault-cluster-backend
+# → NAME                    AGE   STATUS   CAPABILITIES   READY
+# → vault-cluster-backend   12s   Valid    ReadWrite      True
+```
 
-| Характеристика | ESO | SealedSecrets |
-| :--- | :--- | :--- |
-| Источник секретов | Vault, AWS SM, GCP SM и т.д. | Git (зашифрованный) |
-| Ротация | Автоматически по расписанию | Ручное перезапечатывание |
-| Audit trail | В Vault | В Git |
-| Air-gapped | Нужен доступ к Vault | Только Git |
-| Перезапечатывание при пересборке кластера | Нет | Да |
-| Работает без Vault | Нет | Да |
-| Первоначальный bootstrap | Нужны Vault + ESO сначала | Работает с нуля |
+---
 
-Используем оба: SealedSecrets для bootstrap (kubeconfig, начальные учётные credentials registry, секреты инициализации Vault) и ESO для секретов приложений, которые живут в Vault и часто ротируются. Правило: всё, что нужно самому ESO для старта (адрес Vault, конфиг аутентификации), должно быть SealedSecret; всё остальное — ExternalSecret.
+### 3. Синхронизация секретов через ExternalSecret
 
-**Выбор стратегии по типу секрета:**
+#### Важнейшее правило адресации путей в KV v2
 
-| Случай | Sealed Secrets | External Secrets (ESO) |
-| :--- | :--- | :--- |
-| kubeconfig-файлы | ✓ | — |
-| Учётные credentials Docker registry | ✓ | — |
-| TLS-сертификаты | ✓ | — |
-| Общие учётные credentials (пароли БД) | — | ✓ |
-| Секреты, ротируемые командой безопасности | — | ✓ |
-| Секреты с аудит-логом | — | ✓ (через Vault audit) |
+В движке Vault KV версии 2 внутренний HTTP API требует префикс `data/` (`v1/secret/data/production/app`).
+Оператор ESO **автоматически внедряет данный префикс** при формировании HTTP-запроса.
 
-Работа с ESO в GitOps-потоке, а также продвинутые возможности (`dataFrom`, шаблоны, `Generators`, `PushSecret`) — на примерах в [GitOps: управление секретами](../../../GitOps/secrets_encryption.md).
+- **Правильно в `remoteRef.key`:** `production/db` (путь относительно mount point `secret`)
+- **Неправильно:** `secret/production/db` или `secret/data/production/db` (приведет к ошибке `404 Secret Not Found`)
 
-### Паттерн «IaC готовит, ExternalSecret доставляет»
-
-В инфраструктурах, где IaC управляет жизненным циклом ресурсов, секреты часто создаются на этапе provisioning и доставляются в Kubernetes через ExternalSecret. Этот паттерн отделяет создание секретов (IaC) от их синхронизации (ESO), что позволяет:
-
-1. IaC-инструмент генерирует секреты (пароли, ключи) и записывает их во внешний KMS (Vault, AWS Secrets Manager).
-2. IaC-инструмент создает объект `ExternalSecret`, указывающий путь к секрету в KMS.
-3. ESO синхронизирует данные в нативный Kubernetes `Secret`.
-4. Приложение читает секрет из стандартного `Secret` через environment variables или volume mount.
+#### Сценарий А: Выборка конкретных полей и переименование ключей
 
 ```yaml
-# ExternalSecret: синхронизация из внешнего KMS
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: myapp-db-credentials
-  namespace: myapp
+  name: app-db-credentials
+  namespace: production
 spec:
   refreshInterval: 1h
   secretStoreRef:
-    name: vault-backend
+    name: vault-cluster-backend
     kind: ClusterSecretStore
   target:
-    name: myapp-db-credentials
+    name: app-db-credentials
     creationPolicy: Owner
+    deletionPolicy: Retain
   data:
-  - secretKey: password
-    remoteRef:
-      key: prod/myapp
-      property: password
+    - secretKey: DB_USER
+      remoteRef:
+        key: production/db
+        property: username
+    - secretKey: DB_PASSWORD
+      remoteRef:
+        key: production/db
+        property: password
 ```
 
-**Преимущества паттерна:**
-- **Отделение ответственности:** IaC управляет жизненным циклом секрета (создание, ротация), ESO — доставкой в Kubernetes.
-- **Идемпотентность:** При повторном apply ExternalSecret не пересоздается, если не изменились параметры.
-- **Безопасность:** Значения секретов никогда не попадают в state IaC-инструмента (только ссылки на пути в KMS).
+#### Сценарий Б: Выгрузка всех ключей объекта через `dataFrom`
 
-**Когда использовать:**
-- При наличии зрелого процесса IaC (инструмент provisioning управляет всеми ресурсами кластера).
-- Когда команда разработки не должна иметь прямого доступа к Vault/KMS.
-- При необходимости автоматической ротации секретов (IaC обновляет значение в KMS → ESO синхронизирует в Kubernetes).
-
-**Альтернативы:**
-- **Vault Agent Injector:** Подходит, если приложение может работать с внешним API Vault напрямую (аннотации, sidecar).
-- **Secrets Store CSI Driver:** Подходит для максимальной безопасности (секреты не попадают в `etcd`), но требует поддержки CSI в CNI-плагине.
-
-### Использование Secrets Store CSI Driver
-
-Наиболее безопасный метод, исключающий появление секрета в API Kubernetes.
-
-**Особенности реализации:**
-*   **SecretProviderClass:** Описывает список секретов во внешнем KMS и способ их монтирования.
-*   **tmpfs:** Все секреты монтируются в оперативную память.
-*   **Sync to K8s Secret:** Драйвер может опционально создавать нативный секрет для приложений, которые жестко привязаны к переменным окружения, но это снижает общий уровень безопасности.
-
-**Как это работает:** на каждом узле развёрнуты CSI-драйвер (`DaemonSet`) и provider для конкретного хранилища (например, Vault). При старте Pod kubelet вызывает `NodePublishVolume`, драйвер обращается к provider, тот получает данные из KMS и монтирует их как файловый том на узел.
-
-**Установка:**
-
-```bash
-helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
-helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver \
-  -n kube-system --set enableSecretRotation=true
-```
-
-**Пример SecretProviderClass (провайдер Vault):**
+Если в секрете Vault хранится множество параметров конфигурации, используйте конструкцию `extract`:
 
 ```yaml
-apiVersion: secrets-store.csi.x-k8s.io/v1   # v1 стабильна с драйвера v1.0.0-rc.1
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: app-full-config
+  namespace: production
+spec:
+  refreshInterval: 30m
+  secretStoreRef:
+    name: vault-cluster-backend
+    kind: ClusterSecretStore
+  target:
+    name: app-full-config
+    creationPolicy: Owner
+  dataFrom:
+    - extract:
+        key: production/common-config
+```
+
+#### Сценарий В: Шаблонизация и генерация DSN / Dockerconfigjson
+
+Шаблонизатор ESO (engine v2) позволяет генерировать сложные конфигурационные файлы, вычислять хеши и собирать connection string на лету:
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: backend-database-secret
+  namespace: production
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-cluster-backend
+    kind: ClusterSecretStore
+  target:
+    name: backend-database-secret
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      type: Opaque
+      metadata:
+        labels:
+          app.kubernetes.io/part-of: backend
+        annotations:
+          managed-by: external-secrets
+      data:
+        # Генерация готового JDBC / DSN URL
+        DATABASE_URL: "postgresql://{{ .user }}:{{ .password }}@pg-cluster.internal.corp:5432/main_db?sslmode=verify-full"
+        # Генерация конфигурационного файла Spring/Quarkus
+        application.properties: |
+          datasource.username={{ .user }}
+          datasource.password={{ .password }}
+          datasource.pool.max-size=20
+  data:
+    - secretKey: user
+      remoteRef:
+        key: production/postgres
+        property: username
+    - secretKey: password
+      remoteRef:
+        key: production/postgres
+        property: password
+```
+
+Проверка результата синхронизации:
+
+```bash
+kubectl get externalsecret backend-database-secret -n production
+# → NAME                      STORE                   REFRESH INTERVAL   STATUS         READY
+# → backend-database-secret   vault-cluster-backend   1h                 SecretSynced   True
+
+kubectl get secret backend-database-secret -n production -o yaml
+# → apiVersion: v1
+# → kind: Secret
+# → metadata:
+# →   name: backend-database-secret
+# → data:
+# →   DATABASE_URL: cG9zdGdyZXNxbDovL3...
+# →   application.properties: ZGF0YXNvdXJjZS51...
+```
+
+---
+
+### 4. Публикация секретов из кластера во внешний Vault (PushSecret)
+
+В GitOps-архитектуре часто требуется сгенерировать сложный пароль внутри кластера (например, пароль администратора MinIO или ClickHouse) и опубликовать его в Vault для других систем.
+
+```yaml
+# 1. Генерация случайного стойкого пароля средствами ESO
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: generated-db-password
+  namespace: production
+spec:
+  length: 32
+  digits: 8
+  symbols: 0
+  noUpper: false
+  allowRepeat: true
+---
+# 2. Создание нативного секрета из генератора
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: cluster-generated-secret
+  namespace: production
+spec:
+  refreshInterval: 1h
+  target:
+    name: cluster-generated-secret
+    creationPolicy: Owner
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Password
+          name: generated-db-password
+---
+# 3. Экспорт сгенерированного секрета в Vault
+apiVersion: external-secrets.io/v1alpha1
+kind: PushSecret
+metadata:
+  name: push-to-vault
+  namespace: production
+spec:
+  refreshInterval: 1h
+  secretStoreRefs:
+    - name: vault-cluster-backend
+      kind: ClusterSecretStore
+  selector:
+    secret:
+      name: cluster-generated-secret
+  data:
+    - match:
+        secretKey: password
+        remoteRef:
+          remoteKey: production/generated/db
+          property: password
+```
+
+---
+
+### 5. Использование Secrets Store CSI Driver с провайдером Vault
+
+Подход обеспечивает максимальную изоляцию: секреты физически не существуют в `etcd` и монтируются ядром Linux в `tmpfs` контейнера.
+
+#### Установка CSI Driver и Vault Provider
+
+```bash
+# 1. Установка базового CSI Driver
+helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
+helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver \
+  --namespace kube-system \
+  --set enableSecretRotation=true \
+  --set rotationPollInterval=120s
+# → STATUS: deployed
+
+# 2. Установка HashiCorp Vault Provider для CSI
+helm repo add hashicorp https://helm.releases.hashicorp.com
+helm install vault-csi-provider hashicorp/vault \
+  --namespace kube-system \
+  --set "injector.enabled=false" \
+  --set "server.enabled=false" \
+  --set "csi.enabled=true"
+# → STATUS: deployed
+```
+
+Проверка состояния демонов на каждом узле кластера:
+
+```bash
+kubectl get daemonset -n kube-system -l app.kubernetes.io/instance=csi-secrets-store
+# → NAME                         DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE
+# → csi-secrets-store-driver     3         3         3       3            3
+```
+
+#### Описание SecretProviderClass
+
+```yaml
+apiVersion: secrets-store.csi.x-k8s.io/v1
 kind: SecretProviderClass
 metadata:
-  name: vault-webapp
-  namespace: prod
+  name: vault-tls-certs
+  namespace: production
 spec:
   provider: vault
   parameters:
-    vaultAddress: "https://vault.vault.svc.cluster.local:8200"
-    roleName: "webapp-role"                 # Vault-роль Kubernetes Auth
+    vaultAddress: "https://vault.internal.corp:8200"
+    roleName: "eso-role"
+    vaultCACertPath: "/etc/ssl/certs/ca-certificates.crt"
     objects: |
-      - objectName: "db-password"
-        secretPath: "secret/data/production/db"
-        secretKey: "password"
-  secretObjects:                            # НЕОБЯЗАТЕЛЬНО: дополнительная синхронизация в нативный Secret
-  - secretName: db-credentials
-    type: Opaque
-    data:
-    - objectName: "db-password"
-      key: "password"
+      - objectName: "server.crt"
+        secretPath: "secret/data/production/tls"
+        secretKey: "certificate"
+      - objectName: "server.key"
+        secretPath: "secret/data/production/tls"
+        secretKey: "private_key"
 ```
 
-**Монтирование в Pod:**
+#### Монтирование тома в Deployment
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: webapp
-  namespace: prod
+  name: secure-web-api
+  namespace: production
 spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: secure-web-api
   template:
+    metadata:
+      labels:
+        app: secure-web-api
     spec:
+      serviceAccountName: eso-sa
       containers:
-      - name: app
-        image: nginx:1.27
-        volumeMounts:
-        - name: secrets
-          mountPath: "/mnt/secrets-store"
-          readOnly: true
+        - name: web-api
+          image: internal-registry.corp/apps/web-api:v2.4.0
+          volumeMounts:
+            - name: certs-volume
+              mountPath: "/etc/ssl/certs/app"
+              readOnly: true
       volumes:
-      - name: secrets
-        csi:
-          driver: secrets-store.csi.k8s.io
-          readOnly: true
-          volumeAttributes:
-            secretProviderClass: "vault-webapp"   # SPC должен быть в том же namespace, что и Pod
-          nodePublishSecretRef:                    # если провайдер требует авторизацию при монтировании
-            name: csi-auth                         # нативный Secret с креденшилами в том же namespace
+        - name: certs-volume
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: "vault-tls-certs"
 ```
 
-> Если используется `nodePublishSecretRef`, нативный Secret с креденшилами необходимо пометить меткой `secrets-store.csi.k8s.io/used=true`, иначе ротация завершится с ошибкой `failed to get node publish secret`.
-
-**Автоматическая ротация (CSI v1.6+):** вместо отдельного контроллера ротации используется CSI-механизм `RequiresRepublish` — kubelet периодически вызывает `NodePublishVolume`, и драйвер при `--enable-secret-rotation=true` заново запрашивает значения у провайдера. Флаг `--rotation-poll-interval` (по умолчанию `2m`) задаёт минимальную паузу между ротациями. При ротации обновляются и смонтированные файлы, и нативные `Secret` из `secretObjects`. Состояние привязки Pod к SecretProviderClass отслеживается в CR `SecretProviderClassPodStatus`.
-
-**Проверка:**
+Валидация смонтированных файлов внутри пода:
 
 ```bash
-kubectl exec -n prod deploy/webapp -- ls -la /mnt/secrets-store
-# → db-password
-kubectl get secretproviderclasspodstatus -n prod
-# → Name: vault-webapp...  	Status: {"secrets": [...]}
+kubectl exec -n production deploy/secure-web-api -- ls -la /etc/ssl/certs/app
+# → total 0
+# → drwxrwxrwx 2 root root 80 Oct 17 21:00 .
+# → -rw-r--r-- 1 root root 1240 Oct 17 21:00 server.crt
+# → -rw-r--r-- 1 root root 1675 Oct 17 21:00 server.key
 ```
 
-**Ограничения:** том монтируется один раз при старте Pod — если приложение читает секрет из переменных окружения или не перечитывает файл, потребуется перезапуск (автоматизация — [Reloader](../../ToolsUtilities/reloader/reloader_usage_scenarios.md)). Диагностика затруднена: значения не видны через `kubectl get secret`, содержимое проверяется только внутри Pod.
+---
 
-### Интеграция через Vault Agent (Sidecar)
+### 6. Интеграция через Vault Agent (Native Sidecar Container)
 
-Паттерн для сред, использующих HashiCorp Vault. В 2026 году рекомендуется использовать **Native Sidecar Containers** (Kubernetes 1.29+, beta с 1.28), определяемые в блоке `initContainers` с `restartPolicy: Always`: агент гарантированно запускается раньше основного контейнера, остаётся жить на протяжении всего жизненного цикла Pod и завершается после остановки основных контейнеров, что устраняет race conditions при первичном рендеринге.
-
-*   **Init-контейнер:** Получает первичный токен и рендерит секреты в общую директорию.
-*   **Sidecar-контейнер:** Обновляет секреты по мере их ротации в Vault.
-*   **Vault Agent Injector:** Mutating Webhook, который автоматически внедряет эти контейнеры в Pod на основе аннотаций.
-
-**Аннотации Injector (пример):**
+Начиная с Kubernetes 1.29+ внедрен стабильный механизм **Native Sidecar Containers** (`initContainers` с полем `restartPolicy: Always`). Vault Agent запускается до старта основного приложения, выполняет первичную выгрузку файлов и продолжает работать в фоне для ротации.
 
 ```yaml
-annotations:
-  vault.hashicorp.com/agent-inject: "true"            # включить внедрение агента
-  vault.hashicorp.com/role: "webapp-role"             # роль Kubernetes Auth
-  vault.hashicorp.com/agent-inject-secret-db-pass: "secret/data/production/db"  # путь KV v2
-  vault.hashicorp.com/agent-inject-template-db-pass: |
-    {{- with secret "secret/data/production/db" }}
-    {{ .Data.data.password }}
-    {{- end }}
-  vault.hashicorp.com/auth-path: "auth/kubernetes"
-  vault.hashicorp.com/namespace: ""                   # для Vault Enterprise namespaces
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-processor
+  namespace: production
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: payment-processor
+  template:
+    metadata:
+      labels:
+        app: payment-processor
+    spec:
+      serviceAccountName: eso-sa
+      volumes:
+        - name: shared-secrets
+          emptyDir:
+            medium: Memory
+        - name: vault-config
+          configMap:
+            name: vault-agent-config
+      initContainers:
+        - name: vault-agent
+          image: hashicorp/vault:1.21.0
+          restartPolicy: Always
+          args: ["agent", "-config=/etc/vault/vault-agent-config.hcl"]
+          volumeMounts:
+            - name: shared-secrets
+              mountPath: "/vault/secrets"
+            - name: vault-config
+              mountPath: "/etc/vault"
+      containers:
+        - name: app
+          image: internal-registry.corp/finance/processor:v1.12.0
+          volumeMounts:
+            - name: shared-secrets
+              mountPath: "/vault/secrets"
+              readOnly: true
 ```
 
-**Проверка:**
+---
+
+### 7. Автоматический перезапуск приложений при ротации секретов (SRE-паттерн)
+
+Если приложение считывает значения секретов из переменных окружения (`env` / `envFrom`), при изменении нативного объекта `Secret` переменные внутри запущенных контейнеров **не обновляются** (они инициализируются ядром Linux только при системном вызове `execve`).
+
+Для обеспечения прозрачной ротации применяется оператор **Stakater Reloader**:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-backend
+  namespace: production
+  annotations:
+    # Автоматический перезапуск пода при изменении любого Secret или ConfigMap, смонтированного в него
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: payment-backend
+    spec:
+      containers:
+        - name: server
+          image: internal-registry.corp/apps/payment:v3.1.0
+          envFrom:
+            - secretRef:
+                name: app-db-credentials
+```
+
+При обновлении данных в Vault:
+1. ESO обнаруживает дрейф и обновляет объект `Secret/app-db-credentials`.
+2. Reloader перехватывает событие обновления через Informer и выполняет скользящий перезапуск (`RollingUpdate`) Deployment.
+
+---
+
+## Операции и команды
+
+Справочник базовых команд для инженера DevOps / SRE при эксплуатации внешних систем управления секретами:
+
+| Задача | Команда | Ожидаемый результат / Описание |
+| :--- | :--- | :--- |
+| **Список всех ExternalSecret** | `kubectl get externalsecrets.external-secrets.io -A -o wide` | Вывод имени, namespace, целевого `Secret`, статуса и времени обновления |
+| **Детализация синхронизации** | `kubectl describe externalsecret <name> -n <ns>` | Анализ секции `Events` и условий `status.conditions` |
+| **Принудительная ресинхронизация** | `kubectl annotate externalsecret <name> force-sync="$(date +%s)" -n <ns> --overwrite` | Немедленный запуск опроса внешнего хранилища без ожидания `refreshInterval` |
+| **Проверка статуса хранилищ** | `kubectl get clustersecretstore,secretstore -A` | Проверка флага `READY=True` для всех подключений к Vault |
+| **Инспекция CSI SecretProvider** | `kubectl get secretproviderclasses.secrets-store.csi.x-k8s.io -A` | Список зарегистрированных классов монтирования томов |
+| **Статус монтирования CSI подами** | `kubectl get secretproviderclasspodstatus -A` | Отображение привязки конкретного Pod к томам и секретам CSI |
+| **Логи контроллера ESO** | `kubectl logs -n external-secrets -l app.kubernetes.io/name=external-secrets -c external-secrets --tail=100 -f` | Мониторинг HTTP-запросов к Vault и ошибок авторизации |
+| **Тестирование токена K8s в Vault** | `vault write auth/kubernetes/login role=eso-role jwt="$(kubectl create token eso-sa -n external-secrets --audience=vault)"` | Ручная валидация работы механизма Kubernetes Auth со стороны CLI Vault |
+
+### Принудительный перезапуск синхронизации (Force-Sync)
 
 ```bash
-kubectl describe pod -n prod webapp | grep -A2 "Vault Agent"
-# → Init Containers:   vault-agent-init
-# → Containers:        vault-agent, vault-agent-init
-kubectl exec -n prod deploy/webapp -- ls -la /vault/secrets
-# → db-pass
+kubectl annotate externalsecret backend-database-secret force-sync="$(date +%s)" -n production --overwrite
+# → externalsecret.external-secrets.io/backend-database-secret annotated
+
+kubectl get externalsecret backend-database-secret -n production
+# → NAME                      STORE                   REFRESH INTERVAL   STATUS         READY
+# → backend-database-secret   vault-cluster-backend   1h                 SecretSynced   True
 ```
 
-Детальное руководство: [Vault Agent: основы](../../../Vault/guides/vault_agent/basics.md) (шаблоны, Auto-Auth), [Vault Agent Sidecar](../../../Vault/guides/vault_agent/sidecar_pattern.md) (ручное внедрение, native sidecar, `SIGHUP`), [Vault Agent Injector](../../../Vault/guides/vault_agent/injector.md) (аннотации, кэширование, WIF).
+### Мониторинг ключевых метрик Prometheus для SRE
+
+Оператор ESO экспортирует стандартные метрики Prometheus на порту `8080` (`/metrics`). Ключевые метрики для настройки алертов в Alertmanager:
+
+```promql
+# 1. Наличие сбойных секретов (алерт при значении > 0 более 15 минут)
+sum(externalsecret_status_condition{condition="Ready",status="False"}) by (namespace, name) > 0
+
+# 2. Ошибки синхронизации оператора (рост темпа сбоев)
+sum(rate(externalsecret_sync_calls_error[5m])) by (namespace) > 0
+
+# 3. Время обработки цикла синхронизации (SLA оператора)
+histogram_quantile(0.99, sum(rate(externalsecret_reconcile_duration_seconds_bucket[5m])) by (le))
+
+# 4. Ошибки автоматической ротации Secrets Store CSI Driver
+sum(rate(secretsstore_csi_rotation_error_total[5m])) > 0
+```
+
+---
+
+## Диагностика и устранение неполадок
+
+### Сводная матрица типовых неисправностей
+
+| Симптом / Ошибка | Первопричина | Метод локализации | Решение |
+| :--- | :--- | :--- | :--- |
+| `status: SecretSyncedError` / `secret not found` | В `remoteRef.key` указан путь с префиксом `secret/` или `data/` | `kubectl describe externalsecret` | Укажите путь относительно точки монтирования (например, `production/app` вместо `secret/data/production/app`) |
+| `permission denied` при обращении к Vault | Политика ACL в Vault не разрешает чтение пути, либо истек токен | Логи подов Vault: `vault audit log` | Проверьте `vault policy read eso-policy` и убедитесь в наличии `capabilities = ["read"]` для пути `secret/data/...` |
+| `audience claim does not match` | Токен ServiceAccount выпущен с другим `audience` | Проверка `audiences` в `ClusterSecretStore` | Задайте поле `audience: "vault"` в `auth/kubernetes/role` и `audiences: ["vault"]` в `serviceAccountRef` |
+| `no matches for kind "SecretStore" in version "external-secrets.io/v1beta1"` | Применение устаревших манифестов API `v1beta1` | `kubectl api-resources \| grep external-secrets` | Переведите все манифесты на версию `apiVersion: external-secrets.io/v1` |
+| `ClusterSecretStore: InvalidProviderConfig` / `connection refused` | Vault запечатан (sealed), неверный FQDN или отсутствует доступ | `kubectl describe clustersecretstore` | Проверьте состояние `vault status` (хранилище должно быть распечатано); проверьте сетевой доступ и NetworkPolicy |
+| CSI Driver: `FailedMount: volumeattributes: provider not found: provider "vault"` | На узле не запущен daemonset провайдера Vault | `kubectl get pods -n kube-system -l app=vault-csi-provider` | Установите DaemonSet Vault CSI Provider на все рабочие узлы кластера |
+| CSI Driver: `failed to get node publish secret` | Секрету авторизации не хватает метки драйвера | `kubectl describe pod <name>` | Установите метку `kubectl label secret <name> secrets-store.csi.k8s.io/used=true` |
+| Приложение работает со старыми паролями после ротации | Значения переданы через ENV и закешированы процессом | Сравнение `kubectl get secret` и `env` в Pod | Настройте оператор Stakater Reloader или переведите приложение на чтение файлов из тома |
+
+### Детальные сценарии отладки
+
+#### Проблема 1: Ошибка пути Vault KV v2 (`secret not found`)
+
+- **Симптом:**
+  ```text
+  Warning  UpdateFailed  35s  external-secrets  could not get secret data from provider: Vault failed to read secret: 404 Not Found
+  ```
+- **Причина:** Пользователь указал в манифесте `remoteRef.key: secret/data/production/db`. Оператор формирует запрос к `https://vault:8200/v1/secret/data/secret/data/production/db`, возвращающий 404.
+- **Исправление:**
+  ```yaml
+  # Правильная конфигурация:
+  data:
+    - secretKey: password
+      remoteRef:
+        key: production/db    # префикс mount point 'secret' и 'data/' опущены
+        property: password
+  ```
+
+#### Проблема 2: Vault запечатан (Vault is sealed)
+
+- **Симптом:**
+  ```text
+  Error from provider: Error making API request. Code: 503. Errors: * Vault is sealed
+  ```
+- **Диагностика:**
+  ```bash
+  vault status
+  # → Key             Value
+  # → ---             -----
+  # → Sealed          true
+  # → Total Shares    5
+  # → Threshold       3
+  ```
+- **Исправление:** Выполните процедуру распечатывания (unseal) кворумом операторов либо проверьте работу службы авто-распечатывания (Auto-unseal via Transit / PKCS#11 HSM).
+
+---
+
+## Рекомендации и лучшие практики
+
+### 1. Архитектурный выбор решения
+
+1. **Используйте External Secrets Operator (ESO) по умолчанию:**
+   - Для абсолютного большинства микросервисов, которым требуются стандартные переменные окружения и совместимость со сторонними Helm-чартами без правки их кода.
+2. **Используйте Secrets Store CSI Driver:**
+   - Для высоконагруженных систем с критическими требованиями комплаенса (PCI DSS, строгая изоляция), где сохранение расшифрованных секретов на диск в `etcd` категорически запрещено политиками безопасности.
+3. **Используйте Vault Agent / VSO:**
+   - При работе с динамическими секретами баз данных (Dynamic DB Leases со сроком жизни до 1 часа) и автоматической ротацией внутренних TLS-сертификатов через HashiCorp Vault PKI Engine.
+
+### 2. Паттерн первичного развертывания («Secret Zero» Bootstrap)
+
+Не пытайтесь доставлять учетные данные для самого оператора ESO через ESO. Применяйте гибридный подход:
+
+```
+[Git-репозиторий платформы]
+       │
+       ├─► [SealedSecrets / SOPS (age)] ──► Креденшилы Vault, адреса, TLS CA ──► [Старт ESO]
+       │
+       └─► [ExternalSecret манифесты]  ──► Секреты прикладных сервисов       ──► [Синхронизация из Vault]
+```
+
+- **Bootstrap-уровень (Git-шифрование):** Манифесты подключения к Vault, приватные ключи для расшифровки репозиториев и базовые конфигурации хранятся в Git в зашифрованном виде с помощью **Bitnami Sealed Secrets** или **Mozilla SOPS + age**.
+- **Runtime-уровень (Внешний менеджер):** Все прикладные секреты микросервисов, пароли баз данных и токены API управляются централизованно в HashiCorp Vault / OpenBao и доставляются оператором ESO.
+
+### 3. Разграничение доступа и изоляция (RBAC)
+
+1. **Запрет доступа разработчиков к `ClusterSecretStore`:** Ресурс `ClusterSecretStore` должен создаваться исключительно администраторами платформы в пространстве имен `external-secrets`. Разработчикам приложений предоставляются права только на создание `ExternalSecret` в рамках их персональных namespace.
+2. **Использование namespace-scoped `SecretStore` для команд:** В мультиарендных (multi-tenant) кластерах каждой команде настраивается собственный локальный `SecretStore`, привязанный к уникальной роли Vault и выделенной ветке путей (`secret/data/teams/team-alpha/*`), что исключает доступ к секретам соседних сервисов.
+3. **Минимизация прав ServiceAccount:** ServiceAccount, используемый оператором, должен иметь доступ исключительно к TokenReview API, но не обладать правами чтения секретов в кластере через нативный RBAC.
+
+### 4. Оптимизация нагрузки и SRE-параметры
+
+1. **Не устанавливайте агрессивный `refreshInterval`:** Значение по умолчанию должно составлять **от 15 минут до 1 часа** (`refreshInterval: 1h`). Слишком частый опрос (например, `5s`) при наличии сотен `ExternalSecret` вызовет лавинообразную нагрузку на API Vault (Thundering Herd Problem) и может привести к исчерпанию лимитов соединений.
+2. **Экстренная ротация через аннотацию:** Для внеплановой немедленной ротации используйте аннотацию `force-sync` вместо уменьшения постоянного интервала опроса.
+3. **Отказоустойчивость контроллера:** Всегда развертывайте ESO с флагом `leaderElect: true` минимум в 2 репликах с `podAntiAffinity` по физическим узлам.
+
+---
 
 ## Дополнительная информация
 
-### Аутентификация и идентификация (Workload Identity)
-
-Безопасность внешней интеграции зависит от того, как кластер доказывает свою личность внешнему KMS.
-
-*   **Kubernetes Auth Method (Vault):** Vault проверяет ServiceAccount токен через TokenReview API самого Kubernetes. В роли задаются `bound_service_account_names`, `bound_service_account_namespaces`, `policies`, `audience` и `ttl`. Для доступа к TokenReview ServiceAccount Vault необходима привязка к роли `system:auth-delegator`. Полная настройка — в [Интеграции Vault с Kubernetes](../../../Vault/guides/vault_kubernetes_integration.md).
-*   **Проецируемые (bound) ServiceAccount-токены:** короткоживущие JWT, монтируемые в Pod через projected volume с полями `audience`, `expirationSeconds`, `path`. Используются ESO, VSO, CSI-провайдером и Vault Agent для аутентификации без долгоживущих статических токенов. В Vault 1.21+ роли Kubernetes Auth обязаны содержать `audience`.
-*   **AppRole:** способ аутентификации для не-Kubernetes клиентов (CI/CD, серверы приложений вне кластера): `RoleID`/`SecretID` с TTL и ограничением использования. Подробнее — [Vault AppRole](../../../Vault/guides/vault_auth_approle.md).
-*   **AWS (IRSA):** Использование OIDC-провайдера кластера для обмена Kubernetes ServiceAccount Token на временные AWS IAM Credentials.
-*   **GCP/Azure (Workload Identity Federation):** Аналогичный механизм федерации идентичностей без использования секретных ключей в манифестах.
-
-### Безопасность интеграции
-
-1.  **Принцип наименьших привилегий:** политика Vault для каждой роли ограничена конкретными путями (`path "secret/data/production/app/*" { capabilities = ["read"] }`), короткие TTL, предпочтение динамических секретов с автоистечением.
-2.  **RBAC Kubernetes:** создание `ClusterSecretStore` ограничивается платформенной командой (админ кластера), `ExternalSecret` — только в своих namespace; права на CRD задаются через `ClusterRole`.
-3.  **NetworkPolicy:** egress-политики разрешают доступ к адресу Vault/провайдера только нужным компонентам (оператор ESO, CSI-провайдер, Vault Agent), остальной исходящий трафик по умолчанию запрещён.
-4.  **Креденшилы интеграций** не хранятся в Git и манифестах — только ссылки; используются Kubernetes Auth, AppRole, WIF.
-5.  **Аудит:** включите Vault audit log (записи о доступе к секретам) и мониторинг запросов; шифрование данных в `etcd` не отменяет аудит на стороне KMS.
-6.  **Снижение следа в etcd:** где возможно, используйте CSI-монтирование вместо синхронизации в нативные `Secret`.
-
-### Наблюдаемость и диагностика
-
--   **ESO:** статус каждого ресурса виден через `kubectl get externalsecret -A -o wide`, условия — в `status.conditions`; события — `kubectl describe externalsecret <name>`; логи оператора — `kubectl logs deploy/external-secrets -n external-secrets`.
--   **Взаимодействие с приложениями:** при ротации приложению, читающему секрет из окружения, нужен перезапуск — используйте [Reloader](../../ToolsUtilities/reloader/reloader_usage_scenarios.md) (аннотация `reloader.stakater.com/auto: "true"`) или rollout на изменение содержимого `Secret`.
--   **CSI:** сбои монтирования видны в событиях Pod (`FailedMount`, `SecretProviderClassNotFound`) и в логах драйвера/provider на соответствующем узле; привязка Pod к SecretProviderClass — в `SecretProviderClassPodStatus`.
-
-### Типичные проблемы и их решение
-
-| Проблема | Причина | Решение |
-| :--- | :--- | :--- |
-| `ExternalSecret` создан, но нативный `Secret` не появился | Ошибка аутентификации, политика Vault, недоступность `server` | `kubectl get externalsecret -o yaml` → `status.conditions`; проверить `ClusterSecretStore` и логи ESO |
-| Условие `RefreshFailed` / `SecretSyncError` | Отзыв токена/роли, изменение пути, rate limit хранилища | Проверить условия и события; скорректировать `refreshInterval` или креденшилы |
-| `no matches for kind "SecretStore" in version "external-secrets.io/v1beta1"` | Ресурс на старой API-версии (ESO ≥ 0.17 не отдаёт `v1beta1`) | Перевести манифесты на `external-secrets.io/v1` и обновить ресурсы до апгрейда |
-| `could not find key ...` | Поле `property` в `remoteRef` не существует в секрете Vault | Проверить имя поля в Vault через `vault kv get <path>` |
-| `secret not found` | В `remoteRef.key` указан полный путь с префиксом `data/` или `secret/` — ESO добавляет `data/` сам | Убрать префикс: `key: app/db` вместо `key: secret/data/app/db`; путь указывается относительно mount point `secret` |
-| `permission denied` | У роли Vault, которую использует ESO, нет прав чтения этого пути | Проверить политику Vault (`vault policy read`) и права на `secret/metadata/*` для list |
-| `connection refused` | Vault запечатан или неправильный URL в поле `server` | Проверить `vault status` и поле `server` в ClusterSecretStore |
-| `SecretSyncedError` (status.Condition) | Vault запечатан (sealed) либо путь к секрету не существует | Проверить `vault status` на стороне Vault; `vault kv get secret/<path>` для проверки существования пути; если путь неверный — поправить `remoteRef.key` относительно mount point |
-| CSI: том пуст или монтирование падает | Ошибки в `SecretProviderClass`, нет provider (`DaemonSet`), недоступен Vault | `kubectl describe pod` → события `FailedMount`; проверить SPC, логи провайдера на узле |
-| CSI: ротация не происходит | `enableSecretRotation=false` | Включить Helm-значение `enableSecretRotation` и настроить `rotationPollInterval` |
-| `failed to get node publish secret` | Нативному Secret с креденшилами не хватает метки | `kubectl label secret <name> secrets-store.csi.k8s.io/used=true` |
-| Vault Agent не рендерит файл | Неверный шаблон/роль, политика запрещает доступ | Логи контейнера `vault-agent`; проверить роль и таргет-политику Vault |
-| Приложение видит старые значения (окружение) | `Secret` обновлён, но поды не перезапущены | Rolling Update, [Reloader](../../ToolsUtilities/reloader/reloader_usage_scenarios.md), restart on change |
-
-### Рекомендации и лучшие практики
-
-1.  По умолчанию выбирайте **ESO** для «прозрачной» миграции — приложения продолжают читать нативные `Secret`, синхронизированные из KMS; **CSI** — когда наличие секретов в `etcd` недопустимо; **VSO/Sidecar** — при глубокой интеграции с Vault и использовании динамических секретов.
-2.  Соблюдайте наименьшие привилегии (политики Vault, RBAC на CRD ESO); раздельные `SecretStore` на namespace при мультиарендности.
-3.  Не устанавливайте слишком агрессивный `refreshInterval` (в production обычно 1–5 минут): это снижает нагрузку на API провайдера и стоимость вызовов.
-4.  Мониторите статус синхронизации (`Ready`/`RefreshFailed`), настраивайте алерты на долгое расхождение.
-5.  Храните `ExternalSecret`/`ClusterSecretStore` декларативно в Git ([GitOps: управление секретами](../../../GitOps/secrets_encryption.md)); учитывайте, что при стратегиях бэкапа публично доступны только определения, а не значения ([Бэкапы](../../Operations/backup-strategies.md)).
-6.  Тестируйте ротацию в staging-окружении, не логируйте значения секретов, периодически анализируйте Vault audit log.
-7.  **Bootstrap-паттерн (ESO + SealedSecrets):** всё, что нужно самому ESO для старта (адрес Vault, конфигурация аутентификации, начальные учётные credentials registry, секреты инициализации Vault) храните как SealedSecret — это работает с нуля без доступа к Vault. Всё остальное — через ExternalSecret. Секреты приложений, которые живут в Vault и часто ротируются, доставляйте через ESO.
-8.  При использовании Vault Enterprise с namespaces задавайте `namespace` в `ClusterSecretStore` отдельно от `path` — путь указывается относительно namespace.
-
-### Выбор решения
-
-1.  **ESO:** Если нужно "прозрачно" заменить существующие секреты на данные из KMS без изменения кода и манифестов приложений.
-2.  **CSI Driver:** Для высоконагруженных или критически важных систем, где недопустимо наличие секретов в `etcd`.
-3.  **VSO / Sidecar:** При глубокой интеграции с экосистемой HashiCorp и использовании динамических секретов (например, временных пользователей базы данных).
-
 ### Смотрите также
 
-- [Безопасность Secret](security.md) — общие принципы и KMS v2.
-- [Хранение в etcd](etcd_storage.md) — риски и механизмы шифрования.
-- [Интеграция Vault с Kubernetes](../../../Vault/guides/vault_kubernetes_integration.md) — детальные инструкции по настройке.
-- [Helm + секреты](helm_secrets.md) — управление секретами в Helm-чартах.
-- [Секреты в StatefulSet](statefulset_secrets.md) — паттерны для баз данных и stateful-приложений.
-- [Sealed Secrets](../../Security/sealed_secrets_overview.md) — шифрование секретов для Git.
-- [SOPS](../../../Security/Tools/sops_overview.md) — шифрование файлов через Mozilla SOPS.
-- [GitOps: управление секретами](../../../GitOps/secrets_encryption.md) — сравнение подходов к хранению секретов в Git.
+- [Безопасность Secret](file:///C:/Users/Elise/notes/Kubernetes/Base/secrets/security.md) — механизмы защиты секретов на уровне кластера и RBAC.
+- [Хранение в etcd](file:///C:/Users/Elise/notes/Kubernetes/Base/secrets/etcd_storage.md) — внутреннее устройство etcd, риски утечки и шифрование данных at rest.
+- [Создание Secret](file:///C:/Users/Elise/notes/Kubernetes/Base/secrets/creating_secrets.md) — базовые типы секретов и способы работы с нативным API.
+- [Использование Secret](file:///C:/Users/Elise/notes/Kubernetes/Base/secrets/using_secrets.md) — монтирование через volume, env и envFrom.
+- [Helm + секреты](file:///C:/Users/Elise/notes/Kubernetes/Base/secrets/helm_secrets.md) — интеграция секретов в процесс деплоя через Helm.
+- [Секреты в StatefulSet](file:///C:/Users/Elise/notes/Kubernetes/Base/secrets/statefulset_secrets.md) — специфика работы с постоянными хранилищами баз данных.
+- [Интеграция Vault с Kubernetes](file:///C:/Users/Elise/notes/Vault/guides/vault_kubernetes_integration.md) — детальная настройка Vault Kubernetes Auth, TokenReview и VSO.
+- [Vault AppRole](file:///C:/Users/Elise/notes/Vault/guides/vault_auth_approle.md) — аутентификация для внешних процессов и CI/CD контуров.
+- [GitOps: Управление секретами и шифрование](file:///C:/Users/Elise/notes/GitOps/secrets_encryption.md) — шифрование в Git через SOPS, Sealed Secrets и сравнение с ESO.
+- [Сценарии использования Reloader](file:///C:/Users/Elise/notes/Kubernetes/ToolsUtilities/reloader/reloader_usage_scenarios.md) — настройка автоматического перезапуска рабочих нагрузок при обновлении ConfigMap и Secret.
+- [Обзор Sealed Secrets](file:///C:/Users/Elise/notes/Kubernetes/Security/sealed_secrets_overview.md) — асимметричное шифрование секретов для GitOps-пайплайнов.

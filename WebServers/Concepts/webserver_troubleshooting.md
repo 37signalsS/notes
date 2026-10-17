@@ -698,6 +698,28 @@ sudo journalctl -u nginx -b 0 --no-pager
   `grep "open() failed (2: No such file or directory)" /var/log/nginx/error.log`
 - **Решение:** Проверить правильность слешей в `alias` (в Nginx `location /images/ { alias /data/images/; }` требует замыкающего слеша в обоих параметрах).
 
+#### 400 Bad Request (включая сбои WebSocket Handshake)
+- **Причины:**
+  1. Синтаксическая ошибка в HTTP-запросе от клиента или превышение размера заголовка (`large_client_header_buffers`).
+  2. При проксировании WebSocket: клиент отправляет `Upgrade: websocket`, но прокси-сервер использует протокол HTTP/1.0 по умолчанию или не передает заголовки `Upgrade` и `Connection` на бэкенд.
+- **Диагностика:**
+  ```bash
+  # Проверка логов прокси на предмет сбоев WebSocket
+  grep "WebSocket" /var/log/nginx/error.log
+  curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" http://127.0.0.1/ws
+  ```
+- **Решение:** Настроить блок `map` и явный проброс заголовков переключения протокола:
+  ```nginx
+  map $http_upgrade $connection_upgrade {
+      default upgrade;
+      ''      close;
+  }
+  # В location:
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection $connection_upgrade;
+  ```
+
 #### 413 Payload Too Large
 - **Причины:** Размер тела запроса (загружаемого файла) превышает лимит сервера (`client_max_body_size` в Nginx/Angie, `LimitRequestBody` в Apache).
 - **Решение:** Задать допустимый лимит в соответствующем блоке `location` или `server`:
@@ -705,10 +727,27 @@ sudo journalctl -u nginx -b 0 --no-pager
   client_max_body_size 64M;
   ```
 
+#### 429 Too Many Requests (Массовые блокировки за балансировщиком)
+- **Причины:** Веб-сервер находится за пограничным L4/L7-балансировщиком, WAF или CDN. Так как реальный IP клиента не восстанавливается, модуль `limit_req` рассчитывает лимит по IP-адресу балансировщика, блокируя всех пользователей сразу.
+- **Диагностика:** В поле `$remote_addr` в access.log фиксируется один и тот же приватный IP шлюза.
+- **Решение:** Добавить в `http` или `server` блок директивы модуля `real_ip`:
+  ```nginx
+  set_real_ip_from 10.0.0.0/8;       # CIDR доверенного балансировщика
+  real_ip_header X-Forwarded-For;
+  real_ip_recursive on;             # Исключить поддельные IP из цепочки
+  ```
+
 #### 499 Client Closed Request
 - **Причины:** Клиент оборвал соединение до завершения обработки запроса сервером. В 95% случаев вызвано медленной обработкой запроса на бэкенде, превышающей клиентский таймаут приложения или JS-фреймворка.
 - **Диагностика:** Проверить время ответа бэкенда в access-логе: `$upstream_response_time`.
 - **Решение:** Оптимизировать запросы к БД и логику бэкенда; проверить очереди upstream.
+
+### Конфигурационные ловушки безопасности
+
+#### Пропадание заголовков безопасности (HSTS, CSP) в дочерних location
+- **Симптом:** Браузер сообщает об отсутствии HSTS или CSP на путях `/api/` или `/static/`, хотя в блоке `server` настроены директивы `add_header`.
+- **Причина:** Архитектурная ловушка наследования Nginx/Angie: объявление локального `add_header` в `location` полностью аннулирует все родительские `add_header`.
+- **Решение:** Вынести заголовки безопасности в файл `/etc/nginx/snippets/security-headers.conf` и подключать его через `include` во всех дочерних блоках `location`, где есть локальные заголовки. Подробнее: [Типовые уязвимости и ошибки конфигурации веб-серверов](./webserver_security_misconfigurations.md).
 
 ### Типовые ошибки HTTP 5xx
 
@@ -862,3 +901,5 @@ sudo journalctl -u nginx -b 0 --no-pager
 - **[Общая методология диагностики сервисов](../../Linux/Diagnostics/Troubleshooting/general_troubleshooting_methodology.md)** — общесистемные методы поиска неисправностей в Linux.
 - **[Коды состояния HTTP](../../Networking/Protocols/HTTP/http_status_codes.md)** — семантика и стандарты статусных кодов согласно RFC 9110.
 - **[Логирование веб-серверов](./webserver_logging.md)** — настройка структурированных логов, сбор метрик задержек и аудит.
+- **[Типовые уязвимости и ошибки конфигурации веб-серверов](./webserver_security_misconfigurations.md)** — разбор Off-by-slash, Request Smuggling, CRLF-инъекций и дефолтных виртуальных хостов.
+

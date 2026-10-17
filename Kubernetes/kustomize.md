@@ -1,82 +1,132 @@
 # Kustomize: основы и лучшие практики для множественных окружений
 
+**Актуально для:** Kustomize v5.4.x / Flux CD v2.3.x / Kubernetes 1.28–1.31
+
 ## Определения
-- Kustomize — инструмент для настройки Kubernetes объектов через слои overlays и патчи.
-- HelmRelease — пользовательский ресурс определния (CRD) от Flux CD, позволяющий управлять Helm чартами как Kubernetes объектами.
-- Overlay — директория, содержащая kustomization.yaml, которая определяет, какие базовые ресурсы включены и какие патци применены.
-- Base — директория с манифестами, общими для всех сред развертывания.
-- Custom — директория с опциональными компонентами, используемыми не во всех средах.
-- Patch — файл с изменениями (делтами), применяемыми к ресурсам из base/ или custom/.
-- Strategic merge patch — формат патча, который объединяет указанные поля с базовым ресурсом, оставляя остальные поля без изменений.
-- JSON patch — формат патча, использующий операции add, remove, replace по JSON-pointer путям для модификации ресурсов.
-- kustomization.yaml — конфигурационный файл Kustomize, указывающий ресурсы, патци, преобразования и другие параметры.
 
-## Основные концепции и архитектура
-Трехуровневая структура Kustomize для достижения DRY принципа в управлении Helm values across multiple environments:
+- **Kustomize** — нативный инструмент декларативной кастомизации манифестов Kubernetes без использования шаблонизации, настраивающий объекты через иерархические слои (overlays), компоненты (components) и патчи (patches).
+- **kustomization.yaml** — основной конфигурационный файл (`apiVersion: kustomize.config.k8s.io/v1beta1`, `kind: Kustomization`), декларирующий включаемые ресурсы, генераторы, модификаторы метаданных и патчи для конкретного слоя.
+- **Base (Базовый слой)** — каталог с манифестами, содержащий эталонные конфигурации, одинаковые для всех сред развертывания.
+- **Overlay (Слой наложения)** — каталог с файлом `kustomization.yaml`, который ссылается на `base` (или другие оверлеи) и накладывает специфичные для окружения изменения (патчи, селекторы, переменные).
+- **Custom (Слой опциональных компонентов)** — каталог модульных сервисов или аддонов (например, базы данных, очереди, стеки мониторинга), подключаемых к окружениям по принципу конструктора.
+- **Component (Компонент Kustomize)** — переиспользуемый модуль (`apiVersion: kustomize.config.k8s.io/v1alpha1`, `kind: Component`), инкапсулирующий ресурсы и патчи для горизонтального подмешивания функциональности (например, включение TLS, аутентификации или debug-режима) без создания промежуточных оверлеев.
+- **Patch (Патч)** — файл или встроенная инструкция, описывающая изменения (дельты), применяемые к целевым объектам.
+- **Strategic Merge Patch** — метод слияния YAML-манифестов на основе схемы Kubernetes OpenAPI, позволяющий обновлять и добавлять поля без перезаписи неизмененных атрибутов.
+- **JSON 6902 Patch** — стандарт точечной модификации структуры (RFC 6902), использующий операции `add`, `remove`, `replace` по точным путям JSON Pointer; критически важен для модификации нетипизированных полей (`values` в CRD).
+- **HelmRelease** — пользовательский ресурс (CRD `helm.toolkit.fluxcd.io/v2`) оператора Flux CD Helm Controller, обеспечивающий декларативное управление жизненным циклом Helm-релизов в рамках GitOps.
 
-1. **Уровень 1: base/**
-   - Содержит HelmRelease объекты с значениями, идентичными для всех окружений.
-   - Пример: версия чарта, ресурсные запросы/лимиты, настройки probe, параметры serviceMonitor, конфигурация TLS, feature flags.
-   - Изменение значения в base/ (например, версия чарта) автоматически применяется ко всем окружениям.
+## Архитектура и принципы работы
 
-2. **Уровень 2: custom/**
-   - Содержит опциональные компоненты, структурированные по поддиректориям (например, apps/, db/, elk/, monitoring/, queue/, web/).
-   - Каждая поддиректория имеет собственный kustomization.yaml, перечисляющий включенные компоненты (например, custom/db/kustomization.yaml список redis/, mongodb/, etc.).
-   - Позволяет включать/исключать целые наборы компонентов для разных окружений без дублирования конфигурации.
+### DRY-архитектура управления конфигурациями
 
-3. **Уровень 3: projects/{env}/hub/**
-   - Overlay для конкретного окружения {env}, который:
-     * Ссылается на директории base/ и выбранные custom/ компоненты через resources в kustomization.yaml.
-     * Применяет дельта-патчи (patches/), содержащие только отличия между окружениями (например, StorageClass, количество реплик, ресурсные лимиты, учетные данные, имена хостов).
-     * Устанавливает namespace на уровне overlay (поле namespace в kustomization.yaml), что размещает все HelmRelease в namespace окружения без необходимости указывать namespace в каждом HelmRelease файле.
-   - Пример: projects/dev/kustomization/hub/ для окружения dev, projects/sre/kustomization/hub/ для sre и т.д.
+Главный вызов при эксплуатации нескольких Kubernetes-кластеров и сред (Dev, Staging, SRE/Prod) — устранение дублирования конфигураций (принцип DRY — Don't Repeat Yourself). Изменение глобального параметра (например, версии Helm-чарта, глобального тайм-аута или базового probe) должно выполняться ровно в одном месте.
 
-Ключевой принцип: патци содержат только дельты и никогда не дублируют значения из base/. Это обеспечивает, что обновление общей конфигурации (например, версии чарта) требует изменения только одного файла в base/.
-
-## Практическая установка и настройка
-Пример структуры репозитория:
+```text
+                               ┌───────────────────────────┐
+                               │   Уровень 1: base/        │
+                               │   (общие HelmRelease,     │
+                               │    версии, baseline probe)│
+                               └─────────────┬─────────────┘
+                                             │
+                               ┌─────────────┴─────────────┐
+                               │   Уровень 2: custom/      │
+                               │   (опциональные сервисы:  │
+                               │    db, elk, queue, infra) │
+                               └─────────────┬─────────────┘
+                                             │
+                 ┌───────────────────────────┼───────────────────────────┐
+                 │                           │                           │
+                 v                           v                           v
+  ┌─────────────────────────────┐ ┌─────────────────────────────┐ ┌─────────────────────────────┐
+  │ Уровень 3: projects/dev/    │ │ Уровень 3: projects/test/   │ │ Уровень 3: projects/sre/    │
+  │ • StorageClass: local-path  │ │ • StorageClass: nfs-client  │ │ • StorageClass: ceph-rbd    │
+  │ • Min replicas (1)          │ │ • Middle replicas (2)       │ │ • HA replicas (3), limits   │
+  │ • dev-kubeconfig            │ │ • test-kubeconfig           │ │ • prod-kubeconfig           │
+  └─────────────────────────────┘ └─────────────────────────────┘ └─────────────────────────────┘
 ```
+
+Иерархия разделения ответственности:
+
+1. **Уровень 1: `base/`**
+   - Содержит манифесты `HelmRelease` и общие объекты со значениями, идентичными для всех окружений.
+   - Здесь фиксируются: версия Helm-чарта, источник `HelmRepository`, базовые интервалы сверки, общие флаги (`grafana.enabled: false` для spoke-кластеров), базовые метрики и probes.
+   - Обновление версии в `base/` мгновенно каскадируется на все среды.
+
+2. **Уровень 2: `custom/` (или `components/`)**
+   - Содержит опциональные компоненты, сгруппированные по категориям (например, `db/`, `elk/`, `monitoring/`, `queue/`, `web/`).
+   - Каждый каталог содержит собственный `kustomization.yaml`, подключающий ресурсы внутри категории (например, `custom/db/kustomization.yaml` агрегирует `redis/`, `postgresql/`).
+   - Позволяет подключать или отключать функциональные блоки для конкретных кластеров без копирования манифестов.
+
+3. **Уровень 3: `projects/{env}/hub/` (или `environments/{env}/`)**
+   - Оверлей конкретного окружения (`dev`, `test`, `sre`), выполняющий:
+     - Подключение базовых ресурсов из `base/` и выбранных компонентов из `custom/` через директиву `resources:`.
+     - Наложение точечных патчей (`patches:`), содержащих исключительно дельты параметров окружения: класс хранилища (`storageClass`), лимиты памяти/CPU, количество реплик, профили сетевой изоляции.
+     - Установку пространства имен на уровне всего оверлея (`namespace: dev`), автоматически транслируемую во все дочерние ресурсы без хардкода в каждом отдельном файле.
+     - Инъекцию контекстных секретов (например, `kubeConfig` для взаимодействия Hub-кластера со Spoke-кластерами).
+
+### Механизм патчинга в Kustomize v5+
+
+В современном Kustomize устаревшие поля `bases:`, `patchesStrategicMerge:` и `patchesJson6902:` объединены в универсальный блок `patches:`.
+
+| Метод | Механизм применения | Когда применять |
+| :--- | :--- | :--- |
+| **Strategic Merge** | Слияние по именованным ключам схемы K8s OpenAPI | Изменение стандартных полей K8s (`replicas`, `resources`, `env`, `nodeSelector`). |
+| **JSON 6902 Patch** | Адресация по RFC 6902 путям (`add`, `remove`, `replace`) | Модификация `values` внутри CRD `HelmRelease`, удаление секций, массовая инъекция блоков через селектор. |
+| **$patch директивы** | Директивы `$patch: delete` и `$patch: replace` в Strategic Merge | Полная замена списков или удаление контейнеров/томов в стандартных подах. |
+
+> [!IMPORTANT]
+> Манифесты CRD (включая `HelmRelease` от Flux CD) содержат секцию `spec.values`, которая с точки зрения OpenAPI K8s является нетипизированным объектом (`type: object`, `x-kubernetes-preserve-unknown-fields: true`). Для `spec.values` Strategic Merge Patch не может вычислить ключи слияния списков! Поэтому для удаления или точечной модификации списков внутри `values` необходимо применять **JSON 6902 patch**.
+
+## Практические сценарии и конфигурация
+
+### Базовая структура каталогов репозитория
+
+```text
 fluxcd/
 ├── base/
 │   └── monitoring/
 │       └── kube-prom-stack/
-│           └── helmrelease.yaml   # Общие значения для kube-prometheus-stack
+│           ├── helmrelease.yaml        # Базовый релиз со стабильными values
+│           └── kustomization.yaml      # Регистрация ресурса base
 ├── custom/
 │   ├── db/
-│   │   └── kustomization.yaml     # Список компонентов баз данных
+│   │   ├── redis/
+│   │   │   └── helmrelease.yaml
+│   │   └── kustomization.yaml          # Экспорт сервисов баз данных
 │   ├── elk/
+│   │   ├── elasticsearch/
+│   │   │   └── helmrelease.yaml
 │   │   └── kustomization.yaml
-│   ├── monitoring/
-│   │   └── kustomization.yaml
-│   ├── queue/
-│   │   └── kustomization.yaml
-│   └── web/
+│   └── monitoring/
 │       └── kustomization.yaml
 └── projects/
     ├── dev/
     │   └── kustomization/
     │       └── hub/
-    │           ├── kustomization.yaml   # Hub overlay для dev
+    │           ├── kustomization.yaml  # Точка входа для dev-окружения
     │           └── patches/
     │               ├── elasticsearch.yaml
     │               ├── kube-prom-stack.yaml
     │               └── redis.yaml
     ├── test/
-    │   └── ... (аналогично dev)
-    ├── sre/
     │   └── kustomization/
     │       └── hub/
     │           ├── kustomization.yaml
     │           └── patches/
-    │               ├── elasticsearch.yaml  # С другим StorageClass и ресурсами
-    │               └── ...
-    ├── loadgds/
-    │   └── ...
-    └── demo/
-        └── ...
+    │               └── elasticsearch.yaml
+    └── sre/
+        └── kustomization/
+            └── hub/
+                ├── kustomization.yaml
+                └── patches/
+                    ├── elasticsearch.yaml
+                    └── kube-prom-stack.yaml
 ```
 
-Пример базового HelmRelease в base/monitoring/kube-prom-stack/helmrelease.yaml:
+### Базовый манифест HelmRelease (base/)
+
+Файл `fluxcd/base/monitoring/kube-prom-stack/helmrelease.yaml`:
+
 ```yaml
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -88,16 +138,22 @@ spec:
   chart:
     spec:
       chart: kube-prometheus-stack
-      version: "85.2.0"
+      version: "70.3.0"
       sourceRef:
         kind: HelmRepository
         name: prometheus-community
         namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
   values:
     grafana:
-      enabled: false      # Grafana размещается только на инфраструктурном хабе, не на spoke
+      enabled: false       # Grafana централизована на Hub-кластере
     defaultRules:
-      create: false
+      create: true
     kubeScheduler:
       enabled: false
     kubeProxy:
@@ -110,12 +166,23 @@ spec:
             spec:
               resources:
                 requests:
-                  storage: 20Gi
+                  storage: 50Gi
 ```
 
-Пример патца для Elasticsearch в окружении dev (on-prem, local-path storage):
+Файл `fluxcd/base/monitoring/kube-prom-stack/kustomization.yaml`:
+
 ```yaml
-# projects/dev/kustomization/hub/patches/elasticsearch.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - helmrelease.yaml
+```
+
+### Патч для Dev-окружения (On-Prem, local-path storage)
+
+Файл `fluxcd/projects/dev/kustomization/hub/patches/elasticsearch.yaml`:
+
+```yaml
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -123,18 +190,29 @@ metadata:
   namespace: dev
 spec:
   values:
+    replicas: 1
     master:
       persistence:
         storageClass: local-path
+        size: 20Gi
+      resources:
+        requests:
+          cpu: 500m
+          memory: 2Gi
+        limits:
+          cpu: 1000m
+          memory: 2Gi
     esConfig:
       elasticsearch.yml: |
         xpack.security.enabled: true
-    esJavaOpts: "-Xmx2g -Xms2g"
+    esJavaOpts: "-Xmx1g -Xms1g"
 ```
 
-Пример патца для Elasticsearch в окружении sre (Yandex Cloud, сетевой SSD):
+### Патч для SRE/Production-окружения (On-Prem, Ceph RBD / Высокая доступность)
+
+Файл `fluxcd/projects/sre/kustomization/hub/patches/elasticsearch.yaml`:
+
 ```yaml
-# projects/sre/kustomization/hub/patches/elasticsearch.yaml
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -142,114 +220,315 @@ metadata:
   namespace: sre
 spec:
   values:
+    replicas: 3
     master:
       persistence:
-        storageClass: yc-network-ssd
+        storageClass: ceph-rbd
+        size: 200Gi
       resources:
         requests:
+          cpu: 2000m
           memory: 8Gi
-          cpu: 2
-    esJavaOpts: "-Xmx6g -Xms6g"
-    replicas: 3
+        limits:
+          cpu: 4000m
+          memory: 8Gi
+    esConfig:
+      elasticsearch.yml: |
+        xpack.security.enabled: true
+    esJavaOpts: "-Xmx4g -Xms4g"
 ```
 
-Пример hub kustomization.yaml для окружения dev:
+### Итоговый Hub kustomization.yaml (Dev-окружение)
+
+Файл `fluxcd/projects/dev/kustomization/hub/kustomization.yaml`:
+
 ```yaml
-# projects/dev/kustomization/hub/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
 namespace: dev
+
 resources:
-  - ../../../../base/
-  - ../../../../custom/db/
-  - ../../../../custom/elk/
-  - ../../../../custom/monitoring/
-  - spoke.yaml        # Flux Kustomization для spoke-слоя
-  - monitoring.yaml   # Flux Kustomization для monitoring-слоя
+  - ../../../../base/monitoring/kube-prom-stack
+  - ../../../../custom/db
+  - ../../../../custom/elk
+  - spoke-sync.yaml
 
 patches:
+  # Стратегические патчи для отдельных сервисов
   - path: patches/elasticsearch.yaml
+    target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: elasticsearch
   - path: patches/kube-prom-stack.yaml
-  - path: patches/redis.yaml
-  # Добавление kubeConfig во ВСЕ HelmRelease через JSON patch
+    target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: kube-prom-stack
+
+  # Массовая инъекция через JSON 6902 Patch: добавление kubeConfig во ВСЕ HelmRelease
   - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
       kind: HelmRelease
     patch: |-
       - op: add
         path: /spec/kubeConfig
         value:
           secretRef:
-            name: dev-kubeconfig
+            name: dev-cluster-kubeconfig
+
+# Безопасное добавление меток без мутации matchLabels селекторов
+labels:
+  - pairs:
+      env: dev
+      managed-by: flux-kustomize
+    includeSelectors: false
 ```
 
-Примечание: Поле `namespace: dev` в верхней части устанавливает namespace для всех ресурсов в этом оверлее, если у них нет собственного namespace. Это позволяет всем HelmRelease оказываться в namespace `dev` на hub без повторения `namespace: dev` в каждом файле.
+### Сценарий использования Kustomize Components
+
+Когда необходимо добавить опциональный функционал (например, `node-exporter` host-root доступ или корпоративный TLS Sidecar), используются компоненты Kustomize.
+
+Пример компонента `fluxcd/custom/components/tls-sidecar/kustomization.yaml`:
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      kind: Deployment
+      labelSelector: "app.kubernetes.io/part-of=web"
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: not-used
+      spec:
+        template:
+          spec:
+            containers:
+              - name: tls-proxy
+                image: envoyproxy/envoy:v1.30.0
+                volumeMounts:
+                  - name: certs
+                    mountPath: /etc/ssl/certs
+                    readOnly: true
+            volumes:
+              - name: certs
+                secret:
+                  secretName: onprem-corp-cert
+```
+
+Подключение компонента в оверлее:
+
+```yaml
+components:
+  - ../../../../custom/components/tls-sidecar
+```
 
 ## Операции и команды
-Локальная валидация конфигурации перед коммитом:
-- Проверка полного hub оверлея:
-  ```bash
-  kubectl kustomize fluxcd/projects/dev/kustomization/hub/
-  ```
-- Проверка наличия добавленного kubeConfig во всех HelmRelease:
-  ```bash
-  kubectl kustomize fluxcd/projects/dev/kustomization/hub/ | grep -A 5 "kubeConfig"
-  ```
-- Проверка values конкретного чарта после применения патци:
-  ```bash
-  kubectl kustomize fluxcd/projects/dev/kustomization/hub/ | \
-    yq '. | select(.metadata.name == "elasticsearch") | .spec.values'
-  ```
-- Сравнение конфигураций двух окружений для выявления различий:
-  ```bash
-  diff \
-    <(kubectl kustomize fluxcd/projects/dev/kustomization/hub/) \
-    <(kubectl kustomize fluxcd/projects/test/kustomization/hub/)
-  ```
 
-Пример шага в GitLab CI для автоматической валидации:
+### Локальная проверка и валидация манифестов
+
+Сборка оверлея и проверка результирующего манифеста:
+
+```bash
+kubectl kustomize fluxcd/projects/dev/kustomization/hub/
+# → apiVersion: helm.toolkit.fluxcd.io/v2
+# → kind: HelmRelease
+# → metadata:
+# →   name: kube-prom-stack
+# →   namespace: dev
+# → ...
+```
+
+Проверка применения JSON-патча (наличие добавленного `kubeConfig` во всех релизах):
+
+```bash
+kubectl kustomize fluxcd/projects/dev/kustomization/hub/ | grep -A 4 "kubeConfig:"
+# →     kubeConfig:
+# →       secretRef:
+# →         name: dev-cluster-kubeconfig
+# → --
+# →     kubeConfig:
+# →       secretRef:
+# →         name: dev-cluster-kubeconfig
+```
+
+Выборочный просмотр `spec.values` конкретного сервиса с помощью `yq`:
+
+```bash
+kubectl kustomize fluxcd/projects/dev/kustomization/hub/ | \
+  yq '. | select(.metadata.name == "elasticsearch") | .spec.values.master.persistence'
+# → storageClass: local-path
+# → size: 20Gi
+```
+
+Сравнение сгенерированных манифестов между двумя окружениями:
+
+```bash
+diff -u \
+  <(kubectl kustomize fluxcd/projects/dev/kustomization/hub/) \
+  <(kubectl kustomize fluxcd/projects/sre/kustomization/hub/) | head -n 25
+# → --- /dev/fd/63
+# → +++ /dev/fd/62
+# → @@ -8,7 +8,7 @@
+# → -  namespace: dev
+# → +  namespace: sre
+# → @@ -45,7 +45,7 @@
+# → -        storageClass: local-path
+# → +        storageClass: ceph-rbd
+```
+
+### Сборка через автономный бинарный файл kustomize
+
+Если оверлеи ссылаются на каталоги выше корня запуска, используется флаг снятия ограничений загрузки:
+
+```bash
+kustomize build fluxcd/projects/dev/kustomization/hub/ --load-restrictor LoadRestrictionsNone > /dev/null
+# → (код возврата 0 при успешной компиляции)
+```
+
+### Dry-Run валидация в кластере Kubernetes
+
+```bash
+kubectl apply -k fluxcd/projects/dev/kustomization/hub/ --dry-run=client
+# → helmrelease.helm.toolkit.fluxcd.io/kube-prom-stack configured (dry run)
+# → helmrelease.helm.toolkit.fluxcd.io/elasticsearch configured (dry run)
+# → helmrelease.helm.toolkit.fluxcd.io/redis configured (dry run)
+```
+
+### Валидация в GitLab CI / Автоматизация
+
+Пример этапа валидации в конвейере CI/CD (`.gitlab-ci.yml`):
+
 ```yaml
 kustomize-validate:
   stage: validate
-  image: bitnami/kubectl:latest
+  image: bitnami/kubectl:1.31.1
+  before_script:
+    - kubectl version --client=true
   script:
-    - for env in dev test sre loadgds demo; do
-        echo "Validating $env...";
-        kubectl kustomize fluxcd/projects/${env}/kustomization/hub/ > /dev/null;
+    - set -euo pipefail
+    - |
+      for env in dev test sre; do
+        echo "=== [CHECK] Валидация оверлея: ${env} ==="
+        kubectl kustomize "fluxcd/projects/${env}/kustomization/hub/" > /tmp/manifest.yaml
+        if [ ! -s /tmp/manifest.yaml ]; then
+          echo "ERROR: Пустой манифест для ${env}" >&2
+          exit 1
+        fi
+        echo "OK: Оверлей ${env} успешно собран ($(wc -l < /tmp/manifest.yaml) строк)"
       done
 ```
-Выполняется за ~5 секунд и обнаруживает ~90% ошибок в патци до слияния.
 
 ## Устранение неполадок
-- **Ошибка: ссылка на отдельный файл вместо директории**
-  - Симптом: команда `kubectl kustomize` падает с ошибкой load-restrictor при локальной валидации.
-  - Причина: в resources указан путь к отдельному файлy (например, `../../../../custom/db/redis/helmrelease.yaml`) вместо директории с kustomization.yaml.
-  - Решение: всегда ссылаться на директории, содержащие kustomization.yaml (например, `../../../../custom/db/`).
 
-- **Проблема со strategic merge patch при удалении ключей**
-  - Симптом: ключ не удаляется из результирующего ресурса при использовании strategic merge патца.
-  - Причина: strategic merge не удаляет ключи без явной директивы `$patch: delete`.
-  - Решение: для удаления ключей использовать JSON patch с операцией `op: remove`.
+### 1. Ошибка load-restrictor при локальной сборке
 
-- **Конфликт при применении множественных патци**
-  - Симптом: непредсказуемый результат при модификации одного и того же пути разными патци.
-  - Причина: порядок применения патци может влиять на результат при конфликтующих изменениях.
-  - Решение: обеспечить, чтобы патци модифицировали разные пути, или тщательно протестировать порядок их применения.
+- **Симптом:**
+  ```text
+  Error: accumulating resources: accumulation err='merging resources from ...':
+  security; file is not in or below current working directory
+  ```
+- **Причина:** Kustomize по умолчанию блокирует выход за пределы корневой папки сборки (`LoadRestrictionsRootOnly`) при использовании относительных путей `../../..`.
+- **Диагностика:** Проверьте относительный путь в `resources:` манифеста `kustomization.yaml`.
+- **Решение:**
+  - При вызове бинарного `kustomize` передайте флаг:
+    ```bash
+    kustomize build <overlay-dir> --load-restrictor LoadRestrictionsNone
+    ```
+  - В настройках Argo CD repo-server укажите параметр:
+    `kustomize.buildOptions: "--load-restrictor LoadRestrictionsNone"` в ConfigMap `argocd-cm`.
+  - Убедитесь, что пути ссылаются на каталоги с `kustomization.yaml`, а не на одиночные манифесты за пределами корня.
+
+### 2. Strategic Merge Patch не удаляет параметры из HelmRelease
+
+- **Симптом:** При попытке занулить ключ (например, убрать `resources.limits` или отключить блок) через Strategic Merge старые значения из `base/` остаются в манифесте.
+- **Причина:** Поля `spec.values` внутри CRD `HelmRelease` не имеют типизированной схемы слияния K8s OpenAPI. Стратегическое слияние выполняет глубокий merge словарей, но не может удалить существующие ключи.
+- **Диагностика:**
+  ```bash
+  kubectl kustomize <overlay> | yq '.spec.values'
+  ```
+- **Решение:** Использовать JSON 6902 Patch с операцией `remove`:
+  ```yaml
+  patches:
+    - target:
+        group: helm.toolkit.fluxcd.io
+        version: v2
+        kind: HelmRelease
+        name: elasticsearch
+      patch: |-
+        - op: remove
+          path: /spec/values/master/resources/limits
+  ```
+
+### 3. Ошибка мутации matchLabels селекторов (Immutable Field)
+
+- **Симптом:** При деплое в кластер возникает ошибка:
+  ```text
+  The Deployment "app" is invalid: spec.selector: Invalid value: field is immutable
+  ```
+- **Причина:** Использование директивы `commonLabels:` в `kustomization.yaml` приводит к тому, что Kustomize принудительно изменяет поле `spec.selector.matchLabels` в Deployment/StatefulSet. В Kubernetes изменение селектора подов для существующих контроллеров запрещено.
+- **Диагностика:** Проверьте `diff` манифеста Deployment на наличие измененных `matchLabels`.
+- **Решение:** В Kustomize v5+ используйте директиву `labels` с отключением мутации селекторов:
+  ```yaml
+  labels:
+    - pairs:
+        environment: dev
+      includeSelectors: false
+  ```
+
+### 4. Непримененный патч из-за несовпадения Namespace или API-группы
+
+- **Симптом:** Сборка завершается успешно, но изменения из файла патча не появляются в целевом манифесте.
+- **Причина:** Если в `target` патча указан `namespace: dev`, но базовый ресурс в `base/` определен без `namespace` (или наоборот), Kustomize не считает их идентичными объектами до фазы присвоения общего namespace.
+- **Диагностика:** Проверьте точные метаданные в базовом файле:
+  ```bash
+  grep -E "(kind|name|namespace):" fluxcd/base/monitoring/kube-prom-stack/helmrelease.yaml
+  ```
+- **Решение:** В блоке `target` патча опускайте поле `namespace`, если селекция однозначно выполняется по имени (`name`) и типу (`kind`), либо синхронизируйте его декларацию.
 
 ## Лучшие практики
-- Хранить в директории base/ исключительно те значения и конфигурации, которые являются одинаковыми для всех окружений без исключений.
-- Никогда не дублировать значения из base/ в патцих — патци должны содержать только дельты (изменения, специфичные для окружения).
-- Использовать strategic merge патци для изменения существующих значений и JSON patch для структурных операций (добавление, удаление, замена полей, которые могут отсутствовать в base/).
-- Всегда указывать поле `namespace` в metadata патца, чтобы Kustomize мог точно определить, к какому HelmRelease с данным именем применять патца (особенно важно, когда существует несколько HelmRelease с одинаковым именем в разных namespaces).
-- Выполнять локальную валидацию через `kubectl kustomize` для каждого оверлея перед каждым коммитом, затрагивающим патци или kustomization.yaml.
-- При добавлении нового окружения:
-  1. Скопировать директорию существующего окружения (например, projects/dev/).
-  2. Обновить поле `namespace` в kustomization.yaml hub оверлея.
-  3. Обновить имя секрета в патце kubeConfig (например, с dev-kubeconfig на newenv-kubeconfig).
-  4. Адаптировать значения в патцих под конкретное окружение (StorageClass, имена хостов, ресурсные лимиты, реплики).
-  5. Добавить SealedSecret для нового kubeconfig секрета.
-  6. Закоммитить изменения и дождаться синхронизации с Flux.
-  Весь процесс занимает 20-30 минут и гарантирует, что новое окружение получает идентичные версии чартов и base values как существующие окружения, без ручной установки Helm или копирования values-файлов.
+
+1. **Абсолютная чистота `base/`:**
+   - В `base/` помещаются только 100% общие параметры. Если параметр варьируется хотя бы в одном окружении (например, реплики или StorageClass), он должен выноситься в патч оверлея или компонент.
+2. **Дельты вместо дублирования:**
+   - Патч должен содержать только изменяемые поля. Никогда не копируйте весь `values.yaml` чарта в патч оверлея — это обесценивает DRY и приводит к рассинхронизации версий.
+3. **Разделение типов патчей:**
+   - Используйте Strategic Merge для лаконичной модификации стандартных манифестов Kubernetes.
+   - Используйте JSON 6902 Patch для работы со `spec.values` внутри CRD `HelmRelease`, `PrometheusRule` и других кастомных ресурсов.
+4. **Безопасная работа с метаданными:**
+   - Откажитесь от устаревшей директивы `commonLabels:` в пользу `labels` с `includeSelectors: false`, чтобы избежать падений подов из-за иммутабельности селекторов.
+5. **Изоляция секретов в GitOps:**
+   - Конфиденциальные параметры (пароли БД, токен доступа к spoke-кластерам) не должны храниться в открытом виде в патчах. Используйте интеграцию с SealedSecrets, SOPS или External Secrets Operator.
+6. **Обязательная валидация в CI:**
+   - Каждый коммит, затрагивающий директории `base/`, `custom/` или `projects/`, должен проходить automated `kubectl kustomize` проверку всех оверлеев в конвейере GitLab CI перед слиянием.
+7. **Алгоритм добавления нового окружения:**
+   1. Создать каталог `projects/<new-env>/kustomization/hub/` копированием эталонного оверлея.
+   2. Обновить значение `namespace: <new-env>` в файле `kustomization.yaml`.
+   3. Скорректировать имя секрета доступа к целевому кластеру в JSON-патче `kubeConfig`.
+   4. Настроить патчи хранилищ под доступные локальные классы (например, `local-path` для стендов разработчиков, `ceph-rbd` для отказоустойчивых кластеров).
+   5. Добавить манифест SealedSecret для `kubeconfig` целевого кластера.
+   6. Выполнить локальную сборку `kubectl kustomize` и закоммитить изменения.
 
 ## Дополнительная информация
-- Официальная документация Kustomize: https://kubernetes-sigs.github.io/kustomize/
-- Документация HelmRelease в Flux CD: https://fluxcd.io/flux/components/helm/helmrelease/
-- Примеры и best practices в репозитории Kustomize: https://github.com/kubernetes-sigs/kustomize/tree/master/examples
-- Руководство по управлением множественными средами с Kustomize: https://kubetools.io/patterns/kustomize-multiple-environments
+
+### Внутренние ссылки базы знаний
+- [Kustomize — Обзор и основные концепции](./ToolsUtilities/kustomize/kustomize_overview.md)
+- [Kustomize — Наложения и патчи (Overlays and Patches)](./ToolsUtilities/kustomize/kustomize_overlays_and_patches.md)
+- [Kustomize — Multi-cluster и multi-tenancy паттерны](./ToolsUtilities/kustomize/kustomize_multi_cluster.md)
+- [Kustomize — Структура проекта и синтаксис](./ToolsUtilities/kustomize/kustomize_structure_and_syntax.md)
+- [Kustomize — Отладка и диагностика](./ToolsUtilities/kustomize/kustomize_debugging.md)
+- [GitOps с использованием Flux CD](../GitOps/flux.md)
+- [Интеграция Kustomize в Argo CD](../GitOps/ArgoCD/kustomize_integration.md)
+- [Local-path-provisioner в Kubernetes](../Kubernetes/Storage/local-path-provisioner.md)
+
+### Официальные источники
+- [Официальная документация Kustomize (SIG CLI)](https://kubernetes-sigs.github.io/kustomize/)
+- [Спецификация Flux CD HelmRelease](https://fluxcd.io/flux/components/helm/helmrelease/)
+- [RFC 6902: JavaScript Object Notation (JSON) Patch](https://datatracker.ietf.org/doc/html/rfc6902)

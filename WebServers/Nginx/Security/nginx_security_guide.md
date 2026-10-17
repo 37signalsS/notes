@@ -354,6 +354,17 @@ location /internal-files/ {
     internal;
     alias /var/storage/protected/;
 }
+
+# ВНИМАНИЕ SRE (Критическая уязвимость Off-by-slash / Alias Path Traversal):
+# Если префикс location не завершается слэшем, а alias завершается (или наоборот):
+# ДЕФЕКТНАЯ КОНФИГУРАЦИЯ:
+# location /static {
+#     alias /var/www/static/;
+# }
+# Запрос GET /static../etc/passwd транслируется ядром Nginx в чтение:
+# /var/www/static/../etc/passwd -> /var/www/etc/passwd (обход родительского каталога!)
+# ПРАВИЛО: Всегда синхронизируйте замыкающие слэши: location /static/ { alias /var/www/static/; }
+# Детальный разбор уязвимости: [Раздача статических файлов и уязвимость off-by-slash](../../Core/Location/serving_files.md).
 ```
 
 ### Сценарий 6: Запрет исполнения скриптов в каталогах загрузки (Anti-Webshell)
@@ -409,11 +420,29 @@ location / {
 
 ```nginx
 http {
-    # Скрытие версии Nginx в заголовке Server и на стандартных страницах ошибок
+    # 1. Скрытие версии Nginx в заголовке Server и на стандартных страницах ошибок
+    # ВНИМАНИЕ: директива server_tokens off скрывает только номер версии,
+    # но оставляет заголовок "Server: nginx".
     server_tokens off;
 
-    # В Angie PRO/Angie возможно полное переопределение строки Server:
+    # 2. Полное удаление или подмена заголовка Server в Nginx Open Source:
+    # Требует динамического модуля headers_more (пакет libnginx-mod-http-headers-more-filter):
+    # load_module modules/ngx_http_headers_more_filter_module.so;
+    # Полное удаление заголовка Server из всех ответов:
+    more_clear_headers Server;
+    # Либо подмена на нейтральную строку:
+    # more_set_headers "Server: Protected-Gateway";
+
+    # В сервере Angie переопределение строки Server доступно из коробки:
     # server_tokens "Web-Perimeter";
+
+    # 3. Защита от подмены заголовков (Namespace Collision в CGI/FastCGI/uWSGI)
+    # По умолчанию Nginx сбрасывает заголовки с подчеркиваниями (underscores_in_headers off;).
+    # ОПАСНОСТЬ ВКЛЮЧЕНИЯ: в протоколах CGI/WSGI дефисы заменяются на подчеркивания:
+    # заголовок "X-Auth-Token" и атакующий "X_Auth_Token" превращаются в одну переменную
+    # HTTP_X_AUTH_TOKEN на стороне бэкенда! Никогда не включайте underscores_in_headers on;
+    # без крайней необходимости и аудита бэкенда.
+    underscores_in_headers off;
 }
 
 server {
@@ -432,13 +461,21 @@ server {
 }
 ```
 
-### Сценарий 9: Предотвращение Request Smuggling
+### Сценарий 9: Предотвращение Request Smuggling и защита от SSRF
 
-Атака десинхронизации возникает, когда Nginx пересылает запрос бэкенду по HTTP/1.1 с конвейеризацией или двойными заголовками длины.
+1. **Десинхронизация HTTP (Request Smuggling):** возникает при расхождении интерпретации границ запросов (`Content-Length` против `Transfer-Encoding`) между Nginx и бэкендами.
+2. **SSRF (Server-Side Request Forgery):** возникает при динамическом формировании адреса бэкенда (например, `proxy_pass http://$http_host;` или `proxy_pass http://$arg_target;`), позволяя атакующему сканировать локальные сервисы хоста (Redis, etcd, link-local metadata `169.254.169.254`).
 
-`/etc/nginx/conf.d/request_smuggling_defense.conf`:
+`/etc/nginx/conf.d/request_smuggling_and_ssrf.conf`:
 
 ```nginx
+# Белый список целевых хостов для защиты от SSRF при динамическом проксировании
+map $arg_target $safe_upstream_host {
+    default                  "";
+    "api.partner-service.ru" "api.partner-service.ru";
+    "cdn.trusted-assets.net" "cdn.trusted-assets.net";
+}
+
 http {
     # Обязательная буферизация тела запроса: Nginx читает тело целиком,
     # пересчитывает точный Content-Length и отправляет бэкенду нормализованный запрос
@@ -454,7 +491,26 @@ http {
     # Отклонение запросов с некорректными символами в именах заголовков
     ignore_invalid_headers on;
 }
+
+server {
+    listen 443 ssl;
+    server_name gateway.corp.internal;
+
+    # Динамический прокси с защитой от SSRF
+    location /outbound-proxy {
+        # Блокировка неизвестных или внутренних адресов (127.0.0.1, localhost, 169.254.169.254)
+        if ($safe_upstream_host = "") {
+            return 403 "Forbidden: Target upstream is not in whitelist\n";
+        }
+
+        # Использование безопасного разрешенного хоста
+        proxy_pass https://$safe_upstream_host$uri;
+        proxy_set_header Host $safe_upstream_host;
+    }
+}
 ```
+
+Детальный архитектурный анализ векторов SSRF на веб-серверах: [SSRF: Server-Side Request Forgery для веб-серверов](../../Concepts/ssrf.md).
 
 ### Сценарий 10: Защита ссылок от хотлинкинга (`secure_link`)
 
@@ -512,32 +568,60 @@ chmod 640 /etc/nginx/.htpasswd
 chown root:www-data /etc/nginx/.htpasswd
 ```
 
-#### Вариант Б: Централизованная проверка через `auth_request`
+#### Вариант Б: Централизованная проверка через `auth_request` с редиректом на SSO и кэшированием
 
 ```nginx
-location /private/ {
-    # Отправка субреквеста на локальный сервис проверки прав
-    auth_request /auth-validator;
+# Зона кэширования вердиктов авторизации для исключения задержек (10 МБ RAM)
+proxy_cache_path /var/cache/nginx/auth_cache levels=1:2 keys_zone=auth_cache:10m inactive=10m;
 
-    # Передача контекста пользователя из ответа auth-сервиса в приложение
-    auth_request_set $user_id $upstream_http_x_user_id;
-    proxy_set_header X-User-Id $user_id;
+server {
+    listen 443 ssl;
+    server_name portal.example.corp;
 
-    proxy_pass http://backend_app;
-}
+    location /private/ {
+        # 1. Отправка субреквеста на локальный сервис проверки прав
+        auth_request /auth-validator;
 
-location = /auth-validator {
-    internal;
-    proxy_pass http://127.0.0.1:9090/validate;
-    proxy_pass_request_body off;
-    proxy_set_header Content-Length "";
-    proxy_set_header X-Original-URI $request_uri;
+        # 2. Передача контекста пользователя из ответа auth-сервиса в приложение
+        auth_request_set $user_id $upstream_http_x_user_id;
+        auth_request_set $user_role $upstream_http_x_user_role;
+        proxy_set_header X-User-Id $user_id;
+        proxy_set_header X-User-Role $user_role;
+
+        # 3. Перехват 401 ошибки и перенаправление пользователя на страницу входа SSO/IdP
+        error_page 401 = @login_redirect;
+
+        proxy_pass http://backend_app;
+    }
+
+    # Именованный location перенаправления на SSO с передачей URL возврата
+    location @login_redirect {
+        return 302 https://auth.example.corp/login?rd=$scheme://$http_host$request_uri;
+    }
+
+    # Внутренний эндпоинт валидатора с кэшированием успешной авторизации
+    location = /auth-validator {
+        internal;
+        proxy_pass http://127.0.0.1:9090/validate;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-URI $request_uri;
+        proxy_set_header X-Original-Method $request_method;
+
+        # Кэширование успешных ответов авторизации на 5 минут по токену/сессионной куке
+        proxy_cache auth_cache;
+        proxy_cache_key "$http_authorization$cookie_session_id";
+        proxy_cache_valid 200 5m;
+        proxy_cache_use_stale error timeout updating;
+    }
 }
 ```
 
 ### Сценарий 12: Интеграция Host-based WAF (ModSecurity v3 и Coraza)
 
-Интеграция модуля `ngx_http_modsecurity_module` с правилами OWASP Core Rule Set (CRS) v4.
+Интеграция WAF-модулей с правилами OWASP Core Rule Set (CRS) v4.
+
+> **Статус WAF в 2026 году:** Компания Trustwave официально объявила **End-of-Life (EOL)** для проекта ModSecurity. Основным развиваемым открытым стандартом WAF является **OWASP Coraza**. На bare-metal Nginx стабильно эксплуатируется `ngx_http_modsecurity_module` (на базе `libmodsecurity3` 3.0.17+), в то время как Coraza внедряется через SPOE-демон в HAProxy (`coraza-spoa`) или Wasm в Envoy.
 
 `/etc/nginx/conf.d/waf.conf`:
 
@@ -589,7 +673,7 @@ Include /etc/nginx/modsecurity/crs/rules/*.conf
 SecRuleUpdateTargetById 942100 "!ARGS:json_payload"
 ```
 
-Подробная установка и сборка ModSecurity v3 и Coraza приведены в [WAF для веб-приложений](../../../Security/ApplicationSecurity/waf.md).
+Подробная установка, сборка и сравнительный анализ движков приведены в [WAF для веб-приложений (ModSecurity, NAXSI, Coraza)](../../../Security/ApplicationSecurity/waf.md).
 
 ### Сценарий 13: Харденинг прав доступа к файлам и каталогам (Linux DAC)
 
@@ -616,6 +700,199 @@ find /var/www/site -type f -exec chmod 644 {} \;
 ```
 
 Полная изоляция процесса на уровне ядра через systemd-юнит и SELinux/AppArmor документирована в [Харденинге Nginx на уровне системы](./nginx_systemd_selinux_hardening.md).
+
+### Сценарий 14: Защита WebSocket и предотвращение Cross-Site WebSocket Hijacking (CSWSH)
+
+**Проблема безопасности:** Браузеры **не применяют** политику Same-Origin Policy (SOP) к соединениям WebSocket. Злоумышленник может разместить вредоносный скрипт на стороннем сайте, который открывает полнодуплексный веб-сокет к вашему API (`wss://api.example.corp/ws`), и браузер автоматически прикрепит сессионные cookies пользователя.
+
+**Решение:** Обязательная проверка заголовка `$http_origin` при рукопожатии переключения протокола (`Upgrade`) и ограничение числа одновременных сокетов.
+
+`/etc/nginx/conf.d/websocket_secure.conf`:
+
+```nginx
+# 1. Белый список разрешенных Origin-доменов для WebSocket
+map $http_origin $ws_origin_allowed {
+    default                         0;
+    "https://portal.example.corp"   1;
+    "https://admin.example.corp"    1;
+    ""                              0; # Запрет запросов без Origin для веб-сокетов
+}
+
+# 2. Корректная обработка заголовка Connection для WebSocket
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# Ограничение параллельных WebSocket-соединений с одного IP
+limit_conn_zone $binary_remote_addr zone=ws_conn_per_ip:10m;
+
+server {
+    listen 443 ssl;
+    server_name portal.example.corp;
+
+    location /ws/ {
+        # Валидация Origin: немедленный сброс чужих сайтов
+        if ($ws_origin_allowed = 0) {
+            return 403 "Forbidden: Cross-Site WebSocket connection rejected\n";
+        }
+
+        # Ограничение числа сокетов (защита от исчерпания worker_connections)
+        limit_conn ws_conn_per_ip 10;
+
+        proxy_pass http://backend_websocket_cluster;
+        proxy_http_version 1.1;
+
+        # Проброс заголовков апгрейда
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+
+        # Таймауты для долгоживущих сокетов
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+```
+
+### Сценарий 15: Маскирование конфиденциальных данных и PII в журналах (Log Sanitization / GDPR)
+
+**Проблема:** В стандартных журналах `access.log` оседают токены аутентификации (`Authorization: Bearer <secret>`), пароли и API-ключи из query-параметров (`?token=...`, `?password=...`), а также полные IP-адреса пользователей, что нарушает требования регуляторов (GDPR, 152-ФЗ, PCI-DSS).
+
+**Решение:** Использование директив `map` с регулярными выражениями для очистки чувствительных полей перед записью в лог.
+
+`/etc/nginx/conf.d/log_sanitization.conf`:
+
+```nginx
+# 1. Маскирование заголовка Authorization (оставляем только тип токена, скрывая тело)
+map $http_authorization $sanitized_authorization {
+    default                           "[NO_AUTH]";
+    "~*^Bearer\s+(.{4}).*$"          "Bearer $1****[REDACTED]";
+    "~*^Basic\s+.*$"                  "Basic [REDACTED]";
+}
+
+# 2. Очистка query-параметров URI от паролей, токенов и секретов
+map $request_uri $sanitized_request_uri {
+    # Маскирование значений параметров token, password, secret, key, api_key
+    "~*(?i)^(?<prefix>.*[?&](?:token|password|secret|key|api_key|auth)=)[^&]*(?<suffix>.*)$"  "$prefix[REDACTED]$suffix";
+    default                           $request_uri;
+}
+
+# 3. Анонимизация IP-адреса (обнуление последнего октета IPv4 для комплаенса)
+map $remote_addr $anonymized_ip {
+    "~*(?<prefix>\d+\.\d+\.\d+)\.\d+"  "$prefix.0";
+    "~*(?<prefix>[0-9a-fA-F:]+):[0-9a-fA-F]+" "$prefix:0000";
+    default                           "0.0.0.0";
+}
+
+# 4. Безопасный структурированный JSON-формат логирования
+log_format sanitized_json escape=json '{'
+    '"time_local":"$time_iso8601",'
+    '"client_ip":"$anonymized_ip",'
+    '"request_method":"$request_method",'
+    '"request_uri":"$sanitized_request_uri",'
+    '"status":$status,'
+    '"bytes_sent":$bytes_sent,'
+    '"request_time":$request_time,'
+    '"http_referrer":"$http_referer",'
+    '"http_user_agent":"$http_user_agent",'
+    '"auth_header":"$sanitized_authorization"'
+'}';
+
+access_log /var/log/nginx/access_sanitized.log sanitized_json;
+```
+
+### Сценарий 16: Валидация JWT в Nginx Open Source через njs (`ngx_http_js_module`)
+
+**Контекст:** В коммерческой версии Nginx Plus доступен нативный модуль `ngx_http_auth_jwt_module`. В бесплатной версии Nginx Open Source валидация JWT реализуется через скриптовый модуль **njs**, позволяя верифицировать подпись и срок действия токена до передачи запроса бэкенду без внешних сетевых вызовов.
+
+#### 1. Файл валидатора `/etc/nginx/njs/jwt_validator.js`
+
+```javascript
+// njs скрипт валидации JWT с алгоритмом HMAC-SHA256 (HS256)
+async function verifyJwt(r) {
+    const authHeader = r.headersIn['Authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        r.return(401, JSON.stringify({ error: 'unauthorized', message: 'Missing Bearer token' }));
+        return;
+    }
+
+    const token = authHeader.substring(7);
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+        r.return(400, JSON.stringify({ error: 'bad_request', message: 'Malformed JWT' }));
+        return;
+    }
+
+    try {
+        // Декодирование Payload
+        const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf8');
+        const payload = JSON.parse(payloadJson);
+
+        // 1. Проверка срока жизни токена (exp)
+        const now = Math.floor(Date.now() / 1000);
+        if (payload.exp && payload.exp < now) {
+            r.return(401, JSON.stringify({ error: 'token_expired', message: 'Token has expired' }));
+            return;
+        }
+
+        // 2. Верификация криптографической подписи HS256 через WebCrypto API
+        const secret = r.variables.jwt_secret;
+        const key = await crypto.subtle.importKey(
+            'raw',
+            Buffer.from(secret, 'utf8'),
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['verify']
+        );
+
+        const dataToVerify = Buffer.from(`${parts[0]}.${parts[1]}`, 'utf8');
+        const signature = Buffer.from(parts[2], 'base64url');
+
+        const isValid = await crypto.subtle.verify('HMAC', key, signature, dataToVerify);
+        if (!isValid) {
+            r.return(403, JSON.stringify({ error: 'forbidden', message: 'Invalid JWT signature' }));
+            return;
+        }
+
+        // 3. Проброс пользователя в переменные Nginx и пропуск запроса
+        r.variables.jwt_user_id = payload.sub || 'anonymous';
+        r.pass();
+    } catch (e) {
+        r.error(`JWT validation error: ${e.message}`);
+        r.return(401, JSON.stringify({ error: 'auth_failed', message: 'JWT verification failed' }));
+    }
+}
+
+export default { verifyJwt };
+```
+
+#### 2. Конфигурация Nginx `/etc/nginx/conf.d/jwt_api.conf`
+
+```nginx
+# Подключение JavaScript-модуля (load_module modules/ngx_http_js_module.so;)
+js_import jwt from /etc/nginx/njs/jwt_validator.js;
+
+server {
+    listen 443 ssl;
+    server_name api.example.corp;
+
+    # Секретный ключ подписи (в prod загружается из защищенного файла или env)
+    set $jwt_secret "super-secret-cluster-signing-key-2026";
+    set $jwt_user_id "";
+
+    location /api/v1/protected/ {
+        # Выполнение проверки на фазе доступа
+        js_access jwt.verifyJwt;
+
+        proxy_pass http://backend_api_cluster;
+        proxy_http_version 1.1;
+
+        # Передача аутентифицированного пользователя бэкенду
+        proxy_set_header X-Authenticated-User $jwt_user_id;
+    }
+}
+```
 
 ## Операции и команды
 
@@ -680,6 +957,38 @@ journalctl -u nginx --since "1 hour ago" -p warning..alert --no-pager
 
 ### Интеграция с Fail2ban и управление блокировками
 
+Интеграция с демоном Fail2ban позволяет делегировать повторяющиеся блокировки нарушителей с L7 веб-сервера на уровень пакетного фильтра ядра Linux (`nftables` / `iptables`), защищая воркеры Nginx от расходования ресурсов.
+
+#### 1. Фильтр `/etc/fail2ban/filter.d/nginx-limit-req.conf`
+
+```ini
+[Definition]
+# Поиск сообщений о превышении лимитов rate limit в журнале ошибок Nginx
+failregex = ^\s*\[warn\]\s+\d+#\d+:\s+\*\d+\s+limiting requests, excess:\s+[\d\.]+\s+by zone "(?:[^"]+)", client:\s+<HOST>,
+ignoreregex =
+```
+
+#### 2. Конфигурация джейла `/etc/fail2ban/jail.d/nginx-limit-req.local`
+
+```ini
+[nginx-limit-req]
+enabled  = true
+port     = http,https
+filter   = nginx-limit-req
+logpath  = /var/log/nginx/error.log
+maxretry = 5
+findtime = 60
+bantime  = 3600
+banaction = nftables-multiport
+```
+
+> **КРИТИЧЕСКАЯ ПРОИЗВОДСТВЕННАЯ ЛОВУШКА (Fail2ban за Reverse Proxy / CDN):**
+> Если Nginx работает за внешним балансировщиком нагрузки (HAProxy, Keepalived, Cloudflare, AWS ALB), стандартное действие `nftables` / `iptables` заблокирует сетевой пакет по IP-адресу источника.
+> Источником для ОС является **IP-адрес самого балансировщика**, а не клиента! Блокировка этого адреса приведет к **полному отказу сервиса (DoS) для всех 100% пользователей**!
+> **Решение:**
+> 1. Если перед сервером есть L4/L7-балансировщик, разворачивайте Fail2ban/CrowdSec **на пограничном балансировщике**, а не на внутренних нодах Nginx.
+> 2. Либо используйте кастомное действие бана, которое добавляет строку `deny <HOST>;` в конфигурационный файл `/etc/nginx/conf.d/banned_ips.conf` с вызовом `nginx -s reload`, чтобы блокировка происходила на уровне L7 с учетом `ngx_http_realip_module`.
+
 ```bash
 # Просмотр активного статуса джейла rate-limit блокировок
 fail2ban-client status nginx-limit-req
@@ -736,7 +1045,7 @@ for i in {1..25}; do curl -s -o /dev/null -w "%{http_code}\n" https://api.exampl
 | `ModSecurity: Access denied with code 403 (phase 2)` | Ложное срабатывание правила OWASP CRS на легитимный запрос приложения | Найти в `/var/log/modsecurity/audit.log` идентификатор сработавшего правила (`id "942100"`) и добавить `SecRuleRemoveById 942100` в конфигурацию хоста. |
 | `worker_connections are not enough while connecting to upstream` | Исчерпан пул соединений процесса воркера из-за флуда или медленных клиентов Slowloris | 1. Увеличить `worker_connections 4096;` в секции `events`.<br>2. Проверить системный лимит `worker_rlimit_nofile 65535;` и лимиты systemd-юнита (`LimitNOFILE=65535`). |
 | `client intended to send too large body` (код 413) | Тело загружаемого файла превышает лимит `client_max_body_size` | Увеличить `client_max_body_size 50m;` в целевом блоке `location /upload/`. |
-| `client sent invalid header line` (код 400) | Запрос содержит заголовки с недопустимыми символами (например, нижнее подчеркивание) | Если подчеркивания легитимны в API, включить `underscores_in_headers on;`. Иначе — отклонять как аномалию. |
+| `client sent invalid header line` (код 400) | Запрос содержит заголовки с нижним подчеркиванием (`_`), отброшенные директивой `underscores_in_headers off;`. | Если API действительно требует подчеркиваний, включить `underscores_in_headers on;`, но предварительно убедиться, что бэкенд не подвержен коллизиям заголовков в CGI/WSGI окружении. |
 
 ### Аварийные регламенты (SRE Runbooks)
 
@@ -833,8 +1142,13 @@ for i in {1..25}; do curl -s -o /dev/null -w "%{http_code}\n" https://api.exampl
 *   **[Глобальные параметры TLS/SSL в Nginx](./TLS_SSL/nginx_tls_global_parameters.md)** — тюнинг SSL-кэша, криптографических библиотек и буферов TLS.
 *   **[Диагностика TLS/SSL](./TLS_SSL/nginx_tls_troubleshooting_and_compatibility.md)** — решение проблем с рукопожатием, сертификатами и совместимостью клиентов.
 *   **[Конфигурация mTLS в Nginx](./TLS_SSL/nginx_mtls_configuration.md)** — взаимная аутентификация клиентов по сертификатам x509.
+*   **[Защита Upstream TLS и mTLS к бэкендам](./TLS_SSL/nginx_upstream_tls_and_mtls.md)** — Zero-Trust валидация сертификатов бэкендов, передача SNI и взаимная аутентификация.
+*   **[Географическая фильтрация и модуль GeoIP2](./nginx_geoip2_access_control.md)** — блокировка стран, ASN-фильтрация, MaxMind MMDB и связка с Real-IP.
 *   **[Защита от DoS-атак в Angie](../../Angie/High_Load/dos_protection.md)** — кластерная синхронизация зон `sync`, мониторинг лимитов через REST API.
 *   **[Контроль доступа в Angie](../../Angie/angie_access_control.md)** — разграничение доступа по IP, JWT-валидация и модули аутентификации.
+*   **[Скриптовый модуль njs в Nginx](../Core/nginx_njs_module.md)** — валидация JWT, кастомные фильтры и интеграция с WebCrypto API.
+*   **[SSRF: Server-Side Request Forgery для веб-серверов](../../Concepts/ssrf.md)** — векторы атак через обратный прокси и методы изоляции локальных адресов.
+*   **[CORS в Nginx](./nginx_cors_guide.md)** — архитектура настройки Cross-Origin Resource Sharing, Preflight OPTIONS и белый список Origin.
 *   **[CORS в Angie](../../Angie/angie-cors.md)** — корректная обработка preflight-запросов и заголовков `Access-Control-*`.
 *   **[Безопасность HTTP в продакшене](../../../Networking/Protocols/HTTP/http_security_hardening.md)** — протокольный анализ Security Headers, CORS и предотвращения атак.
 *   **[Rate Limiting и устойчивость HTTP-сервисов](../../../Networking/Protocols/HTTP/http_rate_limiting_circuit_breakers.md)** — алгоритмы Token Bucket, Leaky Bucket и Circuit Breakers.

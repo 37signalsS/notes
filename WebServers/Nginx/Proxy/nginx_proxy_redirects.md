@@ -702,6 +702,8 @@ sudo tail -f /var/log/nginx/access.log | grep -E 'HTTP/[0-9.]+" 30[12378]'
 ### См. также
 
 - [HTTP-серверы и прокси: Конфигурация и эксплуатация](../../../Networking/Protocols/HTTP/http_servers_proxies.md) — базовые концепции обратного проксирования, работа с заголовками `X-Forwarded-*`.
+- [Архитектура и ядро HTTP Reverse Proxy](./nginx_reverse_proxy_core.md) — фундаментальные правила `proxy_pass`, трансформация URI, сброс наследования заголовков, куки и UDS.
+- [Разделение трафика и теневое зеркалирование](./nginx_traffic_mirroring_and_splitting.md) — канареечные релизы (`split_clients`) и теневой трафик (`mirror`).
 - [Буферизация и стриминг в Nginx](./nginx_buffering_and_streaming.md) — поведение конвейера Nginx при обработке ответов апстримов.
 - [Практическая конфигурация балансировки нагрузки](./Load_Balancing/practical_configuration.md) — шаблоны распределения трафика и директивы `proxy_pass`.
 - [Перенаправления и перезапись URI в Nginx](../Core/nginx_rewrite_rules_and_try_files.md) — детальный разбор директив `rewrite`, `return`, `try_files` и фаз обработки запроса.

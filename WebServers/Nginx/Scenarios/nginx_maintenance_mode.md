@@ -871,6 +871,7 @@ systemctl reload nginx
 
 ## Связанные темы
 
+- **[Zero-Downtime Deployment и Graceful Reload для веб-производительности](../../Concepts/web_performance/zero_downtime_deployment.md)** — архитектурные принципы бесшовного развертывания, стратегии Blue-Green/Canary и connection draining.
 - **[Установка и базовая настройка Nginx](../Core/nginx_setup.md)** — структура конфигурационных файлов и работа директивы `include`.
 - **[Rewrite правила и try_files](../Core/nginx_rewrite_rules_and_try_files.md)** — вычисление переменных через `map` и правила внутренних перенаправлений.
 - **[Внутренняя маршрутизация Nginx](../Core/Location/internal_routing.md)** — директива `internal`, именованные локации (`@name`) и обработка `error_page`.

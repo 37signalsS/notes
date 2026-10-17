@@ -150,6 +150,43 @@ Nginx: fastcgi_read_timeout = 45s
 | `X-Forwarded-Host` | `$host` | Исходный запрошенный хост |
 | `X-Forwarded-Port` | `$server_port` | Порт, на который поступил запрос (`80` или `443`) |
 
+### Отказоустойчивость и повторные запросы: `proxy_next_upstream` в блоках location
+
+При проксировании запросов на пул серверов (`upstream`) в блоках `location` ключевую роль играет обработка сбоев отдельных узлов через директиву `proxy_next_upstream` (подробнее об архитектуре пулов — в **[Практическая конфигурация балансировки](../../Proxy/Load_Balancing/practical_configuration.md)**).
+
+#### Идемпотентность методов и защита от дублирования транзакций
+
+По умолчанию Nginx переключает запрос на следующий сервер пула только при ошибках соединения (`error`, `timeout`, `invalid_header`) и **исключительно для идемпотентных HTTP-методов** (`GET`, `HEAD`, `OPTIONS`, `PUT`, `DELETE`).
+
+**Критический нюанс с методом `POST` (Вопрос на собеседовании):**
+Если запрос методом `POST`, `LOCK` или `PATCH` уже начал передаваться на первый сервер пула, и тот аварийно оборвал связь или завис по таймауту, Nginx **не будет** переключать запрос на следующий узел, а вернет клиенту код ошибки `502 Bad Gateway` или `504 Gateway Timeout`.
+- *Причина:* Защита от дублирования финансовых транзакций, повторного списания баланса или создания дубликатов сущностей в базе данных, так как первый сервер мог успеть зафиксировать операцию до падения сокета.
+- *Решение:* Флаг `non_idempotent` разрешает повторную отправку `POST`-запросов:
+  ```nginx
+  proxy_next_upstream error timeout http_502 http_503 non_idempotent;
+  ```
+  Включать параметр `non_idempotent` в `location` допустимо **только в том случае**, если бэкенд гарантирует идемпотентность на уровне приложения (например, через заголовок `Idempotency-Key` или распределенные транзакции).
+
+#### Бюджет повторов и предотвращение Retry Storm
+
+При падении одного из серверов пула Nginx пытается повторить запрос на оставшихся узлах. Без ограничений лавина повторных запросов мгновенно перегрузит здоровые серверы и приведет к каскадному падению всего кластера (Retry Storm / Cascading Failure).
+
+В каждом проксирующем блоке `location` обязательно задаются лимиты бюджета повторов:
+```nginx
+location /api/ {
+    proxy_pass http://backend_pool;
+
+    # Условия переключения на следующий узел
+    proxy_next_upstream error timeout http_502 http_503;
+
+    # Максимальное количество серверов для одной попытки (включая первый)
+    proxy_next_upstream_tries 3;
+
+    # Суммарное окно времени на все попытки (строго меньше таймаута клиента!)
+    proxy_next_upstream_timeout 6s;
+}
+```
+
 ---
 
 ## Практические сценарии
@@ -778,6 +815,7 @@ lsof +L1 | grep nginx | grep proxy_temp
 | **Primary script unknown** (FastCGI) | Неверно передан параметр `SCRIPT_FILENAME` в PHP-FPM | В логе Nginx: 404/403. В теле ответа: `File not found.` или `Primary script unknown` | 1. Проверить `fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;`.<br>2. Убедиться, что `root` задан в контексте `server` или `location` и доступен процессу PHP-FPM. |
 | **WebSocket 400 / 502 Failure** | Заголовки Upgrade не переданы или соединение закрыто | `WebSocket connection failed: Error during WebSocket handshake: Unexpected response code: 400` | 1. Добавить блок `map $http_upgrade $connection_upgrade`.<br>2. Указать `proxy_http_version 1.1;`.<br>3. Передать `proxy_set_header Upgrade $http_upgrade;` и `proxy_set_header Connection $connection_upgrade;`. |
 | **413 Request Entity Too Large** | Тело POST/PUT запроса клиента больше лимита Nginx | `client intended to send too large body: 15728640 bytes` | Увеличить лимит в контексте `location` или `server`:<br>`client_max_body_size 64M;`. |
+| **502 / 504 при падении бэкенда на POST-запросе** | `proxy_next_upstream` не повторяет неидемпотентные запросы по умолчанию для защиты от дублей | В логах: `upstream timed out` или `recv() failed`, но повторного запроса на соседний узел нет | Если бэкенд поддерживает идемпотентность по `Idempotency-Key`, добавить параметр `non_idempotent`. Иначе обрабатывать retry на стороне клиента. |
 
 ### Диагностические команды и трассировка
 
@@ -869,6 +907,7 @@ sudo tcpdump -i lo -nn -s 0 -A "tcp port 3000 and (((ip[2:2] - ((ip[0]&0xf)<<2))
 - **[Директива location: отдача статических файлов](./serving_files.md)** — директивы `root`, `alias`, оптимизация `sendfile` и `tcp_nopush`.
 - **[Директива location: внутренняя маршрутизация](./internal_routing.md)** — директивы `try_files`, `error_page`, именованные локации и `X-Accel-Redirect`.
 - **[Практическая конфигурация балансировки](../../Proxy/Load_Balancing/practical_configuration.md)** — расширенные сценарии upstream, алгоритмы распределения нагрузки и failover.
+- **[CORS в Nginx](../../Security/nginx_cors_guide.md)** — безопасная настройка Cross-Origin Resource Sharing, Preflight OPTIONS и интеграция с API.
 - **[Upstream Keepalive и Connection Pooling](../../../Concepts/web_performance/upstream_keepalive_and_pooling.md)** — математика сетевых задержек, TIME_WAIT сокеты и тюнинг пулов соединений.
 - **[uWSGI, SCGI, WSGI, FastCGI: интерфейсы бэкендов](../../../Concepts/uwsgi_scgi.md)** — сравнительный анализ шлюзовых интерфейсов, бинарных фреймов и режимов Emperor/Harakiri.
 - **[FastCGI и PHP-FPM в Angie](../../../Angie/angie-fastcgi-php-fpm.md)** — архитектура пулов FastCGI и расширенные директивы в сервере Angie.

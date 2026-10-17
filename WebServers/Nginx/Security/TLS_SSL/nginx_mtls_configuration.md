@@ -919,6 +919,7 @@ mv -f "$OUTPUT_FILE" "$FINAL_FILE"
 ### Связанные документы базы знаний
 
 - **[Обзор TLS/SSL в Nginx](./nginx_tls_ssl_overview.md)** — общая архитектура подсистемы TLS, ALPN, HSTS и глобальные директивы.
+- **[Защита Upstream TLS и mTLS к бэкендам](./nginx_upstream_tls_and_mtls.md)** — взаимная аутентификация и проверка сертификатов при проксировании Nginx к внутренним микросервисам.
 - **[Конфигурация виртуальных хостов TLS](./nginx_tls_virtual_host_config.md)** — настройка блоков `server`, dual-stack сертификаты и SNI.
 - **[Устранение неполадок TLS и совместимость](./nginx_tls_troubleshooting_and_compatibility.md)** — диагностика проблем согласования шифров, протоколов и дампы рукопожатий.
 - **[Защищенный репозиторий APT с mTLS](../../Scenarios/secure_apt_repository_guide.md)** — комплексный сценарий применения mTLS для дистрибуции системных пакетов.

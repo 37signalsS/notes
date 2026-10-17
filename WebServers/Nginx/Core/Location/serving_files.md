@@ -1042,6 +1042,7 @@ tail -n 50 -f /var/log/nginx/error.log | grep -E "(denied|failed|cycle)"
 - **[Nginx location: лучшие практики и отладка](./best_practices.md)** — практические паттерны построения плоских конфигураций и техники отладки.
 - **[Nginx: внутренняя маршрутизация](./internal_routing.md)** — механизмы `internal`, `ngx_http_internal_redirect`, именованные locations и архитектура `X-Accel-Redirect`.
 - **[Перенаправления и перезапись URI в Nginx](../nginx_rewrite_rules_and_try_files.md)** — фазы rewrite, директивы `try_files`, `return` и переменные `$uri`, `$request_uri`.
+- **[CORS в Nginx](../../Security/nginx_cors_guide.md)** — кросс-доменная раздача шрифтов, ассетов и безопасная настройка заголовков Access-Control.
 - **[Клиентское кэширование в Nginx и Angie](../../Performance/Caching/client_caching.md)** — управление клиентскими заголовками `Cache-Control`, `expires`, ETag и условными запросами.
 - **[Оптимизация производительности Nginx](../../Performance/nginx_performance_tuning.md)** — системные параметры ядра Linux, тюнинг сокетов и сетевого стека.
 - **[Оптимизация сжатия в Nginx](../../Performance/nginx_compression.md)** — детальная настройка модулей сжатия Gzip, Brotli и Zstandard.
