@@ -78,10 +78,14 @@ cosign attest --yes --predicate sbom.json --type cyclonedx ghcr.io/my-org/my-app
 
 ### Использование PQC-алгоритмов
 
-Для защиты от будущих квантовых атак рекомендуется использовать алгоритмы семейства **ML-DSA** (FIPS 204).
+Для защиты от будущих квантовых атак рекоменуется использовать алгоритмы семейства **ML-DSA** (FIPS 204). Поддержка ML-DSA в Cosign находится в экспериментальной фазе (на 2026 год не включена в стабильные релизы). Для PQC-подписи используйте KMS с поддержкой ML-DSA (HashiCorp Vault, AWS KMS, GCP KMS) с аннотациями:
 
 ```bash
-cosign sign --yes --sign-algorithm mldsa my-registry.com/image:v1
+# Гибридная подпись: ECDSA (keyless через Fulcio) + ML-DSA (через KMS)
+cosign sign --yes --tlog-upload=true my-registry.com/image:v1
+cosign sign --yes --key "hashivault://mldsa-signing-key" \
+  --annotations "signing.dev/algorithm=ML-DSA-65" \
+  my-registry.com/image:v1
 ```
 
 ## Дополнительная информация
@@ -104,7 +108,7 @@ cosign sign --yes --sign-algorithm mldsa my-registry.com/image:v1
 
 ### Рекомендации по эксплуатации
 
-1.  **OCI 1.1 Referrers:** Всегда используйте современные реестры (Harbor 2.11+, GHCR, ECR) для хранения подписей без создания лишних тегов.
+1.  **OCI 1.1 Referrers:** Всегда используйте современные реестры (Harbor v2.15+, GHCR, ECR) для хранения подписей без создания лишних тегов.
 2.  **Short-lived certs:** Не увеличивайте время жизни сертификатов Fulcio выше 10–15 минут.
 3.  **TUF (The Update Framework):** Помните, что Sigstore обеспечивает целостность *конкретного* артефакта, в то время как TUF защищает систему дистрибуции в целом (откаты, подмены репозитория).
 

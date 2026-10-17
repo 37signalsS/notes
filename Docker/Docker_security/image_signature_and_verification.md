@@ -1,6 +1,6 @@
 # Подписание и верификация Docker-образов
 
-**Актуально для:** Docker Engine 29.x, Cosign v3.x, Notation v1.x, Harbor 2.11+, Kubernetes 1.29+, Kyverno 1.19+ (2026)
+**Актуально для:** Docker Engine 29.x, Cosign v3.1.3, Notation v1.3.2, Harbor v2.15+, Kubernetes 1.29+, Kyverno 1.19+ (2026)
 
 Данный документ описывает методы обеспечения безопасности цепочки поставок (**Supply Chain Security**) для контейнерных образов через механизмы контроля целостности и подтверждения подлинности.
 
@@ -21,9 +21,9 @@
 ## Предварительные требования
 
 - **Docker Engine 29.x** — для команд `docker buildx`, `docker inspect` и работы с реестром.
-- **Cosign v3.x** — для keyless-подписи образов через OIDC. В 2026 году Cosign по умолчанию использует OCI 1.1 Referrers и поддерживает PQC-алгоритмы (ML-DSA).
-- **Notation v1.x** — для корпоративной подписи через X.509 PKI и HSM.
-- **Harbor 2.11+** — реестр с поддержкой OCI 1.1 Referrers API для хранения подписей без тегов-пустышек.
+- **Cosign v3.1.3** — для keyless-подписи образов через OIDC. В 2026 году Cosign по умолчанию использует OCI 1.1 Referrers и поддерживает PQC-алгоритмы (ML-DSA).
+- **Notation v1.3.2** — для корпоративной подписи через X.509 PKI и HSM.
+- **Harbor v2.15+** — реестр с поддержкой OCI 1.1 Referrers API для хранения подписей без тегов-пустышек.
 - **Kubernetes 1.29+** с **Kyverno 1.19+** или **OPA Gatekeeper** — для принудительной проверки подписей на этапе deployment.
 - **OIDC-провайдер** — GitHub Actions, GitLab CI, Google Workload Identity или корпоративный IdP для keyless-подписи (Fulcio).
 - **Для self-hosted:** внутренние Fulcio и Rekor (или прямой доступ к публичным Sigstore) с настроенным DNS и TLS.
@@ -160,7 +160,7 @@ spec:
 ### Ошибка: `cosign verify` — "no signatures found" или "no matching signatures"
 
 - **Причина:** Реестр не поддерживает OCI 1.1 Referrers API, либо подпись хранится как `.sig`-тег (устаревший формат).
-- **Решение:** Используйте Harbor 2.11+ или GHCR/ECR с поддержкой Referrers. Проверьте подпись через `cosign verify-attestation` или `crane manifest`. Если реестр устарел, подписывайте с флагом `--legacy-include-operations`.
+- **Решение:** Используйте Harbor v2.15+ или GHCR/ECR с поддержкой Referrers. Проверьте подпись через `cosign verify-attestation` или `crane manifest`. Если реестр устарел, подписывайте с флагом `--legacy-include-operations`.
 
 ### Ошибка: Keyless-подпись в CI/CD — "OIDC token not available" / "identity token not found"
 
@@ -204,7 +204,7 @@ spec:
 ### Ошибка: Harbor не отображает подпись в UI
 
 - **Причина:** Образ подписан с использованием `.sig`-тегов, а Harbor ожидает подпись через OCI 1.1 Referrers.
-- **Решение:** Переподпишите образ с `--type sls://cosign.sig` (автоматически в Cosign v3.x) или используйте Notation с OCI 1.1. См. **[Harbor: подпись образа с помощью Cosign](../../Docker/Docker_registries/Harbor/usage.md#сценарий-4-подпись-образа-с-помощью-cosign)**.
+- **Решение:** Переподпишите образ с `--type sls://cosign.sig` (автоматически в Cosign v3.1.3) или используйте Notation с OCI 1.1. См. **[Harbor: подпись образа с помощью Cosign](../../Docker/Docker_registries/Harbor/usage.md#сценарий-4-подпись-образа-с-помощью-cosign)**.
 
 ## Лучшие практики
 
@@ -214,7 +214,7 @@ spec:
 
 3.  **Проверка identity, а не только подписи:** Не достаточно проверить, что подпись существует. Всегда используйте `--certificate-identity` и `--certificate-oidc-issuer` для подтверждения, **кто** подписал образ. Это предотвращает атаки типа "злоумышленник получил ключ и подписал под себя".
 
-4.  **OCI 1.1 Referrers:** Используйте Harbor 2.11+ или GHCR для хранения подписей через Referrers API. Не используйте устаревшие `.sig`-теги — они затрудняют GC и создают "мусор" в реестре.
+4.  **OCI 1.1 Referrers:** Используйте Harbor v2.15+ или GHCR для хранения подписей через Referrers API. Не используйте устаревшие `.sig`-теги — они затрудняют GC и создают "мусор" в реестре.
 
 5.  **Короткоживущие сертификаты:** Fulcio выдаёт сертификаты на 10–20 минут. Не пытайтесь увеличить срок жизни — это ослабляет безопасность. Используйте Rekor для долгосрочного аудита (SET — Signed Entry Timestamp).
 
@@ -243,7 +243,7 @@ spec:
 
 3. **Самоподписанные реестры (self-signed TLS):** Если реестр использует self-signed сертификат, Cosign может отказаться его подписывать. Добавьте сертификат в системное хранилище или используйте `SSL_CERT_FILE=/path/to/ca.crt`.
 
-4. **PQC-подпись (ML-DSA):** Для защиты от квантовых атак используйте `--sign-algorithm mldsa` (Cosign v3.x+). Обратите внимание: не все реестры и Policy Controllers поддерживают PQC-подпись — проверьте совместимость перед внедрением в production.
+4. **PQC-подпись (ML-DSA):** ML-DSA не поддерживается в стабильных релизах Cosign на 2026 год. Для подготовки к постквантовой миграции используйте гибридную подпись (ECDSA через Fulcio + ML-DSA через KMS с аннотациями). Обратите внимание: не все реестры и Policy Controllers поддерживают PQC-подпись — проверьте совместимость перед внедрением в production.
 
 5. **Кросс-реестр промоция (image promotion):** При promotion образа из staging в production (staging-registry/app:v1 → prod-registry/app:v1) подпись не переносится автоматически, так как дайджест может измениться. Решение: либо переподписывайте в prod-реестре, либо используйте `cosign copy` для переноса подписей. См. **[promotion in GitLab CI](../../CI-CD/GitLab_CI/Tutorials/container_registry_management.md)**.
 
@@ -257,10 +257,10 @@ spec:
 
 **Глубокое изучение:**
 - **[Cosign keyless signing](../../Security/Tools/sigstore.md#keyless-подпись-в-github-actions-2026)** — подпись через OIDC. В Docker: `cosign sign --yes image:tag` через токен GitHub Actions/GitLab CI, проверка через `--certificate-identity` и `--certificate-oidc-issuer`.
-- **[Notation (OCI)](../../Security/Supply_Chain_Security/artifact_signing.md)** — PKI-based подпись. В Docker: `notation sign --key ca.key image:tag`, проверка через `notation verify`, интеграция с Harbor 2.11+.
+- **[Notation (OCI)](../../Security/Supply_Chain_Security/artifact_signing.md)** — PKI-based подпись. В Docker: `notation sign --key ca.key image:tag`, проверка через `notation verify`, интеграция с Harbor v2.15+.
 - **[Kyverno admission](../../Kubernetes/Security/kyverno/Scenarios/security_policies.md)** — блокировка неподписанных. В Docker/K8s: `imageVerify` policy для проверки Cosign/Notation перед запуском Pod.
 - **[Harbor: подпись образа с помощью Cosign](../../Docker/Docker_registries/Harbor/usage.md#сценарий-4-подпись-образа-с-помощью-cosign)** — практический сценарий подписи и верификации в Harbor.
 - **[Безопасный релиз в CI/CD](../../CI-CD/DevSecOps/secure_release_pipeline.md)** — Cosign + SBOM attestation + VEX в GitLab CI/CD pipeline.
 
-**Инструменты:** `Cosign v3.x`, `Notation v1.x`, `crane`, `Syft v1.52+` (SBOM), `Kyverno 1.19+`.
+**Инструменты:** `Cosign v3.1.3`, `Notation v1.3.2`, `crane`, `Syft v1.54+` (SBOM), `Kyverno 1.19+`.
 

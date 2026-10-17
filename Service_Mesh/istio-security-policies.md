@@ -368,7 +368,7 @@ kubectl get configmap istio-ca-root-cert -n istio-system -o jsonpath='{.data["ro
 
 ### Ротация trust anchors
 
-Ротация промежуточных CA (certificate signing) происходит автоматически. Ротация корневых trust anchors выполняется через обновление Kubernetes Secret `cacerts` в неймспейсе `istio-system` (в Istio 1.30+ команда `istioctl create-credential` удалена; используется `kubectl create secret`):
+Ротация промежуточных CA (certificate signing) происходит автоматически. Ротация корневых trust anchors выполняется через обновление Kubernetes Secret `cacerts` в неймспейсе `istio-system` (в Istio 1.31.x команда `istioctl create-credential` удалена; используется `kubectl create secret`):
 
 1. Сгенерируйте новый корневой сертификат и цепочку (см. [Plug in CA Certificates](https://istio.io/latest/docs/tasks/security/cert-management/plugin-ca-cert/)).
 2. Обновите Secret `cacerts` в каждом кластере (primary и remote) с новыми файлами `ca-cert.pem`, `ca-key.pem`, `root-cert.pem`, `cert-chain.pem`.
@@ -412,23 +412,26 @@ kubectl get configmap istio-ca-root-cert -n istio-system -o yaml
 
 ### Внешний CA (Vault / SPIRE / cert-manager)
 
-Если используется внешний CA, настройте `MeshConfig` или istiod для подключения к нему:
+Если используется внешний CA, настраивайте через `cacerts`-Secret и `MeshConfig`:
 
 ```yaml
+# 1. Создайте Secret cacerts в istio-system (см. https://istio.io/v1.31/docs/tasks/security/cert-management/plugin-ca-cert/)
+kubectl create secret generic cacerts -n istio-system \
+  --from-file=ca-cert.pem \
+  --from-file=ca-key.pem \
+  --from-file=root-cert.pem \
+  --from-file=cert-chain.pem
+
+# 2. IstioOperator: укажите адрес внешнего CA и trust anchors через MeshConfig
 apiVersion: install.istio.io/v1alpha1
 kind: IstioOperator
 spec:
-  values:
-    meshConfig:
-      defaultConfig:
-        tlsCerts:
-          cert: /etc/istio/ca-certs/cert.pem
-          key: /etc/istio/ca-certs/key.pem
-      caCertificates:
-      - pem: |
-          -----BEGIN CERTIFICATE-----
-          ...
-          -----END CERTIFICATE-----
+  meshConfig:
+    caCertificates:
+    - pem: |
+        -----BEGIN CERTIFICATE-----
+        ...
+        -----END CERTIFICATE-----
 ```
 
 - **Vault / SPIRE**: интеграция через pluggable CA и trust anchors (см. [Zero Trust с HashiCorp Vault](../Vault/zero_trust.md)).
@@ -844,7 +847,7 @@ kubectl get pods -n kube-system -o wide | grep kube-apiserver
 kubectl get authorizationpolicies -A -o json \
   | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name) managedFields=\(.metadata.managedFields[0].manager) action=\(.spec.action)"'
 
-# PeerAuthentication: проверка, что premissive/STRICT заданы явно
+# PeerAuthentication: проверка, что PERMISSIVE/STRICT заданы явно
 kubectl get peerauthentications -A -o json | jq -r '.items[].metadata.namespace + "/" + .metadata.name'
 
 # Sidecar-скопинг (что видит каждый namespace)
@@ -886,7 +889,7 @@ kubectl get sidecars -A
 
 ## Лучшие практики эксплуатации
 
-1.  **Ресурсные квоты:** всегда устанавливайте `requests` и `limits` для сайдкаров. В 2026 году Envoy требует ~0.5 vCPU и 50MB RAM на 1,000 RPS. Для Ztunnel (Ambient) используйте `requests.cpu: 50m` и `requests.memory: 64Mi` как минимум.
+1.  **Ресурсные квоты:** всегда устанавливайте `requests` и `limits` для сайдкаров. В Istio 1.31 Envoy требует ~0.20 vCPU и 60MB RAM на 1,000 RPS. Для Ztunnel (Ambient) используйте `requests.cpu: 50m` и `requests.memory: 64Mi` как минимум.
 2.  **Стандартизация на Gateway API (GAMMA):** в новых проектах используйте `HTTPRoute` вместо `VirtualService`/`ServiceProfile` для обеспечения переносимости между мешами. Учитывайте поведение «reject by default» при привязке роута к `Service`.
 3.  **Scoping конфигурации:** используйте ресурс `Sidecar` (Istio) или `ServiceProfile` (Linkerd) для ограничения списка сервисов, о которых знает прокси. Это критично для снижения потребления RAM в больших кластерах.
 4.  **Градуальное внедрение:** начинайте с Ambient L4 (mTLS) для всего кластера, затем добавляйте Waypoint Proxy только для сервисов, требующих L7. При переходе с Sidecar оставляйте оба режима параллельно 2–4 недели.

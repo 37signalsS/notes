@@ -1,14 +1,16 @@
 # Обзор безопасности цепочки поставок (Supply Chain Security)
 
+**Актуально для:** SLSA v1.2, Cosign v3.1+, Syft v1.54+, Trivy v0.69+, Harbor v2.15+, Kyverno v1.19+, Kubernetes 1.31+, Docker Engine 29.x, BuildKit 0.34+, SPDX 3.0, CycloneDX 1.7, NIST SP 800-218 Rev 1
+
 ## Определения
 
 * **Software Supply Chain Security (Безопасность цепочки поставок ПО):** Стратегический подход к защите программных артефактов, их зависимостей, сборочных конвейеров и систем распространения от умышленных атак (инъекции кода, подмена пакетов) и случайных уязвимостей. В 2026 году фокус сместился на **Zero Trust Architecture** для всех участников процесса.
-* **SLSA (Supply-chain Levels for Software Artifacts):** Фреймворк и стандарт безопасности (v2.0), обеспечивающий целостность артефактов через проверяемые аттестации. В v2.0 введены раздельные треки: **Build Track** (защита процесса сборки) и **Source Track** (защита исходного кода, включая управление доступом и двухфакторную проверку коммитов).
-* **SBOM (Software Bill of Materials — состав ПО):** Машиночитаемый инвентарный список всех компонентов (библиотек, пакетов ОС, драйверов). Стандарт **SPDX 3.0+** и **CycloneDX 1.6+** поддерживают расширенные профили для специализированных систем.
-* **CBOM (Cryptography Bill of Materials):** Спецификация криптографических активов (стандарт **ECMA-424** / CycloneDX 1.6). Описывает используемые алгоритмы, длины ключей и протоколы, что критично для миграции на постквантовую криптографию (**PQC**).
+* **SLSA (Supply-chain Levels for Software Artifacts):** Фреймворк и стандарт безопасности (v1.2, ноябрь 2025), обеспечивающий целостность артефактов через проверяемые аттестации. В v1.2 введены два независимых трека: **Build Track** (защита процесса сборки, уровни L0–L3) и **Source Track** (защита исходного кода, уровни L1–L4).
+* **SBOM (Software Bill of Materials — состав ПО):** Машиночитаемый инвентарный список всех компонентов (библиотек, пакетов ОС, драйверов). Стандарт **SPDX 3.0+** и **CycloneDX 1.7+** поддерживают расширенные профили для специализированных систем.
+* **CBOM (Cryptography Bill of Materials):** Спецификация криптографических активов (стандарт **ECMA-424** (2-е издание, CycloneDX 1.7)). Описывает используемые алгоритмы, длины ключей и протоколы, что критично для миграции на постквантовую криптографию (**PQC**).
 * **VEX (Vulnerability Exploitability eXchange):** Формат обмена данными об эксплуатируемости уязвимостей, позволяющий дополнять статический SBOM актуальной информацией о том, влияет ли конкретная CVE на продукт в его текущей конфигурации.
-* **NIST SSDF (Secure Software Development Framework, SP 800-218):** Набор практик для безопасной разработки ПО. В 2026 году обновлен для защиты «критического ПО», включая инструменты CI/CD. Обязателен для государственных контрактов через формы самоаттестации.
-* **EU Cyber Resilience Act (CRA):** Регуляторный стандарт, вступивший в полную силу в сентябре 2026 года. Разделяет ПО на **Class I (Important)** и **Class II (Highly Critical)**. Обязывает производителей сообщать об эксплуатируемых уязвимостях в течение 24 часов (Article 14).
+* **NIST SSDF Rev 1 (Secure Software Development Framework, SP 800-218 Rev 1, Version 1.2, 2025):** Набор практик для безопасной разработки ПО. Обновлён до версии 1.2 с добавлением двух новых групп практик: **PO.6** (непрерывное совершенствование процессов) и **PS.4** (надёжные и безопасные обновления). Включает защиту «критического ПО» и интеграцию с DevSecOps. Применяется для государственных контрактов через формы самоаттестации.
+* **EU Cyber Resilience Act (CRA):** Регуляторный стандарт (регламент (ЕС) 2024/2847). Отчётность по эксплуатируемым уязвимостям применяется с **11 сентября 2026 года** (статья 14), полное применение — с **11 декабря 2027 года**. Разделяет ПО на **Class I (Important)** и **Class II (Critical)**. Производители обязаны уведомлять **CRA Single Reporting Platform (SRP)**, управляемый ENISA: раннее предупреждение в течение 24 часов, полное уведомление — в течение 72 часов.
 
 ## Ландшафт угроз (Supply Chain Attacks)
 
@@ -31,16 +33,17 @@
 * **VEX-фильтрация:** Устранение шума. Если библиотека содержит уязвимость, но её уязвимые функции не вызываются приложением, статус VEX `not_affected` позволяет не блокировать деплой.
 * **CBOM и PQC-инвентаризация:** Обязательный учет криптографических алгоритмов. CBOM позволяет выявить использование уязвимых RSA/ECC и спланировать переход на алгоритмы **NIST PQC**: **ML-KEM** (FIPS 203) для инкапсуляции ключей и **ML-DSA** (FIPS 204) для цифровых подписей.
 
-### 2. Целостность и аттестация (SLSA v2.0)
+### 2. Целостность и аттестация (SLSA v1.2)
 
-Фреймворк SLSA в версии 2.0 разделяет требования на два независимых трека, обеспечивая полную защиту от коммита до артефакта.
+Фреймворк SLSA в версии 1.2 (ноябрь 2025) разделяет требования на два независимых трека, обеспечивая полную защиту от коммита до артефакта.
 
 * **Build Track (Трек сборки):** Уровни 1–3 гарантируют, что артефакт собран в доверенной среде. Включает генерацию **Provenance** (аттестаций в формате in-toto) и использование эфемерных runner'ов.
-* **Source Track (Трек исходного кода):** Новый стандарт 2026 года. Фокусируется на защите «головы» цепочки поставок:
-    * Двухфакторное подтверждение (Two-party review) всех изменений.
-    * Обязательная подпись коммитов через OIDC/SSH-ключи.
-    * Неизменяемая история изменений (Immutable history).
-* **VSA (Verification Summary Attestation):** Сводный отчет о верификации, который агрегирует результаты обоих треков для принятия решения о деплое.
+* **Source Track (Трек исходного кода):** Введён в SLSA v1.2 (ноябрь 2025). Защищает «голову» цепочки поставок — процесс создания и изменения исходного кода. Уровни:
+    * **Source L1:** Использование системы контроля версий (VCS) для создания дискретных ревизий.
+    * **Source L2:** Сохранение истории изменений и генерация Source Provenance (неизменяемая история, защита веток).
+    * **Source L3:** Принудительение организационных технических контролей (например, подпись коммитов через OIDC/SSH-ключи).
+    * **Source L4:** Двухфакторное ревью (Two-party review) всех изменений и верифицированная идентичность автора (Verified Author).
+* **VSA (Verification Summary Attestation):** Сводный отчёт о верификации, агрегирующий результаты обоих треков для принятия решения о деплое.
 
 ### 3. Supply Chain Observability (Наблюдаемость)
 
@@ -53,27 +56,28 @@
 
 Использование криптографии для подтверждения авторства и неизменности.
 
-* **Sigstore / Cosign:** Стандарт де-факто для keyless-подписи. В 2026 году обязательна поддержка постквантовых подписей для защиты от HNDL-атак.
-* **PQC в подписях:** Использование алгоритмов **ML-DSA** и **SLH-DSA** (FIPS 205) для подписи образов и аттестаций. Все новые сертификаты соответствуют стандарту **FIPS 140-3**.
+* **Sigstore / Cosign:** Стандарт де-факто для keyless-подписи. Поддержка постквантовых подписей (ML-DSA) находится в активной разработке и **не включена в стабильные релизы** Cosign на 2026 год. Для защиты от HNDL-атак (Harvest Now, Decrypt Later) рекомендуется двойная подпись (ECDSA + ML-DSA через KMS).
+* **PQC в подписях:** Алгоритмы **ML-DSA** (FIPS 204) и **SLH-DSA** (FIPS 205) доступны для будущей постквантовой подписи. ML-DSA используется через KMS (HashiCorp Vault, AWS KMS, GCP KMS) с аннотациями, а не через встроенный флаг `--sign-algorithm` в `cosign sign`. Все новые сертификаты соответствуют стандарту **FIPS 140-3**.
 * **Admission Policies:** Автоматическая блокировка запуска в Kubernetes (Kyverno, OPA) образов без валидной подписи, VSA-аттестации или SBOM, соответствующего политике EU CRA.
 
 ### 5. Регуляторный комплаенс (EU CRA)
 
-Стандарт CRA 2026 года устанавливает жесткие требования к «прозрачности» ПО.
+Стандарт CRA устанавливает обязательства по «прозрачности» ПО с цифровыми элементами.
 
-* **Обязательная отчетность:** Производители обязаны уведомлять ENISA об активно эксплуатируемых уязвимостях в течение 24 часов.
-* **Class II Software:** Для критического ПО (гипервизоры, PKI, сетевые интерфейсы) требуется обязательная сертификация третьей стороной.
-* **CE Marking:** Программный продукт без знака CE и подтвержденного SBOM/CBOM запрещен к продаже на рынке ЕС.
+* **Обязательная отчётность (Article 14):** Производители обязаны уведомлять **CRA Single Reporting Platform (SRP)**, управляемый ENISA, об активно эксплуатируемых уязвимостях: раннее предупреждение — в течение 24 часов, полное уведомление — в течение 72 часов, финальный отчёт — в течение 14 дней. Применяется с 11 сентября 2026 года.
+* **Class II (Critical):** Для критических программных продуктов (гипервизоры, PKI, сетевые интерфейсы) требуется сертификация третьей стороны.
+* **CE Marking:** Программный продукт без знака CE и подтверждённого SBOM/CBOM может быть запрещён к продаже на рынке ЕС с 11 декабря 2027 года.
 
-### Уровни SLSA v2.0 (Build Track)
+### Уровни SLSA v1.2 (Build Track)
 
 | Уровень | Требование | Значение для безопасности |
 | :--- | :--- | :--- |
+| **Build L0** | (нет гарантий) | Нет provenance; артефакт может быть изменён после сборки. |
 | **Build L1** | Наличие аттестации (Provenance) | Базовая прослеживаемость процесса сборки и используемых исходников. |
 | **Build L2** | Hosted Build + Подписанная Provenance | Гарантия того, что аттестация создана доверенным сервисом сборки и не была подделана. |
 | **Build L3** | Hardened Build Platform | Изоляция процесса сборки, защита от влияния других сборок и компрометации сборочного узла. |
 
-> **Source Track (Требования):** Включает обязательное использование систем контроля версий, двухфакторную проверку кода (Two-party review) и подтвержденную идентичность автора (Verified Author).
+> **Source Track (Требования):** Использование систем контроля версий (L1), сохранение истории и генерация Source Provenance (L2), принудительение технических контролей (L3), двухфакторное ревью (Two-party review) и верифицированная идентичность автора (Verified Author) на L4.
 
 ## Практические сценарии
 
@@ -83,15 +87,15 @@
 
 | Компонент | Минимальная версия | Назначение |
 | :--- | :--- | :--- |
-| **Docker / BuildKit** | 24.0+ (BuildKit 1.11+) | Сборка образов с генерацией SBOM и SLSA-аттестаций. |
-| **Cosign** | v3.1+ | Keyless-подпись образов и аттестаций с поддержкой ML-DSA (PQC). |
-| **Syft** | v1.5+ | Генерация SBOM/CBOM в форматах SPDX 3.1 и CycloneDX 1.7. |
-| **Trivy** | v0.55+ | Сканирование зависимостей и артефактов, VEX-фильтрация. |
+| **Docker / BuildKit** | 29.x (BuildKit 0.34+) | Сборка образов с генерацией SBOM и SLSA-аттестаций. |
+| **Cosign** | v3.1+ | Keyless-подпись образов и аттестаций; ML-DSA (PQC) через KMS (в стабильной версии недоступна). |
+| **Syft** | v1.54+ | Генерация SBOM/CBOM в форматах SPDX 3.0 и CycloneDX 1.7. |
+| **Trivy** | v0.69+ | Сканирование зависимостей и артефактов, VEX-фильтрация. |
 | **Grype** | v0.35+ | Анализ достижимости (reachability) уязвимостей. |
-| **Harbor** | v2.11+ | Локальный OCI-реестр с поддержкой OCI 1.1 Referrers API. |
-| **Kyverno** | v1.19+ | Admission-контроль для верификации подписей и VSA-аттестаций. |
+| **Harbor** | v2.15+ | Локальный OCI-реестр с поддержкой OCI 1.1 Referrers API. |
+| **Kyverno** | v1.19+ | Admission-контроль для верификации подписей и VSA-аттестаций (ClusterPolicy устарел — см. ImageValidatingPolicy). |
 | **Git-сервер** | Gitea 1.21+ / GitLab 16+ | Хостинг исходного кода с защитой веток и подписью коммитов. |
-| **Kubernetes** | 1.29+ | Целевая платформа для деплоя с Admission-политиками. |
+| **Kubernetes** | 1.31+ | Целевая платформа для деплоя с Admission-политиками. |
 
 **Аппаратные требования:**
 * CPU с поддержкой AES-NI для ускорения криптографических операций.
@@ -167,7 +171,7 @@ curl -u admin:Harbor12345 -X POST "https://harbor.internal/api/v2.0/projects" \
 
 curl -u admin:Harbor12345 -X POST "https://harbor.internal/api/v2.0/robots" \
   -H "Content-Type: application/json" \
-  -d '{"name":"ci-bot","duration":-1,"level":"project","permissions":[{"namespace":"my-app","kind":"project","access":[{"resource":"repository","action":"push","resource":"my-app"}]}]}'
+  -d '{"name":"ci-bot","duration":-1,"level":"project","permissions":[{"namespace":"my-app","kind":"project","access":[{"resource":"repository","action":"push"}]}]}'
 # → {"name":"robot$ci-bot","secret":"..."}
 ```
 
@@ -180,7 +184,7 @@ docker login harbor.internal -u robot$ci-bot -p $ROBOT_SECRET
 # Проверка Referrers API (должен вернуть пустой список или 404, если нет артефактов)
 curl -u "robot$ci-bot:$ROBOT_SECRET" \
   "https://harbor.internal/v2/my-app/manifests/sha256:abc123/referrers"
-# → 200 OK или 404 (если реестр не поддерживает Referrers — требуется Harbor 2.11+)
+# → 200 OK или 404 (если реестр не поддерживает Referrers — требуется Harbor v2.15+)
 ```
 
 #### Шаг 3. Сборка с генерацией SBOM и SLSA-аттестаций
@@ -202,7 +206,7 @@ docker buildx build \
   --build-arg SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH \
   --build-arg VENDOR_DIR=/app/vendor \
   --tag $REGISTRY:$IMAGE_TAG \
-  --attest type=slsa,provenance=mode=max \
+  --attest type=provenance,mode=max \
   --attest type=sbom \
   --output type=image,push=true,rewrite-timestamp=true \
   --push .
@@ -235,27 +239,44 @@ kubectl apply -f https://raw.githubusercontent.com/sigstore/rekor/release/rekor-
 export FULCIO_URL=$(kubectl get svc/fulcio-webhook -n fulcio-system -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 export REKOR_URL=$(kubectl get svc/rekor-server -n rekor-system -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
-# Подпись образа с явным указанием внутреннего Fulcio
+# Подпись образа через внутренний Fulcio (keyless, ECDSA)
 cosign sign --yes \
   --tlog-upload=false \
   --fulcio-url $FULCIO_URL \
   --rekor-url $REKOR_URL \
-  --sign-algorithm mldsa \
   $REGISTRY:$IMAGE_TAG
 # → Сгенерирован ephemeral-ключ, подпись прикреплена к образу через Referrers API
+
+# Дополнительно: ML-DSA подпись через KMS для PQC-защиты (гибридный подход):
+# ML-DSA не поддерживается нативно в cosign sign (на 2026 год). Используйте
+# KMS с поддержкой PQC (HashiCorp Vault 1.19+, AWS KMS, GCP KMS) для генерации
+# отдельной подписи с аннотацией.
+cosign sign --yes \
+  --tlog-upload=false \
+  --key "hashivault://mldsa-signing-key" \
+  --annotations "signing.dev/algorithm=ML-DSA-65" \
+  --annotations "signing.dev/fips=FIPS-204" \
+  $REGISTRY:$IMAGE_TAG
+# → ML-DSA подпись хранится как отдельный OCI referrer
 ```
 
-**Валидация:** Проверка подписи и соответствия алгоритма.
+**Валидация:** Проверка подписи и аттестаций.
 
 ```bash
+# 1. Проверка keyless подписи (ECDSA через Fulcio)
 cosign verify $REGISTRY:$IMAGE_TAG \
   --certificate-identity-regexp "https://harbor.internal/project/my-app" \
   --certificate-oidc-issuer $FULCIO_URL \
-  --check-claims=true \
   --output json | jq '.signatures[0].publicKey'
 # → {"keyType":"ECDSA","keyData":"base64..."}
 
-# Проверка наличия постквантовой подписи
+# 2. Проверка ML-DSA подписи (через KMS)
+cosign verify $REGISTRY:$IMAGE_TAG \
+  --key "hashivault://mldsa-signing-key" \
+  --output json | jq '.signatures[0].annotations'
+# → {"signing.dev/algorithm":"ML-DSA-65","signing.dev/fips":"FIPS-204"}
+
+# 3. Проверка наличия SLSA-аттестации
 cosign verify-attestation $REGISTRY:$IMAGE_TAG \
   --type slsaprovenance \
   --certificate-identity-regexp "https://harbor.internal/project/my-app" \
@@ -290,7 +311,7 @@ stages:
 
 trivy-scan:
   stage: scan
-  image: aquasec/trivy:0.55.0
+  image: aquasec/trivy:0.69.0
   script:
     - trivy image --exit-code 1 --severity CRITICAL $REGISTRY:$IMAGE_TAG
   only:
@@ -303,21 +324,31 @@ trivy-scan:
 
 ```yaml
 # install-kyverno.yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+# Примечание: в Kyverno v1.19 ClusterPolicy (kyverno.io/v1) официально устарел.
+# Рекомендуется мигрировать на ImageValidatingPolicy (policies.kyverno.io/v1).
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
 metadata:
   name: verify-supply-chain
 spec:
-  validationFailureAction: Enforce
-  background: true
+  failurePolicy: Enforce
   rules:
     - name: check-image-signature
-      match:
-        any:
-          - resources:
-              kinds: ["Pod"]
-      verifyImages:
-        - imageReferences: ["harbor.internal/my-app/*"]
+      image: harbor.internal/my-app/*
+      attestors:
+        entries:
+          - keys:
+              publicKeys: |-
+                -----BEGIN PUBLIC KEY-----
+                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...
+                -----END PUBLIC KEY-----
+        certificateIdentity: "https://harbor.internal/project/my-app"
+        certificateOidcIssuer: "https://harbor.internal"
+
+    - name: check-slsa-vsa
+      image: harbor.internal/my-app/*
+      attestations:
+        - type: https://slsa.dev/verification_summary/v1
           attestors:
             - entries:
                 - keys:
@@ -325,30 +356,11 @@ spec:
                       -----BEGIN PUBLIC KEY-----
                       MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...
                       -----END PUBLIC KEY-----
-              certificateIdentity: "https://harbor.internal/project/my-app"
-              certificateOidcIssuer: "https://harbor.internal"
-
-    - name: check-slsa-vsa
-      match:
-        any:
-          - resources:
-              kinds: ["Pod"]
-      verifyImages:
-        - imageReferences: ["harbor.internal/my-app/*"]
-          attestations:
-            - type: https://slsa.dev/verification_summary/v1
-              attestors:
-                - entries:
-                    - keys:
-                        publicKeys: |-
-                          -----BEGIN PUBLIC KEY-----
-                          MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...
-                          -----END PUBLIC KEY-----
-              conditions:
-                - all:
-                    - key: "{{ json_parse(attestation.statement).predicate.slsa_level }}"
-                      operator: Equals
-                      value: "Build_L3"
+          conditions:
+            - all:
+                - key: "{{ json_parse(attestation.statement).predicate.slsa_level }}"
+                  operator: Equals
+                  value: "Build_L3"
 ```
 
 **Применение и валидация:**
@@ -381,13 +393,16 @@ cosign verify $REGISTRY:$IMAGE_TAG \
   --certificate-oidc-issuer "https://harbor.internal" \
   && echo "Signature OK" || echo "Signature FAIL"
 
-# 2. Проверка наличия SLSA-аттестации
-syft $REGISTRY:$IMAGE_TAG -o spdx-json | jq '.packages[] | select(.name=="slsa-provenance")'
-# → Должен вернуть attestation object
+# 2. Проверка наличия SLSA-аттестации (Provenance)
+cosign verify-attestation $REGISTRY:$IMAGE_TAG \
+  --type slsaprovenance \
+  --certificate-identity-regexp "https://harbor.internal/project/my-app" \
+  --certificate-oidc-issuer $FULCIO_URL \
+  --output json | jq '.payload'
+# → Должен вернуть SLSA provenance аттестацию
 
 # 3. Проверка VSA через Kyverno
-kyverno test ./kyverno-tests/ --policy verify-supply-chain.yaml \
-  --resource ./test-pod.yaml
+kyverno apply ./test-pod.yaml --policy verify-supply-chain.yaml
 # → 1 passed, 0 failed
 
 # 4. Проверка CBOM для криптографических компонентов
@@ -441,7 +456,7 @@ curl -u "admin:Harbor12345" -X POST \
 
 ### Стандарты и ресурсы
 
-* **SLSA.dev:** <https://slsa.dev/> — спецификации SLSA v2.0 (Build & Source tracks).
+* **SLSA.dev:** <https://slsa.dev/> — спецификации SLSA v1.2 (Build & Source tracks).
 * **NIST PQC Standards:** <https://csrc.nist.gov/Projects/post-quantum-cryptography> — стандарты FIPS 203 (ML-KEM), FIPS 204 (ML-DSA) и FIPS 205 (SLH-DSA).
 * **EU CRA:** <https://digital-strategy.ec.europa.eu/en/policies/cyber-resilience-act> — официальный текст закона о киберустойчивости ЕС.
 * **ECMA-424:** <https://www.ecma-international.org/> — стандарт Cryptography Bill of Materials (CBOM).
@@ -454,7 +469,7 @@ curl -u "admin:Harbor12345" -X POST \
 * [Безопасность цепочки поставок контейнерных образов](./container_image_supply_chain.md) — distroless, digest pinning, multi-stage builds, admission control.
 * [Сравнение SCA-инструментов](./sca_tools_comparison.md) — Trivy vs Grype vs Snyk vs osv-scanner vs Syft.
 * [Анализ зависимостей и SBOM](./dependency_and_sbom_analysis.md) — SCA, VEX и инвентаризация по CycloneDX 1.6.
-* [Целостность сборки](./build_integrity.md) — SLSA v2.0, аттестации и воспроизводимость.
+* [Целостность сборки](./build_integrity.md) — SLSA v1.2, аттестации и воспроизводимость.
 * [Подпись артефактов](./artifact_signing.md) — Sigstore, Cosign и PQC-алгоритмы подписи.
 * [SBOM в продакшене](./sbom_in_production.md) — чтение SBOM, blast radius, реакция на CVE.
 * [Триаж CVE](./cve_triage_workflow.md) — практический workflow классификации, приоритизации и false positives.

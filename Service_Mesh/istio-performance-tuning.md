@@ -1,5 +1,7 @@
 # Тюнинг производительности Istio (Performance & Capacity)
 
+**Актуально для:** Istio 1.31.x
+
 ## Определения
 
 **Sidecar Tax** — накладные расходы (CPU/RAM/задержка), которые добавляет каждый прокси к рабочей нагрузке. В Sidecar-модели это может достигать 10–15% ресурсов сервиса; Ambient-модель снижает оверхед до 1–3%.
@@ -29,19 +31,20 @@
 
 | Компонент | requests | limits | Примечание |
 | :--- | :--- | :--- | :--- |
-| istiod (на 1000 подов) | 500m CPU / 1Gi RAM | — | минимум 2 реплики |
-| istio-proxy (sidecar) | 50m–100m CPU / 128Mi RAM | под нагрузкой — больше | растёт с числом кластеров |
-| ztunnel (на узел) | 50m CPU / 64Mi RAM | 200m CPU / 256Mi RAM | DaemonSet |
-| waypoint (до 1000 RPS) | 100m CPU / 128Mi RAM | — | HPA |
+| istiod (на 1000 подов) | 500m CPU / 1Gi RAM | — | минимум 2 реплики; CPU растёт с rate изменений конфигов и числом подключающихся прокси |
+| istio-proxy (sidecar, 1000 RPS, 2 worker threads) | ~200m CPU / 60Mi RAM | — | растёт с числом кластеров и RPS; официальные бенчмарки Istio 1.24 |
+| ztunnel (на узел) | 50m CPU / 64Mi RAM | 200m CPU / 256Mi RAM | worker threads auto-размерятся от CPU limit (1.31+); 0.06 vCPU / 12Mi RAM @ 1000 RPS в бенчмарках |
+| waypoint (до 1000 RPS, 2 worker threads) | ~250m CPU / 60Mi RAM | — | HPA |
 
 Числа ориентировочные; фактические определяйте нагрузочным тестированием (см. ниже).
 
 ### Параметры `proxy.istio.io/config`
 
-- **`concurrency`**: число потоков Envoy. По умолчанию 2. Увеличение до числа CPU повышает пропускную способность, но линейно растёт и память. На стабильно высоконагруженных прокси ставьте `concurrency: 2` fixed (стабильность), на коротких всплесках — не выше числа ядер.
+- **`concurrency`**: число worker-потоков Envoy. Если не задано — определяется автоматически из `resources.limits.cpu` (округление вверх до целого: `2000m` → 2 потока). Если установлено в `0` — используются все ядра. Не гоняйте выше числа CPU: на 2 CPU потребуется 2 потока. Для стабильно высоконагруженных прокси фиксируйте `concurrency: 2` (стабильность), на коротких всплесках — не выше числа ядер.
 - **`terminationDrainDuration`**: время доводки in-flight запросов при SIGTERM (см. [istio-graceful-shutdown.md](./istio-graceful-shutdown.md)).
 - **`drainDuration`**: длительность draining-фазы listener'ов.
 - **`proxyMetadata`**: дополнительные метаданные (например, `ISTIO_META_DNS_CAPTURE`).
+- **`ZTUNNEL_WORKER_THREADS`** (env var для ztunnel): в 1.31+ ztunnel автоматически размерирует worker threads от CPU limit пода. Для фиксированного значения установите `ZTUNNEL_WORKER_THREADS: "8"` или `ZTUNNEL_WORKER_THREADS: "25%"` (относительно CPU limit); `0` = все ядер. Автоматический размер — лучший default.
 
 ### Как снижать накладные расходы
 
@@ -66,7 +69,7 @@
 3. Вычислить «процент накладных»: (P99_mesh − P99_base) / P99_base × 100%.
 4. Менять один параметр за раз (concurrency, resources, scoping) и повторять.
 
-Инструменты: `vegeta`, `fortio`, `ghz` (gRPC).
+Инструменты: `vegeta`, `fortio`, `nighthawk` (от Envoy), `ghz` (gRPC).
 
 ---
 
@@ -275,4 +278,4 @@ kubectl top pods -n production
 - [Сравнение Istio и Linkerd](./istio_vs_linkerd.md) — бенчмарки и сравнение overhead
 - [Прокси Sidecar: реализации и сценарии](./proxy_sidecar.md) — диагностика производительности Envoy
 
-Документация: [Istio: Performance and Scalability](https://istio.io/latest/docs/ops/deployment/performance-and-scalability/).
+Документация: [Istio: Performance and Scalability](https://istio.io/v1.31/docs/ops/deployment/performance-and-scalability/).

@@ -110,6 +110,29 @@ HBONE позволяет Ztunnel обрабатывать весь TCP-траф�
 
 ---
 
+## Когда Service Mesh не нужен
+
+Service Mesh — не «обязательный слой Kubernetes», а решение конкретных проблем east-west трафика. Он **не заменяет** ingress controller и API Gateway: те закрывают north-south задачи (end-user аутентификация, WAF, квоты и биллинг по потребителю, rate limits на периметре), а меш — взаимодействие сервисов внутри кластера. Оба слоя дополняют друг друга и часто работают вместе (шлюз на периметре + меш внутри).
+
+| Задача | Достаточно без меша | Меш нужен, когда |
+| :--- | :--- | :--- |
+| Доступ снаружи | Ingress / Gateway API (Standard Channel стабилен с v1.1) | Нужны межсервисные политики и mTLS внутри |
+| Сетевая изоляция | Kubernetes NetworkPolicy (L3/L4) | Нужна авторизация на уровне L7 (методы, пути) |
+| Отказоустойчивость | Библиотеки в коде (resilience4j, gRPC-retry), клиентская балансировка | Десятки сервисов на разных стеках — политики единообразно на уровне платформы |
+| mTLS между сервисами | Ручной TLS / SPIRE | Нужен автоматический выпуск и ротация сертификатов с идентичностью workload |
+| Наблюдаемость east-west | Метрики приложений, eBPF (Hubble) | Нужны L7-метрики/трейсы без изменения кода приложения |
+
+Когда внедрять меш **не стоит**:
+
+- **мало сервисов и нет L7-требований** — оверхед на инфраструктуру (CPU/RAM sidecar'ов, латентность +~1 мс на хоп) и эксплуатацию control plane не окупается; замеры оверхеда — в [Тюнинг производительности Istio](./istio-performance-tuning.md);
+- **простое приложение без межсервисной безопасности** — одного ingress + NetworkPolicy достаточно;
+- **нет команды/компетенций** на эксплуатацию: меш добавляет новый класс отказов (xDS-синхронизация, инъекция сайдкаров, совместимость версий control plane и прокси) и требует регулярных апгрейдов (см. [Канареечное обновление Istio](./istio_canary_upgrades.md));
+- **хостинг без Kubernetes** — меш ориентирован на оркестратор; для виртуалок альтернативы (Consul Connect, Kuma) тяжелее внедрять.
+
+Альтернативы без меша: нативный Gateway API + NetworkPolicy, библиотеки отказоустойчивости в коде, eBPF-наблюдаемость (Cilium/Hubble). Выбор — компромисс между глубиной контроля L7 и эксплуатационной стоимостью.
+
+---
+
 ## Практические сценарии
 
 ### Сценарий 1: Валидация работоспособности меша после установки
@@ -322,7 +345,7 @@ kubectl exec -n my-app deploy/my-app -- curl -s localhost:15090/stats/prometheus
 
 ## Лучшие практики эксплуатации
 
-1.  **Ресурсные квоты:** всегда устанавливайте `requests` и `limits` для сайдкаров. В 2026 году Envoy требует ~0.5 vCPU и 50MB RAM на 1,000 RPS. Для Ztunnel (Ambient) используйте `requests.cpu: 50m` и `requests.memory: 64Mi` как минимум.
+1.  **Ресурсные квоты:** всегда устанавливайте `requests` и `limits` для сайдкаров. В Istio 1.31 Envoy требует ~0.20 vCPU и 60MB RAM на 1,000 RPS. Для Ztunnel (Ambient) используйте `requests.cpu: 50m` и `requests.memory: 64Mi` как минимум.
 2.  **Стандартизация на Gateway API (GAMMA):** в новых проектах используйте `HTTPRoute` вместо `VirtualService`/`ServiceProfile` для обеспечения переносимости между мешами. Учитывайте поведение «reject by default» при привязке роута к `Service`.
 3.  **Scoping конфигурации:** используйте ресурс `Sidecar` (Istio) или `ServiceProfile` (Linkerd) для ограничения списка сервисов, о которых знает прокси. Это критично для снижения потребления RAM в больших кластерах.
 4.  **Градуальное внедрение:** начинайте с Ambient L4 (mTLS) для всего кластера, затем добавляйте Waypoint Proxy только для сервисов, требующих L7. При переходе с Sidecar оставляйте оба режима параллельно 2–4 недели.
@@ -336,6 +359,21 @@ kubectl exec -n my-app deploy/my-app -- curl -s localhost:15090/stats/prometheus
 ---
 
 ## Дополнительная информация
+
+### Ландшафт Service Mesh (2026)
+
+| Решение | Data Plane | Статус и примечание |
+| :--- | :--- | :--- |
+| **Istio** | Envoy (sidecar), Ztunnel + Waypoint (Ambient) | Основной Open Source-меш; Gateway API/GAMMA, мультикластер, VM. Освещён в этой директории |
+| **Linkerd** | linkerd-proxy (Rust) | Минималистичный меш Buoyant; сравнение с Istio — [Сравнение Istio и Linkerd](./istio_vs_linkerd.md) |
+| **Cilium Service Mesh** | eBPF (+ Envoy для L7) | Меш на eBPF без sidecar; Hubble для наблюдаемости; управление через Gateway API |
+| **Consul Connect** | Envoy (или HAProxy) | Кроссплатформенный (Kubernetes/VM/Nomad); полноценное покрытие — [Consul Service Mesh](../Consul/consul_service_mesh.md), [Consul API Gateway](../Consul/consul-api-gateway.md) |
+| **Kuma** | Envoy | Universal-меш (Kong) в CNCF, multi-zone для Kubernetes и VM |
+| **Traefik Mesh** | Traefik Proxy | Меш на базе Traefik; упоминание — [Прокси Sidecar](./proxy_sidecar.md) |
+| **AWS App Mesh** | Envoy | **Не развивается:** поддержка прекращается 30.09.2026 (новые клиенты не подключаются с 24.09.2024); применявшийся в AWS-средах, для новых проектов не рекомендуется |
+| **Proxyless gRPC** | gRPC-стек приложения (xDS, без прокси) | Экспериментальная модель Istio — [Proxyless gRPC](./proxy_sidecar.md#proxyless-grpc-без-сайдкара) |
+
+SMI (`TrafficSplit`) считается устаревшим — стандарт перехвачен Gateway API/GAMMA (см. [Актуальность](#актуальность)). На собеседованиях полезно различать три группы: **прокси-меше** (Istio, Linkerd, Consul, Kuma), **eBPF-меше** (Cilium) и **модель без прокси** (proxyless gRPC).
 
 ### Операционные аспекты (2026)
 

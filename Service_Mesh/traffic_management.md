@@ -133,14 +133,15 @@ spec:
     timeouts:
       request: 5s
     retry:
-      codes: ["503", "504"]
+      codes: [503, 504]
       attempts: 3
-      backoff:
-        percent: 500ms
+      backoff: 100ms
     backendRefs:
     - name: backend-service
       port: 80
 ```
+
+> Поле `backoff` по GEP-1731 — это одна Gateway API Duration (базовый интервал exponential backoff с jitter), а не объект. Имплементация может ограничивать задержку собственным максимумом (для Envoy-имплементаций обычно 10× base interval).
 
 ```bash
 # 1. Проверка роута и статуса
@@ -159,6 +160,61 @@ istioctl proxy-config routes deploy/api-v1-<pod> -n prod -o json | jq '.[0].rout
 ```
 
 > **Примечание для Istio:** в режиме legacy `VirtualService` ретраи и таймауты задаются через `http[].retries` и `http[].timeout`. При миграции на Gateway API перенесите их в `HTTPRoute.rules[].retry` и `HTTPRoute.rules[].timeouts`.
+
+#### Семантика ретраев и таймаутов в Istio VirtualService
+
+Для Istio-контроллера важно знать поведение **по умолчанию** — именно оно чаще всего становится причиной неожиданной нагрузки на бэкенд или «зависших» запросов:
+
+| Параметр | Поведение по умолчанию | Назначение |
+| :--- | :--- | :--- |
+| `http[].timeout` (request timeout) | **Отсутствует** — запрос может висеть неограниченно | Общий лимит времени на запрос со всеми ретраями. Задавайте всегда |
+| `retries.attempts` (кластерный default) | **2 попытки** при условиях `connect-failure,refused-stream,unavailable,cancelled,retriable-status-codes` (ретраится в т.ч. 503) | Кластерно настраивается через `MeshConfig.defaultConfig.defaultHttpRetryPolicy`; `attempts: 0` отключает ретраи глобально |
+| `retries.perTryTimeout` | равен `timeout` маршрута (итого — без отдельного лимита) | Таймаут одной попытки (initial + каждый ретрай) |
+| `retries.backoff` | минимальный интервал 25 мс, экспоненциальный backoff | Защита бэкенда от «thundering herd» при ретраях |
+| `retries.retryOn` | `connect-failure,refused-stream,unavailable,cancelled` | Условия ретрая: Envoy-условия через запятую + HTTP-коды (`"503,reset"`) |
+| `retryIgnorePreviousHosts` | `true` — ретрай уходит на другой эндпоинт | Борьба с «ядовитыми» подами |
+| `retryRemoteLocalities` | `false` — ретраи только в локальной localite | Для cross-region failover включается явно |
+
+Ключевые взаимосвязи, спрашиваемые на собеседованиях:
+
+- **Фактическое число ретраев ограничено общим timeout.** При `attempts: 3`, `backoff: 2s` и `timeout: 3s` успеет выполниться лишь один ретрай — остальные «съедает» ожидание.
+- **Максимум запросов к бэкенду = 1 + attempts.** Ретраи умножают нагрузку: 10 RPS × 3 ретрая = до 40 запросов в секунду на деградирующем сервисе. Бюджет ретраев (`retryBudget` в circuit breaker Envoy) ограничивает параллельные ретраи долей активных запросов — см. [Свой Service Mesh на Envoy](./envoy-custom-service-mesh.md).
+- **Ретраи не должны повторять запросы, отклонённые rate limiter'ом (429)** — исключайте `429` из `retryOn`, иначе лимитный запрос превращается в серию ретраев (см. [Rate Limiting](./istio_rate_limiting.md)).
+- **Ретраи только для идемпотентных операций** (GET/HEAD/OPTIONS); для POST/PUT используйте только таймауты.
+
+Пример `VirtualService` с явной отказоустойчивостью:
+
+```yaml
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: api-reliability-vs
+  namespace: prod
+spec:
+  hosts:
+  - api-service
+  http:
+  - route:
+    - destination:
+        host: api-service
+        subset: v1
+    timeout: 5s              # общий лимит (по умолчанию отсутствует!)
+    retries:
+      attempts: 3            # до 3 ретраев, 1+3=4 запроса максимум
+      perTryTimeout: 2s      # лимит одной попытки
+      retryOn: connect-failure,refused-stream,503
+```
+
+```bash
+# Проверка фактической retry-политики в конфиге Envoy
+istioctl proxy-config routes deploy/api-client -n prod -o json \
+  | jq '.[0].virtualHosts[] | select(.name=="api-service.prod.svc.cluster.local:80") | .routes[0].retry_policy'
+# → {"retry_on": "connect-failure,refused-stream,retriable-status-codes",
+#    "num_retries": 3, "per_try_timeout": "2s", ...}
+
+# Отключение ретраев для конкретного маршрута
+# retries: { attempts: 0 }
+```
 
 ### Сценарий 3: Circuit Breaking (Outlier Detection)
 
@@ -399,6 +455,9 @@ istioctl proxy-config endpoint deploy/api-v1-<pod> -n prod | grep api-service
 | **Reroutes циклично перезапускаются** | Ретраи без backoff или таймаут меньше времени обработки | Добавьте exponential backoff, увеличьте `http1MaxPendingRequests` |
 | **Outlier detection не срабатывает** | `localityLbSetting.enabled` отключён или `consecutive5xxErrors` = 0 | Убедитесь, что `outlierDetection` задан и `localityLbSetting.enabled: true` |
 | **Mirror traffic не доставляется** | Бэкенд-сервис не создан или недоступен | Проверьте, что mirror-host (`v2-canary`) развёрнут и имеет готовые эндпоинты |
+| **Запрос висит без ответа (нет ни 2xx, ни 504)** | Не задан `request` timeout — в Istio он отсутствует по умолчанию | Задайте `timeouts.request` (HTTPRoute) или `http[].timeout` (VirtualService) |
+| **Нагрузка на бэкенд растёт при деградации (ретраи xN)** | Кластерный default: до 2 ретраев на connect-failure/unavailable/503 | Ограничьте `attempts` явно (в т.ч. `attempts: 0` для неидемпотентных маршрутов); настройте `retryBudget` в circuit breaker |
+| **Ретраи «съедают» лимиты rate limiter** | Ретраи 429-ответов от локального rate limiter | Исключите `429` из `retryOn`; см. [Rate Limiting](./istio_rate_limiting.md) |
 
 ### Методы диагностики
 
@@ -439,6 +498,7 @@ kubectl get endpoints <service> -n <namespace> -o yaml | grep -A3 topology
 10. **Circuit breaking при масштабировании:** настраивайте `outlierDetection` и `connectionPool` до нагрузки; параметры по умолчанию часто слишком либеральны для продакшена.
 11. **Валидация после каждого изменения:** используйте `istioctl analyze` или `kubectl apply --dry-run=client` для проверки ресурсов перед применением.
 12. **Locality LB в multi-cluster:** для cross-region failover всегда задавайте `localityLbSetting` с `failover` и проверяйте topology-хинты через `istioctl proxy-config endpoint`.
+13. **Явные ретраи и таймауты:** не полагайтесь на дефолты Istio — ретраи по умолчанию (до 2 попыток, включая 503) умножают нагрузку на деградирующий сервис, а request timeout по умолчанию отсутствует. Задавайте `timeout`/`retries` (или `timeouts`/`retry` в Gateway API) явно на каждом маршруте, ретраи — только для идемпотентных методов.
 
 ---
 

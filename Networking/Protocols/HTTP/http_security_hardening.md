@@ -206,31 +206,13 @@ http {
 
 ### Сценарий 4: ModSecurity с OWASP CRS
 
-```bash
-# Установка
-apt install libmodsecurity3 modsecurity-crs
+Базовая установка ModSecurity + CRS на Nginx (и версии libmodsecurity3 >= 3.0.17, CVE-2026-30923) детально описана в **[WAF: установка и конфигурация ModSecurity](../../../Security/ApplicationSecurity/waf.md)**. Здесь — лаконичный набор директив для HTTP-харднинга:
 
-# Nginx конфигурация
-modsecurity on;
-modsecurity_rules_file /etc/nginx/modsecurity.conf;
+- в блоке `http`: `modsecurity on;` + `modsecurity_rules_file /etc/nginx/modsecurity.conf;`;
+- `SecRuleEngine On`, `SecRequestBodyAccess On`, `Include .../crs-setup.conf` и `Include .../crs/rules/*.conf`;
+- `SecRuleRemoveById 920350` для шумных правил (пример).
 
-# Основной конфиг
-SecRuleEngine On
-SecRequestBodyAccess On
-SecRequestBodyLimit 13107200
-SecRequestBodyNoFilesLimit 131072
-SecResponseBodyAccess Off
-SecRuleRemoveById 920350  # Пример отключения шумного правила
-
-# Включение CRS
-Include /etc/modsecurity/crs/crs-setup.conf
-Include /etc/modsecurity/crs/rules/*.conf
-```
-
-**Валидация:**
-- `curl "https://api.example.com/?q=<script>alert(1)</script>"` — `403 Forbidden` (XSS detection).
-- `curl "https://api.example.com/?id=1 OR 1=1"` — `403 Forbidden` (SQL injection detection).
-- `tail -f /var/log/modsec_audit.log` — логи блокировок.
+**Валидация:** `curl "https://api.example.com/?q=<script>alert(1)</script>"` → `403` (XSS); `curl "https://api.example.com/?id=1 OR 1=1"` → `403` (SQLi); `tail -f /var/log/modsec_audit.log` — логи блокировок.
 
 ### Сценарий 5: Fail2ban для защиты от brute-force
 

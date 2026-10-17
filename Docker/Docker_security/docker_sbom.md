@@ -1,6 +1,6 @@
 # SBOM для Docker-образов
 
-**Актуально для:** Docker Engine 29.x, Syft v1.52+, CycloneDX 1.7, SPDX 3.x. Docker Engine 28.x и ранее достигли EOL (май 2026).
+**Актуально для:** Docker Engine 29.x, Syft v1.54+, CycloneDX 1.7, SPDX 3.x. Docker Engine 28.x и ранее достигли EOL (май 2026).
 
 ## Определения
 
@@ -17,8 +17,8 @@
 ## Предварительные требования
 
 - **Docker Engine:** 29.x с включенным BuildKit (`DOCKER_BUILDKIT=1` по умолчанию). Docker 28.x и ранее достигли EOL (май 2026).
-- **Инструменты генерации:** `Syft v1.52+` (установка: `curl -sSfL https://get.anchore.io/syft | sudo sh -s -- -b /usr/local/bin`), `Trivy` для сканирования.
-- **Реестр:** Harbor 2.11+, GitHub Container Registry, или любой реестр с поддержкой **OCI 1.1 Referrers API** для прикрепления SBOM к образу.
+- **Инструменты генерации:** `Syft v1.54+` (установка: `curl -sSfL https://get.anchore.io/syft | sudo sh -s -- -b /usr/local/bin`), `Trivy` для сканирования.
+- **Реестр:** Harbor v2.15+, GitHub Container Registry, или любой реестр с поддержкой **OCI 1.1 Referrers API** для прикрепления SBOM к образу.
 - **Подпись:** `Cosign` или `Notation` для подписания аттестаций SBOM.
 - **Права:** Доступ к реестру для загрузки образов и аттестаций. В CI/CD — сервисный аккаунт с правами `write` на реестр и `read` на артефакты.
 
@@ -47,7 +47,7 @@ curl -v -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
 
 ### Современные инструменты и процессы (2026)
 
-1. **Генерация**: **Syft v1.52+** и **Trivy** являются индустриальными стандартами. `docker buildx --sbom` интегрирует генерацию прямо в процесс сборки BuildKit. Для быстрого локального просмотра состава образа — `docker sbom <image>` (плагин Docker Desktop, на базе Syft; в Docker Engine standalone недоступен).
+1. **Генерация**: **Syft v1.54+** и **Trivy** являются индустриальными стандартами. `docker buildx --sbom` интегрирует генерацию прямо в процесс сборки BuildKit. Для быстрого локального просмотра состава образа — `docker sbom <image>` (плагин Docker Desktop, на базе Syft; в Docker Engine standalone недоступен).
 2. **Аттестация и хранение**: SBOM подписывается через **Cosign** и хранится как аттестация. В 2026 году активно используется **OCI 1.1 Referrers API**, позволяющий прикреплять SBOM к образу без изменения его основного дайджеста.
 3. **Верификация (VSA)**: **Verification Summary Attestation** — итоговый документ, подтверждающий, что SBOM был сгенерирован и проверен сканерами в соответствии с политиками организации.
 4. **ASPM (Application Security Posture Management)**: Платформы типа **Docker Scout** или **Dependency-Track** агрегируют SBOM для непрерывного мониторинга новых CVE.
@@ -64,7 +64,7 @@ curl -v -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
 
 ## Практические сценарии
 
-### 1. Глубокая генерация SBOM с помощью Syft v1.52+
+### 1. Глубокая генерация SBOM с помощью Syft v1.54+
 
 Syft анализирует слои образа, пакетные менеджеры (npm, go mod, pip) и даже бинарные файлы.
 
@@ -119,7 +119,7 @@ docker scout compare my-app:v1 --to my-app:v2
 - **Фиксация по дайджесту:** Используйте `image@sha256:...` вместо тегов при сканировании SBOM. Теги могут быть переназначены, что приведет к несоответствию SBOM и образа.
 - **Минимальные образы:** Distroless и Chainguard образы генерируют SBOM с минимальным количеством компонентов, что упрощает аудит и снижает количество CVE.
 - **Цикл VEX:** Внедрите процесс анализа уязвимостей. Не все CVE эксплуатируемы — используйте VEX (см. `vulnerability_scanning.md`) для фильтрации ложных срабатываний.
-- **Хранение SBOM:** Храните SBOM минимум 12 месяцев (требование EU CRA). Используйте реестр с нативной поддержкой Referrers API (Harbor 2.11+, GHCR).
+- **Хранение SBOM:** Храните SBOM минимум 12 месяцев (требование EU CRA). Используйте реестр с нативной поддержкой Referrers API (Harbor v2.15+, GHCR).
 - **Валидация перед деплоем:** Настройте admission controller (Kyverno/OPA) для проверки наличия подписанного SBOM и отсутствия критических CVE перед запуском контейнера.
 - **Сканирование базового образа:** Генерируйте SBOM для базовых образов (distroless, alpine) отдельно и включайте их в baseline. Сравнивайте SBOM базового образа при обновлении.
 
@@ -155,7 +155,7 @@ docker scout compare my-app:v1 --to my-app:v2
 
 - **Multi-arch образы (manifest list):** Syft не поддерживает анализ multi-arch manifest list напрямую. Генерируйте SBOM для каждого архитектурного варианта отдельно: `docker buildx imagetools inspect --format '{{json .Manifest}}' image:tag` и `syft -o cyclonedx-json <image>:<tag>@<digest>`.
 - **Distroless образы:** Не содержат менеджеров пакетов (apk, dpkg). Syft анализирует файловую систему и генерирует SBOM только с языковыми зависимостями. Это ожидаемое поведение, а не ошибка.
-- **OCI 1.1 Referrers и старые реестры:** Не все реестры поддерживают Referrers API. Harbor 2.11+, GHCR и Docker Hub поддерживают. Для старых реестров используйте теги-пустышки (`.sbom`, `.att`) как fallback.
+- **OCI 1.1 Referrers и старые реестры:** Не все реестры поддерживают Referrers API. Harbor v2.15+, GHCR и Docker Hub поддерживают. Для старых реестров используйте теги-пустышки (`.sbom`, `.att`) как fallback.
 - **SBOM для бинарных файлов (Go, Rust):** Статически скомпилированные бинарники не оставляют следов в менеджере пакетов. Syft анализирует ELF-заголовки и генерирует PURL вида `pkg:generic/<name>@<version>`. Для точности добавляйте metadata через `--config auto`.
 - **Конвертация CycloneDX ↔ SPDX:** При конвертации теряются VEX-данные и CBOM-свойства. Генерируйте SBOM в целевом формате напрямую. Используйте конвертацию только для совместимости со старыми инструментами.
 

@@ -1,6 +1,6 @@
 # Supply Chain Security для Mobile
 
-**Актуально для:** iOS 17–26, Android API 24–35, GitLab CI 17.x, Cosign 2.x, Syft 1.x, SLSA v1.0
+**Актуально для:** iOS 17–26, Android API 24–35, GitLab CI 17.x, Cosign 2.x, Syft 1.x, SLSA v1.2
 
 ---
 

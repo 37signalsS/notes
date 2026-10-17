@@ -1,6 +1,6 @@
 # Метрики безопасности Docker и SLO
 
-**Актуально для:** Docker Engine 29.x, Trivy ≥ 0.70.1, Cosign v3.x, docker-bench-security (CIS Docker Benchmark v1.6.0).
+**Актуально для:** Docker Engine 29.x, Trivy ≥ 0.70.1, Cosign v3.1.3, docker-bench-security (CIS Docker Benchmark v1.6.0).
 
 Общие DevSecOps-метрики (coverage, MTTR, MTTT), стек мониторинга (Prometheus/Loki/Alertmanager), Grafana-дашборды и security-alerting — SSoT в [devsecops_monitoring.md](../../CI-CD/DevSecOps/devsecops_monitoring.md). Данный файл — Docker-специфичные метрики и security SLO/SLA: CIS score, drift rate, % signed, % scanned, % non-root, привилегированные контейнеры, EOL-образы.
 
@@ -22,7 +22,7 @@
 
 - **Docker Engine 29.x** — `docker inspect`, `docker events`, `docker stats`, `docker system df`.
 - **Trivy ≥ 0.70.1** (≥ 0.74.x) — сканирование образов на CVE и EOL ОС. Критично из-за CVE-2026-33634 (компрометация образов сканера). SSoT — [vulnerability_scanning.md](./vulnerability_scanning.md).
-- **Cosign v3.x** — проверка подписи образов. SSoT — [image_signature_and_verification.md](./image_signature_and_verification.md).
+- **Cosign v3.1.3** — проверка подписи образов. SSoT — [image_signature_and_verification.md](./image_signature_and_verification.md).
 - **docker-bench-security** — образ на основе CIS Docker Benchmark v1.6.0. SSoT — [docker_bench_cis.md](./docker_bench_cis.md).
 - **curl, jq, openssl** — парсинг JSON, вызовы API, проверка сертификатов.
 - **Prometheus textfile collector** (опционально) — экспорт Docker-метрик в стек Prometheus/Grafana.

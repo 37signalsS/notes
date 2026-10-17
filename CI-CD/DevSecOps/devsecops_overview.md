@@ -14,7 +14,7 @@
 
 Сравнение подходов SAST и DAST, их границы применимости и комбинированный конвейер — в **[сравнении подходов SAST vs DAST](./sast_vs_dast.md)**.
 
-**Supply Chain Security 2.0** — защита всей цепочки поставок артефактов, базирующаяся на стандарте **SLSA v2.0**, сквозной подписи образов и использовании **VEX (Vulnerability Exploitability eXchange)** для фильтрации неактуальных уязвимостей. Глубоко тема раскрыта в **[обзоре безопасности цепочки поставок](../../Security/Supply_Chain_Security/overview.md)**.
+**Supply Chain Security 2.0** — защита всей цепочки поставок артефактов, базирующаяся на стандарте **SLSA v1.2**, сквозной подписи образов и использовании **VEX (Vulnerability Exploitability eXchange)** для фильтрации неактуальных уязвимостей. Глубоко тема раскрыта в **[обзоре безопасности цепочки поставок](../../Security/Supply_Chain_Security/overview.md)**.
 
 ## Базовые концепции
 
@@ -40,7 +40,7 @@
 | **Runtime (eBPF)** | Falco, Tetragon, Pixie | Обнаружение аномалий и дрейфа конфигурации (Drift Detection) в ядре. |
 
 **Стандарты и протоколы:**
-- **SLSA v2.0 (Supply-chain Levels for Software Artifacts):** уровни защиты целостности сборки и артефактов.
+- **SLSA v1.2 (Supply-chain Levels for Software Artifacts):** уровни защиты целостности сборки и артефактов.
 - **VEX (Vulnerability Exploitability eXchange):** машиночитаемый формат сообщения о статусе эксплуатации уязвимости.
 - **DSEC (DevSecOps Maturity Model):** оценка зрелости процессов безопасности.
 - **[Сертификация ФСТЭК](../../Linux/Security/Fstec/overview.md):** требования по безопасной разработке в рамках SDL для РФ.

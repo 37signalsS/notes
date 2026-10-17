@@ -1,5 +1,7 @@
 # Определение протокола трафика (Protocol Detection) в Istio
 
+**Актуально для:** Istio 1.31.x
+
 ## Определения
 
 **Port Naming Conventions (соглашения об именах портов)** — в Istio протокол трафика сервиса определяется по имени порта в Kubernetes `Service.ports[].name` через префиксы: `http-`, `http2-`, `grpc-`, `tcp-`, `tls-`, `https-` и известным именам (`mysql`, `redis`, `mongo`, `kafka` и др.).
@@ -15,6 +17,13 @@
 **Protocol Detection Timeout** — таймаут, в течение которого Envoy «слушает» первые байты соединения, чтобы решить, это HTTP/2 prior-knowledge или HTTP/1.x (по умолчанию 5 секунд). Влияет на задержку первого байта для неявных протоколов.
 
 ---
+
+## Предпосылки
+
+- Kubernetes кластер с Istio 1.31+ (sidecar или ambient)
+- `istioctl` версии 1.31
+- `jq` для разбора JSON-вывода `proxy-config`
+- `kubectl` с доступом к наблюдению за pod'ами mesh
 
 ## Основные концепции
 
@@ -62,8 +71,8 @@ gRPC требует HTTP/2. Envoy умеет детектить h2c (prior knowl
 ### Keepalive (TCP-level)
 
 - **Upstream (исходящие)** — настраивается в `DestinationRule.trafficPolicy.connectionPool.tcp.keepalive`: Envoy поддерживает жизнеспособность idle-соединений до бэкенда (полезно при долгих простоях под NAT/балансировщиками).
-- **Inbound (входящие)** — глобально через `ProxyConfig.tcpKeepalive` (`meshConfig.defaultConfig.tcpKeepalive`).
-- Примечание: в Istio API поля называется `proveTime`, `proveInterval`, `proves` (известный исторический перекос в неймингах от `probe`); в k8s/enovy это `keepalive_time`/`keepalive_interval`/`keepalive_probes`.
+- **Inbound (входящие)** — глобально через `meshConfig.defaultConfig.tcpKeepalive` (`ProxyConfig.tcpKeepalive`): устанавливает `SO_KEEPALIVE` на входящих сокетах прокси.
+- Поля в `TcpKeepalive`: `time` (Duration, простой перед первой пробой), `interval` (Duration, интервал между пробами), `probes` (uint32, число проваленных проб до разрыва). В Envoy — аналогично: `keepalive_time`/`keepalive_interval`/`keepalive_probes`. Значения по умолчанию берутся из ОС (Linux: 7200s/75s/9).
 
 ---
 
@@ -155,20 +164,20 @@ spec:
     connectionPool:
       tcp:
         keepalive:
-          proveTime: 30       # первая проба через 30с idle
-          proveInterval: 10   # интервал проб
-          proves: 3           # число неудачных проб до разрыва
+          time: 30s         # первая проба через 30с idle
+          interval: 10s     # интервал между пробами
+          probes: 3         # число неудачных проб до разрыва
 ```
 
 ```bash
 # Проверка применения (в config dump кластера)
 istioctl proxy-config cluster deploy/my-app -n production -o json | grep -A6 tcp
-# → "upstream_connection_options": {"tcp_keepalive": {...}}
+# → "upstream_connection_options": {"tcp_keepalive": {"time": "30s", "interval": "10s", "probes": 3}}
 ```
 
 ### Сценарий 5: Протоколы на listener'ах шлюза (Gateway API)
 
-`applicationProtocol` в `Gateway` указывает допустимые протоколы для сервера:
+В K8s Gateway API (v1) протокол TLS-слоя задаётся полем `protocol` слушателя, а ALPN — через `spec.listeners[].tls.alpnProtocols` для HTTPS-listener'ов. Для h2c (HTTP/2 без TLS) на cleartext-слушателе протокол определяется по `protocol: HTTP`; для фиксированного h2c на бэкенде задайте `appProtocol: kubernetes.io/h2c` в Service.
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -179,24 +188,27 @@ metadata:
 spec:
   gatewayClassName: istio
   listeners:
-  - name: http2
+  - name: http
     protocol: HTTP
     port: 80
-    applicationProtocol: h2c
   - name: https
     protocol: HTTPS
     port: 443
-    applicationProtocol:
-    - http/1.1
-    - http/2
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: app-tls-secret
+      alpnProtocols:
+      - h2
+      - http/1.1
 ```
 
 Проверка принятых ALPN-протоколов:
 
 ```bash
 istioctl proxy-config listener deploy/istio-ingressgateway -n istio-ingress
-# → 0.0.0.0:8080  ... application_protocols: h2c
-# → 0.0.0.0:8443  ... application_protocols: http/1.1 http/2
+# → 0.0.0.0:8080  ... application_protocols: http/1.1
+# → 0.0.0.0:8443  ... application_protocols: h2,http/1.1
 ```
 
 ---
@@ -222,7 +234,7 @@ istioctl proxy-config listener deploy/istio-ingressgateway -n istio-ingress
 3. **`appProtocol` для унификации**: используйте его как единый источник протокола вместо неоднозначных имён.
 4. **Проверяйте `istioctl proxy-config listener/route`** после добавления нового сервиса — быстрая детекция «TCP-вместо-HTTP».
 5. **Keepalive для долгих потоков** (gRPC, WebSocket, базы через NAT/LB) — настраивайте `tcp.keepalive` в `DestinationRule`.
-6. **Шлюз**: явно перечисляйте `applicationProtocol` (http/1.1, http/2) на HTTPS-listeners, чтобы не терять HTTP/2-совместимость клиентов.
+6. **Шлюз**: явно перечисляйте `alpnProtocols` (`h2`, `http/1.1`) на HTTPS-listeners, чтобы не терять HTTP/2-совместимость клиентов.
 
 ---
 
@@ -241,4 +253,4 @@ istioctl proxy-config listener deploy/istio-ingressgateway -n istio-ingress
 - [Service Mesh: основные концепции](./service_mesh_concepts.md)
 - [Работа с gRPC в networking](../Networking/ServicesAndTools/grpc_overview.md)
 
-Документация: [Istio: Protocol Selection](https://istio.io/latest/docs/ops/configuration/traffic-management/protocol-selection/).
+Документация: [Istio: Protocol Selection](https://istio.io/v1.31/docs/ops/configuration/traffic-management/protocol-selection/).

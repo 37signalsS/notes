@@ -1,5 +1,7 @@
 # Подпись артефактов
 
+**Актуально для:** Cosign v3.1.3, Notation v1.3.2, Syft v1.54+, Harbor v2.15+, Kyverno v1.19+, OpenSSL 3.5+, Kubernetes 1.31+, Docker Engine 29.x, BuildKit 0.34+, SLSA v1.2, OCI Distribution 1.1
+
 ## Определения
 
 * **Artifact Signing (Подпись артефактов):** Процесс криптографического подтверждения аутентичности (авторства) и целостности программных объектов (образов, бинарных файлов, аттестаций, SBOM, Helm-чартов, Terraform-модулей).
@@ -9,6 +11,9 @@
 * **ML-DSA (Module-Lattice Digital Signature Algorithm):** Основной постквантовый алгоритм цифровой подписи (стандарт **FIPS 204**), устойчивый к атакам квантовых компьютеров. Заменяет ECDSA/RSA в критических контурах.
 * **OCI 1.1 Referrers API:** Стандарт OCI для связывания метаданных (подписей, SBOM) с основным артефактом. Позволяет реестру хранить подписи как связанные объекты, а не через дополнительные теги.
 * **VSA (Verification Summary Attestation):** Сводная аттестация, агрегирующая результаты проверки подписей и SLSA-уровней. Используется для принятия автоматических решений о развертывании (Admission Control).
+* **TUF (The Update Framework):** Фреймворк для защиты целостности систем дистрибуции обновлений. Защищает от атак на откат версий, подмены репозитория и компрометации ключей издателя. Использует роли (root, targets, snapshot, timestamp) с независимыми ключами.
+* **in-toto:** Стандарт для описания и верификации жизненного цикла ПО. SLSA Provenance и VSA-аттестации оформляются как in-toto Statements с обязательными полями `_type`, `subject`, `predicateType` и `predicate`.
+* **SLSA (Supply-chain Levels for Software Artifacts):** Фреймворк безопасности (v1.2), разделённый на два независимых трека: **Build Track** (защита процесса сборки, уровни L0–L3) и **Source Track** (защита исходного кода, уровни L1–L4).
 
 ## Основные концепции
 
@@ -27,7 +32,7 @@
 Ключевое отличие модели — отсутствие долгоживущих закрытых ключей. Вместо этого используется эфемерная пара ключей, генерируемая в памяти на время подписи:
 
 1. **Генерация:** CI/CD-раннер создает ephemeral-пару ключей (ECDSA-P256 или ML-DSA) только в оперативной памяти.
-2. **Аутентификация:** Раннер получает OIDC-токен от внутреннего провайдера (GitLab, Gitea, corporate IdP).
+2. **Аутентификация:** Раннер получает OIDC-токен от внутренего провайдера (GitLab, Gitea, corporate IdP).
 3. **Сертификация:** Внутренний Fulcio проверяет OIDC-токен и выдает краткосрочный X.509-сертификат (10–20 минут), где Subject = identity раннера.
 4. **Публикация:** Метаданные (сертификат + подпись) отправляются во внутренний Rekor для неизменяемого аудита.
 5. **Подписание:** Артефакт подписывается ephemeral-закрытым ключом, который затем уничтожается.
@@ -36,9 +41,10 @@
 
 ### Стек технологий (2026)
 
-*   **Sigstore (Cosign v3.x):** Де-факто стандарт. Поддерживает эфемерные ключи, PQC-профили и OCI 1.1. Все события записываются в Rekor для публичного аудита.
-*   **Notation (v1.x):** Отраслевой стандарт для корпоративных реестров (Harbor, GitLab Container Registry). Поддерживает Trust Stores и интеграцию с HSM/Vault.
+*   **Sigstore (Cosign v3.1.3):** Де-факто стандарт. Поддерживает эфемерные ключи, PQC-профили и OCI 1.1. Все события записываются в Rekor для публичного аудита.
+*   **Notation (v1.3.2):** Отраслевой стандарт для корпоративных реестров (Harbor, GitLab Container Registry). Поддерживает Trust Stores и интеграцию с HSM/Vault.
 *   **TUF (The Update Framework):** Обеспечивает защиту от атак на компрометацию систем дистрибуции (защита от отката версий).
+*   **OpenSSL 3.5+:** Поддержка PQC-алгоритмов (ML-DSA, SLH-DSA) для бинарных подписей (FIPS 204/205).
 
 ### Инфраструктура Referrers (OCI 1.1)
 
@@ -52,7 +58,7 @@
 
 Проверка отдельных подписей и аттестаций не масштабируется. VSA агрегирует результаты:
 - Подпись образа (Cosign/Notation) — действительна?
-- SLSA-уровень (Build L1–L3) — достигнут?
+  - SLSA-уровень (Build L0–L3) — достигнут?
 - SBOM — прикреплен и не содержит критических CVE?
 - CBOM — криптографические алгоритмы соответствуют политике (ML-DSA, нет RSA-2048)?
 
@@ -64,14 +70,14 @@
 
 | Компонент | Минимальная версия | Назначение |
 | :--- | :--- | :--- |
-| **Cosign** | v3.1+ | Keyless-подпись образов и аттестаций с поддержкой ML-DSA (PQC). |
-| **Notation** | v1.x+ | Корпоративная подпись через X.509 / HSM / внутреннюю CA. |
-| **Syft** | v1.5+ | Генерация SBOM/CBOM в форматах SPDX 3.1 и CycloneDX 1.7. |
-| **Harbor** | v2.11+ | Локальный OCI-реестр с поддержкой OCI 1.1 Referrers API. |
+| **Cosign** | v3.1.3 | Keyless-подпись образов и аттестаций; ML-DSA (PQC) через KMS (в стабильной версии недоступна). |
+| **Notation** | v1.3.2 | Корпоративная подпись через X.509 / HSM / внутреннюю CA. |
+| **Syft** | v1.54+ | Генерация SBOM/CBOM в форматах SPDX 3.0 и CycloneDX 1.7. |
+| **Harbor** | v2.15+ | Локальный OCI-реестр с поддержкой OCI 1.1 Referrers API. |
 | **GitLab Runner** | v16+ / Gitea Runner | Self-hosted CI/CD-раннер с OIDC для keyless-подписи. |
 | **Kyverno** | v1.19+ | Admission-контроль для верификации подписей и VSA-аттестаций. |
-| **OpenSSL** | v3.4+ | Поддержка PQC-алгоритмов (ML-DSA) для бинарных подписей. |
-| **Kubernetes** | 1.29+ | Целевая платформа для деплоя с Admission-политиками. |
+| **OpenSSL** | v3.5+ | Поддержка PQC-алгоритмов (ML-DSA, SLH-DSA) для бинарных подписей (FIPS 204/205). |
+| **Kubernetes** | 1.31+ | Целевая платформа для деплоя с Admission-политиками (ImageValidatingPolicy, Kyverno v1.19+). |
 
 ### Аппаратные требования
 
@@ -90,12 +96,12 @@
 
 ### Подпись через Sigstore Cosign (Keyless)
 
-Основной метод для CI/CD пайплайнов. В 2026 году Cosign по умолчанию использует **OCI 1.1 Referrers** и поддерживает постквантовые алгоритмы.
+Основной метод для CI/CD пайплайнов. Cosign по умолчанию использует **OCI 1.1 Referrers**. Поддержка постквантовых алгоритмов (ML-DSA) находится в экспериментальной фазе и не включена в стабильные релизы.
 
 ```bash
-# 1. Подписание образа с использованием ML-DSA (PQC)
+# 1. Подписание образа через OIDC (keyless, ECDSA)
 # В CI идентичность подтверждается через OIDC токен среды
-cosign sign --yes --tlog-upload=true --sign-algorithm mldsa ghcr.io/my-org/my-app:v1.0.0
+cosign sign --yes --tlog-upload=true ghcr.io/my-org/my-app:v1.0.0
 
 # 2. Верификация с проверкой идентичности и записи в Rekor
 cosign verify \
@@ -120,7 +126,6 @@ cosign sign --yes \
   --tlog-upload=false \
   --fulcio-url $FULCIO_URL \
   --rekor-url $REKOR_URL \
-  --sign-algorithm mldsa \
   $REGISTRY:$IMAGE_TAG
 # → Сгенерирован ephemeral-ключ, подпись прикреплена к образу через Referrers API
 ```
@@ -131,17 +136,21 @@ cosign sign --yes \
 cosign verify $REGISTRY:$IMAGE_TAG \
   --certificate-identity-regexp "https://harbor.internal/project/my-app" \
   --certificate-oidc-issuer $FULCIO_URL \
-  --check-claims=true \
   --output json | jq '.signatures[0].publicKey'
 # → {"keyType":"ECDSA","keyData":"base64..."}
+```
 
-# Проверка наличия постквантовой подписи
+**Валидация:** Проверка наличия SLSA-аттестации.
+
+```bash
 cosign verify-attestation $REGISTRY:$IMAGE_TAG \
   --type slsaprovenance \
   --certificate-identity-regexp "https://harbor.internal/project/my-app" \
   --certificate-oidc-issuer $FULCIO_URL \
   | jq '.payload'
 ```
+
+Подробнее о проверке SLSA Provenance и VSA — в [Целостности сборки](./build_integrity.md#валидация-внедрения).
 
 ### Подпись через Notation (корпоративный стандарт)
 
@@ -159,7 +168,7 @@ notation sign --key "internal-ca/signing-key" harbor.internal/my-app:v1.0.0
 notation verify harbor.internal/my-app:v1.0.0
 
 # 4. Инспекция графа метаданных (Referrers)
-notation ls harbor.internal/my-app:v1.0.0
+notation list harbor.internal/my-app:v1.0.0
 ```
 
 ### Подпись бинарных файлов и Helm-чартов
@@ -170,7 +179,7 @@ Cosign работает с любыми файлами, не только с о�
 # Подписание бинарного файла (WASM, прошивка, исполняемый файл)
 cosign sign-blob --yes ./my-app-linux-amd64 \
   --bundle my-app.bundle \
-  --sign-algorithm mldsa
+  --signing-algorithm ecdsa-sha2-256-nistp256
 
 # Верификация бинарного файла
 cosign verify-blob ./my-app-linux-amd64 \
@@ -188,7 +197,12 @@ cosign sign --yes oci://harbor.internal/charts/my-app-1.4.0.tgz
 
 ```bash
 # 1. Генерация ключевой пары (в air-gapped зоне)
-openssl genpkey -algorithm ML-DSA -out signing.key -pkeyopt ml_dsa_paramset:ML-DSA-65
+# OpenSSL 3.5+ использует имя алгоритма с указанием параметров:
+#   ML-DSA-44 = security level 2 (128-bit)
+#   ML-DSA-65 = security level 3 (192-bit)
+#   ML-DSA-87 = security level 5 (256-bit)
+openssl genpkey -algorithm ML-DSA-65 -out signing.key
+
 openssl req -new -x509 -key signing.key -out signing.crt -days 365 \
   -subj "/CN=Internal CI Signing/O=MyOrg"
 
@@ -201,27 +215,30 @@ notation verify --certificate-file signing.crt harbor.internal/my-app:v1.0.0
 
 ### Верификация VSA в Kubernetes (Admission Control)
 
-В 2026 году блокировка деплоя выполняется на основе **VSA**, которая подтверждает выполнение всей политики безопасности (подписи + SLSA). Детальный пример политики Kyverno с troubleshooting — в **[Целостность сборки](./build_integrity.md#верификация-vsa-через-admission-controller-kyverno)**.
+В 2026 году блокировка деплоя выполняется на основе **VSA**, которая подтверждает выполнение всей политики безопасности (подписи + SLSA). Детальный пример политики Kyverno с troubleshooting — в **[Целостности сборки](./build_integrity.md#верификация-vsa-через-admission-controller)**.
 
 ## Валидация внедрения
 
-После настройки подписи выполните комплексную проверку всех компонентов:
+После настройки подписи выполните проверку ключевых компонентов:
 
 ```bash
-# 1. Проверка целостности подписи и аттестаций
+# 1. Проверка целостности подписи
 cosign verify $REGISTRY:$IMAGE_TAG \
   --certificate-identity-regexp "https://harbor.internal/project/my-app" \
-  --certificate-oidc-issuer "https://harbor.internal" \
+  --certificate-oidc-issuer $FULCIO_URL \
   && echo "Signature OK" || echo "Signature FAIL"
 
-# 2. Проверка наличия SLSA-аттестации
-syft $REGISTRY:$IMAGE_TAG -o spdx-json | jq '.packages[] | select(.name=="slsa-provenance")'
-# → Должен вернуть attestation object
+# 2. Проверка наличия SLSA-аттестации (Provenance)
+cosign verify-attestation $REGISTRY:$IMAGE_TAG \
+  --type slsaprovenance \
+  --certificate-oidc-issuer $FULCIO_URL \
+  --output json | jq '.payloadType' | head -1
+# → Должен вернуть slsaprovenance
 
-# 3. Проверка VSA через Kyverno
-kyverno test ./kyverno-tests/ --policy verify-supply-chain.yaml \
-  --resource ./test-pod.yaml
-# → 1 passed, 0 failed
+# 3. Проверка Provenance через Docker BuildKit
+docker buildx imagetools inspect $REGISTRY:$IMAGE_TAG \
+  --format '{{json .Provenance.SLSA}}'
+# → {"buildType":"https://mobyproject.org/buildkit@v1","predicateType":"https://slsa.dev/provenance/v1",...}
 
 # 4. Проверка CBOM для криптографических компонентов
 cdxgen -t generic --output-format json --output cbom.json .
@@ -233,6 +250,8 @@ trivy diff sbom:./expected-sbom.json sbom:./runtime-sbom.json
 # → Должен показать 0 изменений, если дрейф отсутствует
 ```
 
+Комплексная валидация всего пайплайна (сборка, SBOM, сканирование, admission) — в [Обзоре безопасности цепочки поставок](./overview.md#валидация-внедрения).
+
 ## Устранение неполадок
 
 | Симптом | Причина | Диагностика | Решение |
@@ -242,9 +261,9 @@ trivy diff sbom:./expected-sbom.json sbom:./runtime-sbom.json
 | `Cosign verify: certificate identity mismatch` | Идентичность в политике Kyverno не совпадает с OIDC-claim | `cosign verify --output text ...` | Проверьте точное совпадение `--certificate-identity` с claim `sub` в токене. |
 | `Notation: key not found` | Ключ не добавлен в trust store | `notation cert list` | Добавьте сертификат через `notation cert add --type ca --store <name> <cert.pem>`. |
 | `Trivy: false positive на CVE` | Уязвимый код не вызывается (reachability) | `trivy sbom --show-vulnerability-reachability` | Создайте VEX-отчет со статусом `not_affected`. |
-| `Kyverno блокирует валидный образ` | Политика содержит устаревший public key | `kyverno apply --policy ... --resource ...` | Обновите public key в `ClusterPolicy` после ротации ключей Cosign. |
+| `Kyverno блокирует валидный образ` | Политика содержит устаревший public key | `kyverno apply --policy ... --resource ...` | Обновите public key и используйте `ImageValidatingPolicy` (Kyverno v1.19+; `ClusterPolicy` для подписей устарел). |
 | `SBOM generation failed: multi-arch` | Syft не поддерживает манифест image index | `syft -o spdx-json ...` | Используйте `docker buildx imagetools inspect --format '{{json .Manifest}}'` и генерацию SBOM для каждого архитектурного варианта отдельно. |
-| `Referrers API 404` | Реестр не поддерживает OCI 1.1 | `curl -v /v2/.../referrers` | Обновите Harbor до v2.11+ или используйте альтернативный реестр с поддержкой Referrers. |
+| `Referrers API 404` | Реестр не поддерживает OCI 1.1 | `curl -v /v2/.../referrers` | Обновите Harbor до v2.15 или используйте альтернативный реестр с поддержкой Referrers. |
 
 ## Лучшие практики и очистка
 
@@ -254,11 +273,10 @@ trivy diff sbom:./expected-sbom.json sbom:./runtime-sbom.json
 4. **Ротация ключей:** Периодически (раз в 90 дней) ротируйте ключи подписи Cosign. Для keyless-сценария обновляйте Fulcio CA-корневой сертификат.
 5. **Short-lived сертификаты:** Минимизируйте время жизни сертификатов (Fulcio выдает их на 10 минут), чтобы исключить необходимость ведения списков отзыва (CRL).
 6. **Очистка артефактов:** Настройте политику удержания (retention) в Harbor: удаляйте неиспользуемые теги и старые аттестации через Harbor API.
-7. **Аудит:** Ведите журнал всех изменений политик Kyverno и Git-коммитов. Используйте `git log --show-signature` для проверки подлинности истории.
 
 ```bash
-# Пример очистки старых артефактов в Harbor (через API)
-curl -u "admin:Harbor12345" -X POST \
+# Пример очистки старых артефактов в Harbor (через API с robot-аккаунтом)
+curl -u "robot\$ci-bot:$ROBOT_SECRET" -X POST \
   "https://harbor.internal/api/v2.0/projects/my-app/repositories/my-app/artifacts/sha256:abc123" \
   -H "Content-Type: application/json" \
   -d '{"with_tag":false,"with_label":false}'
@@ -280,18 +298,20 @@ curl -u "admin:Harbor12345" -X POST \
 
 ### Как работает TUF
 
+Ключевые роли TUF и их функции:
+
 ```
 Репозиторий (издатель)
     │
-    ├── 1. Генерация целей (targets) + подпись
+    ├── 1. Генерация целей (targets) + хеши
     │       targets.json (список файлов + хеши)
     │       → подписывается targets-ключом
     │
     ├── 2. Роли и ключи
     │       ├── root: доверие к корневому ключу (хардкод)
-    │       ├── root →签字→ snapshot (манифест всех метаданных)
-    │       ├── root →签字→ timestamp (свежесть данных)
-    │       └── targets →签字→ targets (список файлов)
+    │       ├── root → подпись → snapshot (манифест всех метаданных)
+    │       ├── root → подпись → timestamp (свежесть данных)
+    │       └── targets → подпись → targets (список файлов)
     │
     └── 3. Клиент при обновлении
             ├── Проверяет timestamp (свежесть)
@@ -300,40 +320,70 @@ curl -u "admin:Harbor12345" -X POST \
             └── Скачивает файл и проверяет хеш
 ```
 
-**Ключевое отличие от простой подписи:** TUF защищает от атак на selbst (self-update attack), где злоумышленник компрометировал сервер обновлений и отдаёт старые/подменённые файлы. Простая подпись не ловит это, потому что подпись валидна, но файл — нет.
+**Ключевое отличие от простой подписи:** TUF защищает от атак на self-update, где злоумышленник компрометировал сервер обновлений и отдаёт старые/подменённые файлы. Простая подпись не ловит это, потому что подпись валидна, но файл — нет.
 
 ### Интеграция с пакетными менеджерами
 
 | Пакетный менеджер | Поддержка TUF | Настройка |
 | :--- | :--- | :--- |
-| **apt (Debian/Ubuntu)** | Нативная (apt-transport-https) | `/etc/apt/trusted.gpg.d/` + `InRelease` файлы |
-| **yum (RHEL/CentOS)** | Нативная (gpgcheck=1) | `/etc/pki/rpm-gpg/` + `repo_gpgcheck=1` |
-| **npm** | Через Sigstore (TUF-обёртка) | `sigstore` пакет, `npm audit signatures` |
-| **Go modules** | Нативная (GOSUMDB + TUF) | `GONOSUMCHECK`, `GONOSUMDB` |
-| **Helm** | Нативная (Helm provenance) | `helm install --verify` |
+| **apt (Debian/Ubuntu)** | Экспериментальная (Debian 12+) | `/etc/apt/trusted.gpg.d/` (GPG, не TUF); TUF-поддержка через экспериментальный плагин |
+| **yum/dnf (RHEL/CentOS)** | Частичная (RHEL 9+) | `/etc/pki/rpm-gpg/` + `repo_gpgcheck=1` (GPG, не TUF) |
+| **npm** | Нет TUF | Sigstore для provenance (`npm audit signatures`) |
+| **Go modules** | Нет TUF | `GOSUMDB`, `GOPRIVATE`, `GONOSUMDB` env vars |
+| **Helm** | Нет TUF | `helm install --verify` (GPG), `helm provenance` |
 
 ### Практический пример: TUF-сервер для внутренних обновлений
 
-```bash
-# 1. Установка TUF-сервера (tuf-on-server)
-go install github.com/theupdateframework/tuf/cmd/tuf-server@latest
+Для on-prem развертывания используйте **go-tuf** (CLI для управления репозиторием) и веб-сервер для доставки метаданных клиентам.
 
-# 2. Инициализация репозитория
+```bash
+# 1. Установка go-tuf CLI (управление репозиторием и клиент)
+go install github.com/theupdateframework/go-tuf/cmd/tuf@latest
+go install github.com/theupdateframework/go-tuf/cmd/tuf-client@latest
+
+# 2. Инициализация репозитория (на сервере)
 tuf init
 
-# 3. Добавление целей (файлов для обновления)
+# 3. Генерация ключей для каждой роли (root, targets, snapshot, timestamp)
+tuf gen-key root
+tuf gen-key targets
+tuf gen-key snapshot
+tuf gen-key timestamp
+
+# 4. Добавление целей (файлов для обновления)
 tuf add /path/to/update-v1.0.0.tar.gz
 
-# 4. Генерация ключей и подписание
-tuf generate
-tuf sign
+# 5. Создание snapshot и timestamp метаданных
+tuf snapshot
+tuf timestamp
 
-# 5. Запуск сервера
-tuf-server --listen :8080 --repo /path/to/tuf-repo
+# 6. Подписание метаданных каждой ролью
+tuf sign staged/root.json
+tuf sign staged/targets.json
+tuf sign staged/snapshot.json
+tuf sign staged/timestamp.json
 
-# 6. Клиент: проверка обновлений
-tuf-client init http://tuf-server.internal:8080
+# 7. Фиксация подписанной метаданных в репозитории
+tuf commit
+
+# 8. Выдача root-ключей клиентам (для инициализации)
+tuf root-keys
+# → [{"key_id":"...","keytype":"...","scheme":"..."}]
+
+# 9. Клиент: инициализация и проверка обновлений
+tuf-client init http://tuf-server.internal:8080/
 tuf-client update
+# → Successfully updated to latest version
+```
+
+Для production-развёртывания используйте **RSTUF (Repository Service for TUF)** — управляемый сервис с API:
+
+```bash
+# Установка RSTUF CLI
+pip install repository-service-tuf
+
+# Инициализация (ceremony) и bootstrap репозитория
+rstuf --api-server http://rstuf-api.internal
 ```
 
 ### TUF в контексте supply chain
@@ -348,18 +398,22 @@ TUF дополняет Sigstore/Notation:
 
 ### Стандарты и ресурсы
 
-* **SLSA.dev:** <https://slsa.dev/> — спецификации SLSA v2.0 (Build & Source tracks).
+* **SLSA.dev:** <https://slsa.dev/> — спецификации SLSA v1.2 (Build & Source tracks).
 * **NIST PQC Standards:** <https://csrc.nist.gov/Projects/post-quantum-cryptography> — стандарты FIPS 203 (ML-KEM), FIPS 204 (ML-DSA) и FIPS 205 (SLH-DSA).
 * **EU CRA:** <https://digital-strategy.ec.europa.eu/en/policies/cyber-resilience-act> — официальный текст закона о киберустойчивости ЕС.
 * **ECMA-424:** <https://www.ecma-international.org/> — стандарт Cryptography Bill of Materials (CBOM).
 * **IETF SCITT:** <https://datatracker.ietf.org/wg/scitt/> — цепочка доверия для программных артефактов (Supply Chain Integrity, Transparency, and Trust).
 * **OpenSSF:** <https://openssf.org/> — инициативы GUAC, Scorecard и Sigstore.
+* **TUF:** <https://theupdateframework.io/> — спецификация и реализации The Update Framework.
+* **in-toto:** <https://in-toto.io/> — стандарт описания жизненного цикла ПО; формат-обёртка для SLSA Provenance.
 
 ### Связанные документы
 
-* [Обзор безопасности цепочки поставок](./overview.md) — фундаментальные принципы, SLSA v2.0 и регуляторика (EU CRA).
-* [Целостность сборки](./build_integrity.md) — SLSA v2.0, аттестации и воспроизводимость.
-* [Анализ зависимостей и SBOM](./dependency_and_sbom_analysis.md) — SCA, VEX и инвентаризация по CycloneDX 1.6.
-* [Sigstore: Безопасность цепочки поставок](../Tools/sigstore.md) — детальный разбор Fulcio/Rekor и OIDC.
+* [Обзор безопасности цепочки поставок](./overview.md) — фундаментальные принципы, SLSA v1.2 и регуляторика (EU CRA).
+* [Целостность сборки](./build_integrity.md) — SLSA, аттестации, воспроизводимость и VSA.
+* [Sigstore vs Notation: сравнение и выбор](./sigstore_vs_notation.md) — детальное сравнение моделей подписи, когда использовать каждую.
+* [Sigstore: Безопасность цепочки поставок](../Tools/sigstore.md) — глубокий разбор Fulcio/Rekor и OIDC.
+* [Анализ зависимостей и SBOM](./dependency_and_sbom_analysis.md) — SCA, VEX и инвентаризация по CycloneDX.
+* [Безопасность цепочки поставок контейнерных образов](./container_image_supply_chain.md) — distroless, digest pinning, multi-stage builds, admission control.
 * [Docker SBOM](../../Docker/Docker_security/docker_sbom.md) — генерация аттестаций через BuildKit.
 * [ASPM: Управление безопасностью приложений](../../CI-CD/DevSecOps/devsecops_overview.md) — оркестрация рисков и результатов сканирования.

@@ -26,7 +26,7 @@ chkrootkit — shell-скрипт, вызывающий вспомогатель
 | `check_wtmpx.c` | то же для `wtmpx` (только Solaris) |
 | `strings.c` | быстрая замена `strings` |
 
-Проверяемые системные команды: `netstat`, `named`, `passwd`, `pidof`, `pop2`, `pop3`, `ps`, `pstree`, `rpcinfo`, `rlogind`, `rshd`, `slogin`, `sendmail`, `sshd`, `syslogd`, `tar`, `tcpd`, `tcpdump`, `top`, `telnetd`, `timed`, `traceroute`, `vdir`, `w`, `write`. Актуальный список детектируемых руткитов, червей и LKM (75 позиций, от `lrk3`/`t0rn`/`Adore LKM` до `Mumblehard`, `Linux.Xor.DDoS`, `Umbreon`, `BPFDoor`, `Kovid`, `Syslogk`) — на сайте проекта.
+Проверяемые системные команды: `netstat`, `named`, `passwd`, `pidof`, `pop2`, `pop3`, `ps`, `pstree`, `rpcinfo`, `rlogind`, `rshd`, `slogin`, `sendmail`, `sshd`, `syslogd`, `tar`, `tcpd`, `tcpdump`, `top`, `telnetd`, `timed`, `traceroute`, `vdir`, `w`, `write`, `nologin` (0.59+). Актуальный список детектируемых руткитов, червей и LKM (75 позиций, от `lrk3`/`t0rn`/`Adore LKM` до `Mumblehard`, `Linux.Xor.DDoS`, `Umbreon`, `BPFDoor`, `Kovid`, `Syslogk`) — на сайте проекта.
 
 **Модель доверия.** chkrootkit работает, вызывая системные команды (`awk`, `cut`, `echo`, `egrep`, `find`, `head`, `id`, `ls`, `netstat`, `ps`, `strings`, `sed`, `uname`). На скомпрометированной системе они могут быть подменены руткитом, и результаты проверки станут ненадёжными. Ключи `-p` (путь к доверенным бинарникам) и `-r` (альтернативный корень) решают эту проблему — см. раздел «Устранение неполадок».
 
@@ -51,9 +51,44 @@ sudo dnf install chkrootkit
 # (tarball с chkrootkit.org: make в каталоге с исходниками)
 ```
 
-Пакеты дистрибутивов могут отставать от upstream-версии (Debian stable — 0.58b, Fedora — 0.58; upstream — 0.59, в которой добавлены проверка «process executed from memory», команда `nologin` и детекция XZ Backdoor Bottkitty (UEFI bootkit)).
+Пакеты дистрибутивов могут отставать от upstream-версии (Debian stable — 0.58b, Fedora — 0.58; upstream — 0.59). Нововведения 0.59:
+
+- **Process executed from memory** — проверка `/proc/*/exe` на симлинки вида `/memfd:.*(deleted)`, обнаруживающие программы, загруженные в анонимную память через `memfd_create(2)` (техника fileless-мalware); выводит `INFECTED: Possible process running from memory:`.
+- **`nologin`** — новая команда в списке проверяемых (`TROJAN`): ищет строку `/bin/*sh` в бинарнике `nologin`, признак встраивания backdoor-оболочки в эту утилиту.
+- **Bootkitty (UEFI bootkit)** — в expert mode проверяет наличие `LD_PRELOAD` в конфигурации GRUB (`/boot/grub/grub.cfg`, `/etc/grub.d/*`), техника, используемой UEFI-буткитом для инъекции кода в загрузку.
+- **XZ Backdoor** — упомянуто в changelog, но конкретных проверок в исходном коде 0.59 не идентифицировано (поиск по исходным файлам не выявил кода, сопоставимого с обнаружением backdoor в `xz-utils`/CVE-2024-3094).
 
 Часть тестов (`chkproc`, проверка `lastlog`/`wtmp`) требует прав root — запускайте `sudo chkrootkit`.
+
+### Конфигурация и автоматизация
+
+chkrootkit не имеет собственного конфигурационного файла: все параметры задаются через командную строку. Дистрибутивы добавляют автоматизацию поверх пакета.
+
+**Debian / Ubuntu (0.58b+):** пакет устанавливает `chkrootkit-daily` — systemd-таймер (`chkrootkit.timer` + `chkrootkit.service`) или cron-скрипт (`/etc/cron.daily/chkrootkit`), который ежедневно запускает chkrootkit в quiet-режиме и отправляет результаты по почте. Параметры задаются в `/etc/chkrootkit/chkrootkit.conf`:
+
+| Переменная | По умолчанию | Назначение |
+| :--- | :--- | :--- |
+| `RUN_DAILY` | `false` | запускать ли ежедневную проверку |
+| `RUN_DAILY_OPTS` | `-q` | опции для ежедневного запуска |
+| `DIFF_MODE` | `false` | сравнивать текущий лог с эталоном (`log.expected`) |
+| `REPORT_EMAIL` / `MAILTO` | `root` | получатель отчёта |
+
+Журналы: `/var/log/chkrootkit/chkrootkit.log`, `/var/log/chkrootkit/log.today`, `/var/log/chkrootkit/log.expected` (при включённом `DIFF_MODE`).
+
+Проверить статус таймера:
+
+```bash
+systemctl list-unit-files 'chkrootkit*' --no-pager
+systemctl list-timers 'chkrootkit*' --all --no-pager
+```
+
+Другие дистрибутивы (RHEL, Fedora, Arch) не включают `chkrootkit-daily` — настраивают cron вручную:
+
+```bash
+# /etc/cron.daily/chkrootkit
+#!/bin/sh
+/usr/sbin/chkrootkit -q
+```
 
 ## Практические сценарии
 
@@ -187,13 +222,35 @@ sudo rmmod diamorphine
 | `-d` | debug-режим: все шаги, включая `set -x` |
 | `-q` | quiet mode: только сообщения о заражении |
 | `-x` | expert mode: дополнительный вывод тестов |
-| `-e "FILE1 [FILE2 ...]"` | исключить файлы из результатов части тестов; ключ можно повторять |
+| `-e "FILE1 [FILE2 ...]"` | исключить файлы из результатов части тестов; ключ можно повторять несколько раз |
+| `-s REGEXP` | фильтр для теста `sniffer`: исключает из вывода строки, соответствующие регулярному выражению (egrep); применяется к выводу теста `ifpromisc` |
 | `-r dir` | использовать `dir` как корневой каталог (диск проверяемой системы смонтирован в доверенной) |
-| `-p dir` | путь к доверенным бинарникам вместо системных |
+| `-p dir1:dir2:...:dirN` | путь к доверенным бинарникам вместо системных; можно указывать несколько путей через `:` |
+| `-n` | пропускать NFS-монтированные каталоги |
+| `-T FSTYPE` | пропускать файловые системы указанного типа (через `find -fstype`) |
 
 Ключи нельзя комбинировать: пишите `-q -x`, а не `-qx`.
 
 ## Устранение неполадок
+
+### Коды вывода
+
+chkrootkit выводит следующие сообщения (кроме режимов `-x` и `-q`). Статусы кодируются числовыми кодами в исходном коде (`INFECTED=0`, `NOT_INFECTED=1`, `NOT_TESTED=2`, `NOT_FOUND=3`, `VULNERABLE_BUT_DISABLED=4`):
+
+| Сообщение | Код | Значение |
+| :--- | :--- | :--- |
+| `INFECTED` | 0 | тест обнаружил команду, вероятно, изменённую известным руткитом |
+| `not infected` | 1 | сигнатуры руткитов не найдены |
+| `not tested` | 2 | тест не выполнен (OS-специфичный, внешняя утилита недоступна, или заданы опции `-r`/`-n`) |
+| `not found` | 3 | проверяемая команда отсутствует в системе |
+| `infected but disabled` | 4 | команда инфицирована, но не используется (not running or commented in `inetd.conf`) |
+
+**Важно:** chkrootkit не использует код возврата скрипта для сигнализации заражения. При использовании в cron/monitoring следует парсить вывод на наличие `INFECTED`:
+
+```bash
+# в cron-скрипте или мониторинге:
+sudo chkrootkit -q 2>&1 | grep INFECTED && echo "ALERT: rootkit detected"
+```
 
 ### Ложные срабатывания chkproc
 
@@ -208,11 +265,21 @@ sudo chkrootkit -p /cdrom/bin   # бинарники с доверенного �
 sudo chkrootkit -r /mnt         # диск проверяемой системы смонтирован в доверенной
 ```
 
+### Ложные срабатывания теста `sniffer`
+
+Симптом: тест `sniffer` (утилита `ifpromisc`) помечает обычные сетевые менеджеры как packet sniffer. Это происходит потому, что `systemd-networkd`, `NetworkManager` и `wpa_supplicant` используют promiscuous mode для перехвата трафика. Решение — фильтр `-s`:
+
+```bash
+sudo chkrootkit -s '(systemd-networkd|NetworkManager|wpa_supplicant)'
+```
+
+Этот регулярный фильтр (egrep) применяется к каждой строке вывода теста `ifpromisc`. Дополнительные ложные срабатывания описаны в `/usr/share/doc/chkrootkit/README.FALSE-POSITIVES`.
+
 ## Лучшие практики
 
 - **Комбинируйте с rkhunter:** chkrootkit по умолчанию ловит скрытые процессы (`chkproc`), rkhunter — сигнатуры, свойства файлов и конфигурацию; оба сигнатурные и дополняют, а не заменяют друг друга (см. [rkhunter](./rkhunter.md)).
 - **Доверенные бинарники:** при подозрении на компрометацию запускайте с `-p`/`-r` с доверенного носителя.
-- **Регулярность:** запуск по cron (например, `cron.daily`); каждое сообщение о заражении расследуйте, а не игнорируйте.
+- **Регулярность:** запуск по cron (Debian/Ubuntu — `chkrootkit-daily` из `/etc/chkrootkit/chkrootkit.conf`, см. «Конфигурация и автоматизация»); каждое сообщение о заражении расследуйте, а не игнорируйте.
 - **Границы возможностей:** ни chkrootkit, ни rkhunter не обнаруживают современные eBPF-руткиты — для них используйте [ghostscan](./ghostscan.md); для мониторинга в реальном времени — [Falco](./falco.md) и [Wazuh](./wazuh.md).
 
 ## Дополнительная информация

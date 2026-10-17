@@ -95,6 +95,18 @@ Envoy является самой популярной реализацией с
 - **Traefik Proxy:** используется в Traefik Mesh.
 - **HAProxy:** может использоваться в качестве прокси в HashiCorp Consul (как альтернатива Envoy) или в самописных решениях.
 
+### Proxyless gRPC (без сайдкара)
+
+**Proxyless gRPC** — модель, при которой gRPC-приложение само подключается к Control Plane по протоколу **xDS**, без Envoy-сайдкара: логика маршрутизации, балансировки и mTLS выполняется gRPC-стеком приложения. В Istio доступна как экспериментальная опция с 1.11 (шаблон инъекции `grpc-agent`: в под внедряется только `pilot-agent` с bootstrap-файлом, Envoy не запускается). Требования и ограничения:
+
+- **Версия gRPC ≥ 1.39** с включёнными xDS-функциями; часть функций реализована не во всех языковых имплементациях gRPC (см. gRFC и таблицу feature status).
+- **Работает:** service discovery, subsets, `ROUND_ROBIN` балансировка, базовые политики `VirtualService` (маршрутизация), mTLS.
+- **Ограничено:** auto-mTLS и PERMISSIVE не поддерживаются — на сервере задаётся `PeerAuthentication: STRICT`, на клиенте `tls.mode: ISTIO_MUTUAL`; fault injection, ретраи, зеркалирование, rewrite и `consistentHash` могут не поддерживаться.
+- **Готовность:** серверу нужна аннотация `proxy.istio.io/config` с `holdApplicationUntilProxyStarts: true`, иначе gRPC-сервер стартует до готовности xDS-агента.
+- **Health-check'и** при mTLS требуют отдельного порта или клиентских сертификатов.
+
+Для продакшена предпочтительнее sidecar-модель (Envoy) или Ambient: полный набор функций меша и единый data plane. Proxyless интересен для gRPC-only сервисов, где критичен каждый мегабайт RAM сайдкара, — но это компромисс по функциональности и уровню экспериментальности.
+
 ### Сравнение реализаций (июль 2026)
 
 | Критерий | Envoy (Istio 1.30+) | Linkerd-proxy (Linkerd 2.20+) |
@@ -689,7 +701,7 @@ kubectl delete namespace istio-system
 
 ### Лучшие практики эксплуатации
 
-1. **Ресурсные квоты:** всегда устанавливать `requests` и `limits` для сайдкаров. В 2026 году Envoy требует ~0.5 vCPU и 50MB RAM на 1,000 RPS. Для Native Sidecar используйте `requests.cpu: 50m` и `requests.memory: 64Mi` как минимум; лимиты — `cpu: 200m`, `memory: 128Mi`.
+1. **Ресурсные квоты:** всегда устанавливать `requests` и `limits` для сайдкаров. В Istio 1.31 Envoy требует ~0.20 vCPU и 60MB RAM на 1,000 RPS. Для Native Sidecar используйте `requests.cpu: 50m` и `requests.memory: 64Mi` как минимум; лимиты — `cpu: 200m`, `memory: 128Mi`.
 2. **Scoping конфигурации:** использовать ресурс `Sidecar` (Istio) для ограничения списка сервисов, о которых знает прокси. Это критично для снижения потребления RAM в больших кластерах. Подробнее в [Конфигурации Sidecar в Istio](./istio-sidecar-configuration.md).
 3. **eBPF Acceleration:** при использовании CNI (Cilium, Calico VPP) в амбиентном режиме, включайте eBPF redirect для эффективного перенаправления трафика в Ztunnel. Для SOCKMAP-ускорения требует `--define=sockmap=enabled` при сборке Envoy и eBPF-объект; экспериментальная функция.
 4. **Безопасность:** ограничивать доступ к административному порту Envoy (15000) и Linkerd (4191) через NetworkPolicies. Разрешайте доступ только из системных неймспейсов и от SRE-инструментов.

@@ -1,6 +1,6 @@
 # Безопасность реестров образов
 
-**Актуально для:** Docker Engine 29.x, Docker Registry 2.x–3.x, Harbor 2.11+.
+**Актуально для:** Docker Engine 29.x, Docker Registry 2.x–3.x, Harbor v2.15+.
 
 Гигиена public-реестров (typo-squatting, rate limits) — в [public_registry_security.md](../Docker_registries/public_registry_security.md); версионирование и immutable tags — в [image_versioning_and_tagging.md](../Docker_registries/image_versioning_and_tagging.md); Harbor — в [Harbor/](../Docker_registries/Harbor/); GC и retention — в [cleanup_gc_strategies.md](../Docker_fs/cleanup_gc_strategies.md). Данный файл — security-разрез: угрозы, контроль доступа, подписи, сканирование, network hardening, аудит.
 
@@ -14,7 +14,7 @@
 
 **Content trust / cosign / notation** — подпись образов: Docker Content Trust (DCT, Notary v1 — устарел, вывод из эксплуатации с 30.07.2025, `notary.docker.io` отключается 08.12.2026), Cosign (Sigstore, keyless, OCI 1.1 Referrers) и Notation (Notary Project, PKI). Проверка подписи перед запуском.
 
-**OCI 1.1 Referrers** — стандарт связи артефактов (подписей, SBOM, provenance) с образом через API реестра без использования тегов-пустышек. Harbor 2.11+, GHCR и Docker Hub поддерживают.
+**OCI 1.1 Referrers** — стандарт связи артефактов (подписей, SBOM, provenance) с образом через API реестра без использования тегов-пустышек. Harbor v2.15+, GHCR и Docker Hub поддерживают.
 
 **Dependency confusion** — атака: злоумышленник публикует пакет с именем внутреннего в public registry; сборщик тянет public-версию.
 
@@ -27,9 +27,9 @@
 ## Предварительные требования
 
 - **Docker Engine 29.x** — `docker login`, `docker push/pull`, `docker inspect`.
-- **Cosign v3.x** — подпись и верификация образов (keyless OIDC, OCI 1.1 Referrers по умолчанию).
-- **Notation v1.x** — корпоративная подпись через X.509 PKI.
-- **Harbor 2.11+** — реестр с поддержкой OCI 1.1 Referrers, RBAC, сканирование.
+- **Cosign v3.1.3** — подпись и верификация образов (keyless OIDC, OCI 1.1 Referrers по умолчанию).
+- **Notation v1.3.2** — корпоративная подпись через X.509 PKI.
+- **Harbor v2.15+** — реестр с поддержкой OCI 1.1 Referrers, RBAC, сканирование.
 - **Trivy ≥ 0.70.1** (≥ 0.74.x) — сканирование уязвимостей; критично из-за CVE-2026-33634 (компрометация образов сканера).
 - **Kyverno 1.19+** или **OPA Gatekeeper** — admission control для принудительной проверки подписей в Kubernetes.
 - **curl, jq, openssl** — проверка лимитов, API, сертификатов.
@@ -134,7 +134,7 @@ cosign attest --predicate sbom.json --type spdx \
 cosign verify --key cosign.pub my-registry.example.com:5000/my-app:v1.2.3 && echo "OK"
 # → Verification OK
 
-# Проверка Referrers API (Harbor 2.11+)
+# Проверка Referrers API (Harbor v2.15+)
 curl -u "robot$production+ci-bot:$ROBOT_SECRET" \
   "https://harbor.example.com/v2/production/manifests/sha256:abcd.../referrers"
 # → 200 OK со списком подписей/аттестаций
@@ -281,7 +281,7 @@ spec:
 * **Multi-arch подписи:** подпись привязывается к каждому child-образу манифест-листа отдельно; `cosign verify` проверяет только выбранный клиентом манифест (обычно amd64).
 * **Air-gapped / офлайн-реестры:** публичный Sigstore недоступен; используйте self-hosted Fulcio/Rekor или ключ-based подпись (Cosign `--key`).
 * **Self-signed TLS и Cosign:** Cosign может отказаться подписывать образ в реестре с self-signed сертификатом; добавьте CA в `SSL_CERT_FILE` или system trust store.
-* **PQC (ML-DSA):** Cosign v3.x поддерживает `--sign-algorithm mldsa`, но не все Admission Controllers и реестры recognise PQC-подписи — проверяйте совместимость перед production.
+* **PQC (ML-DSA):** ML-DSA поддерживается в Cosign только экспериментально (через KMS, а не через `--sign-algorithm`). Не все Admission Controllers и реестры поддерживают PQC-подписи — проверяйте совместимость перед production.
 * **Кросс-реестр promotion:** при promotion staging→prod подпись не переносится автоматически; переподписывайте в prod-реестре или используйте `cosign copy`.
 * **Registry GC и 2-часовое окно:** Harbor GC не удаляет артефакты, загруженные за последние 2 часов; остановка GC не восстанавливает удалённое.
 * **Robot-аккаунт без интерфейса:** не может войти в веб-Harbor, только API/CLI; при утере секрета — Refresh Secret.

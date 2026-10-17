@@ -1,5 +1,7 @@
 # Конфигурация Sidecar в Istio
 
+**Актуально для:** Istio 1.31.x
+
 ## Определения
 
 **Sidecar (ресурс)** — пользовательский ресурс Istio (`networking.istio.io/v1`), позволяющий тонко настраивать поведение [сайдкар-прокси](./proxy_sidecar.md) для конкретных рабочих нагрузок или неймспейсов. В архитектуре 2026 года ресурс Sidecar остается основным инструментом оптимизации для классической модели инъекции, сосуществуя с [Ambient Mesh](./istio_architecture.md).
@@ -33,10 +35,10 @@
 В Kubernetes 1.33+ прокси запускаются как **Native Sidecar Containers** (`initContainers` с `restartPolicy: Always`). Это гарантирует:
 - Запуск прокси строго до старта приложения.
 - Завершение прокси только после остановки основных контейнеров (решает проблему зависших Job).
-- Использование `holdApplicationUntilProxyStarts: true` (по умолчанию в 1.29+) для предотвращения race conditions.
+- Использование `holdApplicationUntilProxyStarts: true` (через `proxy.istio.io/config` или `MeshConfig.defaultConfig`) для предотвращения race conditions.
 
 ### API и стабильность
-Ресурс `Sidecar` поддерживается в API `networking.istio.io/v1` (в 1.30+ `v1beta1` и `v1alpha3` deprecated). В текущих версиях Istio 1.30+ API является стабильным и обратно совместимым. Прямое редактирование `spec` поля `egress` или `ingress` не требует перезапуска пода — `istiod` отправляет дельту xDS-конфигурации.
+Ресурс `Sidecar` поддерживается в API `networking.istio.io/v1` (`v1alpha3` deprecated с 1.22; `v1beta1` и `v1` поддерживаются одновременно). В текущих версиях Istio 1.31.x API является стабильным и обратно совместимым. Прямое редактирование `spec` поля `egress` или `ingress` не требует перезапуска пода — `istiod` отправляет дельту xDS-конфигурации.
 
 ### Взаимодействие с MeshConfig и outboundTrafficPolicy
 Поведение прокси также зависит от глобального параметра `MeshConfig.outboundTrafficPolicy`:
@@ -71,6 +73,15 @@ metadata:
 При пересечении правил более специфичное правило имеет приоритет. Resource `Sidecar` в неймспейсе `istio-system` с `hosts: ["./*"]` не даст эффекта для workload в других неймспейсах.
 
 ---
+
+## Предпосылки
+
+- **Istio 1.31.x** или совместимая версия, установленная с профилем `ambient` или `default` (+ `nativeSidecar: true`).
+- **Kubernetes 1.30+** (рекомендуется 1.31–1.33+ для Native Sidecar Containers).
+- **istioctl 1.31.x** — версия должна совпадать с установленным Istio.
+- Понимание концепций service mesh: mTLS, xDS (CDS/LDS/RDS/EDS), [sidecar proxy](./proxy_sidecar.md).
+- Развёрнутый [Gateway API v1.1+](https://gateway-api.sigs.k8s.io/) (для waypoint и GAMMA-ресурсов).
+- RBAC: права на создание `Sidecar` и `ServiceEntry` ресурсов в целевых неймспейсах.
 
 ## Практические сценарии
 
@@ -376,12 +387,12 @@ istioctl proxy-config clusters <pod-name> -n <ns> | wc -l
 
 ## Лучшие практики эксплуатации
 
-1.  **Ресурсные квоты:** всегда устанавливайте `requests` и `limits` для сайдкаров. В 2026 году Envoy требует ~0.5 vCPU и 50MB RAM на 1,000 RPS. Для Native Sidecar используйте `requests.cpu: 50m` и `requests.memory: 64Mi` как минимум; лимиты — `cpu: 200m`, `memory: 128Mi`.
+1.  **Ресурсные квоты:** всегда устанавливайте `requests` и `limits` для сайдкаров. В Istio 1.31 Envoy требует ~0.20 vCPU и 60MB RAM на 1,000 RPS (2 worker threads). Для Native Sidecar используйте `requests.cpu: 50m` и `requests.memory: 64Mi` как минимум; лимиты — `cpu: 200m`, `memory: 128Mi`.
 2.  **Gateway API стандартизация:** используйте Gateway API (GAMMA) как основной интерфейс для управления трафиком. Legacy API (`VirtualService`, `DestinationRule`) поддерживается, но новые проекты должны использовать Gateway API.
 3.  **Scoping:** ограничивайте `egress.hosts` до минимально необходимого набора. Избегайте `*/*` в продакшене.
 4.  **Постепенное внедрение:** начинайте с Ambient L4 (mTLS) для всего кластера, затем добавляйте Waypoint Proxy только для сервисов, требующих L7. При переходе с Sidecar оставляйте оба режима параллельно 2–4 недели.
 5.  **Мониторинг Ztunnel:** настройте алерты на использование ресурсов Ztunnel, так как он обслуживает все поды на ноде.
-6.  **eBPF-акселерация:** при использовании CNI (Cilium, Calico VPP), включайте SOCKMAP для обхода TCP-стека ядра между приложением и прокси. Это снижает задержки на 15–20%.
+6.  **eBPF-акселерация:** при использовании CNI (Cilium, Calico VPP) включайте sockmap-интерфейс Envoy для обхода TCP-стека ядра между приложением и прокси. Это может снизить задержки локальных соединений (эффективность зависит от нагрузки и стека). Для активации требуется сборка Envoy с `--define=sockmap=enabled` и загрузка eBPF-объекта (`sockmap_kern.o`).
 7.  **Ротация сертификатов:** настройте автоматическую ротацию trust anchors перед истечением срока (рекомендуемый срок — 90 дней для промежуточных CA). Используйте `istioctl proxy-config secret` для проверки.
 8.  **Валидация после изменений:** после изменения ресурсов `Sidecar`, `VirtualService` или `DestinationRule` выполняйте `istioctl analyze` и `istioctl proxy-status` для подтверждения распространения конфигурации.
 9.  **Бэкап конфигурации:** регулярно экспортируйте ресурсы Istio и ConfigMap `istio` в `istio-system`.

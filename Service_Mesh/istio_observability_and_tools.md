@@ -1,8 +1,10 @@
 # Наблюдаемость в Istio: Kiali, телеметрия и федерация идентичности
 
+**Актуально для:** Istio 1.31.x
+
 ## Определения
 
-**Наблюдаемость (Observability)** в Istio — это совокупность инструментов и практик для глубокого анализа состояния сервисной сетки (Service Mesh), визуализации топологии трафика, мониторинга производительности и распределенной трассировки запросов. В 2026 году наблюдаемость строится на стандартах **OpenTelemetry** и **Gateway API**.
+**Наблюдаемость (Observability)** в Istio — это совокупность инструментов и практик для глубокого анализа состояния сервисной сетки (Service Mesh), визуализации топологии трафика, мониторинга производительности и распределенной трассировки запросов. В 2026 году наблюдаемость строится на стандартах **OpenTelemetry** и **W3C Trace Context**, а конфигурация Waypoint Proxy использует **Gateway API**.
 
 **Kiali** — центральная консоль управления и визуализации для Istio. Она предоставляет графическое представление графа зависимостей сервисов, отслеживает "золотые сигналы" (RPS, ошибки, задержки) и валидирует корректность конфигураций.
 
@@ -16,7 +18,7 @@
 
 ### Стек наблюдаемости 2026 года
 
-Современная архитектура мониторинга Istio (1.30+) интегрируется со стеком **LGTM** (Loki, Grafana, Tempo, Mimir) через универсальный агент **Grafana Alloy**.
+Современная архитектура мониторинга Istio (1.31.x) интегрируется со стеком **LGTM** (Loki, Grafana, Tempo, Mimir) через универсальный агент **Grafana Alloy**.
 
 | Компонент | Роль | Примечание |
 | :--- | :--- | :--- |
@@ -28,7 +30,7 @@
 
 ### Telemetry API (telemetry.istio.io)
 
-В Istio 1.30+ настройка телеметрии централизована через ресурс **`Telemetry`** (API-группа `telemetry.istio.io/v1`). Он заменяет устаревшие пер-прокси аннотации и `MeshConfig`-фрагменты для метрик, логов и трейсов. Ресурс привязывается к workloads через `selector` или к мешу/неймспейсу как global/default:
+В Istio 1.31.x настройка телеметрии централизована через ресурс **`Telemetry`** (API-группа `telemetry.istio.io/v1`). Он заменяет устаревшие пер-прокси аннотации и `MeshConfig`-фрагменты для метрик, логов и трейсов. Ресурс привязывается к workloads через `selector` или к мешу/неймспейсу как global/default:
 
 | Поле | Назначение |
 | :--- | :--- |
@@ -120,6 +122,20 @@ Kiali использует цветовую и символьную индика
 
 ---
 
+## Предпосылки
+
+Перед настройкой наблюдаемости выполните проверку:
+
+- **Istio 1.31.x** с включённым профилем `ambient` или `default` (+ `nativeSidecar: true` при использовании Native Sidecar Containers).
+- **Kubernetes 1.32–1.37** (минимальная поддерживаемая версия — 1.32).
+- **Prometheus Operator (kube-prometheus-stack v0.8.x+)** или **Mimir** для сбора метрик с `ServiceMonitor`/`PodMonitor`.
+- **Kiali 2.28** (установлен через официальный Helm chart или Istio addon).
+- **Grafana Tempo 3.1+** или **Jaeger v2** для сбора трейсов (OTLP gRPC `:4317`).
+- **Grafana Loki 3.x+** для централизованного сбора логов.
+- **Grafana Alloy 1.2+** или **OpenTelemetry Collector 0.120+** в роли коллектора телеметрии.
+- **OIDC-провайдер** (Dex, Keycloak, или внешний IdP) с поддержкой Authorization Code Flow.
+- **RBAC:** ServiceAccount Kiali с правами `clusterroles` для чтения `metrics`, `pods`, `services`, и `istio.io/*` CRDs.
+
 ## Практические сценарии
 
 ### Организация безопасного доступа к Kiali через OIDC (Dex)
@@ -184,7 +200,7 @@ staticClients:
 
 #### 4. PKCE и безопасность токенов
 
-Начиная с Kiali 2.21 (январь 2026) поток **OIDC Authorization Code** полностью поддерживает **PKCE** (Proof Key for Code Exchange) — расширение, защищающее код авторизации от перехвата даже при отсутствии `client_secret`. В Kiali конфигурация PKCE включается флагом `auth.openid.enable_pkce`. Рекомендации:
+Начиная с Kiali 2.21 (январь 2026) поток **OIDC Authorization Code** полностью поддерживает **PKCE** (Proof Key for Code Exchange) — расширение, защищающее код авторизации от перехвата даже при отсутствии `client_secret`. В Kiali PKCE включается автоматически при использовании OIDC без `client_secret` — отдельный флаг конфигурации не требуется. Рекомендации:
 
 - В публичных средах (без доверенного `client_secret`) обязательно включайте PKCE.
 - Для `client_secret` используйте только секреты и переменные окружения — не храните его в ConfigMap.
@@ -406,9 +422,123 @@ curl -v -H "traceparent: 00-$TRACE_ID-$PARENT_ID-01" http://my-app.prod/api
 kubectl logs <pod> -c istio-proxy -n prod | grep -i "traceparent\|tracestate"
 ```
 
+### Сценарий 10: Безопасный сбор метрик через mTLS (Istio 1.31+)
+
+Начиная с Istio 1.31, встроены переменные окружения для mTLS-защищённых портов метрик. Это устраняет необходимость в обходных ServiceEntry/VirtualService-конфигурациях для older версий.
+
+**Порты:**
+- `ENVOY_SECURE_METRICS_PORT` (15091) — mTLS listener для Envoy-only stats (порт 15090)
+- `ENVOY_SECURE_MERGED_METRICS_PORT` (15092) — mTLS listener для объединённых метрик (порт 15020, включая app и agent stats)
+
+#### Шаг 1. Настройка mTLS-портов в proxyMetadata
+
+```yaml
+# istio-secure-metrics.yaml
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  meshConfig:
+    defaultConfig:
+      proxyMetadata:
+        ENVOY_SECURE_METRICS_PORT: "15091"
+        ENVOY_SECURE_MERGED_METRICS_PORT: "15092"
+        METRICS_LOCALHOST_ACCESS_ONLY: "true"
+  components:
+    ingressGateways:
+    - name: istio-ingressgateway
+      enabled: true
+      k8s:
+        podAnnotations:
+          prometheus.istio.io/secure-port: "15092"
+          prometheus.io/path: "/stats/prometheus"
+```
+
+```bash
+istioctl install -f istio-secure-metrics.yaml -y
+# → ✔ Installation complete
+```
+
+#### Шаг 2. Проверка mTLS-портов
+
+```bash
+# Проверка, что прокси знает о mTLS listeners
+kubectl get pods -n default -l app=httpbin -o jsonpath='{.items[0].metadata.annotations}' | jq '.["prometheus.istio.io/secure-port"]'
+
+# Проверка mTLS-ручки через curl с сертификатами Istio
+POD_IP=$(kubectl get pods -n default -l app=httpbin -o jsonpath='{.items[0].status.podIP}')
+kubectl exec -n istio-system deploy/prometheus -c istio-proxy -- \
+  curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+  --cacert /etc/istio-certs/root-cert.pem \
+  --cert /etc/istio-certs/cert-chain.pem \
+  --key /etc/istio-certs/key.pem \
+  --insecure \
+  https://$POD_IP:15092/stats/prometheus
+# → 200
+```
+
+#### Шаг 3. Настройка Prometheus scrape job с mTLS
+
+```yaml
+# prometheus-secure-scrape.yaml
+scrape_configs:
+- job_name: 'istio-secure-merged-metrics'
+  metrics_path: '/stats/prometheus'
+  scheme: https
+  tls_config:
+    ca_file: /etc/istio-certs/root-cert.pem
+    cert_file: /etc/istio-certs/cert-chain.pem
+    key_file: /etc/istio-certs/key.pem
+    insecure_skip_verify: true
+  kubernetes_sd_configs:
+  - role: pod
+  relabel_configs:
+  - source_labels: [__meta_kubernetes_pod_annotation_prometheus_istio_io_secure_port]
+    action: keep
+    regex: .+
+  - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_prometheus_istio_io_secure_port]
+    action: replace
+    target_label: __address__
+    regex: (.+);(.+)
+    replacement: $1:$2
+```
+
+#### Шаг 4. Multi-target scraping (Istio 1.31+)
+
+```yaml
+# Поддержка нескольких application-metrics endpoint'ов на одном поде
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  template:
+    metadata:
+      annotations:
+        prometheus.istio.io/scrape-targets: "8080:/metrics,9090:/internal/metrics"
+```
+
+```bash
+# Проверка, что оба endpoint'а скрапятся
+kubectl exec -n istio-system deploy/prometheus -c istio-proxy -- \
+  curl -s 127.0.0.1:15000/stats | grep "my-app.*scrape"
+# → Видны метрики с обоих портов
+```
+
+#### Шаг 5. Очистка
+
+```bash
+# Деактивация secure metrics и возврат к plaintext
+kubectl annotate pods -n default -l app=httpbin \
+  prometheus.istio.io/secure-port- \
+  prometheus.istio.io/secure-envoy-port- \
+  prometheus.io/path- \
+  --overwrite
+# → Удалите proxyMetadata ENVOY_SECURE_* и METRICS_LOCALHOST_ACCESS_ONLY из IstioOperator
+```
+
 ---
 
-## Диагностика и устранение неполадок
+## Операции и команды
 
 ### Команды проверки
 
@@ -444,6 +574,8 @@ Access-лог Envoy содержит следующие поля:
 - `upstream_rq_retry` — ретрай запроса к upstream.
 - `access_logs` — отсутствие записи означает, что `Telemetry` ресурс не настроен или `accessLogging` отключен.
 
+## Устранение неполадок
+
 ### Типичные ошибки и устранение неполадок
 
 | Ошибка | Причина | Решение |
@@ -463,7 +595,7 @@ Access-лог Envoy содержит следующие поля:
 
 ## Лучшие практики эксплуатации
 
-1.  **Scraping метрик:** используйте **PodMonitor** (Prometheus Operator) с портом `15090` и путём `/stats/prometheus` для Envoy-метрик; для метрик Istio-агента — порт `15020`. В моделях без sidecar (Ambient) метрики собираются напрямую с Ztunnel (`istio_tcp_*`).
+1.  **Scraping метрик:** используйте **PodMonitor** (Prometheus Operator) с портом `15090` и путём `/stats/prometheus` для Envoy-метрик; для метрик Istio-агента — порт `15020`. В моделях без sidecar (Ambient) метрики собираются напрямую с Ztunnel (`istio_tcp_*`). Для продакшена используйте mTLS-порты (`15091`/`15092`, см. Сценарий 10).
 2.  **Ресурсные лимиты:** для мешей с количеством сервисов > 500 выделите Kiali не менее 2 CPU и 2GB RAM для эффективной обработки графа топологии. Начиная с Kiali 2.22+ включите health cache (`kiali_health_status`) — для инсталляций с высокой кардинальностью метрик оставляйте его отключённым (opt-in с 2.24).
 3.  **Health Validation:** регулярно проверяйте вкладку **Istio Config** в Kiali — она подсвечивает ошибки в Gateway API (например, конфликтующие `HTTPRoute`).
 4.  **Распределенная трассировка:** убедитесь, что ваше приложение пробрасывает заголовок `traceparent` (стандарт **W3C Trace Context**, используется по умолчанию) — `b3` (Zipkin) применяется только в legacy-инсталляциях. Иначе меш не сможет связать спаны в единый трейс.
@@ -475,6 +607,41 @@ Access-лог Envoy содержит следующие поля:
 10. **Ограничение кардинальности:** используйте `Telemetry.metrics.overrides.tags` для удаления избыточных labels (`source_cluster`, `destination_cluster`, `reporter`).
 11. **Хранение логов:** настройте Loki с retention policy (например, 30 дней для продакшена) и лимитами на объём стека.
 12. **Безопасность observability stack:** ограничьте доступ к Kiali через `AuthorizationPolicy` и `NetworkPolicy`; Grafana и Tempo должны находиться в отдельном неймспейсе `monitoring`.
+
+## Очистка окружения
+
+Команды для безопасного удаления наблюдательных ресурсов:
+
+```bash
+# 1. Удаление ресурсов Telemetry
+kubectl delete telemetry checkout-otel -n checkout --ignore-not-found=true
+kubectl delete telemetry global-mesh-tracing -n istio-system --ignore-not-found=true
+kubectl delete telemetry waypoint-tracing -n fintech-apps --ignore-not-found=true
+kubectl delete telemetry disable-mesh-spans -n fintech-apps --ignore-not-found=true
+kubectl delete telemetry reduce-cardinality -n my-app --ignore-not-found=true
+
+# 2. Удаление ServiceMonitor и PrometheusRule
+kubectl delete servicemonitor ztunnel-metrics -n istio-system --ignore-not-found=true
+kubectl delete servicemonitor waypoint-metrics -n my-app --ignore-not-found=true
+kubectl delete servicemonitor istiod-metrics -n istio-system --ignore-not-found=true
+kubectl delete prometheusrule istio-golden-signals -n istio-system --ignore-not-found=true
+
+# 3. Удаление шлюзов и HTTPRoute для Kiali
+kubectl delete gateway mesh-observability -n istio-system --ignore-not-found=true
+kubectl delete httproute kiali-route -n istio-system --ignore-not-found=true
+
+# 4. Удаление Waypoint Gateway и метки
+kubectl delete gateway namespace-waypoint -n fintech-apps --ignore-not-found=true
+kubectl label namespace fintech-apps istio.io/use-waypoint- --ignore-not-found=true
+
+# 5. Отключение secure metrics (Istio 1.31+)
+kubectl annotate pods -n default -l app=httpbin \
+  prometheus.istio.io/secure-port- \
+  prometheus.istio.io/secure-envoy-port- \
+  prometheus.io/path- \
+  --overwrite
+# → Затем удалите ENVOY_SECURE_* и METRICS_LOCALHOST_ACCESS_ONLY из IstioOperator
+```
 
 ---
 
@@ -491,7 +658,7 @@ Access-лог Envoy содержит следующие поля:
 
 Особенности интеграции в 2026:
 
-- **Trace overlay в Kiali (2.26+, май 2026):** при клике на ребро графа Kiali запрашивает Tempo по TraceQL-выражению и накладывает трейсы на граф — видно, через какие сервисы прошёл запрос и где возникла задержка.
+- **Trace overlay в Kiali (2.25+, май 2026):** при клике на ребро графа Kiali запрашивает Tempo по TraceQL-выражению и накладывает трейсы на граф — видно, через какие сервисы прошёл запрос и где возникла задержка.
 - **Traces Drilldown в Grafana:** альтернативный способ работы с трейсами без TraceQL — UI-инструмент для поточечного анализа latency и ошибок; сгенерированные в нём запросы можно дорабатывать вручную.
 - Tempo принимает трейсы по **OTLP** (gRPC/HTTP) — в связке с Istio трафик доставляется через Envoy/Ztunnel, а контекст распространяется заголовками **W3C Trace Context** (`traceparent`).
 
@@ -499,7 +666,7 @@ Access-лог Envoy содержит следующие поля:
 
 ### Операционные аспекты (2026)
 
-1.  **Sidecar Tax (Налог на сайдкар):** даже с оптимизациями добавление прокси увеличивает задержку. В 2026 году это решается через переход на **Ambient Mesh** (Ztunnel + Waypoint) или использование **eBPF-акселерации** (SOCKMAP-обход TCP/IP-стека ядра, снижение задержек на 15–20%).
+1.  **Sidecar Tax (Налог на сайдкар):** даже с оптимизациями добавление прокси увеличивает задержку. В 2026 году это решается через переход на **Ambient Mesh** (Ztunnel + Waypoint) или использование **eBPF-акселерации** (SOCKMAP-обход TCP/IP-стека ядра для локальных соединений; эффективность зависит от нагрузки и стека).
 2.  **Ресурсное планирование:** прокси потребляют память и CPU. В Sidecar-модели это может составлять до 10–15% ресурсов кластера. Ambient Mesh снижает этот показатель до 1–3%.
 3.  **Управление сертификатами:** ротация сертификатов mTLS происходит автоматически (обычно раз в 24 часа), что исключает риски простоя из-за истечения срока действия.
 4.  **Планирование емкости провайдеров (Capacity Planning):** в мультикластерных конфигурациях важно учитывать overhead Control Plane (например, Istiod) и резервировать ресурсы для распределенной трассировки.
@@ -507,8 +674,8 @@ Access-лог Envoy содержит следующие поля:
 
 ### Актуальность и ссылки
 
-- **Istio 1.30+:** стандарт для современного Service Mesh (Kubernetes 1.32–1.37); телеметрия настраивается через Telemetry API.
-- **Kiali 2.28:** основной инструмент визуализации; полная поддержка Ambient Mesh, Gateway API, OIDC PKCE и Trace overlay (2.26+).
+- **Istio 1.31.x:** стандарт для современного Service Mesh (Kubernetes 1.32–1.37); телеметрия настраивается через Telemetry API.
+- **Kiali 2.28:** основной инструмент визуализации; полная поддержка Ambient Mesh, Gateway API, OIDC PKCE и Trace overlay (2.25+).
 - **OpenTelemetry:** OTLP — единый протокол для метрик, логов и трейсов; Grafana Alloy — рекомендуемый коллектор в стеке LGTM.
 
 **См. также:**

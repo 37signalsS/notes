@@ -386,7 +386,7 @@ linkerd viz stat deploy -n my-app
 
 ### Лучшие практики эксплуатации
 
-1. **Ресурсные квоты:** всегда устанавливайте `requests` и `limits` для сайдкаров. В 2026 году Envoy требует ~0.5 vCPU и 50MB RAM на 1,000 RPS. Для Linkerd-proxy: `requests.cpu: 50m`, `requests.memory: 64Mi`; лимиты: `cpu: 200m`, `memory: 128Mi`.
+1. **Ресурсные квоты:** всегда устанавливайте `requests` и `limits` для сайдкаров. В Istio 1.31 Envoy требует ~0.20 vCPU и 60MB RAM на 1,000 RPS. Для Linkerd-proxy: `requests.cpu: 50m`, `requests.memory: 64Mi`; лимиты: `cpu: 200m`, `memory: 128Mi`.
 2. **Scoping конфигурации:** используйте ресурс `Sidecar` (Istio) для ограничения списка сервисов. Для Linkerd применяйте `ServiceProfile` с явным списком сервисов.
 3. **Gateway API (GAMMA):** используйте `HTTPRoute` вместо `VirtualService`/`ServiceProfile` для обеспечения переносимости между мешами. Учитывайте поведение «reject by default».
 4. **eBPF Acceleration:** включайте SOCKMAP для обхода TCP-стека ядра (Istio CNI / Cilium). Снижает задержки на 15–20%.

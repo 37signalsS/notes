@@ -222,7 +222,7 @@ spec:
 | `cosign: error signing` | Fulcio недоступен или OIDC токен невалиден | `curl -k $FULCIO_URL`; проверьте `id_token` permissions в GitLab |
 | `notation: key not found` | Ключ не добавлен в trust store | `notation cert add --type ca --store <name> <cert.pem>` |
 | `certificate identity mismatch` | Идентичность в политике не совпадает с claim | Проверьте точное совпадение `--certificate-identity` с `sub` в токене |
-| `Referrers API 404` | Реестр не поддерживает OCI 1.1 | Обновите Harbor до v2.11+ или используйте другой реестр |
+| `Referrers API 404` | Реестр не поддерживает OCI 1.1 | Обновите Harbor до v2.15+ или используйте другой реестр |
 
 ## Граничные случаи и ограничения
 

@@ -359,6 +359,127 @@ istioctl proxy-config secret deploy/istio-ingressgateway -n istio-ingress | grep
 # → 1 (mTLS identity выдана istiod)
 ```
 
+### Сценарий 8: URL rewrite и redirect на шлюзе (HTTPRoute)
+
+Перезапись пути и перенаправления на Istio-шлюзе реализуются фильтрами Gateway API Standard Channel в `HTTPRoute.rules[].filters`. Теория фильтров и полный справочник — [Gateway API: routing features](../Kubernetes/Networking/gateway_api/routing_features.md).
+
+```yaml
+# 1. Strip prefix /api/v1 перед бэкендом
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api-strip-prefix
+  namespace: production
+spec:
+  parentRefs:
+  - name: istio-ingress
+    sectionName: https
+  hostnames:
+  - app.example.com
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api/v1
+    filters:
+    - type: URLRewriteFilter
+      urlRewrite:
+        path:
+          type: ReplacePrefixMatch
+          replacePrefixMatch: /
+    backendRefs:
+    - name: api-backend
+      port: 80
+---
+# 2. Глобальный redirect: HTTP → HTTPS (301)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: https-redirect
+  namespace: production
+spec:
+  parentRefs:
+  - name: istio-ingress
+    sectionName: http
+  hostnames:
+  - app.example.com
+  rules:
+  - filters:
+    - type: RequestRedirect
+      requestRedirect:
+        scheme: https
+        statusCode: 301
+```
+
+```bash
+# Проверка, что rewrite применился в RDS шлюза
+istioctl proxy-config routes deploy/istio-ingressgateway -n istio-ingress --name http.8443 -o json \
+  | jq '.[0].virtualHosts[0].routes[0] | {prefix_rewrite, redirect}'
+# → "/"; null  ← prefix rewrite применён, redirect отсутствует на https-роуте
+
+# Проверка rewrite в действии (путь уходит в бэкенд без /api/v1)
+curl -s https://app.example.com/api/v1/health
+# → 200 OK (бэкенд получил /health)
+
+# Проверка redirect (должен вернуть 301 на https)
+curl -s -o /dev/null -w "%{http_code} %{redirect_url}\n" http://app.example.com/
+# → 301 https://app.example.com/
+```
+
+> Не создавайте циклы: `RequestRedirect` на маршруте, который сам обслуживается через этот же listener, приводит к бесконечным 301 — проверяйте `sectionName` (http vs https) при redirect-схемах.
+
+### Сценарий 9: Реальный IP клиента (X-Forwarded-For)
+
+Когда перед Istio-шлюзом стоит внешний балансировщик или reverse proxy, в `X-Forwarded-For` (XFF) оказываются промежуточные адреса, а не клиент. Istio извлекает доверенный адрес клиента по числу доверенных прокси (`numTrustedProxies`) и помещает его в заголовок **`X-Envoy-External-Address`** — его и должны читать бэкенды и access-логи.
+
+Глобальная настройка (IstioOperator):
+
+```yaml
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  meshConfig:
+    defaultConfig:
+      gatewayTopology:
+        numTrustedProxies: 2   # LB + reverse proxy перед Istio-шлюзом
+```
+
+Или точечно — аннотацией на под шлюза (перекрывает MeshConfig):
+
+```yaml
+metadata:
+  annotations:
+    "proxy.istio.io/config": '{"gatewayTopology": {"numTrustedProxies": 2}}'
+```
+
+Если внешний TCP-балансировщик не умеет L7 и передаёт TCP (например, NLB с PROXY protocol), включите приём PROXY protocol на шлюзе:
+
+```yaml
+spec:
+  meshConfig:
+    defaultConfig:
+      gatewayTopology:
+        proxyProtocol: {}      # слушатели шлюза принимают PROXY protocol
+```
+
+> PROXY protocol и L7-заголовки XFF взаимоисключающими по источнику адреса не являются: при конфигурации `gatewayTopology` приоритет у `numTrustedProxies` и полученного XFF; данные PROXY protocol игнорируются.
+
+Два частых подводных камня:
+
+1. **SNAT на балансировщике Kubernetes-сервиса.** Если шлюз экспортируется через `LoadBalancer`/`NodePort` и клиент видит IP узла/балансировщика, проверьте `externalTrafficPolicy: Local` на Service шлюза — он сохраняет исходный IP клиента на L4.
+2. **Число хопов должно совпадать с реальностью.** `numTrustedProxies` — это количество L4/L7-прокси перед Istio-шлюзом, которые добавляют свой адрес в XFF. Завысившее значение подделывает адрес клиента (атакующий может вписать свой XFF), заниженное — даёт IP последнего прокси.
+
+```bash
+# Проверка: бэкенд отражает полученные заголовки (например, echo-сервис)
+curl -s https://app.example.com/headers
+# → { "x-envoy-external-address": "203.0.113.50",     ← доверенный адрес клиента
+#     "x-forwarded-for": "203.0.113.50, 10.0.1.5" }   ← клиент + IP шлюза
+
+# Проверка в access-логах шлюза
+kubectl logs -n istio-ingress deploy/istio-ingressgateway --tail=20 | grep "app.example.com"
+# → ... "GET / HTTP/1.1" 200 ... "203.0.113.50" ...
+```
+
 ### Диагностика и отладка
 
 ```bash
@@ -398,6 +519,9 @@ istioctl analyze
 | `AdmissionRefused`/`Unsupported protocol` | Listener с неподдерживаемым `protocol` (например, `UDP`) | Использовать поддержку: HTTP, HTTPS, TLS, TCP, HTTP/3 |
 | Вместо HTTP виден `plaintext` в сертификате | Passthrough выбран для терминации (или наоборот) | Проверить `tls.mode` — `Terminate` vs `Passthrough` |
 | `503` внутри меша при обратном проксировании | Нет `DestinationRule`/`BackendTLSPolicy` для бэкенда или mTLS mismatch | Создать `PeerAuthentication STRICT`, проверить кластеры: `istioctl proxy-config cluster ...` |
+| Бэкенд видит в XFF IP промежуточных прокси, а не клиента | Не задан `gatewayTopology.numTrustedProxies` или SNAT на балансировщике | Задать `numTrustedProxies` (MeshConfig/аннотация `proxy.istio.io/config`); проверить `externalTrafficPolicy: Local` на Service шлюза |
+| Бесконечные 301-редиректы | `RequestRedirect` на маршруте того же listener (цикл scheme/host) | Проверить `sectionName` parentRefs; разнести http/https по разным listener'ам |
+| Rewrite-префикс не применяется (404 у бэкенда) | `URLRewriteFilter` не в том `rules[]`, или path не совпадает с `matches` | Проверить порядок `rules`, тип `PathPrefix` и `replacePrefixMatch`; смотреть `prefix_rewrite` в RDS шлюза |
 
 ---
 
@@ -475,8 +599,9 @@ kubectl exec -n production deploy/my-app -- curl -sS -o /dev/null -w "%{http_cod
 ### См. также
 
 - [Gateway API: миграция TLS и маршрутизация](../Kubernetes/Networking/gateway_api/migration_tls_and_routing.md) — базовые понятия Terminate/Passthrough, ReferenceGrant
+- [Gateway API: routing features](../Kubernetes/Networking/gateway_api/routing_features.md) — URLRewriteFilter, RequestRedirect, CORS и другие фильтры HTTPRoute
 - [Политики безопасности Istio](./istio-security-policies.md) — AuthorizationPolicy, RequestAuthentication, BackendTLSPolicy
 - [Архитектура и компоненты Istio](./istio_architecture.md) — связь шлюзов с Control Plane и моделями Sidecar/Ambient
 - [cert-manager: интеграция с Service Mesh](../Kubernetes/ToolsUtilities/cert_manager/Private_CA/service_mesh_integration.md) — выпуск сертификатов для шлюзов
 
-Документация: [Istio: Ingress Gateways](https://istio.io/latest/docs/tasks/traffic-management/ingress/ingress-control/).
+Документация: [Istio: Ingress Gateways](https://istio.io/latest/docs/tasks/traffic-management/ingress/ingress-control/), [Istio: Network Topologies (XFF/XFCC, numTrustedProxies)](https://istio.io/latest/docs/ops/configuration/traffic-management/network-topologies/).

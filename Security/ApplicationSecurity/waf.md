@@ -1,6 +1,6 @@
 # Межсетевой экран веб-приложений (WAF)
 
-**Актуально для:** ModSecurity 3.0.17 (libmodsecurity3, движок v3 для Nginx/Envoy/HAProxy), OWASP CRS 4.30.0 (или 4.25.0 LTS до Q3 2027). ModSecurity 2.9.x — поддерживаемая устаревшая ветка для Apache (см. ниже).
+**Актуально для:** ModSecurity 3.0.17 (libmodsecurity3, движок v3 для Nginx), OWASP CRS 4.30.0 (или 4.25.0 LTS до Q3 2027), Coraza v3.8.1 (Go-движок; коннекторы — coraza-spoa v0.9, coraza-nginx экспериментальный). ModSecurity 2.9.x — поддерживаемая устаревшая ветка для Apache (см. ниже).
 
 ## Определение
 
@@ -72,6 +72,27 @@
 - **CPU:** ModSecurity добавляет 5–20 мс задержки на запрос из-за регулярных выражений. На сервисах с RPS > 10 000 требуется выделенный core или использование NAXSI/Coraza.
 - **RAM:** OWASP CRS потребляет ~50–100 МБ дополнительной памяти на инстанс веб-сервера. Для высоконагруженных систем выделяйте не менее 2 ГБ под WAF-компонент.
 - **Диск:** Логи ModSecurity (audit log) могут быстро расти. Рекомендуется выделить отдельный раздел или настроить logrotate с политикой хранения 7–14 дней.
+
+```bash
+# /etc/logrotate.d/modsecurity
+# Serial-формат: один файл /var/log/modsecurity/audit.log
+/var/log/modsecurity/audit.log /var/log/modsecurity/debug.log {
+    daily
+    rotate 14
+    size 500M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 www-data www-data
+    sharedscripts
+    postrotate
+        # Сигнал применяет ротацию к открытому дескриптору Nginx/Apache
+        systemctl reload nginx 2>/dev/null || true
+        systemctl reload apache2 2>/dev/null || true
+    endscript
+}
+```
 
 #### Программные требования
 
@@ -399,7 +420,7 @@ api_security:
 
 ### Использование Coraza (Wasm) в Service Mesh
 
-Coraza — это современный WAF на Go, который может работать как Wasm-плагин для Envoy, обеспечивая защиту внутри облачных сред.
+Coraza — это современный WAF на Go, который может работать как Wasm-плагин для Envoy, обеспечивая защиту East-West трафика внутри кластера.
 
 ```yaml
 # Пример конфигурации фильтра Envoy для Coraza Wasm
@@ -544,7 +565,7 @@ sudo fail2ban-client status modsecurity
 
 ### Мониторинг и метрики
 
-#### Prometheus Exporter для ModSecurity
+#### Мониторинг через audit.log и метрики
 
 У ModSecurity v3 нет единого официального Prometheus exporter'а; метрики собираются из `audit.log`.
 
@@ -575,24 +596,107 @@ SecAuditLog /var/log/modsecurity/audit.json
 
 _Вариант B. Bash + алертинг без SIEM — для небольших хостов (см. ниже)._
 
-#### Ключевые метрики
+#### Метрики и пороги тревог
 
-| Метрика | Описание | Порог тревоги |
+Метрики, отдающие на `:9000`, — у Coraza SPOA, см. таблицу выше. Для ModSecurity v3 KPI выводятся из `audit.log` (Serial) или из JSON-лога (вариант A):
+
+| Источник | Что измеряется | Как порог |
 | :--- | :--- | :--- |
-| `modsecurity_blocks_total` | Количество заблокированных запросов | > 100/мин требует анализа |
-| `modsecurity_phase2_blocks_total` | Блокировки на Phase 2 (body inspection) | Всплеск = атака на логику |
-| `modsecurity_unique_ips_total` | Количество уникальных IP, заблокированных за период | > 50 = массовая атака |
-| `modsecurity_rule_hits{rule_id="941100"}` | Срабатывания конкретного правила | Рост = обновление атакующих стратегий |
+| `audit.log` (Serial) | Блокировки на 1 минуту | `grep -c "Access denied"` > 100/мин → алерт |
+| `audit.log` (Serial) | Топ правил по срабатываниям | `uniq -c` по `id:\d+` → рост = смена стратегии |
+| `audit.log` (Serial) | Уникальные IP нарушителей | `uniq -c` по IP > 50 → массовая атака |
+| Coraza `/metrics` | `coraza_transactions_total{outcome=~"deny|drop"}` | `rate() > 10/сек` → алерт |
+| Coraza `/metrics` | `coraza_inbound_anomaly_score` | 95-й перцентиль растёт → аномалия |
 
-#### Простой мониторинг через bash
+#### Алертинг по количеству блокировок (systemd service + таймер)
 
 ```bash
-# Скрипт для мониторинга количества блокировок
+# /usr/local/sbin/modsecurity-block-alert.sh
 #!/bin/bash
-BLOCKS=$(grep -c "Access denied" /var/log/modsecurity/audit.log)
+set -u
+LOG=/var/log/modsecurity/audit.log
+BLOCKS=$(grep -c "Access denied" "$LOG" 2>/dev/null || echo 0)
 if [ "$BLOCKS" -gt 100 ]; then
-    echo "WARNING: High block rate: $BLOCKS/min" | mail -s "WAF Alert" ops@example.com
+    echo "WARNING: High block rate: ${BLOCKS}/5m" | mail -s "WAF Alert" ops@example.com
 fi
+```
+
+```ini
+# /etc/systemd/system/modsecurity-monitor.service
+[Unit]
+Description=ModSecurity block-rate alert
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/modsecurity-block-alert.sh
+User=root
+NoNewPrivileges=true
+```
+
+```ini
+# /etc/systemd/system/modsecurity-monitor.timer
+[Unit]
+Description=Run ModSecurity block-rate check every 5m
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo chmod +x /usr/local/sbin/modsecurity-block-alert.sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now modsecurity-monitor.timer
+```
+
+### Проверка работоспособности (health check)
+
+Регрессию удобно запускать из systemd-таймера или CI‑pipeline после каждого релиза правил:
+
+```bash
+# 1. Конфиг веб-сервера и WAF-конфиг синтаксически валидны
+nginx -t          # RHEL: nginx -t
+apachectl configtest
+
+# 2. Движок загружен и активен (строка лога коннектора v1.0.4+)
+grep -iq "modsecurity-nginx" /var/log/nginx/error.log && echo "engine: OK" || echo "engine: NOT FOUND"
+test -s /var/log/modsecurity/audit.log && echo "audit.log: OK" || echo "audit.log: EMPTY"
+```
+
+```ini
+# /etc/systemd/system/waf-healthcheck.timer
+[Unit]
+Description=WAF health check
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15m
+AccuracySec=60s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```ini
+# /etc/systemd/system/waf-healthcheck.service
+[Unit]
+Description=WAF syntax + engine health
+After=network.target nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '! nginx -t || exit 1; test -s /var/log/modsecurity/audit.log'
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now waf-healthcheck.timer
 ```
 
 ### Валидация и тестирование эффективности
@@ -661,7 +765,7 @@ echo "Results: $PASS passed, $FAIL failed"
 | :--- | :--- | :--- | :--- |
 | **Высокая задержка** | RPS падает, latency растет | `systemd-analyze blame`, `top`, проверка `SecRuleRemoveById` для сложных regex | Переход на NAXSI, отключение тяжелых правил, вертикальное/горизонтальное масштабирование |
 | **Ложные срабатывания** | Легитимные запросы возвращают 403 | `grep "Access denied" /var/log/modsecurity/audit.log` | `SecRuleRemoveById`, создание исключений по `REQUEST_URI` |
-| **Утечка памяти** | RSS процесса Nginx растет indefinitely | `pmap -x $(pgrep nginx)`, проверка `SecCacheTransformationsOnDiskCache` | Увеличение `SecTmpDir`, обновление до последней версии ModSecurity |
+| **Утечка памяти** | RSS процесса Nginx растёт indefinitely | `pmap -x $(pgrep nginx)`, проверка `SecDebugLogLevel` и `SecTmpDir` | Увеличение `SecTmpDir`, обновление libmodsecurity3 до 3.0.17, снижение `SecDebugLogLevel` |
 | **Не читается тело запроса** | Запросы с JSON/XML не проверяются | `grep "Request body no files data" /var/log/modsecurity/debug.log` | Убедитесь, что `SecRequestBodyAccess On` и `SecRequestBodyLimit` > реальный размер тела |
 | **Утечка audit.log** | Лог занимает весь диск | `du -sh /var/log/modsecurity/*` | Настройте `logrotate` или `SecAuditLogRelevantStatus` для ограничения записей |
 | **TLS Inspection ошибки** | Backend получает зашифрованный трафик | Проверка, что WAF стоит перед TLS termination | WAF должен работать после TLS termination (на plaintext HTTP) или использовать собственный сертификат |
@@ -684,8 +788,18 @@ echo "Results: $PASS passed, $FAIL failed"
         └── false_positives.conf
     ```
 4.  **Rate Limiting + WAF:** Комбинируйте `limit_req_zone` в Nginx с WAF. WAF защищает от сложных атак, rate limiting — от простого флуда.
-5.  **Логирование в SIEM:** Передавайте audit.log в ELK/Graylog/Splunk через Filebeat/Vector. Это позволяет коррелировать WAF-события с другими инцидентами.
-6.  **Резервное копирование правил:** Храните кастомные правила в Git. Восстановление после сбоя занимает минуты, а не часы.
+    ```nginx
+    # В блоке http: 10 RPS на IP с burst на случаи вырезания легитимных запросов
+    limit_req_zone $binary_remote_addr zone=waf:10m rate=10r/s;
+    ...
+    location / {
+        limit_req zone=waf burst=20 nodelay;
+        proxy_pass http://127.0.0.1:8080;
+    }
+    ```
+    Блокировки rate limiting (`429 Too Many Requests`) идут в `access.log`, а не в `audit.log` — fail2ban и мониторинг выше по‑прежнему цепляются за `audit.log`.
+5.  **Логирование в SIEM:** Передавайте audit.log в ELK/Graylog/Splunk через Filebeat/Vector (см. вариант A в [Метрики](#метрики-и-пороги-тревог)). Для JSON-формата включите `SecAuditLogFormat JSON`.
+6.  **Резервное копирование правил:** Храните кастомные правила, `crs-setup.conf` и исключения в Git. Сконсервированный CRS + diff кастомных правил позволяют восстановиться за минуты.
 7.  **Регулярный пентест:** Раз в квартал запускайте сканеры (OWASP ZAP, Burp Suite) в режиме passive scan для проверки, что WAF действительно блокирует целевые векторы.
 8.  **Отказ от unsafe-inline в CSP:** WAF не защищает от DOM-based XSS. CSP с `strict-dynamic` и nonces закрывает эту брешь.
 
