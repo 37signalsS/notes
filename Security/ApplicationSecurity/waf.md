@@ -1,5 +1,7 @@
 # Межсетевой экран веб-приложений (WAF)
 
+**Актуально для:** ModSecurity 3.0.17 (libmodsecurity3, движок v3 для Nginx/Envoy/HAProxy), OWASP CRS 4.30.0 (или 4.25.0 LTS до Q3 2027). ModSecurity 2.9.x — поддерживаемая устаревшая ветка для Apache (см. ниже).
+
 ## Определение
 
 **WAF (Web Application Firewall)** — специализированный межсетевой экран прикладного уровня (L7), предназначенный для защиты веб-приложений путем фильтрации, мониторинга и блокировки вредоносного HTTP/HTTPS-трафика. В отличие от традиционных файрволов, работающих на уровнях L3/L4, WAF анализирует содержимое пакетов (DPI — Deep Packet Inspection) и понимает логику протокола HTTP.
@@ -75,7 +77,7 @@
 
 - **ОС:** Linux (Debian 12+, RHEL/Rocky 9+, Ubuntu 22.04 LTS). Windows не рекомендуется для production WAF.
 - **Веб-сервер:** Nginx 1.25+ или Apache 2.4+ с поддержкой динамических модулей.
-- **Библиотеки:** `libmodsecurity3` (>= 3.0.12) с коннектором для соответствующего веб-сервера.
+- **Библиотеки:** `libmodsecurity3` (>= 3.0.17; CVE-2026-30923 — DoS-уязвимость segfault'а, закрыта в 3.0.15+, рекомендуется 3.0.17) с коннектором ModSecurity-nginx v1.0.4 или ModSecurity-apache.
 
 ### Установка ModSecurity на Nginx (bare metal)
 
@@ -84,11 +86,11 @@
 ```bash
 # 1. Установка зависимостей
 sudo apt update
-sudo apt install -y libmodsecurity3 modsecurity-crs nginx-module-geoip2
+sudo apt install -y libmodsecurity3 modsecurity-crs
 
-# 2. Проверка версии
-nginx -V 2>&1 | grep -o 'modsecurity/3\.[0-9]\+\(\.[0-9]\+\)*'
-# → modsecurity/3.0.12 (пример)
+# 2. Проверка версии libmodsecurity3 (>= 3.0.17)
+dpkg -s libmodsecurity3 | grep -iE '^Version'
+# → 3.0.17-1 (пример)
 
 # 3. Создание директорий
 sudo mkdir -p /etc/nginx/modsecurity /var/log/modsecurity /var/cache/modsecurity
@@ -98,14 +100,14 @@ sudo chown -R www-data:www-data /var/log/modsecurity /var/cache/modsecurity
 #### RHEL / Rocky / Alma
 
 ```bash
-# 1. Установка из EPEL
+# 1. Установка из EPEL (коннектор nginx v3 + CRS из пакета)
 sudo dnf install -y epel-release
 sudo dnf install -y nginx-mod-http-modsecurity mod_security_crs
 
-# 2. Для RHEL-совместимых систем может потребоваться сборка модуля
+# 2. Сборка коннектора из исходников — только если нужен конкретный тег
 sudo dnf install -y gcc make pcre-devel libxml2-devel
-git clone --depth 1 -b v3.0.12 https://github.com/SpiderLabs/ModSecurity-nginx.git
-sudo nginx -V 2>&1 | grep -- '--add-module='
+git clone --depth 1 -b v1.0.4 https://github.com/owasp-modsecurity/ModSecurity-nginx.git
+sudo nginx -V 2>&1 | tr ' ' '\n' | grep -i -- '--add-module.*modsecurity'
 ```
 
 #### Базовая конфигурация ModSecurity
@@ -134,8 +136,7 @@ SecAuditLog /var/log/modsecurity/audit.log
 SecDebugLog /var/log/modsecurity/debug.log
 SecDebugLogLevel 3
 
-# Кэширование (уменьшает нагрузку)
-SecCacheTransformationsOnDiskCache 128
+# SecCacheTransformations deprecated и не поддерживается в v3 — кэш трансформаций не используется
 SecTmpDir /var/cache/modsecurity
 SecDataDir /var/cache/modsecurity
 
@@ -176,6 +177,11 @@ http {
 sudo mkdir -p /etc/nginx/modsecurity/crs
 sudo cp -r /usr/share/modsecurity-crs/* /etc/nginx/modsecurity/crs/
 
+# Текущая CRS — 4.30.0 (октябрь 2026) или 4.25.0 LTS (поддержка до Q3 2027).
+# Пакеты дистрибутивов часто тормозят: EL9 даёт CRS 3.3.4 (EOL с Q3 2026).
+# Рекомендуется ставить CRS из релиза на GitHub, а не из пакета.
+wget -qO- https://github.com/coreruleset/coreruleset/archive/refs/tags/v4.30.0.tar.gz | tar xz -C /etc/nginx/modsecurity/crs --strip-components=1
+
 # Добавьте в /etc/nginx/modsecurity.conf:
 SecRuleRemoveById 920350  # Пример отключения шумного правила на yaweb crawler
 Include /etc/nginx/modsecurity/crs/crs-setup.conf
@@ -195,6 +201,8 @@ sudo dnf install -y mod_security
 apachectl -M | grep security2
 # → security2_module (shared)
 ```
+
+> **Версия движка:** пакеты `libapache2-mod-security2` (Debian/Ubuntu) и `mod_security` (RHEL) доставляют **ModSecurity 2.9.x** — поддерживаемая, но устаревшая ветка (см. [ModSecurity v2 EOL](https://github.com/owasp-modsecurity/ModSecurity)). Коннектор **ModSecurity-apache** для v3 существует (собирается из `owasp-modsecurity/ModSecurity-apache`), но official README помечает его **«not production ready»**; для Apache рекомендуется v2.9.x, а для высокой производительности — Coraza (см. ниже) или развёртывание WAF на nginx/HAProxy.
 
 #### Базовая конфигурация Apache
 
@@ -231,61 +239,117 @@ sudo a2enmod security2 && sudo systemctl restart apache2
 sudo systemctl restart httpd
 ```
 
-### Coraza как современная альтернатива
+### Coraza как движок и коннекторы
 
-Coraza — это WAF на Go, совместимый с правилами ModSecurity CRS, с акцентом на производительность и Cloud Native-сценарии.
+Coraza (текущая версия библиотеки **v3.8.1**, октябрь 2026) — WAF на Go, 100% совместим с OWASP CRS v4 и синтаксисом правил ModSecurity SecLang. Coraza — это **библиотека**, а не standalone-бинарь: движок встраивается в приложение или задействуется через коннекторы. Развёртывание на bare metal / виртуале выглядит как модуль вашего reverse proxy, а не как облачной SAAS.
 
-#### Установка standalone Coraza на Linux
+Коннекторы (статусы — на 2026 г., из [README Coraza](https://github.com/corazawaf/coraza#integrations)):
+
+| Коннектор | Статус | Применимо для SRE (on-prem) |
+| :--- | :--- | :--- |
+| **coraza-spoa** (HAProxy SPOE) | production | Демон передаёт трафик в Coraza через SPOE; есть встроенный `/metrics`. |
+| **coraza-proxy-wasm** | stable (Envoy) | Wasm-фильтр для Envoy/Istio. |
+| **coraza-caddy** | stable (ищет maintainer) | Плагин для Caddy: `xcaddy build --with github.com/corazawaf/coraza-caddy/v2`. |
+| **coraza-nginx** (libcoraza) | experimental | Модуль C для nginx; пока не рекомендуется для prod. |
+
+> **Важно:** у Coraza **нет** standalone-бинаря с флагами `--listen`/`--upstream`. Директория `releases` проекта `corazawaf/coraza` содержит только теги библиотеки (v3.8.1), а не готовые исполняемые файлы.
+
+#### Coraza через HAProxy SPOE (on-prem)
+
+`coraza-spoa` — демон, передающий HTTP-трафик в Coraza через SPOE и возвращающий вердикт. Запуск:
 
 ```bash
-# Установка из бинарного релиза
-CORAZA_VERSION=v3.0.12
-wget https://github.com/corazawaf/coraza/releases/download/${CORAZA_VERSION}/coraza_${CORAZA_VERSION}_linux_amd64.tar.gz
-sudo tar -xzf coraza_${CORAZA_VERSION}_linux_amd64.tar.gz -C /usr/local/bin/
-sudo chmod +x /usr/local/bin/coraza
-
-# Создание конфигурации
-sudo mkdir -p /etc/coraza /var/log/coraza
-sudo useradd -r -s /bin/false coraza
+coraza-spoa -config /etc/coraza-spoa/coraza-spoa.yaml -metrics-addr=:9000
 ```
 
-#### Конфигурация Coraza standalone
+Файл конфигурации берётся из [примера](https://github.com/corazawaf/coraza-spoa/blob/main/example/coraza-spoa.yaml). HAProxy направляет трафик к SPOA через backend на `127.0.0.1:9000`:
 
-Создайте `/etc/coraza/coraza.conf`:
+```haproxy
+# /etc/haproxy/coraza.cfg
+spoe-agent coraza-agent
+    groups      coraza-req
+    use-backend coraza-spoa
+
+spoe-message coraza-req
+    args app=var(txn.coraza.app) src-ip=src ...
+```
+
+```haproxy
+# /etc/haproxy/haproxy.cfg
+frontend web
+    http-request set-var(txn.coraza.app) str(sample_app)
+    filter spoe engine coraza config /etc/haproxy/coraza.cfg
+    http-request send-spoe-group coraza coraza-req
+    http-request deny deny_status 403 hdr waf-block "request" if { var(txn.coraza.action) -m str deny }
+
+backend coraza-spoa
+    mode tcp
+    option spop-check
+    server s1 127.0.0.1:9000 check
+```
+
+**Жёсткий systemd-юнит** (флаги проверены в официальной сборке):
 
 ```ini
-[default]
-# Режим работы: On, Off, DetectionOnly
-SecRuleEngine DetectionOnly
+# /etc/systemd/system/coraza-spoa.service
+[Unit]
+Description=Coraza SPOA (HAProxy Web Application Firewall)
+After=network.target
 
-# Логирование
-SecAuditEngine RelevantOnly
-SecAuditLogRelevantStatus ^(?:5|4(?!04))
-SecAuditLogParts ABIJDEFHZ
-SecAuditLogType Serial
-SecAuditLog /var/log/coraza/audit.log
-SecDebugLog /var/log/coraza/debug.log
-SecDebugLogLevel 3
+[Service]
+Type=simple
+User=coraza-spoa
+Group=coraza-spoa
+ExecStart=/usr/local/bin/coraza-spoa -config /etc/coraza-spoa/coraza-spoa.yaml -metrics-addr=:9000
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/coraza-spoa /var/log/coraza-spoa
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallFilter=@system-service
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
 
-# Директории
-SecTmpDir /var/cache/coraza
-SecDataDir /var/cache/coraza
-
-# CRS
-Include /etc/coraza/crs/crs-setup.conf
-Include /etc/coraza/crs/rules/*.conf
+[Install]
+WantedBy=multi-user.target
 ```
 
-#### Запуск Coraza как reverse proxy
+#### Метрики Coraza (Prometheus)
 
-```bash
-# Запуск на порту 8443 с проксированием на бэкенд 127.0.0.1:8080
-coraza --config /etc/coraza/coraza.conf --listen :8443 --upstream http://127.0.0.1:8080
+`/metrics` на `:9000` даёт нативные метрики. Счётчики сбрасываются при рестарте SPOA — в PromQL используйте `rate()`/`increase()`.
+
+| Метрика | Тип | Смысл |
+| :--- | :--- | :--- |
+| `coraza_requests_total{application}` | Counter | Запросов, полученных на оценку WAF. |
+| `coraza_transactions_total{application,mode,outcome,suspicious}` | Counter | Транзакций после оценки (outcome: `allow`/`deny`/`drop`/`redirect`/`error`/`expired`). |
+| `coraza_rule_matches_total{application,rule_id,severity}` | Counter | Все сработавшие правила (включая пользовательские ID). |
+| `coraza_handle_spoe_duration_seconds{application,phase,result}` | Histogram | Время обработки SPOE-сообщения. |
+| `coraza_inbound_anomaly_score{application}` | Histogram | Итоговый inbound anomaly score. |
+| `coraza_response_uncorrelated_total{application,reason}` | Counter | `coraza-res`, не сопоставленные с транзакцией (`missing_id`, `not_found`, `closing`, `response_check_disabled`). |
+| `coraza_ruleset_info{application,ruleset,version}` | Gauge | Версия набора правил (например `OWASP_CRS`/`4.25.0`) при загрузке. |
+
+```yaml
+# Prometheus scrape job
+scrape_configs:
+  - job_name: coraza-spoa
+    static_configs:
+      - targets: ['127.0.0.1:9000']
 ```
 
-**Валидация:**
-- `curl -k https://localhost:8443/?q=<script>alert(1)</script>` — ожидается `403 Forbidden`.
-- `tail -f /var/log/coraza/audit.log` — запись о блокировке XSS.
+```promql
+# WAF-вредикты в секунду по outcome и mode
+sum by (outcome, mode) (rate(coraza_transactions_total[5m]))
+```
+
 
 ### Использование ModSecurity в Kubernetes
 
@@ -482,32 +546,34 @@ sudo fail2ban-client status modsecurity
 
 #### Prometheus Exporter для ModSecurity
 
-Используйте `prometheus-modsecurity-exporter`:
+У ModSecurity v3 нет единого официального Prometheus exporter'а; метрики собираются из `audit.log`.
 
-```bash
-# Установка
-go install github.com/BeatrisR/metrics-exporter@latest
-sudo cp metrics-exporter /usr/local/bin/
+**Coraza SPOA** напрямую отдаёт нативные `/metrics` на `:9000` — см. [Метрики Coraza](#метрики-coraza-prometheus) выше.
 
-# Запуск как systemd service
-cat <<EOF | sudo tee /etc/systemd/system/modsecurity-exporter.service
-[Unit]
-Description=ModSecurity Prometheus Exporter
-After=network.target
+**ModSecurity v3 (Nginx/Apache).** Два проверенных подхода:
 
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/metrics-exporter --modsec-log /var/log/modsecurity/audit.log
-Restart=always
-RestartSec=10
+_Вариант A. Filebeat → локальный SIEM (ELK/Loki)._ Чтобы аудит не требовал склейки многострочных записей, переключите формат на JSON (опционально; если не менять — читайте Serial, как в варианте B):
 
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now modsecurity-exporter
+```nginx
+# /etc/nginx/modsecurity.conf — однострочный JSON-аудит для SIEM
+SecAuditLogFormat JSON
+SecAuditLog /var/log/modsecurity/audit.json
+# SecAuditLogParts ABIJDEFHZ — оставьте без изменений
 ```
+
+```yaml
+# /etc/filebeat/conf.d/modsecurity.yml
+- type: log
+  enabled: true
+  paths:
+    - /var/log/modsecurity/audit.json
+  json.keys_under_root: true
+  json.add_error_key: true
+  fields:
+    waf: modsecurity
+```
+
+_Вариант B. Bash + алертинг без SIEM — для небольших хостов (см. ниже)._
 
 #### Ключевые метрики
 
