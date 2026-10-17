@@ -1,8 +1,8 @@
-# Cert-manager: Интеграция с GitOps (ArgoCD / Flux)
+# Cert-manager: Интеграция с GitOps (ArgoCD)
 
 ## Определения
 
-**GitOps для cert-manager** — подход к управлению конфигурацией сертификатов, при котором Ingress, Issuer и ClusterIssuer описываются в Git и автоматически синхронизируются с кластером через контроллеры (ArgoCD или Flux). Ресурсы, управляемые cert-manager автоматически (Certificate, Order, Challenge), НЕ экспортируются в Git.
+**GitOps для cert-manager** — подход к управлению конфигурацией сертификатов, при котором Ingress, Issuer и ClusterIssuer описываются в Git и автоматически синхронизируются с кластером через контроллер ArgoCD. Ресурсы, управляемые cert-manager автоматически (Certificate, Order, Challenge), НЕ экспортируются в Git.
 
 **Server-Side Apply (SSA)** — механизм Kubernetes API, позволяющий нескольким контроллерам управлять одним ресурсом без конфликтов. При совместном управлении Ingress cert-manager'ом и GitOps-контроллером SSA предотвращает гонки за запись полей.
 
@@ -27,7 +27,7 @@
 
 ### Решение: Игнорирование автоматически управляемых полей
 
-Оба GitOps-контроллера (ArgoCD и Flux) поддерживают механизм игнорирования определенных полей или ресурсов.
+Оба решения (ArgoCD) поддерживают механизм игнорирования определенных полей или ресурсов.
 
 **Принцип:** В Git хранятся ТОЛЬКО Ingress и Issuer/ClusterIssuer. Certificate, Order, Challenge, Secret — управляются cert-manager автоматически и исключаются из GitOps.
 
@@ -138,64 +138,7 @@ spec:
     - ServerSideApply=true
 ```
 
-### Сценарий 2: Flux — Игнорирование изменений cert-manager
-
-#### Kustomization с игнорированием specific fields
-
-```yaml
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: my-app
-  namespace: flux-system
-spec:
-  interval: 5m
-  path: ./apps/my-app
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: k8s-manifests
-  healthChecks:
-  - apiVersion: networking.k8s.io/v1
-    kind: Ingress
-    name: my-app-ingress
-    namespace: production
-  timeout: 3m
-  # Игнорирование изменений cert-manager
-  patches:
-  - target:
-      group: networking.k8s.io
-      kind: Ingress
-      name: my-app-ingress
-      namespace: production
-    patch: |
-      - op: remove
-        path: /metadata/managedFields/0
-      - op: replace
-        path: /spec/tls/0/secretName
-        value: ""
-```
-
-#### Дополнительный файл с патчем (выделенный)
-
-```yaml
-# patches/ignore-cert-manager-fields.yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-patches:
-- target:
-    group: networking.k8s.io
-    kind: Ingress
-    labelSelector: "cert-manager.io/cluster-issuer"
-  patch: |
-    - op: add
-      path: /metadata/annotations/ignore-cert-manager~1managed-fields
-      value: "true"
-    - op: remove
-      path: /status
-```
-
-### Сценарий 3: Контроль Certificate через GitOps (Vs ArgoCD)
+### Сценарий 2: Контроль Certificate через GitOps (Vs ArgoCD)
 
 Если требуется декларативное управление Certificate (вместо автоматического через ingress-shim), создайте его явно в Git:
 
@@ -258,7 +201,7 @@ spec:
 **Преимущества:** Полный контроль над конфигурацией сертификата через Git.
 **Недостатки:** Потеря автоматизации ingress-shim (нужно поддерживать Certificate в Git).
 
-### Сценарий 4: ArgoCD Resource Hook для пред-деплойной очистки
+### Сценарий 3: ArgoCD Resource Hook для пред-деплойной очистки
 
 Используйте ArgoCD hooks для удаления osиротевших Secret перед деплоем:
 
@@ -312,23 +255,13 @@ argocd app get my-app --hard-refresh
 argocd app diff my-app
 ```
 
-**Симптом:** Flux не применяет изменения из-за health check timeout.
-
-```bash
-# Проверка статуса Kustomization
-kubectl get kustomization my-app -n flux-system -o yaml
-
-# Просмотр событий
-kubectl get events -n flux-system --field-selector involvedObject.name=my-app
-```
-
 ### Best Practices
 
 1. **Минимальные аннотации:** Используйте только необходимые аннотации cert-manager в Ingress.
 2. **Server-Side Apply:** Включайте SSA в ArgoCD (`ServerSideApply=true`) для избежания конфликтов managedFields.
 3. **Prune Politика:** Настройте `prune: true` и `selfHeal: true` для автоматического восстановления.
-4. **Health Checks:** Добавьте health checks для Ingress и Certificate в ArgoCD/Flux.
-5. **Мониторинг:** Настройте алерты на sync failures в ArgoCD/Flux.
+4. **Health Checks:** Добавьте health checks для Ingress и Certificate в ArgoCD.
+5. **Мониторинг:** Настройте алерты на sync failures в ArgoCD.
 6. **Тестирование:** Используйте staging-окружение для проверки GitOps + cert-manager перед production.
 
 ### Смотрите также

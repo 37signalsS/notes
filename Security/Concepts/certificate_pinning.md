@@ -1,5 +1,7 @@
 # Certificate Pinning — практики привязки сертификатов
 
+**Актуально для:** Certificate Pinning (2026, OpenSSL 3.x, nginx 1.24+, Apache 2.4.60+)
+
 ## Определения
 
 **Certificate Pinning** — механизм привязки клиента к конкретному сертификату или публичному ключу сервера, минуя стандартную проверку цепочки доверия через CA. Клиент «запоминает» ожидаемый сертификат/ключ и при подключении проверяет соответствие.
@@ -8,15 +10,15 @@
 
 **Expect-CT** — HTTP-заголовок, требующий от сервера включения сертификата в CT-логи. Также **устарел** (Chrome 104).
 
-**Subject Alternative Name (SAN) Pinning** — привязка к конкретному DNS-имени в SAN сертификата (самый распространённый тип на 2026).
+**Subject Alternative Name (SAN) Pinning** — привязка к конкретному DNS-имени в SAN сертификата (самый распрострашённый тип на 2026).
 
 **Public Key Pinning** — привязка к публичному ключу (SPKI Hash) вместо всего сертификата. Более гибкий: ключ можно сохранить при перевыпуске сертификата.
 
-**CT (Certificate Transparency) Pinning** — требование, чтобы сертификат был в logged в CT-логах. Де-факто стандарт для public CA (требование Chrome).
+**CT (Certificate Transparency) Pinning** — требование, чтобы сертификат был logged в CT-логах. Де-факто стандарт для public CA (требование Chrome).
 
 ---
 
-## Теоретический блок
+## Концепции и архитектура
 
 ### Зачем нужен Certificate Pinning
 
@@ -24,16 +26,7 @@
 2. **Защита от corporate proxy:** Предотвращает инспекцию трафика через корпоративные прокси (если клиент пинит сертификат)
 3. **Защита от украденных ключей:** Если украден ключ промежуточного CA, пиннинг ограничивает количество подверженных сервисов
 
-### Типы пиннинга
-
-| Тип | Что привязывается | Гибкость | Использование |
-| :--- | :--- | :--- | :--- |
-| Leaf Certificate | Весь сертификат | Низкая (при перевыпуске — новый пин) | Простые случаи |
-| Public Key (SPKI) | SHA-256 хэш публичного ключа | Средняя (перевыпуск с тем же ключом OK) | Рекомендуется |
-| CA Certificate | Сертификат CA | Высокая (вся цепочка) | Корпоративные среды |
-| CT Log Entry | Наличие в CT-логе | Высокая | Public CA |
-
-### Архитектура пиннинга
+### Как работает пиннинг
 
 ```text
 ┌─────────────┐                    ┌──────────────┐
@@ -53,25 +46,30 @@
 │  └── НЕТ → соединение отклонено
 ```
 
-### Отказоустойчивость (Backup Pins)
+Клиент извлекает публичный ключ из сертификата сервера, вычисляет SHA-256 хэш в формате SubjectPublicKeyInfo (SPKI) и сравнивает с заранее известными пинами. Если ни один пин не совпадает — соединение разрывается.
 
-**Backup Pin** — дополнительный публичный ключ, который ещё не используется, но будет использоваться при перевыпуске. Обязателен для предотвращения lockout при компрометации ключа.
+### Типы пиннинга
 
-**Рекомендация:** Минимум 2 пина — текущий + backup. Backup пин должен обновляться каждые 10–14 дней (по мере ротации ключей).
-
-### Сравнение подходов (2026)
-
-| Подход | Статус | Рекомендация |
-| :--- | :--- | :--- |
-| HPKP (RFC 7469) | Устарел, удалён из браузеров | Не использовать |
-| Expect-CT | Устарел | Не использовать |
-| CT Log Requirement | Активен (Chrome, Firefox) | Обязателен для public CA |
-| Public Key Pinning (mobile/API) | Активен | Рекомендуется для мобильных приложений и API-клиентов |
-| Application-level Pinning | Активен | Рекомендуется для кастомных клиентов |
+| Тип | Что привязывается | Гибкость | Использование |
+| :--- | :--- | :--- | :--- |
+| Leaf Certificate | Весь сертификат | Низкая (при перевыпуске — новый пин) | Простые случаи |
+| Public Key (SPKI) | SHA-256 хэш публичного ключа | Средняя (перевыпуск с тем же ключом OK) | Рекомендуется |
+| CA Certificate | Сертификат CA | Высокая (вся цепочка) | Корпоративные среды |
+| CT Log Entry | Наличие в CT-логе | Высокая | Public CA |
 
 ---
 
-## Практический блок
+## Практические сценарии
+
+### Пререквизиты
+
+Перед настройкой пиннинга:
+
+- **TLS-сервер** с валидным сертификатом и цепочкой доверия
+- **SPKI-хэш** публичного ключа сервера (извлекается через `openssl`)
+- **Backup-ключ** — резервный публичный ключ, ещё не используемый сервером
+- **Клиентское приложение**, поддерживающее кастомную проверку сертификатов (OkHttp, URLSession, curl, Go `crypto/tls`, Python `ssl`)
+- **График ротации** — backup-пин должен быть готов минимум за 10 дней до смены ключа
 
 ### Мобильные приложения (iOS/Android)
 
@@ -86,7 +84,7 @@
             <!-- Текущий публичный ключ (SHA-256 base64) -->
             <pin digest="SHA-256">YLh1dUR9y6Kja30RrAn7JKnbQG/uEtLMkBgFF2Fuihg=</pin>
             <!-- Backup пин (другой ключ CA или rotation key) -->
-            <pin digest="SHA-256">sRHdihwgkaib1P1gN4U+0UK0LMfZLg==</pin>
+            <pin digest="SHA-256">sRHdihwgkaib1P1gN4U+0UK0LMfZLg=</pin>
         </pin-set>
         <!-- Trust anchors: системные CA + пользовательские -->
         <trust-anchors>
@@ -207,34 +205,129 @@ func main() {
 }
 ```
 
-### Python (requests)
+### Python (ssl + cryptography)
 
 ```python
 import ssl
+import socket
 import hashlib
 import base64
-import requests
 
 EXPECTED_PINS = [
     "YLh1dUR9y6Kja30RrAn7JKnbQG/uEtLMkBgFF2Fuihg=",
     "sRHdihwgkaib1P1gN4U+0UK0LMfZLg=",
 ]
 
-class PinningAdapter(requests.adapters.HTTPAdapter):
-    def send(self, request, **kwargs):
-        connection = super().send(request, **kwargs)
-        # В реальном проекте проверяем пин через urllib3
-        return connection
+def verify_pin(hostname: str, port: int = 443) -> bool:
+    """
+    Verify the server's public key against expected pins.
+    Requires: pip install cryptography
+    """
+    context = ssl.create_default_context()
+    with socket.create_connection((hostname, port)) as sock:
+        with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+            cert_der = ssock.getpeercert(binary_form=True)
 
-session = requests.Session()
-session.mount("https://", PinningAdapter())
-# Для production используйте ssl_context с verify_callback
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+
+    cert = x509.load_der_x509_certificate(cert_der)
+    public_key = cert.public_key()
+
+    # SubjectPublicKeyInfo в DER формате
+    spki_der = public_key.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+    # SHA-256 → base64
+    pin = base64.b64encode(hashlib.sha256(spki_der).digest()).decode()
+
+    if pin not in EXPECTED_PINS:
+        raise ssl.SSLError(
+            f"Certificate pinning verification failed: "
+            f"expected one of {EXPECTED_PINS}, got {pin}"
+        )
+    return True
+
+# Usage
+try:
+    verify_pin("api.mycompany.com")
+    print("Pin verified")
+except ssl.SSLError as e:
+    print(f"Error: {e}")
 ```
+
+### Серверные веб-серверы (nginx, Apache)
+
+Серверная сторона пиннинга ограничена: **HPKP устарел**, поэтому сервер не отправляет пины клиенту. Вместо этого sysadmin обеспечивает:
+
+- **HSTS** (Strict-Transport-Security) — вынуждает клиент использовать HTTPS
+- **OCSP stapling** — ускоряет и обезопасчивает проверку отзечия сертификата
+- **Certificate Transparency** — публичное логирование выпуска сертификатов
+
+#### nginx
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name api.mycompany.com;
+
+    ssl_certificate     /etc/nginx/ssl/api.mycompany.com.crt;
+    ssl_certificate_key /etc/nginx/ssl/api.mycompany.com.key;
+    ssl_trusted_certificate /etc/nginx/ssl/ca-chain.crt;
+
+    # OCSP stapling
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    resolver 1.1.1.1 valid=300s;
+    resolver_timeout 5s;
+
+    # HSTS (NOT HPKP — HPKP is deprecated)
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+
+    # Certificate Transparency (требует OpenSSL 3.x с CT support;
+    # иначе — используйте отдельный CT-мониторинг на уровне CA)
+}
+```
+
+#### Apache
+
+```apache
+<VirtualHost *:443>
+    ServerName api.mycompany.com
+
+    SSLEngine on
+    SSLCertificateFile      /etc/ssl/certs/api.mycompany.com.crt
+    SSLCertificateKeyFile   /etc/ssl/private/api.mycompany.com.key
+    SSLCertificateChainFile /etc/ssl/certs/ca-chain.crt
+
+    # OCSP stapling
+    SSLUseStapling on
+    SSLStaplingCache "shmcb:/var/run/ocsp(128000)"
+
+    # HSTS
+    Header always set Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+</VirtualHost>
+```
+
+---
+
+## Операции и команды
 
 ### Извлечение пина из сертификата
 
 ```bash
-# Извлечение публичного ключа и вычисление SHA-256 пина
+# SPKI-хэш из локального файла сертификата
+openssl x509 -in cert.pem -pubkey -noout \
+  | openssl pkey -pubin -outform DER \
+  | openssl dgst -sha256 -binary \
+  | base64
+# → YLh1dUR9y6Kja30RrAn7JKnbQG/uEtLMkBgFF2Fuihg=
+```
+
+```bash
+# SPKI-хэш из работающего сервера
 openssl s_client -connect api.mycompany.com:443 -servername api.mycompany.com </dev/null 2>/dev/null \
   | openssl x509 -pubkey -noout \
   | openssl pkey -pubin -outform DER \
@@ -243,20 +336,71 @@ openssl s_client -connect api.mycompany.com:443 -servername api.mycompany.com </
 # → YLh1dUR9y6Kja30RrAn7JKnbQG/uEtLMkBgFF2Fuihg=
 ```
 
+```bash
+# Извлечение сразу нескольких пинов (текущий + backup)
+openssl req -x509 -newkey rsa:2048 -keyout backup.key -out backup.crt \
+  -days 365 -nodes -subj "/CN=backup"
+cat backup.crt | openssl x509 -pubkey -noout \
+  | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | base64
+```
+
+### Тестирование пиннинга
+
+```bash
+# Проверка через curl (ожидается успех)
+curl --pinnedpubkey 'sha256//YLh1dUR9y6Kja30RrAn7JKnbQG/uEtLMkBgFF2Fuihg=' \
+  https://api.mycompany.com/health
+
+# Проверка с неверным пином (ожидается ошибка)
+curl --pinnedpubkey 'sha256//invalidhash' \
+  https://api.mycompany.com/health
+# → curl: (60) SSL: no alternative certificate subject name found
+```
+
 ---
 
-## Типичные ошибки
+## Устранение неполадок
 
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
 | `SSL pinning verification failed` | Сертификат сервера не совпадает с пином | Обновите пины при перевыпуске сертификата; добавьте backup pins |
 | `SSL peer certificate or SSH remote key was not OK` | Сертификат CA не в trust store | Добавьте CA-сертификат в trust store приложения |
 | Lockout после перевыпуска | Не был добавлен backup pin перед ротацией | Всегда добавляйте backup pin минимум за 10 дней до ротации |
-| Corporate proxy failure | Прокси подменяет сертификат | Используйте pinning only для внешних сервисов; для корпоративных — отдельный trust store |
+| Corporate proxy failure | Прокси подменяет сертификат | Используйте pinning только для внешних сервисов; для корпоративных — отдельный trust store |
 
 ---
 
 ## Лучшие практики
+
+### Ротация сертификатов и пинов
+
+**Чек-лист перед ротацией:**
+
+1. **Подготовьте backup-ключ** — минимум за 10–14 дней до плановой ротации
+2. **Добавьте backup-пин в конфигурацию клиента** — оба пина (текущий + backup) должны быть активны
+3. **Дождитесь распространения** — подождите, пока все клиентские приложения получат обновлённый конфигурационный файл
+4. **Перевыпустите сертификат** с новым ключом (или с тем же ключом, если используется SPKI-пиннинг)
+5. **Убедитесь, что backup-пин работает** — проверьте, что трафик идёт через новый сертификат
+6. **Через 30 дней уберите старый пин** — если всё работает стабильно
+
+### Мониторинг
+
+- **Логи клиентских приложений:** отслеживайте ошибки SSL pinning verification failed
+- **Health check endpoints:** используйте `--pinnedpubkey` в curl для smoke-тестов в CI/CD
+- **Алертинг:** настройте алерт на >1% ошибок пиннинга в течение 5-минутного окна
+- **CT логи:** используйте `crt.sh` или `GoCT` для мониторинга нелегитимных выпусков сертификатов
+
+### Таблица рекомендаций
+
+| Подход | Статус | Рекомендация |
+| :--- | :--- | :--- |
+| HPKP (RFC 7469) | Устарел, удалён из браузеров | Не использовать |
+| Expect-CT | Устарел | Не использовать |
+| CT Log Requirement | Активен (Chrome, Firefox) | Обязателен для public CA |
+| Public Key Pinning (mobile/API) | Активен | Рекомендуется для мобильных приложений и API-клиентов |
+| Application-level Pinning | Активен | Рекомендуется для кастомных клиентов |
+
+### Общие рекомендации
 
 1. **Используйте пиннинг по публичному ключу (SPKI)**, а не по всему сертификату — это позволяет перевыпускать сертификат без обновления пинов
 2. **Всегда добавляйте backup pin** — минимум 2 пина, один из которых ещё не используется
@@ -272,7 +416,8 @@ openssl s_client -connect api.mycompany.com:443 -servername api.mycompany.com </
 
 - **RFC 7469** — [HPKP (устарел)](https://datatracker.ietf.org/doc/html/rfc7469)
 - **RFC 8446 (Section 4.4.2)** — [CertificateRequest в TLS 1.3](https://datatracker.ietf.org/doc/html/rfc8446)
+- **RFC 6962** — [Certificate Transparency](https://datatracker.ietf.org/doc/html/rfc6962)
 - **[Certificate Transparency](./certificate_transparency.md)** — замена HPKP для публичных CA
 - **[Обзор PKI](./pki_overview.md)** — базовые понятия PKI
-- **[Nginx TLS](../../WebServers/Nginx/Security/TLS_SSL/nginx_tls_virtual_host_config.md)** — серверная настройка TLS
+- **[WebServers — TLS](../../WebServers/Nginx/Security/TLS_SSL/nginx_tls_virtual_host_config.md)** — серверная настройка TLS
 - **[mTLS Configuration](../../WebServers/Nginx/Security/TLS_SSL/nginx_mtls_configuration.md)** — взаимная аутентификация

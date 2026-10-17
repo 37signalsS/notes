@@ -1,5 +1,7 @@
 # Виды тестирования: Unit, Integration, E2E
 
+**Актуально для:** Python 3.12+ (pytest 8.x), JavaScript (Jest 29.x), Go 1.23+, Java 21+ (Maven), PostgreSQL 18, Playwright v1.63.0, Testcontainers, Pact/PactFlow, GitHub Actions (actions/checkout@v7, actions/cache@v5, actions/upload-artifact@v7), октябрь 2026
+
 ## 1. Определения
 
 **Пирамида тестирования (Testing Pyramid)** — классическая модель, описывающая иерархию тестов. Основание составляют многочисленные быстрые Unit-тесты, середину — интеграционные, вершину — минимальное количество E2E-тестов.
@@ -63,7 +65,7 @@
 
 Для DevOps/SRE критично, чтобы тесты выполнялись в окружении, максимально приближённом к production:
 
-*   **Паритет сред (Environment Parity):** Конфигурация ОС, версии зависимостей (БД, брокеры) и параметры запуска в CI должны совпадать с staging/production. Для контейнеров это означает фиксированные теги образов (`postgres:16.3`, а не `:latest`).
+*   **Паритет сред (Environment Parity):** Конфигурация ОС, версии зависимостей (БД, брокеры) и параметры запуска в CI должны совпадать с staging/production. Для контейнеров это означает фиксированные теги образов (`postgres:18.0`, а не `:latest`).
 *   **Эфемерные окружения (Ephemeral Environments):** Вместо разделения одного стейджинга создаётся изолированное окружение на каждый Merge Request или ветку. После закрытия MR окружение автоматически уничтожается. Это исключает "оно работало на стейджинге, потому что там грязные данные от другого теста".
 *   **Изоляция данных:** Каждый тестовый прогон работает с уникальной базой или схемой. Для PostgreSQL используется отдельная база на тест (`CREATE DATABASE test_${CI_PIPELINE_ID}`); для Kubernetes — отдельный namespace (`test-${CI_COMMIT_REF_SLUG}`).
 *   **Очистка ресурсов:** Тестовые контейнеры, ВМ и записи в БД должны удаляться независимо от исхода теста (`finally`, `after_all`, `when: always`). Неочищенные ресурсы приводят к утечкам и ложным ошибкам следующего прогона.
@@ -98,7 +100,7 @@ def test_user_persistence():
             assert result == "admin"
 ```
 
-> Версия образа `postgres:18` соответствует текущему стабильному релизу PostgreSQL 18 (сентябрь 2025); анонс 19 ожидается в сентябре 2026.
+> Версия образа `postgres:18` соответствует текущему стабильному релизу PostgreSQL 18 (сентябрь 2025). PostgreSQL 19 находится на этапе RC (кандидат в релизы) — Oct 2026; общедоступный релиз ожидается позже. Используйте PG 18 для production-тестов.
 
 ### Полный воркфлоу Pact (Consumer-Driven) в CI/CD
 
@@ -154,9 +156,9 @@ jobs:
   unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
@@ -170,7 +172,7 @@ jobs:
             -n auto  # pytest-xdist: параллелизм по ядрам CPU
       - name: Upload JUnit report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-junit
           path: reports/junit.xml
@@ -205,7 +207,7 @@ go test ./... -coverprofile=coverage.out -json | gotestsum --junitfile reports/j
 # docker-compose.test.yml
 services:
   postgres:
-    image: postgres:16.3
+    image: postgres:18
     environment:
       POSTGRES_DB: testdb
       POSTGRES_USER: test
@@ -243,7 +245,7 @@ docker compose -f docker-compose.test.yml down -v
 
 Сквозные тесты имитируют пользователя через все слои. Для стабильности требуется:
 
-*   **Фиксированные версии браузеров:** Используйте Docker-образ `mcr.microsoft.com/playwright:v1.49.0-noble` с предустановленными Chromium/Firefox/WebKit.
+*   **Фиксированные версии браузеров:** Используйте Docker-образ `mcr.microsoft.com/playwright:v1.63.0-noble` с предустановленными Chromium/Firefox/WebKit.
 *   **Шардирование (Sharding):** Разделите тесты по нескольким джобам для ускорения прогона.
 *   **Артефакты:** Сохраняйте видео, скриншоты и трассировки при падениях.
 
@@ -255,14 +257,14 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run Playwright shard 1/2
         run: npx playwright test --shard=1/2 --reporter=junit --output=reports
         env:
           BASE_URL: https://staging.example.com
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-shard-1
           path: |
@@ -331,9 +333,9 @@ ip netns del test-ns
 
 **Практическое руководство и примеры (Playwright, Percy, Docker):** **[Visual Regression в CI/CD](../CI-CD/Testing/visual-regression-cicd.md)**.
 
-## 4. Дополнительная информация
+## 4. Лучшие практики
 
-### Управление состоянием и изоляция тестов
+### Управление состоянием и изоляцией тестов
 
 Неизолированные тесты — основная причина flaky-результатов и невоспроизводимых багов:
 
@@ -343,9 +345,24 @@ ip netns del test-ns
 *   **Параллелизм без конфликтов:** При запуске в нескольких процессах (pytest-xdist, Jest workers) убедитесь, что тесты не делят файлы, порты или записи БД. Если тест не может быть параллельным — пометьте его `@serial` или вынесите в отдельную джобу.
 *   **Очистка ресурсов:** Используйте контекстные менеджеры (`with`, `try/finally`, `@Container`) для гарантированного удаления контейнеров, ВМ и временных файлов даже при падении теста.
 
+## 5. Устранение неполадок
+
+| Симптом | Причина | Решение |
+| :--- | :--- | :--- |
+| Flaky-результаты | Состояние БД/файлов между тестами не изолировано | Использовать отдельную схему/базу на тест, `@Transactional rollback`, `tmp_path` |
+| Тесты падают по таймауту в CI | Холодный старт зависимостей, сеть медленнее локальной | Добавить healthcheck с таймаутом, увеличить `timeout` в тестовом раннере |
+| Дублированные результаты в отчёте | Несколько шардов пишут XML с одинаковым именем | Использовать уникальные имена (`results-${CI_NODE_INDEX}.xml`), агрегировать в `post`-джобе |
+| Contract test падает после депоя | Provider нарушил контракт, который прошёл верификацию | Использовать `can-i-deploy` перед деплоем, проверить матрицу совместимости в Pact Broker |
+| E2E-тесты не воспроизводятся локально | Запуск против `localhost`, а не staging | Запускать E2E против окружения, максимально приближённого к production |
+| Интеграционные тесты «висят» | БД или сервис-заглушка не готова | Добавить `healthcheck`/`wait-for-it` в `docker-compose`, использовать `Testcontainers` с готовностью |
+| Тесты используют реальные внешние API | Внешний API медленно или недоступен | Заменить WireMock или Mock Server, использовать `--dry-run` для smoke-проверок |
+| `pytest-xdist` даёт разный результат | Тесты делят файлы, порты или записи БД | Пометить конфликтующие тесты `@serial`, использовать динамические порты |
+
+## 6. Дополнительная информация
+
 ### Принципы надёжности (FIRST)
 
-Каждый качественный тест должен соответствовать принципам **FIRST**. Подробное описание и примеры см. в разделе **[Принципы качественных тестов](../CI-CD/Testing/tdd_bdd_overview.md#принципы-качественных-тестов)**.
+Каждый качественный тест должен соответствовать принципам **FIRST**. Подробное описание и примеры см. в разделе **[Принципы качественных тестов](../CI-CD/Testing/tdd_bdd_overview.md#проектирование-тестов)**.
 
 ---
 

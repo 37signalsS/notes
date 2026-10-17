@@ -647,7 +647,7 @@ flux reconcile kustomization cluster-platform --with-source
 
 **Связанные документы базы знаний:**
 - [Обзор методологии GitOps](../GitOps_overview.md) — обзорная таблица топологий и классификация подходов.
-- [Организация Flux CD monorepo](./flux_monorepo_organization.md) — детальный кейс миграции и структуры монорепозитория для 20+ кластеров.
+- [Организация монорепозитория Argo CD](./argocd_monorepo_organization.md) — детальный кейс структуры монорепозитория для 20+ кластеров.
 - [ApplicationSet: генераторы](../ArgoCD/argocd_applicationsets.md) — разбор генераторов Cluster, Git, Matrix и Merge.
 - [Argo CD: Прогрессивная синхронизация](../ArgoCD/synchronization/scenarios/progressive_sync.md) — детальное руководство по механизму RollingSync.
 - [Установка и настройка Argo CD (шардирование)](../ArgoCD/argocd_installation_and_setup.md) — конфигурация `argocd-cmd-params-cm` и масштабирование StatefulSet.

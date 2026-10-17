@@ -57,7 +57,7 @@ kubectl get configmap istio -n istio-system -o yaml > istio-mesh-config-backup.y
 
 #### 2. Модель Ambient (Sidecar-less) — GA статус
 
-Архитектура Ambient Mesh официально стабилизирована (GA с Istio 1.24, ноябрь 2024) и является рекомендуемой для большинства сценариев. Пакет Istio 1.30.x поддерживает Kubernetes 1.32–1.36. Она разделяет обязанности меша на два уровня:
+Архитектура Ambient Mesh официально стабилизирована (GA с Istio 1.24, ноябрь 2024) и является рекомендуемой для большинства сценариев. Пакет Istio 1.30.x поддерживает Kubernetes 1.32–1.37. Она разделяет обязанности меша на два уровня:
 
 **L4-уровень: Ztunnel (Zero Trust Tunnel)**
 - **Развертывание**: DaemonSet на каждом узле кластера.
@@ -214,7 +214,7 @@ istioctl proxy-status
 # → SYNCED: конфигурация доставлена; NOT SYNCED: проблема доставки (проверьте сеть/istiod)
 
 # Описание сетевого пути пода в Ambient
-istioctl ambient describe pod <pod-name> -n <namespace>
+istioctl x describe pod <pod-name> -n <namespace>
 # → Показывает: ztunnel (L4), waypoint (L7), политики, сертификаты
 
 # Анализ всех ресурсов меша на ошибки
@@ -269,8 +269,11 @@ kubectl exec -n my-app <waypoint-pod> -- curl -s localhost:15000/stats | grep <s
 
 **Быстрая проверка мультикластерности:**
 ```bash
-# На Primary кластере: просмотр удаленных секретов
-kubectl get remoteistio -n istio-system
+# На Primary кластере: проверка статуса remote clusters
+istioctl remote-clusters --context="${CTX_CLUSTER1}"
+
+# Проверка наличия remote secrets
+kubectl get secrets -n istio-system -l "istio/multiCluster=true"
 
 # Проверка, что сервис из Remote кластера виден в Primary
 kubectl get endpoints <remote-service>.<remote-ns> -n <local-ns>
@@ -391,8 +394,8 @@ kubectl logs -n my-app deploy/my-app -c istio-proxy | grep -iE "wasm|extension"
   Аналогичный PDB создаётся для `istio-ingressgateway`/`istio-egressgateway` (minAvailable: 1–2 при масштабировании), чтобы обновления нод не отключали границу меша.
 - **Дамп состояния**: Для диагностики состояния меша используйте:
   ```bash
-  istioctl proxy-status --log_output=true
-  istioctl experimental describe pod <pod-name> -n <namespace>
+  istioctl proxy-status
+  istioctl x describe pod <pod-name> -n <namespace>
   ```
 
 ### Лучшие практики

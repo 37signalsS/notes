@@ -1,5 +1,7 @@
 # Установка и базовая настройка Istio
 
+**Актуально для:** Istio 1.30+
+
 ## Определения
 
 **istioctl** — официальная утилита командной строки для установки, настройки, отладки и управления Istio. В 2026 году является мощным инструментом для управления Ambient Mesh, инспекции сетевых путей и отладки Gateway API.
@@ -25,7 +27,7 @@
 ### Аппаратные и программные требования
 
 **Kubernetes:**
-- Версия **1.30+** (рекомендуется 1.32–1.36 для Istio 1.30+)
+- Версия **1.32+** (поддержка 1.32–1.37 для Istio 1.30+)
 - Статус кластера: `Ready` на всех нодах
 - Режимы работы: bare-metal, виртуализация (KVM/VirtualBox), любые оркестраторы поверх Linux
 
@@ -54,12 +56,12 @@
 
 ### Gateway API CRDs
 
-Перед установкой Istio необходимо убедиться, что в кластере установлены CRD Gateway API (версии 1.1.0+).
+Перед установкой Istio необходимо убедиться, что в кластере установлены CRD Gateway API. Минимальная версия для mesh-сценариев (GAMMA) — **v1.1.0+**; **текущая стандартная версия — v1.6.x** (TCPRoute и UDPRoute выведены в Standard в v1.6.0, июнь 2026).
 
 ```bash
 # Проверка наличия CRD
 kubectl get crd gateways.gateway.networking.k8s.io || \
-  kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.1.0/standard-install.yaml
+  kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.1/standard-install.yaml
 
 # Проверка версии CRD
 kubectl get crd gateways.gateway.networking.k8s.io -o jsonpath='{.status.conditions[?(@.type=="Established")].status}'
@@ -71,7 +73,7 @@ kubectl get crd gateways.gateway.networking.k8s.io -o jsonpath='{.status.conditi
 ## Варианты установки
 
 В современных инфраструктурах (2026) используются три основных метода, каждый из которых имеет свои преимущества:
-1.  **Helm (рекомендуется для Production/GitOps)**: стандартный способ управления жизненным циклом. В 1.32+ установка разделена на модули: `base`, `istiod`, `cni`, `ztunnel`, `gateway`.
+1.  **Helm (рекомендуется для Production/GitOps)**: стандартный способ управления жизненным циклом. В 1.30+ установка разделена на модули: `base`, `istiod`, `cni`, `ztunnel`, `gateway`.
 2.  **istioctl (рекомендуется для управления и отладки)**: обеспечивает прямой контроль через профили и удобные инструменты диагностики. Используется для быстрого развертывания Ambient режима.
 3.  **Istio Operator (рекомендуется для сложной кастомизации)**: позволяет декларативно управлять ресурсами через CRD `IstioOperator`. Хотя сообщество движется к Helm, оператор остается актуальным для сложных Enterprise-сценариев.
 
@@ -84,16 +86,16 @@ kubectl get crd gateways.gateway.networking.k8s.io -o jsonpath='{.status.conditi
 Istio требует работающий Kubernetes кластер.
 
 ```bash
-# Скачивание актуальной версии (пример для 1.32)
-curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.32.0 sh -
+# Скачивание актуальной версии (пример для 1.31)
+curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.31.2 sh -
 
 # Добавление в PATH
-cd istio-1.32.0
+cd istio-1.31.2
 export PATH=$PWD/bin:$PATH
 
 # Проверка версии CLI и связи с кластером
 istioctl version
-# → client version: 1.32.0
+# → client version: 1.31.2
 # → control plane version: N/A (не установлен)
 ```
 
@@ -101,8 +103,7 @@ istioctl version
 
 | Профиль | Компоненты | Назначение |
 | :--- | :--- | :--- |
-| **default** | `istiod`, Ingress Gateway | Рекомендуется для большинства рабочих нагрузок с Sidecars. |
-| **demo** | `istiod`, Ingress, Egress | Для обучения (включает всё, но потребляет много ресурсов). |
+| **default** | `istiod`, Ingress Gateway | Рекомендуется для большинства рабочих нагрузок (Sidecar и Ambient). |
 | **minimal** | `istiod` | Только плоскость управления, без шлюзов. |
 | **ambient** | `istiod`, CNI, Ztunnel | **Рекомендуемый профиль 2026 г.** для Sidecar-less архитектуры. |
 | **empty** | — | База для полностью кастомных конфигураций. |
@@ -115,9 +116,6 @@ istioctl install --set profile=ambient -y
 
 # Установка классического профиля с кастомизацией
 istioctl install --set profile=default --set meshConfig.accessLogFile=/dev/stdout -y
-
-# Установка demo-профиля (обучение: istiod + Ingress + Egress, много ресурсов)
-istioctl install --set profile=demo -y
 ```
 
 ### 4. Верификация установки
@@ -132,8 +130,8 @@ kubectl get pods -n istio-system
 
 # Проверка версии
 istioctl version
-# → client version: 1.32.0
-# → control plane version: 1.32.0
+# → client version: 1.31.2
+# → control plane version: 1.31.2
 
 # Проверка установки
 istioctl verify-install
@@ -147,8 +145,8 @@ istioctl verify-install
 
 ### 1. Подготовка манифеста
 ```bash
-# Выгрузка профиля demo для редактирования
-istioctl profile dump demo > demo-operator.yaml
+# Выгрузка профиля default для редактирования
+istioctl profile dump default > custom-operator.yaml
 ```
 
 ### 2. Примеры кастомизации в YAML
@@ -156,7 +154,7 @@ istioctl profile dump demo > demo-operator.yaml
 apiVersion: install.istio.io/v1alpha1
 kind: IstioOperator
 spec:
-  profile: demo
+  profile: default
   components:
     egressGateways:
     - name: istio-egressgateway
@@ -184,10 +182,10 @@ spec:
 ### 3. Применение и обновление
 ```bash
 # Установка на основе файла
-istioctl install -f demo-operator.yaml -y
+istioctl install -f custom-operator.yaml -y
 
 # Обновление (Upgrade) с сохранением настроек
-istioctl upgrade -f demo-operator.yaml -y
+istioctl upgrade -f custom-operator.yaml -y
 ```
 
 ---
@@ -205,16 +203,24 @@ helm repo update
 ### 2. Установка базовых компонентов
 ```bash
 # 1. Base (CRDs и общие ресурсы)
-helm install istio-base istio/base -n istio-system --create-namespace
+helm install istio-base istio/base -n istio-system --create-namespace --wait
 
 # 2. Istiod (Control Plane)
-helm install istiod istio/istiod -n istio-system --wait
+helm install istiod istio/istiod -n istio-system --set profile=ambient --wait
 
 # 3. CNI (Обязательно для Ambient и безопасности Sidecar)
-helm install istio-cni istio/cni -n istio-system --set profile=ambient
+helm install istio-cni istio/cni -n istio-system --set profile=ambient --wait
 
 # 4. Ztunnel (Node-level L4 Proxy для Ambient)
-helm install ztunnel istio/ztunnel -n istio-system
+helm install ztunnel istio/ztunnel -n istio-system --wait
+
+# Проверка статуса развёртывания компонентов
+helm ls -n istio-system
+# → NAME            NAMESPACE       STATUS    CHART               APP VERSION
+# → istio-base      istio-system    deployed  base-1.31.2         1.31.2
+# → istiod          istio-system    deployed  istiod-1.31.2       1.31.2
+# → istio-cni       istio-system    deployed  istio-cni-1.31.2    1.31.2
+# → ztunnel         istio-system    deployed  ztunnel-1.31.2      1.31.2
 ```
 
 ### 3. Пример кастомизации values.yaml
@@ -259,10 +265,10 @@ cni:
 
 Применение кастомизации:
 ```bash
-helm upgrade --install istio-base istio/base -n istio-system --create-namespace -f values.yaml
-helm upgrade --install istiod istio/istiod -n istio-system -f values.yaml
-helm upgrade --install istio-cni istio/cni -n istio-system -f values.yaml --set profile=ambient
-helm upgrade --install ztunnel istio/ztunnel -n istio-system -f values.yaml
+helm upgrade --install istio-base istio/base -n istio-system --create-namespace --wait -f values.yaml
+helm upgrade --install istiod istio/istiod -n istio-system --set profile=ambient --wait -f values.yaml
+helm upgrade --install istio-cni istio/cni -n istio-system --set profile=ambient --wait -f values.yaml
+helm upgrade --install ztunnel istio/ztunnel -n istio-system --wait -f values.yaml
 ```
 
 ### 4. Установка шлюзов (Gateway API)
@@ -374,15 +380,15 @@ kubectl rollout status deployment/istiod -n istio-system
 
 ```bash
 # 1. Установка новой ревизии alongside старой
-istioctl install --set profile=default --set revision=v1-32-0 -y
+istioctl install --revision=1-31-2 --set profile=default --skip-confirmation
 
 # 2. Проверка, что обе ревизии работают
 kubectl get pods -n istio-system -l app=istiod
-# → istiod-v1-31-0-abc123   1/1     Running   0   30d
-# → istiod-v1-32-0-def456   1/1     Running   0   5m
+# → istiod-1-30-1-abc123   1/1     Running   0   30d
+# → istiod-1-31-2-def456   1/1     Running   0   5m
 
 # 3. Переключение тестового namespace на новую ревизию
-kubectl label namespace my-app istio.io/rev=v1-32-0 --overwrite
+kubectl label namespace my-app istio.io/rev=1-31-2 --overwrite
 kubectl rollout restart deployment -n my-app
 
 # 4. Валидация
@@ -390,11 +396,11 @@ istioctl analyze -n my-app
 istioctl proxy-status | grep my-app
 
 # 5. При проблемах — откат за секунды
-kubectl label namespace my-app istio.io/rev=v1-31-0 --overwrite
+kubectl label namespace my-app istio.io/rev=1-30-1 --overwrite
 kubectl rollout restart deployment -n my-app
 
 # 6. После успешной валидации — удаление старой ревизии
-istioctl uninstall --revision=v1-31-0 -y
+istioctl uninstall --revision=1-30-1 -y
 ```
 
 ---
@@ -414,8 +420,9 @@ kubectl label namespace my-app istio-injection-
 kubectl rollout restart deployment/my-app -n my-app
 
 # 4. Проверить, что поды в Ambient-режиме
-istioctl experimental ambient describe pod my-app-pod -n my-app
+istioctl x describe pod my-app-pod -n my-app
 # → L4 traffic handled by ztunnel on node-1
+# → L7 traffic handled by waypoint (если настроен)
 
 # 5. Если нужен L7 — создать waypoint
 istioctl waypoint apply -n my-app --enroll-namespace
@@ -433,7 +440,7 @@ istioctl waypoint apply -n my-app --enroll-namespace
 ### 1. Верификация Ambient Mesh
 ```bash
 # Описание сетевого пути пода в Ambient
-istioctl ambient describe pod <pod-name> -n <ns-name>
+istioctl x describe pod <pod-name> -n <ns-name>
 # → Результат должен показывать ztunnel (L4) и waypoint (L7, если настроен)
 ```
 
@@ -477,13 +484,17 @@ istioctl verify-install
 
 ```bash
 # Экспорт всех ресурсов Istio (VirtualService, DestinationRule, Gateway, AuthorizationPolicy)
-kubectl get virtualservices,destinationrules,gateways,authorizationpolicies,envoyfilters -A -o yaml > istio-config-backup.yaml
+# + Gateway API (HTTPRoute, Gateway, TCPRoute, TLSRoute) и EnvoyFilter
+kubectl get virtualservices,destinationrules,gateways,authorizationpolicies,envoyfilters, \
+  gateways.gateway.networking.k8s.io,httproutes.gateway.networking.k8s.io, \
+  tcproutes.gateway.networking.k8s.io,tlsroutes.gateway.networking.k8s.io \
+  -A -o yaml > istio-config-backup.yaml
 
 # Бэкап ConfigMap с конфигурацией меша
 kubectl get configmap istio -n istio-system -o yaml > istio-mesh-config-backup.yaml
 
-# Бэкап лейблов неймспейсов для инъекции
-kubectl get ns -l istio-injection=enabled -o yaml > istio-ns-backup.yaml
+# Бэкап лейблов неймспейсов для инъекции (Sidecar и Ambient)
+kubectl get ns -l istio-injection=enabled,istio.io/dataplane-mode=ambient -o yaml > istio-ns-backup.yaml
 
 # Восстановление
 kubectl apply -f istio-config-backup.yaml
@@ -505,6 +516,8 @@ helm uninstall istio-base -n istio-system
 # Полное удаление через istioctl
 istioctl uninstall --purge -y
 ```
+
+> **Примечание:** `helm uninstall` удаляет развернутые ресурсы, но **не удаляет CRD**, установленные чартом `istio-base` (они сохраняются, чтобы не нарушить работу остальных компонентов). Для полного удаления меша используйте `istioctl uninstall --purge`, либо вручную удаляйте CRD: `kubectl get crd -l app.kubernetes.io/instance=istio-base -o name | xargs kubectl delete`.
 
 ---
 
@@ -560,7 +573,7 @@ kubectl top pods -n istio-system -l app=ztunnel
 6. **Сертификаты**: Настройте автоматическую ротацию trust anchors перед истечением срока (рекомендуемый срок — 90 дней для промежуточных CA). Используйте `istioctl proxy-config secret` для проверки.
 7. **Waypoint Proxy**: Разворачивайте waypoint per-namespace, а не per-service, для снижения оверхеда. Используйте HPA на основе CPU > 70% и памяти > 80%.
 8. **Изоляция сред**: Разделяйте кластеры по окружениям (dev/staging/prod) разными неймспейсами или отдельными кластерами. Istio не предоставляет встроенной изоляции между окружениями внутри одного кластера на уровне Control Plane.
-9. **Резервное копирование**: Регулярно экспортируйте конфигурацию меша (`kubectl get virtualservices,destinationrules,gateways,authorizationpolicies -A -o yaml`) и ConfigMap `istio` в `istio-system`.
+9. **Резервное копирование**: Регулярно экспортируйте конфигурацию меша (`kubectl get virtualservices,destinationrules,gateways,authorizationpolicies,gateways.gateway.networking.k8s.io,httproutes.gateway.networking.k8s.io -A -o yaml`) и ConfigMap `istio` в `istio-system`.
 10. **Режим Hybrid**: При переходе с Sidecar на Ambient не удаляйте sidecar сразу. Оставьте оба режима работающими параллельно в течение 2–4 недель для валидации трафика и политик.
 
 ---

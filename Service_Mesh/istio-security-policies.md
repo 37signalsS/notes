@@ -1,5 +1,7 @@
 # Политики безопасности Istio
 
+**Актуально для:** Istio 1.30+
+
 ## Определения
 
 **Безопасность Istio** — комплекс механизмов для реализации модели **Zero Trust** в микросервисных архитектурах. Она базируется на трех фундаментальных принципах:
@@ -353,23 +355,46 @@ kubectl get configmap istio-ca-root-cert -n istio-system -o jsonpath='{.data["ro
 
 ### Ротация trust anchors
 
-Ротация промежуточных CA (certificate signing) происходит автоматически. Ротация корневых trust anchors требует ручного вмешательства:
+Ротация промежуточных CA (certificate signing) происходит автоматически. Ротация корневых trust anchors выполняется через обновление Kubernetes Secret `cacerts` в неймспейсе `istio-system` (в Istio 1.30+ команда `istioctl create-credential` удалена; используется `kubectl create secret`):
 
-1. Создайте новый корневой CA через `istioctl x create-credential`.
-2. Обновите ConfigMap `istio-ca-root-cert` в каждом кластере (primary и remote).
-3. Istiod автоматически перевыпустит все сертификаты на новый корень.
-4. Старые сертификаты остаются валидными до истечения срока; Graceful rotation исклюжает простой.
+1. Сгенерируйте новый корневой сертификат и цепочку (см. [Plug in CA Certificates](https://istio.io/latest/docs/tasks/security/cert-management/plugin-ca-cert/)).
+2. Обновите Secret `cacerts` в каждом кластере (primary и remote) с новыми файлами `ca-cert.pem`, `ca-key.pem`, `root-cert.pem`, `cert-chain.pem`.
+3. Istiod обнаруживает изменение Secret через файловый наблюдатель и автоматически перевыпускает сертификаты для workload-подов через SDS.
+4. Старые сертификаты остаются валидными до истечения срока; graceful rotation исключает простой.
 
-**Пример ротации:**
+**Пример ротации (4-фазный процесс zero-downtime):**
+
 ```bash
-# 1. Создание новых учетных данных
-istioctl x create-credential --name=istiod --type=SelfSigned --namespace=istio-system
+# Фаза 1: начальная конфигурация (Root A)
+kubectl create secret generic cacerts -n istio-system \
+    --from-file=rootA/ca-cert.pem \
+    --from-file=rootA/ca-key.pem \
+    --from-file=rootA/root-cert.pem \
+    --from-file=rootA/cert-chain.pem
 
-# 2. Проверка распространения
+# Фаза 2: добавить новый Root B (combined root)
+kubectl create secret generic cacerts -n istio-system \
+    --from-file=rootA/ca-cert-alt.pem \
+    --from-file=rootA/ca-key-alt.pem \
+    --from-file=combined-root.pem \
+    --from-file=rootA/cert-chain-alt.pem
+
+# Фаза 3: переключить на Intermediate B
+kubectl create secret generic cacerts -n istio-system \
+    --from-file=rootB/ca-cert.pem \
+    --from-file=rootB/ca-key.pem \
+    --from-file=combined-root2.pem \
+    --from-file=rootB/cert-chain.pem
+
+# Фаза 4: удалить старый Root A
+kubectl create secret generic cacerts -n istio-system \
+    --from-file=rootB/ca-cert.pem \
+    --from-file=rootB/ca-key.pem \
+    --from-file=rootB/root-cert.pem \
+    --from-file=rootB/cert-chain.pem
+
+# Проверка
 kubectl get configmap istio-ca-root-cert -n istio-system -o yaml
-
-# 3. Проверка, что сертификаты подов обновились
-istioctl proxy-config secret <pod> -n <ns> -o json | jq '.dynamicActiveSecrets[0].secret.tlsCertificate.certificateChain'
 ```
 
 ### Внешний CA (Vault / SPIRE / cert-manager)
@@ -684,8 +709,12 @@ curl -v http://api-server.prod/api/restricted
 ### Сценарий 9: Ротация trust anchors без простоя
 
 ```bash
-# 1. Создайте новые учетные данные
-istioctl x create-credential --name=istiod --type=SelfSigned --namespace=istio-system
+# 1. Обновить Secret cacerts с combined root (Root A + Root B)
+kubectl create secret generic cacerts -n istio-system \
+    --from-file=ca-cert.pem \
+    --from-file=ca-key.pem \
+    --from-file=root-cert.pem=combined-root.pem \
+    --from-file=cert-chain.pem
 
 # 2. Проверьте, что ConfigMap обновился
 kubectl get configmap istio-ca-root-cert -n istio-system -o jsonpath='{.data["root-cert.pem"]}' | openssl x509 -noout -serial -subject -dates
@@ -756,7 +785,7 @@ kubectl exec -n my-app deploy/my-app -- curl -s localhost:15090/stats/prometheus
 | **`istioctl proxy-config cluster deploy/<name> -n <ns>`** | Проверка upstream-кластеров и outlier detection. |
 | **`istioctl proxy-config route deploy/<name> -n <ns>`** | Проверка активных маршрутов, таймаутов и ретраев. |
 | **`istioctl waypoint list -n <ns>`** | Список Waypoint прокси в неймспейсе. |
-| **`istioctl experimental ambient describe pod <pod> -n <ns>`** | Описание сетевого пути пода в Ambient (Ztunnel, Waypoint, политики). |
+| **`istioctl x describe pod <pod> -n <ns>`** | Описание сетевого пути пода в Ambient (Ztunnel, Waypoint, политики). |
 
 ### Логи
 
@@ -832,7 +861,7 @@ kubectl get sidecars -A
 | **Waypoint не создаётся** | Нет Gateway API CRD или недостаточно прав | Установите CRD: `kubectl get crd gateways.gateway.networking.k8s.io`; проверьте RBAC istiod |
 | **Высокий CPU на ноде от Ztunnel** | Конфликт правил iptables/nftables | Переключите на `nftables` (`values.global.nativeNftables=true`); проверьте количество правил: `iptables -L -t nat -v | wc -l` |
 | **Сервис не обнаруживается (No Healthy Upstream)** | Эндпоинт не Ready или отсутствует в `egress.hosts` ресурса `Sidecar` | Проверьте readiness probe; добавьте namespace в `Sidecar.egress.hosts` |
-| **Сертификат истёк / mTLS не работает** | CA недоступен или trust bundle устарел | Проверьте `istioctl proxy-config secret`; перевыпустите trust anchors через `istioctl x create-credential` |
+| **Сертификат истёк / mTLS не работает** | CA недоступен или trust bundle устарел | Проверьте `istioctl proxy-config secret`; перевыпустите trust anchors через обновление Kubernetes Secret `cacerts` |
 | **xDS не синхронизируется (NOT SYNCED)** | istiod перегружен или сетевой разрыв | Проверьте ресурсы istiod; убедитесь в отсутствии NetworkPolicy между istiod и подами |
 | **Зависание Pod при удалении (Terminating)** | Sidecar не завершается вовремя | Увеличьте `terminationGracePeriodSeconds` до 60s; проверьте `preStop` хук |
 | **Access-логи не пишутся** | Telemetry API не настроен или уровень логирования выключен | Примените ресурс `Telemetry` с `accessLogging`; проверьте `kubectl logs -c istio-proxy` |

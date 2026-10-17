@@ -1,6 +1,6 @@
 # GitOps: Образы контейнеров и их жизненный цикл
 
-**Актуально для:** OCI Image/Distribution Spec 1.1, Docker 27.x/28.x, Harbor 2.12+/2.15.x, Kargo v1.11.x, Flux v2.4.x, Argo CD Image Updater v1.0.x, Cosign v2.4+/v3.x
+**Актуально для:** OCI Image/Distribution Spec 1.1, Docker 27.x/28.x, Harbor 2.12+/2.15.x, Kargo v1.11.x, Argo CD Image Updater v1.0.x, Cosign v2.4+/v3.x
 
 В GitOps образ контейнера является ключевым неизменяемым артефактом, связывающим процессы непрерывной интеграции (CI) и непрерывной доставки (CD). Правильное управление образами — основа предсказуемости, прослеживаемости и отказоустойчивости инфраструктуры: именно криптографический digest образа становится той единственной детерминированной переменной, которой достаточно для описания желаемого состояния приложения в кластере.
 
@@ -27,7 +27,7 @@
 GitOps устанавливает строгую границу между созданием артефакта и его развертыванием:
 
 - **CI (Build & Push)**: Пайплайн компилирует код, собирает мульти-архитектурный образ, генерирует SBOM, сканирует уязвимости, подписывает артефакт и публикует его в OCI-реестр. Результат CI — **новый неизменяемый артефакт с зафиксированным digest**.
-- **CD (Pull & Reconcile)**: GitOps-контроллер (Argo CD, Flux) обнаруживает изменение манифеста в Git (или регистрирует новый образ через автоматизацию) и приводит рантайм кластера в соответствие. Результат CD — **актуальное состояние рабочих нагрузок в кластере**.
+    - **CD (Pull & Reconcile)**: GitOps-контроллер (Argo CD) обнаруживает изменение манифеста в Git (или регистрирует новый образ через автоматизацию) и приводит рантайм кластера в соответствие. Результат CD — **актуальное состояние рабочих нагрузок в кластере**.
 
 Главный принцип: **CD никогда не пересобирает артефакт**. Продвижение между средами (Dev → Staging → Production) — это перенос одного и того же хеша digest. Повторная сборка из того же коммита недопустима: она не гарантирует побайтовую идентичность из-за плавающих временных меток слоев и обновления базовых пакетов в репозиториях ОС.
 
@@ -58,7 +58,7 @@ Code Commit
     [Git Repository] ──► Запись закрепленного digest в манифест values.yaml
           │
           ▼
-    [GitOps Agent] ────► Argo CD / Flux выполняет синхронизацию
+    [GitOps Agent] ────► Argo CD выполняет синхронизацию
           │
           ▼
     [Node Kubelet] ────► Containerd проверяет подпись (Kyverno) и пуллит digest
@@ -268,71 +268,8 @@ kargo get stages --project kargo-apps
 
 Для автоматического обновления тегов и дайджестов в Git-репозиториях применяются контроллеры автоматизации.
 
-#### Вариант А: Flux Image Update Automation (Native Digest Pinning)
-Flux считывает реестр, выбирает версию по политике и фиксирует изменение в Git с записью полного `sha256 digest`:
+#### Автоматизация обновления образов в GitOps
 
-```yaml
-apiVersion: image.toolkit.fluxcd.io/v1
-kind: ImageRepository
-metadata:
-  name: auth-service
-  namespace: flux-system
-spec:
-  image: harbor.internal/core/auth-service
-  interval: 5m
-  secretRef:
-    name: harbor-registry-credentials
----
-apiVersion: image.toolkit.fluxcd.io/v1
-kind: ImagePolicy
-metadata:
-  name: auth-service-policy
-  namespace: flux-system
-spec:
-  imageRepositoryRef:
-    name: auth-service
-  policy:
-    semver:
-      range: 2.x.x
----
-apiVersion: image.toolkit.fluxcd.io/v1
-kind: ImageUpdateAutomation
-metadata:
-  name: auth-service-automation
-  namespace: flux-system
-spec:
-  interval: 10m
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-  git:
-    checkout:
-      ref:
-        branch: main
-    commit:
-      author:
-        email: fluxbot@internal
-        name: Flux Image Automator
-      messageTemplate: "chore(deps): update auth-service to {{ .Selected.Tag }} digest {{ .Selected.Digest }}"
-    push:
-      branch: main
-  update:
-    path: ./clusters/production/apps
-    strategy: Setters
-```
-
-В файле манифеста приложения добавляется маркер-сеттер:
-```yaml
-# clusters/production/apps/deployment.yaml
-spec:
-  template:
-    spec:
-      containers:
-        - name: app
-          image: harbor.internal/core/auth-service:2.4.1@sha256:7f83b1657ff1... # {"$imagepolicy": "flux-system:auth-service-policy"}
-```
-
-#### Вариант Б: Argo CD Image Updater (CRD-режим v1.0+)
 Современная версия Image Updater использует манифесты `ImageUpdater` вместо аннотаций:
 
 ```yaml
@@ -359,11 +296,17 @@ spec:
 
 **Проверка выполнения обновления**:
 ```bash
-flux reconcile image repository auth-service -n flux-system
-# → ✔ reconciliation finished in 1.45s, found 18 tags
-kubectl get imagepolicy auth-service-policy -n flux-system
-# → NAME                  LATEST IMAGE                                     READY
-# → auth-service-policy   harbor.internal/core/auth-service:2.4.1@sha256:7f83b1...   True
+# Просмотр статуса ImageUpdater
+kubectl get imageupdater core-services-updater -n argocd -o wide
+# → NAME                  LAST IMAGE               READY
+# → core-services-updater harbor.internal/core/auth-service:2.4.1@sha256:7f83b1...   True
+
+# Проверка состояния приложения после обновления образа
+argocd app get auth-service-staging
+# → Name:               auth-service-staging
+# → Status:             Synced to main (b6c3d2e)
+# → Health:             Healthy
+# → Prune:              Disabled
 ```
 
 ### Сценарий 4: Air-gapped зеркалирование и Proxy Cache в изолированном контуре
@@ -646,17 +589,16 @@ groups:
 - **[Kargo: promotion-пайплайны](./kargo_promotion_pipelines.md)** — управление этапами продвижения артефактов.
 - **[Renovate: автоматизация зависимостей](./renovate_dependency_updates.md)** — управление версиями образов и чартов через PR.
 - **[GitOps: Журналы аудита и трассируемость](./audit_logs.md)** — аудит поставок от коммита до пода.
-- **[Обзор Argo CD](../ArgoCD/argocd_overview.md)** · **[Argo CD Image Updater](../ArgoCD/argocd_image_updater.md)** · **[Обзор Flux](../flux.md)**
+ - **[Обзор Argo CD](../ArgoCD/argocd_overview.md)** · **[Argo CD Image Updater](../ArgoCD/argocd_image_updater.md)**
 - **[Harbor: Обзор реестра](../../Docker/Docker_registries/Harbor/overview.md)** · **[Harbor: Репликация](../../Docker/Docker_registries/Harbor/replication.md)** · **[Harbor: Эксплуатация](../../Docker/Docker_registries/Harbor/operations.md)**
 - **[Air-gapped ошибки Image Pull](../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/airgapped.md)** · **[Диагностика Image Pull](../../Kubernetes/Troubleshooting/Common_Errors/PodImagePullErrors/diagnostics.md)**
 - **[Kaniko и альтернативы сборки без демона](../../Docker/Dockerfile/dockerfile_kaniko.md)** · **[Стратегии очистки Docker FS](../../Docker/Docker_fs/cleanup_gc_strategies.md)**
 
 Внешние спецификации и стандарты:
-- [OCI Distribution Specification v1.1](https://github.com/opencontainers/distribution-spec/blob/main/spec.md) — официальная спецификация OCI Referrers API.
-- [OCI Image Specification v1.1](https://github.com/opencontainers/image-spec/blob/main/spec.md) — структура манифестов и индексов.
-- [Kargo Documentation](https://docs.kargo.io/) — оркестрация продвижения артефактов.
-- [Flux Image Automation Guide](https://fluxcd.io/flux/guides/image-update/) — автоматизация обновления образов в Git.
-- [Sigstore Cosign Documentation](https://docs.sigstore.dev/cosign/overview/) — подписание и аттестация OCI-артефактов.
+ - [Спецификация OCI Referrers API v1.1](https://github.com/opencontainers/distribution-spec/blob/main/spec.md) — официальная спецификация OCI Referrers API.
+ - [OCI Image Specification v1.1](https://github.com/opencontainers/image-spec/blob/main/spec.md) — структура манифестов и индексов.
+ - [Kargo Documentation](https://docs.kargo.io/) — оркестрация продвижения артефактов.
+ - [Sigstore Cosign Documentation](https://docs.sigstore.dev/cosign/overview/) — подписание и аттестация OCI-артефактов.
 
 ## Вопросы для собеседования
 

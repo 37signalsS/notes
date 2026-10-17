@@ -8,7 +8,7 @@
 
 **Push-модель (CI-driven)** — стратегия, при которой внешний конвейер (Jenkins, GitLab CI, GitHub Actions) активно подключается к кластеру и выполняет `kubectl apply -k`.
 
-**Pull-модель (GitOps-driven)** — стратегия, при которой специальный агент внутри кластера (ArgoCD, Flux) отслеживает изменения в Git и самостоятельно синхронизирует состояние кластера с описанным в репозитории.
+**Pull-модель (GitOps-driven)** — стратегия, при которой специальный агент внутри кластера (ArgoCD) отслеживает изменения в Git и самостоятельно синхронизирует состояние кластера с описанным в репозитории.
 
 **Dry-run (Валидация)** — этап проверки сгенерированных манифестов на соответствие схемам Kubernetes API и политикам безопасности без их фактического применения.
 
@@ -28,7 +28,7 @@
 
 | Характеристика | Push-модель (CI-driven) | Pull-модель (GitOps) |
 | :--- | :--- | :--- |
-| **Инструменты** | Jenkins, GitLab CI, GitHub Actions, Tekton, Drone, Woodpecker | ArgoCD, Flux |
+| **Инструменты** | Jenkins, GitLab CI, GitHub Actions, Tekton, Drone, Woodpecker | ArgoCD |
 | **Доступ** | Требуются учетные данные кластера в CI | Агент уже внутри кластера |
 | **State Drift** | Сложно отследить ручные изменения | Автоматическое исправление (Self-healing) |
 | **Безопасность** | Широкий доступ для CI-раннеров | Минимальный доступ (только к Git) |
@@ -36,7 +36,7 @@
 | **Стоимость трафика** | Прямое подключение к API-server | Агент в кластере → нет внешнего доступа |
 | **Audit trail** | Журнал CI-системы | Журнал Git + журнал контроллера |
 | **Сложность инфраструктуры** | Низкая | Требует установки контроллера |
-| **Обратимость** | `git revert` + `kubectl rollout undo` | `git revert` + `argocd app rollback` / `flux suspend` |
+| **Обратимость** | `git revert` + `kubectl rollout undo` | `git revert` + `argocd app rollback` |
 
 Гибридная модель (CI для рендера → GitOps для применения) становится стандартом: CI собирает манифесты и пушит их в GitOps-репозиторий, а контроллер применяет в кластер.
 
@@ -71,7 +71,7 @@ infra-repo/                        # GitOps-репозиторий
 | Стратегия | Описание | Когда использовать |
 | :--- | :--- | :--- |
 | **Branch promotion** | Каждая среда — отдельная ветка (`dev`, `stage`, `main`) | Простые пайплайны, малая команда |
-| **Directory promotion** | Все среды в одной ветке, разные `overlays/`, тег в `kustomization.yaml` меняется в коммите | Стандартный GitOps (ArgoCD/Flux читают `HEAD`) |
+| **Directory promotion** | Все среды в одной ветке, разные `overlays/`, тег в `kustomization.yaml` меняется в коммите | Стандартный GitOps (ArgoCD читают `HEAD`) |
 | **Tag promotion** | Git-tag определяет версию overlay (`overlays/production` читает `tag: v1.4.2`) | Команды с релизным циклом (semver) |
 | **Helm-style release** | CI собирает архив, ArgoCD sync на архив (OCI/HTTP) | Требуется аудит и reproducibility |
 
@@ -123,7 +123,7 @@ kustomize build overlays/production | grep "image:"
 | **Client-side** (по умолчанию) | `kubectl apply -k` или `kubectl apply -f -` | Client сохраняет `last-applied-configuration` в аннотации; merge-логика на стороне kubectl | Простые CI-pipelines, малый объем |
 | **Server-side apply** | `kubectl apply -k --server-side` | Merge-логика на стороне kube-apiserver; `fieldManager` идентифицирует владельца | GitOps-контроллеры, совместное редактирование несколькими акторами, большие манифесты (>3 МБ) |
 
-В GitOps (ArgoCD, Flux) SSA включен по умолчанию. В push-моделях (CI) выбор остается за оператором, но для манифестов, которые также редактируются вручную или HPA-контроллером, SSA предпочтительнее.
+В GitOps (ArgoCD) SSA включен по умолчанию. В push-моделях (CI) выбор остается за оператором, но для манифестов, которые также редактируются вручную или HPA-контроллером, SSA предпочтительнее.
 
 ## 3. Практические сценарии
 
@@ -403,59 +403,7 @@ spec:
       # kustomize без параметров — накладывается поверх результата helm template
 ```
 
-### 3.4. Сценарий 4: Pull-модель через Flux v2
-
-Flux v2 имеет выделенный контроллер **kustomize-controller**, который работает с ресурсами `Kustomization`:
-
-```yaml
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: infra-gitops
-  namespace: flux-system
-spec:
-  interval: 5m
-  url: https://github.com/my-org/infra-gitops.git
-  ref:
-    branch: main
-  secretRef:
-    name: flux-git-creds     # basic-auth или SSH-key
----
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: billing-api-production
-  namespace: flux-system
-spec:
-  interval: 10m
-  sourceRef:
-    kind: GitRepository
-    name: infra-gitops
-  path: ./apps/billing/overlays/production
-  prune: true
-  wait: true
-  timeout: 5m
-  force: false
-  healthChecks:
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: billing-api
-      namespace: billing
-  postBuild:
-    substituteFrom:
-      - kind: ConfigMap
-        name: cluster-vars
-    substitute:
-      cluster_name: production-eu-west
-  decryption:
-    provider: sops
-    secretRef:
-      name: sops-keys
-```
-
-**Health checks и задержки** — критичны для production-роллаутов. Без `healthChecks` Flux пометит ресурсы `Ready` сразу после `kubectl apply`, и следующее обновление начнется до того, как поды станут `Ready`. Рекомендуется всегда указывать `healthChecks` для критичных Deployment'ов и Job'ов.
-
-### 3.5. Сценарий 5: CI-системы (GitLab CI, Tekton, Drone, Woodpecker)
+### 3.4. Сценарий 4: CI-системы (GitLab CI, Tekton, Drone, Woodpecker)
 
 **GitLab CI** (`.gitlab-ci.yml`):
 
@@ -566,7 +514,7 @@ when:
   event: tag
 ```
 
-### 3.6. Управление секретами
+### 3.5. Управление секретами
 
 Для CD критически важно не хранить секреты в открытом виде.
 
@@ -664,7 +612,7 @@ spec:
 
 В `kustomization.yaml` ESO-манифест кладется как resource, и Kustomize его только применяет. Реальные значения подтягиваются контроллером ESO уже после apply.
 
-### 3.7. Стратегия откатов и версионирование
+### 3.6. Стратегия откатов и версионирование
 
 Для обеспечения надежности рекомендуется:
 
@@ -686,18 +634,13 @@ argocd app history billing-api-production
 # 11  def5678    ← good
 argocd app rollback billing-api-production 11
 
-# === Flux: suspend + ручной откат через git ===
-flux suspend kustomization billing-api-production
-# ... ручной git revert ...
-flux resume kustomization billing-api-production
-
 # === Универсальный аварийный откат из snapshot (если Git недоступен) ===
 kubectl apply -f snapshots/12345/manifest.yaml
 ```
 
 **Политика retention снапшотов:** хранить последние 30 релизов для production, 10 для staging. Хранилище артефактов (MinIO, Nexus, GitLab Artifacts) должно иметь политику TTL.
 
-### 3.8. Validation Pipeline (kubeconform + OPA/Kyverno)
+### 3.7. Validation Pipeline (kubeconform + OPA/Kyverno)
 
 Многоуровневая валидация перед apply:
 
@@ -724,7 +667,7 @@ for doc in yaml.safe_load_all(sys.stdin):
 " | xargs -I{} cosign verify {} --certificate-identity-regexp '.*@my-org.*'
 ```
 
-### 3.9. Canary / Blue-Green через Kustomize
+### 3.8. Canary / Blue-Green через Kustomize
 
 Канареечное развертывание без service-mesh реализуется через два overlay'а и `Selector` в Service:
 
@@ -749,7 +692,7 @@ patchesStrategicMerge:
 
 В CD-пайплайне canary деплоится первым, валидируется метриками (latency, error rate), затем промоутится через изменение replicas и удаление canary-Deployment'а.
 
-### 3.10. Image Promotion Pipeline (CI → GitOps)
+### 3.9. Image Promotion Pipeline (CI → GitOps)
 
 Связка registry → CI → GitOps-репозиторий:
 
@@ -778,7 +721,7 @@ git commit -m "Promote billing-api to $IMAGE_TAG"
 git push origin main
 ```
 
-В GitOps-репозитории (например, на Gitea) настраивается webhook в ArgoCD/Flux — apply произойдет автоматически.
+В GitOps-репозитории (например, на Gitea) настраивается webhook в ArgoCD — apply произойдет автоматически.
 
 ## 4. Диагностика и решение проблем
 
@@ -791,7 +734,7 @@ git push origin main
 | Хеш ConfigMap не изменился при изменении файла | `disableNameSuffixHash: true` или `behavior: merge` | Проверить `kustomization.yaml`; для rolling-restart должен быть включен хеш-суффикс |
 | `diff` показывает изменения, которых нет в Git | Server-side apply оставил `managedFields` от предыдущего apply | Использовать `kubectl apply --server-side --force-conflicts` или почистить аннотации |
 | ArgoCD sync падает с `ComparisonError` | Изменения в Git невалидны (синтаксис YAML) | Проверить `argocd app manifests` локально; `kustomize build` на dev-машине |
-| Flux Kustomization в состоянии `Ready=False` после изменения | Health checks не прошли (поды не Ready) | `flux get kustomization`, `flux logs`; увеличить `timeout` или исправить readiness probe |
+| ArgoCD Application в состоянии `Sync=False` после изменения | Health checks не прошли (поды не Ready) | `argocd app get <name>`; увеличить `retry.backoff.maxDuration` или исправить readiness probe |
 | Kustomize edit не сохраняет изменение | Файл `kustomization.yaml` read-only или нет прав | Проверить `ls -la overlays/production/`; CI должен иметь RW |
 | `kubeconform` сообщает о неизвестных полях | Используется CRD без схемы | Создать `schemas/` и передать `-schema-location` |
 | `argocd app sync` долго (timeout) | Большой namespace с тысячами объектов | Увеличить `syncOptions.timeout`, использовать `ServerSideApply=true`, разбить на несколько Application |
@@ -805,20 +748,12 @@ argocd app manifests billing-api-production
 
 # История ревизий
 argocd app history billing-api-production
-flux get kustomization billing-api-production
 
 # Дрифт между Git и кластером
 argocd app diff billing-api-production
-flux diff kustomization billing-api-production
-
-# События Kustomization в кластере
-kubectl describe kustomization billing-api-production -n flux-system
-
-# Логи kustomize-controller
-kubectl logs -n flux-system -l app=kustomize-controller --tail=200
 ```
 
-### 3.11. Multi-cluster деплой через Kustomize
+### 3.10. Multi-cluster деплой через Kustomize
 
 При управлении несколькими кластерами (регионы, окружения) Kustomize используется для создания кластер-специфичных конфигураций из общей base.
 
@@ -908,7 +843,7 @@ spec:
 - **Подпись манифестов (cosign):** для production-кластеров — подписывайте собранные Kustomize-манифесты перед коммитом в GitOps-репозиторий; `cosign verify-blob` в admission controller (Kyverno/Conftest) предотвращает apply неподписанных изменений.
 - **Запрет на force-apply:** `kubectl replace --force` и `kubectl delete --all` в production — только через ручное подтверждение и аудит-лог.
 - **Изоляция канареечных rollout'ов:** канареечные overlay'ы деплоятся в **отдельный namespace** с отдельным ServiceAccount, чтобы при ошибке не задеть основной namespace.
-- **Audit-лог CD-операций:** все `kubectl apply -k`, `argocd app sync`, `flux reconcile` пишут в audit-лог кластера; настройте Fluentbit/Vector для отправки в SIEM (Loki, Splunk on-prem).
+- **Audit-лог CD-операций:** все `kubectl apply -k`, `argocd app sync` пишут в audit-лог кластера; настройте Fluentbit/Vector для отправки в SIEM (Loki, Splunk on-prem).
 
 ## 6. Производительность и масштабирование
 
@@ -919,33 +854,27 @@ spec:
 | 500–2000 | Несколько ArgoCD ApplicationSet или HelmRelease'ов + Kustomize; избегать `kubectl diff` на весь namespace |
 | 2000+ | Переходить на Helm + Kustomize overlay для base, либо на ApplicationSet с auto-discovery |
 
-**Тюнинг ArgoCD:**
+**Тюнинг контроллера:**
 
 - `--status-processors` — увеличить до 50 при большом числе Application'ов.
 - `repoServer.replicas: 3` — для крупных манифестов.
 - SSA и server-side diff настраиваются на уровне приложения (sync option `ServerSideApply=true`, аннотация `argocd.argoproj.io/compare-options: ServerSideDiff=true`); глобальных ключей exclusions для diff в `argocd-cm` нет — для исключения полей из diff используйте `ignoreDifferences` (см. [Ignore Differences](../../../GitOps/ArgoCD/synchronization/ignore_differences.md)).
 
-**Тюнинг Flux:**
-
-- `--concurrent=10` — параллельные reconcile.
-- `--events-per-second=10` — если много Kustomization'ов.
-- `spec.interval` — увеличить с 10m до 1h для non-critical, чтобы снизить нагрузку на kube-apiserver.
-
 ## 7. Чеклист внедрения CD с Kustomize
 
-1. **Определить модель:** push или pull. Для зрелых команд — pull (ArgoCD/Flux).
+1. **Определить модель:** push или pull. Для зрелых команд — pull (ArgoCD).
 2. **Разделить репозитории:** `app-repo` (код) + `infra-repo` (Kustomize), или mono-repo.
 3. **Создать base/overlay структуру:** минимум `base/` + `overlays/{dev,staging,production}/`.
 4. **Включить configMapGenerator/secretGenerator:** для автоматического rolling-restart.
 5. **Настроить CI-валидацию:** kubeconform + dry-run + diff на каждый PR.
 6. **Настроить image-promotion:** `kustomize edit set image` в CI, push в GitOps-репо.
-7. **Развернуть GitOps-контроллер:** ArgoCD или Flux, настроить webhook'и.
-8. **Настроить self-heal:** `selfHeal: true` в ArgoCD / `prune: true` в Flux.
+7. **Развернуть GitOps-контроллер:** ArgoCD, настроить webhook'и.
+8. **Настроить self-heal:** `selfHeal: true` в ArgoCD.
 9. **Внедрить health-checks:** для всех Deployment'ов, ожидание `Ready`.
 10. **Настроить secrets:** SOPS/Sealed Secrets/ESO в зависимости от on-prem-инфраструктуры.
 11. **Описать стратегию откатов:** документировать команды для CI и GitOps-контроллера.
 12. **Внедрить audit-logging:** admission controller + audit-policy + SIEM.
-13. **Обучить команду:** `argocd app`, `flux get`, ручной откат, `kustomize build`.
+13. **Обучить команду:** `argocd app`, ручной откат, `kustomize build`.
 
 ## 8. Дополнительная информация
 
@@ -961,12 +890,10 @@ spec:
 - **[Тестирование и валидация](./kustomize_testing_validation.md)** — conftest, snapshot, lint.
 - **[Валидация манифестов (kubeconform)](../kubeconform_overview.md)** — автоматическая проверка схем Kubernetes API.
 - **[ArgoCD: синхронизация и self-heal](../../../GitOps/ArgoCD/synchronization.md)** — детали GitOps-модели ArgoCD.
-- **[Flux v2: Kustomize Controller](../../../GitOps/flux.md)** — описание `Kustomization` API.
 
 ### Внешние ресурсы
 
 - [Official Kustomize Documentation](https://kustomize.io/)
 - [ArgoCD: Kustomize Integration](https://argo-cd.readthedocs.io/en/stable/user-guide/kustomize/)
-- [Flux v2: Kustomization API](https://fluxcd.io/flux/components/kustomize/kustomization/)
 - [SOPS + Kustomize (ksops)](https://github.com/viaduct-ai/kustomize-sops)
 - [External Secrets Operator](https://external-secrets.io/)

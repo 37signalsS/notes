@@ -918,7 +918,7 @@ flux reconcile helmrelease ingress-nginx -n flux-system --force
 - [Диагностика и мониторинг Argo CD](./ArgoCD/argocd_troubleshooting_and_monitoring.md) — сбор метрик Prometheus, трассировка и отладка компонентов.
 - [Синхронизация и хуки в Argo CD](./ArgoCD/synchronization.md) — волновой деплой (Sync Waves), хуки жизненного цикла и Server-Side Apply.
 - [Управление секретами в GitOps](./secrets_encryption.md) — подробное сравнение SOPS, Sealed Secrets и External Secrets Operator.
-- [Организация монорепозиториев во Flux](./Concepts/flux_monorepo_organization.md) — структуры каталогов, пути Kustomization и оптимизация сборки.
+- [Организация монорепозитория Argo CD](./Concepts/argocd_monorepo_organization.md) — структуры каталогов, пути Application и оптимизация сборки.
 - [Прогрессивная доставка в GitOps](./Concepts/progressive_delivery_gitops.md) — канареечные релизы через Argo Rollouts и Flagger.
 - [Мультикластерные паттерны](./Concepts/multi_cluster_patterns.md) — архитектура распределения приложений по нескольким кластерам.
 - [Оповещения в GitOps](./gitops_notifications.md) — настройка webhook-уведомлений в мессенджеры и корпоративные чаты.

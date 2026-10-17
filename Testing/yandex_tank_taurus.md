@@ -1,12 +1,16 @@
 # Нагрузочное тестирование с помощью Yandex.Tank и Taurus
 
+**Актуально для:** Yandex.Tank 1.15.x (Python 3), Taurus 1.17.x, InfluxDB 1.x, Grafana 12.x
+
+> **Статус:** Yandex.Tank (open-source) и Taurus (open-source) активно поддерживаются сообществом. Облачный сервис **Yandex Load Testing** (SaaS-надстройка над Yandex.Tank) прекратил существование 1 июля 2026 года — миграция на **k6** (см. [k6](./k6_load_testing.md)). Сам open-source Yandex.Tank и Taurus остаются работающими локальными инструментами для on-premise и CI/CD-интеграций.
+
 ## Определения
 
-**Yandex.Tank** — open-source консольный генератор нагрузки (Python). Разработан и поддерживался Яндексом, используется в производстве для стресс- и нагрузочных тестов. Ключевая особенность — программное управление профилем нагрузки: форма конвейера (pipeline) и гибкая настройка деградации.
+**Yandex.Tank** — open-source консольный генератор нагрузки (Python 3). Разработан и поддерживался Яндексом, используется в производстве для стресс- и нагрузочных тестов. Ключевая особенность — программное управление профилем нагрузки: поддержка автостопа (autostop), гибкая настройка деградации, сбор метрик через Telegraf и SSH-мониторинг целевого хоста.
 
-**Taurus** — open-source фреймворк-обёртка поверх разных генераторов (bzt) от BlazeMeter/Perforce. Позволяет **описывать тест в едином YAML** и запускать поверх JMeter, Gatling, Locust, k6, Selenium и Phantom. В 2026 году проект продолжает развиваться (релизы в `Blazemeter/taurus`).
+**Taurus (bzt)** — open-source фреймворк-обёртка поверх разных генераторов (CLI: `bzt`), лицензия Apache 2.0. Позволяет **описывать тест в едином YAML** и запускать поверх JMeter, Gatling, Locust, k6, Selenium и Yandex.Tank. Актуальная версия 1.17.x (2026). Реализована на Python 3.
 
-Любимый «продюсерский» стек в СНГ-продакшенах: **Taurus (YAML) + Yandex.Tank (генератор) + InfluxDB/Grafana (метрики)** либо концерн Yandex Overload/метрики.
+Любимый «prod»-стек в СНГ-продакшенах: **Taurus (YAML) + Yandex.Tank (генератор) + InfluxDB/Grafana (метрики)**.
 
 ## Основные концепции
 
@@ -62,19 +66,20 @@ Taurus поддерживает разные сценарии изменения
 
 Yandex.Tank использует сменные «генераторы трафика» (generators):
 
-- **phantom** — default, низкоуровневый HTTP-генератор на C/C++: высокая производительность, поддержка pipelining, до сотен тысяч RPS с одного узла; для стресс-тестов.
-- **pandora** — встроенный Go-генератор, переиспользующий многие идеи phantom, удобен для своих метрик и критериев;
+- **phantom** — default, низкоуровневый HTTP-генератор на C/C++: высокая производительность, поддержка pipelining, 100 000+ RPS с одного узла (по документации); для стресс-тестов. Не поддерживает HTTP/2.
+- **pandora** — внешний Go-генератор, поддерживает HTTP/2; удобен для own-метрик и критериев через expvar.
 - **jmeter** — как «внешний» генератор.
-- **bfg** — генератор для быстрых unit-тестов (не для нагрузки).
+- **bfg** — Python-генератор для кастомных сценариев (HTTP/HTTPS, HTTP/2); позволяет писать сценарии нагрузки на Python.
+- **firebat** — устаревший генератор на базе phantom (устраняется из поддержки).
 
 ### Каналы данных и бэкенды
 
 Результаты теста Taurus отправляет в:
 
-- **InfluxDB** — с метриками теста и служебной информацией (`bzt-generated` теги + теги проекта).
+- **InfluxDB** — с метриками теста (RPS, latency, errors) и служебной информацией; Taurus добавляет тег `application` при настройке `applications:`.
 - **Grafana** — дашборды на данные InfluxDB.
 - **Файлы** — csv/jtl для последующей обработки.
-- **Overload (Yandex Cloud Monitoring)** — облачный бэкенд (SaaS).
+- **Overload** — сервис аналитики результатов Yandex.Tank (отключён вместе с Yandex Load Testing в 2026 г.). Актуальная альтернатива — Loki/Grafana или собственная push-модель в InfluxDB.
 
 ## Практические сценарии
 
@@ -110,8 +115,6 @@ scenarios:
       method: GET
 settings:
   artifacts-dir: ./artifacts
-aggregator:
-  has-downloads: false
 ```
 
 ```bash
@@ -144,7 +147,7 @@ reporting:
   - condition: failures > 1%
 ```
 
-Приделывания стадия происходит строго до окончания прогона.
+Проверка критериев происходит после окончания прогона.
 
 ### Сценарий 4: Комбинированный тест JMeter + Taurus
 
@@ -167,12 +170,15 @@ modules:
 ### Сценарий 5: Мониторинг через InfluxDB + Grafana
 
 ```yaml
+modules:
+  influxdb-reporter:
+    host: influxdb
+    port: 8086
+    database: loadtest
+    username: tank
+    password: tank
 reporting:
-- module: influxdb
-  url: http://influxdb:8086
-  db: loadtest
-  user: tank
-  password: tank
+- influxdb-reporter
 ```
 
 В Grafana подключить источник InfluxDB и импортировать дашборд Taurus — метрики RPS, latency, errors по времени теста.
@@ -185,12 +191,45 @@ reporting:
 
 | Симптом | Причина | Решение |
 | :--- | :--- | :--- |
-| `Cannot find generator` | Не установлен executor (gatling/locust) | `pip install bzt[something]`-подход; поставить генератор отдельно |
-| Резкий рост RPS сразу | Нет ramp-up, phantom сам разгоняет | Задать `ramp-up` в профиле; исключить `hold-for` без паузы |
+| `Cannot find generator` | Не установлен executor (gatling/locust/jmeter) | `pip install bzt[extra]` или установить генератор отдельно |
+| Резкий рост RPS сразу | Нет ramp-up, phantom разгоняется агрессивно | Задать `ramp-up` в профиле; исключить `hold-for` без паузы |
 | отставание от in-clock сета | Драйвер через HTTP, задержки сети | Использовать `.hdr`-драйвер, `connections-per-host` |
-| influxdb: connection refused | Не создана база/порт слушает локально | Создать БД `loadtest` заранее, проверить bind-address |
-| teardown не выполняется | Ошибка в конфиге до стадии | Валидировать YAML через `bzt -validate` |
-| Большой расход памяти Taurus | Долгий тест с большим artifacts | Настроить агрегатор `module: console`, ротировать логи |
+| influxdb: connection refused | Не создана БД/порт слушает локально | Создать БД `loadtest` заранее, проверить `bind-address` |
+| teardown не выполняется | Ошибка в YAML до стадии teardown | Проверить синтаксис через внешний валидатор YAML (например, `yamllint`); Taurus не имеет встроенной команды валидации конфига |
+| Большой расход памяти Taurus | Долгий тест с большим artifacts | Включить модуль `resource-check` с `mem_limit`; ограничить `check-interval`; ротировать `artifacts-dir` между прогоны |
+
+## Лучшие практики
+
+### Архитектура и запуск
+
+- **Разделяйте генератор и измеритель.** Запускать Yandex.Tank/Taurus на том же хосте, что и тестируемый сервис, создаёт ложный бутылочный колпачок (конкуренция за CPU, сеть, память). Генератор — на выделенном хосте или в отдельном контейнере/Docker-сети.
+- **Phantom для пика:** используйте `phantom` для тестов до 100 000+ RPS с одного узла, включая HTTP pipelining. Для HTTP/2 — `pandora`.
+- **Ramp-up обязателен:** всегда задавайте `ramp-up` — резкий старт Phantom без разгона приводит к искусственным задержкам и преждевременному срабатыванию autostop.
+- **Autostop (автостоп):** используйте встроенный autostop для экономии времени — останавливайте тест, когда SRE-критерии (SLA) нарушаются (error rate > N%, latency > N ms).
+
+### Мониторинг и метрики
+
+- **Telegraf + SSH:** Yandex.Tank собирает системные метрики целевого хоста через Telegraf по SSH. Это позволяет коррелировать нагрузку с CPU, memory, disk I/O на сервере-источнике.
+- **InfluxDB + Grafana:** настраивайте постоянный дашборд с метриками RPS, latency (p50/p95/p99), error rate, а также системными метриками хоста.
+- **Prometheus:** Taurus не имеет встроенного Prometheus-модуля. Для интеграции используйте InfluxDB reporter (InfluxDB поддерживает scrape Prometheus-метрик) или экспортируйте `final-stats` в XML/JUnit-формат для последующей обработки в Prometheus.
+
+### SRE-интеграция
+
+- **Error budget:** используйте результаты нагрузочных тестов для установки SLO/SLI на задержки и ошибки. Autostop в Taurus позволяет остановить тест, когда budget истек.
+- **Burn rate:** для CI/CD-интеграции ограничьте длительность `hold-for` (5–10 минут) — полные стресс-тесты (hours) допускаются только в off-hours.
+- **Baseline:** фиксируйте `merged.yml` и `bzt.log` в артефактах CI для сравнения с последующими прогонами.
+
+### Управление артефактами (Cleanup)
+
+- **Ротация `artifacts-dir`:** Taurus сохраняет всё в `artifacts/<timestamp>/`. Автоматизируйте очистку старых артефактов (`find artifacts/ -mtime +7 -delete`).
+- **Логи:** для долгих тестов включайте `settings: verbose: false` и используйте `tail -f bzt.log` для мониторинга, а не вывод в консоль.
+- **Контейнеры:** если используете Docker-образ `direvius/yandex-tank`, останавливайте контейнеры после прогона (`docker rm -f <container>`).
+
+### Edge Cases
+
+- **HTTP/2:** `phantom` не поддерживает HTTP/2 — используйте `pandora`.
+- **SSL/TLS:** для тестов с клиентскими сертификатами используйте опции `ssl:`, `client_certificate:`, `client_key:` в конфиге phantom.
+- **AMMO-форматы:** Yandex.Tank поддерживает URI-style, URI+POST-style, request-style, а также `access.log`-формат. Выбор формата влияет на производительность генератора.
 
 ## Дополнительная информация
 
@@ -204,4 +243,4 @@ reporting:
 
 - [Taurus (bzt) на GitHub](https://github.com/Blazemeter/taurus) — исходный код, скачивание, документация.
 - [Yandex.Tank на GitHub](https://github.com/yandex/yandex-tank) — исходный код генератора.
-- [Трофа: Yandex.Tank документация](https://yandex.github.io/yandex-tank/) — официальная документация.
+- [Документация Yandex.Tank](https://yandextank.readthedocs.io/en/latest/) — официальная документация.

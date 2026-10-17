@@ -1,10 +1,12 @@
 # Установка Vagrant
 
+**Актуально для:** Vagrant 2.4.9
+
 ## Определения
 
 **Vagrant** — кроссплатформенный инструмент для создания и управления воспроизводимыми средами разработки. Он автоматизирует процесс настройки виртуализации, позволяя описывать конфигурацию инфраструктуры в виде кода (Vagrantfile).
 
-> **Актуальная версия:** 2.4.9 (январь 2026). Проект развивается под лицензией HashiCorp BSL (для новых версий) или MPL 2.0 (для legacy).
+> **Версия:** 2.4.9 (август 2025). Проект развивается под лицензией HashiCorp BSL 1.1 (для версий 2.4.3+); через 4 года после публикации переходит на MPL 2.0.
 
 **Архитектура установки:**
 - **CLI (`vagrant`)** — основной бинарный пакет, интерпретирующий команды и управляющий жизненным циклом ВМ.
@@ -91,7 +93,7 @@ sudo pacman -S vagrant
 
 | Платформа | Команда установки | Особенности |
 | :--- | :--- | :--- |
-| **macOS (Homebrew)**| `brew install vagrant` | Поддержка Intel и Apple Silicon. Для ARM64 также требуется `brew install --cask vagrant`. |
+| **macOS (Homebrew)**| `brew install --cask vagrant` | Поддержка Intel и Apple Silicon (ARM64). Vagrant распрастраняется как cask-пакет с официального DMG. |
 | **Windows** | `winget install HashiCorp.Vagrant` | Требует перезапуска терминала для обновления PATH. Для Hyper-V включите роль в «Компонентах Windows». |
 
 **macOS (Intel):**
@@ -164,6 +166,57 @@ sudo apt-get install -f
 vagrant box add internal-image ./custom.box --provider libvirt
 ```
 
+### Сценарий 7: Установка фиксированной версии для CI/CD
+
+Для воспроизводимых сборок в CI/CD важно закрепить версию Vagrant, чтобы
+избежать неожиданного поведения при обновлении.
+
+**Linux (скрипт для CI-агента):**
+
+```bash
+# Закрепление версии через apt pinning
+cat > /etc/apt/preferences.d/vagrant.pref <<'EOF'
+Package: vagrant
+Pin: version 2.4.9*
+Pin-Priority: 1001
+EOF
+
+# Или — ручная установка конкретной версии из releases.hashicorp.com
+VAGRANT_VERSION="2.4.9"
+curl -fsSL "https://releases.hashicorp.com/vagrant/${VAGRANT_VERSION}/vagrant_${VAGRANT_VERSION}_x86_64.deb" \
+  -o vagrant.deb
+sudo dpkg -i vagrant.deb
+```
+
+**Ansible (идемпотентная установка):**
+
+```yaml
+- name: Установить фиксированную версию Vagrant
+  ansible.builtin.apt:
+    deb: https://releases.hashicorp.com/vagrant/2.4.9/vagrant_2.4.9_x86_64.deb
+  register: vagrant_install
+  until: vagrant_install is succeeded
+  retries: 3
+  delay: 5
+
+- name: Проверить установленную версию
+  ansible.builtin.command: vagrant --version
+  register: vagrant_version
+  changed_when: false
+```
+
+**Puppet:**
+
+```puppet
+package { 'vagrant':
+  ensure => '2.4.9',
+  provider => 'apt',
+}
+```
+
+> Для CI-агентов важно также закрепить `VAGRANT_HOME` в кэше и использовать
+> `vagrant box add --checksum` для воспроизводимых образов.
+
 ## Дополнительная информация
 
 ### Пост-установочные действия
@@ -190,9 +243,12 @@ source ~/.zshrc
 Рекомендуется настроить в `.bashrc` / `.zshrc`:
 - `VAGRANT_HOME`: Путь к глобальному кэшу (`~/.vagrant.d/`). При нехватке места на системном диске можно перенести на другой раздел.
 - `VAGRANT_DEFAULT_PROVIDER`: Установка `libvirt` или `virtualbox` по умолчанию.
+- `VAGRANT_EXECUTABLE`: Переопределение пути к бинарнику Vagrant.
 ```bash
 export VAGRANT_HOME="/mnt/data/vagrant.d"
 export VAGRANT_DEFAULT_PROVIDER="libvirt"
+# VAGRANT_EXECUTABLE — используется в контейнерных CI для явного указания пути
+# export VAGRANT_EXECUTABLE="/usr/bin/vagrant"
 ```
 
 ### Проверка корректности установки
@@ -209,8 +265,22 @@ vagrant plugin list
 virsh list --all
 # → должен отображаться демон libvirt
 
-# Валидация работоспособности (требует любой Vagrantfile)
+# Валидация работоспособности (требует любого Vagrantfile)
 vagrant validate
+```
+
+**Верификация целостности пакета (Linux):**
+
+Для SRE-аудита в продакшене рекомендуется проверять контрольные суммы скачанных пакетов:
+
+```bash
+# Debian/Ubuntu — из кэша apt
+sha256sum /var/cache/apt/archives/vagrant_*.deb
+
+# Fedora/RHEL — из кэша dnf
+sha256sum /var/cache/dnf/*/packages/vagrant-*.rpm
+
+# Сравнение с официальными SHA256SUMS с releases.hashicorp.com/vagrant/2.4.9/
 ```
 
 ### Удаление и очистка
@@ -247,11 +317,12 @@ vagrant plugin expunge
 
 ### Лучшие практики
 
-1.  **Безопасность:** Используйте официальные репозитории HashiCorp. Верифицируйте контрольные суммы образов через `box_download_checksum`.
+1.  **Безопасность:** Используйте официальные репозитории HashiCorp. Верифицируйте контрольные суммы образов через `config.vm.box_download_checksum` и `config.vm.box_download_checksum_type`. На Linux проверяйте SHA256 загруженных пакетов.
 2.  **Изоляция:** Для изолированных сред используйте внутренние зеркала (`box_url`) вместо прямого доступа к Vagrant Cloud.
-3.  **Производительность:** Перенесите `VAGRANT_HOME` на быстрый диск (SSD), чтобы ускорить доступ к образам.
-4.  **Версионирование:** Фиксируйте версию Vagrant в документации проекта (`Vagrant.require_version`).
+3.  **Версионирование:** Фиксируйте версию Vagrant в CI/CD через pinning (`apt-preferences` или `Vagrant.require_version`). Это предотвращает регрессии при обновлении провайдеров.
+4.  **Производительность:** Перенесите `VAGRANT_HOME` на быстрый диск (SSD), чтобы ускорить доступ к образам.
 5.  **Чистота:** Регулярно используйте `vagrant box prune` для удаления неиспользуемых версий образов.
+6.  **CI/CD-аудит:** Настраивайте `VAGRANT_EXECUTABLE` в контейнерах для явного указания пути к бинарнику; используйте `vagrant plugin expunge --reinstall` при смене версии для сброса плагинов.
 
 ### См. также
 

@@ -342,7 +342,7 @@ kubectl apply -f /etc/kubernetes/bootstrap/root-application.yaml
 - [Паттерн App of Apps в Argo CD](../ArgoCD/argocd_app_of_apps.md) — детальная архитектура корневых и дочерних приложений.
 - [Аварийное восстановление и DR в Argo CD](../ArgoCD/argocd_disaster_recovery.md) — регламенты восстановления кластера из Git с нуля.
 - [Шифрование секретов в GitOps](../secrets_encryption.md) — интеграция SOPS, Age и External Secrets Operator.
-- [Организация Flux CD monorepo](./flux_monorepo_organization.md) — структура монорепозитория для мультикластерного парка.
+- [Организация монорепозитория Argo CD](./argocd_monorepo_organization.md) — структура монорепозитория для мультикластерного парка.
 
 ---
 

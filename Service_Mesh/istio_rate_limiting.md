@@ -1,5 +1,7 @@
 # Ограничение скорости (Rate Limiting) в Istio
 
+**Актуально для:** Istio 1.30+ / Istio 1.31 / Envoy 1.30+ / Gateway API v1.6.x / Kubernetes 1.32–1.37
+
 ## Определения
 
 **Rate Limiting (ограничение скорости)** — механизм контроля количества запросов, обрабатываемых сервисом за единицу времени. В контексте Service Mesh rate limiting позволяет защитить бэкенды от перегрузки, предотвратить каскадные сбои и обеспечить справедливое распределение ресурсов между потребителями.
@@ -8,9 +10,9 @@
 
 **Global Rate Limiting (глобальное ограничение)** — кластерное ограничение, учитывающее суммарную нагрузку на все эндпоинты сервиса. Требует внешнего Rate Limit Service (RLS) для агрегации счетчиков.
 
-**EnvoyFilter** — ресурс Istio (`networking.istio.io/v1alpha3`), позволяющий кастомизировать конфигурацию Envoy на уровне фильтров. Используется для внедрения rate limiting в sidecar-прокси и Waypoint Proxy.
+**EnvoyFilter** — ресурс Istio (`networking.istio.io/v1alpha3`), позволяющий кастомизировать конфигурацию Envoy на уровне фильтров. Используется для внедрения rate limiting в sidecar-прокси и Waypoint Proxy. API-версия остаётся `v1alpha3` во всех версиях Istio включая 1.30+ (никогда не продвигалась до `v1`). EnvoyFilter не поддерживается для waypoint-прокси.
 
-**`EnvoyRateLimit` (Gateway API)** — стандартный ресурс Policy Attachment из Gateway API для декларативного описания правил rate limiting, привязываемый к `HTTPRoute` или `Service` через `targetRef`.
+**Provider-specific Policy Attachment** — ресурсы, привязываемые к `HTTPRoute` или `Service` через `targetRef`, для rate limiting вне core-спецификации Gateway API. Существенно зависят от провайдера: NGINX Gateway Fabric (`RateLimitPolicy`), Envoy Gateway (`BackendTrafficPolicy` с rate-limit), Traefik (`RateLimit` middleware через `ExtensionRef`).
 
 ---
 
@@ -128,7 +130,7 @@ kubectl apply -f local-ratelimit.yaml -n my-app
 
 # Генерация нагрузки (vegeta)
 echo 'GET http://my-api.my-app.svc.cluster.local/api/v1' | vegeta attack -rate=200 -duration=10s | vegeta report
-# →成功: 1000, 429: 1000 (лимит 100 RPS на под, 10 подов = 1000 RPS)
+# →ok: 1000, 429: 1000 (лимит 100 RPS на под, 10 подов = 1000 RPS)
 
 # Проверка метрик Envoy
 kubectl exec -n my-app <pod> -c istio-proxy -- curl -s 127.0.0.1:15000/stats | grep local_rate_limiter
@@ -187,53 +189,58 @@ spec:
             local_rate_limit_per_downstream_connection: false
 ```
 
-### Сценарий 3: Локальный rate limiting для Waypoint Proxy (Ambient)
+### Сценарий 3: Rate limiting для Waypoint Proxy (Ambient)
 
-В режиме Ambient Mesh локальный rate limiting настраивается через EnvoyFilter для Waypoint:
+> **Важно:** EnvoyFilter не поддерживается для waypoint-прокси (Istio 1.30+). 
+> Для rate limiting на Waypoint используйте:
+> - **Gateway API Provider-specific политики** (см. ниже), или
+> - **AuthorizationPolicy + RBAC** с ограничениями на количество запросов, или
+> - **External Authorization (`ext-authz`)** с пользовательским rate limiter.
 
+Для Waypoint Proxy, работающего через Gateway API, rate limiting реализуется через Policy Attachment, специфичные для провайдера:
+
+**Envoy Gateway** (`BackendTrafficPolicy` с rate-limit):
 ```yaml
-apiVersion: networking.istio.io/v1alpha3
-kind: EnvoyFilter
+apiVersion: gateway.networking.k8s.io/v1alpha3
+kind: HTTPRoute
 metadata:
-  name: waypoint-ratelimit
+  name: api-route
   namespace: my-app
 spec:
-  workloadSelector:
-    labels:
-      gateway.networking.k8s.io/gateway-name: namespace-waypoint
-  configPatches:
-  - applyTo: HTTP_FILTER
-    match:
-      context: GATEWAY
-      listener:
-        filterChain:
-          filter:
-            name: envoy.filters.network.http_connection_manager
-            subFilter:
-              name: envoy.filters.http.router
-    patch:
-      operation: INSERT_BEFORE
-      value:
-        name: envoy.filters.http.local_ratelimit
-        typed_config:
-          "@type": type.googleapis.com/udpa.type.v1.TypedStruct
-          type_url: type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
-          value:
-            stat_prefix: http_local_rate_limiter
-            token_bucket:
-              max_tokens: 500
-              tokens_per_fill: 500
-              fill_interval: 1s
-            filter_enabled:
-              runtime_key: local_rate_limit_enabled
-              default_value:
-                numerator: 100
-                denominator: HUNDRED
-            filter_enforced:
-              runtime_key: local_rate_limit_enforced
-              default_value:
-                numerator: 100
-                denominator: HUNDRED
+  parentRefs:
+  - name: my-gateway
+    namespace: my-app
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api/
+    forwardTo:
+    - serviceName: api-svc
+      port: 8080
+    filters:
+    - type: ExtensionRef
+      extensionRef:
+        group: gateway.networking.k8s.io
+        kind: BackendTrafficPolicy
+        name: api-ratelimit
+
+---
+apiVersion: gateway.networking.k8s.io/v1alpha3
+kind: BackendTrafficPolicy
+metadata:
+  name: api-ratelimit
+  namespace: my-app
+spec:
+  targetRefs:
+  - name: api-svc
+    kind: Service
+    group: ""
+  request:
+    rateLimit:
+      requests: 1000
+      requestTimeout: 1s
+      unit: Request
 ```
 
 **Проверка:**
@@ -241,11 +248,8 @@ spec:
 # Список Waypoint в неймспейсе
 istioctl waypoint list -n my-app
 
-# Применение EnvoyFilter
-kubectl apply -f waypoint-ratelimit.yaml -n my-app
-
-# Проверка конфигурации Waypoint
-kubectl exec -n my-app <waypoint-pod> -- curl -s 127.0.0.1:15000/stats | grep local_rate
+# Проверка метрик rate limiting на Waypoint
+kubectl exec -n my-app <waypoint-pod> -- curl -s 127.0.0.1:15000/stats | grep -E "rate_limit|429"
 ```
 
 ### Сценарий 4: Глобальный rate limiting через Rate Limit Service
@@ -395,10 +399,51 @@ spec:
                     port_value: 8081
 ```
 
-### Сценарий 5: Rate Limiting с дифференциацией по потребителям
+### Сценарий 5: Rate Limiting с дифференциацией по потребителям (Global RLS)
 
-Ограничение по IP-адресу клиента (разные лимиты для внутренних и внешних потребителей):
+> **Важно:** локальный rate limiting (`local_ratelimit`) не поддерживает дифференциацию по IP — 
+> каждый под незнает о клиенте. Для IP-based лимитов используйте **Global Rate Limiting** через внешний RLS.
 
+Ограничение по IP-адресу клиента (разные лимиты для внутренних и внешних потребителей) реализуется через `rate_limit` filter с `descriptors`:
+
+**1. Обновлённый конфиг RLS (с сегментами по IP):**
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ratelimit-config
+  namespace: istio-system
+data:
+  config.yaml: |
+    domain: my-api
+    descriptors:
+    # Глобальный лимит: 100 RPS на всех
+    - key: generic_key
+      value: default
+      rate_limit:
+        unit: second
+        requests_per_unit: 100
+    # Лимит на внутренние сети: 500 RPS
+    - key: remote_address
+      value: "10.0.0.0/8"
+      rate_limit:
+        unit: second
+        requests_per_unit: 500
+      descriptors:
+      - key: generic_key
+        value: internal
+        rate_limit:
+          unit: second
+          requests_per_unit: 1000
+    # Лимит на внешних потребителей: 50 RPS
+    - key: remote_address
+      value: "0.0.0.0/0"
+      rate_limit:
+        unit: second
+        requests_per_unit: 50
+```
+
+**2. EnvoyFilter с `rate_limit` filter и `request_set_descriptors`:**
 ```yaml
 apiVersion: networking.istio.io/v1alpha3
 kind: EnvoyFilter
@@ -422,26 +467,15 @@ spec:
     patch:
       operation: INSERT_BEFORE
       value:
-        name: envoy.filters.http.local_ratelimit
+        name: envoy.filters.http.rate_limit
         typed_config:
-          "@type": type.googleapis.com/udpa.type.v1.TypedStruct
-          type_url: type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
-          value:
-            stat_prefix: http_local_rate_limiter
-            token_bucket:
-              max_tokens: 1000
-              tokens_per_fill: 1000
-              fill_interval: 1s
-            filter_enabled:
-              runtime_key: local_rate_limit_enabled
-              default_value:
-                numerator: 100
-                denominator: HUNDRED
-            filter_enforced:
-              runtime_key: local_rate_limit_enforced
-              default_value:
-                numerator: 100
-                denominator: HUNDRED
+          "@type": type.googleapis.com/envoy.extensions.filters.http.ratelimit.v3.RateLimit
+          domain: my-api
+          failure_mode_deny: false
+          rate_limit_service:
+            grpc_service:
+              envoy_grpc:
+                cluster_name: rate_limit_cluster
 ```
 
 ### Сценарий 6: Проверка и диагностика
@@ -476,14 +510,48 @@ kubectl get envoyfilter -n my-app
 
 ---
 
-## Типичные ошибки и устранение неполадок
+## Операции и команды
+
+### Управление EnvoyFilter
+
+| Команда | Описание |
+| :--- | :--- |
+| `kubectl apply -f <file>.yaml -n <ns>` | Применить конфигурацию rate limiting |
+| `kubectl delete envoyfilter <name> -n <ns>` | Удалить локальный rate limiting |
+| `kubectl get envoyfilter -n <ns>` | Список EnvoyFilter в namespace |
+| `istioctl proxy-config listeners deploy/<pod> -n <ns> -o json` | Проверить фильтры в listener chain |
+| `istioctl proxy-config clusters deploy/<pod> -n <ns> -o json` | Проверить backend-кластеры |
+
+### Метрики Envoy (admin /stats)
+
+Метрики rate limiting доступны на `http://127.0.0.1:15000/stats` (admin port).
+
+| Метрика | Описание |
+| :--- | :--- |
+| `local_rate_limit.enforced` | Количество отклонённых запросов (429) |
+| `local_rate_limit.not_enforced` | Количество пропущенных (filter_enabled < 100%) |
+| `rate_limit_service.ratelimit.ok` | RLS вернул OK |
+| `rate_limit_service.ratelimit.error` | Ошибка связи с RLS |
+| `rate_limit_service.ratelimit.over_limit` | RLS вернул OVER_LIMIT |
+
+### Метрики RLS (Redis)
+
+| Метрика | Источник |
+| :--- | :--- |
+| `redis.cmdstat_get` | Redis command stats |
+| `envoy_cluster_ratelimit_rq_ok` | Envoy → RLS успешные |
+| `envoy_cluster_ratelimit_rq_error` | Envoy → RLS ошибки |
+
+---
+
+## Устранение неполадок
 
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
 | **429 Too Many Requests на здоровых сервисах** | Лимит слишком низкий или `tokens_per_fill` не совпадает с ожидаемой нагрузкой | Увеличьте `max_tokens` или уменьшите `fill_interval`. Проверьте метрики `over_limit` в Envoy stats. |
 | **Rate limiting не применяется** | EnvoyFilter не совпадает с `workloadSelector` или `context` неверен | Проверьте `istioctl proxy-config listeners` — фильтр должен отображаться в цепочке. Убедитесь, что `context` соответствует модели (SIDECAR_INBOUND / GATEWAY). |
 | **Все запросы отклоняются (100% 429)** | `max_tokens` установлен в 0 или `fill_interval` слишком мал | Проверьте YAML EnvoyFilter на ошибки валидации. Убедитесь, что `fill_interval` >= 1ms. |
-| **Rate limit не работает для Waypoint** | EnvoyFilter не настроен для GATEWAY context | Используйте `context: GATEWAY` вместо `SIDECAR_INBOUND` в EnvoyFilter match. |
+| **Rate limit не работает для Waypoint** | EnvoyFilter не поддерживается для waypoint-прокси (Istio 1.30+) | Используйте provider-specific Policy Attachment (например, `BackendTrafficPolicy` в Envoy Gateway). |
 | **Global RLS возвращает OVER_LIMIT для всех** | Redis недоступен или `failure_mode_deny: true` при сбое RLS | Проверьте доступность Redis: `kubectl exec -it <rls-pod> -- redis-cli ping`. Установите `failure_mode_deny: false` для fail-open поведения. |
 | **Запросы с retry попадают под rate limit дважды** | Ретраи считаются новыми запросами для rate limiter'а | Настройте `retryOn` исключающее `429`; увеличьте `max_tokens` с учетом retry overhead. |
 
@@ -493,13 +561,38 @@ kubectl get envoyfilter -n my-app
 
 1. **Defense-in-depth:** комбинируйте локальный rate limiting (защита конкретного пода) с глобальным (кластерное ограничение). Локальный — всегда, глобальный — когда критично.
 2. **Начинайте с локального:** для первого внедрения используйте `local_rate_limit` через EnvoyFilter. Это не требует внешних сервисов и минимально влияет на латентность.
-3. **Настройте `filter_enabled` и `filter_enforced` раздельно:** используйте `filter_enabled: 50%` для тестирования новой политики, а `filter_enforced: 100%` для ее реального применения. Это позволяет измерить impact до полного внедрения.
+3. **Настройте `filter_enabled` и `filter_enforced` раздельно:** используйте `filter_enabled: 50%` для тестирования новой политики, а `filter_enforced: 100%` для ее реального применения. Это позволяет измерить влияние до полного внедрения.
 4. **Не лимитируйте health-check'и:** исключите `/health`, `/ready`, `/live` из rate limiting через `descriptors` в RLS или через `envoy.filters.http.cors` / `envoy.filters.http.health_check` до rate limit фильтра.
 5. **Обрабатывайте 429 на клиенте:** убедитесь, что клиенты реализуют `Retry-After` и exponential backoff. В Kubernetes-среде используйте resilience-библиотеки (Envoy retry, Istio retry policy).
-6. **Мониторинг:** настройте алерты на метрику `over_limit` в Envoy stats. Рост этого счётчика Indicates проблемы с бэкендом или слишком агрессивными потребителями.
+6. **Мониторинг:** настройте алерты на метрику `over_limit` в Envoy stats. Рост этого счётчика указывает на проблемы с бэкендом или слишком агрессивными потребителями.
 7. **Не используйте rate limiting для авторизации:** rate limiting — это protection от перегрузки, а не от несанкционированного доступа. Используйте `AuthorizationPolicy` для контроля доступа.
 8. **Кардинальность метрик:** `stat_prefix` в EnvoyFilter задает префикс метрик. Используйте уникальные имена для разных сервисов, чтобы не путать метрики в Prometheus.
 9. **Откат:** при проблемах EnvoyFilter можно удалить за секунды — `kubectl delete envoyfilter <name>`. Конфигурация откатывается мгновенно через xDS.
+
+---
+
+## Очистка и откат
+
+При удалении rate limiting избавьтесь от всех созданных ресурсов:
+
+```bash
+# 1. Удаление локального rate limiting (EnvoyFilter)
+kubectl delete envoyfilter local-ratelimit -n my-app
+kubectl delete envoyfilter checkout-ratelimit -n my-app
+
+# 2. Удаление глобального rate limiting
+kubectl delete envoyfilter global-ratelimit -n my-app
+kubectl delete deployment ratelimit -n istio-system
+kubectl delete service ratelimit -n istio-system
+kubectl delete configmap ratelimit-config -n istio-system
+
+# 3. Проверка, что rate limiting больше не применяется
+istioctl proxy-config listeners deploy/my-api -n my-app -o json | grep -c "local_ratelimit\|rate_limit"
+# → 0
+
+# 4. Проверка метрик — счётчики over_limit перестают расти
+kubectl exec -n my-app <pod> -c istio-proxy -- curl -s 127.0.0.1:15000/stats | grep -E "local_rate_limiter|rate_limit"
+```
 
 ---
 
@@ -509,7 +602,7 @@ kubectl get envoyfilter -n my-app
 
 | Система | Механизм | Особенности |
 | :--- | :--- | :--- |
-| **Istio + Envoy** | EnvoyFilter / EnvoyRateLimit | L4/L7, local и global, интеграция с мешем |
+| **Istio + Envoy** | EnvoyFilter (local) / EnvoyFilter + RLS (global) | L4/L7, local и global, интеграция с мешем |
 | **NGINX Ingress** | `limit_req_zone` / `limit_req` | Только L7, уровня Ingress, без.mesh-интеграции |
 | **Kong** | Rate Limiting plugin | Только L7, плагин-based, без Envoy-интеграции |
 | **Traefik** | RateLimit middleware | Только L7, middleware-based |

@@ -299,13 +299,12 @@ spec:
 | **Большой** (1000-5000) | 500m/512Mi | `--namespaces-to-select` | 5m | 2 |
 | **Очень большой** (>5000) | 1000m/1Gi | `--namespaces-to-ignore` | 15m | 3 |
 
-### 3. GitOps-совместимость (ArgoCD / Flux)
+### 3. GitOps-совместимость (ArgoCD)
 
 | Практика | Описание | Применение |
 | :--- | :--- | :--- |
 | **Annotation Strategy** | Использование `--reload-strategy=annotations` | Рекомендуется для ArgoCD |
 | **Ignore Differences** | Добавление `reloader.stakater.com/last-reloaded-from` в ignoreDifferences | Обязательно для ArgoCD |
-| **Flux PostBuild** | Использование `postBuild.substituteFrom` для динамических переменных | Рекомендуется для Flux |
 
 **ArgoCD Application:**
 
@@ -320,20 +319,6 @@ spec:
       kind: Deployment
       jsonPointers:
         - /spec/template/metadata/annotations/reloader.stakater.com~1last-reloaded-from
-```
-
-**Flux Kustomization:**
-
-```yaml
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: my-app
-spec:
-  postBuild:
-    substituteFrom:
-      - kind: ConfigMap
-        name: cluster-config
 ```
 
 ### 4. Надёжность и отказоустойчивость

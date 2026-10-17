@@ -1,5 +1,7 @@
 # Прокси Sidecar: реализации и сценарии
 
+**Актуально для:** Istio 1.31.x
+
 ## Определения
 
 **Proxy Sidecar (сайдкар-прокси)** — специализированный сетевой прокси, развёртываемый в одном Pod с приложением (в отдельном контейнере) и обрабатывающий весь входящий и исходящий трафик. Этот паттерн является фундаментом плоскости данных (Data Plane) в архитектуре [Service Mesh](./service_mesh_concepts.md).
@@ -23,7 +25,7 @@
 **Перехват трафика (Interception):** процесс прозрачного перенаправления сетевых пакетов из сетевого пространства имён (Network Namespace) приложения в прокси.
 - **iptables:** традиционный метод через правила NAT/REDIRECT. Создаёт накладные расходы на прохождение пакетов через стек ядра. Требует привилегированный init-контейнер (`istio-init`).
 - **nftables:** современная альтернатива iptables (в Istio 1.27+ включается параметром `values.global.nativeNftables=true`), более эффективная при большом объёме правил и приоритетная для новых инсталляций.
-- **eBPF (SOCKMAP):** современный метод (стандарт в 2026 году), позволяющий «сшивать» сокеты приложения и прокси на уровне ядра, минуя полный стек TCP/IP, что снижает задержки на 15–20%. Используется через Istio CNI и амбиентный компонент Ztunnel.
+- **eBPF (SOCKMAP, Experimental):** метод ускорения передачи данных между сокетами приложения и прокси на уровне ядра, минуя TCP/IP-стек. Требует kernel 4.18+, специальной сборки Envoy с `--define=sockmap=enabled` и eBPF-объекта. В Istio используется в амбиентном режиме через Istio CNI (eBPF redirect), а для sidecar mode требует ручной настройки и не является стандартом.
 - **CNI-редирект (Istio CNI / Cilium):** редирект выполняется CNI-плагином на уровне сетевого интерфейса пода вместо привилегированного `istio-init`. Это убирает потребность в `NET_ADMIN` для init-контейнера, повышает безопасность и упрощает политики. Подробнее в [Архитектуре Istio](./istio_architecture.md).
 
 **Native Sidecar (нативный сайдкар):** механизм Kubernetes 1.29+ (стабилен в 1.33+), позволяющий запускать прокси как `initContainer` с `restartPolicy: Always`. Это гарантирует, что прокси будет готов *до* старта приложения и завершится *после* него, решая проблему гонки состояний (Race Condition). Дополнительно решает известную проблему «зависших» **Job**: с нативным сайдкаром Job завершается корректно, потому что прокси получает `SIGTERM` после выхода приложения, а не блокирует завершение пода.
@@ -59,6 +61,15 @@
 Filter chains критичны для Service Mesh: Istio генерирует отдельную цепочку для inbound-трафика (с политиками AuthorizationPolicy) и для outbound (с маршрутизацией VirtualService/DestinationRule).
 
 ---
+
+## Предварительные требования
+
+- **Kubernetes:** версия 1.29+ (для нативных сайдкаров — 1.29+ с `SidecarContainers` feature gate; стабильно с 1.33+).
+- **Istio:** версия 1.27+ (Native Sidecar по умолчанию с 1.27; nftables с 1.27+; Ambient mode GA с 1.24).
+- **istioctl:** утилита командной строки для диагностики и управления инъекцией.
+- **CNIプラグин:** Istio CNI (`istio-cni`) для перехвата трафика без привилегированного init-контейнера (рекомендуется для production).
+- **CoreDNS:** для резолюции внутри пода без DNS capture.
+- **Доступ к API Kubernetes:** для проверки статуса подов, логов и конфигурации прокси.
 
 ## Основные концепции: Envoy и Linkerd-proxy
 
@@ -123,7 +134,7 @@ kubectl get pod my-app-pod -n my-app -o jsonpath='{.spec.initContainers[?(@.name
 
 #### Linkerd
 
-Аннотация на уровне Deployment. В Linkerd 2.20 нативные сайдкары переведены из Beta в GA и стали типом инъекции по умолчанию (прокси внедряется как init-контейнер с `restartPolicy: Always`). Для возврата к классической модели используется `proxy.nativeSidecar=false`.
+Аннотация на уровне Deployment. В Linkerd 2.20 нативные сайдкары переведены из Beta в GA и стали типом инъекции по умолчанию (прокси внедряется как init-контейнер с `restartPolicy: Always`). Для возврата к классической модели используйте Helm-значение `proxy.nativeSidecar: false` или аннотацию `config.linkerd.io/proxy-enable-native-sidecar: "false"` на уровне пода/Deployment.
 
 ```yaml
 apiVersion: apps/v1
@@ -369,9 +380,9 @@ kubectl logs my-app-pod -c linkerd-proxy -n my-app
 istioctl waypoint list -n my-app
 
 # Проверка сетевого состояния пода (Ambient)
-istioctl experimental ambient describe pod my-app-pod
-# → L4 traffic handled by ztunnel-xyz
-# → L7 traffic handled by waypoint-ns
+istioctl ztunnel-config workload my-app-pod -n my-app
+# → Показывает: ztunnel (L4), waypoint (L7), политики, сертификаты
+# → Показывает: ztunnel (L4), waypoint (L7), политики, сертификаты
 
 # Логи Ztunnel (DaemonSet в istio-system)
 kubectl logs -n istio-system -l app=ztunnel
@@ -551,7 +562,7 @@ kubectl get pods -n source-ns -o jsonpath='{.items[*].spec.initContainers[*].nam
 
 ```bash
 # Проверка доступности istiod из пода:
-kubectl exec -it my-app-pod -c istio-proxy -- curl -s http://istiod:15012/healthz/ready
+kubectl exec -it my-app-pod -c istio-proxy -- curl -s http://istiod:15014/healthz/ready
 # → 200 OK
 
 # Проверка времени синхронизации:
@@ -599,6 +610,72 @@ istioctl proxy-config clusters deploy/my-app -n my-app | wc -l
 
 ---
 
+## Операции и команды
+
+### Управление инъекцией sidecar
+
+| Действие | Команда | Примечание |
+| :--- | :--- | :--- |
+| Включить автоинъекцию (Istio, namespace) | `kubectl label namespace <ns> istio-injection=enabled` | С 1.27 нативные сайдкары по умолчанию |
+| Включить автоинъекцию (Linkerd, namespace) | `kubectl annotate namespace <ns> linkerd.io/inject=enabled` | С 2.20 нативные сайдкары по умолчанию |
+| Отключить инъекцию (Istio, pod) | `kubectl annotate pod <pod> sidecar.istio.io/inject-`; или `kubectl patch deploy <name> -p '{"spec":{"template":{"metadata":{"annotations":{"sidecar.istio.io/inject":"false"}}}}}}'` | Перезапустить поды после |
+| Отключить нативный сайдкар (Istio) | `kubectl annotate pod <pod> sidecar.istio.io/nativeSidecar="false"` | Подменяет `ENABLE_NATIVE_SIDECARS` |
+| Отключить нативный сайдкар (Linkerd) | `kubectl annotate namespace <ns> config.linkerd.io/proxy-enable-native-sidecar="false"`; или `helm upgrade linkerd-control-plane linkerd/control-plane --set proxy.nativeSidecar=false` |  |
+
+### Диагностика статуса
+
+| Команда | Что проверяет |
+| :--- | :--- |
+| `istioctl proxy-status` | Синхронизация xDS (CDS/LDS/EDS/RDS) для sidecar-подов |
+| `istioctl ztunnel-config workloads -n <ns>` | Статус амбиентных workloads (zTunnel) |
+| `istioctl waypoint list -n <ns>` | Список waypoint-прокси в неймспейсе |
+| `istioctl proxy-config endpoints deploy/<name> -n <ns>` | Эндпоинты, известные прокси |
+| `istioctl proxy-config bootstrap deploy/<name> -n <ns>` | Bootstrap-конфигурация (admin ports, xDS server) |
+| `istioctl proxy-config clusters deploy/<name> -n <ns>` | Upstream-кластеры, известные прокси |
+| `istioctl proxy-config listener deploy/<name> -n <ns>` | Слушатели и filter chains |
+| `istioctl x check-inject deploy/<name> -n <ns>` | Проверка применения шаблона инъекции |
+| `istioctl analyze -n <ns>` | Валидация конфигурации меша |
+
+### Мониторинг и метрики
+
+| Метрика | Источник | Что мониторить |
+| :--- | :--- | :--- |
+| `envoy_cluster_upstream_rq_total` | Prometheus | Общее количество запросов к upstream |
+| `envoy_cluster_upstream_rq_5xx` | Prometheus | Ошибки upstream |
+| `envoy_cluster_upstream_cx_active` | Prometheus | Активные соединения |
+| `envoy_cluster_upstream_cx_connect_timeout` | Prometheus | Таймауты подключения |
+| `istio_requests_total` | Prometheus | RPS по сервисам (через telemetry) |
+| `istio_request_duration_milliseconds` | Prometheus | P50/P90/P99 latency |
+| `istio_tcp_connections_closed_total` | Prometheus | Частота закрытия соединений |
+
+### Очистка
+
+После удаления workloads из mesh необходимо очистить ресурсы и конфигурацию:
+
+```bash
+# 1. Отключить автоинъекцию (Istio):
+kubectl label namespace my-app istio-injection-
+
+# 2. Отключить автоинъекцию (Linkerd):
+kubectl annotate namespace my-app linkerd.io/inject-
+
+# 3. Перезапустить поды для удаления сайдкара:
+kubectl rollout restart deployment -n my-app
+
+# 4. Удалить аннотации нативного сайдкара (если вручную задавались):
+kubectl annotate pod <pod> sidecar.istio.io/nativeSidecar- -n my-app
+
+# 5. Проверить, что прокси больше не присутствует в подах:
+kubectl get pods -n my-app -o jsonpath='{.items[*].spec.initContainers[*].name}'
+# → (пусто, если не включено)
+```
+
+Для окончательного удаления Istio из кластера:
+```bash
+istioctl uninstall --purge
+kubectl delete namespace istio-system
+```
+
 ## Дополнительная информация
 
 ### Сравнение производительности (2026)
@@ -614,7 +691,7 @@ istioctl proxy-config clusters deploy/my-app -n my-app | wc -l
 
 1. **Ресурсные квоты:** всегда устанавливать `requests` и `limits` для сайдкаров. В 2026 году Envoy требует ~0.5 vCPU и 50MB RAM на 1,000 RPS. Для Native Sidecar используйте `requests.cpu: 50m` и `requests.memory: 64Mi` как минимум; лимиты — `cpu: 200m`, `memory: 128Mi`.
 2. **Scoping конфигурации:** использовать ресурс `Sidecar` (Istio) для ограничения списка сервисов, о которых знает прокси. Это критично для снижения потребления RAM в больших кластерах. Подробнее в [Конфигурации Sidecar в Istio](./istio-sidecar-configuration.md).
-3. **eBPF Acceleration:** при использовании CNI (Cilium, Calico VPP), включайте SOCKMAP для обхода TCP-стека ядра между приложением и прокси. Это снижает задержки на 15–20%.
+3. **eBPF Acceleration:** при использовании CNI (Cilium, Calico VPP) в амбиентном режиме, включайте eBPF redirect для эффективного перенаправления трафика в Ztunnel. Для SOCKMAP-ускорения требует `--define=sockmap=enabled` при сборке Envoy и eBPF-объект; экспериментальная функция.
 4. **Безопасность:** ограничивать доступ к административному порту Envoy (15000) и Linkerd (4191) через NetworkPolicies. Разрешайте доступ только из системных неймспейсов и от SRE-инструментов.
 5. **Телеметрия:** отключать детальные Access Logs в продакшене, используя `Telemetry` API для выборочного логирования только ошибок и медленных запросов (latency > 1s).
 6. **Native Sidecar для Jobs/CronJobs:** всегда используйте нативный сайдкар (`restartPolicy: Always` в `initContainers`) для рабочих нагрузок с завершаемым выполнением. Обычные sidecar-контейнеры блокируют завершение Job.
@@ -625,7 +702,7 @@ istioctl proxy-config clusters deploy/my-app -n my-app | wc -l
 
 ### Крайние случаи и ограничения
 
-1. **hostNetwork: true:** поды с включённым `hostNetwork` используют сетевой стек узла напрямую. iptables/eBPF-редирект в этом случае не работает корректно — трафик не попадает в сайдкар. Istio помечает такие поды как `Sidecar.istio.io/inject: false` по умолчанию.
+1. **hostNetwork: true:** поды с включённым `hostNetwork` используют сетевой стек узла напрямую. iptables/eBPF-редирект в этом случае не работает корректно — трафик не попадает в сайдкар. Istio помечает такие поды как `sidecar.istio.io/inject: "false"` по умолчанию.
 2. **Пorted Services с нестандартными портами:** убедитесь, что порты приложения совпадают с портами в `Service` и `DestinationRule`. При несовпадении Envoy может вернуть `503 Service Unavailable` с причиной `no healthy upstream`.
 3. **StatefulSet с volumeClaimTemplates:** при rolling update StatefulSet Native Sidecar завершается после основного контейнера, но перед отключением PVC. Это гарантирует корректный drain соединений к БД.
 4. **Изменение образа прокси (proxyv2):** обновление образа Envoy требует перезапуска подов (`kubectl rollout restart`). Control Plane не выполняет hot-update бинарного файла прокси — только конфигурации через xDS.
@@ -638,7 +715,7 @@ istioctl proxy-config clusters deploy/my-app -n my-app | wc -l
 ### Актуальность и ссылки
 
 - **Istio 1.30.x:** Ambient Mesh стабилен (GA с 1.24), нативные сайдкары включены по умолчанию (с 1.27). Поддержка Kubernetes 1.32–1.36.
-- **Envoy 1.39+:** расширяемость через API `TrafficExtension` (Istio 1.30+) заменяет устаревший `WasmPlugin`; поддержка Lua и WebAssembly (WASM) для кастомной обработки трафика на L4/L7.
+- **Envoy 1.40.x:** расширяемость через API `TrafficExtension` (Istio 1.30+) заменяет устаревший `WasmPlugin`; поддержка Lua и WebAssembly (WASM) для кастомной обработки трафика на L4/L7.
 - **Linkerd 2.20+:** нативные сайдкары по умолчанию, HAZL с учётом rate-limit-ответов (429) и снижение потребления памяти Control Plane.
 
 **См. также:**

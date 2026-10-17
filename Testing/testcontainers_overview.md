@@ -1,5 +1,7 @@
 # Testcontainers
 
+**Актуально для:** Testcontainers Java 2.0.5 / Node 12.2.0 / Python 4.15.0 / Go 0.44.0 / .NET 4.15.0 / Rust 0.28.0 (Ryuk 0.14.0, PostgreSQL 16–17, Redis 7)
+
 ## 1. Определения
 
 **Testcontainers** — это библиотека с открытым исходным кодом, которая предоставляет временные ("эфемерные"), легковесные экземпляры зависимостей (баз данных, брокеров сообщений, браузеров), запускаемые в Docker-контейнерах. Библиотека управляет полным жизненным циклом контейнеров, обеспечивая их автоматический запуск перед тестами и удаление после завершения.
@@ -140,6 +142,36 @@ class OrderRepositoryTest {
 * Контейнер переиспользуется только при полном совпадении параметров запуска (образ, конфигурация, имя); любые изменения приводят к пересозданию.
 * Testcontainers Desktop включает `testcontainers.reuse.enable=true` по умолчанию для локальных прогонов.
 
+### Конфигурационный файл (~/.testcontainers.properties)
+
+Testcontainers поддерживает централизованную конфигурацию через файл `~/.testcontainers.properties` (Linux/macOS) или `%USERPROFILE%\.testcontainers.properties` (Windows). Параметры можно переопределять через переменные окружения с префиксом `TESTCONTAINERS_`.
+
+**Ключевые параметры для SysAdmin/SRE:**
+
+| Параметр | Переменная | По умолчанию | Описание |
+| :--- | :--- | :--- | :--- |
+| `ryuk.container.image` | `RYUK_CONTAINER_IMAGE` | `testcontainers/ryuk:0.14.0` | Образ Ryuk для cleanup |
+| `ryuk.container.privileged` | `TESTCONTAINERS_RYUK_PRIVILEGED` | Java: `true`; Go/Python: `false` | Запуск Ryuk в privileged mode |
+| `ryuk.disabled` | `TESTCONTAINERS_RYUK_DISABLED` | `false` | Отключение Ryuk (только если очистка реализована CI) |
+| `testcontainers.reuse.enable` | `TESTCONTAINERS_REUSE_ENABLE` | `false` | Включение reusable mode |
+| `checks.disable` | `TESTCONTAINERS_CHECKS_DISABLE` | `false` | Отключение стартовых проверок (ускоряет тесты) |
+| `hub.image.name.prefix` | `TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX` | — | Префикс реестра (например, для локального mirror) |
+| `docker.host` | `DOCKER_HOST` | `unix:///var/run/docker.sock` | Путь к Docker socket |
+
+**Пример `~/.testcontainers.properties` для корпоративной среды:**
+```properties
+# Используем локальный registry mirror
+hub.image.name.prefix=registry.mycorp.local/testcontainers/
+
+# Кастомный образ Ryuk
+ryuk.container.image=registry.mycorp.local/testcontainers/ryuk:0.14.0
+
+# Отключаем проверки для ускорения в CI
+checks.disable=true
+```
+
+В CI-пайплайнах конфигурация обычно задаётся через переменные окружения, а не через файл — это позволяет переопределять параметры без изменения файловой системы раннера.
+
 ### Инициализация данных и миграции
 
 Вместо ручного создания схемы БД в каждом тесте, используйте стандартные механизмы инициализации:
@@ -176,8 +208,10 @@ secret_file = tempfile.NamedTemporaryFile(delete=False, mode="w")
 secret_file.write(os.environ["DB_PASSWORD"])
 secret_file.close()
 
-postgres.with_command(f"bash -c 'cat /run/secret/db_password | psql -U test'")
-postgres.with_file_system_bind(secret_file.name, "/run/secret/db_password", "ro")
+# Mount secret file read-only; application reads from the file path
+postgres.with_file_system_bind(secret_file.name, "/run/secrets/db_password", "ro")
+# Tell PostgreSQL to read password from the mounted file (supported by official image)
+postgres.with_env("POSTGRES_PASSWORD_FILE", "/run/secrets/db_password")
 ```
 
 ### Предварительная загрузка образов (Pre-pull)
@@ -247,6 +281,87 @@ docker inspect testcontainers-postgres-1
 * **Testcontainers Desktop** — бесплатное GUI-приложение для локальной разработки. Позволяет запускать тесты без локального Docker-демона (встроенный runtime на macOS), переключать рантаймы (Docker Desktop, Podman, Rancher), фиксировать порты сервисов, «замораживать» контейнеры для отладки.
 * **Testcontainers Desktop** по умолчанию включает `testcontainers.reuse.enable=true` для локальных прогонов.
 
+#### Настройка Docker daemon для тестовых нагрузок
+
+Для нагрузок, где Testcontainers запускает множество эфемерных контейнеров (особенно в CI), Docker daemon требует настройки для стабильности и производительности. Параметры задаются в `/etc/docker/daemon.json` и применяются после `sudo systemctl restart docker`:
+
+* **Хранилище (storage driver):** `overlay2` — драйвер по умолчанию и рекомендуемый начиная с Docker 17.05. Обеспечивает высокую производительность и эффективное использование диска за счёт copy-on-write. Не используйте `aufs` (устарел) или `devicemapper` в loopback-режиме (критически медленно).
+* **Логи (log driver):** В CI-средах контейнеры создают большое количество логов. Ограничьте размер json-логов, чтобы избежать переполнения диска:
+  ```json
+  {
+    "log-driver": "json-file",
+    "log-opts": {
+      "max-size": "10m",
+      "max-file": "3"
+    }
+  }
+  ```
+  В системах с централизованным логированием (Syslog, Fluentd, journald) переключайте `log-driver` на соответствующий.
+* **Live restore:** Включите `live-restore: true`, чтобы контейнеры продолжали работать во время перезапуска daemon:
+  ```json
+  { "live-restore": true }
+  ```
+* **Параллельные загрузки образов:** Увеличьте лимиты параллельных операций для ускорения `docker pull` при параллельных тестах (по умолчанию 3):
+  ```json
+  {
+    "max-concurrent-downloads": 10,
+    "max-concurrent-uploads": 10
+  }
+  ```
+* **Том для данных:** Укажите `data-root` на том томе с достаточным объёмом (минимум 50–100 ГБ SSD) для кэша образов и эфемерных томов.
+
+#### Требования к ресурсам CI-раннера
+
+Размер CI-раннера напрямую влияет на параллельность и стабильность тестов с Testcontainers:
+
+* **CPU:** Минимум 2 vCPU на агент. Для параллельных тестов с несколькими контейнерами рекомендуется 4–8 vCPU. Каждый контейнер потребляет минимум 0.1–0.2 vCPU в простое.
+* **Память:** Минимум 4 ГБ RAM. Тяжёлые образы (PostgreSQL, Kafka, ClickHouse) требуют 1–2 ГБ каждый. Сумма лимитов контейнеров не должна превышать 80% от доступной памяти раннера (оставшееся 20% — на OS и daemon).
+* **Диск:** Минимум 50 ГБ SSD для образов и эфемерных томов. Используйте `docker system df` для мониторинга и `docker system prune -a -f` для периодической очистки.
+* **cgroup v2:** На новых дистрибутивах Linux (Kernel 5.10+) используйте cgroup v2 для лучшей изоляции. Проверить версию: `stat -fc %T /sys/fs/cgroup/` → `cgroup2fs`.
+
+Для GitLab Runner настраивайте лимиты в `config.toml`:
+```toml
+[[runners]]
+  [runners.docker]
+    memory = "8g"
+    memory_swap = "12g"
+    volumes = ["/var/run/docker.sock:/var/run/docker.sock", "runner-cache:/cache"]
+```
+
+#### Кэширование образов и registry-зеркала
+
+Для сокращения времени сборки в CI:
+
+* **Registry-зеркало (mirror):** Настройте локальный registry mirror или используйте встроенный в Docker Desktop / Podman. Это устраняет bottle-neck на Docker Hub rate-limiting:
+  ```json
+  {
+    "registry-mirrors": ["https://dockerhub-mirror.my-registry.local"]
+  }
+  ```
+* **Pre-pull в before_script:** Загружайте базовые образы в начале джобы (см. «Предварительная загрузка образов»). Добавьте `--quiet` для сокращения вывода:
+  ```bash
+  docker pull --quiet postgres:16 redis:7-alpine testcontainers/ryuk:0.14.0
+  ```
+* **Cache Docker layers между запусками:** В GitLab используйте shared runners с Docker-in-Docker + `cache`. В GitHub Actions — `actions/cache@v5` для `~/.cache/testcontainers` и Docker layers.
+
+#### Мониторинг и наблюдаемость тестовой инфраструктуры
+
+Для отслеживания состояния инфраструктуры тестов (SRE-подход):
+
+* **Метрики контейнеров:** Используйте **cAdvisor** или **node-exporter** + **Prometheus** для сбора метрик: `container_cpu_usage_seconds_total`, `container_memory_rss`, `container_fs_usage_bytes`. Это позволяет обнаружить «тяжёлые» тесты, которые потребляют ресурсы неравномерно.
+* **Метрики жизненного цикла:** Отслеживайте количество создаваемых/удаляемых контейнеров, время запуска и время очистки через Ryuk. Метрика `testcontainers_container_startup_seconds` помогает находить узкие места.
+* **Алертинг:** Настройте алерты на: падение Ryuk (онлайн старше 5 минут), рост «висячих» контейнеров (`docker ps -f "label=com.testcontainers=true"`), переполнение диска в `/var/lib/docker` (>85%), превышение лимита памяти контейнером (>90%).
+* **Логи:** Централизуйте логи тестовых контейнеров через `fluentd` или `journald`. Используйте метку `com.testcontainers=true` для фильтрации.
+
+#### Валидация релизов на этапе тестирования
+
+Testcontainers поддерживают паттерн **release validation** — проверка релиза в эфемерной среде перед деплоем в production:
+
+* **Pre-deployment smoke test:** Перед деплоем в staging поднимайте через Testcontainers те же сервисы, что и в production (PostgreSQL, Redis, Kafka), применяйте миграции и выполняйте smoke-тесты. Это ловит несовместимости схемы БД или конфигурацию.
+* **Canary validation:** При blue-green или canary деплое используйте Testcontainers для проверки миграций на копии production-данных (с маскированием) перед реальным применением.
+* **Контрактное тестирование:** Комбинируйте Testcontainers с Pact для проверки API-контрактов между микросервисами в эфемерной среде, где каждый сервис поднят в своём контейнере.
+* **Error budget:** Используйте метрики из тестовых сред (время старта контейнеров, частота падений) как вход для SLO на тестовую инфраструктуру. Непроходимость тестового окружения — прямой индикатор риска в продакшене.
+
 ## 5. Устранение неполадок
 
 | Симптом | Причина | Решение |
@@ -256,11 +371,45 @@ docker inspect testcontainers-postgres-1
 | `Connection refused` на порт | Порт неожиданно занят другим процессом | Использовать `docker ps` для поиска конфликтов; убедиться, что `docker rm` удалил старые контейнеры |
 | Таймаут ожидания готовности | Медленный образ или неверная wait strategy | Увеличить таймаут через `.waitingFor(Wait.forHttp(...).withStartupTimeout(Duration.ofSeconds(120)))` |
 | `Permission denied` на Docker socket | Пользователь не в группе `docker` | `usermod -aG docker $USER` и перелогин |
-| Нехватка памяти (OOM) | Контейнер выходит за лимиты на раннере | Задать `.withCreateContainerCmdModifier` с `--memory` |
+| Нехватка памяти (OOM) | Контейнер выходит за лимиты на раннере | Задать `.withCreateContainerCmdModifier(cmd -> cmd.withMemory(...))` |
+| Диск переполнен (`/var/lib/docker`) | Накопились образы и эфемерные тома | `docker system df` для диагностики; `docker system prune -a -f` для очистки; настроить `data-root` на том томе с большим объёмом |
 | Контейнеры остаются после падения тестов | Ryuk упал или не запустился | Включить Ryuk явно или настроить cleanup в CI |
+| Rate-limiting Docker Hub | Слишком много запросов `docker pull` | Настроить `registry-mirrors` в `daemon.json` или использовать локальный mirror; pre-pull образы в `before_script` |
 | Проблемы с DNS в сети Testcontainers | Кастомный DNS не настроен | Использовать `Network.newNetwork()` с явным указанием DNS-сервера |
 
-## 6. Дополнительная информация
+## 6. Лучшие практики
+
+Ниже — консолидированный набор best practices, собранных из разделов §2 (концепции) и §4 (DevOps/CI).
+
+### Безопасность
+
+* **Image Tag Pinning:** Всегда используйте фиксированные теги образов (например, `postgres:16.11`), а не `:latest`, чтобы обеспечить детерминизм и избежать supply-chain атак. Список актуальных тегов — в [Docker Hub](https://hub.docker.com/_/postgres/tags).
+* **Non-root пользователи:** Указывайте пользователя через `.withCreateContainerCmdModifier(cmd -> cmd.withUser("1001:1001"))`, если образ поддерживает non-root.
+* **Read-only root filesystem:** `.withReadOnlyRootFilesystem()` снижает поверхность атаки при компрометации контейнера.
+* **Capabilities:** Отключение неиспользуемых Linux capabilities через `.withCapabilityDrop("ALL")` повышает безопасность.
+* **Управление секретами:** Используйте файловый bind mount (`withFileSystemBind` / `with_file_system_bind`) с временным файлом, а не переменные окружения, чтобы секреты не попадали в `docker inspect`.
+
+### Управление ресурсами и жизненным циклом
+
+* **Лимиты CPU/Memory:** Явно задавайте лимиты через `.withCreateContainerCmdModifier()` для предотвращения влияния «прожорливого» теста на другие джобы (см. §2 «Ограничение ресурсов и cgroups»).
+* **Periodic cleanup:** В CI добавляйте шаг `docker system prune -a -f --filter "label=com.testcontainers=true"` в `after_script` для удаления висячих контейнеров и образов.
+* **Ulimit:** Увеличение `nofile` или `nproc` необходимо для тестов с большим количеством соединений или процессов.
+
+### Надёжность и наблюдаемость (SRE)
+
+* **Мониторинг:** Настраивайте сбор метрик через cAdvisor или node-exporter + Prometheus (см. §4 «Мониторинг и наблюдаемость»).
+* **Алертинг:** Настраивайте алерты на падение Ryuk, рост висячих контейнеров и переполнение диска.
+* **Error budget:** Используйте метрики тестовой инфраструктуры (время старта, частота падений) как вход для SLO.
+* **Healthcheck:** Используйте `Wait.forHealthcheck()` для образов с `HEALTHCHECK` в Dockerfile — это надёжнее `forListeningPort()`, так как проверяет готовность на уровне приложения.
+
+### Оптимизация CI/CD
+
+* **Docker daemon tuning:** Настраивайте `overlay2` как storage driver, `json-file` с `max-size`, `live-restore: true` и `max-concurrent-downloads` (см. §4 «Настройка Docker daemon»).
+* **Pre-pull images:** Загружайте базовые образы в `before_script` для сокращения времени запуска тестов и обхода rate-limiting Docker Hub (см. §3 «Предварительная загрузка образов»).
+* **Sharding:** Делите тесты по джобам по типу сервиса (PostgreSQL, Kafka) для параллелизма.
+* **Reusable mode:** Используйте `.withReuse(true)` только локально для ускорения обратной связи; в CI не применяйте.
+
+## 7. Дополнительная информация
 
 ### Модульная экосистема (2025–2026)
 
@@ -273,12 +422,12 @@ docker inspect testcontainers-postgres-1
 
 ### Поддерживаемые языки
 
-* **Java/JVM:** Версия 2.0+ (стандарт индустрии). В ветке 2.x удалена поддержка JUnit 4 (только JUnit Jupiter), классы контейнеров переехали в пакет `org.testcontainers.*`, все артефакты имеют префикс `testcontainers-` (например, `org.testcontainers:testcontainers-mysql`).
-* **Node.js:** `testcontainers-node` v12+ (требует Node.js >= 22.22).
-* **Go:** `testcontainers-go`.
-* **Python:** `testcontainers-python`.
-* **.NET:** `testcontainers-dotnet`.
-* **Rust:** `testcontainers-rs`.
+* **Java/JVM:** Версия 2.0.x (текущая 2.0.5, April 2026). В ветке 2.x удалена поддержка JUnit 4 (только JUnit Jupiter), классы контейнеров переехали в пакет `org.testcontainers.*`, все артефакты имеют префикс `testcontainers-` (например, `org.testcontainers:testcontainers-mysql`). Управление версиями через BOM `org.testcontainers:testcontainers-bom`.
+* **Node.js:** `testcontainers` v12.x (текущая 12.2.0, npm). Требует Node.js >= 22.22. Использует `DockerComposeEnvironment` и `GenericContainer` с fluent-интерфейсом.
+* **Python:** `testcontainers` 4.15.x (текущая 4.15.0, PyPI, July 2026). Менеджер контекстов `with PostgresContainer("postgres:16") as postgres:` для автоматического cleanup.
+* **Go:** `testcontainers-go` v0.44.0 (August 2026). Использует `testing.T` для жизненного цикла и `t.Cleanup` для удаления.
+* **.NET:** `testcontainers` 4.x (NuGet). Интеграция с `IHost` и `Docker.DotNet`.
+* **Rust:** `testcontainers-rs` 0.28.x (August 2026). Поддерживает как блокирующий (sync), так и асинхронный (async) режимы; минимальная версия Rust 1.88+. Начиная с 0.27.2 удалена явная поддержка Podman (см. §2 «Rootless Docker / Podman»).
 
 ### Сравнение с альтернативами
 

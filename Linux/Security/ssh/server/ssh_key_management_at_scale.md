@@ -79,7 +79,7 @@ vault write ssh-client-signer/config/ca \
 
 # 3. Создание роли для подписи
 vault write ssh-client-signer/roles/ops-role \
-   key_type="ed25519" \
+   key_type="ca" \
    allowed_users="admin,deploy,sre" \
    default_extensions="permit-pty,permit-port-forwarding" \
    ttl="8h" \

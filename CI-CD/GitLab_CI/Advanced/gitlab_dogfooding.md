@@ -241,7 +241,7 @@ e2e_staging:
   stage: e2e
   image: registry.gitlab.com/gitlab-org/gitlab:e2e
   services:
-    - selenium/standalone-chrome:latest
+    - selenium/standalone-chrome:4.50.0
   variables:
     SELENIUM_HOST: selenium
     GITLAB_URL: https://staging.gitlab.com
@@ -259,7 +259,7 @@ e2e_production_mirror:
   stage: e2e
   image: registry.gitlab.com/gitlab-org/gitlab:e2e
   services:
-    - selenium/standalone-chrome:latest
+    - selenium/standalone-chrome:4.50.0
   variables:
     SELENIUM_HOST: selenium
     GITLAB_URL: https://gitlab.com

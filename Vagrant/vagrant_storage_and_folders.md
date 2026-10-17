@@ -1,5 +1,7 @@
 # Управление хранилищем и общими папками в Vagrant
 
+**Актуально для:** Vagrant 2.4.x
+
 ## Определения
 
 **Общая папка (Synced Folder)** — программный механизм синхронизации директорий между хост-системой и гостевой операционной системой виртуальной машины (ВМ). Позволяет работать с исходным кодом проекта на хосте, выполняя и тестируя его в изолированном окружении.
@@ -12,7 +14,7 @@
 
 **Propagation (Propagation Mode)** — политика распространения событий монтирования между пространствами имён mount namespace. Режимы: `private` (по умолчанию, события не распространяются), `shared` (события распространяются), `slave` (принимает события только от родителя). Критичен для Docker-in-Vagrant и сложных оркестраций.
 
-**vagrant-disk plugin** — официальный плагин для декларативного управления дисками (`config.vm.disk`). Позволяет создавать, переименовывать и расширять виртуальные диски без ручного обращения к CLI провайдера. Сохраняет диски при `vagrant reload`, но не при `vagrant destroy` (если не настроено иное).
+**Управление дисками (Disk Management)** — встроенная в ядро Vagrant функция (`config.vm.disk`), позволяющая декларативно добавлять и расширять виртуальные диски. Поддержка в ядре ограничена провайдером **VirtualBox** (см. [Vagrant Disk Usage](https://developer.hashicorp.com/vagrant/docs/disks/usage)). Для Libvirt используйте `lv.storage :file` в блоке провайдера (см. [Vagrant Providers](./vagrant_providers.md)). Диски сохраняются при `vagrant reload`, но удаляются при `vagrant destroy`.
 
 ## Базовые концепции
 
@@ -70,8 +72,8 @@
 - Диски: формат `vmdk`. Дополнительные диски создаются как `vdi`/`vmdk` и подключаются через `VBoxManage storageattach`. Удаление диска при `destroy` управляется параметром провайдера.
 
 **Libvirt/QEMU:**
-- Общие папки: протокол `virtiofs` (рекомендуется, требует ядро ≥5.4 в гостевой ОС и Vagrant 2.4+). Альтернатива — `9p` (legacy). NFS работает через `private_network`.
-- Диски: формат `qcow2` (поддерживает сжатие, snapshots, thin provisioning). Пулы хранилища управляются через `virsh pool-*`. Дополнительные диски `config.vm.disk` создаются в пуле по умолчанию.
+- **Общие папки:** протокол `virtiofs` (рекомендуется, требует ядро ≥5.4 в гостевой ОС и Vagrant 2.4+). Альтернатива — `9p` (legacy). NFS работает через `private_network`.
+- **Диски:** формат `qcow2` (поддерживает сжатие, snapshots, thin provisioning). Пулы хранилища управляются через `virsh pool-*`. Дополнительные диски создаются через `lv.storage :file` в блоке провайдера (не через `config.vm.disk`, который ограничен VirtualBox).
 
 **QEMU (Apple Silicon / `vagrant-qemu`):**
 - Общие папки: `virtiofs` через `-virtfs` в CLI QEMU. Требует корректной настройки `virtiofsd` на хосте.
@@ -82,8 +84,8 @@
 - Диски: формат `vmdk`. Поддерживает динамическое расширение.
 
 **Hyper-V:**
-- Общие папки: нет нативного高性能 протокола общих папок. Используется SMB или развёртывание через `vagrant rsync`.
-- Диски: формат `vhd`/`vhdx`. Динамическое расширение поддерживается нативно.
+- **Общие папки:** нет нативного высокопроизводительного протокола общих папок. Используется SMB или развёртывание через `vagrant rsync`.
+- **Диски:** формат `vhd`/`vhdx`. Динамическое расширение поддерживается нативно.
 
 ## Практические сценарии
 
@@ -145,22 +147,26 @@ end
 Vagrant.configure("2") do |config|
   config.vm.box = "bento/ubuntu-24.04"
   
-  # Создание дополнительного диска для БД
-  config.vm.disk :disk, 
-    name: "database_storage", 
-    size: "50GB",
-    primary: false # Не является системным
+  config.vm.provider "virtualbox" do |vb|
+    # Создание дополнительного диска для БД (VirtualBox only)
+    config.vm.disk :disk, 
+      name: "database_storage", 
+      size: "50GB",
+      primary: false
+  end
+
+  config.vm.provider "libvirt" do |lv|
+    # libvirt: используйте lv.storage вместо config.vm.disk
+    lv.storage :file,
+      name: "database_storage",
+      size: "50G"
+  end
 end
 ```
 
-**Операции через CLI:**
-```bash
-# Список всех дисков проекта и их путей в хост-системе
-vagrant disk list
+**Операции с дисками:**
 
-# Расширение диска (требует последующего resizefs внутри ВМ)
-vagrant disk resize --name database_storage --size 100GB
-```
+Для VirtualBox: расширение диска выполняется через изменение `size` в `Vagrantfile` + `vagrant reload`. Для libvirt: используйте `qemu-img resize` + `growpart` внутри ВМ (см. Сценарий 8). Список дисков VirtualBox можно получить через `VBoxManage list hdds`.
 
 ### Сценарий 5: Ручная инициализация диска в Linux
 
@@ -251,7 +257,7 @@ Vagrant.configure("2") do |config|
   # Системный диск расширяется автоматически при создании ВМ
   # (зависит от box; для bento/ubuntu-24.04 поддерживается auto-resize)
   
-  # Дополнительный диск для данных
+  # Дополнительный диск для данных (VirtualBox)
   config.vm.disk :disk,
     name: "database_storage",
     size: "50GB",
@@ -259,19 +265,11 @@ Vagrant.configure("2") do |config|
 end
 ```
 
-**Расширение диска через плагин vagrant-disk (preferred):**
+**Расширение диска:**
 
-```bash
-# 1. Список дисков
-vagrant disk list
-# → database_storage  /Users/mac/notes/.vagrant/machines/default/libvirt/disk_database_storage.vdi  (50 GB)
+Для VirtualBox: измените `size` в `Vagrantfile` и выполните `vagrant reload`. Vagrant подхватит новый размер и провайдер расширит диск. Далее — ресайз внутри ВМ (см. ниже).
 
-# 2. Расширение
-vagrant disk resize --name database_storage --size 100GB
-
-# 3. Перезагрузка ВМ
-vagrant reload
-```
+Для Libvirt: используйте `qemu-img resize` + `growpart` внутри ВМ. Список дисков — через `virsh domblklist <vm_name>` или `VBoxManage list hdds`.
 
 **Расширение диска через CLI провайдера (fallback):**
 
@@ -370,14 +368,15 @@ namei -l /srv/vagrant-nfs/project
 
 ### Сценарий 11: Персистентность данных при `vagrant destroy`
 
-По умолчанию `vagrant destroy` удаляет ВМ и **все** связанные диски, описанные в `Vagrantfile` через `config.vm.disk`. Для сохранения данных на хосте переименуйте диск или используйте внешний пул.
+По умолчанию `vagrant destroy` удаляет ВМ и **все** связанные диски. Чтобы сохранить данные на хосте, переименуйте диск в хранилище libvirt/VirtualBox или используйте внешний пул.
 
 ```bash
-# 1. Список дисков перед destroy
-vagrant disk list
+# 1. Определение расположения диска (libvirt)
+virsh domblklist <vm_name>
+# → vda   /var/lib/libvirt/images/vagrant_default_vagrant_data.qcow2  (50G)
 
-# 2. Ручное переименование (чтобы vagrant-disk plugin не нашёл диск по имени)
-mv /var/lib/libvirt/images/vagrant_default_database_storage.qcow2 \
+# 2. Переименование диска (чтобы libvirt не удалил его при destroy)
+mv /var/lib/libvirt/images/vagrant_default_vagrant_data.qcow2 \
    /var/lib/libvirt/images/saved_database_storage.qcow2
 
 # 3. destroy ВМ
@@ -385,7 +384,7 @@ vagrant destroy -f
 
 # 4. Возврат исходного имени
 mv /var/lib/libvirt/images/saved_database_storage.qcow2 \
-   /var/lib/libvirt/images/vagrant_default_database_storage.qcow2
+   /var/lib/libvirt/images/vagrant_default_vagrant_data.qcow2
 
 # 5. Пересоздание ВМ — диск останется
 vagrant up
@@ -431,42 +430,7 @@ vagrant ssh -c "ls -la /opt/app/src"
 vagrant ssh -c "mount | grep -E 'virtiofs|nfs'"
 ```
 
-## Дополнительная информация
-
-### Guest Additions drift и автоматическое обновление
-
-Drift версий гостевых дополнений — частая причина падения производительности общих папок и некорректного определения размера диска в VirtualBox.
-
-```bash
-# 1. Проверка версии Guest Additions в гостевой ОС
-vagrant ssh -c "cat /opt/VBoxGuestAdditions-*/version"
-
-# 2. Проверка версии хоста
-VBoxManage --version
-
-# 3. Автоматическое исправление через vagrant-vbguest
-vagrant plugin install vagrant-vbguest
-vagrant up # Плагин автоматически проверит и обновит Guest Additions
-```
-
-Для Libvirt/QEMU используется `qemu-guest-agent`, который устанавливается внутри гостевой ОС:
-
-```bash
-# Ubuntu/Debian внутри ВМ
-sudo apt-get install -y qemu-guest-agent
-sudo systemctl enable --now qemu-guest-agent
-```
-
-### Персистентность данных и влияние `vagrant destroy`
-
-| Хранилище | Сохраняется при `vagrant destroy` | Примечание |
-| :--- | :--- | :--- |
-| Общие папки (любой тип) | Нет | Это механизм монтирования, а не физическое хранилище |
-| `config.vm.disk` (Libvirt) | Нет (по умолчанию) | Диск удаляется вместе с доменом Libvirt |
-| `config.vm.disk` с внешним пулом | Да | Если диск создан в пуле, не управляемом Vagrant |
-| Внешний NAS/SAN | Да | Подключение через iSCSI/NFS напрямую к гостю (вне Vagrant) |
-
-### Диагностика и типичные ошибки
+## Устранение неполадок
 
 1.  **Зависание NFS:** Проверьте, разрешены ли порты на хосте:
     ```bash
@@ -500,15 +464,58 @@ sudo systemctl enable --now qemu-guest-agent
     VBoxManage closemedium disk <uuid> --delete
     ```
 
-### Лучшие практики
+## Рекомендации и лучшие практики
 
 1.  **Изоляция данных:** Храните базы данных только на **виртуальных дисках**, а не в общих папках, чтобы избежать повреждения данных из-за особенностей сетевых протоколов (NFS/SMB).
 2.  **Исключения:** Всегда настраивайте `rsync__exclude` для директорий с кэшем и логами.
 3.  **Безопасность:** Используйте `mount_options: ["ro"]` (Read-Only) для папок с конфигурациями, которые ВМ не должна изменять. Отключайте стандартную папку `/vagrant` через `disabled: true` и создавайте явные правила синхронизации.
 4.  **Удаление ресурсов:** Помните, что `vagrant destroy` удаляет все диски, описанные в `Vagrantfile`, если не настроено иное через параметры провайдера. Для сохранения критичных данных используйте внешние пулы хранилища.
-5.  **Гостевые дополнения:** Для VirtualBox всегда используйте `vagrant-vbguest` в продакшн-окружениях. Для Libvirt убедитесь, что `qemu-guest-agent` установлен и активен.
+5.  **Гостевые дополнения:** Для VirtualBox всегда используйте `vagrant-vbguest` в продакшн-окружениях. Для Libvirt убедитесь, что `qemu-guest-agent` установлен и активен (см. [KVM: Обзор](../Linux/Virtualization/kvm/overview.md#qemu-guest-agent-qga)).
 6.  **Производительность:** Вместо NFS используйте `virtiofs` для однохостовых сценариев на Libvirt/KVM (требует ядро 5.4+ в гостевой ОС). Для Windows-хостов используйте SMB 3.0+ с шифрованием.
 7.  **Кэширование rsync:** В CI/CD окружениях используйте `rsync` вместо постоянных общих папок, чтобы снизить нагрузку на файловую систему хоста во время простоя.
+
+## Дополнительная информация
+
+### Guest Additions drift и влияние на хранилище
+
+Drift версий гостевых дополнений — частая причина падения производительности общих папок и некорректного определения размера диска в VirtualBox. Общие сведения о управлении Guest Additions — в [Vagrant Troubleshooting: Дополнительная информация](./vagrant_troubleshooting/additional_info.md#управление-guest-additions).
+
+**Влияние на хранилище:** при несовпадении версий `vboxsf` работает в fallback-режиме (максимальная скорость снижается в 3–5 раз), а `VBoxManage` не может корректно определить размер диска для расширения.
+
+```bash
+# 1. Диагностика: проверка версий
+vagrant ssh -c "cat /opt/VBoxGuestAdditions-*/version"    # версия в госте
+VBoxManage --version                                       # версия на хосте
+
+# 2. Автоматическое исправление (VirtualBox)
+vagrant plugin install vagrant-vbguest
+vagrant reload  # плагин пересобирает и перезагружает Guest Additions
+```
+
+Для Libvirt/QEMU используется `qemu-guest-agent`, который устанавливается внутри гостевой ОС (общие сведения — в [KVM: Обзор](../Linux/Virtualization/kvm/overview.md#qemu-guest-agent-qga)):
+
+```bash
+# Ubuntu/Debian внутри ВМ
+sudo apt-get install -y qemu-guest-agent
+sudo systemctl enable --now qemu-guest-agent
+```
+
+В Vagrantfile включите агент для libvirt:
+```ruby
+config.vm.provider "libvirt" do |lv|
+  lv.qemu_use_agent = true
+end
+```
+
+### Персистентность данных и влияние `vagrant destroy`
+
+| Хранилище | Сохраняется при `vagrant destroy` | Примечание |
+| :--- | :--- | :--- |
+| Общие папки (любой тип) | Нет | Это механизм монтирования, а не физическое хранилище |
+| Диски через `config.vm.disk` (VirtualBox) | Нет (по умолчанию) | Диск удаляется вместе с ВМ |
+| `lv.storage :file` (Libvirt) | Нет (по умолчанию) | Диск удаляется вместе с доменом Libvirt |
+| `lv.storage` с внешним пулом | Да | Если диск создан в пуле, не управляемом Vagrant |
+| Внешний NAS/SAN | Да | Подключение через iSCSI/NFS напрямую к гостю (вне Vagrant) |
 
 ### См. также
 

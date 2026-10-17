@@ -38,7 +38,7 @@
 
 | Способ | Когда использовать | Преимущества | Недостатки |
 | :--- | :--- | :--- | :--- |
-| **Helm** | Production, GitOps (ArgoCD/Flux) | Управление версиями, поддержка HA, простая параметризация через `values.yaml`. | Зависимость от Helm, "магия" шаблонов. |
+| **Helm** | Production, GitOps (ArgoCD) | Управление версиями, поддержка HA, простая параметризация через `values.yaml`. | Зависимость от Helm, "магия" шаблонов. |
 | **Манифесты (YAML)** | Быстрое развёртывание, Air-gapped | Не требует сторонних инструментов, полный контроль над каждым ресурсом. | Сложность обновления, ручное управление версиями. |
 | **Kustomize** | GitOps без шаблонизации | Нативный подход Kubernetes, отсутствие "магии" шаблонов. | Требует понимания Kustomize, ограниченная параметризация. |
 
@@ -403,7 +403,7 @@ kubectl apply -k overlays/production/
 # → result: All resources applied from overlays/production/
 ```
 
-### Сценарий 5: Настройка для GitOps (ArgoCD / Flux)
+### Сценарий 5: Настройка для GitOps (ArgoCD)
 
 Для стабильной работы в GitOps необходимо исключить "петли синхронизации" (sync loops).
 
@@ -418,26 +418,6 @@ spec:
       kind: Deployment
       jsonPointers:
         - /spec/template/metadata/annotations/reloader.stakater.com~1last-reloaded-from
-```
-
-**Flux Kustomization:**
-
-```yaml
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: reloader
-  namespace: flux-system
-spec:
-  interval: 10m
-  path: ./kubernetes/reloader/overlays/production
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-  postBuild:
-    substituteFrom:
-      - kind: ConfigMap
-        name: cluster-config
 ```
 
 ### Сценарий 6: Air-gapped установка (закрытые кластеры)

@@ -440,6 +440,8 @@ EOH
 - `change_mode = "restart"` — перезапуск задачи при изменении секрета.
 - `splay = "5s"` — случайная задержка для предотвращения thundering herd.
 
+Настройка Vault-стороны (workload identity, JWT auth, роли, разбор ошибок): [Vault: интеграция с Nomad](../Vault/guides/nomad-integration.md).
+
 #### Интеграция с Consul KV
 
 ```hcl

@@ -1,3 +1,5 @@
+**Актуально для:** Lens Desktop 2026.8 / FreeLens v1.10.3
+
 # Lens: Практические сценарии
 
 ## Определения
@@ -21,8 +23,6 @@
 **Air-gapped mode** — режим работы в изолированной среде без доступа к интернету. Требует предварительной загрузки всех бинарных файлов и образов. В FreeLens v1.10.0+ добавлена настройка зеркала kubectl в Preferences → Kubernetes → Kubectl.
 
 **Hotbar** — панель быстрого доступа (до 12 кластеров на банк) с мгновенным переключением через клавиши F1–F12. Доступна в Pro/Enterprise редакциях Lens Desktop.
-
-**Flux CD** — CNCF-выпускной GitOps-контроллер, обеспечивающий непрерывную конверgenцию состояния кластера с declarations в Git-репозитории. Lens поддерживает нативную навигацию по Flux-ресурсам (Kustomization, HelmRelease, GitRepository, ImageAutomation) с 2026.6.
 
 **Argo CD** — GitOps-инструмент для Kubernetes, предоставляющий declarative CD и визуальный дашборд приложений. Lens Desktop интегрирует Argo CD Applications, ApplicationSets, AppProjects, Repositories и Clusters с возможностью Sync и Refresh прямо из IDE (2026.8+).
 
@@ -48,7 +48,6 @@ Lens абстрагирует сложные команды `kubectl` в инт�
 | **Hotbar** | Панель быстрого доступа до 12 кластеров на банк. Переключение F1–F12 / Shift+F1–F12 (Pro/Enterprise). |
 | **Gateway API** | Полная навигация и typed detail-панели для всех 10 ресурсов Gateway API (2026.5+). |
 | **Admission Policies** | Визуализация VAP/MAP с подсветкой CEL-выражений и шаблонами создания ресурсов (2026.5+). |
-| **Flux CD (GitOps)** | Нативная навигация: Kustomizations, HelmReleases, Sources, ImageAutomation. Dashboards reconcile-состояния (2026.6+). |
 | **Argo CD** | Sync/Health дашборд, Application Sets, Repositories. Один клик для Sync/Refresh (2026.8+, Premium). |
 | **Ask AI (AI Agent)** | Запуск Claude Code, Codex, Copilot CLI, Gemini CLI в терминале Lens с контекстом кластера. Без собственного API-ключа (2026.6+). |
 | **Lens MCP Server** | Model Context Protocol для внешних AI-клиентов (Claude, Copilot, Codex). Кластерный контекст через MCP-инструменты (2026.3+). |
@@ -78,7 +77,7 @@ Lens абстрагирует сложные команды `kubectl` в инт�
 | **Lens ID** | Не требуется | Обязателен | Обязателен |
 | **Hotbar** | Нет | Нет | Да (Pro+) |
 | **AI-агенты** | Ограничено (Extensions) | Ask AI (CLI-агенты) | Ask AI + MCP Server |
-| **GitOps** | Базовый (Extensions) | Flux / Argo CD (read-only) | Flux + Argo CD (Sync/Refresh) |
+| **GitOps** | Базовый (Extensions) | Argo CD (read-only) | Argo CD (Sync/Refresh) |
 | **Security Center** | Нет | Базовый | Полный (Trivy + CIS) |
 | **Редактор с diff** | Нет | Базовый | Side-by-side diff + revert |
 | **SSO/SCIM** | Нет | Нет | Да (Entra ID, Okta) |
@@ -165,8 +164,7 @@ http://prometheus-operated.monitoring.svc.cluster.local:9090
 - **Рекомендуемые расширения (FreeLens):**
     - `@freelens/metrics` — расширенные визуализации для FreeLens.
     - `@freelens/node-shell` — доступ к нодам через shell.
-    - `@fluxcd/lens-extension` — интеграция с GitOps-инструментами Flux.
-    - `@argoproj/argo-cd-extension` — отображение статуса приложений ArgoCD.
+   - `@argoproj/argo-cd-extension` — отображение статуса приложений ArgoCD.
 - **Совместимость:** Большинство расширений OpenLens работают в FreeLens, но могут потребовать обновления. Проверяйте в [FreeLens Extensions Discussion](https://github.com/freelensapp/freelens/discussions/2291).
 - **Lens Desktop:** Расширения доступны в маркетплейсе Lens (Pro/Enterprise).
 
@@ -261,17 +259,6 @@ Lens предоставляет интегрированный редактор 
 4. **Сохранение:** Save and Close применяет манифест через kubectl apply (Server-Side Apply по умолчанию в Lens).
 
 **Примечание:** Редактирование доступно только для ресурсов, к которым у пользователя есть права RBAC (verbs: get, update, patch).
-
-### Интеграция с Flux CD (GitOps)
-
-С 2026.6 Lens предоставляет нативную навигацию по Flux-ресурсам:
-1. **Навигатор:** Группа GitOps в боковой панели содержит: Sources, Kustomizations, Helm Releases, Image Automation, Notifications.
-2. **Dashboard:** Обзор reconcile-состояния — ready/total для каждого типа ресурсов. Список "Needs attention" для failing/suspended ресурсов. Лента "Recent activity" с последними reconcile-событиями.
-3. **Детали:** Клик по ресурсу → detail-панель с Properties, Conditions, Status. Cross-references между source и деплоимыми ресурсами.
-4. **Статус в списках:** Колонка Flux Status в таблицах workload показывает reconcile-состояние (Ready/Failed/Progressing).
-5. **Ask AI:** ПКМ на Flux-ресурсе → Ask AI → анализ reconcile-состояния.
-
-**Примечание:** Требуется Flux CD, развёрнутый в кластере. Функция доступна в Pro/Enterprise.
 
 ### Интеграция с Argo CD
 

@@ -834,11 +834,13 @@ spec:
       app.kubernetes.io/component: vlselect
 ```
 
-### Хранение WAL
+### Надёжность данных
 
-WAL (Write-Ahead Log) критичен для потери данных. Убедитесь, что:
-- PVC для vlstorage используют быстрые диски (SSD) для WAL
-- `persistentVolumeclaimTemplate` не включает WAL-директорию в долгосрочное хранилище
+VictoriaLogs не использует WAL (Write-Ahead Log) — данные буферизуются в памяти и сбрасываются на диск каждые `-inmemoryDataFlushInterval` (по умолчанию `5s`, минимум `1s`). Убедитесь, что:
+
+- PVC для `vlstorage` используют быстрые диски (SSD/NVMe) для `-storageDataPath`, чтобы сброс in-memory буферов был мгновенным
+- оставляйте ≥20% свободного места на диске (`-storage.minFreeDiskSpaceBytes`, по умолчанию 100 MB) для merge и записи
+- `persistentVolumeClaimTemplate` использует `storageClassName` с подходящей I/O-характеристикой
 
 ### Обновление стека
 

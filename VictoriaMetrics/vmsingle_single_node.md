@@ -1,6 +1,6 @@
 # vmsingle — однобинарная замена стека Prometheus
 
-**Актуально для:** VictoriaMetrics v1.136+
+**Актуально для:** VictoriaMetrics v1.154.x (Community) / v1.148.x (LTS)
 
 ## Определения
 
@@ -23,9 +23,23 @@ vmsingle предназначен для сценариев, когда полн
 - Операторе Prometheus и его CRD (PrometheusRule, ServiceMonitor, etc.).
 - Внешнем слое долговременного хранения для простых сценариев (хотя может использоваться как локальное хранилище с длительным retention).
 
+Механизм: в single-node режиме бинарник `victoria-metrics-prod` выполняет все три роли кластерного режима — `vminsert` (приём), `vmstorage` (хранение) и `vmselect` (запросы) — в одном процессе. Все HTTP-эндпоинты слушают один порт по умолчанию `:8428`: `/api/v1/write` (приём), `/api/v1/query` (запросы), `/vmui` (интерфейс) и `/metrics` (самоскрейп). Это устраняет сетевые переходы между компонентами, но означает отсутствие горизонтального масштабирования и встроенной отказоустойчивости — для HA используйте два независимых инстанса с дедупликацией (см. [Обзор](./overview.md)). Подробности внутреннего устройства хранилища — в [storage_internals.md](./storage_internals.md).
+
 ## Практические сценарии
 
 ### Установка и настройка
+
+#### Предварительные требования
+
+Перед установкой убедитесь, что окружение соответствует требованиям:
+
+- **Kubernetes:** 1.27+ (StatefulSet, PVC)
+- **Helm:** 3.9+
+- **Helm-чарт:** `vm/victoria-metrics-single` из репозитория `https://victoriametrics.github.io/helm-charts/`
+- **VictoriaMetrics:** v1.154.x (Community) / v1.148.x (LTS)
+- **Диск:** минимум 5 ГБ свободного места на `-storageDataPath`; рекомендуется не менее 20% диска свободным ([формула оценки размера](./overview.md#планирование-мощностей-capacity-planning))
+- **Память:** минимум 2 ГБ RAM для стартовой конфигурации ([аппаратные требования](./overview.md#аппаратные-требования-single-node))
+- **Лимиты:** `LimitNOFILE=65535` для bare-metal; `resources.limits.memory` в Kubernetes
 
 vmsingle может быть развёрнут в Kubernetes через Helm чарт `vm/victoria-metrics-single`. Пример значения файла (`values.yaml`):
 
@@ -47,7 +61,8 @@ server:
     enableTCP6: "true"
     envflag.enable: "true"
     loggerFormat: json
-    vmalert.proxyURL: http://vmalert.monitoring.svc.cluster.local:8080
+    selfScrapeInterval: "15s"
+    vmalert.proxyURL: http://vmalert.monitoring.svc.cluster.local:8880
     memory.allowedPercent: "20"
 ```
 
@@ -55,6 +70,7 @@ server:
 
 - `memory.allowedPercent: 20` — VictoriaMetrics рассчитывает размер внутренних кэшей как процент от доступной памяти. Значение по умолчанию (60%) берётся от cgroup-лимита, а когда на узле живёт ещё куча всего, кэши безопаснее держать маленькими. Скорость запросов на датасете такого размера не страдает.
 - `vmalert.proxyURL` — VMUI проксирует вкладки алертинга в vmalert, и сработавшие правила видны в том же UI.
+- `selfScrapeInterval` — встроенный скрейпер vmsingle собирает собственные метрики (`/metrics` на `:8428`) с указанным интервалом. Без него метрики самого vmsingle (очередь приёма, размеры кэшей, состояние скрейпера) недоступны — типичная лакуна в standalone-деплое.
 
 #### Срок хранения
 
@@ -226,11 +242,47 @@ ClusterRoleBinding должен указывать на то имя ServiceAccou
 - **hostPath PV + Retain + явный биндинг через volumeName** — Ни storage class, ни провижионера; данные переживают helm uninstall, а `storageClassName: ""` на PVC не даёт ему ждать провижионер, которого нет.
 - **Ограниченная память везде** — У каждого компонента лимиты; vmsingle дополнительно зажимает кэши через `memory.allowedPercent: 20`. На общей ноде безлимитный стек наблюдаемости первым делом OOM-ит те самые сервисы, за которыми должен следить.
 - **Стабильные ClusterIP-имена** — Grafana и vmalert ходят в `vmsingle-stable` — обычный ClusterIP перед headless-сервисом чарта: headless DNS раздаёт IP подов, которые протухают при рестартах CoreDNS.
+- **Самоскрейп vmsingle** — включите `-selfScrapeInterval=15s`, чтобы VM скрейпил свои `/metrics` на `:8428`; иначе метрик самого vmsingle (очередь, кэши, scrape) не будет видно — типовая лакуна в standalone-деплое.
+
+## Очистка и откат (Cleanup)
+
+Для удаления vmsingle из Kubernetes:
+
+1. **Удалите Helm-релиз.** PVC и PV с `Retain` сохранятся (см. ниже):
+
+```bash
+helm uninstall vmsingle -n monitoring
+# → release "vmsingle" uninstalled
+```
+
+2. **Удалите PVC и PV (только при необходимости).** PV с `persistentVolumeReclaimPolicy: Retain` не удаляются автоматически — удалите вручную, если данные больше не нужны:
+
+```bash
+kubectl -n monitoring delete pvc vmsingle-data
+kubectl delete pv vmsingle-data
+```
+
+3. **Очистите снапшоты** в каталоге `-storageDataPath/snapshots/` на узле (если используется hostPath), чтобы не занимали место:
+
+```bash
+kubectl -n monitoring exec vmsingle-server-0 -- find /storage/snapshots -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+```
+
+4. **Для bare-metal (systemd):**
+
+```bash
+systemctl stop victoria-metrics
+systemctl disable victoria-metrics
+rm /etc/systemd/system/victoria-metrics.service
+systemctl daemon-reload
+# Данные в /var/lib/victoria-metrics сохраняются до ручного удаления
+rm -rf /var/lib/victoria-metrics
+```
 
 ## Дополнительная информация
 
-- [Обзор VictoriaMetrics](../VictoriaMetrics/overview.md) — архитектура, компоненты, сравнение
-- [Обзор vmalert](../VictoriaMetrics/vmalert_overview.md) — правила алертинга, интеграция с VictoriaLogs
-- [Архитектура наблюдаемости в Kubernetes](./kubernetes-monitoring-logging-architecture.md) — общая схема стека мониторинга
+- [Обзор VictoriaMetrics](./overview.md) — архитектура, компоненты, сравнение
+- [Обзор vmalert](./vmalert_overview.md) — правила алертинга, интеграция с VictoriaLogs
+- [Архитектура наблюдаемости в Kubernetes](../Kubernetes/MonitoringLogging/kubernetes-monitoring-logging-architecture.md) — общая схема стека мониторинга
 - [Полная наблюдаемость на одном VPS: метрики, логи, алерты, дашборды](../Kubernetes/MonitoringLogging/single-vps-observability-case-study.md) — пример использования vmsingle в стеке с VictoriaLogs
-- [LogsQL: руководство по запросам](../VictoriaMetrics/logsql_overview.md) — синтаксис и функции аналитики логов
+- [LogsQL: руководство по запросам](./logsql_overview.md) — синтаксис и функции аналитики логов

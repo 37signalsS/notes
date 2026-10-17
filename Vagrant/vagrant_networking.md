@@ -1,5 +1,7 @@
 # Настройка сети в Vagrant
 
+**Актуально для:** Vagrant 2.4.9
+
 ## Определения
 
 **Сетевые интерфейсы Vagrant** — программные механизмы, обеспечивающие сетевое взаимодействие между хост-системой, виртуальными машинами (ВМ) и внешними сетями. Vagrant абстрагирует настройки различных провайдеров (VirtualBox, Libvirt, VMware), предоставляя унифицированный декларативный синтаксис.
@@ -10,6 +12,20 @@
 
 **Public Network (публичная сеть)** — интерфейс типа «сетевой мост» (Bridge), подключающий ВМ напрямую к физической или виртуальной сети хоста. ВМ получает статус полноценного узла в этой сети.
 
+## Предпосылки
+
+Перед настройкой сети в Vagrant убедитесь, что выполнены предварительные требования:
+
+- **Vagrant** 2.4.x установлен и доступен в `$PATH`
+- **Провайдер установлен** в зависимости от целевой платформы:
+  - VirtualBox — `virtualbox` или отдельный пакет с сайта Oracle
+  - Libvirt — `vagrant-libvirt` (`vagrant plugin install vagrant-libvirt`)
+  - QEMU/Apple Silicon — `vagrant-qemu` (`vagrant plugin install vagrant-qemu`)
+- **Аппаратная виртуализация включена** в BIOS/UEFI (для нативных гипервизоров; QEMU на Apple Silicon использует HVF)
+- **Для NFS:** на хосте установлен и запущен NFS-сервер (`nfs-kernel-server` / `nfs-utils`), а порт 2049 открыт в фаерволе
+- **Для сетевых туннелей (Libvirt):** установлен `qemu-kvm` ≥ 1.2.20 (для UDP/Mcast-туннелей)
+- **Для systemd-resolved в гостевой ОС:** настройте статические DNS или отключите resolved, чтобы избежать конфликтов с `/etc/hosts`, управляемым Vagrant
+
 ## Базовые концепции
 
 ### Основные типы сетей
@@ -19,6 +35,20 @@
 | **Forwarded Port** | NAT Port Forwarding | Быстрый доступ к API/UI | Только хост (localhost) |
 | **Private Network** | Host-only / Isolated | Кластеры, базы данных | Хост + ВМ |
 | **Public Network** | Bridged Adapter | Публичные сервисы, PXE | Вся локальная сеть |
+
+### Типы сетевых адаптеров
+
+Понимание типов адаптеров, которые использует Vagrant, необходимо для правильного выбора сети в зависимости от задачи:
+
+| Тип адаптера | Описание | Используется для | Ограничения |
+| :--- | :--- | :--- | :--- |
+| **NAT** | ВМ получает IP через NAT хоста. Хост переводит трафик во внешнюю сеть. | Исходящий интернет-трафик, базовый доступ | Входящие соединения требуют проброса портов |
+| **NAT Network** | Группировка NAT-адаптеров в сеть с межВМ связью | Кластеры с исходящим доступом | Требует настройки NAT Network в VirtualBox |
+| **Host-only** | ВМ общается только с хостом и другими ВМ в той же сети | Локальная разработка, лаборатории | Нет доступа во внешнюю сеть |
+| **Bridged** | ВМ подключается напрямую к физическому сегменту | Публичные сервисы, PXE-загрузка | ВМ виден в локальной сети |
+| **Internal** | ВМ обмениваются данными только между собой, хост исключён | Полностью изолированные кластеры | Нет доступа к хосту или внешней сети |
+
+**Порядок адаптеров в VirtualBox:** адаптер 1 всегда NAT (для управления ВМ), адаптеры 2+ — это private_network или public_network. Vagrant определяет порядок сетей по их объявлению в Vagrantfile.
 
 ### Взаимодействие с сетевым стеком гипервизора
 
@@ -36,13 +66,13 @@ Vagrant описывает сеть декларативно, но underneath и
 
 **Hyper-V:**
 - `private_network` → Внутренний виртуальный коммутатор (Private Switch). Доступна только для ВМ на том же хосте, хост не имеет IP в этой сети по умолчанию.
-- `public_network` → Внешний виртуальный коммутатор (External Switch), привязанный к физическому адаптеру. Несколько ВМ могут shares one External Switch.
+- `public_network` → Внешний виртуальный коммутатор (External Switch), привязанный к физическому адаптеру. Несколько ВМ могут использовать один и тот же внешний коммутатор.
 - `forwarded_port` → Правила портов на коммутаторе или через PowerShell `netsh interface portproxy`.
 
 **QEMU (Apple Silicon):**
-- `forwarded_port` → SLIRP (User-mode networking). По умолчанию SSH пробрасывается на порт **50022** (вместо стандартного 2222) для избежания конфликтов. Не требует прав root.
-- `private_network` → Виртуальный коммутатор `virtio-net-pci`. На macOS создание настоящего bridge без root затруднительно, поэтому чаще используется SLIRP или пользовательские туннели.
-- `qemu.net_device = "virtio-net-pci"` — самый быстрый доступный драйвер для ARM64.
+  - `forwarded_port` → SLIRP (User-mode networking). По умолчанию SSH пробрасывается на порт **50022** (вместо стандартного 2222) для избежания конфликтов. Не требует прав root.
+  - `private_network` → Сетевой интерфейс на базе `virtio-net-pci`. На macOS без root создать настоящий bridge затруднительно, поэтому для `private_network` чаще используется SLIRP или пользовательские туннели.
+  - `qemu.net_device = "virtio-net-pci"` — самый быстрый доступный драйвер для ARM64.
 
 ### 1. Проброс портов (Forwarded Port)
 
@@ -64,9 +94,14 @@ Vagrant описывает сеть декларативно, но underneath и
 **Параметры и возможности:**
 - **Статический IP:** `ip: "192.168.56.10"`.
 - **DHCP:** `type: "dhcp"`.
-- **IPv6:** Поддерживается через параметр `ip: "fde4:8dba:82e1:ffff::c0"`.
-- **Внутренние сети (VirtualBox):** `virtualbox__intnet: "my-internal-net"` создает сеть, к которой хост не имеет доступа (только ВМ).
-- **Управление именами:** `hostname: true` — автоматическое обновление `/etc/hosts` (требует плагин).
+- **Маска сети:** `netmask: "255.255.255.0"` (по умолчанию). Можно указать и как префикс: `netmask: "24"`.
+- **IPv6:** Поддерживается через параметр `ip: "fde4:8dba:82e1:ffff::c0"`. Для IPv6 маска по умолчанию `/64`.
+- **Внутренние сети (VirtualBox):** `virtualbox__intnet: "my-internal-net"` создаёт сеть, к которой хост не имеет доступа (только ВМ).
+- **Тип сетевого адаптера:** `nic_type: "virtio"` — задаёт паравиртуализированный драйвер для VirtualBox (по умолчанию `virtio` начиная с Vagrant 2.4+).
+- **Ручная конфигурация:** `auto_config: false` — Vagrant не настраивает интерфейс автоматически; применяется, когда необходимо задать собственный маршрут, шлюз или несколько адресов на одном интерфейсе.
+- **Управление именами:** `hostname: true` — автоматическое обновление `/etc/hosts` для этого интерфейса.
+
+**Важно:** порядок объявления `config.vm.network` в Vagrantfile определяет порядок создания адаптеров. Vagrant назначает адаптер 1 как NAT (для управления ВМ), адаптеры 2+ — в порядке следования в файле.
 
 ### 3. Публичная сеть (Public Network)
 
@@ -75,6 +110,9 @@ Vagrant описывает сеть декларативно, но underneath и
 **Параметры:**
 - `bridge`: Имя интерфейса хоста (например, `eth0`, `wlan0`). Если не указано, Vagrant предложит выбор при запуске.
 - `use_dhcp_assigned_default_route`: Если `true`, ВМ будет использовать шлюз, полученный по DHCP в этой сети, как основной.
+- `nic_type`: Тип сетевого адаптера (например, `nic_type: "virtio"` для повышения производительности в VirtualBox).
+- `auto_config: false`: Отключить автоматическую настройку IP внутри ВМ.
+- `adapter`: Номер слота адаптера VirtualBox (например, `adapter: 2` для принудительного размещения на слоте 2). По умолчанию Vagrant выбирает слот автоматически.
 
 ## Практические сценарии
 
@@ -137,7 +175,7 @@ vagrant ssh -c "ip -brief addr show"
 
 ### Сценарий 3: Динамический выбор моста и UDP-туннели
 
-Автоматический выбор интерфейса в зависимости от ОС хоста и настройка туннеля между разными физическими хостами в Libvirt.
+Автоматический выбор интерфейса в зависимости от ОС хоста и настройка UDP-туннеля между разными физическими хостами в Libvirt.
 
 ```ruby
 Vagrant.configure("2") do |config|
@@ -151,12 +189,15 @@ Vagrant.configure("2") do |config|
 
   config.vm.network "public_network", bridge: bridge_if
 
-  # UDP туннель для связи между разными ПК (Libvirt)
+  # UDP-туннель для связи между разными ПК (Libvirt)
+  # libvirt__tunnel_ip / libvirt__tunnel_port — удалённая конечная точка
+  # libvirt__tunnel_local_ip / libvirt__tunnel_local_port — локальная конечная точка
   config.vm.network "private_network",
     libvirt__tunnel_type: "udp",
+    libvirt__tunnel_local_ip: "127.0.0.1",
     libvirt__tunnel_local_port: 11111,
-    libvirt__tunnel_remote_host: "10.0.0.2",
-    libvirt__tunnel_remote_port: 11111
+    libvirt__tunnel_ip: "10.0.0.2",
+    libvirt__tunnel_port: 11111
 end
 ```
 
@@ -410,14 +451,106 @@ vagrant ssh -c "curl -s http://localhost:3000/health"
 vagrant destroy -f
 ```
 
+### Сценарий 11: Ручная сетевая конфигурация с `auto_config: false`
+
+В некоторых сценариях необходимо полностью управлять конфигурацией сетевого интерфейса внутри ВМ — например, для настройки кастомного статического маршрута, собственного шлюза, или размещения нескольких IP на одном интерфейсе. Параметр `auto_config: false` отключает автоматическую настройку Vagrant.
+
+```ruby
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.hostname = "router-test"
+
+  # Vagrant не настраивает интерфейс — делаем это сами
+  config.vm.network "private_network",
+    ip: "192.168.56.10",
+    auto_config: false
+
+  config.vm.provision "shell", inline: <<-SHELL
+    # Настраиваем интерфейс вручную через systemd-networkd
+    cat > /etc/systemd/network/10-vagrant.network << EOF
+    [Match]
+    Name=eth1
+
+    [Network]
+    Address=192.168.56.10/24
+    Gateway=192.168.56.1
+    DNS=8.8.8.8
+
+    [Route]
+    Gateway=192.168.56.1
+    Destination=10.0.0.0/8
+    Metric=100
+    EOF
+
+    systemctl restart systemd-networkd
+  SHELL
+end
+```
+
+**Валидация:**
+```bash
+# Проверить, что статический маршрут добавлен
+vagrant ssh -c "ip route show"
+# → 192.168.56.0/24 dev eth1 proto kernel scope link src 192.168.56.10
+# → 10.0.0.0/8 via 192.168.56.1 dev eth1 proto static metric 100
+
+# Проверить доступность шлюза
+vagrant ssh -c "ping -c1 192.168.56.1"
+# → 64 bytes from 192.168.56.1: icmp_seq=1 ttl=64 time=0.320 ms
+```
+
+### Сценарий 12: Тестирование сетевой производительности и диагностика
+
+Для SRE и DevOps важно проверять пропускную способность и latency внутри Vagrant-окружений — особенно для хранилищ, БД и распределённых систем. Используйте `iperf3` для нагрузки и стандартные утилиты для диагностики.
+
+```ruby
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.network "private_network", ip: "192.168.56.10"
+
+  config.vm.provision "shell", inline: <<-SHELL
+    apt-get update && apt-get install -y iperf3
+  SHELL
+
+  config.vm.define "client" do |client|
+    client.vm.network "private_network", ip: "192.168.56.11"
+    client.vm.provision "shell", inline: <<-SHELL
+      apt-get update && apt-get install -y iperf3
+    SHELL
+  end
+end
+```
+
+**Тестирование внутри ВМ:**
+```bash
+# Запустить iperf3-сервер на одной ВМ
+vagrant ssh -c "iperf3 -s -D"
+
+# Тестирование пропускной способности с другой ВМ
+vagrant ssh -c "iperf3 -c 192.168.56.10 -t 10 -P 4"
+# → [ ID] Interval           Transfer     Bitrate
+# → [  5]   0.00-10.00  sec  1.02 GBytes  836 Mbits/sec  (примерная скорость — типично для vboxsf/virtio без оптимизаций)
+
+# Проверка latency
+vagrant ssh -c "ping -c5 192.168.56.10"
+# → rtt min/avg/max/mdev = 0.120/0.250/0.450/0.100 ms
+
+# Трассировка пути и проверка MTU
+vagrant ssh -c "tracepath 192.168.56.10"
+# →  192.168.56.10  pmtu 1500
+
+# Проверка размера буфера сокетов
+vagrant ssh -c "ss -tuln | grep 5201"
+```
+
 ## Дополнительная информация
 
 ### Провайдер-специфичные настройки
 
 **VirtualBox:**
-- Изменение типа адаптера: `vb.customize ["modifyvm", :id, "--nictype1", "virtio"]`.
+- Изменение типа адаптера: `vb.customize ["modifyvm", :id, "--nictype1", "virtio"]` или через Vagrant-параметр `nic_type: "virtio"` в `config.vm.network`.
 - Внутренняя сеть (без хоста): `virtualbox__intnet: "cluster-internal"`.
-- NAT DNS резолвер: `vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]`.
+  - NAT DNS резолвер: `vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]`.
 
 **Libvirt:**
 - Имя сети: `libvirt__network_name: "vagrant-private-net"`.
@@ -473,6 +606,9 @@ ss -tulnp
 | `The box '...' could not be found` | Неверное имя box или отсутствует провайдер | `vagrant box add bento/ubuntu-24.04 --provider virtualbox` |
 | `SSH timeout` после `vagrant up` | VPN перекрывает управляющую подсеть (`10.0.2.0/24` или `192.168.121.0/24`) | Отключите VPN или измените подсеть `private_network` |
 | `Port already in use` | Порт на хосте занят другим процессом | Укажите другой `host` порт или `auto_correct: true` |
+| `Network unreachable` после `auto_config: false` | Интерфейс не настроен (требуется ручная конфигурация) | Добавьте provisioner для настройки IP/маршрутов, либо уберите `auto_config: false` |
+| `Failed to mount /vagrant` (NFS) | NFS-экспорт не настроен на хосте | Проверьте `/etc/exports` и статус `nfs-server` на хосте |
+| `Cannot forward port` (VirtualBox) | НАТ-движок переполнен (>100 правил) | Перезапустите VirtualBox или используйте `public_network` |
 
 ### Лучшие практики
 
@@ -481,6 +617,8 @@ ss -tulnp
 3.  **Версионирование:** Фиксируйте версию box (`config.vm.box_version`), так как обновление образа может изменить сетевые параметры по умолчанию.
 4.  **Документирование подсетей:** В команде храните карту подсетей (`docs/networking.md`), чтобы избежать конфликтов при добавлении новых проектов.
 5.  **Очистка после destroy:** Проверяйте, что `vagrant destroy` удаляет все созданные сети и правила iptables. При State Desync используйте `virsh net-destroy` или `VBoxManage hostonlyif remove`.
+6.  **Паравиртуализированные драйверы:** Используйте `nic_type: "virtio"` (или `--nictype virtio` через `vb.customize`) для сетевых адаптеров, когда гостевая ОС поддерживает virtio — это даёт 2-3× прирост пропускной способности по сравнению с `e1000`.
+7.  **auto_config для production-сценариев:** В production- и CI-окружениях используйте `auto_config: false` и настраивайте сеть через provisioners (Ansible, systemd-networkd), чтобы гарантировать воспроизводимость статических маршрутов и DNS.
 
 ### Безопасность
 

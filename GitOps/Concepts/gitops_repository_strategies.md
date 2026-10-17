@@ -387,7 +387,7 @@ curl --request PUT --header "PRIVATE-TOKEN: $ADMIN_TOKEN" \
 
 **Связанные документы:**
 - [GitOps: декомпозиция методологии и апгрейд CIOps](./gitops_decomposition.md) — разбор push vs pull, SSA и циклов согласования.
-- [Организация Flux CD monorepo](./flux_monorepo_organization.md) — архитектура каталогов `clusters/` и `components/` для 20+ кластеров.
+- [Организация монорепозитория Argo CD](./argocd_monorepo_organization.md) — архитектура каталогов `clusters/` и `components/` для 20+ кластеров.
 - [Kargo: promotion-пайплайны](./kargo_promotion_pipelines.md) — декларативное продвижение артефактов без самописных CI-скриптов.
 - [GitOps: пример пайплайна](../gitops_pipeline_example.md) — сквозной конвейер сборки и доставки с интеграцией Cosign и Harbor.
 

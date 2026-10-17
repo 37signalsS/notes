@@ -282,7 +282,7 @@ kubectl get pods -n default -o wide
 
 ```bash
 # Описание трафика пода
-istioctl ambient describe pod myapp-<hash> -n default
+istioctl x describe pod myapp-<hash> -n default
 # → Pod is enrolled in Ambient Mesh
 # → L4: ztunnel (mTLS enabled)
 # → L7: waypoint (not deployed)

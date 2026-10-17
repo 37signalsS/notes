@@ -1,5 +1,7 @@
 # Интеграция Vault с Docker
 
+**Актуально для:** Vault 2.x (стабильная ветка 2.x; текущая версия — 2.1.2, октябрь 2026; примеры привязаны к образу `hashicorp/vault:2.1.1`).
+
 ## Определения
 
 **Интеграция Vault с Docker** — совокупность архитектурных паттернов и инструментов для обеспечения безопасности секретов (паролей, ключей, сертификатов) в контейнеризированных средах. Целью интеграции является реализация модели жизненного цикла безопасности (SLM), при которой секреты никогда не сохраняются в образах, слоях Docker или переменных окружения.
@@ -133,7 +135,7 @@ services:
   # Агент Vault
   vault-agent:
     # Фиксируйте точный тег вместо latest (anti-pattern)
-    image: hashicorp/vault:2.0.0
+    image: hashicorp/vault:2.1.1
     cap_add:
       - IPC_LOCK
     volumes:
@@ -186,11 +188,6 @@ auto_auth {
 
 cache {
   use_auto_auth_token = true
-  persist "file" {
-    path = "/tmp/vault-agent-cache/cache.db"
-    keep_after_import = true
-    exit_on_err = true
-  }
 }
 
 template {
@@ -201,6 +198,8 @@ template {
 ```
 
 > Контейнер агента хранит `RoleID`/`SecretID` через монтируемые файлы. Параметр `exit_after_auth = true` (вместо `false`) переводит агент в режим «отрендерить шаблоны и выйти» — полезен при одноразовой подготовке секретов в `tmpfs` перед стартом приложения. При `false` агент продолжает работать в фоне и поддерживает секреты актуальными, реагируя на изменения в Vault. Рекомендуется `false` для production-сред, где требуется динамическая ротация.
+
+> **Постоянный кэш (persistent cache):** опция `persist` поддерживает **только** драйвер `kubernetes` (хранит кэш в K8s-секрете через service-account token). В чистом Docker Compose / `docker run` / systemd на bare metal драйвер `kubernetes` недоступен — используйте in-memory `cache` (renewal и кэш токенов в течение жизни процесса агента). Для восстановления после перезапуска полагайтесь на повторный `auto_auth` (AppRole) и перерендер шаблонов.
 
 ### Динамические секреты (база данных) в Docker Compose
 
@@ -403,11 +402,6 @@ auto_auth {
 
 cache {
   use_auto_auth_token = true
-  persist "file" {
-    path = "/var/lib/vault-agent/cache.db"
-    keep_after_import = true
-    exit_on_err = true
-  }
 }
 
 template {
@@ -468,6 +462,8 @@ services:
 
 > Параметр `AmbientCapabilities=CAP_IPC_LOCK` и `LimitMEMLOCK=infinity` предотвращают сброс секретов в swap. В контейнере добавьте `cap_add: [IPC_LOCK]`. Если `mlock` недоступен, добавьте в HCL: `disable_mlock = true`.
 
+> **Persistent cache:** `persist` доступен **только** в Kubernetes (K8s-секрет через service-account token). Для bare-metal/ВМ без Kubernetes используйте in-memory `cache` + AppRole `auto_auth`; для восстановления после restart полагайтесь на повторный логин и перерендер шаблонов.
+
 ### Проверка запуска: Single container режим (docker run)
 
 Для проверки конфигурации без Docker Compose агент можно запустить разово:
@@ -479,7 +475,7 @@ docker run --rm --cap-add=IPC_LOCK \
   -v $PWD/role-id:/etc/vault/role-id:ro \
   -v $PWD/secret-id:/etc/vault/secret-id:ro \
   -v secrets-shared:/app/secrets \
-  hashicorp/vault:2.0.0 agent -config=/etc/vault/config.hcl
+  hashicorp/vault:2.1.1 agent -config=/etc/vault/config.hcl
 ```
 
 ### Валидация и проверка корректности работы
@@ -489,7 +485,7 @@ docker run --rm --cap-add=IPC_LOCK \
 ```bash
 # 1. Проверка доступности Vault
 curl -sk https://vault.example.com:8200/v1/sys/health
-# → {"initialized":true,"sealed":false,"version":"2.0.0"}
+# → {"initialized":true,"sealed":false,"version":"2.1.1"}
 
 # 2. Проверка рендеринга секретов внутри контейнера
 docker exec -it <webapp_container> cat /app/secrets/db_password.txt
@@ -501,7 +497,7 @@ docker exec -it <webapp_container> ls -la /app/secrets/
 
 # 4. Проверка логов Vault Agent
 docker logs vault-agent
-# → 2026-09-20T12:00:00.000Z [INFO]  core: successful auth method refresh
+# → 2026-09-20T12:00:00.000Z [INFO]  auth.handler: authentication successful, sending token to sinks
 
 # 5. Проверка, что секрет не попал в историю слоев
 docker history my-secure-app
@@ -526,6 +522,7 @@ docker exec -it <webapp_container> env | grep -i password
 | `CrashLoopBackOff` (если в Compose) | Неправильные права на файлы `role-id`/`secret-id` или неверный путь в HCL. | Проверьте права: `chmod 600 role-id secret-id`, убедитесь в правильности путей в конфиге. |
 | Приложение стартует раньше секретов | Healthcheck агента не настроен или `depends_on` отсутствует. | Добавьте `healthcheck` в сервис агента и `condition: service_healthy` в `depends_on`. |
 | `token lookup self failed` | Токен истек или был отозван. | Проверьте `token_ttl` политики и работу renew в агенте. Убедитесь, что Vault сервер доступен. |
+| `persist` / кэш не восстанавливается после restart | Драйвер `persist` — `kubernetes` only; в Docker Compose / bare-metal токен не сохраняется на диск. | Используйте in-memory `cache` + AppRole `auto_auth` для перелогина; для сохранения токена между рестартами монтируйте `sink "file" { path = "/app/secrets/.vault-token" }` в общий `tmpfs`/bind-volume с `chmod 600`. |
 
 ### Очистка и откат изменений
 
@@ -570,7 +567,7 @@ vault delete auth/approle/role/<role>
 3.  **Маскирование переменных:** В CI/CD пайплайнах помечайте переменные как `masked` или `hidden`.
 4.  **Сетевая безопасность:** Даже во внутренней сети Docker (`bridge` или `overlay`) трафик к Vault должен быть зашифрован (TLS). Используйте `ca_cert` в конфигурации агента и отключайте `tls_skip_verify`.
 5.  **Права на файлы:** Файлы `role-id` и `secret-id` должны иметь права `0600` и принадлежать пользователю `vault:vault`. В контейнере монтируйте их как `readOnly`.
-6.  **Фиксированные версии образов:** Используйте точные теги образов (например, `hashicorp/vault:2.0.0`), а не `latest`, для воспроизводимости развертываний.
+6.  **Фиксированные версии образов:** Используйте точные теги образов (например, `hashicorp/vault:2.1.1`), а не `latest`, для воспроизводимости развертываний.
 7.  **Отключение swap:** На хосте выполните `sudo swapoff -a` или используйте `mlock`, чтобы секреты не попали в swap-раздел.
 
 ### Конфигурация слушателя Vault (listener) для Docker

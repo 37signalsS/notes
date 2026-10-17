@@ -1,6 +1,6 @@
 # GitOps: Управление секретами и шифрование
 
-**Актуально для:** Mozilla SOPS v3.13.x, Bitnami Sealed Secrets v0.40.x, External Secrets Operator (ESO) v1.x (API external-secrets.io/v1), HashiCorp Vault 1.18–1.21 / OpenBao 2.x, Argo CD v3.5+, Flux v2.9.x, Kubernetes 1.30–1.34+ (on-premise / bare-metal)
+**Актуально для:** Mozilla SOPS v3.13.x, Bitnami Sealed Secrets v0.40.x, External Secrets Operator (ESO) v1.x (API external-secrets.io/v1), HashiCorp Vault 1.18–1.21 / OpenBao 2.x, Argo CD v3.5+, Kubernetes 1.30–1.34+ (on-premise / bare-metal)
 
 Хранение секретов — одна из центральных архитектурных задач в GitOps. Поскольку Git является единственным источником истины (Source of Truth), хранить в нем пароли, сертификаты и токены в открытом виде категорически недопустимо. Данное руководство описывает подходы, инструменты и эксплуатационные практики для безопасного управления секретами в рамках методологии GitOps в локальной, частной и on-premise инфраструктуре.
 
@@ -62,7 +62,7 @@ git push origin --force --tags
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                   Архитектурные модели доставки секретов                    │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ 1. Push / In-Memory Decryption (Flux SOPS, Argo CD CMP/AVP):                │
+│ 1. Push / In-Memory Decryption (Argo CD native SOPS, CMP/AVP):                │
 │    Git (Зашифрованный файл) ──▶ Controller Memory (Расшифровка) ──▶ etcd    │
 │                                                                             │
 │ 2. Operator Pull (External Secrets Operator):                               │
@@ -76,7 +76,7 @@ git push origin --force --tags
 
 1. **Модель расшифровки при генерации манифестов (Push / In-memory Interpolation)**:
    - В Git коммитятся файлы с зашифрованными значениями (SOPS) или манифесты с плейсхолдерами (Argo CD Vault Plugin).
-   - GitOps-контроллер (kustomize-controller во Flux или argocd-repo-server в Argo CD) расшифровывает манифест в оперативной памяти перед отправкой в Kubernetes API.
+   - GitOps-контроллер (argocd-repo-server в Argo CD) расшифровывает манифест в оперативной памяти перед отправкой в Kubernetes API.
    - *Плюсы:* Манифесты версионируются в едином репозитории, строгая синхронизация с ревизией Git.
    - *Минусы:* etcd хранит расшифрованные объекты `Secret`; контроллер GitOps должен обладать доступом к приватным ключам age или токенам Vault.
 2. **Модель внутрикластерного оператора (Operator Pull)**:
@@ -116,13 +116,13 @@ git push origin --force --tags
 
 ## Практические сценарии
 
-### Сценарий 1: Mozilla SOPS с ключами age (Стандарт для Flux CD)
+### Сценарий 1: Mozilla SOPS с ключами age (Стандарт для Argo CD)
 
 SOPS шифрует значения полей в структурированных файлах (YAML, JSON, .env), сохраняя ключи и комментарии в открытом виде. Это позволяет просматривать диффы (`git diff`) без раскрытия конфиденциальных данных.
 
 **Требования к окружению:**
 - Утилиты `sops` (v3.13.x) и `age` / `age-keygen` (v1.2.x+).
-- Установленный GitOps-контроллер Flux (v2.9.x) в неймспейсе `flux-system`.
+- Развернутый Argo CD v3.5+ в неймспейсе `argocd` с включенной нативной поддержкой SOPS (входит в состав `argocd-repo-server`).
 
 **1. Генерация пары ключей age:**
 
@@ -177,43 +177,46 @@ grep "sops:" clusters/prod/database-secret.enc.yaml -A 2
 # →     age:
 ```
 
-**4. Экспорт приватного ключа age в кластер Kubernetes для Flux CD:**
+**4. Экспорт приватного ключа age в `argocd-secret` для нативной расшифровки SOPS:**
+
+Argo CD v3.5+ поддерживает SOPS нативно: ключ шифрования age хранится в системном секрете `argocd-secret` неймспейса `argocd`, и `argocd-repo-server` автоматически расшифровывает закрытые файлы при рендеринге манифестов.
 
 ```bash
-# Создание нативного секрета в пространстве имен flux-system
-kubectl -n flux-system create secret generic sops-age \
-  --from-file=age.agekey=$HOME/.config/sops/age/keys.txt \
-  --dry-run=client -o yaml | kubectl apply -f -
-# → secret/sops-age configured
+# Извлечение публичного ключа age из приватного ключа
+AGE_PUBKEY=$(grep "^# public key:" $HOME/.config/sops/age/keys.txt | awk '{print $NF}')
+
+# Добавление приватного ключа в argocd-secret (формат: age1...)
+kubectl -n argocd patch secret argocd-secret \
+  --type merge -p "{\"stringData\":{\"data.agekey\":\"$HOME/.config/sops/age/keys.txt\"}}"
+# → secret/argocd-secret patched
+
+# Проверка наличия ключа
+kubectl -n argocd get secret argocd-secret -o jsonpath='{.data.agekey}' | base64 -d
+# → # created: 2026-10-13T12:00:00Z
+# → # public key: age15k3fuv983z5r77l04r432k428j7y6tqq77p4088x33e50w2c59esf5afl6
+# → AGlzc2V5...
 ```
 
-**5. Настройка Kustomization-манифеста Flux для автоматической расшифровки:**
+**5. Нативная поддержка SOPS в Argo CD:**
 
-```yaml
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: apps-prod-secrets
-  namespace: flux-system
-spec:
-  interval: 10m
-  path: ./clusters/prod
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: fleet-infra
-  decryption:
-    provider: sops
-    secretRef:
-      name: sops-age
-```
+С момента добавления ключа в `argocd-secret` любые SOPS-зашифрованные YAML/JSON-файлы в репозитории Git расшифровываются автоматически на стороне `argocd-repo-server` во время синхронизации. Дополнительных манифестов настройки не требуется — Argo CD сканирует секцию `sops` в каждом зашифрованном файле, извлекает метаданные о получателе (age public key) и использует соответствующий приватный ключ из `argocd-secret`.
 
-**Валидация работы Flux:**
+Для Helm-чартов с зашифрованными `values` используйте [CMP v2 плагин](argocd_app_of_apps.md#сценарий-6-шифрование-секретов-поверх-helm-через-cmp-v2-и-sops) (см. также `helm_integration.md`, Сценарий 6).
+
+**Валидация работы Argo CD:**
 
 ```bash
-flux reconcile kustomization apps-prod-secrets --with-source
-# → ► annotating Kustomization apps-prod-secrets in flux-system namespace
-# → ✔ Kustomization reconciled successfully
+# Синхронизация приложения с SOPS-секретом
+argocd app sync prod-apps
+# → Enter the server address (press enter for http://localhost:8080):
+# → Enter username of admin:
+# → Enter password:
+# → Enter 2FA code (press enter for no 2FA code):
+# → Enter number of retries (default 3):
+# → Enter login method (ssh, https): ssh
+# → ...
+# → Sync application prod-apps? (y/n): y
+# → ✅ Sync operation to prod-apps completed
 
 kubectl get secret db-credentials -n default -o jsonpath='{.data.DB_PASSWORD}' | base64 -d
 # → HardcodedProductionPassword2026!
@@ -476,55 +479,63 @@ grep -E "tls.key|tls.crt" sealed-secrets-master-backup.yaml
 # → tls.key: LS0tLS1CRUdJTi...
 ```
 
-### Сценарий: Sealed Secrets с Flux CD (hub-and-spoke)
+### Сценарий: Sealed Secrets с Argo CD (hub-and-spoke)
 
-В hub-and-spoke топологии Flux CD контроллер Sealed Secrets разворачивается декларативно через `HelmRelease` в неймспейсе `flux-system` на hub-кластере. Spoke-кластеры подключаются к hub через kubeconfig, зашифрованный в `SealedSecret` и хранимый в Git. Этот паттерн отличается от автономного развертывания ([Сценарий 5](#сценарий-5-bitnami-sealed-secrets-автономный-кластер)) тем, что контроллер управляется Flux, работает в `flux-system` (а не `kube-system`), а kubeconfigы spoke-кластеров встраиваются непосредственно в env-кастомизацию.
+В hub-and-spoke топологии контроллер Sealed Secrets разворачивается декларативно через `Application` CR в неймспейсе `argocd` на hub-кластере. Spoke-кластеры подключаются к hub через kubeconfig, зашифрованный в `SealedSecret` и хранимый в Git. Этот паттерн отличается от автономного развертывания ([Сценарий 5](#сценарий-5-bitnami-sealed-secrets-автономный-кластер)) тем, что контроллер управляется Argo CD, разворачивается в `kube-system` (как и в автономном режиме), а kubeconfigы spoke-кластеров встраиваются непосредственно в `Application` CR как `destination.kubeConfig.secretRef`.
 
 **Архитектурная схема:**
 
 ```
-hub-кластер (Flux CD)
+hub-кластер (Argo CD)
 │
-├── flux-system namespace
-│   ├── sealed-secrets-controller (HelmRelease → Deployment)
+├── kube-system namespace
+│   ├── sealed-secrets-controller (Application → Deployment)
 │   └── sealed-secrets keys (Master Key в Secret)
 │
 └── GitOps-репозиторий
-    ├── fluxcd/{env}-kustomization.yaml  ← встроенный SealedSecret с kubeconfig
-    └── fluxcd/projects/{env}/kustomization/spoke/secrets/
+    ├── argocd/{env}-application.yaml  ← встроенный SealedSecret с kubeconfig
+    └── argocd/projects/{env}/applications/spoke/secrets/
         ├── registry-pull-secret.yaml
         └── tls-cert.yaml
 ```
 
-Контроллер работает в `flux-system` и расшифровывает каждый `SealedSecret`, создавая нативный `Secret`. Приватный ключ никогда не покидает кластер. Vault для этого паттерна не нужен, как и подстановка секретов через CI/CD.
+Контроллер работает в `kube-system` и расшифровывает каждый `SealedSecret`, создавая нативный `Secret`. Приватный ключ никогда не покидает кластер. Vault для этого паттерна не нужен, как и подстановка секретов через CI/CD.
 
-**1. Установка через HelmRelease (Flux-native):**
+**1. Установка через Argo CD Application:**
 
-Требуется ранее созданный `HelmRepository` с именем `sealed-secrets` в неймспейсе `flux-system`. Внимание: официальный Helm-репозиторий изменился с `bitnami-labs.github.io/sealed-secrets` на `bitnami.github.io/sealed-secrets` — используйте актуальный URL.
+Требуется ранее добавленный Helm-репозиторий в Argo CD (через UI или `argocd app create` с `repoURL: https://bitnami.github.io/sealed-secrets`). Внимание: официальный Helm-репозиторий изменился с `bitnami-labs.github.io/sealed-secrets` на `bitnami.github.io/sealed-secrets` — используйте актуальный URL.
 
 ```yaml
-# fluxcd/projects/infra/kustomization/flux/helmreleases/sealed-secrets.yaml
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
+# argocd/projects/infra/applications/sealed-secrets.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
 metadata:
   name: sealed-secrets
-  namespace: flux-system
+  namespace: argocd
 spec:
-  chart:
-    spec:
-      chart: sealed-secrets
-      version: "2.*"
-      sourceRef:
-        kind: HelmRepository
-        name: sealed-secrets
-        namespace: flux-system
-  values:
-    fullnameOverride: sealed-secrets-controller
+  project: default
+  source:
+    repoURL: https://bitnami.github.io/sealed-secrets
+    chart: sealed-secrets
+    targetRevision: "2.x"
+    helm:
+      values: |
+        fullnameOverride: sealed-secrets-controller
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace: true
+      - ServerSideApply: true
 ```
 
-Контроллер создаёт ключевую пару RSA и сохраняет её в `Secret` с меткой `sealedsecrets.bitnami.com/sealed-secrets-key` в неймспейсе `flux-system`.
+Контроллер создаёт ключевую пару RSA и сохраняет её в `Secret` с меткой `sealedsecrets.bitnami.com/sealed-secrets-key` в неймспейсе `kube-system`.
 
-> **Важно:** с `fullnameOverride: sealed-secrets-controller` имя сервиса контроллера становится `sealed-secrets-controller`, а не `sealed-secrets`. При запечатывании через `kubeseal` укажите `--controller-name=sealed-secrets-controller --controller-namespace=flux-system`, иначе kubeseal не найдёт сервис по умолчанию. Подробнее об ошибке `error: cannot get sealed secret service` — в [Sealed Secrets Overview](../../Kubernetes/Security/sealed_secrets_overview.md) (Сценарий 10).
+> **Важно:** с `fullnameOverride: sealed-secrets-controller` имя сервиса контроллера становится `sealed-secrets-controller`, а не `sealed-secrets`. При запечатывании через `kubeseal` укажите `--controller-name=sealed-secrets-controller --controller-namespace=kube-system`, иначе kubeseal не найдёт сервис по умолчанию. Подробнее об ошибке `error: cannot get sealed secret service` — в [Sealed Secrets Overview](../../Kubernetes/Security/sealed_secrets_overview.md) (Сценарий 10).
 
 **2. Запечатывание spoke kubeconfig:**
 
@@ -549,7 +560,7 @@ stringData:
         server: https://dev-cluster.example.com:6443
         certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t
     users:
-    - name: flux
+    - name: argocd
       user:
         client-certificate-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t
         client-key-data: LS0tLS1CRUdJTiBSU0EgUFJJV...
@@ -557,7 +568,7 @@ stringData:
     - name: dev
       context:
         cluster: dev-cluster
-        user: flux
+        user: argocd
     current-context: dev
 EOF
 
@@ -565,10 +576,10 @@ EOF
 kubeseal \
   --format yaml \
   --controller-name=sealed-secrets-controller \
-  --controller-namespace flux-system \
+  --controller-namespace kube-system \
   --kubeconfig .kubeconfigs/infra.yaml \
   < /tmp/spoke-kubeconfig.yaml \
-  > fluxcd/projects/dev/kustomization/spoke/secrets/dev-kubeconfig.yaml
+  > argocd/projects/dev/applications/spoke/secrets/dev-kubeconfig.yaml
 
 # 3. Удалить файл с открытым секретом
 rm /tmp/spoke-kubeconfig.yaml
@@ -581,7 +592,7 @@ rm /tmp/spoke-kubeconfig.yaml
 kubeseal \
   --fetch-cert \
   --controller-name=sealed-secrets-controller \
-  --controller-namespace flux-system \
+  --controller-namespace kube-system \
   --kubeconfig .kubeconfigs/infra.yaml \
   > .kubeconfigs/sealed-secrets-infra.pem
 
@@ -590,7 +601,7 @@ kubeseal \
   --format yaml \
   --cert .kubeconfigs/sealed-secrets-infra.pem \
   < /tmp/spoke-kubeconfig.yaml \
-  > fluxcd/projects/dev/kustomization/spoke/secrets/dev-kubeconfig.yaml
+  > argocd/projects/dev/applications/spoke/secrets/dev-kubeconfig.yaml
 ```
 
 Файл `.pem` можно хранить в репозитории — он не секретный. Механизм шифрования (RSA-OAEP + AES-GCM), scope и ротация ключей — в [Sealed Secrets Overview](../../Kubernetes/Security/sealed_secrets_overview.md).
@@ -601,15 +612,15 @@ kubeseal \
 
 | Что | Путь |
 |---|---|
-| Spoke kubeconfigs | `fluxcd/{env}-kustomization.yaml` — встроенный `SealedSecret` рядом с `Namespace` и `Flux Kustomization` |
-| Docker registry pull secrets | `fluxcd/projects/{env}/kustomization/spoke/secrets/` |
-| TLS-сертификаты | `fluxcd/projects/{env}/kustomization/spoke/secrets/` |
-| Vault token для Terraform | `fluxcd/projects/infra/kustomization/terraform/vault-token-sealed.yaml` |
+| Spoke kubeconfigs | `argocd/{env}-application.yaml` — встроенный `SealedSecret` рядом с `Namespace` и `Application` CR |
+| Docker registry pull secrets | `argocd/projects/{env}/applications/spoke/secrets/` |
+| TLS-сертификаты | `argocd/projects/{env}/applications/spoke/secrets/` |
+| Vault token для Terraform | `argocd/projects/infra/applications/terraform/vault-token-sealed.yaml` |
 
-Самые важные секреты — kubeconfigы spoke-кластеров. Каждый встраивается прямо в `fluxcd/{env}-kustomization.yaml` вместе с `Namespace` и `Flux Kustomization`:
+Самые важные секреты — kubeconfigы spoke-кластеров. Каждый встраивается прямо в `argocd/{env}-application.yaml` вместе с `Namespace` и `Application` CR:
 
 ```yaml
-# fluxcd/dev-kustomization.yaml
+# argocd/dev-application.yaml
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -629,38 +640,49 @@ spec:
       namespace: dev
     type: Opaque
 ---
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
+apiVersion: argoproj.io/v1alpha1
+kind: Application
 metadata:
   name: dev-apps
-  namespace: dev
+  namespace: argocd
 spec:
-  path: ./fluxcd/projects/dev/kustomization/hub/
-  kubeConfig:
-    secretRef:
-      name: dev-kubeconfig
+  project: default
+  source:
+    repoURL: git@gitlab.corp.internal:infra/fleet-infra.git
+    targetRevision: main
+    path: argocd/projects/dev/applications/hub/
+  destination:
+    server: https://dev-cluster.example.com:6443
+    namespace: default
+    kubeConfig:
+      secretRef:
+        name: dev-kubeconfig
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
 ```
 
-`Namespace`, `SealedSecret` и ссылающаяся на него `Kustomization` находятся в одном файле. `Kustomization` спикает `kubeConfig.secretRef.name` на имя `SealedSecret` → контроллер расшифровывает его в нативный `Secret` → Flux использует этот kubeconfig для синхронизации spoke-кластера.
+`Namespace`, `SealedSecret` и ссылающийся на него `Application` находятся в одном файле. `SealedSecret` расшифровывается контроллером в нативный `Secret`, который `Application` использует как `destination.kubeConfig.secretRef` для синхронизации spoke-кластера.
 
 **4. Добавление нового spoke-кластера:**
 
 Новый spoke-кластер добавляется копированием и переименованием:
 
 ```bash
-# 1. Скопировать кастомизацию из существующего env
-cp fluxcd/dev-kustomization.yaml fluxcd/staging-kustomization.yaml
+# 1. Скопировать манифест из существующего env
+cp argocd/dev-application.yaml argocd/staging-application.yaml
 
 # 2. Запечатать kubeconfig для нового кластера
 kubeseal \
   --format yaml \
   --controller-name=sealed-secrets-controller \
-  --controller-namespace flux-system \
+  --controller-namespace kube-system \
   --kubeconfig .kubeconfigs/infra.yaml \
   < /tmp/staging-kubeconfig.yaml \
-  > fluxcd/projects/staging/kustomization/spoke/secrets/staging-kubeconfig.yaml
+  > argocd/projects/staging/applications/spoke/secrets/staging-kubeconfig.yaml
 
-# 3. Обновить ссылки в kustomization.yaml
+# 3. Обновить ссылки в application.yaml
 # 4. Commit
 ```
 
@@ -672,10 +694,10 @@ kubeseal \
 kubeseal \
   --format yaml \
   --controller-name=sealed-secrets-controller \
-  --controller-namespace flux-system \
+  --controller-namespace kube-system \
   --kubeconfig .kubeconfigs/infra.yaml \
   < /tmp/updated-kubeconfig.yaml \
-  > fluxcd/projects/dev/kustomization/spoke/secrets/dev-kubeconfig.yaml
+  > argocd/projects/dev/applications/spoke/secrets/dev-kubeconfig.yaml
 ```
 
 Новый `encryptedData` заменяет старый. Контроллер обнаружит изменение и пересоздаст нативный `Secret`.
@@ -684,18 +706,18 @@ kubeseal \
 
 **Резервное копирование и ротация ключей:**
 
-Контроллер по умолчанию ротирует ключ каждые 30 дней, сохраняя старые для расшифровки существующих `SealedSecret`. Резервную копию ключей делают из неймспейса `flux-system`:
+Контроллер по умолчанию ротирует ключ каждые 30 дней, сохраняя старые для расшифровки существующих `SealedSecret`. Резервную копию ключей делают из неймспейса `kube-system`:
 
 ```bash
 # Бэкап ключей контроллера
 kubectl get secret \
-  -n flux-system \
+  -n kube-system \
   -l sealedsecrets.bitnami.com/sealed-secrets-key \
   -o yaml > sealed-secrets-keys-backup.yaml
 
 # Восстановление
 kubectl apply -f sealed-secrets-keys-backup.yaml
-kubectl rollout restart deployment/sealed-secrets-controller -n flux-system
+kubectl rollout restart deployment/sealed-secrets-controller -n kube-system
 ```
 
 Если удалить контроллер и переустановить, старые приватные ключи пропадут. Миграция на новое железо требует перезапечатывания каждого `SealedSecret` сертификатом нового кластера — подробности в [Sealed Secrets Overview](../../Kubernetes/Security/sealed_secrets_overview.md) (Сценарий 9).
@@ -705,12 +727,12 @@ kubectl rollout restart deployment/sealed-secrets-controller -n flux-system
 ```bash
 # Логи контроллера
 kubectl logs \
-  -n flux-system \
+  -n kube-system \
   -l app.kubernetes.io/name=sealed-secrets-controller \
   --context=infra-k8s
 
 # Проверка наличия ключей
-kubectl get secret -n flux-system -l sealedsecrets.bitnami.com/sealed-secrets-key
+kubectl get secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-key
 
 # Статус конкретного SealedSecret
 kubectl describe sealedsecret my-secret -n dev
@@ -767,7 +789,7 @@ git status --short
 | **Sealed Secrets: `cannot decrypt secret: no key could decrypt secret`** | 1. Имя или namespace секрета не совпадают с метаданными шифрования (`--scope strict`).<br>2. Утерян приватный ключ контроллера при переустановке кластера. | `kubectl logs -n kube-system -l app.kubernetes.io/name=sealed-secrets --tail=50` | 1. Проверить `metadata.name` и `metadata.namespace` в манифесте `SealedSecret`.<br>2. Если кластер пересоздан: восстановить секрет `sealed-secrets-key` из резервной копии (`kubectl apply -f sealed-secrets-master-backup.yaml`) и перезапустить контроллер. |
 | **ESO: `SecretStore is not ready: permission denied`** | В Vault не настроен или просрочен Kubernetes Auth; не совпадает `audience` сервисного аккаунта. | `kubectl describe clustersecretstore vault-backend`<br>Проверка логов Vault: `grep "permission denied" /var/log/vault/audit.log` | 1. В Vault 1.21+ убедиться, что роль создана с параметром `audience=vault`.<br>2. Проверить права ServiceAccount `eso-sa` в пространстве имен `external-secrets`.<br>3. Проверить доступность адреса Vault по сети (DNS, MTU, сетевые политики). |
 | **ESO: `ExternalSecret: RefreshFailed (secret not found)`** | Неправильно указан путь к секрету в Vault или ключ внутри JSON. | `kubectl describe externalsecret <name> -n <ns>`<br>Вывод: `remote key not found at path` | Для KV v2 убедиться, что в `spec.provider.vault.version` указано `v2`. В поле `remoteRef.key` путь указывается относительно корня движка (например, `production/db`, а не `secret/data/production/db`). |
-| **Flux: `Kustomization decryption failed: no age secret found`** | Отсутствует Secret с ключом `sops-age` в пространстве имен `flux-system` или неверно указано имя файла ключа. | `kubectl describe kustomization <name> -n flux-system`<br>Вывод: `failed to decrypt... no key found` | Проверить наличие секрета: `kubectl get secret sops-age -n flux-system`. Убедиться, что ключ внутри секрета имеет имя `age.agekey` или `keys.txt`, соответствующее конфигурации Kustomization. |
+| **Argo CD: `Kustomization decryption failed: no age secret found`** | Отсутствует ключ `age` в секрете `argocd-secret` неймспейса `argocd` или ключ не соответствует получателю в `.sops.yaml`. | `kubectl describe secret argocd-secret -n argocd`<br>`kubectl logs -n argocd deploy/argocd-repo-server --tail=50` | Проверить наличие ключа: `kubectl -n argocd get secret argocd-secret -o jsonpath='{.data.agekey}'`. Убедиться, что публичный ключ в `.sops.yaml` совпадает с ключом в `argocd-secret`. Перезапустить `argocd-repo-server`: `kubectl rollout restart deployment/argocd-repo-server -n argocd`. |
 | **Reloader: Pod в CrashLoopBackOff после обновления секрета** | Приложение получило некорректно отформатированное значение секрета или не поддерживает горячий перезапуск. | `kubectl logs <pod-name> -n <ns> --previous` | 1. Откатить версию секрета в Vault (`vault kv rollback -version=X ...`).<br>2. Проверить переменные окружения пода: `kubectl get pod <pod> -o yaml`.<br>3. Исправить формат данных в хранилище. |
 
 ---
@@ -834,15 +856,14 @@ secrets-scan:
 - [Хранение Secret в etcd](../Kubernetes/Base/secrets/etcd_storage.md) — включение шифрования etcd на уровне мастер-узлов Kubernetes (Encryption at Rest).
 - [Обзор HashiCorp Vault](../Vault/overview.md) — архитектура, хранилище Raft и жизненный цикл секретов.
 - [Интеграция Vault с Kubernetes](../Vault/guides/vault_kubernetes_integration.md) — настройка метода Kubernetes Auth и политик доступа.
-- [Безопасность Secret в Kubernetes](../Kubernetes/Base/secrets/security.md) — матрица RBAC и защита нативных секретов.
-- [Пайплайн Flux CD](./flux.md) — настройка Gotk-контроллеров и kustomize-controller.
+ - [Безопасность Secret в Kubernetes](../Kubernetes/Base/secrets/security.md) — матрица RBAC и защита нативных секретов.
 
 **Рекомендации по выбору инструмента для On-Premise инфраструктуры:**
 
 | Условия инфраструктуры | Рекомендуемый выбор | Обоснование |
 | :--- | :--- | :--- |
 | **Единый автономный кластер K8s без центрального Vault** | **Bitnami Sealed Secrets** | Не требует внешней инфраструктуры; ключи генерируются и управляются внутри кластера. |
-| **Мультикластерный GitOps на базе Flux CD** | **Mozilla SOPS + age** | Нативная поддержка в `kustomize-controller`; разделение ключей по папкам окружений в `.sops.yaml`. |
+| **Мультикластерный GitOps на базе Argo CD** | **Mozilla SOPS + age** | Нативная поддержка в `argocd-repo-server`; разделение ключей по папкам окружений в `.sops.yaml`. |
 | **Корпоративная среда с уже развернутым Vault / OpenBao** | **External Secrets Operator** | Централизованный аудит, автоматическая ротация учетных данных без коммитов в Git. |
 | **Требования PCI DSS / изоляция от etcd** | **Secrets Store CSI Driver** | Секреты монтируются строго в RAM (`tmpfs`) пода и не попадают в базу данных etcd. |
 

@@ -1,5 +1,10 @@
 # Vault Agent Injector — автоматическое внедрение в Kubernetes
 
+**Актуально для:** Vault 1.17+ (Vault Agent Injector, аннотации, persistent cache)
+
+> **Статус:** Встроенный API Proxy в Vault Agent **deprecated** и **планируется к удалению** (Q2 2026).
+> Для новых развёртываний используйте [Vault Proxy](https://developer.hashicorp.com/vault/docs/agent-and-proxy/proxy).
+
 ## Определения
 
 **Vault Agent Injector** — это компонент экосистемы HashiCorp Vault, реализованный в виде **Mutating Admission Webhook** для Kubernetes. Он автоматизирует процесс доставки секретов в поды, внедряя в них контейнеры Vault Agent (init-контейнер или sidecar) на основе аннотаций в манифестах приложений.
@@ -172,11 +177,11 @@ Injector не пересоздаёт пода, а применяет `JSONPatch`
 
 ### Жизненный цикл и завершение пода
 
-При нормальном завершении пода (`kubectl delete`, rolling update, scale down) Injector внедрённый sidecar получает `SIGTERM` **после** остановки основных контейнеров (при использовании native sidecar — до, в зависимости от K8s версии). Агент должен успеть:
+При нормальном завершении пода (`kubectl delete`, rolling update, scale down) sidecar получает `SIGTERM` **последним** — после остановки основных контейнеров. Это верно как для legacy-сайдкаров (K8s < 1.29), так и для native sidecar (K8s 1.29+, `initContainer` с `restartPolicy: Always`), который Kubernetes гарантирует завершить **последним** (согласно [K8s docs](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/)). Агент должен успеть:
 
 1.  Отозвать активные аренды (Lease) в Vault, если настроен `agent-revoke-on-shutdown: "true"`.
-2.  Записать токен в отозванное состояние, если настроен `agent-revoke-token-on-shutdown` (устаревшая аннотация, используйте `agent-revoke-on-shutdown`).
-3.  Корректно закрыть BoltDB кэш (если используется `persist "kubernetes"`), чтобы избежать повреждения файла при последующем запуске.
+2.  Отозвать активные аренды (Lease) в Vault, если настроен `agent-revoke-on-shutdown: "true"`.
+3.  Корректно закрыть BoltDB кэш (если используется `agent-cache-enable` с `persist "kubernetes"`), чтобы избежать повреждения файла при последующем запуске.
 
 Если под завершается аварийно (`OOMKilled`, `node failure`), токен может остаться активным до истечения TTL. Vault автоматически отзывает истёкшие токены, но для критичных сред рекомендуется использовать shorter TTL и Monitor alerts на активные сессии.
 
@@ -301,18 +306,85 @@ spec:
 
 > **Важно:** в `restartPolicy: OnFailure` init-контейнер завершается успешно, и Job продолжает нормальное выполнение. При `Never` или если init-контейнер завершается с ошибкой — Pod остаётся в состоянии `Init:Error`.
 
-## Дополнительная информация
+## Операции и команды
 
-### Рекомендации по безопасности
+### Поддерживаемые версии Kubernetes
 
-1.  **TLS Webhook:** Связь между Kubernetes API и Injector должна быть зашифрована (mTLS); сертификат настраивается автоматически при установке через Helm-чарт и ротируется cert-manager.
-2.  **`failurePolicy`:** Для критичных сред установите `Ignore` (чтобы сбой вебхука не блокировал создание подов) и мониторьте алертами. Для строгих требований (секреты обязательны) — `Fail`.
-3.  **Изоляция пространств имен:** По умолчанию Injector обрабатывает все поды в кластере. Рекомендуется ограничить область действия с помощью `namespaceSelector` в конфигурации вебхука.
-4.  **Авто-отзыв токена:** При завершении пода sidecar может отозвать свой токен (`vault.hashicorp.com/agent-revoke-on-shutdown: "true"`, grace — `agent-revoke-grace`), снижая число активных токенов в Vault.
-5.  **Безопасность контейнера:** Используйте аннотацию `vault.hashicorp.com/agent-json-patch` для добавления профилей AppArmor/Seccomp и задавайте `securityContext` (запуск не от root: `agent-run-as-user: "100"`, `agent-set-security-context: "true"`).
-6.  **Не используйте** `vault.hashicorp.com/tls-skip-verify: "true"` в production.
+[Официальная документация](https://developer.hashicorp.com/vault/docs/deploy/kubernetes/injector) Vault поддерживает следующие minor releases Kubernetes (текущие):
 
-### Диагностика
+- **K8s 1.36, 1.35, 1.34, 1.33, 1.32** — полностью протестированы.
+- **K8s 1.29** — минимальная версия для **native sidecar containers** (`initContainer` с `restartPolicy: Always`). На старших версиях применяется классический init+sidecar паттерн.
+
+### Мониторинг и метрики
+
+Vault Agent Injector экспортирует Prometheus-метрики. Чтобы включить 수бор метрик, установите `injector.metrics.enabled: true` в Helm-чарте.
+
+| Метрика | Описание | Алерт |
+| :--- | :--- | :--- |
+| `vault_agent_injector_request_queue_length` | Количество ожидающих webhook-запросов. | Рост >100 в течение 5 мин — возможен перегрев. |
+| `vault_agent_injector_webhook_latency` | Время обработки AdmissionReview. | >5s — проверьте нагрузку и настройки `timeoutSeconds`. |
+| `vault_agent_injector_errors` | Ошибки обработки запросов. | >0 за 10 мин — проверьте логи. |
+
+```bash
+# Проверка состояния Injector Pod
+kubectl get pods -n vault -l app.kubernetes.io/name=vault-agent-injector -o wide
+
+# Просмотр метрик (через prometheus или direct scrape)
+kubectl port-forward -n vault svc/vault-agent-injector-svc 9102:9102 &
+curl -s http://localhost:9102/metrics | grep vault_agent_injector
+kill %1
+
+# Проверка MutatingWebhookConfiguration
+kubectl get mutatingwebhookconfiguration vault-agent-injector-cfg -o name
+```
+
+### Health check и readiness
+
+```bash
+# Проверка готовности вебхука (API-сервер должен получать 200)
+kubectl get --raw /apis/admissionregistration.k8s.io/v1/mutatingwebhookconfigurations \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep vault
+
+# Проверка, что Service endpoint существует
+kubectl get endpoints -n vault vault-agent-injector-svc -o wide
+```
+
+### Журналирование и rotation
+
+Injector запускается как Deployment и пишет логи в stdout. Для bare-metal или on-prem кластеров с локальным сбором логов (journald на нодах) рекомендуется настроить rotation:
+
+```ini
+# /etc/systemd/journald.conf.d/vault-agent-injector.conf  (на нодах K8s)
+[Journal]
+SystemMaxUse=1G
+MaxFileSec=1week
+MaxRetentionSec=4week
+```
+
+Для k8s-кластеров с `kubectl logs` агрегатором (Fluentd, Loki, etc.) настройте `logLevel: info` или `logLevel: debug` в Helm values для детального аудита:
+
+```yaml
+# helm/values.yaml
+injector:
+  logLevel: info
+```
+
+### Команды диагностики
+
+```bash
+# Проверка MutatingWebhookConfiguration
+kubectl get mutatingwebhookconfigurations vault-agent-injector-cfg -o yaml
+
+# Проверка отзыпа логов Injector
+kubectl logs -n vault -l app.kubernetes.io/name=vault-agent-injector --tail=100
+
+# Аудит патчей через audit-логи API-сервера
+kubectl get --raw /apis/auditregistration.k8s.io/v1alpha1/auditsinks
+```
+
+## Устранение неполадок
+
+### Типовые ошибки
 
 | Проблема | Инструмент | Причина и решение |
 | :--- | :--- | :--- |
@@ -369,6 +441,25 @@ kubectl delete pod -l app=secure-app -n prod --grace-period=0 --force
 ```
 
 > **Важно:** при `agent-pre-populate-only: "true"` (CronJob, Job) новый Pod получит свежие секреты при каждом запуске. Для `agent-pre-populate: "true"` (init + sidecar) требуется полный rollout Deployment.
+
+## Лучшие практики
+
+### Безопасность
+
+1.  **TLS Webhook:** Связь между Kubernetes API и Injector должна быть зашифрована (mTLS); сертификат настраивается автоматически при установке через Helm-чарт и ротируется cert-manager.
+2.  **`failurePolicy`:** Для критичных production-сред, где секреты обязательны, установите `Fail` (создание пода блокируется при недоступном Injector). Для staging-сред с пониженными требованиями к секретам — `Ignore` (pod создаётся без инъекции). В обоих случаях настраивайте алерты на метрики Injector (`vault_agent_injector_request_queue_length`).
+3.  **Изоляция пространств имен:** По умолчанию Injector обрабатывает все поды в кластере. Рекомендуется ограничить область действия с помощью `namespaceSelector` в конфигурации вебхука.
+4.  **Авто-отзыв токена:** При завершении пода sidecar может отозвать свой токен (`vault.hashicorp.com/agent-revoke-on-shutdown: "true"`, grace — `agent-revoke-grace`), снижая число активных токенов в Vault.
+5.  **Безопасность контейнера:** Используйте аннотацию `vault.hashicorp.com/agent-json-patch` для добавления профилей AppArmor/Seccomp и задавайте `securityContext` (запуск не от root: `agent-run-as-user: "100"`, `agent-set-security-context: "true"`).
+6.  **Не используйте** `vault.hashicorp.com/tls-skip-verify: "true"` в production.
+7.  **Резервное копирование TLS-сертификатов:** сертификат вебхука (используемый API-сервером для mTLS к Injector) требует backup. При использовании cert-manager сертификаты ротируются автоматически, но `Secret` с сертификатом в неймспейсе `vault` должен быть включён в backup-процедуру.
+
+### Управление версиями и rollout
+
+8.  **Избегайте `latest` образа:** при установке через Helm явно фиксируйте `injector.image.tag` и `vault.image.tag` для воспроизводимости.
+9.  **Регулярные rollout:** после обновления конфигурации Vault (policies, roles) перезапускайте зависимые Deployment через `kubectl rollout restart`, так как изменения политик не применяются к уже выписанным токенам в работающих подах.
+
+## Дополнительная информация
 
 ### Связанные документы
 

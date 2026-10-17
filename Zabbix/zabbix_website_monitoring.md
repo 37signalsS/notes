@@ -64,7 +64,7 @@ Browser Items выполняются в реальном браузере (Chrom
 
 ```bash
 # Запуск Selenium Standalone Chrome (Docker)
-docker run -d -p 4444:4444 --shm-size=2g selenium/standalone-chrome
+docker run -d -p 4444:4444 --shm-size=2g selenium/standalone-chrome:4.50.0
 # → <CONTAINER_ID> (идентификатор запущенного контейнера)
 
 # Проверка доступности WebDriver (эндпоинт /status)
@@ -273,7 +273,7 @@ docker logs <CONTAINER_ID> --tail 50
 Для работы Browser Items требуется запущенный экземпляр Selenium WebDriver:
 
 ```bash
-docker run -d -p 4444:4444 --shm-size=2g --name selenium selenium/standalone-chrome
+docker run -d -p 4444:4444 --shm-size=2g --name selenium selenium/standalone-chrome:4.50.0
 # → <CONTAINER_ID> (идентификатор запущенного контейнера)
 ```
 

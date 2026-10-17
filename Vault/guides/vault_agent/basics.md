@@ -1,18 +1,22 @@
 # Vault Agent — определения и базовая конфигурация
 
+**Актуально для:** Vault 1.15+ (Process Supervisor Mode, Vault Proxy, persistent cache; совместим с 2.x)
+
 ## Определения
 
 **Vault Agent** — это клиентский режим работы бинарного файла `vault`, предназначенный для автоматизации взаимодействия приложений с сервером Vault. Он действует как локальный посредник (Proxy/Sidecar), исключая необходимость встраивания логики аутентификации и управления токенами непосредственно в код приложения.
 
-**Vault Proxy (2024+)** — специализированная эволюция агента, выделенная в отдельный исполняемый компонент и ориентированная исключительно на проксирование API-запросов и кэширование статических секретов. В современных архитектурах функциональность проксирования (API Proxy) вынесена из Agent в Proxy, в то время как Agent остается основным инструментом для инъекции секретов в файлы и переменные окружения. Запускается через `vault proxy -config=proxy.hcl` ([официальная документация](https://developer.hashicorp.com/vault/docs/agent-and-proxy/proxy)).
+**Vault Proxy (Vault 1.15+)** — специализированная эволюция агента, выделенная в отдельный исполняемый компонент и ориентированная исключительно на проксирование API-запросов и кэширование статических секретов. В современных архитектурах функциональность проксирования (API Proxy) вынесена из Agent в Proxy, в то время как Agent остается основным инструментом для инъекции секретов в файлы и переменные окружения. Запускается через `vault proxy -config=proxy.hcl` ([официальная документация](https://developer.hashicorp.com/vault/docs/agent-and-proxy/proxy)).
+
+> **Статус:** Встроенный API Proxy в Vault Agent **deprecated** и **планируется к удалению** (срок поддержки — Q2 2026). Для новых развёртываний используйте Vault Proxy.
 
 ### Ключевые задачи агента
 
 1.  **Auto-Auth (Автоматическая аутентификация):** Самостоятельный вход в Vault через настроенные методы (AppRole, Kubernetes, AWS и др.).
 2.  **Управление жизненным циклом токена:** Кэширование, автоматическое продление (renew) и перевыпуск токена при истечении.
-3.  **Рендеринг секретов (Templating):** Запрос секретов и их запись в конфигурационные файлы приложения через движок [Consul Template](https://github.com/hashicorp/consul-template).
+3.  **Рендеринг секретов (Templating):** Запрос секретов и их запись в конфигурационные файлы приложения через движок [Consul Template](https://github.com/hashicorp/consul-template); отдельное руководство — [consul-template](../consul-template.md).
 4.  **Бесшовная ротация:** Выполнение команд (например, `SIGHUP` приложению) после обновления секрета в файле, что позволяет обновлять пароли без перезапуска сервиса.
-5.  **Persistent Caching (1.15+):** Сохранение токенов и аренды секретов в локальной базе данных (BoltDB), что позволяет агенту восстанавливать состояние после перезапуска без повторной аутентификации.
+5.  **Persistent Caching (1.15+):** Сохранение токенов и аренды секретов в локальном кэше (BoltDB), что позволяет агенту восстанавливать состояние после перезапуска без повторной аутентификации.
 
 ## Основные концепции
 
@@ -56,16 +60,10 @@ auto_auth {
 }
 
 # Кэширование и персистентность
+# persist поддерживает только тип "kubernetes" (требует SA-токен).
+# См. раздел «Управление кэшем и персистентностью» для обходных путей.
 cache {
   use_auto_auth_token = true
-
-  # Сохранение кэша на диск для выживания при перезапуске (BoltDB, Vault 1.9+)
-  # В Kubernetes токен используется как ключ шифрования (AAD)
-  persist "kubernetes" {
-    path = "/var/lib/vault-agent/cache.db"
-    # keep_after_import = true   # не удалять файл после восстановления
-    # exit_on_err = true         # выйти при ошибке восстановления кэша
-  }
 }
 
 # Глобальные настройки движка шаблонов
@@ -73,6 +71,7 @@ template_config {
   exit_on_retry_failure = true # выйти при исчерпании попыток, а не циклиться бесконечно
   static_secret_render_interval = "10m" # период перерисовки статических секретов (KV v2)
   max_connections_per_host = 20
+  # lease_renewal_threshold = 0.9 — доля lease duration для перезапроса dynamic-секретов
 }
 
 # Рендеринг шаблонов
@@ -151,20 +150,33 @@ AmbientCapabilities=CAP_IPC_LOCK
 CapabilityBoundingSet=CAP_IPC_LOCK
 LimitMEMLOCK=infinity
 LimitCORE=0
-ExecStart=/usr/bin/vault agent -config=/etc/vault.d/agent.hcl
+ExecStart=/usr/bin/vault agent \
+  -config=/etc/vault.d/agent.hcl \
+  -log-level=info \
+  -log-file=/var/log/vault-agent/agent.log \
+  -log-rotate-max-files=5 \
+  -log-rotate-duration=24h
 ExecReload=/bin/kill --signal HUP $MAINPID
 KillMode=process
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=30
+StartLimitBurst=3
+StartLimitIntervalSec=10
 
 [Install]
 WantedBy=multi-user.target
 ```
 
+> **Vault 2.0.2+:** в контейнерах `CAP_IPC_LOCK` больше не требуется — бинарник Vault не имеет этой capability на этапе сборки. Операторы контейнеров должны установить `disable_mlock = true` в конфигурации. На bare metal / VM `CAP_IPC_LOCK` и `LimitMEMLOCK=infinity` по-прежнему применяются.
+
 После создания unit-файла:
 
 ```bash
+sudo mkdir -p /var/log/vault-agent
+sudo chown vault:vault /var/log/vault-agent
+sudo chmod 0750 /var/log/vault-agent
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now vault-agent
 sudo systemctl status vault-agent
@@ -178,6 +190,15 @@ sudo setcap cap_ipc_lock=+eip /usr/bin/vault
 ```
 
 Если `mlock` не требуется (например, в контейнере), добавьте в HCL: `disable_mlock = true`.
+
+Для управления логами через systemd используйте journald:
+
+```ini
+# /etc/systemd/journald.conf.d/vault-agent.conf
+[Journal]
+MaxRetentionSec=7day
+MaxSize=100M
+```
 
 ### Синтаксис шаблонов (.ctmpl)
 
@@ -220,6 +241,8 @@ tls_key  = "{{ .Data.PrivateKey }}"
 
 Агент может выступать локальным прокси к Vault: добавление блока `listener` включает **API proxy** — приложение обращается к агенту, а не к серверу напрямую. Прокси использует кэш (если `cache` задан), снижая нагрузку на сервер и управляя ротацией токенов.
 
+> **Важно:** Встроенный API Proxy в Agent **deprecated** (см. выше). Для чисто проксирующих сценариев используйте отдельный компонент [Vault Proxy](https://developer.hashicorp.com/vault/docs/agent-and-proxy/proxy).
+
 ```hcl
 listener "tcp" {
   address     = "127.0.0.1:8200"
@@ -232,8 +255,6 @@ cache {
 }
 ```
 
-Для чисто проксирующего сценария (без шаблонов и файлов) официально рекомендуется отдельный компонент [Vault Proxy](https://developer.hashicorp.com/vault/docs/agent-and-proxy/proxy).
-
 ### Управление кэшем и персистентностью (BoltDB)
 
 Блок `cache` позволяет агенту хранить токены, аренды и секреты в локальной памяти и на диске. Без `cache` агент выполняет сетевой запрос к Vault при каждом рендеринге шаблона.
@@ -243,7 +264,8 @@ cache {
   use_auto_auth_token = true
 
   # Персистентный кэш на диске (BoltDB)
-  persist "file" {
+  # Тип "kubernetes" требует service account token (K8s).
+  persist "kubernetes" {
     path = "/var/lib/vault-agent/cache.db"
     keep_after_import = true   # не удалять файл после импорта кэша
     exit_on_err = true         # завершить работу при ошибке восстановления
@@ -253,11 +275,12 @@ cache {
 
 Правила:
 *   **`use_auto_auth_token = true`:** аутентифицирует все запросы к Vault от имени агента, исключая необходимость прописывать токен в шаблонах.
-*   **`persist "file"`** (Vault 1.15+): сохраняет кэш на диск в формате BoltDB. После перезапуска агент импортирует кэш и продлевает аренды без повторной аутентификации.
+*   **`persist` (Vault 1.15+):** сохраняет кэш на диск в формате BoltDB. После перезапуска агент импортирует кэш и продлевает аренды без повторной аутентификации. **Поддерживается только тип `kubernetes`** (требует K8s service account token). Для on-prem / bare metal используйте обходной путь: создайте статичный файл-токен и укажите путь к нему через `service_account_token_file` (см. [issue #26265](https://github.com/hashicorp/vault/issues/26265)).
 *   **`keep_after_import`:** по умолчанию `false`. Если импорт не удался, файл удаляется. В production рекомендуется `true` для ручного анализа.
-*   **`exit_on_err`:** по умолчанию `false`. При `true` агент завершается с ненулевым кодом, что позволяет systemd зафиксировать ошибку.
+*   **`exit_on_err`:** по умолчанию **`true`**. При `true` агент завершается с ненулевым кодом, что позволяет systemd зафиксировать ошибку.
 *   **Путь к файлу:** размещайте на разделе, защищенном от swap (отключите swap или используйте `mlock`). В контейнерах используйте `emptyDir` или `hostPath` с `tmpfs`.
 *   **Размер:** BoltDB ограничена по объему (десятки МБ). Для сред с большим количеством уникальных секретов мониторьте рост файла.
+*   **Важно:** персистентный кэш сохраняет **только leased secrets** (токены, динамические секреты). Статические секреты (KV v2) при восстановлении перезапрашиваются из Vault.
 
 ### Режим супервизора (env_template + exec)
 
@@ -320,7 +343,7 @@ auto_auth {
 
 ### Сценарий 3: Деплой на bare metal через systemd
 
-Агент работает как системный сервис, рендерит секреты в файлы и перезапужает приложение при обновлении.
+Агент работает как системный сервис, рендерит секреты в файлы и перезапускает приложение при обновлении.
 
 **Шаг 1.** Создайте конфигурацию `/etc/vault.d/agent.hcl` (см. раздел «Структура конфигурации»).
 
@@ -403,6 +426,8 @@ auto_auth {
 }
 ```
 
+Подробности метода, фильтры и маппинг групп на политики — [Vault: аутентификация через LDAP](../vault-auth-ldap.md).
+
 **Сертификаты (mTLS):**
 
 ```hcl
@@ -419,7 +444,7 @@ auto_auth {
 
 ### Пример: Настройка прав для AppRole
 
-Для работы агента роль в Vault должна иметь соответствующие политики.
+Для работы агента роль в Vault должен иметь соответствующие политики.
 
 ```bash
 # 1. Создаем политику 'agent-policy.hcl'
@@ -436,9 +461,83 @@ vault write auth/approle/role/webapp-role \
     token_ttl="1h"
 ```
 
-## Дополнительная информация
+## Операции и команды
 
-### Отладка: Типовые ошибки
+### Команды управления службой
+
+```bash
+# Старт/остановка/перезагрузка
+sudo systemctl start vault-agent
+sudo systemctl stop vault-agent
+sudo systemctl reload vault-agent    # отправка SIGHUP — перезагрузка конфигурации
+
+# Проверка статуса и логов
+sudo systemctl status vault-agent
+journalctl -u vault-agent --no-pager -n 100
+journalctl -u vault-agent -f
+
+# Проверка рендеринга
+cat /etc/app/config.json
+# → {"db_user":"admin","db_pass":"s3cret"}
+```
+
+### Флаги командной строки `vault agent`
+
+| Флаг | Описание | По умолчанию |
+| :--- | :--- | :--- |
+| `-config` | Путь к HCL-файлу или директории с конфигами | обязательно |
+| `-exit-after-auth` | Завершить работу после успешной аутентификации | `false` |
+| `-log-level` | Уровень логирования: `trace`/`debug`/`info`/`warn`/`err` | `info` |
+| `-log-format` | Формат логов: `standard`/`json` | `standard` |
+| `-log-file` | Путь для записи логов в файл | `./agent.log` |
+| `-log-rotate-bytes` | Размер файла в байтах для ротации | не установлен |
+| `-log-rotate-duration` | Интервал ротации логов | `24h` |
+| `-log-rotate-max-files` | Кол-во архивов для хранения (0 — не удалять, -1 — удалять все) | `0` |
+| `-address` | Адрес Vault сервера | `https://127.0.0.1:8200` |
+| `-ca-cert` | Путь к CA-сертификату | — |
+| `-client-cert` | Путь к клиентскому сертификату | — |
+| `-client-key` | Путь к клиентскому ключу | — |
+
+### Проверка статуса аутентификации
+
+```bash
+# Токен, полученный агентом, доступен для проверки
+VAULT_TOKEN=$(cat /etc/vault.d/.vault-token)
+
+# Инспекция токена: политики, TTL, renewable
+export VAULT_TOKEN
+vault token lookup
+# → Ключ                Значение
+#   path                cubbyhole/
+#   policies            [webapp-reader]
+#   ttl                 3600
+#   renewable           true
+
+# Проверка здоровья Vault (через агент или напрямую)
+curl -k https://vault.example.com:8200/v1/sys/health
+# → {"sealed":false,"initialized":true,"standby":false,"performance_standby":false,"replication_performance_mode":"disabled","replication_dr_mode":"disabled","server_time_offset":0}
+```
+
+### Ручное управление кэшем
+
+```bash
+# Агент использует BoltDB-файл для кэша. Для ручного анализа:
+# 1. Остановите агент
+sudo systemctl stop vault-agent
+
+# 2. Проверьте размер файла кэша
+ls -lh /var/lib/vault-agent/cache.db
+
+# 3. При необходимости удалите кэш для чистого старта
+rm -f /var/lib/vault-agent/cache.db
+
+# 4. Запустите агент
+sudo systemctl start vault-agent
+```
+
+## Устранение неполадок
+
+### Типовые ошибки
 
 | Ошибка | Причина | Решение |
 | :--- | :--- | :--- |
@@ -456,6 +555,57 @@ vault write auth/approle/role/webapp-role \
 | `token lookup self failed` | Токен истек или был отозван. | Проверьте `token_ttl` политики и `renew` агентом. Убедитесь, что Vault сервер доступен. |
 | `signal: killed` | Агент получил SIGKILL (OOM или внешнее убийство). | Проверьте `dmesg` и логи systemd на предмет `oom-kill`. Увеличьте `LimitMEMLOCK` или `memory.limit_in_bytes`. |
 
+### Отладка и диагностика
+
+```bash
+# Запуск с debug-логированием
+vault agent -config=/etc/vault.d/agent.hcl -log-level=debug
+
+# Запуск с JSON-логами для парсинга в лог-агрегатор
+vault agent -config=/etc/vault.d/agent.hcl -log-level=info -log-format=json
+
+# Проверка синтаксиса конфигурации
+vault agent -config=/etc/vault.d/agent.hcl -log-level=info &
+sleep 2
+# Если агент стартовал без ошибок — синтаксис корректен
+kill %1
+
+# Проверка TLS-соединения
+openssl s_client -connect vault.example.com:8200 -CAfile /etc/vault.d/ca.crt
+```
+
+## Лучшие практики
+
+### Безопасность файловой системы
+
+*   **Директории с секретами:** размещайте на `tmpfs` (в памяти), чтобы секреты не попадали на диск. Пример для systemd: `PrivateTmp=yes` + монтирование секретов в `/run/secrets`.
+*   **Права на файлы:** директория с `agent.hcl` и `cache.db` должна принадлежать пользователю `vault:vault`, права `0600` на конфиг и `0640` на кэш.
+*   **Очистка временных файлов:** секрет ID (`secret_id_file_path`) должен удаляться после прочтения (`remove_secret_id_file_after_reading = true`).
+*   **Swap:** отключите swap на хосте (`sudo swapoff -a`) или используйте `mlock`, чтобы секреты не попали в swap-раздел.
+*   **Запрет на встроенный token sink:** если приложение читает токен из файла, ограничьте права на этот файл (0600), иначе любой пользователь системы получит доступ к Vault.
+
+### Управление логами и аудит
+
+*   **Ротация логов:** используйте встроенные флаги `-log-rotate-bytes`, `-log-rotate-duration`, `-log-rotate-max-files`, либо journald:
+  ```ini
+  # /etc/systemd/journald.conf.d/vault-agent.conf
+  [Journal]
+  MaxRetentionSec=7day
+  MaxSize=100M
+  ```
+*   **JSON-формат:** включайте `-log-format=json` для удобного парсинга в ELK/Fluentd/Loki.
+*   **Не логируйте секреты:** агент не выводит значения секретов в логи, но убедитесь, что отладочный лог не попадает в публичные хранилища логов.
+
+### Ограничения и известные проблемы
+
+*   **Нет атомарного обновления нескольких шаблонов:** при массовом изменении секретов агент обновляет файлы последовательно. Кратковременно приложение может видеть несогласованное состояние. Используйте блок `wait` для стабилизации.
+*   **Один `exec` на конфиг:** в режиме супервизора допускается ровно один блок `exec`. Для запуска нескольких процессов используйте процесс-менеджер (например, `s6` или `runit`) внутри `exec`.
+*   **BoltDB и NFS:** хранить `cache.db` на NFS-разделе нельзя — BoltDB не поддерживает распределенные блокировки.
+*   **Ручное управление токеном:** если агент пишет токен в файл (`sink "file"`), не изменяйте этот файл вручную — агент перезапишет его при следующем renew.
+*   **Версия агента:** используйте версию, совместимую с версией сервера Vault (minor version difference допустима, major — нет).
+*   **Persistent Cache — только Kubernetes:** тип `persist "kubernetes"` требует service account token. Для on-prem обходной путь — создать статичный токен и использовать его как `service_account_token_file` (см. [issue #26265](https://github.com/hashicorp/vault/issues/26265)).
+*   **Персистентный кэш не сохраняет KV v2:** только leased secrets (токены, dynamic credentials) сохраняются в кэше. Статические KV v2 секреты при перезапуске перезапрашиваются.
+
 ### Метрики Prometheus и мониторинг
 
 Агент экспортирует метрики на эндпоинте `/v1/metrics` (по умолчанию на `127.0.0.1:9102` при включенном `telemetry`). Ключевые метрики для SRE:
@@ -464,7 +614,15 @@ vault write auth/approle/role/webapp-role \
 telemetry {
   prometheus_retention_time = "30s"
   disable_hostname          = true
-  unauthenticated_metrics_access = false # зафиксировать 127.0.0.1
+}
+
+# Метрики экспортируются на отдельный listener
+listener "tcp" {
+  address     = "127.0.0.1:9102"
+  tls_disable = true
+  telemetry {
+    unauthenticated_metrics_access = false  # требовать аутентификацию для /v1/metrics
+  }
 }
 ```
 
@@ -491,30 +649,16 @@ listener "tcp" {
 }
 ```
 
-### Безопасность файловой системы
-
-*   **Директории с секретами:** размещайте на `tmpfs` (в памяти), чтобы секреты не попадали на диск. Пример для systemd: `PrivateTmp=yes` + монтирование секретов в `/run/secrets`.
-*   **Права на файлы:** директория с `agent.hcl` и `cache.db` должна принадлежать пользователю `vault:vault`, права `0600` на конфиг и `0640` на кэш.
-*   **Очистка временных файлов:** секрет ID (`secret_id_file_path`) должен удаляться после прочтения (`remove_secret_id_file_after_reading = true`).
-*   **Swap:** отключите swap на хосте (`sudo swapoff -a`) или используйте `mlock`, чтобы секреты не попали в swap-раздел.
-*   **Запрет на встроенный token sink:** если приложение читает токен из файла, ограничьте права на этот файл (0600), иначе любой пользователь системы получит доступ к Vault.
-
-### Ограничения и известные проблемы
-
-*   **Нет атомарного обновления нескольких шаблонов:** при массовом изменении секретов агент обновляет файлы последовательно. Кратковременно приложение может видеть несогласованное состояние. Используйте блок `wait` для стабилизации.
-*   **Один `exec` на конфиг:** в режиме супервизора допускается ровно один блок `exec`. Для запуска нескольких процессов используйте процесс-менеджер (например, `s6` или `runit`) внутри `exec`.
-*   **BoltDB и NFS:** хранить `cache.db` на NFS-разделе нельзя — BoltDB не поддерживает распределенные блокировки.
-*   **Ручное управление токеном:** если агент пишет токен в файл (`sink "file"`), не изменяйте этот файл вручную — агент перезапишет его при следующем renew.
-*   **Версия агента:** используйте версию, совместимую с версией сервера Vault (minor version difference допустима, major — нет).
-
 ### Сравнение методов доставки
 
 | Метод | Механизм | Когда использовать |
 | :--- | :--- | :--- |
 | **Agent Files** | Запись в `.json`, `.yaml`, `.env` через блок `template`. | Стандарт для большинства приложений. |
 | **Agent Env** | `env_template` + блок `exec` (Process Supervisor Mode). | Когда приложение не умеет читать файлы и нужны секреты в окружении. |
-| **Agent API Proxy** | Локальный `listener` + кэш (блок `cache`). | Когда приложение обращается к Vault API, а прямой доступ нежелателен. |
+| **Agent API Proxy** | Локальный `listener` + кэш (блок `cache`). | **Deprecated** — используйте Vault Proxy. |
 | **Vault Proxy** | Отдельный бинарник: API-запросы без токена, кэш. | Когда нужна только динамика через SDK/API (без шаблонов). |
+
+## Дополнительная информация
 
 ### Связанные документы
 

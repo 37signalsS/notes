@@ -470,7 +470,7 @@ vault secrets enable -path=ssh-client-signer ssh
 
 # 2. Создание роли
 vault write ssh-client-signer/roles/ops-role \
-    key_type="ed25519" \
+    key_type="ca" \
     allowed_users="admin,deploy,sre" \
     default_extensions="permit-pty,permit-port-forwarding" \
     ttl="8h" \

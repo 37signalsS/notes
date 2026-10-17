@@ -1,6 +1,8 @@
 # Secrets Management Overview
 
-## Definitions
+**Актуально для:** HashiCorp Vault 2.x, SOPS 3.10+, Kubernetes 1.31+, Docker Engine 29.x
+
+## Определения
 
 **Secrets Management** — процесс безопасного хранения, контроля доступа, аудита и ротации чувствительных данных: паролей, API-ключей, токенов, TLS-сертификатов, SSH-ключей.
 
@@ -8,13 +10,13 @@
 
 **Ключевая задача:** исключить хранение секретов в открытом виде в коде, Git, логах, конфигурационных файлах.
 
-## Basic Concepts
+## Основные концепции
 
 ### Стратегии управления секретами
 
 | Стратегия | Описание | Применение |
 |-----------|----------|------------|
-| **Централизованное хранилище** | Единое защищённое место (Vault, HashiCorp Boundary) | Крупные проекты, production |
+| **Централизованное хранилище** | Единое защищённое место (Vault) | Крупные проекты, production |
 | **Шифрование в Git (GitOps)** | Секреты шифруются, хранятся в Git рядом с кодом | GitOps-пайплайны |
 | **Нативные решения платформы** | Встроенные средства (Kubernetes Secrets, Docker Secrets) | Среды с ограниченными требованиями |
 | **Переменные окружения CI/CD** | Секреты управляются CI/CD-системой | Small projects, CI/CD-стадии |
@@ -35,6 +37,19 @@
 | **Криптографические ключи** | SSH-ключи, TLS-сертификаты, JWT-ключи | Долгосрочные, требуют защиты от утечки |
 | **Сервисные идентификаторы** | ServiceAccount, AppRole, machine identities | Создаются автоматически, имеют ограниченный TTL |
 | **Секреты сборки** | Токены реестра, GPG-ключи подписи | Существуют только во время пайплайна |
+
+### Non-Human Identities (NHI)
+
+**NHI (Non-Human Identities)** — нечелеческие сущности (сервисные аккаунты, robot-accounts, workload identities), управляющие доступом к инфраструктуре. В 2026 году NHI составляют до 95% всех цифровых сущностей и являются основной целью атак.
+
+| Тип NHI | Пример | Жизненный цикл |
+| :--- | :--- | :--- |
+| **Service Account** | Kubernetes ServiceAccount, AWS IAM Role | Постоянный, с ротацией токенов |
+| **AppRole** | Vault AppRole | С ограниченным SecretID TTL |
+| **Machine-to-Machine** | CI/CD пайплайн → Vault | Через OIDC Workload Identity Federation |
+| **Workload Identity** | GitHub Actions OIDC → Vault | Временные JWT-токены (1–15 мин) |
+
+**Secret-Zero:** классическая проблема — для получения секретов из хранилища приложению изначально требуется статический идентификатор. Современное решение — Workload Identity Federation через OIDC, исключающее статические ключи. Подробнее — в **[CI/CD Secrets Management](../../CI-CD/DevSecOps/secrets_management.md)**.
 
 ### Сравнение подходов
 
@@ -95,13 +110,66 @@
 - **История коммитов:** сканирование всей истории (не только текущего состояния) для обнаружения старых утечек.
 - **Непрерывное сканирование:** регулярный запуск сканеров в CI-пайплайнах и регламентный аудит артефактов.
 
-## Practical Scenarios
+### Инвентаризация и обнаружение секретов (Secret Discovery)
+
+Операционная задача SRE/Sysadmin — поддерживать актуальный **инвентарь секретов**: знать, где каждый секрет используется, кто владелец, когда ротировался, используется ли он вообще (stale secrets = риск).
+
+| Инструмент | Для чего | Особенности |
+| :--- | :--- | :--- |
+| **Vault API** | `vault list sys/leases/lookup/...` | Перечисление активных leases, TTL. |
+| **GitLab/GitHub Secret Scanning** | Поиск в репозиториях | CI-level обнаружение; push protection. |
+| **trufflehog / gitleaks** | Сканирование истории Git | Полный offline-обход, `--no-update` в CI. |
+| **detect-secrets** | Pre-commit baseline | Инкрементальное, минимум ложных срабатываний. |
+| **kube-no-trouble / popeye** | K8s аудит | Проверка устаревших Secret, RBAC. |
+| **Ansible Vault / Ansible lookup** | Инвентарь в Ansible | Поиск зашифрованных блоков в ролях. |
+
+**Automation:** инвентаризацию можно автоматизировать через nightly-сканеры с записью в CMDB/инвентарь. Stale secrets (>90 дней без ротации) автоматически попадают в тикет в Jira/Linear.
+
+### Роутение и доставка секретов (Operational Pattern)
+
+Для on-prem и гибридных инфраструктур (без cloud-зависимости) характерны следующие паттерны доставки секретов в runtime:
+
+| Паттерн | Инструмент | Когда |
+| :--- | :--- | :--- |
+| **Init Container → tmpfs** | Vault + K8s | K8s-приложения |
+| **systemd-creds** | systemd v247+ | Linux-сервисы |
+| **BuildKit --mount=type=secret** | Docker BuildKit | Этапы сборки образов |
+| **Docker secrets / tmpfs** | Docker Swarm/Compose | Контейнеры в standalone |
+| **OpenSSH certificates** | ssh-ca + Vault SSH | SSH-доступ на хосты |
+
+### Автоматизация ротации секретов
+
+Ротация — ключевая операция в жизненном цикле. Детальное описание механизмов ротации в HashiCorp Vault — в **[Ротация секретов в Vault](../../Vault/guides/secret_rotation.md)**.
+
+| Тип ротации | Стратегия | TTL | Автоматизация |
+| :--- | :--- | :--- | :--- |
+| **Dynamic Secrets** | Vault Database Secrets Engine | 1–24h | Автоматически |
+| **Static Secrets** | KV v2 с versioning | 90–180 дней | `cron` + Vault API |
+| **Root Credentials** | Database rotate-root | после onboarding | Vault Enterprise |
+| **Transit Keys** | `/transit/keys/:name/rotate` | 24h | `auto_rotate_period` |
+| **SSH CA** | Overlapping CA keys | 90 дней | Ansible + Vault |
+| **TLS Certificates** | cert-manager / certbot | 90 дней | ACME + webhook |
+
+**SRE принцип:** ротация должна быть **бесшовной (zero-downtime)**. Приложения поддерживают graceful reload при смене пароля; для legacy-систем — sidecar-паттерн с Vault Agent.
+
+### Мониторинг и алертинг секретов
+
+Для наблюдаемости SRE критически важно отслеживать:
+
+- **Состояние хранилища:** Vault unsealed? Резервные копии актуальны?
+- **Активность:** anomalous access patterns, рост количества проблемных токенов, orphaned leases.
+- **Ротация:** `last_vault_rotation` / `next_vault_rotation` для dynamic и static roles.
+- **Аудит:** все read/write операции с секретами логируются (Vault Audit Device, K8s audit, CI/CD audit).
+
+Подробнее — в **[Мониторинг и алертинг Vault](../../Vault/guides/monitoring_and_alerting.md)** и **[Анализ audit логов](../../Vault/guides/audit_log_analysis.md)**.
+
+## Практические сценарии
 
 ### HashiCorp Vault — централизованное управление
 
 Авторитетный источник: [Vault overview](../../Vault/overview.md)
 
-Для масштабных и зрелых проектов. Обеспечивает хранениеение, аудит, динамическую генерацию и ротацию секретов.
+Для масштабных и зрелых проектов. Обеспечивает хранение, аудит, динамическую генерацию и ротацию секретов.
 
 ```bash
 # Записать секрет
@@ -199,38 +267,7 @@ SSH-ключи требуют того же подхода к жизненном
 - **Ротация:** автоматическая через ACME-клиенты (certbot) или cert-manager с напоминанием за 30 дней до истечения.
 - **Отзыв:** CRL (Certificate Revocation List) или OCSP-responder для проверки статуса в реальном времени.
 
-## Additional Information
-
-### Динамические секреты (Vault)
-
-Vault генерирует временные credentials по запросу (БД, RabbitMQ и др.). После истечения TTL — автоматический отзыв. Преимущества:
-
-- Уникальные credentials на каждый запрос
-- Автоматическая ротация и отзыв
-- Минимизация blast radius при компрометации
-
-Примеры: [динамические секреты PostgreSQL](../../Vault/concepts.md), [динамические секреты RabbitMQ](../../Vault/concepts.md).
-
-### Антипаттерны
-
-Подробный разбор распространённых ошибок: [Антипаттерны управления секретами](../../Vault/common_antipatterns.md).
-
-### Рекомендации по выбору инструмента
-
-| Масштаб | Рекомендация |
-|---------|-------------|
-| **Small project / pet-project** | CI/CD Variables (GitLab CI, GitHub Actions) |
-| **GitOps-команда** | SOPS + age/PGP, хранение в Git |
-| **Kubernetes-кластер (без внешнего хранилища)** | Sealed Secrets или SOPS + EncryptionConfiguration |
-| **Enterprise / production** | HashiCorp Vault + динамические секреты + аудит |
-| **Локальная инфраструктура (on-prem)** | Vault + SSH CA + systemd-creds |
-
-### Аудит и соответствие
-
-- **Логирование доступа:** каждое чтение секрета фиксируется (Vault Audit Devices, аудит CI-системы, системные логи). Без аудита невозможно расследовать инцидент.
-- **Инвентаризация:** что является секретом, где используется, кто владелец, когда ротировался, используется ли он вообще (stale secrets = риск).
-- **Соответствие:** PCI DSS (требует ротации и ограничения доступа к ключам), российские регуляторные требования (152-ФЗ для персональных данных, ФСТЭК/ФСБ для ключей).
-- **Регулярный review:** пересмотр политик доступа и вывод из эксплуатации неиспользуемых секретов.
+## Операции и команды
 
 ### Команды аудита (Sysadmin)
 
@@ -248,8 +285,100 @@ trufflehog git file:///path/to/repo --json
 gitleaks detect --source /path/to/repo --verbose
 
 # Проверка устаревших секретов Vault
-vault list -format=json kv/metadata/production/ | jq '.[] | select(.data.ttl < 720h)'
+vault list --format=json kv/metadata/production/ | jq '.[] | select(.data.ttl < 720h)'
 ```
+
+### Инвентаризация и обнаружение (Operational Commands)
+
+```bash
+# Список всех активных leases в Vault (dynamic secrets)
+vault list sys/leases/lookup/database/creds/
+
+# Проверка, что K8s Secret смонтирован как tmpfs
+kubectl exec <pod-name> -- mount | grep /etc/secrets
+# → tmpfs on /etc/secrets type tmpfs (rw,relatime)
+
+# Проверка переменных окружения контейнера на секреты
+docker inspect --format='{{json .Config.Env}}' <container> | jq -r '.[]' | grep -iE 'pass|secret|key|token'
+
+# Аудит RBAC для Secret: можно ли ServiceAccount читать все секреты в Namespace?
+kubectl auth can-i list secrets --namespace=my-namespace --as=system:serviceaccount:my-namespace:my-sa
+# → должно быть "no" — иначе over-provisioned SA
+
+# Сканирование образа на секреты в слоях
+docker save <image> > /tmp/image.tar && tar -xf /tmp/image.tar && grep -rn "secret\|password\|token" .
+```
+
+## Устранение неполадок
+
+### Типичные ошибки и устранение неполадок
+
+| Симптом | Причина | Решение |
+|---------|---------|---------|
+| `vault: permission denied` | Политика запрещает путь или метод аутентификации | `vault policy read <policy>`; проверить `path` и `capabilities` |
+| `sops: no key found` | Отсутствует master key (KMS, age, PGP) в окружении | Указать `SOPS_AGE_KEY_FILE` или `--age` флаг |
+| `kubectl get secret` возвращает base64 | Это ожидаемое поведение; секрет не расшифрован | Использовать `kubectl get secret <name> -o jsonpath='{.data.<key>}' \| base64 -d` |
+| Secret не обновляется в Pod | Используется `subPath` или immutable Secret | Удалить Pod или отключить `immutable` |
+| `podman secret inspect` пустой | Секрет создан из env-переменной, но переменная пуста | Проверить переменную окружения при создании |
+| Динамический секрет не отзывается | Истёк TTL, но приложение кэширует connection | Перезапустить приложение или настроить connection refresh |
+| Утечка в Git-истории | Секрет был закоммичен ранее | `git filter-repo` + принудительная ротация секрета |
+| `sshd: refused connect from ...` | Отсутствует соответствующий ключ в authorized_keys или KRL | Проверить `~/.ssh/authorized_keys`, `/etc/ssh/sshd_config`, `krl.pub` |
+| `trufflehog` не находит находки | Сканирование только текущего состояния, а не истории | Добавить `git file:///path/to/repo` для полного сканирования |
+| Pre-commit hook не срабатывает | Нет прав на выполнение или symlink сбит | `ls -l .git/hooks/pre-commit` → должен указывать на `pre-commit` |
+
+### Troubleshooting Vault Secret Rotation
+
+| Ошибка | Причина | Решение |
+| :--- | :--- | :--- |
+| `vault kv undo: command not found` | Команда `kv undo` не существует | Использовать `vault kv get -version=N` + `vault kv put` для отката |
+| `last_rotation` не возвращается | Поле называется `last_vault_rotation` | `vault read database/static-creds/<name>` — смотреть `last_vault_rotation` |
+| `rotation_period must be at least 5 seconds` | `rotation_period` меньше минимума | Установить минимум 5s или использовать `rotation_schedule` |
+| `orphaned rotation entry detected` | Ротация превысила лимит retries | Check `sys/rotation/orphans`; resolve error; re-register |
+| `database plugin: connection refused during rotation` | БД недоступна | Проверить `connection_url`, сеть; увеличить `rotation_window` |
+| `lease not renewable` при dynamic secret rotation | Lease просрочен | Увеличить `max_ttl`; проверить политику lease |
+
+Подробнее — в **[Ротация секретов в Vault](../../Vault/guides/secret_rotation.md)**.
+
+## Лучшие практики
+
+### Рекомендации по выбору инструмента
+
+| Масштаб | Рекомендация |
+|---------|-------------|
+| **Small project / pet-project** | CI/CD Variables (GitLab CI, GitHub Actions) |
+| **GitOps-команда** | SOPS + age/PGP, хранение в Git |
+| **Kubernetes-кластер (без внешнего хранилища)** | Sealed Secrets или SOPS + EncryptionConfiguration |
+| **Enterprise / production** | HashiCorp Vault + динамические секреты + аудит |
+| **Локальная инфраструктура (on-prem)** | Vault + SSH CA + systemd-creds |
+
+### Политика ротации
+
+- **Динамические секреты:** предпочтительнее статических. Настраивайте dynamic roles с коротким TTL (1–4 часа).
+- **Static Secrets (KV v2):** ротация каждые 90–180 дней; используйте версионирование для отката.
+- **Root credentials:** ротация после onboarding Database Secrets Engine.
+- **Transit keys:** используйте `auto_rotate_period` (минимум 1 час).
+- **SSH CA:** overlapping CA keys during rotation; удаляйте старые роли после истечения TTL.
+- **TLS certificates:** автоматическая ротация через ACME (certbot) или cert-manager с напоминанием за 30 дней.
+- **Секреты сборки (build-time):** существуют только во время пайплайна; не переиспользуйте для runtime.
+
+Подробнее — в **[Ротация секретов в Vault](../../Vault/guides/secret_rotation.md)**.
+
+### Аудит и соответствие (Audit & Compliance)
+
+- **Логирование доступа:** каждое чтение секрета фиксируется (Vault Audit Devices, аудит CI-системы, системные логи). Без аудита невозможно расследовать инцидент.
+- **Инвентаризация:** что является секретом, где используется, кто владелец, когда ротировался, используется ли он вообще (stale secrets = риск).
+- **Соответствие:** PCI DSS (требует ротации и ограничения доступа к ключам), российские регуляторные требования (152-ФЗ для персональных данных, ФСТЭК/ФСБ для ключей).
+- **Регулярный review:** пересмотр политик доступа и вывод из эксплуатации неиспользуемых секретов.
+
+### Антипаттерны
+
+Подробный разбор распространённых ошибок: [Антипаттерны управления секретами](../../Vault/common_antipatterns.md).
+
+Ключевые антипаттерны:
+- **Secret Zero:** хранение статического master-ключа в Git/переменной окружения.
+- **ENV-секреты в production:** секреты в `ENV` видны в `docker inspect`, `/proc/*/environ`, дампах памяти.
+- **Отсутствие ротации:** статические секреты действуют бессрочно.
+- **Shared secrets:** один и тот же секрет для всех сред/сервисов.
 
 ### Резервное копирование и аварийное восстановление
 
@@ -268,18 +397,28 @@ vault list -format=json kv/metadata/production/ | jq '.[] | select(.data.ttl < 7
 4.  **Ограничение по времени:** доступ выдаётся на минимальный срок (1–4 часа) с автоматическим отзывом.
 5.  **Пост-анализ:** после восстановления штатного режима — полная ротация всех секретов, к которым был получен доступ, и аудит действий.
 
-### Типичные ошибки и устранение неполадок
+## Дополнительная информация
 
-| Симптом | Причина | Решение |
-|---------|---------|---------|
-| `vault: permission denied` | Политика запрещает путь или метод аутентификации | `vault policy read <policy>`; проверить `path` и `capabilities` |
-| `sops: no key found` | Отсутствует master key (KMS, age, PGP) в окружении | Указать `SOPS_AGE_KEY_FILE` или `--age` флаг |
-| `kubectl get secret` возвращает base64 | Это ожидаемое поведение; секрет не расшифрован | Использовать `kubectl get secret <name> -o jsonpath='{.data.<key>}' \| base64 -d` |
-| Secret не обновляется в Pod | Используется `subPath` или immutable Secret | Удалить Pod или отключить `immutable` |
-| `podman secret inspect` пустой | Секрет создан из env-переменной, но переменная пуста | Проверить переменную окружения при создании |
-| Динамический секрет не отзывается | Истёк TTL, но приложение кэширует connection | Перезапустить приложение или настроить connection refresh |
-| Утечка в Git-истории | Секрет был закоммичен ранее | `git filter-repo` + принудительная ротация секрета |
-| `sshd: refused connect from ...` | Отсутствует соответствующий ключ в authorized_keys или KRL | Проверить `~/.ssh/authorized_keys`, `/etc/ssh/sshd_config`, `krl.pub` |
+### Динамические секреты (Vault)
+
+Vault генерирует временные credentials по запросу (БД, RabbitMQ и др.). После истечения TTL — автоматический отзыв. Преимущества:
+
+- Уникальные credentials на каждый запрос
+- Автоматическая ротация и отзыв
+- Минимизация blast radius при компрометации
+
+Примеры: [динамические секреты PostgreSQL](../../Vault/concepts.md), [динамические секреты RabbitMQ](../../Vault/concepts.md).
+
+Подробнее о механизмах ротации — в **[Ротация секретов в Vault](../../Vault/guides/secret_rotation.md)**.
+
+### Жизненный цикл и управление Key Escrow
+
+Для криптографических ключей (TLS CA, JWT signing, SSH CA) применяется **Key Escrow** — механизм доверенного хранения копий ключей третьей стороной. Используется Shamir's Secret Sharing (разделение на N частей, достаточно K):
+
+- **Root CA:** хранится офлайн; passphrase разделяется через `ssss` (2-of-3) на USB-носителях в разных локациях.
+- **Service keys:** хранятся в Vault Transit Engine с `auto_rotate_period`; резервные копии — в encrypted offline storage.
+
+Подробнее — в **[Key Escrow Policy](./key_escrow_policy.md)**.
 
 ### Связанные концепции
 

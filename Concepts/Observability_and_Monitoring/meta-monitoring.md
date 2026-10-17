@@ -115,9 +115,9 @@ groups:
 
 **Ключевые метрики для алертинга:**
 
-- `vm_rpc_errors_total`: ошибки передачи данных между компонентами.
-- `vmagent_remotewrite_queues_filled_percentage`: заполнение очередей на отправку. Если 100% — данные начинают теряться (backpressure).
-- `vmagent_remotewrite_dropped_rows_total`: прямой показатель потери данных из-за невозможности отправить их в хранилище.
+- `vmagent_remotewrite_errors_total`: ошибки HTTP-передачи данных в хранилище (транспорт, аутентификация, таймауты).
+- `vmagent_remotewrite_queue_blocked`: 1 — очередь заблокирована, хранилище не успевает (backpressure).
+- `vmagent_remotewrite_samples_dropped_total`: прямой показатель потери данных из-за переполнения буфера или ошибок.
 
 ### Сценарий 3: Самомониторинг Zabbix
 

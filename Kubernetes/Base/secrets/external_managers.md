@@ -86,34 +86,90 @@ kubectl get crd | grep external-secrets
 kubectl get pods -n external-secrets
 ```
 
-**Установка через HelmRelease (Flux CD):** в GitOps-инфраструктурах, где Flux уже управляет приложениями, ESO разворачивается декларативно через `HelmRelease`. Это обеспечивает согласованность жизненного цикла с остальными компонентами кластера:
+**Установка через Argo CD Application:** в GitOps-инфраструктурах, где Argo CD управляет приложениями, ESO разворачивается декларативно через `Application` CR в неймспейсе `argocd`. Это обеспечивает согласованность жизненного цикла с остальными компонентами кластера:
 
 ```yaml
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
+# argocd/projects/infra/applications/external-secrets.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
 metadata:
   name: external-secrets
-  namespace: flux-system
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
-  chart:
-    spec:
-      chart: external-secrets
-      version: "2.12.x"
-      sourceRef:
-        kind: HelmRepository
-        name: external-secrets
-        namespace: flux-system
-  values:
-    installCRDs: true
-    replicaCount: 1
-    serviceMonitor:
-      enabled: true
-      interval: 60s
-      labels:
-        release: kube-prom-stack
+  project: infra
+  source:
+    repoURL: https://charts.external-secrets.io
+    chart: external-secrets
+    targetRevision: "2.12.x"
+    helm:
+      releaseName: external-secrets
+      values: |
+        installCRDs: true
+        replicaCount: 1
+        serviceMonitor:
+          enabled: true
+          interval: 60s
+          labels:
+            release: kube-prom-stack
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-secrets
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
 ```
 
-> **Версия chart:** `version` в `HelmRelease` должен соответствовать текущей линии ESO (см. scope-линию файла). При использовании `HelmRepository` с именем `external-secrets` убедитесь, что он настроен в namespace `flux-system`.
+> **Версия chart:** `targetRevision` в `Application` должен соответствовать текущей линии ESO (см. scope-линию файла). Убедитесь, что Helm-репозиторий `https://charts.external-secrets.io` зарегистрирован в Argo CD.
+
+**Установка через Argo CD CLI:**
+
+```bash
+# Добавление Helm-репозитория в Argo CD
+argocd repo add https://charts.external-secrets.io
+
+# Создание Application
+argocd app create external-secrets \
+  --repo https://charts.external-secrets.io \
+  --chart external-secrets \
+  --revision 2.12.x \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace external-secrets \
+  --helm-set installCRDs=true \
+  --helm-set serviceMonitor.enabled=true \
+  --sync-policy automated \
+  --auto-prune \
+  --self-heal
+
+# Синхронизация
+argocd app sync external-secrets
+```
+
+**Валидация:**
+
+```bash
+# Проверка статуса Application
+argocd app get external-secrets
+# → Sync Status: Synced to 2.12.x
+# → Health Status: Healthy
+
+# Проверка CRD и подов оператора
+kubectl get crd | grep external-secrets
+# → clustersecretstores.external-secrets.io
+# → externalsecrets.external-secrets.io
+kubectl get pods -n external-secrets
+```
 
 > **Версия API (важно при обновлении):** с ESO 0.17 (май 2025) и далее в стабильной ветке используется `apiVersion: external-secrets.io/v1`; `v1beta1` устарел и отключён по умолчанию в чарте ESO 2.x (`unsafeServeV1Beta1: false`, планируется к удалению 2026.05.01). Старые манифесты на `v1beta1` дадут ошибку `no matches for kind "SecretStore" in version "external-secrets.io/v1beta1"` — переведите все ресурсы (SecretStore, ClusterSecretStore, ExternalSecret, ClusterExternalSecret) на `v1` до апгрейда. Шаблонный движок v1 также устарел — по умолчанию используется engine v2, который поддерживает темplatating в `spec.target.template.metadata` и ключах `data`.
 

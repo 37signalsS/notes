@@ -1,492 +1,363 @@
-# LogsQL: Справочник и руководство по языку запросов
+# LogsQL: язык запросов VictoriaLogs
+
+**Актуально для:** VictoriaLogs v1.53.x (LTS-линия v1.52.x)
 
 ## Определения
 
-**LogsQL** — это высокопроизводительный потоковый (pipeline) язык запросов VictoriaLogs, оптимизированный для поиска, фильтрации и аналитической обработки больших объемов журналов. Запрос строится как последовательность операций, разделенных символом `|`, где результат каждой предыдущей операции передается на вход следующей.
+**LogsQL** — pipeline-язык запросов [VictoriaLogs](https://docs.victoriametrics.com/victorialogs/): фильтрация, извлечение структуры на лету и аналитика над логами. Запрос — фильтр (или их последовательность, объединённая `AND`/`OR`/`NOT`), затем опциональная цепочка пайпов через `|`, где результат одной операции подаётся на вход следующей:
 
-**Базовая структура запроса:**
 ```logsql
-<фильтрация> | <парсинг/извлечение> | <трансформация> | <агрегация> | <пост-фильтрация>
+<фильтры> | <трансформации> | <агрегация> | <пост-фильтрация>
 ```
 
----
+**Слово (word)** — токен из букв, цифр и подчёркиваний; именно по словам ищут full-text-фильтры (word/phrase/prefix). Всё остальное (пробелы, пунктуация) — разделители.
+
+**Поле (log field)** — именованный атрибут записи. Служебные: `_time` (timestamp), `_msg` (сообщение, цель full-text поиска), `_stream` / `_stream_id` (принадлежность к потоку). Имена полей регистрозависимы; точка в имени допустима (`log.level`).
+
+**Поток (stream)** — группа лог-записей с одинаковым набором значений stream-полей (`_stream_fields` при приёме). Потоки — единица хранения и сжатия: данные одного потока лежат рядом, что ускоряет выборку `{app="nginx"}` и повышает компрессию.
 
 ## Базовые концепции
 
-### 1. Структура запроса и синтаксис
-Запрос всегда начинается с фильтра (выбора данных). С 2026 года в LogsQL поддерживается использование точки с запятой `;` в конце запроса для разделения многострочных конструкций.
+### Структура запроса и синтаксис
 
-**Основные правила:**
-- Регистр имен полей и значений в фильтрах учитывается.
-- Технологические термины (deploy, pipeline, stream) не переводятся.
-- Пайпы (pipes) позволяют модифицировать поток данных.
+- Запрос обязан содержать минимум один фильтр. Веб-UI (`/select/vmui`) и Grafana-плагин сами передают выбранный временной диапазон, поэтому `_time:` в них обычно не нужен; в API/CLI временной фильтр добавляйте всегда.
+- `AND` между фильтрами можно опускать: `_time:5m error` ≡ `_time:5m AND error`.
+- `NOT` пишется словом или через `-`/`!`; короткие отрицания фильтров — `!=`, `!~`.
+- Приоритет: `NOT` > `AND` > `OR`. Сомневаетесь — скобки: `error -(buggy_app OR foobar)`.
+- Многострочные запросы и комментарии `#` допустимы; в конце запроса можно поставить `;` (удобно определять границу при программной сборке).
+- Слово, совпадающее с ключевым, заключается в кавычки: `"and"`. Кавычки (`"`, `'`, бэктики) безопасно использовать всегда; если запрос собирается из внешнего ввода — экранируйте всё.
 
-### 2. Фильтрация и временные фильтры
-Временной фильтр является первичным инструментом ограничения объема сканируемых данных.
+### Временные фильтры
 
-- `_time:5m` — последние 5 минут.
-- `_time:24h` — последние сутки.
-- `_time:[2026-01-01, 2026-01-02]` — фиксированный диапазон.
-- `_time:1h level:error` — комбинация фильтров (AND по умолчанию).
+Временной фильтр — главный способ сократить объём сканируемых данных (партиционирование по дням):
 
-### 3. Полнотекстовый поиск
-- `"error"` — поиск слова в любом месте сообщения.
-- `"timeout exceeded"` — поиск точной фразы.
-- `~"(?i)(err|warn)"` — регулярное выражение (регистронезависимый поиск).
+```logsql
+_time:5m                          # последние 5 минут
+_time:24h                         # последние сутки
+_time:[2026-01-01T00:00:00Z, 2026-01-02T00:00:00Z]
+_time:1h level:error              # комбинация (AND)
+```
 
-### 4. Потоки (Streams) и поля потока (_stream_fields)
-Поля потока (`_stream_fields`) определяют группировку логов при хранении. VictoriaLogs хранит логи одного потока рядом, что обеспечивает высокую степень сжатия и скорость запросов.
+Дополнительно: day range (`day_range[9:00:00, 18:00:00]`) и week range (`week_range[Mon,Fri]`) для поиска по времени суток/дня недели независимо от даты.
 
-**Требования к полям потока:**
-- Должны быть **низкокардинальными** (стабильными): `host`, `app`, `pod`, `env`.
-- Высококардинальные данные (`trace_id`, `user_id`, `request_id`) следует оставлять обычными полями.
-- Неправильный выбор полей потока приводит к созданию слишком большого числа мелких потоков, что снижает эффективность сжатия и замедляет поиск.
+### Полнотекстовый поиск
 
-Фильтрация по `_stream_fields` работает значительно быстрее, так как VictoriaLogs хранит данные потоков локализовано.
+```logsql
+error                     # слово в _msg
+"error: cannot find file" # точная фраза
+erro*                     # префикс слова
+*"connection reset"*      # подстрока (медленно на больших объёмах)
+~"(?i)(err|warn)"         # regexp (медленно; регистрозависимый по умолчанию)
+*                         # «всё» — валидный фильтр, не ломает сервер
+```
 
----
+Поиск по нескольким полям сразу: `*:error` (любое поле) или `log_*:error` (префикс имени поля; может быть медленным).
 
-## Требования к окружению
+### Фильтры по полям (основные)
 
-### Операционная система
-VictoriaLogs доступен для Linux (amd64, arm64) и macOS (amd64). Для production эксплуатации рекомендуется Linux-based ОС с актуальным LTS-ядром.
-
-### Аппаратные требования
-| Сценарий | CPU | RAM | Диск | Пропускная способность |
-| :--- | :--- | :--- | :--- | :--- |
-| **Малая нагрузка** (< 10K строк/сек) | 2 ядра | 4 GB | 50 GB SSD | 10 MB/s |
-| **Средняя нагрузка** (10K–100K строк/сек) | 4–8 ядер | 8–16 GB | 200 GB SSD | 50 MB/s |
-| **Высокая нагрузка** (> 100K строк/сек) | 8+ ядер | 16+ GB | 500 GB+ SSD/NVMe | 100+ MB/s |
-
-### Программные зависимости
-- Для запуска бинарного файла: никаких внешних зависимостей не требуется.
-- Для контейнеризации: Docker, Podman или containerd.
-- Для сбора логов: vlagent (рекомендуется), Fluent Bit, Fluentd, Promtail или любой агент, поддерживающий Elasticsearch Bulk API, Loki API, OpenTelemetry или JSON lines.
-
-### Сетевые порты
-| Порт | Протокол | Назначение |
+| Тип | Синтаксис | Комментарий |
 | :--- | :--- | :--- |
-| `9428` | HTTP | Основной API для приёма логов и выполнения LogsQL-запросов (vlselect/vlinsert) |
-| `9429` | HTTP | Метрики Prometheus (/metrics) |
+| Word / phrase | `level:error`, `msg:"timeout exceeded"` | По умолчанию применяется к `_msg` |
+| Exact | `field:=value` | Точное равенство (после токенизации) |
+| Multi-exact | `field:in(v1, v2)` / `not_in(...)` | Несколько значений |
+| Prefix | `field:erro*` | Префикс значения |
+| Range | `status:>=400`, `latency:[1s, 5s]` | Числа, даты, длительности |
+| Regexp | `path:~"/api/v[0-9]+/"` | Медленный фильтр |
+| Пустое значение | `field:""` | Поле отсутствует или пусто |
+| Subquery | `_stream_id:in(_time:1h \| top 3 (_stream_id) \| keep _stream_id)` | Фильтр по результату вложенного запроса |
 
-### Хранение
-- **Тип диска:** SSD или NVMe рекомендуется для production из-за высокой частоты случайных чтений при запросах.
-- **Размер:** Зависит от retention-периода и объёма ingest. VictoriaLogs использует columnar storage с высокой компрессией (~10:1 для типичных логов).
-- **Разделы:** Данные organizуются в суточные разделы (`partitions/YYYYMMDD`), что упрощает управление retention.
+### Потоки: как выбирать `_stream_fields`
 
----
+Фильтрация по потоку — самая дешёвая: `{app="nginx"}`, `{app in (api, web)} -{env="dev"}`. Рекомендации:
 
-## Операторы пайпов (Pipes)
+- В потоки — низкокардинальные стабильные идентификаторы: `host`, `app`, `pod`, `env`, `_SYSTEMD_UNIT`.
+- Высококардинальные значения (`trace_id`, `user_id`, `request_id`, timestamp-суффиксы) — обычные поля; они индексируются, но не должны попадать в stream-поля.
+- Каждая новая комбинация stream-полей создаёт новый поток: millions потоков = взрыв памяти и деградация. Диагностика: `| stats by(_stream) count() | sort by (count) desc | limit 20`, метрика `vl_streams_created_total`, временный логинг новых потоков (`POST /internal/log_new_streams?seconds=10`).
 
-С 2026 года введено строгое правило: пайпы фильтрации, не начинающиеся с `field_name:`, требуют обязательного префикса `filter`.
+## Пайпы (Pipes)
 
-| Пайп | Описание | Пример |
+**Правило фильтрации после пайпов (v1.51.0+):** пост-фильтр, не начинающийся с `field_name:`, обязан иметь префикс `filter` — иначе `unexpected pipe`: `... | filter status>=400`, `... | filter !error`, `... | filter {host="x"}`. Исключение (с фикса v1.52.x): если фильтр начинается с нетокенного символа или `not`/`!`/`-`/`=`/`>`/`{`, префикс можно не писать. Безопаснее писать `filter` всегда.
+
+Ключевые пайпы:
+
+| Пайп | Назначение | Пример |
 | :--- | :--- | :--- |
-| `fields` | Выбор конкретных колонок для чтения с диска. | `| fields _time, host, msg` |
-| `filter` | Явная фильтрация после трансформаций. | `| filter status >= 400` |
-| `sort by` | Сортировка результатов (`asc` / `desc`). | `| sort by (_time desc)` |
-| `limit` | Ограничение количества возвращаемых строк. | `| limit 100` |
-| `coalesce` | Возвращает первое непустое значение (New 2026). | `| coalesce(user_id, uid, "anon") as user` |
-| `json_array_concat` | Объединение JSON-массива в строку (New 2026). | `| json_array_concat tags, "," as s_tags` |
-| `uniq` | Возвращает уникальные наборы значений. | `| uniq with hits` |
-| `stream_context` | Выбор окружающих строк (должен быть первым). | `| stream_context(before 5, after 5)` |
-| `collapse_nums` | Группировка похожих строк путем замены чисел. | `| collapse_nums` |
+| `fields` | Только перечисленные колонки (меньше I/O) | `\| fields _time, host, _msg` |
+| `filter` | Явный пост-фильтр | `\| filter status>=400` |
+| `sort by` | Сортировка | `\| sort by (_time desc)` |
+| `limit` | Число возвращаемых строк | `\| limit 100` |
+| `top` | Топ-N по полям (+`hits`, `rank`) | `\| top 10 by (host)` |
+| `stats` | Агрегаты, в т.ч. `by()` и бакеты времени | `\| stats by(host) count() as n` |
+| `extract` / `extract_regexp` | Извлечение полей по шаблону/regexp | `\| extract "user=<user_id> status=<status>"` |
+| `unpack_json` / `unpack_logfmt` / `unpack_syslog` | Парсинг форматов в поля | `\| unpack_json` |
+| `replace` / `replace_regexp` | Замена внутри поля | `\| replace("old", "new") at msg` |
+| `format` | Новое поле из шаблона | `\| format "User <user> from <ip>" as summary` |
+| `coalesce` | Первое непустое значение (v1.52.0) | `\| coalesce(user_id, uid, "anon") as user` |
+| `collapse_nums` | Шаблонизация: числа → плейсхолдеры | `\| collapse_nums` |
+| `json_array_concat` | JSON-массив → строка (v1.52.0) | `\| json_array_concat tags, "," as s_tags` |
+| `uniq` | Уникальные комбинации полей | `\| uniq with hits` |
+| `stream_context` | Соседние строки потока (первым пайпом) | `\| stream_context(before 5, after 5)` |
+| `field_names` / `field_values` | Исследование схемы | `\| field_values level` |
+| `math` | Математика над stats-полями | `\| math (errors / total * 100) as rate` |
+| `join` / `union` / `enrich` | Обогащение и объединение | см. официальную документацию |
+| `block_stats` / `query_stats` / `total_stats` | Отладка стоимости запроса | см. сценарий «Медленные запросы» |
 
----
+## Агрегации (stats)
 
-## Парсинг и трансформация
-
-LogsQL позволяет извлекать структурированные данные из неструктурированных сообщений на лету.
-
-- **`unpack_json`**: Распаковка JSON-объекта в отдельные поля.
-- **`extract`**: Извлечение по шаблону с использованием `<name>`.
-  ```logsql
-  * | extract "user=<user_id> status=<status>"
-  # → создает поля user_id и status
-  ```
-- **`extract_regexp`**: Извлечение с помощью именованных групп регулярных выражений.
-- **`replace`**: Замена подстроки в поле.
-  ```logsql
-  * | replace("old_val", "new_val") at my_field
-  ```
-- **`format`**: Создание нового поля на основе шаблона.
-  ```logsql
-  * | format "User <user> logged from <ip>" as summary
-  ```
-
----
-
-## Агрегации и аналитика (stats)
-
-Оператор `stats` используется для вычисления метрик над группами логов.
-
-**Функции агрегации:**
-- `count()`, `count_uniq(field)` — подсчет количества.
-- `sum(field)`, `avg(field)` — математические операции.
-- `min(field)`, `max(field)` — экстремумы.
-- `quantile(0.95, field)` — перцентили.
-- `stddev(field)` — стандартное отклонение (New 2026).
-
-**Пример агрегации по времени (Bucketing):**
 ```logsql
 _time:1h | stats by(_time:1m, host) count() as req_per_min
-# → результат: таблица с количеством запросов в минуту для каждого хоста
+# → строки по минутам и хостам
 ```
 
----
+Функции: `count()`, `count() if (filter)` (условный счётчик), `sum/avg/min/max/median/stddev(field)`, `quantile(0.95, field)`, `histogram(field)`, `rate(field)` и др. Бакеты времени: `by(_time:1m)`, `by(_time:5m:offset 30m)` со смещением таймзоны. Строки бакетов, не имеющие входов, пропускаются.
 
-## Практические сценарии
+**Кардинальность в stats:**
 
-### 1. Анализ процента ошибок
-Определение доли неуспешных запросов с использованием математических операций.
+- `count_uniq(field)` — **точный**, хранит все уникальные значения в памяти; на больших cardinality ограничивайте: `count_uniq(ip) limit 1_000_000`.
+- `count_uniq_hash(field)` — **приблизительный** (хеши, возможны коллизии → занижение), быстрее и легче по памяти на огромных множествах.
+- `top N by (field)` — топ по частоте, без удержания всех значений в памяти.
+
+## Query options (опции запроса)
+
+Передаются как аргументы запроса (POST `query` + опции):
+
+- `concurrency=N` — параллелизм чтения;
+- `parallel_readers=NP/2` — число параллельных readers (по умолчанию пропорционально CPU);
+- `time_offset=24h` — сдвинуть `_time` (backfill-сценарии, сравнение «сейчас vs вчера»);
+- `global_filter=<filter>` — применить фильтр ко всем временным диапазонам (в т.ч. внутри subqueries);
+- `ignore_global_time_filter=1` — игнорировать внешний time filter (использовать осторожно);
+- `allow_partial_response=1` — кластер: разрешить частичный ответ при недоступности части vlstorage.
+
+## Практические сценарии (SRE)
+
+### 1. Процент ошибок по хостам
+
 ```logsql
-_time:1h app:web 
-| stats count() as total, count() if (status:>=400) as errors 
-| math errors / total * 100 as error_rate
-| filter error_rate > 5
+_time:1h app:web
+| stats by(host)
+    count() as total,
+    count() if (status>=400) as errors
+| math (errors / total * 100) as error_rate
+| filter error_rate:>5
+| sort by (error_rate desc)
 ```
-**Результат:** Список временных интервалов или хостов, где процент ошибок превысил 5%.
 
-### 2. Схлопывание похожих сообщений об ошибках
-Использование `collapse_nums` для группировки логов, различающихся только идентификаторами или числами.
+### 2. Топ шаблонов ошибок
+
+Числа, ID и таймстемпы в сообщениях мешают группировать — `collapse_nums` приводит сообщения к шаблону:
+
 ```logsql
-_time:24h level:error 
-| collapse_nums 
-| stats by(_msg) count() as hits 
+_time:24h level:error
+| collapse_nums
+| stats by(_msg) count() as hits
 | sort by (hits desc)
+| limit 20
 ```
-**Результат:** Топ уникальных шаблонов ошибок с количеством их вхождений.
 
-### 3. Работа с несколькими ID пользователя
-Использование `coalesce` для нормализации данных из разных версий API.
+### 3. Топ потоков по объёму (поиск «шумных» сервисов)
+
+```logsql
+_time:1h | top 10 by (_stream)
+```
+
+### 4. Нормализация полей из разных версий API
+
 ```logsql
 _time:15m | coalesce(user_id, legacy_uid, "guest") as user | stats by(user) count()
 ```
 
-### 4. Деплой на bare-metal (systemd)
-**Задача:** Запустить VictoriaLogs на сервере без контейнеризации, с автозапуском и ротацией логов.
+### 5. Разбор медленного запроса
+
+**Серверный уровень.** Медленные запросы (по умолчанию дольше 5s — флаг `-search.logSlowQueryDuration`) попадают в логи; копятся в `vl_slow_queries_total`. Счётчики per-query I/O: `vl_storage_per_query_processed_rows`, `vl_storage_per_query_read_bytes` и др.
+
+**Уровень запроса.** Статистика исполнения — пайпы, а не отдельный HTTP-эндпоинт:
+
+```logsql
+# Итоговая статистика: BlocksProcessed, RowsProcessed, BlocksSearchDuration и т.д.
+_time:24h level:error | query_stats
+
+# Стоимость по блокам (где именно «дорого») — отладочный пайп
+_time:24h | filter level:error | block_stats
+```
+
+**Корректирующие действия:** сузить `_time`; добавить stream-фильтр `{...}`; вынести дорогие regexp/substring после селективных фильтров; ограничить колонки `| fields`; увеличить бакеты `by(_time:5m)`; снизить cardinality stream-полей; для кластера — проверить доступность vlstorage (`allow_partial_response`).
+
+### 6. Логирование новых потоков (диагностика cardinality)
 
 ```bash
-# Создание пользователя и директорий
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin victorialogs
-sudo mkdir -p /etc/victorialogs /var/lib/victorialogs
-sudo chown victorialogs:victorialogs /var/lib/victorialogs
+curl -X POST 'http://localhost:9428/internal/log_new_streams?seconds=10'
+# → 10 секунд в лог пишется каждая новая комбинация stream-полей
 ```
+
+### 7. Выборка и экспорт
+
+```bash
+# Топ-100 ошибок за час (JSON lines)
+curl -sG 'http://localhost:9428/select/logsql/query' \
+  --data-urlencode 'query=_time:1h level:error | sort by (_time desc) | limit 100'
+
+# Hits-статистика для Grafana (гистограмма «сколько логов в бакете»)
+curl -sG 'http://localhost:9428/select/logsql/hits' \
+  --data-urlencode 'query=level:error'
+```
+
+Удаление данных ( Enterprise-фича `-retentionPeriod` не заменяет; задаётся флагом `-deleteAuthKey` / authKey запроса):
+
+```bash
+curl -X POST 'http://localhost:9428/delete/run_task?filter={app=nginx}&authKey=<deleteAuthKey>'
+# задача удаления запускается асинхронно; статус — /delete/list_tasks
+```
+
+## Эксплуатация VictoriaLogs (devops/sre)
+
+### Установка
+
+```bash
+# Бинарник (пример v1.53.0; Linux amd64/arm64, macOS, Windows, FreeBSD/OpenBSD — артефакты релизов)
+curl -L -O https://github.com/VictoriaMetrics/VictoriaLogs/releases/download/v1.53.0/victoria-logs-linux-amd64-v1.53.0.tar.gz
+tar xzf victoria-logs-linux-amd64-v1.53.0.tar.gz
+./victoria-logs-prod -storageDataPath=/var/lib/victoria-logs -httpListenAddr=:9428
+```
+
+```bash
+# Docker (пиньте версию)
+docker run -d --name victoria-logs -p 9428:9428 \
+  -v /var/lib/victoria-logs:/victoria-logs \
+  docker.io/victoriametrics/victoria-logs:v1.53.0 \
+  -storageDataPath=/victoria-logs
+```
+
+Для Kubernetes — чарты `victoria-logs-single` / `victoria-logs-cluster` / `victoria-logs-collector` и CRD `VLSingle`/`VLCluster`; systemd-сценарий — в [victorialogs_k8s_setup.md](../Kubernetes/MonitoringLogging/victorialogs_k8s_setup.md) нет, для bare-metal используйте unit:
 
 ```ini
-# /etc/systemd/system/victorialogs.service
-[Unit]
-Description=VictoriaLogs
-After=network.target
-
+# /etc/systemd/system/victorialogs.service (фрагмент)
 [Service]
-Type=simple
 User=victorialogs
-Group=victorialogs
-ExecStart=/usr/local/bin/victoria-logs \
-  -storageDataPath=/var/lib/victorialogs \
-  -httpListenAddr=:9428
+ExecStart=/usr/local/bin/victoria-logs-prod \
+  -storageDataPath=/var/lib/victoria-logs \
+  -httpListenAddr=:9428 \
+  -retentionPeriod=30d
 Restart=on-failure
-RestartSec=5
 LimitNOFILE=65536
-
-[Install]
-WantedBy=multi-user.target
 ```
 
-```bash
-# Установка и запуск
-sudo systemctl daemon-reload
-sudo systemctl enable --now victorialogs
+### Порты и эндпоинты
 
-# Проверка
-systemctl status victorialogs
-curl -s http://localhost:9428/health | head
-```
-
-### 5. Resource Limits и тюнинг производительности
-**Задача:** Ограничить потребление ресурсов VictoriaLogs в production и подобрать оптимальные параметры.
-
-```bash
-# Ограничение ресурсов через systemd
-# /etc/systemd/system/victorialogs.service
-[Service]
-CPUQuota=50%
-MemoryMax=2G
-TasksMax=64
-```
-
-```bash
-# Ограничение через Docker
-docker run -d \
-  --name victorialogs \
-  --cpus=1 \
-  --memory=2g \
-  -p 9428:9428 \
-  -v /etc/victorialogs:/storage \
-  docker.io/victoriametrics/victoria-logs:latest \
-  -storageDataPath=/storage
-```
-
-> **Важно:** При высокой нагрузке (>100K строк/сек) увеличивайте `memory.allowedPercent` до 50% и используйте NVMe-накопители. Для больших сред — уменьшайте количество `_stream_fields` dimensions.
-
-### 6. Production runbook — реакция на медленные запросы
-**Задача:** Структурировать действия инженера при degration производительности запросов.
-
-**Шаг 1: Идентификация проблемного запроса**
-```bash
-# Проверить метрики VictoriaLogs
-curl -s http://localhost:9428/metrics | grep vl_victorialogs_query
-
-# Просмотреть медленные запросы
-curl -s 'http://localhost:9428/select/logsql/query_stats' | head
-```
-
-**Шаг 2: Анализ LogsQL**
-```logsql
-# Проверить стоимость выполнения по блокам
-_time:24h | filter level:error | block_stats | limit 10
-```
-
-**Шаг 3: Корректирующие действия**
-| Действие | Описание |
+| Эндпоинт | Назначение |
 | :--- | :--- |
-| **Уменьшение временного окна** | Уменьшить `_time` до минимально необходимого |
-| **Удаление лишних полей** | Добавить `| fields _time, _msg` в конец запроса |
-| **Упрощение фильтров** | Переместить фильтры в начало запроса |
-| **Увеличение interval** | Для агрегаций использовать больший интервал bucketing |
-| **Проверка streams** | Снизить количество `_stream_fields` если их слишком много |
+| `:9428/insert/*` | Приём логов (jsonline, Elasticsearch, Loki, OTLP, syslog и др.) — см. [victorialogs_ingestion.md](./victorialogs_ingestion.md) |
+| `:9428/select/logsql/query` | Выполнение LogsQL-запросов |
+| `:9428/select/logsql/hits` | Hits-гистограмма для Grafana |
+| `:9428/select/vmui` | Встроенный Web UI |
+| `:9428/select/vmalert/*` | Прокси на vmalert (интеграция UI) |
+| `:9428/metrics` | Метрики Prometheus (**тот же порт**, отдельного 9429 нет) |
+| `:9428/internal/*` | Управление: partition attach/detach/snapshot, force_merge, log_new_streams, delete |
+| `:9428/debug/pprof/*` | pprof (heap, profile) для профилирования |
 
-**Шаг 4: Верификация**
+### Retention и партиции
+
+- По умолчанию хранится `[now-7d, now]`; записи вне диапазона **отклоняются на приёме** (`-retentionPeriod`, минимум `1d`). Будущие метки времени: до `now+2d` (`-futureRetention`).
+- Старые суточные партиции `<-storageDataPath>/partitions/YYYYMMDD` удаляются фоновой очисткой; каждое отклонение пишется в счётчик `vl_rows_dropped_total`.
+- Дисковые лимиты (взаимоисключающие с точностью до комбинации с временем): `-retention.maxDiskSpaceUsageBytes=100GiB` или `-retention.maxDiskUsagePercent=80`. Чтобы чистить только по диску: `-retentionPeriod=100y -retention.maxDiskUsagePercent=85`.
+- Остановка приёма при нехватке места: `-storage.minFreeDiskSpaceBytes` (по умолчанию ~10 GB) → режим read-only, метрика `vl_storage_is_read_only=1`.
+- Бэкап партиций: `POST /internal/partition/snapshot/create?partition_prefix=YYYYMMDD` → rsync снапшота → `POST /internal/partition/detach?name=YYYYMMDD` (ждёт завершения читающих запросов) → удаление каталога. Multi-tier (NVMe→HDD) строится на той же последовательности — детально в [victorialogs_internals.md](./victorialogs_internals.md).
+- Принудительная компакция старых партиций: `POST /internal/force_merge?partition_prefix=YYYYMMDD`.
+
+### Мониторинг
+
+Метрики — на `http://localhost:9428/metrics`. Ключевые (полный справочник — [Metrics of VictoriaLogs](https://docs.victoriametrics.com/victorialogs/metrics/)):
+
+| Метрика | Смысл |
+| :--- | :--- |
+| `vl_rows_ingested_total` | Принято строк (норма ingest) |
+| `vl_bytes_ingested_total` | Принято байт |
+| `vl_rows_dropped_total` | Отбрасано (вне retention и т.п.) — алерт `rate(...) > 0` |
+| `vl_too_long_lines_skipped_total` | Строки длиннее лимита |
+| `vl_http_requests_total` / `vl_http_request_duration_seconds` | HTTP-трафик API |
+| `vl_slow_queries_total` | Медленные запросы (> `-search.logSlowQueryDuration`) |
+| `vl_storage_rows` / `vl_data_size_bytes` / `vl_compressed_data_size_bytes` | Объём и сжатие |
+| `vl_streams_created_total` | Создание потоков (cardinality-взрыв) |
+| `vl_free_disk_space_bytes` / `vl_total_disk_space_bytes` | Диск |
+| `vl_storage_is_read_only` | Read-only из-за места |
+| `vl_active_merges` / `vl_merges_total` | Фоновые компакции |
+
+Для автоскрейпа vmagent'ом / кластера смотрите [vmagent_overview.md](./vmagent_overview.md) и [victorialogs_internals.md](./victorialogs_internals.md); compose-демо с мониторингом и алертингом — в репозитории VictoriaLogs (`deployment/docker`).
+
+### Мультитенантность и безопасность
+
+- Тенант — заголовки `AccountID` / `ProjectID` (uint32, по умолчанию 0) при записи и запросе. Сам VT **не делает per-tenant авторизацию** — ставьте [vmauth](./vmauth_overview.md) с маршрутизацией правил на tenant.
+- Базовая защита: `-httpAuth.username/-password` (Basic Auth на весь HTTP) и authKey'ы служебных эндпоинтов: `-metricsAuthKey`, `-flagsAuthKey`, `-deleteAuthKey`, `-pprofAuthKey` (переопределяют `-httpAuth.*`).
+- TLS — флаги `-tls` + сертификаты; на практике чаще — прокси перед VT.
+- Удаление логов только через `/delete/run_task` (Enterprise) с authKey — полезно ограничивать сетью.
+
+### Валидация
+
 ```bash
-# Проверить, что latency снизилась
-curl -s 'http://localhost:9428/select/logsql/query_stats' | grep latency
-```
-
-### 7. Управление retention и ротацией данных
-**Задача:** Настроить автоматическое удаление старых логов.
-
-```bash
-# Запуск с retention 30 дней
-victoria-logs \
-  -storageDataPath=/var/lib/victorialogs \
-  -retentionPeriod=30d \
-  -httpListenAddr=:9428
-```
-
-```bash
-# Проверка текущего retention
-curl -s http://localhost:9428/metrics | grep retention
-```
-
-> **Важно:** Изменение `-retentionPeriod` влияет только на НОВЫЕ данные. Старые разделы удаляются при следующем запуске фоновой очистки. Для немедленного применения удалите соответствующие каталоги в `partitions/`.
-
----
-
-## Валидация установки
-
-### Health checks
-```bash
-# Проверка доступности API
 curl -s http://localhost:9428/health
 # → OK
 
-# Проверка метрик
-curl -s http://localhost:9428/metrics | grep vl_victorialogs_up
-# → vl_victorialogs_up 1
+# Тестовая запись и чтение
+echo '{"level":"info","msg":"validation ping"}' | \
+  curl -s -X POST -H 'Content-Type: application/stream+json' --data-binary @- \
+  'http://localhost:9428/insert/jsonline'
+curl -sG http://localhost:9428/select/logsql/query --data-urlencode 'query=_time:5m "validation ping"'
+# → запись в ответе
+
+# Метрики и Web UI
+curl -s http://localhost:9428/metrics | head
+# → открыть http://<host>:9428/select/vmui и выполнить запрос *| limit 10
 ```
 
-### Верификация данных
-```bash
-# Отправить тестовый лог
-echo '{"level":"info","msg":"test log"}' | curl -X POST http://localhost:9428/insert/jsonline -d @-
+## Troubleshooting
 
-# Проверить, что лог появился
-curl -s 'http://localhost:9428/select/logsql/query' \
-  --data-urlencode 'query=_time:5m | stats count()'
-```
-
-### Диагностика типичных проблем
-| Симптом | Возможная причина | Решение |
+| Симптом | Причина | Действие |
 | :--- | :--- | :--- |
-| `curl /health` не отвечает | Сервис не запущен | `systemctl status victorialogs` |
-| `vl_victorialogs_up = 0` | Ошибка конфигурации | Проверить логи `journalctl -u victorialogs` |
-| Данные не поступают | Ошибка в агенте сбора | Проверить endpoint у vlagent/Fluent Bit |
-| Запросы возвращают 0 строк | Неверный `_time` фильтр | Увеличить временное окно запроса |
-| Высокое CPU (>100%) | Слишком много streams | Уменьшить `_stream_fields` cardinality |
-| Высокий disk I/O | Недостаток памяти для in-memory parts | Увеличить `memory.allowedPercent` |
-
----
+| `/health` не отвечает | Процесс не запущен / слушает другой адрес | `systemctl status`, `-httpListenAddr` |
+| Запросы возвращают 0 строк | Узкий `_time`; данные вне retention; тенант не тот | Расширить окно; проверить `vl_storage_log_max_timestamp_seconds`; заголовки AccountID/ProjectID |
+| Медленные запросы | Широкий `_time`, нет stream-фильтра, regexp, высокая cardinality | `query_stats` / `block_stats`; сузить окно; `{...}`-фильтр; `vl_slow_queries_total` |
+| Растёт `vl_rows_dropped_total` | Записи вне retention или `now+futureRetention` | Часы источника; `-futureRetention`; алерт на метрику |
+| Растёт `vl_streams_created_total` | Взрыв cardinality stream-полей | `/internal/log_new_streams`; убрать высококардинальные поля из `_stream_fields` |
+| Ингест остановлен, `vl_storage_is_read_only=1` | Место на диске ниже `-storage.minFreeDiskSpaceBytes` | Освободить диск; расширить retention-лимиты |
+| `unexpected pipe` на пост-фильтре | v1.51.0+: нет префикса `filter` | `... \| filter <условие>` |
+| Логи >256 KiB обрезаются/отбрасиваются | Лимит строки | `-insert.maxLineSizeBytes` (можно снизить; потолок 2 MB зашит в код) |
+| Слишком много полей в JSON-строке | Лимит полей на строку | `-insert.maxFieldsPerLine` (по умолчанию 1000) |
+| OOM при `count_uniq` | Точный подсчёт удерживает значения в памяти | `count_uniq(...) limit N`; `count_uniq_hash`; `top` |
 
 ## Рекомендации по производительности
 
-1. **Селективность**: Помещайте наиболее точные фильтры (например, `_time` или `_stream_fields`) в самое начало запроса.
-2. **Использование потоков**: Фильтрация по `_stream_fields` (например, `app="nginx"`, `env="prod"`) работает значительно быстрее, так как VictoriaLogs хранит данные потоков локализовано.
-3. **Минимизация I/O**: Всегда используйте пайп `| fields` для ограничения количества считываемых колонок, если вам нужны не все данные.
-4. **Предварительный осмотр**: Используйте `| field_names` или `| field_values name` для быстрого анализа схемы данных без сканирования всех записей.
-
----
-
-## Отладка и устранение неполадок
-
-### Типичные ошибки и диагностика
-
-| Симптом | Возможная причина | Диагностика | Решение |
-| :--- | :--- | :--- | :--- |
-| Медленные запросы | Слишком широкий `_time` или нет `| fields` | `| block_stats` | Уменьшить окно, добавить fields |
-| Потеря логов | Недостаточная память или диск полон | `df -h`, `journalctl` | Очистить место, увеличить memory.allowedPercent |
-| Высокое CPU | Много streams или сложные regex | `top -p <pid>` | Уменьшить `_stream_fields`, упростить фильтры |
-| Ошибки при ingest | Пустой или невалидный JSON | Логи vlinsert | Проверить формат отправляемых логов |
-| Данные не найдены | Неверный фильтр или retention | Проверить `_time` | Увеличить окно, проверить retentionPeriod |
-| Отсутствует `churn` метрика | Используется Prometheus без MetricsQL | Проверить версию VictoriaMetrics | Использовать MetricsQL или пересчитать вручную |
-
-### Диагностические команды
-```bash
-# Проверка статуса сервиса
-systemctl status victorialogs
-journalctl -u victorialogs --since "1 hour ago" --no-pager
-
-# Проверка ресурсов
-ps -p $(pgrep victoria-logs) -o pid,%cpu,%mem,cmd
-cat /proc/$(pgrep victoria-logs)/limits | grep "open files"
-
-# Проверка диска
-df -h /var/lib/victorialogs
-du -sh /var/lib/victorialogs/partitions/* | sort -rh | head
-```
-
-### Восстановление после сбоя
-```bash
-# Перезапуск с очисткой in-memory состояния
-sudo systemctl restart victorialogs
-
-# Проверка после перезапуска
-sleep 5
-curl -s http://localhost:9428/health
-# → OK
-```
-
----
-
-## Рекомендации по эксплуатации
-
-### Resource Limits и планирование
-VictoriaLogs — легковесный компонент, но при высокой нагрузке его требования растут:
-
-| Компонент | Рекомендация | Обоснование |
-| :--- | :--- | :--- |
-| **CPU** | 1 ядро на 20K строк/сек | vlinsert CPU-bound при высоком ingest |
-| **RAM** | `memory.allowedPercent` = 30-50% от total | Для in-memory parts и компрессии |
-| **Диск** | SSD/NVMe, отдельный раздел | Случайные чтения при запросах |
-| **open files** | `LimitNOFILE=65536` минимум | Множество открытых сегментов |
-
-### Безопасность
-- **Аутентификация:** Используйте `vmauth` как reverse proxy для реализации мультитенантности и разграничения прав доступа.
-- **Сеть:** Ограничьте доступ к порту `9428` firewall-ом. В production используйте только HTTPS с валидными сертификатами.
-- **Данные:** VictoriaLogs не имеет встроенной аутентификации; все вопросы безопасности решаются на уровне сетевого доступа и прокси.
-
-### Процедура обновления
-```bash
-# 1. Остановка сервиса
-sudo systemctl stop victorialogs
-
-# 2. Бэкап конфигурации и данных
-sudo tar -czf /root/vl-backup-$(date +%F).tar.gz /etc/victorialogs /var/lib/victorialogs
-
-# 3. Обновление бинарника
-sudo cp victoria-logs-new /usr/local/bin/victoria-logs
-sudo chmod +x /usr/local/bin/victoria-logs
-
-# 4. Запуск и проверка
-sudo systemctl start victorialogs
-sleep 3
-curl -s http://localhost:9428/health
-```
-
-### Очистка и обслуживание
-```bash
-# Проверка целостности данных
-victoria-logs -storageDataPath=/var/lib/victorialogs -check
-
-# Ручное удаление старого раздела (при изменении retention)
-sudo rm -rf /var/lib/victorialogs/partitions/20250101
-
-# Перезапуск фоновой очистки
-sudo systemctl restart victorialogs
-```
-
----
+1. Всегда ограничивайте `_time`; в Web UI полагайтесь на выбранный диапазон.
+2. Ставьте селективные фильтры (stream, exact, range) до regexp/substring/`*:`-поиска.
+3. Используйте `{stream}`-фильтры — они сокращают чтение блоков на диске сильнее любых полевых фильтров.
+4. `| fields` в конце — уменьшает объём ответа и чтение колонок.
+5. Исследуйте схему пайпами `field_names` / `field_values` вместо сканирования `*`.
+6. Сортировка и `count_uniq` без лимита дороги по памяти — лимитируйте.
+7. Память: `-memory.allowedPercent` (по умолчанию 60) кэши VictoriaLogs; docs рекомендуют держать ~50% RAM свободными, а на `-storageDataPath` — минимум 20% свободного места.
+8. `LimitNOFILE` — повышайте при большом числе сегментов/потоков (единственная «настройка, которую почти всегда нужно сделать» по FAQ вендора).
 
 ## Ограничения и особые случаи
 
-### Точность HyperLogLog и кардинальности
-LogsQL использует приблизительные алгоритмы для `count_uniq`. Отклонение от точного значения составляет ~2-3%, что приемлемо для большинства практических задач, но может быть критично при малых объемах данных.
-
-### WAL и диск
-Write-Ahead Log (WAL) обеспечивает гарантию сохранности данных при сбоях. Однако:
-- WAL может занимать значительное место на диске при пиковых нагрузках.
-- При аварийной остановке системы требуется выполнить WAL replay при старте, что увеличивает время восстановления.
-
-### Зависимость от сетевого доступа
-В кластерном режиме `vlinsert`, `vlstorage` и `vlselect` взаимодействуют по сети. Сетевые разрывы могут привести к:
-- Потере данных при ingest (если retry-буфер переполнен)
-- Тайм-аутам при выполнении запросов
-
-### Ограничения версии
-- Backfill для правил LogsQL с кастомным time filter не поддерживается (ограничение vmalert).
-- `stddev()` в `stats` добавлен в 2026 году и требует актуальной версии VictoriaLogs.
-
-### Известные проблемы
-1. **High Cardinality Streams:** Создание streams с миллионами уникальных значений кардинально снижает производительность.
-2. **Большие строки:** Строки > 1 MB требуют увеличения `insert.maxLineSizeBytes` и могут вызвать OOM.
-3. **Windows не поддерживается:** VictoriaLogs доступен только для Linux и macOS (amd64/arm64).
-
----
-
-## FAQ
-
-**В: Какой retention period выбрать для production?**
-О: Зависит от compliance-требований. Для большинства сред достаточно 30–90 дней. Для debugging критических инцидентов рекомендуется минимум 7 дней с возможностью экспорта в S3-совместимое хранилище для долгосрочного архива.
-
-**В: Нужно ли создавать mapping/индексы перед ingest?**
-О: Нет, VictoriaLogs использует schema-less подход. Поля автоматически обнаруживаются из JSON-записей. Предварительное описание схемы не требуется.
-
-**В: Как откатить изменения конфигурации?**
-О: Используйте systemd для управления сервисом:
-```bash
-sudo systemctl restart victorialogs
-# При проблемах:
-sudo systemctl revert victorialogs
-```
-
-**В: Чем LogsQL отличается от PromQL?**
-О: LogsQL — это pipeline-язык для логов (строки), PromQL — для метрик (числовые временные ряды). LogsQL оптимизирован для фильтрации и полнотекстового поиска, PromQL — для математических операций над агрегированными метриками.
-
-**В: Как мониторить сам VictoriaLogs?**
-О: Используйте встроенный эндпоинт `/metrics` (порт 9429) для сбора метрик в VictoriaMetrics. Ключевые метрики: `vl_victorialogs_inserted_rows_total`, `vl_victorialogs_query_duration_seconds`, `vl_victorialogs_memory_available_bytes`.
-
-**В: Поддерживается ли multi-tenancy?**
-О: Да, через `vmauth` как reverse proxy с маршрутизацией по пользователям/tenant_id. Подробнее см. [Внутреннее устройство VictoriaLogs](./victorialogs_internals.md).
-
-**В: Что делать при потере логов?**
-О: Проверить `insert.maxLineSizeBytes` (не пропускает большие строки), `_stream_fields` на высокую кардинальность, доступное место на диске и статус vlinsert через `/metrics`.
-
----
+- Лимит размера лог-строки — 2 MB (зашит); `-insert.maxLineSizeBytes` лишь снижает порог (по умолчанию 256 KiB).
+- Имя поля — максимум 128 байт; число полей на строку — `-insert.maxFieldsPerLine` (1000).
+- `count_uniq` точный, но память-ограниченный; `count_uniq_hash` приблизительный (возможны коллизии хешей → занижение).
+- Кластер: при недоступности части vlstorage запросы падают, если не задан `allow_partial_response` (см. [victorialogs_internals.md](./victorialogs_internals.md)).
+- `stddev`, `coalesce`, `json_array_concat` требуют актуальных версий (соответственно с v1.49.0 и v1.52.0).
+- Backfill-правил vmalert с кастомным time filter имеет ограничения vmalert — см. [vmalert_overview.md](./vmalert_overview.md).
 
 ## Дополнительная информация
 
+### Ссылки
+
+- [LogsQL (официально)](https://docs.victoriametrics.com/victorialogs/logsql/) — полный справочник фильтров и пайпов;
+- [LogsQL Examples](https://docs.victoriametrics.com/victorialogs/logsql-examples/) / [SQL→LogsQL](https://docs.victoriametrics.com/victorialogs/sql-to-logsql/) / [LogQL→LogsQL](https://docs.victoriametrics.com/victorialogs/logql-to-logsql/) — рецепты и миграции;
+- [Metrics of VictoriaLogs](https://docs.victoriametrics.com/victorialogs/metrics/) — справочник метрик;
+- [vlogscli](https://docs.victoriametrics.com/victorialogs/querying/vlogscli/) — рекомендуемый CLI для запросов;
+- [Песочница](https://play-vmlogs.victoriametrics.com/) — Web UI с демо-данными.
+
 ### См. также
-- **[Внутреннее устройство VictoriaLogs](./victorialogs_internals.md)** — архитектурные оптимизации и структура хранения.
-- **[Инжест логов](./victorialogs_ingestion.md)** — протоколы приёма и коллекторы.
-- **[Развёртывание в Kubernetes](../Kubernetes/MonitoringLogging/victorialogs_k8s_setup.md)** — руководство по установке стека логирования.
-- **[Обзор vmalert](./vmalert_overview.md)** — создание алертов на основе LogsQL запросов.
-- **[Управление правилами vmalert в Kubernetes](./vmalert_rules_management_with_manifests.md)** — VMRule CRD и оператор.
-- **[Логирование: глубокое погружение](../Concepts/Observability_and_Monitoring/logs_deep_dive.md)** — сравнение систем логирования.
 
-Связанные компоненты:
-- [VictoriaMetrics — обзор](./overview.md) — платформа хранения метрик;
-- [vmalert — обзор](./vmalert_overview.md) — алертинг на основе метрик и логов;
-- [VictoriaLogs: внутреннее устройство](./victorialogs_internals.md) — архитектура хранения;
-- [Cardinality в Prometheus](../Prometheus/concepts/labels_and_cardinality.md) — фундаментальные концепции кардинальности.
-
-# force reindex test
+- [VictoriaLogs: внутреннее устройство](./victorialogs_internals.md) — хранение, партиции, кластер;
+- [Инжест логов](./victorialogs_ingestion.md) — протоколы и коллекторы;
+- [Развёртывание в Kubernetes](../Kubernetes/MonitoringLogging/victorialogs_k8s_setup.md) — Helm/operator и мониторинг;
+- [vmalert](./vmalert_overview.md) — алерты на LogsQL (`type: vlogs`);
+- [vmauth](./vmauth_overview.md) — авторизация, тенанты, балансировка;
+- [Логирование: глубокое погружение](../Concepts/Observability_and_Monitoring/logs_deep_dive.md) — сравнение систем логирования.

@@ -1,5 +1,7 @@
 # Vector: Практические сценарии
 
+**Актуально для:** Vector 0.58.0 (latest stable, released 2026-08-26)
+
 ## Определения
 
 **Конфигурация Vector** — файл (TOML, YAML или JSON), описывающий направленный ациклический граф (DAG) обработки данных.
@@ -84,7 +86,7 @@ Vector предоставляет разнообразные источники 
 
 ### 1. Роутер логов: Kafka → OpenSearch
 
-**Сценарий:** Агрегация логов из высоконагруженного кластера Kubernetes через промежуточный буфер в Kafka.
+**Сценарий:** Агрегация логов с более чем одного хоста через промежуточный буфер в Kafka (on-premise).
 
 **Задача:**
 1.  Вычитывание из Kafka по Consumer Group.
@@ -93,32 +95,30 @@ Vector предоставляет разнообразные источники 
 4.  Маршрутизация по индексам на основе метаданных.
 
 ```yaml
-# Пример в формате YAML (часто используется в K8s Helm values)
-customConfig:
-  sources:
-    kafka_in:
-      type: kafka
-      bootstrap_servers: "kafka-cluster:9092"
-      topics: ["kubernetes-logs"]
-      group_id: "vector-aggregator-v1"
+sources:
+  kafka_in:
+    type: kafka
+    bootstrap_servers: "kafka-cluster:9092"
+    topics: ["app-logs"]
+    group_id: "vector-aggregator-v1"
 
-  transforms:
-    process_logs:
-      type: remap
-      inputs: ["kafka_in"]
-      source: |
-        # Парсинг основного сообщения
-        . = parse_json!(.message)
-        
-        # Рекурсивная замена точек в ключах (K8s annotations/labels)
-        if exists(.kubernetes.labels) {
-          .kubernetes.labels = map_keys(.kubernetes.labels, recursive: true) -> |key| {
-            replace(key, ".", "_")
-          }
+transforms:
+  process_logs:
+    type: remap
+    inputs: ["kafka_in"]
+    source: |
+      # Парсинг основного сообщения
+      . = parse_json!(.message)
+      
+      # Рекурсивная замена точек в ключах metadata (annotations, labels)
+      if exists(.metadata) {
+        .metadata = map_keys(.metadata, recursive: true) -> |key| {
+          replace(key, ".", "_")
         }
-        
-        # Удаление временных полей
-        del(.kafka_metadata)
+      }
+      
+      # Удаление временных полей
+      del(.kafka_metadata)
 
   sinks:
     os_out:
@@ -147,7 +147,9 @@ if .level == "ERROR" || .level == "WARN" {
 } else {
     # Динамический порог (можно завязать на внешнюю таблицу или метрики)
     sampling_rate = 0.1
-    if random_float() > sampling_rate {
+    # random_float требует аргументы min/max и является fallible (v0.57+)
+    sample_val, err = random_float(0.0, 1.0)
+    if err == null && sample_val > sampling_rate {
         log("Event dropped due to sampling", level: "debug")
         abort # Прерываем обработку события (оно не пойдет в Sink)
     }
@@ -382,8 +384,11 @@ vector tap parse
   start_at_beginning = false  # Начать с конца (только новые события)
   max_line_bytes = 1048576  # 1 MiB лимит на строку
 
-  # Для multiline (Java stack traces, Python traceback):
-  # multiline.condition = { type = "regexp", pattern = "^\s", mode = "continue" }
+  # Глубокая конфигурация multiline для Java stack traces и Python traceback
+  [sources.app.multiline]
+  mode = "continue"
+  condition = { type = "regexp", pattern = "^\s" }
+  timeout_ms = 60000
 ```
 
 **Ключевые параметры:**
@@ -487,14 +492,16 @@ curl -s http://localhost:9598/metrics | grep component_deduced_events_total
     .user_agent_short = .http_user_agent ?? "unknown"
     del(.http_user_agent)
     
-    # Вычисляем bucket статуса
-    .status_class = to_int!(.status) -> {
-      0: "error",
-      1: "error",
-      2: "success",
-      3: "success",
-      4: "client_error",
-      5: "server_error"
+    # Вычисляем класс статуса HTTP
+    .status_code = to_int!(.status)
+    if .status_code >= 500 {
+      .status_class = "server_error"
+    } else if .status_code >= 400 {
+      .status_class = "client_error"
+    } else if .status_code >= 300 {
+      .status_class = "redirection"
+    } else {
+      .status_class = "success"
     }
   '''
 
@@ -536,7 +543,7 @@ vector tap parse_nginx
     .facility = "kernel"
     
     # Извлекаем модуль ядра из сообщения
-    .module = capture(.message, r'^(\w+):')?.[0] ?? "kernel"
+    .module = parse_regex(.message, r'^(?P<module>\w+):')?.module ?? "kernel"
   '''
 
 [sinks.loki_kernel]
@@ -638,19 +645,120 @@ vector tap parse_nginx
 
 ---
 
-## Дополнительная информация
+## Конфигурация и кодеки
 
-### Ключевые команды отладки
+### Encoding и codecs для sinks
+
+Каждый sink использует `encoding` для сериализации событий. Поддерживаемые кодеки:
+
+| Codec | Применение | Пример |
+| :--- | :--- | :--- |
+| `json` | Структурированные события (рекомендуется для Loki, Elasticsearch) | `encoding.codec = "json"` |
+| `text` | Plain text (syslog, файлы) | `encoding.codec = "text"` |
+| `bytes` | Сырые данные | `encoding.codec = "bytes"` |
+| `syslog` | Формат syslog (RFC 5424) | `encoding.codec = "syslog"` |
+| `protobuf` | Protocol Buffers | `encoding.codec = "protobuf"` |
+| `gelf` | Graylog Extended Log Format | `encoding.codec = "gelf"` |
+
+**Framing (разделение сообщений):**
+
+Для TCP и Unix socket sinks используется framing для определения границ сообщений:
+
+```toml
+[sinks.tcp_out]
+type = "socket"
+inputs = ["normalize"]
+address = "logstash:514"
+
+[sinks.tcp_out.encoding]
+codec = "json"
+
+[sinks.tcp_out.encoding.framing]
+mode = "newline-delimited"  # каждое событие заканчивается \n
+# или mode = "length-prefixed" с length.delimiter = 4
+```
+
+**Пример: отправка в Loki с JSON-кодеком:**
+
+```toml
+[sinks.loki]
+type = "loki"
+inputs = ["normalize"]
+endpoint = "http://loki:3100"
+labels = { service = "myapp", host = "${HOSTNAME}" }
+
+[sinks.loki.encoding]
+codec = "json"  # каждое событие отправляется как JSON
+```
+
+### Сбор логов контейнеров (CRI)
+
+Vector собирает логи контейнеров через стандартный CRI-лог формат (`/var/log/pods/.../*.log`):
+
+```toml
+[sources.cri_logs]
+type = "file"
+include = ["/var/log/pods/*/*/*.log"]
+ignore_older = 86400
+start_at_beginning = false
+
+# CRI-логи в формате: <timestamp> <stream> <log>
+# Пример: 2024-01-15T10:23:45.123456789Z stdout P{"message":"hello","level":"info"}
+[sources.cri_logs]
+fingerprint.strategy = "device_and_inode"
+
+[transforms.parse_cri]
+type = "remap"
+inputs = ["cri_logs"]
+source = '''
+# Извлекаем JSON из CRI-лога (после timestamp и stream)
+. = parse_regex!(.message, r'^(?P<timestamp>\S+)\s+(?P<stream>stdout|stderr)\s+(?P<log>\d+\s+)(?P<json>.*)$')
+. = parse_json!(.json)
+'''
+```
+
+### Multiline parsing (склейка стеков)
+
+**Java stack trace:**
+
+```toml
+[sources.java_app]
+type = "file"
+include = ["/var/log/java-app/app.log"]
+
+[sources.java_app.multiline]
+mode = "continue"
+condition = { type = "regexp", pattern = "^\s" }  # строки, начинающиеся с пробела — продолжение
+timeout_ms = 60000  # таймаут склейки 60 секунд
+```
+
+**Python traceback:**
+
+```toml
+[sources.python_app]
+type = "file"
+include = ["/var/log/python-app/*.log"]
+
+[sources.python_app.multiline]
+mode = "continue"
+condition = { type = "regexp", pattern = "^(  File|    |Traceback|Error|Exception)" }
+timeout_ms = 30000
+```
+
+---
+
+## Операции и команды
+
+### CLI для отладки и валидации
 
 *   `vector validate [--no-environment] [--deny-warnings]` — проверка конфигурации на корректность без запуска (заменяет прежнюю `vector check`). `--no-environment` пропускает проверки окружения.
 *   `vector graph` — вывод топологии в формате DOT (GraphViz) для визуализации DAG.
-*   `vector vrl` — запуск интерактивной песочницы REPL для проверки выражений (с v0.56 включает полный набор функций).
+*   `vector vrl` — выполнение и отладка VRL-выражений: позиционный аргумент программы, чтение входных данных через stdin или `--input`, `--print-object` для вывода изменённого объекта. Без аргументов запускает интерактивный REPL.
 *   `vector tap <component_id>` — просмотр событий "на лету" на этапе пайплайна (аналог `tail -f`).
-*   `vector top` — визуализация топологии и нагрузки в реальном времени (через gRPC API).
-*   `vector remap <expr>` — однострочное применение VRL-выражения к JSON-событию (удобно для отладки).
-*   `vector convert <input> <output>` — конвертация конфигурации между форматами TOML/YAML/JSON.
+*   `vector top` — визуализация топологии и нагрузки в реальном времени через gRPC API.
+*   `vector test <config>` — запуск unit-тестов из секции `[[tests]]`; возвращает ненулевой код при падении любого теста (CI/CD).
 
-### Health checks и управление службой
+### Управление через systemd
 
 Vector поставляется с systemd-юнитом (`/etc/systemd/system/vector.service`). Для production рекомендуется настроить:
 
@@ -679,6 +787,58 @@ systemctl reload vector
 # → читает новый конфиг, сохраняя буферы
 ```
 
+## Устранение неполадок
+
+### События потеряны на этапе трансформации
+
+**Диагноз:** сравните `component_received_events_total` и `component_sent_events_total` для проблемного трансформа. Если разница растёт — события отбрасываются.
+
+**Причины и решения:**
+
+| Причина | Решение |
+| :--- | :--- |
+| `parse_json!()` abort на некорректном JSON | Замените на `parse_json()` с обработкой ошибки: `parsed, err = parse_json(.message); if err != null { .parse_error = true }` |
+| `random_float()` без аргументов (v0.57+) | Добавьте диапазон: `random_float(0.0, 1.0)` |
+| `del(.field)` с несуществующим полем | Используйте `exists(.field)` перед удалением, или `del(.field) ?? null` |
+| VRL timeout превышен | Уменьшите сложность программы, вынесите внешние вызовы в enrichment tables |
+
+**Диагностика:**
+```bash
+# Просмотр событий на этапе пайплайна
+vector tap parse_nginx
+# → если события есть в source, но отсутствуют после remap — проблема в VRL
+
+# Просмотр ошибок Vector
+journalctl -u vector -f | grep -i "vrl\|remap\|parse_error"
+```
+
+### Disk buffer переполняется
+
+**Причина:** Sink не успевает отправлять данные (Downstream недоступен или медленный).
+
+**Решения:**
+1.  Увеличьте `max_size` disk buffer (по умолчанию 1 GiB) — требует свободного места на диске.
+2.  Добавьте `throttle` или `sample` перед sink для снижения нагрузки.
+3.  Включите `acknowledgements` для гарантии at-least-once delivery.
+
+### Hot reload не применяет изменения
+
+**Причины:**
+*   `--watch-config` не включён в `vector.service`.
+*   Внешние VRL-файлы изменены, но `SIGHUP` не отправлен.
+*   Синтаксическая ошибка в конфиге — Vector откатывает к последней рабочей версии.
+
+**Диагностика:**
+```bash
+vector validate /etc/vector/vector.yaml
+# → если ошибка — исправьте перед reload
+
+# Принудительная перезагрузка VRL-файлов:
+kill -HUP $(pidof vector)
+```
+
+## Дополнительная информация
+
 ### Интерполяция переменных окружения (v0.57+)
 
 `${VAR}` в конфигурации отключена по умолчанию — включение только через `--dangerously-allow-env-var-interpolation` (см. [Vector Overview](./vector_overview.md), раздел «Безопасность»).
@@ -687,5 +847,8 @@ systemctl reload vector
 
 *   [Vector Overview](./vector_overview.md) — общие сведения и архитектура.
 *   [VRL Language](./vrl_language.md) — синтаксис и функции языка трансформации.
+*   [Vector Security](./vector_security.md) — TLS, аутентификация, секреты, systemd hardening.
+*   [Vector Reliability](./vector_reliability.md) — retry, DLQ, circuit breaker, rate limiting, acknowledgements.
+*   [Vector Performance](./vector_performance.md) — профилирование, benchmark, capacity planning.
+*   [Vector Production Deployment](./vector_production_deployment.md) — K8s DaemonSet, HA, health checks, upgrade.
 *   [Логирование: глубокое погружение](../Concepts/Observability_and_Monitoring/logs_deep_dive.md) — сценарии централизованного логирования bare-metal, маскирования PII и диагностики.
-*   [Fluent Bit → Kafka → Vector → OpenSearch](../ELK_Stack/Tutorials/fluentbit_kafka_vector_opensearch_pipeline.md) — детальное руководство по развертыванию инфраструктуры.

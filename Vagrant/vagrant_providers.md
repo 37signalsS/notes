@@ -1,5 +1,7 @@
 # Провайдеры и образы (Boxes) в Vagrant
 
+**Актуально для:** Vagrant 2.4.x
+
 ## Определения
 
 **Провайдер (Provider)** — программный слой или «движок» виртуализации, который Vagrant использует для создания и управления виртуальными машинами. Vagrant служит унифицированным интерфейсом, абстрагирующим работу с различными гипервизорами (VirtualBox, Libvirt, VMware, Hyper-V), контейнеризаторами (Docker) и локальными эмуляторами (QEMU). Облачные платформы (AWS, Azure, GCP) рассматриваются отдельно и не являются предметом этого раздела.
@@ -37,17 +39,17 @@ Vagrant хранит образы в кэше `~/.vagrant.d/boxes/`. При до
   "description": "Ubuntu 24.04 for VirtualBox and Libvirt",
   "versions": [
     {
-      "version": "202501.0",
+       "version": "202510.26.0",
       "providers": [
         {
           "name": "virtualbox",
-          "url": "https://example.com/ubuntu-24.04-virtualbox-202501.0.box",
+          "url": "https://example.com/ubuntu-24.04-virtualbox-202510.26.0.box",
           "checksum_type": "sha256",
           "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         {
           "name": "libvirt",
-          "url": "https://example.com/ubuntu-24.04-libvirt-202501.0.box",
+          "url": "https://example.com/ubuntu-24.04-libvirt-202510.26.0.box",
           "checksum_type": "sha256",
           "checksum": "a3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b856"
         }
@@ -97,8 +99,8 @@ Vagrant поддерживает версионирование образов, 
 ```ruby
 Vagrant.configure("2") do |config|
   config.vm.box = "bento/ubuntu-24.04"
-  # Оператор ~> означает "совместимая с 202501" (например, 202501.1)
-  config.vm.box_version = "~> 202501.0"
+   # Оператор ~> означает "совместимую с 202510.26" (например, 202510.26.0)
+   config.vm.box_version = "~> 202510.26.0"
 end
 ```
 
@@ -110,8 +112,35 @@ end
 | **libvirt** | `vagrant-libvirt` | Рекомендуется для Linux, производительность KVM |
 | **vmware_desktop** | `vagrant-vmware-desktop` | Платный, стабильная работа с VMware Workstation/Fusion |
 | **hyperv** | Встроен | Только Windows |
-| **qemu** | `vagrant-qemu` | macOS Apple Silicon, эмуляция ARM64 |
+| **qemu** | `vagrant-qemu` | macOS (Apple Silicon/Intel), Linux, Windows; эмуляция ARM64/x86_64 |
 | **docker** | Встроен | Контейнеры как ВМ |
+| **parallels** | `vagrant-parallels` | macOS x86_64/ARM64, Parallels Desktop |
+| **podman** | `vagrant-podman` | Linux/macOS, альтернатива Docker-провайдеру на базе Podman |
+
+### Предварительные требования
+
+Выбор провайдера определяется хост-платформой и требованиями к производительности. Перед началом работы:
+
+| Платформа | Рекомендуемый провайдер | Установка |
+| :--- | :--- | :--- |
+| **Linux** | Libvirt (KVM) | `sudo apt install libvirt-daemon-system qemu-kvm` + `vagrant plugin install vagrant-libvirt` |
+| **macOS (Intel)** | VirtualBox или VMware | VirtualBox [скачать](https://www.virtualbox.org/wiki/Downloads) или VMware Fusion + `vagrant plugin install vagrant-vmware-desktop` |
+| **macOS (Apple Silicon)** | QEMU или Parallels | `vagrant plugin install vagrant-qemu` или `vagrant plugin install vagrant-parallels` |
+| **Windows** | Hyper-V или VirtualBox | Включить Hyper-V через `Enable-WindowsOptionalFeature` или установить VirtualBox |
+
+**Проверка готовности:**
+```bash
+# Linux: убедиться, что KVM загружен
+lsmod | grep kvm
+# → kvm_intel или kvm_amd в выводе
+
+# macOS: проверить VT-x
+sysctl -n machdep.cpu.features | grep VMX
+# → VMX в выводе означает поддержку аппаратной виртуализации
+
+# Windows: проверить Hyper-V
+Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V
+```
 
 ## Практические сценарии
 
@@ -171,13 +200,13 @@ config.vm.provider "hyperv" do |h|
 end
 ```
 
-**Настройка QEMU (Apple Silicon):**
-Требует плагин `vagrant-qemu`. Использует Apple Hypervisor.framework.
+**Настройка QEMU (Apple Silicon и другие платформы):**
+Требует плагин `vagrant-qemu`. На macOS использует Apple Hypervisor.framework; на Linux — KVM; на Windows — WHPX.
 
 ```ruby
 config.vm.provider "qemu" do |qemu|
   qemu.machine = "virt,accel=hvf"
-  qemu.cpus = 4
+  qemu.smp = "cpus=4"    # Количество vCPUs (ppggff/vagrant-qemu 0.6.0)
   qemu.memory = "4G"
   qemu.arch = "aarch64"
 end
@@ -283,9 +312,16 @@ vagrant box add my-custom-box ./package.box --provider libvirt
 ### Сценарий 6: Проверка целостности образа
 
 ```bash
-# Список образов с контрольными суммами
-vagrant box list --checksum bento/ubuntu-24.04
-# → bento/ubuntu-24.04 (202501.0, virtualbox, sha256:e3b0c44298fc...)
+# Список образов с указанием провайдера и версии ( Vagrant Cloud поддерживает
+# контрольные суммы, но команда `vagrant box list` их не выводит напрямую)
+vagrant box list
+# → bento/ubuntu-24.04 (202510.26.0, virtualbox)
+
+# Проверка контрольной суммы при добавлении нового образа
+vagrant box add bento/ubuntu-24.04 --provider virtualbox \
+  --checksum sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 \
+  --checksum-type sha256
+# → Confirming box checksum...
 
 # Принудительная перепроверка и повторная загрузка
 vagrant box update --box bento/ubuntu-24.04 --insecure
@@ -349,9 +385,9 @@ config.vm.provider "libvirt" do |lv|
   lv.memory = 8192
   lv.cpus = 4
 
-  # Адрес устройства из `lspci -nn` (например, GPU: 01:00.0)
-  lv.pci bus: "0x01", slot: "0x00", function: "0x0"
-  # Звук/второй узел GPU: lv.pci bus: "0x01", slot: "0x00", function: "0x1"
+   # Адрес устройства из `lspci -nn` (например, GPU: 01:00.0)
+   lv.pci :domain => "0x0000", :bus => "0x01", :slot => "0x00", :function => "0x0"
+   # Звук/второй узел GPU: lv.pci :domain => "0x0000", :bus => "0x01", slot => "0x00", function => "0x1"
 end
 ```
 
@@ -375,17 +411,20 @@ lspci -s 01:00.0 -nn   # полный адрес bus:slot.func
 | **VirtualBox** | Hosted | Средняя | Встроен | Универсальное решение для обучения и macOS (x86_64). |
 | **VMware Workstation/Fusion** | Hosted | Высокая | `vagrant-vmware-desktop` | Стабильность, работа с 3D, корпоративные среды. |
 | **Hyper-V** | Нативный | Высокая | Встроен | Корпоративные Windows-системы. |
-| **QEMU (HVF)** | Эмулятор/Гипервизор | Высокая (HVF) | `vagrant-qemu` | macOS Apple Silicon (M1/M2/M3). |
+| **QEMU (HVF)** | Эмулятор/Гипервизор | Высокая (HVF/KVM) | `vagrant-qemu` | macOS (Apple Silicon, Intel), Linux, Windows. |
 | **Docker** | Контейнер | Экстремальная | Встроен | Легковесные сервисы, CI/CD, тестовые среды. |
 
-### Источники образов и поддержка (2026)
+### Источники образов
 
-С 2026 года компания Canonical прекратила поддержку официальных образов Ubuntu в Vagrant Cloud (начиная с 24.04).
+Официальные образы Ubuntu в Vagrant Cloud больше не публикуются компанией Canonical (с 24.04 из-за перехода на BSL). Для Ubuntu используйте альтернативные источники или ссылки напрямую на облачные образы Canonical ([cloud-images.ubuntu.com](https://cloud-images.ubuntu.com/vagrant/)).
+
 **Рекомендованные источники:**
-- **Bento (Chef):** Проект по сборке чистых, минимизированных образов для большинства ОС (`bento/ubuntu-*`, `bento/debian-*`). Поддерживаются VirtualBox, Libvirt, VMware.
+- **Bento (Chef):** Проект по сборке чистых, минимизированных образов для большинства ОС (`bento/ubuntu-*`, `bento/debian-*`). Поддерживаются VirtualBox, Libvirt, VMware. Текущая версия `bento/ubuntu-24.04`: `202510.26.0`.
 - **Generic (Lavabit):** Широкий выбор дистрибутивов с хорошей поддержкой разных провайдеров.
 - **Debian / AlmaLinux:** Продолжают выпускать официальные качественные образы.
 - **Собственные зеркала:** Для изолированных сред используйте `box_url` с внутренним HTTPS-сервером.
+
+> **Примечание:** HCP Vagrant (HashiCorp Cloud Platform Vagrant registry) устаревает. Новые box больше не могут быть созданы после 1 октября 2026 года; существующие работают до 31 декабря 2026 года.
 
 ### Создание переносимых образов (Packaging)
 

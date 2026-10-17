@@ -291,23 +291,12 @@ kustomize build overlays/production/ | kubectl apply --dry-run=server -f -
 kubectl get deployment web-server -n production -o yaml | grep "kubectl.kubernetes.io/last-applied-configuration"
 ```
 
-### 3.10. Отладка с ArgoCD/Flux
+### 3.10. Отладка с ArgoCD
 
 ```bash
 # ArgoCD: что именно видит контроллер
 argocd app manifests my-app-production
 argocd app diff my-app-production
-
-# Flux: статус и логи kustomize-controller
-flux get kustomization my-app-production
-flux logs --kind=kustomization --name=my-app-production
-kubectl describe kustomization my-app-production -n flux-system
-
-# Проверить, не в состоянии ли лирица (suspend)
-flux get kustomizations | grep True  # ← SUSPENDED = true
-
-# Принудительная реконсиляция
-flux reconcile kustomization my-app-production --with-source
 ```
 
 ## 4. Дополнительная информация

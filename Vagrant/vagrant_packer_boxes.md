@@ -1,5 +1,7 @@
 # Vagrant: Packer и пайплайн box-образов
 
+**Актуально для:** Vagrant 2.4.9, Packer 1.16.x
+
 ## Определения
 
 **Packer** — инструмент HashiCorp для воспроизводимой сборки образов ОС. В контексте Vagrant используется как основной способ получения повторяемых `.box` файлов: описывает образ как код (HCL2), собирает ВМ у провайдера и упаковывает её в бокс. Общие концепции Packer (golden image, image pipeline, hardening) описаны в [Автоматизация сборки образов](../Linux/Virtualization/vm_images/image_automation.md).
@@ -10,7 +12,7 @@
 
 **Post-Processor `vagrant-cloud` (Packer)** — этап Packer, загружающий получившийся `.box` прямиком в указанный box на Vagrant Cloud. Запускается строго после `vagrant` (цепочка).
 
-**Vagrant Cloud** — публичный каталог (registry) box-образов и API для их публикации/раздачи. Публикация и приватные box требуют аутентификации (`vagrant login`, токен доступа). С 2026 года HashiCorp сворачивает регистри HCP Vagrant в пользу классического `vagrantcloud.com` — см. [Источники образов](./vagrant_providers.md).
+**Vagrant Cloud** — публичный каталог (registry) box-образов и API для их публикации/раздачи. Публикация и приватные box требуют аутентификации (`vagrant login`, токен доступа). HashiCorp объявила о плановой [устарелости HCP Vagrant](https://developer.hashicorp.com/hcp/docs/vagrant/hcp-vagrant-eol): создание новых box на HCP запрещено с **1 октября 2026**, поддержка прекывается **2 ноября 2026**, окончание операций — **31 декабря 2026**. Классический `vagrantcloud.com` продолжает работать — для миграции используйте [storage providers](https://developer.hashicorp.com/vagrant/vagrant-cloud/hcp-vagrant/storage-providers).
 
 **Box Tag (тег)** — идентификатор box в формате `ORGANIZATION/BOX_NAME` (например, `bento/ubuntu-24.04`). Используется в `Vagrantfile` (`config.vm.box`) и во всех командах `vagrant cloud`.
 
@@ -104,6 +106,10 @@ packer {
       version = ">= 1.0.0"
       source  = "github.com/hashicorp/virtualbox"
     }
+    vagrant = {
+      version = ">= 1.1.1"
+      source  = "github.com/hashicorp/vagrant"
+    }
   }
 }
 
@@ -113,7 +119,7 @@ variable "box_version" {
 
 source "virtualbox-iso" "ubuntu" {
   iso_url          = "https://releases.ubuntu.com/24.04/ubuntu-24.04.2-live-server-amd64.iso"
-  iso_checksum     = "sha256:af5e87809d9bb98835d5159e12d43f2e1f9e484e"
+  iso_checksum     = "sha256:<sha256-checksum>"
   ssh_username     = "vagrant"
   ssh_password     = "vagrant"
   ssh_wait_timeout = "3600s"
@@ -129,11 +135,12 @@ build {
     scripts = ["scripts/setup.sh", "scripts/cleanup.sh"]
   }
 
-  post-processor "vagrant" {
-    provider = "virtualbox"
-    output   = "builds/{{.Provider}}/{{.BuildName}}.box"
-    keep_input_artifact = true
-
+  post-processors {
+    post-processor "vagrant" {
+      provider = "virtualbox"
+      output   = "builds/{{.Provider}}/{{.BuildName}}.box"
+      keep_input_artifact = true
+    }
     post-processor "vagrant-cloud" {
       box_tag      = "my-org/ubuntu-24.04"
       version      = var.box_version
@@ -174,7 +181,7 @@ vagrant cloud publish my-org/ubuntu-24.04 "202601.1" \
 ```yaml
 # .gitlab-ci.yml (фрагмент)
 build_box:
-  image: hashicorp/packer:1.12
+  image: hashicorp/packer:1.16
   stage: build
   script:
     - packer init .
@@ -182,11 +189,16 @@ build_box:
   artifacts:
     paths:
       - builds/
+    expire_in: 1 week
   variables:
     VAGRANT_CLOUD_TOKEN: $BOX_PUBLISH_TOKEN   # Secret
 ```
 
-При релизе тегом используйте номер версии из тега: `--version "${CI_COMMIT_TAG#v}"` или параметризуйте `-var box_version=`.
+При релизе тегом используйте номер версии из тега: `--version "${CI_COMMIT_TAG#v}"` или параметризуйте `-var box_version=`. Сборка с `-timestamp-ui` и `-force` обеспечивает воспроизводимые логи в CI:
+
+```bash
+packer build -force -timestamp-ui -var "box_version=${CI_COMMIT_TAG#v}" box-config.pkr.hcl
+```
 
 ### Сценарий 4: Приватный box для внутренней команды
 
@@ -211,7 +223,8 @@ vagrant up --provider=libvirt
 ```ruby
 config.vm.box = "custom-build"
 config.vm.box_url = "https://artifacts.example.com/vagrant/build-env-1.2.0.box"
-config.vm.box_download_checksum = "sha256:$(sha256sum build-env-1.2.0.box | cut -d' ' -f1)"
+# Вычисляйте checksum отдельно в CI, а не в Vagrantfile — Ruby не поддерживает $(...) в строках
+config.vm.box_download_checksum = "sha256:" + `sha256sum build-env-1.2.0.box | cut -d' ' -f1`.strip
 config.vm.box_download_checksum_type = "sha256"
 ```
 
@@ -338,8 +351,9 @@ cosign verify-blob build-env.box --signature build-env.box.sig --certificate bui
 5. Для повторяемых мульти-провайдерных артефактов укажите `-only=<build>` в CI, чтобы собирать каждый провайдер отдельным джобом.
 6. Иммутабельность: при изменении конфигурации выпускайте новую версию, а не перезаписывайте существующую.
 7. **Supply-chain:** пините checksum при раздаче не через Vagrant Cloud, подписывайте `.box` (Sigstore/cosign) и сканируйте содержимое (`guestmount` + Trivy) перед релизом.
+8. **CI/CD аудит:** логируйте кто/когда опубликовал box — используйте `-var "box_version=${CI_COMMIT_TAG#v}"` в Packer и `--version-description` в `vagrant cloud publish` для трассируемости к коммиту/тегу.
 
-> **Примечание (2026):** HashiCorp объявила о сворачивании регистри HCP Vagrant. Новые box в HCP создавать нельзя начиная с декабря 2026, поддержка прекращается в марте 2027. Классический `vagrantcloud.com` продолжает работать — публикуйте туда.
+> **Примечание (2026):** HashiCorp объявила о [устарелости HCP Vagrant](https://developer.hashicorp.com/hcp/docs/vagrant/hcp-vagrant-eol) — этапированное сворачивание: создание новых box запрещено с **1 октября 2026**, поддержка прекывается **2 ноября 2026**, окончание операций — **31 декабря 2026**. Vagrant CLI и исходники на GitHub остаются доступными (open-source community edition). Для миграции используйте [storage providers](https://developer.hashicorp.com/vagrant/vagrant-cloud/hcp-vagrant/storage-providers) — S3, Azure Blob, IBM Cloud.
 
 ### См. также
 

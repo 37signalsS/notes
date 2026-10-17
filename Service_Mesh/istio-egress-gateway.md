@@ -1,5 +1,7 @@
 # Исходящий шлюз (Egress Gateway) в Istio
 
+**Актуально для:** Istio 1.29.x / 1.30+ / 1.31
+
 ## Определения
 
 **Egress Gateway** — выделенный экземпляр прокси Envoy на границе меша для исходящего (north-south) трафика. Весь исходящий трафик приложений (или отдельные сервисы, выбранные политикой) принудительно проходит через этот шлюз, что позволяет централизованно контролировать доступ к внешним сервисам: фильтровать по SNI/хосту, выполнять TLS-ориджинацию (termination и повторное шифрование), вести аудит и enforce default-deny.
@@ -91,7 +93,7 @@ Egress Gateway (Envoy)  ← маршрут по SNI/хосту, TLS origination,
 
 ```bash
 # Включение компонента через istioctl
-istioctl install --set profile=default --set components.egressGateways[0].name=istio-egressgateway --set components.egressGateways[0].enabled=true
+istioctl install --set profile=default --set components.egressGateways[0].name=istio-egressgateway --set components.egressGateways[0].enabled=true -y
 
 # Проверка
 kubectl get pods -n istio-system -l istio=egressgateway
@@ -163,7 +165,7 @@ spec:
       - api.example.com
     route:
     - destination:
-        host: istio-egressgateway.istio-system.svc.cluster.local
+        host: api.example.com
         port:
           number: 443
 ---
@@ -346,7 +348,21 @@ istioctl proxy-config endpoint deploy/istio-egressgateway -n istio-system | grep
 
 ---
 
-## Типичные ошибки и устранение неполадок
+## Операции и команды
+
+### Управление egress gateway
+
+| Действие | Команда |
+| :--- | :--- |
+| Включить egress gateway | `istioctl install --set profile=default --set components.egressGateways[0].enabled=true -y` |
+| Статус подов | `kubectl get pods -n istio-system -l istio=egressgateway` |
+| Статус config distribution | `istioctl proxy-status deploy/istio-egressgateway -n istio-system` |
+| Масштабирование | `kubectl scale deploy/istio-egressgateway -n istio-system --replicas=N` |
+| PDB для обновлений | `kubectl apply -f egress-gateway-pdb.yaml` (minAvailable: 1–2) |
+
+---
+
+## Устранение неполадок
 
 | Симптом | Причина | Решение |
 | :--- | :--- | :--- |
@@ -369,6 +385,35 @@ istioctl proxy-config endpoint deploy/istio-egressgateway -n istio-system | grep
 5. **TLS-версии**: на egress настраивайте `minProtocolVersion`/`maxProtocolVersion` в `DestinationRule`, чтобы соответствовать внешним требованиям.
 6. **SNI-звезды**: используйте wildcard-SNI (`*.example.com`) аккуратно — они снижают изоляцию между доменами.
 7. **Сертификаты**: для MUTUAL храните client-credentials в одном месте и автоматизируйте ротацию (cert-manager), иначе mTLS-вызовы к внешним API падают при истечении.
+
+---
+
+## Очистка и откат
+
+При удалении egress gateway избавьтесь от всех созданных ресурсов:
+
+```bash
+# 1. Удаление ServiceEntry и DestinationRule для внешних сервисов
+kubectl delete serviceentry external-api -n production 2>/dev/null
+kubectl delete destinationrule external-api -n production 2>/dev/null
+
+# 2. Удаление VirtualService на шлюзе и в меше
+kubectl delete virtualservice redirect-to-egress -n production 2>/dev/null
+kubectl delete virtualservice app-to-egress -n production 2>/dev/null
+
+# 3. Удаление egress Gateway
+kubectl delete gateway istio-egressgateway -n istio-system 2>/dev/null
+
+# 4. Отключение компонента (если установлен через istioctl)
+istioctl install --set profile=default --set components.egressGateways[0].enabled=false -y 2>/dev/null || true
+
+# 5. Проверка, что egress gateway удалён
+kubectl get pods -n istio-system -l istio=egressgateway
+# → No resources found
+
+# 6. Проверка, что трафик идёт напрямую (если REGISTRY_ONLY)
+kubectl exec deploy/my-app -n production -- curl -sS https://api.example.com/ -w "%{http_code}\n"
+```
 
 ---
 

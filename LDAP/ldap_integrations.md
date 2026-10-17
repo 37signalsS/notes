@@ -118,34 +118,9 @@ sudo gitlab-ctl reconfigure
 
 ### 3. Vault + LDAP Auth
 
-```bash
-# Включение LDAP auth method
-vault auth enable ldap
+Включение и конфигурация LDAP auth method, фильтры (`group_filter`, `user_filter`), назначение политик через `policies` в записях ролей/групп/пользователей, user lockout и разбор типовых ошибок — в отдельном руководстве: **[Vault: аутентификация через LDAP](../Vault/guides/vault-auth-ldap.md)**.
 
-# Конфигурация
-vault write auth/ldap/config \
-  url="ldaps://ldap.example.com:636" \
-  userdn="ou=people,dc=example,dc=com" \
-  userattr="uid" \
-  groupdn="ou=groups,dc=example,dc=com" \
-  groupattr="cn" \
-  binddn="cn=vault,ou=services,dc=example,dc=com" \
-  bindpass="SecretPassword" \
-  certificate=@/etc/vault/ca.crt \
-  insecure_tls=false \
-  starttls=true \
-  group_filter="(&(objectClass=groupOfNames)(member=%u))" \
-  user_filter="(&(objectClass=posixAccount)(uid=%u))"
-
-# Тестирование
-vault login -method=ldap username=jdoe password=UserPassword
-
-# Маппинг LDAP-групп на Vault-политики
-vault write auth/ldap/groups/devops policy=devops-full-access
-vault write auth/ldap/groups/developers policy=devops-read-only
-```
-
-Подробности: **[Vault: концепции](../Vault/concepts.md)**
+Подробнее о Vault: **[Vault: концепции](../Vault/concepts.md)**
 
 ### 4. Keycloak + LDAP Federation
 

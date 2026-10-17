@@ -249,6 +249,8 @@ max_duration_secs = 3600
 
 Это реализует определенный выше паттерн DLQ: ни одно событие не исчезает молча — ошибки парсинга накапливаются в бакете с префиксом даты, а метрика `component_errors_total` трансформации служит триггером для алерта. Для on-prem стендов вместо AWS S3 подойдёт любое S3-совместимое хранилище (например, MinIO) — укажите его через `aws.endpoint`.
 
+> **См. также:** подробнее о TLS/mTLS, аутентификации, управлении секретами и systemd hardening — **[Vector Security](../../Vector/vector_security.md)**; о retry policy, circuit breaker, DLQ-паттернах и acknowledgements — **[Vector Reliability](../../Vector/vector_reliability.md)**.
+
 ### 4. Настройка OpenSearch (Storage)
 
 Подготовка принимающей стороны: шаблон данных, политика жизненного цикла, проверка записи.

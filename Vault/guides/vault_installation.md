@@ -1,5 +1,7 @@
 # Руководство по установке Vault
 
+> **Актуально для:** Vault 2.x (latest 2.1.2; ветка 1.21.x поддерживается)
+
 ## Определения
 
 **Установка Vault** — процесс развёртывания бинарного файла **HashiCorp Vault**, настройки его как системной службы, инициализации и приведения в рабочее состояние через процедуру распечатывания (unseal) или настройки автоматического распечатывания (auto-unseal).
@@ -101,7 +103,8 @@ listener "tcp" {
   tls_cert_file = "/etc/vault.d/tls/vault.crt"
   tls_key_file  = "/etc/vault.d/tls/vault.key"
   
-  # Рекомендуется использовать mTLS для максимальной безопасности
+  # mTLS обязательна для production — аутентификация клиентов по сертификату
+  tls_client_ca_file = "/etc/vault.d/tls/ca.crt"
   tls_disable   = 0
   max_request_size = 33554432  # 32 MB — защита от переполнения
 }
@@ -116,7 +119,7 @@ storage "raft" {
   }
 }
 
-# Настройка Auto-unseal (пример для AWS KMS)
+# Auto-unseal через KMS/HSM (опционально, заменить на используемый)
 seal "awskms" {
   region     = "us-east-1"
   kms_key_id = "alias/vault-unseal-key"
@@ -125,17 +128,20 @@ seal "awskms" {
 api_addr     = "https://vault.example.com:8200"
 cluster_addr = "https://10.0.0.1:8201"
 
-# Performance tuning
+# Performance tuning — TTL по умолчанию и максимум для выписываемых токенов
 default_lease_ttl_seconds = 2764800  # 32 дня
 max_lease_ttl_seconds     = 31536000  # 365 дней
+
+# Интегрированная защита
+disable_mlock = false  # mlock предотвращает выгрузку секретов на диск
 ```
 
 ### Seal Migration (переход между механизмами seal)
 
 Vault поддерживает изменение механизма seal без переинициализации и потери данных. Типичные сценарии:
 * **Shamir → Auto-unseal** (переход в production с HSM/KMS).
-* **Auto-unseal → Shamir** (деградация при недоступности KMS).
-* **Смена KMS-ключа** (ротация ключа в AWS KMS / HSM).
+* **Auto-unseal → Shamir** (возврат при недоступности внешнего KMS/HSM).
+* **Смена KMS-ключа** (ротация ключа в HSM или KMS-совместимом сервисе).
 
 **Общий алгоритм:**
 1.  Подготовить новый блок `seal` в конфигурации (новый KMS ключ или HSM).
@@ -280,7 +286,7 @@ systemctl status vault
 # Статус Vault (ожидается Sealed, т.к. инициализация ещё не выполнена)
 VAULT_ADDR='https://127.0.0.1:8200' vault status
 # → Sealed        true
-# → Seal Type     shamir | awskms | ...
+# → Seal Type     shamir | awskms | transit | ... 
 # → Initialized   false
 ```
 
@@ -386,25 +392,40 @@ vault operator raft list-peers
 vault operator raft info
 ```
 
+## Лучшие практики
+
+### Безопасность процесса
+
+1.  **Запуск под выделенным пользователем:** Никогда не запускайте Vault как root. Пользователь `vault` должен иметь минимальные привилегии — доступ только к `/opt/vault/data` и `/var/log/vault`.
+2.  **Отключение swap:** Swap обязательно отключается — иначе секреты из памяти могут попасть на диск. Используйте `swapoff -a` и удаляйте swap из `/etc/fstab`.
+3.  **CAP_IPC_LOCK:** Устанавливайте `setcap cap_ipc_lock=+eip` на бинарник и `LimitMEMLOCK=infinity` в systemd unit. Без этого Vault не может использовать `mlock` для предотвращения выгрузки страниц на диск.
+4.  **mTLS для всех соединений:** `tls_disable = 0` и `tls_client_ca_file` обязательны. Никогда не используйте HTTP в production.
+5.  **Хранение конфигурации:** `/etc/vault.d/vault.hcl` должен иметь права `640`, владелец `vault:vault`. PEM-файлы TLS — права `640`, закрытый ключ — `600`.
+
+### Управление ключами и инициализация
+
+6.  **Распределение Unseal Keys по кворуму:** Unseal Keys распределяются между разными ответственными лицами. Ни один человек не должен иметь все ключи. Используйте защищённое хранилище (Password Manager) для резервных копий.
+7.  **Auto-unseal только для production:** В dev/staging можно использовать Shamir для простоты восстановления. В production предпочтительно Auto-unseal через KMS/HSM — устраняет необходимость ручного вмешательства при перезапуске.
+8.  **Резервное копирование перед инициализацией:** Снимок данных Raft должен создаваться сразу после `vault operator init` и входа в него. Храните снапшоты в отдельном, зашифрованном хранилище с rotation policy (keep last 7 daily, 4 weekly).
+9.  **Root token — одноразово:** Root token используется только для первоначальной настройки. После входа сразу создаётся персональный токен с ограниченными политиками через `vault token create`.
+
+### Мониторинг и аудит
+
+10. **Включение audit device до любой работы:** `vault audit enable file file_path=/var/log/vault/audit.log` должен быть первой командой после входа. Без аудита security-инциденты необнаружимы.
+11. **Health checks в load balancer:** Используйте `/v1/sys/health` для liveness/readiness probe. Endpoint возвращает HTTP 200 (active), 429 (standby), 501 (not initialized), 503 (sealed).
+12. **Метрики в Prometheus:** Включите `telemetry { prometheus_enabled = true }`. Ключевые метрики: `vault.core.unsealed`, `vault.raft.leader`, `vault.raft.commitTime`, `vault.core.leader_last_leader_heartbeat_success`.
+
+### Обслуживание и DR
+
+13. **Регулярные снапшоты:** cron: `0 2 * * * vault operator raft snapshot save /backup/vault-$(date +%Y%m%d).snap && find /backup -name "vault-*.snap" -mtime +30 -delete`
+14. **Тестирование DR ежеквартально:** Восстановление из снапшота должно тестироваться на отдельном сервере не р r r rеже одного раза в квартал.
+15. **Ротация TLS-сертификатов:** Используйте внутренний PKI Engine для автоматической ротации сертификаторов Vault. Истекший сертификат приводит к недоступности.
+
 ## Дополнительная информация
 
 ### Стратегия резервного копирования и восстановления
 
-Для production сред необходимо настроить регулярное создание снапшотов Raft-хранилища.
-
-```bash
-# Создание снапшота (требует root-токен или capability sudo)
-vault operator raft snapshot save /opt/vault/backups/vault-$(date +%Y%m%d-%H%M).snap
-
-# Плановая ротация снапшотов (cron)
-0 2 * * * vault operator raft snapshot save /opt/vault/backups/vault-$(date +\%Y\%m\%d).snap && find /opt/vault/backups -name "vault-*.snap" -mtime +7 -delete
-```
-
-**Восстановление:**
-1.  Остановите Vault на целевом сервере.
-2.  Замените содержимое `/opt/vault/data` на данные из снапшота.
-3.  Запустите Vault и выполните `vault operator unseal` (Shamir) или убедитесь в работоспособности Auto-unseal.
-4.  Проверьте статус кластера: `vault operator raft list-peers`.
+Настоятельная рекомендация: **[Стратегии резервного копирования и восстановления Vault](./backup_restore_strategies.md)** — создание, off-site-хранилище, cron, восстановление (в т. ч. после потери кворума), DR Replication, discrete secret recovery.
 
 > В Enterprise-версии доступна функция **Secret Recovery** (начиная с 1.20+), позволяющая восстанавливать отдельные секреты без полного восстановления кластера.
 
@@ -418,7 +439,7 @@ curl -k https://127.0.0.1:8200/v1/sys/health
 # → {"initialized":true,"sealed":false,"standby":false,"performance_standby":false,"replication_performance_mode":"disabled",...}
 
 # Metrics в формате Prometheus (включается в конфигурации)
-metrics {
+telemetry {
   prometheus_enabled = true
   prometheus_retention_time = "30s"
 }
@@ -434,16 +455,7 @@ curl -k https://127.0.0.1:8200/v1/sys/metrics
 
 #### Потеря кворума Raft (Quorum Lost)
 
-При потере более половины узлов кластер переходит в состояние `Sealed`. Восстановление:
-
-```bash
-# Вариант 1: восстановление из снапшота (если есть)
-vault operator raft snapshot restore /opt/vault/backups/vault-latest.snap
-
-# Вариант 2: ручная правка peers.json (при отсутствии снапшота)
-# Остановите Vault, отредактируйте /opt/vault/data/raft/peers.json,
-# удалите недоступные узлы, запустите и распечатайте оставшийся узел.
-```
+При потере более половины узлов кластер теряет лидера и перестаёт обслужвать запросы (состояние `Sealed` не всегда — см. детали в [Сценарии 3: Восстановление после потери кворума](./backup_restore_strategies.md#сценарий-3-восстановление-после-потери-кворума)).
 
 #### Недоступность Auto-unseal (KMS/HSM)
 

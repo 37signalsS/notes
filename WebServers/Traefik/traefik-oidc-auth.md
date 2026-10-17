@@ -112,6 +112,23 @@ Traefik проектировался как высокопроизводител
 
 ```yaml
 services:
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.1
+    restart: unless-stopped
+    command:
+      - --provider=oidc
+      - --oidc-issuer-url=https://idp.example.com/realms/myrealm
+      - --client-id=${OAUTH_CLIENT_ID}
+      - --client-secret=${OAUTH_CLIENT_SECRET}
+      - --redirect-url=https://app.example.com/oauth2/callback
+      - --cookie-secret=${COOKIE_SECRET}
+      - --cookie-secure=true
+      - --set-xauthrequest=true                 # отдавать X-Auth-Request-* в forwardAuth
+      - --set-authorization-header=true         # Authorization: Bearer <access_token>
+      - --email-domain=example.com
+      - --whitelist-domain=.example.com
+    networks: [edge]
+
   traefik:
     image: traefik:v3.7
     container_name: traefik

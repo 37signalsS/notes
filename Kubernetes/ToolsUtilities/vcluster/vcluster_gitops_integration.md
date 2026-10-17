@@ -1,14 +1,12 @@
 # vCluster — интеграция с GitOps
 
-> Документ описывает интеграцию vCluster с GitOps-инструментами: ArgoCD, Flux, ApplicationSet для управления множеством тенантов, конфигурацией vCluster через Git. CI/CD — в [vcluster_cicd_integration.md](./vcluster_cicd_integration.md), установка — в [vcluster_installation.md](./vcluster_installation.md).
+> Документ описывает интеграцию vCluster с GitOps-инструментом ArgoCD и ApplicationSet для управления множеством тенантов, конфигурацией vCluster через Git. CI/CD — в [vcluster_cicd_integration.md](./vcluster_cicd_integration.md), установка — в [vcluster_installation.md](./vcluster_installation.md).
 
 ## Определения
 
 **GitOps** — методология управления инфраструктурой и приложениями через Git как единственный источник истины. Все изменения проходят через PR/MR, применяются автоматически или вручную.
 
 **ArgoCD** — GitOps-controller для Kubernetes. Синхронизирует желаемое состояние (Git) с текущим (кластер). Поддерживает Helm, Kustomize, raw manifests.
-
-**Flux** — GitOps-controller от CNCF. Композитный подход: Source Controller (Git/Helm), Kustomize Controller, Helm Controller, Notification Controller.
 
 **ApplicationSet** — CRD ArgoCD, позволяющий динамически генерировать Application из шаблонов. Идеально для управления множеством vCluster (один шаблон — много тенантов).
 
@@ -144,42 +142,6 @@ spec:
       kind: Deployment
       jsonPointers:
         - /spec/replicas
-```
-
-### Flux: конфигурация vCluster через Git
-
-```yaml
-# flux-source.yaml
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: gitops-infra
-  namespace: flux-system
-spec:
-  interval: 1m
-  url: https://github.com/myorg/gitops-infra.git
-  ref:
-    branch: main
----
-# flux-kustomization.yaml
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: vcluster-team-alpha
-  namespace: flux-system
-spec:
-  interval: 5m
-  path: ./clusters/team-alpha
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: gitops-infra
-  healthChecks:
-    - apiVersion: apps/v1
-      kind: StatefulSet
-      name: vc-team-alpha
-      namespace: team-alpha
-  timeout: 3m
 ```
 
 ### Управление конфигурацией vCluster через Git
@@ -346,7 +308,7 @@ git add clusters/team-alpha/vcluster.yaml
 git commit -m "feat(team-alpha): increase etcd size to 10Gi"
 git push origin update-team-alpha-config
 
-# 3. После мержа ArgoCD/Flux применит изменения
+# 3. После мержа ArgoCD применит изменения
 # 4. Проверить статус
 argocd app get vc-team-alpha
 # → Health: Healthy, Sync: Synced
@@ -358,7 +320,7 @@ argocd app get vc-team-alpha
 | :--- | :--- | :--- |
 | ArgoCD selfHeal будит vCluster | `selfHeal: true` + Sleep Mode | `selfHeal: false` или `ignoreDifferences` |
 | ApplicationSet не генерирует Applications | Неверный path в generator | Проверить `directories.path` |
-| Flux Kustomization в Error | Git repository недоступен | Проверить credentials, network |
+| ArgoCD Application в Error | ArgoCD Application не синхронизируется | Проверить `argocd app get <name>` |
 | Синхронизация зациклена | SelfHeal + аннотации Helm | Добавить `ApplyOutOfSyncOnly` |
 | vCluster не обновляется через GitOps | Helm values не применяются | Проверить `helm.valueFiles` в Application |
 | Prune удаляет нужные объекты | Объекты не в Git | Добавить `managedFields` или exclude |
@@ -368,7 +330,7 @@ argocd app get vc-team-alpha
 - **selfHeal: false для vCluster:** Sleep Mode и selfHeal конфликтуют. Используйте `ignoreDifferences`.
 - **Версионирование CLI:** Зафиксируйте версию vCluster CLI в GitOps-репозитории.
 - **Паттерн multi-tenancy:** ApplicationSet + git generator для автоматического добавления тенантов.
-- **Health checks:** В Flux добавляйте `healthChecks` для контроля состояния Control Plane.
+   - **Health checks:** В ArgoCD добавляйте `healthChecks` для контроля состояния Control Plane.
 - **RBAC в ArgoCD:** Ограничьте доступ тенантов к своему vCluster через `AppProject`.
 - **Мониторинг синхронизации:** Алерт на `argocd_app_sync_total{phase="Error"}`.
 - **Тестирование изменений:** Сначала примените изменения в dev vCluster, потом в production.
@@ -391,4 +353,3 @@ argocd app get vc-team-alpha
 
 - [vCluster GitOps Documentation](https://www.vcluster.com/docs/use-cases/gitops)
 - [ArgoCD Documentation](https://argo-cd.readthedocs.io/)
-- [Flux Documentation](https://fluxcd.io/docs/)
