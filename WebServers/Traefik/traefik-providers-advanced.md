@@ -1,22 +1,44 @@
-# Провайдеры конфигурации Traefik: Nomad, Consul Catalog, HTTP (API), Go-шаблоны
+# Провайдеры конфигурации Traefik: Nomad, Consul Catalog, HTTP, Go-шаблоны
+
+**Актуально для:** Traefik v3.x (протестировано на v3.4–v3.6)
 
 ## Определения
 
-**Провайдер конфигурации** — источник динамической конфигурации Traefik (роутеры, сервисы, middleware). Провайдеров несколько; статические опции при этом всегда берутся из файла/CLI/флагов.
+**Провайдер конфигурации (Configuration Provider)** — внутренний модуль Traefik, отвечающий за автоматическое обнаружение инфраструктуры и поставку динамической конфигурации (маршруты, балансировщики, промежуточные обработчики, TLS-параметры).
 
-**Consul Catalog** — провайдер, читающий реестр сервисов HashiCorp Consul (health-статусы, теги, метаданные) и строящий маршруты по меткам (аналогично Docker-меткам). В отличие от **KV-store провайдера** (`providers.consul` — чтение ключей `traefik/` напрямую), Consul Catalog использует именно известный сервисный каталог.
+**Consul Catalog Provider (`providers.consulCatalog`)** — реестровый провайдер, подключающийся к API HashiCorp Consul Service Catalog для динамического построения роутеров и сервисов на основе зарегистрированных сервисов, их тегов (`tags`) и метаданных (`meta`). Отличается от KV-провайдера (`providers.consul`), который читает сырое дерево ключей.
 
-**Nomad** — оркестратор HashiCorp; провайдер Nomad читает allocation/job метаданные и генерирует маршруты аналогично Docker.
+**Nomad Provider (`providers.nomad`)** — реестровый провайдер оркестратора HashiCorp Nomad. Опрашивает Nomad HTTP API (allocations/jobs), автоматически создавая бэкенды для запущенных экземпляров задач и считывая правила маршрутизации из тегов сервисов в спецификации HCL.
 
-**HTTP (API) провайдер** — способ передать динамическую конфигурацию в Traefik в рантайме через REST-эндпоинт `/api/providers/http` (в v2 назывался REST provider через `/api/providers/rest`).
+**HTTP Provider (`providers.http`)** — провайдер периодического опроса (polling). Traefik с заданным интервалом выполняет HTTP(S) GET-запрос к внешнему эндпоинту (сервису управления конфигурацией, CMDB, внутреннему генератору) и загружает динамическую конфигурацию в формате JSON или YAML. Traefik API при этом работает строго в режиме чтения — внешняя запись через PUT/POST отсутствует.
 
-**Go-шаблоны в File-провайдере** — обработка динамических файлов конфигурации как шаблонов с функциями Go `text/template` + библиотеки Sprig (например `{{ env "VAR" }}`, циклы `range`).
+**Go-шаблоны в File-провайдере** — механизм динамической препроцессорной обработки конфигурационных файлов Traefik с использованием синтаксиса Go `text/template` и встроенной библиотеки функций **Sprig v3** (переменные окружения, строковые трансформации, циклы, фильтры).
 
-## Базовые концепции
+**Provider Namespace (`@<provider>`)** — суффикс контекстной изоляции ресурсов в объединенном реестре Traefik, позволяющий ссылаться на middleware или сервисы, объявленные в другом провайдере (например, `auth@file`, `api-srv@nomad`).
 
-### Общая модель и приоритет провайдеров
+**Providers Throttle Duration (`providers.providersThrottleDuration`)** — глобальный интервал дебаунсинга (по умолчанию `2s`), задающий паузу между повторными пересборками динамического графа маршрутизации при лавинообразных изменениях в инфраструктуре.
 
-Traefik может использовать сразу несколько провайдеров одновременно: они **объединяются** в единую конфигурацию динамики. При конфликте одинаковых ключей провайдеры имеют строгий приоритет (перечислен в официальной документации, порядок от высшего к низшему):
+---
+
+## Архитектура и базовые концепции
+
+### Модель слияния и приоритет провайдеров
+
+Traefik поддерживает одновременную работу произвольного количества провайдеров. Конфигурации из всех активных источников объединяются в единый runtime-реестр:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Traefik Static Engine                           │
+│  providers.providersThrottleDuration: 2s (дебаунсинг пересборок графа) │
+└──────▲─────────────────▲──────────────────────▲─────────────────▲──────┘
+       │                 │                      │                 │
+┌──────┴────────┐ ┌──────┴──────────────┐ ┌─────┴──────────┐ ┌────┴───────┐
+│ providers.file│ │providers.consulCatalog│providers.nomad │ │providers.http│
+│ (Go-templates)│ │ (Service Discovery) │ │(Job/Alloc Tags)│ │  (Polling)   │
+└───────────────┘ └─────────────────────┘ └────────────────┘ └────────────┘
+```
+
+При совпадении идентификаторов однотипных объектов между несколькими провайдерами действует детерминированный приоритет (от наивысшего к низшему):
 
 ```
 kubernetesgateway > kubernetescrd > kubernetes > kubernetesingressnginx
@@ -24,184 +46,542 @@ kubernetesgateway > kubernetescrd > kubernetes > kubernetesingressnginx
 > nomad > etcd > ecs > http > zookeeper > rest
 ```
 
-Правила безопасности при конкурентном использовании:
+В on-premise и bare-metal инсталляциях без облачных контроллеров ключевая иерархия выглядит так:
+`file` (приоритет 7) > `consul` (10) > `consulcatalog` (11) > `nomad` (12) > `etcd` (13) > `http` (15).
 
-- один и тот же роутер, объявленный в нескольких провайдерах, «побеждает» провайдер с более высоким приоритетом;
-- не используйте несколько KV/реестровых провайдеров с перекрывающимися маршрутами — только если уверены, что об этом знаете (типичный баг продакшена: Docker-метки + File-шаблоны дублируют одни и те же роутеры).
+#### Межпровайдерные ссылки (Cross-Provider References)
+Каждый ресурс при регистрации получает постфикс своего провайдера. Если роутер объявлен в Nomad или Consul Catalog, он может использовать middleware, объявленное в File-провайдере:
 
-### Go-шаблоны в File-провайдере (важно!)
-
-Шаблонизацию **включать не нужно** — для файлов в `providers.file.directory` или `providers.file.filename`, когда файл содержит `{{ ... }}`, Traefik обработает его как Go-шаблон с функциями **Sprig**. Особенности:
-
-- работают только в динамических файлах (не в основном `traefik.yml`/статике);
-- доступны: `{{ env "MY_ENV_VAR" }}`, `{{ range $i, $e := .MyList }}`, функции Sprig (`default`, `upper`, `join`, итд);
-- шаблон выполняется на каждый приход «раскатки» — переменные окружения должны существовать у процесса Traefik;
-- при ошибке выполнения шаблона Traefik не применяет конфиг и пишет ошибку в лог — файл не «полуприменяется».
-
-Пример динамического файла с шаблоном:
-
-```yaml
-# /etc/traefik/dynamic/backend.yml
-http:
-  routers:
-    app:
-      rule: "Host(`{{ env "APP_DOMAIN" }}`)"
-      service: "app"
-      tls: {}
-  services:
-    app:
-      loadBalancer:
-        servers:
-          - url: "http://{{ env "BACKEND_HOST" }}:8080"
+```hcl
+# В Nomad job specification:
+tags = [
+  "traefik.http.routers.app.rule=Host(`app.internal.domain`)",
+  "traefik.http.routers.app.middlewares=sec-headers@file,rate-limit@file",
+  "traefik.http.routers.app.service=app-service"
+]
 ```
 
-И в статике только:
+Если суффикс провайдера не указан (например, `middlewares=sec-headers`), Traefik ищет ресурс внутри того же провайдера, в котором объявлен роутер.
+
+### Принцип работы Go-шаблонов в File-провайдере
+
+Шаблонизация активна по умолчанию для любых динамических файлов конфигурации, обрабатываемых `providers.file.directory` или `providers.file.filename`. Отдельного флага включения нет: если парсер обнаруживает блоки `{{ ... }}`, файл передается в шаблонизатор Go с зарегистрированными функциями **Sprig v3**.
+
+Ключевые эксплуатационные свойства:
+1. **Контекст исполнения:** шаблоны вычисляются внутри процесса Traefik. Функции `env` считывают переменные окружения процесса Traefik (из systemd unit, `/etc/environment` или переменных контейнера).
+2. **Триггер вычисления:** Traefik рендерит шаблоны **только** при событиях файловой системы (inotify `MODIFY`/`CREATE`) или при старте процесса. Изменение переменной окружения в ОС без модификации файла (или `touch`) конфигурацию не обновляет.
+3. **Атомарность:** если шаблон содержит синтаксическую ошибку или необработанное исключение, Traefik отклоняет весь файл целиком, оставляет в памяти предыдущую валидную конфигурацию и пишет `level=error` в лог.
+
+### Реестровое обнаружение (Nomad / Consul) vs Опрос (HTTP)
+
+| Характеристика | Nomad (`providers.nomad`) | Consul Catalog (`providers.consulCatalog`) | HTTP (`providers.http`) |
+| :--- | :--- | :--- | :--- |
+| **Механизм передачи** | HTTP Long-polling / Event Stream | Consul Blocking Queries (`/v1/catalog/...`) | Периодический GET-опрос (`pollInterval`) |
+| **Реакция на события** | Мгновенная (< 100 мс после alloc update) | Мгновенная (< 100 мс по Consul watch index) | С задержкой до интервала `pollInterval` |
+| **Формат правил** | Теги в блоке `service {}` Nomad HCL | Теги (`tags`) и метаданные (`meta`) сервиса | Полная структура dynamic YAML/JSON |
+| **Нагрузка на оркестратор** | Постоянный пул соединений к Nomad API | Запросы к локальному Consul Agent (stale) | Запросы к HTTP-серверу по расписанию |
+| **Область применения** | On-premise микросервисы в Nomad | Сервисный каталог bare-metal/VM | Интеграция с CMDB, GitOps-контроллерами |
+
+---
+
+## Практические сценарии и конфигурация
+
+### Сценарий 1: HashiCorp Nomad Service Discovery (`providers.nomad`)
+
+Интеграция с кластером Nomad на bare-metal с разграничением пространств имен, фильтрацией сервисов и канареечными релизами.
+
+#### 1. Статическая конфигурация Traefik (`/etc/traefik/traefik.yml`)
+
+```yaml
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+providers:
+  providersThrottleDuration: 2s
+  nomad:
+    endpoint:
+      address: "http://127.0.0.1:4646"
+      region: "global"
+      token: "nomad-secret-acl-token-uuid"
+    namespaces:
+      - "default"
+      - "production"
+    refreshInterval: 15s
+    exposedByDefault: false
+    prefix: "traefik"
+    defaultRule: "Host(`{{ .Name }}.internal.domain`)"
+    constraints: "Tag(`traefik.enable=true`)"
+    allowEmptyServices: false
+    stale: true
+```
+
+#### 2. Задание Nomad с маршрутизацией HTTP и Canary-развертыванием (`api.nomad.hcl`)
+
+```hcl
+job "api-service" {
+  datacenters = ["dc1"]
+  type        = "service"
+  namespace   = "production"
+
+  update {
+    max_parallel     = 1
+    canary           = 1
+    min_healthy_time = "15s"
+    healthy_deadline = "3m"
+    auto_revert      = true
+    auto_promote     = false
+  }
+
+  group "api-cluster" {
+    count = 3
+
+    network {
+      mode = "host"
+      port "http" {
+        to = 8080
+      }
+    }
+
+    service {
+      name     = "api-service"
+      port     = "http"
+      provider = "nomad"
+
+      # Метки канареечного релиза:
+      canary_tags = [
+        "traefik.enable=true",
+        "traefik.nomad.canary=true",
+        "traefik.http.routers.api-canary.rule=Host(`canary-api.internal.domain`)",
+        "traefik.http.routers.api-canary.entrypoints=web",
+        "traefik.http.services.api-service.loadbalancer.server.port=8080"
+      ]
+
+      # Основные производственные метки:
+      tags = [
+        "traefik.enable=true",
+        "traefik.http.routers.api.rule=Host(`api.internal.domain`)",
+        "traefik.http.routers.api.entrypoints=web",
+        "traefik.http.routers.api.middlewares=strip-api-prefix@file",
+        "traefik.http.services.api-service.loadbalancer.server.port=8080",
+        "traefik.http.services.api-service.loadbalancer.healthcheck.path=/healthz",
+        "traefik.http.services.api-service.loadbalancer.healthcheck.interval=5s",
+        "traefik.http.services.api-service.loadbalancer.healthcheck.timeout=2s"
+      ]
+
+      check {
+        type     = "http"
+        path     = "/healthz"
+        interval = "10s"
+        timeout  = "2s"
+      }
+    }
+
+    task "server" {
+      driver = "docker"
+
+      config {
+        image        = "hashicorp/http-echo:latest"
+        args         = ["-listen=:8080", "-text=production-api"]
+        network_mode = "host"
+      }
+
+      resources {
+        cpu    = 200
+        memory = 128
+      }
+    }
+  }
+}
+```
+
+#### 3. Маршрутизация чистого TCP через Nomad
+
+Для сервисов баз данных или брокеров очередей без HTTP-заголовков используются TCP-роутеры:
+
+```hcl
+service {
+  name     = "pg-replica"
+  port     = "postgres"
+  provider = "nomad"
+
+  tags = [
+    "traefik.enable=true",
+    "traefik.tcp.routers.pg.rule=HostSNI(`pg-replica.internal.domain`)",
+    "traefik.tcp.routers.pg.entrypoints=postgres",
+    "traefik.tcp.routers.pg.tls=true",
+    "traefik.tcp.services.pg-srv.loadbalancer.server.port=5432"
+  ]
+}
+```
+
+---
+
+### Сценарий 2: HashiCorp Consul Catalog (`providers.consulCatalog`)
+
+Consul Catalog обнаруживает сервисы, зарегистрированные как на самом сервере Consul, так и через Consul Agent на физических серверах и виртуальных машинах.
+
+#### 1. Статическая конфигурация Traefik (`/etc/traefik/traefik.yml`)
+
+```yaml
+providers:
+  providersThrottleDuration: 2s
+  consulCatalog:
+    endpoint:
+      address: "127.0.0.1:8500"
+      scheme: "http"
+      datacenter: "dc1"
+      token: "consul-acl-token-secret"
+    exposedByDefault: false
+    prefix: "traefik"
+    refreshInterval: 15s
+    requireConsistent: false
+    stale: true
+    cache: true
+    defaultRule: "Host(`{{ .Name }}.internal.domain`)"
+    constraints: "Tag(`traefik.enable=true`)"
+    connectAware: false
+```
+
+Параметры `stale: true` и `cache: true` критически важны для SRE: они разрешают Traefik обращаться к локальному Consul Agent и обслуживать запросы из кэша памяти агента, предотвращая перегрузку Raft-лидера Consul при частых повторных инициализациях.
+
+#### 2. Регистрация сервиса в Consul через JSON-манифест (`/etc/consul.d/backend.json`)
+
+```json
+{
+  "service": {
+    "name": "billing-app",
+    "id": "billing-app-node-01",
+    "address": "10.10.20.15",
+    "port": 9000,
+    "tags": [
+      "traefik.enable=true",
+      "traefik.http.routers.billing.rule=Host(`billing.internal.domain`) && PathPrefix(`/api/v1`)",
+      "traefik.http.routers.billing.entrypoints=websecure",
+      "traefik.http.routers.billing.tls=true",
+      "traefik.http.routers.billing.tls.options=default@file",
+      "traefik.http.services.billing-app.loadbalancer.server.port=9000",
+      "traefik.http.services.billing-app.loadbalancer.passhostheader=true",
+      "traefik.http.services.billing-app.loadbalancer.responseforwarding.flushinterval=100ms"
+    ],
+    "meta": {
+      "environment": "production",
+      "owner": "finance-team"
+    },
+    "checks": [
+      {
+        "id": "billing-http-check",
+        "name": "Billing HTTP Health Check",
+        "http": "http://10.10.20.15:9000/health",
+        "interval": "10s",
+        "timeout": "2s"
+      }
+    ]
+  }
+}
+```
+
+После размещения файла манифеста на целевом хосте выполняется регистрация:
+
+```bash
+consul reload
+# → Configuration reloaded!
+```
+
+---
+
+### Сценарий 3: HTTP Polling Provider (`providers.http`)
+
+Провайдер периодического опроса предназначен для получения динамической конфигурации от внешнего HTTP-сервера (внутреннего шлюза конфигураций, сервиса генерации топологии или централизованного оркестратора).
+
+#### Архитектурное отличие от Traefik v1 REST Provider:
+> [!IMPORTANT]
+> В Traefik v2 и v3 **нет эндпоинта записи динамической конфигурации через `PUT /api/providers/...`**. Встроенный API Traefik (`api: {}`) строго read-only. Провайдер `providers.http` работает по модели **Pull (Polling)**: Traefik сам регулярно опрашивает внешний сервис, указанный в параметре `endpoint`, забирая динамический документ (JSON или YAML).
+
+#### 1. Статическая конфигурация Traefik (`/etc/traefik/traefik.yml`)
+
+```yaml
+providers:
+  providersThrottleDuration: 2s
+  http:
+    endpoint: "https://config-generator.internal:8443/api/v1/traefik-topology"
+    pollInterval: 10s
+    pollTimeout: 3s
+    headers:
+      Authorization: "Bearer sec-infra-token-987654"
+      X-Datacenter: "dc-onprem-primary"
+    maxResponseBodySize: 10485760 # 10 МБ максимум
+    tls:
+      ca: "/etc/traefik/certs/internal-ca.pem"
+      cert: "/etc/traefik/certs/traefik-client.crt"
+      key: "/etc/traefik/certs/traefik-client.key"
+      insecureSkipVerify: false
+```
+
+#### 2. Спецификация ответа внешнего сервиса (Payload)
+
+Внешний сервис по адресу `https://config-generator.internal:8443/api/v1/traefik-topology` на каждый GET-запрос должен возвращать HTTP 200 OK со стандартным содержимым dynamic configuration (схема идентична File-провайдеру):
+
+```json
+{
+  "http": {
+    "routers": {
+      "external-crm": {
+        "entryPoints": ["websecure"],
+        "rule": "Host(`crm.internal.domain`)",
+        "service": "crm-backend-service",
+        "tls": {}
+      }
+    },
+    "services": {
+      "crm-backend-service": {
+        "loadBalancer": {
+          "passHostHeader": true,
+          "servers": [
+            { "url": "http://10.20.30.11:8080" },
+            { "url": "http://10.20.30.12:8080" }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+---
+
+### Сценарий 4: Go-шаблоны и функции Sprig в File-провайдере
+
+Генерация комплексных наборов роутеров для множества виртуальных хостов или сред на основе переменных окружения хоста без дублирования YAML-блоков.
+
+#### 1. Статическая конфигурация Traefik (`/etc/traefik/traefik.yml`)
 
 ```yaml
 providers:
   file:
-    directory: /etc/traefik/dynamic
+    directory: "/etc/traefik/dynamic"
     watch: true
 ```
 
-## Практические сценарии
+#### 2. Переменные окружения демона (например, в `/etc/systemd/system/traefik.service.d/env.conf`)
 
-### Сценарий 1: Провайдер Nomad
-
-```yaml
-providers:
-  nomad:
-    endpoint:
-      address: "http://127.0.0.1:4646"     # URL API Nomad
-    namespaces: []                        # все неймспейсы (для multitenancy)
-    exposedByDefault: false               # включать только метченые
-    prefix: "traefik"                     # ключ меток
-    defaultRule: "Host(`{{ .Name }}.nomad.local`)"
-    constraints:
-      - "status == running"
+```ini
+[Service]
+Environment="TRAEFIK_ENV=production"
+Environment="APP_LIST=auth,billing,orders,analytics"
+Environment="AUTH_SERVERS=10.0.1.10:8000,10.0.1.11:8000"
+Environment="BILLING_SERVERS=10.0.2.10:8000"
+Environment="ORDERS_SERVERS=10.0.3.10:8000,10.0.3.11:8000,10.0.3.12:8000"
+Environment="ANALYTICS_SERVERS=10.0.4.10:8000"
 ```
 
-Метки на задании (job) — аналогично Docker (docker-compose пример см. [Traefik с Docker Compose](./traefik_with_docker_compose.md)):
+#### 3. Шаблонизированный динамический файл (`/etc/traefik/dynamic/services.yml`)
+
+```yaml
+{{- $env := env "TRAEFIK_ENV" | default "staging" }}
+{{- $apps := env "APP_LIST" | default "app" | split "," }}
+
+http:
+  routers:
+    {{- range $app := $apps }}
+    {{- $cleanApp := $app | trim }}
+    router-{{ $cleanApp }}:
+      rule: "Host(`{{ $cleanApp }}.{{ $env }}.internal.domain`)"
+      entryPoints:
+        - "websecure"
+      service: "srv-{{ $cleanApp }}"
+      middlewares:
+        - "sec-headers@file"
+      tls: {}
+    {{- end }}
+
+  middlewares:
+    sec-headers:
+      headers:
+        sslRedirect: true
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        frameDeny: true
+        contentTypeNosniff: true
+
+  services:
+    {{- range $app := $apps }}
+    {{- $cleanApp := $app | trim }}
+    {{- $envVarName := printf "%s_SERVERS" ($cleanApp | upper) }}
+    {{- $rawServers := env $envVarName }}
+    srv-{{ $cleanApp }}:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          {{- if $rawServers }}
+          {{- range $backend := $rawServers | split "," }}
+          - url: "http://{{ $backend | trim }}"
+          {{- end }}
+          {{- else }}
+          - url: "http://127.0.0.1:9999" # Fallback заглушка при отсутствии серверов
+          {{- end }}
+    {{- end }}
+```
+
+---
+
+### Сценарий 5: Гибридная конфигурация с межпровайдерными ссылками
+
+Объединение оркестратора (Nomad/Consul) с централизованным хранилищем политик безопасности и TLS в файлах:
+
+```yaml
+# /etc/traefik/dynamic/common-middlewares.yml
+http:
+  middlewares:
+    global-rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+    corp-whitelist:
+      ipWhiteList:
+        sourceRange:
+          - "10.0.0.0/8"
+          - "192.168.0.0/16"
+
+tls:
+  options:
+    strict-tls:
+      minVersion: "VersionTLS13"
+      sniStrict: true
+```
+
+Использование в тегах сервиса Nomad:
 
 ```hcl
-service {
-  name = "app"
-  tags = ["traefik.enable=true", "traefik.http.routers.app.rule=Host(`app.example.com`)"]
-  port = 8080
-}
+tags = [
+  "traefik.enable=true",
+  "traefik.http.routers.erp.rule=Host(`erp.internal.domain`)",
+  "traefik.http.routers.erp.entrypoints=websecure",
+  "traefik.http.routers.erp.middlewares=corp-whitelist@file,global-rate-limit@file",
+  "traefik.http.routers.erp.tls.options=strict-tls@file",
+  "traefik.http.services.erp-service.loadbalancer.server.port=8080"
+]
 ```
 
-- `consulCatalog` и `nomad` — реестровые провайдеры: Traefik слушает изменения каталога и пересобирает роутеры в рантайме.
-- Назначение: мультиВМ/bare-metal и инфраструктура на Nomad/Consul без контейнеров Docker (масштабируется до множества инстансов Traefik — [HA](./traefik-high-availability.md)).
+---
 
-### Сценарий 2: Провайдер Consul Catalog
+## Операции и диагностика
 
-```yaml
-providers:
-  consulCatalog:
-    endpoint:
-      address: "10.0.0.10:8500"
-    exposedByDefault: false
-    prefix: "traefik"
-    defaultRule: "Host(`{{ .Name }}.example.com`)"
-    constraints:
-      - "operator == support"            # фильтр по value-value метке
-    scheme: "http"                       # / https
-    watch: true
-```
+Диагностические команды для проверки состояния провайдеров и регистрации сервисов.
 
-Метка в Consul (через `consul services register` c `meta`/`tags`):
+### 1. Проверка состояния провайдеров через Traefik API
 
 ```bash
-consul services register consulkv_register(
-  "meta": {
-    "traefik.enable": "true",
-    "traefik.http.routers.frontend.rule": "Host(`consul.example.com`)"
-  }
-)
+# Получить статус инициализации и ошибки загрузки провайдеров
+curl -s "http://127.0.0.1:8080/api/overview" | jq '.providers'
+# → {
+# →   "file": true,
+# →   "consulCatalog": true,
+# →   "nomad": true,
+# →   "http": true
+# → }
+
+# Проверить список активных роутеров и источник их провайдера
+curl -s "http://127.0.0.1:8080/api/http/routers" | jq '.[] | {name: .name, provider: .provider, status: .status, rule: .rule}'
+# → {
+# →   "name": "api@nomad",
+# →   "provider": "nomad",
+# →   "status": "enabled",
+# →   "rule": "Host(`api.internal.domain`)"
+# → }
+# → {
+# →   "name": "billing@consulcatalog",
+# →   "provider": "consulcatalog",
+# →   "status": "enabled",
+# →   "rule": "Host(`billing.internal.domain`)"
+# → }
+
+# Полный срез всех обнаруженных бэкендов в рантайме
+curl -s "http://127.0.0.1:8080/api/rawdata" | jq '.services | to_entries[] | {name: .key, servers: .value.loadBalancer.servers}'
 ```
 
-Обратите внимание: метаданные (`meta`) поддерживаются в свежих версиях Consul/провайдера; при старом Consul используйте `tags`.
-
-### Сценарий 3: HTTP (API) провайдер — динамическое обновление конфига без рестарта и без файлов
-
-Включение — не требуется отдельной секции «провайдер»: эндпоинт всегда доступен при включенном API (см. [Обзор Traefik](./traefik_overview.md), `api.insecure`/`entryPoints.api`).
+### 2. Инспекция сервисов в HashiCorp Nomad
 
 ```bash
-# Продавить полный конфиг динамики (PUT)
-curl -X PUT -H "Content-Type: application/json" \
-  -d '{"http":{"routers":{"dyr":{"rule":"Host(`dyn.example.com`)","service":"dynser"}},"services":{"dynser":{"loadBalancer":{"servers":[{"url":"http://10.0.0.5:8080"}]}}}}}' \
-  "http://127.0.0.1:8080/api/providers/http"
+# Проверить регистрацию сервиса в Nomad Service Discovery
+nomad service list
+# → Service Name  Job ID        Namespace
+# → api-service   api-service   production
 
-# Проверить, что применено
-curl -s "http://127.0.0.1:8080/api/http/routers" | jq '.[].name'
-
-# Удалить целиком
-curl -X DELETE "http://127.0.0.1:8080/api/providers/http"
+# Проверить теги конкретного экземпляра задачи
+nomad service info -namespace=production api-service
+# → Allocation ID  Address          Port  Tags
+# → 4b1f8c32       10.10.10.15      8080  traefik.enable=true,traefik.http.routers.api.rule=Host(`api.internal.domain`)
 ```
 
-Особенности:
-
-- в v3 это HTTP Provider (PUT/DELETE на `/api/providers/http`); в v2 — REST Provider (`/api/providers/rest`). Миграция: см. [Миграция v2 → v3](./traefik-migration-v2-to-v3.md).
-- эндпоинт **не аутентифицирован** по умолчанию — к `api` подключайте только через внутренний entrypoint/Trusted IPs, иначе любой сможет писать конфиг;
-- конфиг не персистится — после рестарта Traefik всё «забывает» (это точечное решение, а не источник правды; для прод-постоянства используйте File/KV-хранилище);
-- «http» в списке провайдеров (раздел выше) — это **данный** провайдер, у него же есть статическая секция `providers.http` для настройки дефолтной конфигурации, приходящей при PUT.
-
-### DNS resolution и сервис-дискавери
-
-Провайдеры Docker, Kubernetes, Consul, Nomad зависят от DNS для разрешения имен сервисов. Типичные проблемы:
-
-1. **DNS timeout при старте Traefik** (Docker provider):
-   - Traefik не может resolve имя бэкенда → `service not found` в логах.
-   - Причина: Docker-сеть без DNS (передаете `network_mode: host`), или `ndots: 5` в `/etc/resolv.conf` пода Traefik заставляет ждать 5+ секунд на каждый не-FQDN запрос.
-   - Решение: для контейнерного Traefik используйте стандартный `bridge`/`overlay` драйвер (встроенный DNS); для Kubernetes — проверьте CoreDNS.
-
-2. **Consul Catalog: сервисы не появляются**:
-   - Consul agent на `127.0.0.1:8500` не резолвится из контейнера Traefik.
-   - Решение: использовать адрес Consul, доступный из сети Traefik (не `localhost`), или `network_mode: host`.
-
-3. **Kubernetes: ExternalName сервисы**:
-   - ExternalName возвращает CNAME; Traefik делает二次ный DNS-запрос.
-   - Если CoreDNS пересылает на корпоративный resolver с низким TTL — кэш Traefik (если используется) может устареть.
-   - Решение: `providers.kubernetes.ingressClass` и `allowExternalNameServices: true` (по умолчанию `false` в v3).
-
-Диагностика:
+### 3. Инспекция каталога в HashiCorp Consul
 
 ```bash
-# Внутри контейнера Traefik
-docker compose exec traefik cat /etc/resolv.conf
-# → nameserver 127.0.0.11 (Docker embedded DNS)
+# Проверить адреса и теги зарегистрированных экземпляров
+consul catalog nodes -service=billing-app
+# → Node          Address      ServicePort  Tags
+# → node-01       10.10.20.15  9000         traefik.enable=true,traefik.http.routers.billing.rule=...
 
-# Проверка резолва
-docker compose exec traefik nslookup app-backend
-# → должен вернуть IP
-
-# Для Consul/K8s: проверка доступности API резолвера
-curl -s http://consul:8500/v1/catalog/service/app | jq '.[].ServiceAddress'
+# Выполнить проверку фильтрации по тегам через curl к API Consul
+curl -s "http://127.0.0.1:8500/v1/health/service/billing-app?passing=true" | jq '.[].Service.Tags'
 ```
+
+### 4. Принудительное обновление Go-шаблонов File-провайдера
+
+```bash
+# Обновить timestamp файла для вызова inotify-триггера Traefik
+touch /etc/traefik/dynamic/services.yml
+
+# Проверить журнал systemd на наличие синтаксических ошибок рендеринга шаблона
+journalctl -u traefik -n 20 --no-pager | grep -i "template"
+# → [OK при отсутствии ошибок]
+```
+
+---
 
 ## Устранение неисправностей
 
-| Проблема | Причина | Решение |
-| :--- | :--- | :--- |
-| **Роутеры не появляются из Nomad/Consul** | `exposedByDefault: false`, метки не совпадают с `prefix` (по умолчанию `traefik`) | Убедиться в метках `traefik.enable=true` и префиксе; проверить сетевую доступность API оркестратора |
-| **Дубликаты роутеров из Nesting-провайдеров** | Одна и та же конфигурация в File и в реестре | Убрать дубли или делегировать одну «зону» провайдеру с более высоким приоритетом |
-| **`{{ env "..." }}` стало `string`, а не переменная** | Файл не в `directory`, а в статическом `traefik.yml` | Шаблоны работают только в динамических файлах |
-| **HTTP Provider: конфиг пропал после рестарта** | Это неустойчивое хранилище | Использовать File/KV как источник правды, HTTP Provider — для временных вмешательств |
-| **503 Not ready до применения конфига** | Еще не «прикатился» PUT / не загружена директория | Дождаться загрузки; смотреть `traefik_service_`-метрики и лог |
+| Проблема | Диагностика | Причина | Решение |
+| :--- | :--- | :--- | :--- |
+| **Сервисы из Nomad/Consul не появляются в Traefik** | `curl 127.0.0.1:8080/api/http/routers` не содержит нужного маршрута; в логах нет упоминаний сервиса | 1. Установлен `exposedByDefault: false`, но в тегах отсутствует `traefik.enable=true`.<br>2. Имя тегов не начинается с `prefix` (по умолчанию `traefik`).<br>3. Токен ACL не имеет прав на чтение каталога (`service:read`). | Добавить `traefik.enable=true` в `tags`; проверить валидность ACL-токена: `nomad acl token self` или `consul acl token read -self`. |
+| **502 Bad Gateway при балансировке на задачу Nomad** | В access-логе статус `502`; в Traefik логе: `dial tcp 10.10.10.15:0: connect: can't assign requested address` | У задачи объявлено несколько портов или динамический порт, и Traefik не смог определить целевой порт (выбрал `0`). | Явно зафиксировать порт сервиса в тегах: `traefik.http.services.<srv>.loadbalancer.server.port=<порт>`. |
+| **Высокая нагрузка на CPU / Flapping при массовом перезапуске задач** | Процесс Traefik утилизирует 100% одного ядра CPU, постоянные логи `Configuration received from provider` | Слишком короткий интервал дебаунсинга; частые обновления из Nomad/Consul вызывают бесконечный рендеринг графа. | Увеличить задержку дебаунсинга: `providers.providersThrottleDuration: 2s` (или `5s` для крупных инсталляций). |
+| **Ошибка рендеринга Go-шаблона в File-провайдере** | В логах Traefik: `error while reading configuration file ... function "foo" not defined` или `template: ... nil pointer` | Использована функция, отсутствующая в Sprig v3, либо переменная окружения не существует и не задан `default`. | Добавить безопасные значения по умолчанию: `{{ env "VAR" \| default "value" }}`; проверить список встроенных функций Sprig. |
+| **Ошибки опроса в HTTP Provider (`providers.http`)** | В логах: `HTTP provider connection timeout` или `Error while polling configuration: 401 Unauthorized` | Внешний эндпоинт недоступен, отвечает дольше `pollTimeout`, либо передан невалидный заголовок `Authorization`. | Проверить доступность: `curl -v -H "Authorization: Bearer ..." <endpoint>`; настроить `pollTimeout: 10s` при тяжелых генерациях. |
+| **Ошибка `middleware not found` при использовании общего middleware** | В логах: `middleware "corp-whitelist" does not exist` для роутера Nomad | Роутер из провайдера Nomad ищет middleware внутри пространства `@nomad`, а middleware создано в файле. | Указать явный суффикс провайдера: `traefik.http.routers.app.middlewares=corp-whitelist@file`. |
+| **504 Gateway Timeout при обращении к Consul Catalog** | В логах: `consulCatalog: Failed to read services: Get ... context deadline exceeded` | Consul Agent перегружен Raft-запросами или сетевой задержкой между датацентрами при строгом кворуме. | Включить `stale: true` и `cache: true` в настройках `providers.consulCatalog`, чтобы читать данные из локального кэша агента. |
 
-## Рекомендации
+---
 
-- Двойная запись одного роутера в разных провайдерах — антипаттерн: приоритет выстраивается, но внезапные изменения в «верхнем» провайдере «перебивают» конфиг ниже.
-- Не используйте HTTP Provider как единственный источник правды; его роль — оперативные исправления «на лету» при расследовании инцидентов.
-- `exposedByDefault: false` всегда в реестровых провайдерах — так новые сервисы не «выстреливают» на prod-домены случайно.
-- KV-store провайдеры (Consul/etcd/ZooKeeper/Redis) — отдельная тема, разобрана в [Traefik: KV-store провайдеры](./traefik-providers-kv-stores.md).
-- Для множества одинаковых инстансов Traefik (HA) именно реестровые/файловые провайдеры дают общий источник конфига (см. [HA Traefik](./traefik-high-availability.md)).
+## Лучшие практики
+
+### 1. Безопасность и контроль доступа
+- **Принцип наименьших привилегий для ACL:** токены Nomad (`token`) и Consul (`token`), передаваемые в Traefik, должны обладать строго read-only правами на пространства имен (`namespace { policy = "read" }`, `service_prefix "" { policy = "read" }`, `node_prefix "" { policy = "read" }`).
+- **Скрытие сервисов по умолчанию:** всегда устанавливайте `exposedByDefault: false`. Это гарантирует, что случайно развернутые тестовые или служебные задачи не будут автоматически опубликованы во внешний периметр.
+- **Отсутствие чувствительных данных в тегах:** никогда не передавайте приватные ключи, токены авторизации или пароли в строках тегов Nomad/Consul. Теги видны всем пользователям с правом чтения каталога. Все секреты и TLS-сертификаты должны подключаться через File-провайдер или хранилище секретов.
+
+### 2. Надежность (SRE) и масштабируемость
+- **Использование Stale Reads:** для провайдеров Consul и Nomad включайте флаг `stale: true`. Это снижает нагрузку на Raft-кворум лидеров в 10–50 раз, направляя поток запросов обнаружения сервисов на локальные агенты нод.
+- **Тюнинг дебаунсинга:** на крупных bare-metal кластерах (от 50+ нод и 500+ сервисов) установите `providersThrottleDuration: 3s–5s`. Это предотвратит "шторм перезагрузок" во время массового обновления кластера оркестратором.
+- **Таймауты опроса в HTTP-провайдере:** при использовании `providers.http` параметр `pollTimeout` должен быть строго меньше `pollInterval` (например, `pollInterval: 10s`, `pollTimeout: 3s`), чтобы предотвратить наложение конкурирующих запросов опроса.
+
+### 3. Эксплуатационные стандарты именования
+- **Пространства имен для сервисов:** используйте четкие соглашения именования роутеров и сервисов в тегах (например, `<namespace>-<app_name>`), чтобы исключить коллизии между командами.
+- **Явная фиксация портов:** всегда указывайте `traefik.http.services.<srv>.loadbalancer.server.port` в тегах сервисов, если контейнер или задача экспонирует более одного сетевого порта.
+
+---
 
 ## Дополнительная информация
 
-- [Traefik: KV-store провайдеры](./traefik-providers-kv-stores.md) — Consul/etcd/ZooKeeper/Redis как хранилище конфигурации.
-- [Traefik с Docker Compose](./traefik_with_docker_compose.md) — тот же паттерн меток для Docker.
-- [Traefik на bare-metal](./traefik-bare-metal.md) — запуск без контейнеров, File-провайдер.
-- [Nomad: основы](../../Nomad/definitions_and_concepts.md) — концепции HashiCorp Nomad.
-- [Nomad + Consul Connect](../../Nomad/nomad_consul_connect.md) — интеграция с сетевой политикой Consul.
+- [Обзор Traefik](./traefik_overview.md) — фундаментальные концепции, архитектура ядра и жизненный цикл запроса.
+- [Traefik: KV-store провайдеры](./traefik-providers-kv-stores.md) — детальный разбор сырых Key-Value провайдеров: Consul KV, etcd, Redis, ZooKeeper.
+- [Traefik с Docker Compose](./traefik_with_docker_compose.md) — конфигурация роутеров и балансировки с использованием меток Docker.
+- [Traefik на bare-metal](./traefik-bare-metal.md) — развертывание Traefik в виде systemd-сервиса на выделенных серверах.
+- [Высокая доступность Traefik (HA)](./traefik-high-availability.md) — организация кластера Traefik с общей конфигурацией и балансировкой.
+- [Миграция с Traefik v2 на v3](./traefik-migration-v2-to-v3.md) — изменения в синтаксисе правил маршрутизации и конфигурационных опций.
+- [Основы Nomad: концепции и архитектура](../../Nomad/definitions_and_concepts.md) — базовые принципы работы оркестратора HashiCorp Nomad.
+- [Практические сценарии Nomad](../../Nomad/practical_scenarios.md) — развертывание и эксплуатация рабочих нагрузок в Nomad.
+- [Архитектура HashiCorp Consul](../../Consul/consul_architecture.md) — принципы работы агентов, серверов и протокола Raft.
+- [Каталог сервисов Consul](../../Consul/consul_service_catalog.md) — регистрация сервисов, проверка работоспособности и интеграция с DNS.

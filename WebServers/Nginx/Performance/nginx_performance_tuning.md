@@ -1,448 +1,772 @@
 # Оптимизация производительности Nginx
 
+**Актуально для:** Nginx 1.30.x (Stable) / 1.31.x (Mainline), Angie 1.10+ / 1.12.x, Linux Kernel 5.15+ / 6.x
+
+---
+
 ## Определения
 
-**Оптимизация производительности Nginx** — комплексный процесс настройки архитектуры веб-сервера, параметров ядра Linux и сетевого стека для достижения максимальной пропускной способности (throughput) и минимальных задержек (latency) при обработке трафика.
+**Оптимизация производительности Nginx (Performance Tuning)** — комплексная инженерная процедура согласования архитектуры веб-сервера с возможностями оборудования (CPU, RAM, дисковая и сетевая подсистемы) и сетевого стека ядра Linux с целью максимизации пропускной способности (RPS/Throughput), минимизации сетевых задержек (Latency, TTFB) и исключения деградации сервиса при пиковых нагрузках.
 
-**Worker process** — независимый дочерний процесс Nginx, обрабатывающий соединения в неблокирующем цикле событий (event loop). Количество воркеров определяется директивой `worker_processes`.
+**Рабочий процесс (Worker Process)** — непривилегированный процесс Nginx, выполняющий неблокирующий цикл обработки событий (Event Loop) и обслуживающий клиентские и upstream-соединения. Количество рабочих процессов определяется директивой `worker_processes`.
 
-**Event Loop (цикл событий)** — ядро архитектуры Nginx. Воркер регистрирует события (accept, read, write) в epoll/kqueue и обрабатывает их по готовности, без выделения потока на каждое соединение.
+**Цикл обработки событий (Event Loop)** — ядро архитектуры Nginx. Рабочий процесс регистрирует файловые дескрипторы сокетов в системном мультиплексоре `epoll` (в Linux) и обрабатывает возникающие события ввода-вывода (готовность к чтению, записи, установлению соединения) без создания отдельных потоков или процессов на каждое соединение.
 
-**Zero-Copy** — технология передачи данных с диска напрямую в сетевой интерфейс через системный вызов `sendfile()`, минуя копирование в адресное пространство приложения и лишние переходы между режимами ядра.
+**SO_REUSEPORT (Директива `reuseport`)** — опция сокета в ядре Linux (начиная с ядра 3.9), позволяющая нескольким независимым процессам привязываться (`bind`) к одному и тому же IP-адресу и порту. Ядро операционной системы автоматически распределяет входящие TCP-соединения между слушающими сокетами воркеров на основе хэша 4-tuple/5-tuple пакета SYN.
 
-**open_file_cache** — механизм кэширования дескрипторов файлов, их размеров и времени модификации в оперативной памяти. Ускоряет отдачу мелкой статики за счет сокращения количества системных вызовов `stat()`.
+**Zero-Copy** — технология передачи данных с блочного устройства (диска) напрямую в сетевой сокет через системный вызов `sendfile()`, минуя промежуточную буферизацию данных в адресном пространстве пользователя (user-space) и минимизируя переключения контекста процессора.
 
-**Keepalive (HTTP persistent connection)** — механизм повторного использования одного TCP-соединения для нескольких HTTP-запросов, снижающий накладные расходы на установку соединения (handshake).
+**kTLS (Kernel TLS)** — механизм ядра Linux, переносящий симметричное шифрование и дешифрование TLS-трафика (AES-GCM, ChaCha20-Poly1305) из пространства пользователя в ядро ОС. Позволяет объединить системный вызов `sendfile()` с TLS-шифрованием без промежуточного копирования данных в user-space.
 
-**kTLS (Kernel TLS)** — перенос симметричного шифрования (AES-GCM, ChaCha20-Poly1305) из пользовательского пространства в ядро Linux. Позволяет использовать `sendfile()` вместе с TLS, исключая двойное копирование данных.
+**Асинхронный ввод-вывод и пулы потоков (`aio threads`)** — механизм делегирования потенциально блокирующих файловых операций чтения с диска в независимый пул потоков (`thread_pool`), предотвращающий остановку неблокирующего цикла событий воркера при промахах мимо кэша страниц ядра (Page Cache).
+
+**Кэш открытых дескрипторов (`open_file_cache`)** — структура данных в оперативной памяти воркера, сохраняющая дескрипторы файлов, их размеры, метаданные inode и статус существования, что устраняет избыточные системные вызовы `open()`, `stat()` и `close()` при отдаче статических файлов.
+
+**HTTP Keepalive и пулы соединений (Connection Pooling)** — механизм повторного использования одного TCP-соединения для последовательной передачи множества HTTP-запросов между клиентом и Nginx, а также между Nginx и upstream-серверами, устраняющий накладные расходы на тройное рукопожатие TCP (3-way handshake) и инициализацию TLS.
+
+**Проблема «громоподобного стада» (Thundering Herd)** — ситуация, при которой по прибытии одного входящего соединения операционная система пробуждает все ожидающие процессы, но соединение достается только одному, а остальные тратят ресурсы CPU вхолостую. В современных ядрах Linux полностью решена на уровне `EPOLLEXCLUSIVE` и `SO_REUSEPORT`.
+
+**Исчерпание эфемерных портов (Ephemeral Port Exhaustion)** — состояние операционной системы, при котором исчерпан диапазон локальных TCP-портов (`net.ipv4.ip_local_port_range`), используемых Nginx для исходящих соединений к бэкендам, обычно вызванное накоплением сокетов в состоянии `TIME_WAIT`.
+
+**Очередь прослушивания (Listen Backlog)** — очередь ядра Linux для входящих TCP-соединений, завершивших 3-way handshake, но еще не извлеченных процессом Nginx с помощью системного вызова `accept()`.
+
+---
 
 ## Основные концепции
 
-### Архитектура и процессная модель
+### 1. Архитектура и процессная модель
 
-Производительность Nginx определяется тремя факторами: количество воркеров, эффективность Event Loop и оптимальность взаимодействия с ядром.
+Высокая производительность Nginx базируется на однопоточной событийно-ориентированной модели каждого рабочего процесса. В отличие от серверов с моделью process-per-request или thread-per-request, Nginx не расходует память на стек потока для каждого клиента и не страдает от дорогостоящих переключений контекста (context switches).
 
-*   **`worker_processes auto;`** — создает один процесс на каждое доступное ядро CPU. Это baseline для всех современных конфигураций. Для систем с NUMA учитывайте расположение ядер: `worker_cpu_affinity` позволяет привязать воркеры к конкретным ядрам и их локальной памяти.
-*   **`worker_rlimit_nofile`** — мягкий лимит дескрипторов файлов для воркеров. Должен превышать `worker_connections` минимум в 2 раза, так как на каждое проксируемое соединение тратится два дескриптора (клиент + бэкенд). Рекомендуемое значение: `65535` или выше.
-*   **`worker_shutdown_timeout`** — время на корректное завершение воркера при перезагрузке конфигурации. Предотвращает "подвешивание" старых процессов при долгих соединениях (gRPC, WebSocket, HTTP/3). Значение по умолчанию — `0` (ожидать завершения без ограничений), для production рекомендуется `10s` или `30s`.
-*   **`worker_priority`** — приоритет планировщика для воркеров. На загруженных серверах можно установить `worker_priority -10` или `nice` для повышения приоритета Nginx относительно других сервисов.
-
-### Сетевой стек и ввод-вывод
-
-Современный baseline (2026) — полная асинхронность дисковых и сетевых операций, минимизация копирований между пространствами.
-
-*   **`sendfile on;`** — включает Zero-Copy. Критически важен для статики и pre-compressed файлов. В сочетании с TLS работает через kTLS (см. ниже).
-*   **`sendfile_max_chunk 512k;`** — ограничивает объем данных за один вызов `sendfile()`. Предотвращает монополизацию воркера одним быстрым клиентом, скачивающим тяжелый файл. Значение `0` отключает ограничение (не рекомендуется для публичных серверов).
-*   **`aio threads=default;`** — включает асинхронный дисковый I/O через пулы потоков ядра. Предотвращает блокировку Event Loop при чтении данных, отсутствующих в Page Cache. Критично для высоконагруженных систем с большим объемом статики.
-*   **`tcp_nopush on;`** — отправляет заголовки HTTP и начало файла в одном TCP-пакете (TCP_CORK). Эффективно только с `sendfile on;`.
-*   **`tcp_nodelay on;`** — отключает алгоритм Нагла (Nagle). Критично для HTTP/2 и HTTP/3, где задержка отправки мелких фреймов управления замедляет весь поток. В паре с `tcp_nopush` работает корректно: `tcp_nopush` собирает пакеты при записи, `tcp_nodelay` мгновенно отправляет их при сбросе.
-*   **`reset_timedout_connection on;`** — принудительно закрывает соединения по таймауту, освобождая дескрипторы и память воркера.
-
-### open_file_cache
-
-Кэширует дескрипторы файлов, их размеры и время модификации. Радикально ускоряет отдачу мелкой статики (favicon, robots.txt, CSS, JS) на системах с большим количеством файлов.
-
-```nginx
-http {
-    open_file_cache          max=10000 inactive=20s;
-    open_file_cache_valid    30s;
-    open_file_cache_min_uses 2;
-    open_file_cache_errors   on;
-}
+```text
+                        ┌───────────────────────────────┐
+                        │    Master Process (root)      │
+                        │ Чтение конфига, bind сокетов  │
+                        └───────┬───────────────┬───────┘
+                                │ fork()        │ fork()
+            ┌───────────────────▼──┐         ┌──▼───────────────────┐
+            │  Worker Process #0   │         │  Worker Process #1   │
+            │  epoll Event Loop    │         │  epoll Event Loop    │
+            │  [CPU Core 0]        │         │  [CPU Core 1]        │
+            └───────────┬──────────┘         └──────────┬───────────┘
+                        │                               │
+            ┌───────────▼──────────┐         ┌──────────▼───────────┐
+            │ Клиенты & Upstreams  │         │ Клиенты & Upstreams  │
+            └──────────────────────┘         └──────────────────────┘
 ```
 
-*   **`max=10000`** — максимальное количество элементов в кэше. Значение должно покрывать количество часто отдаваемых файлов.
-*   **`inactive=20s`** — время неиспользования, после которого элемент удаляется из кэша.
-*   **`open_file_cache_valid 30s`** — интервал проверки актуальности кэшированных данных (inode, размер). При изменении файла на диске Nginx обнаружит это в течение указанного времени.
-*   **`open_file_cache_min_uses 2`** — минимальное количество обращений для попадания в кэш. Исключает "шум" от редко запрашиваемых файлов.
-*   **`open_file_cache_errors on`** — кэширует ошибки отсутствия файлов (`ENOENT`), защищая файловую систему от шумного трафика ботов.
+#### Ключевые директивы процессной модели
 
-### Keepalive и пулы соединений
+- **`worker_processes auto;`**  
+  Запускает по одному рабочему процессу на каждое доступное ядро CPU. Для выделенных серверов это базовое значение. В контейнерах (Docker/LXC) директива `auto` считывает физические ядра хоста, если не настроена квота CFS; при ограничении ресурсов через cgroups задавайте фиксированное число воркеров, соответствующее лимиту ядер CPU.
+- **`worker_cpu_affinity auto;`**  
+  Жестко привязывает каждый рабочий процесс к выделенному ядру CPU (affinity mask). Устраняет миграцию процессов между ядрами, сохраняет горячими процессорные кэши L1/L2/L3 и снижает латентность обработки пакетов.
+- **`worker_rlimit_nofile`**  
+  Задает жесткий лимит открытых файловых дескрипторов (`RLIMIT_NOFILE`) для рабочего процесса. На каждый проксируемый запрос Nginx может расходовать минимум 2 файловых дескриптора (клиентский сокет + сокет к upstream-серверу), а также дескрипторы дисковых файлов, соединений к логам и разделяемой памяти.  
+  *Формула минимального значения:*  
+  $$\text{worker\_rlimit\_nofile} \ge \text{worker\_connections} \times 2 + 1024$$  
+  В production рекомендуется устанавливать от `65535` до `1048576` (при согласовании с лимитами ядра и systemd).
+- **`worker_shutdown_timeout`**  
+  Время принудительного завершения старых воркеров при бесшовной перезагрузке (`nginx -s reload`). Предотвращает зависание процессов, обслуживающих долгоживущие соединения (WebSocket, gRPC-стримы, HTTP/3). Рекомендуемое значение: `15s`–`30s`.
 
-С версии Nginx 1.19.10 значение `keepalive_requests` по умолчанию увеличено до `1000`. С версии 1.29.7 keepalive к бэкендам включен по умолчанию с лимитом `32` соединений на воркер.
+---
+
+### 2. Распределение соединений: `reuseport`, `multi_accept` и `accept_mutex`
+
+Исторически распределение входящих сетевых соединений между воркерами Nginx вызывало блокировки и неравномерность нагрузки.
+
+#### Сравнение механизмов обработки соединений
+
+| Механизм | Принцип работы | Плюсы | Минусы / Ограничения |
+| :--- | :--- | :--- | :--- |
+| **`accept_mutex`** | Воркеры по очереди захватывают мьютекс в shared memory для вызова `accept()`. | Исключает thundering herd на старых ядрах Linux (< 3.9). | Создает жесткие блокировки на многоядерных машинах при высоком RPS. По умолчанию **выключен** (`off`) с Nginx 1.11.3. |
+| **`multi_accept`** | По событию готовности сокета воркер извлекает все накопившиеся соединения в очереди за один проход. | Быстрее освобождает listen backlog ядра при взрывных всплесках трафика. | Без `reuseport` может привести к монополизации соединений одним воркером, пока остальные простаивают. |
+| **`reuseport`** | Ядро создает отдельный слушающий сокет для каждого воркера (`SO_REUSEPORT`) и балансирует входящие SYN-пакеты. | Аппаратное/ядровое масштабирование, нулевые блокировки между процессами, идеальный RPS на 16+ ядрах. | Задается только один раз на конкретную пару `IP:port`. При reload возможны кратковременные перекосы распределения. |
 
 ```nginx
+events {
+    worker_connections 65535;
+    use epoll;
+    multi_accept on;
+}
+
 http {
-    keepalive_timeout  65s;
-    keepalive_requests 1000;
-    reset_timedout_connection on;
-
-    upstream backend {
-        server 10.0.0.1:8080;
-        server 10.0.0.2:8080;
-
-        keepalive 32;
-        keepalive_timeout 60s;
-        keepalive_requests 1000;
-    }
-
     server {
-        listen 80;
-
-        location / {
-            proxy_pass http://backend;
-            proxy_http_version 1.1;
-            proxy_set_header Connection "";
-        }
+        # Параметр reuseport указывается один раз для пары IP:port
+        listen 80 default_server reuseport;
+        listen 443 ssl default_server reuseport;
+        ...
     }
 }
 ```
 
-**Важно:** Для работы `keepalive` в `upstream` необходимо:
-1.  Установить `proxy_http_version 1.1;` (HTTP/1.0 не поддерживает keepalive по умолчанию).
-2.  Очистить заголовок `Connection`: `proxy_set_header Connection "";`.
-3.  Убедиться, что бэкенд не закрывает соединения агрессивно (его `keepalive_timeout` должен быть не меньше, чем у Nginx).
+> [!IMPORTANT]
+> Параметр `reuseport` директивы `listen` доступен только в Linux (начиная с ядра 3.9) и DragonFly BSD. Если сконфигурировано несколько виртуальных хостов на одном порту, `reuseport` должен быть указан **строго в первом (или default_server) блоке `listen`**.
 
-### Kernel TLS (kTLS)
+---
 
-kTLS переносит симметричное шифрование в ядро Linux, что позволяет использовать `sendfile()` вместе с TLS и исключить копирование данных между пространствами.
+### 3. Сетевой стек, Zero-Copy и Kernel TLS (kTLS)
 
-**Требования:**
-*   **Ядро Linux:** 4.13+ (базовая поддержка), 5.2+ (рекомендуется).
-*   **OpenSSL:** 3.0+ с опцией сборки `enable-ktls`.
-*   **Nginx:** 1.21.4+ (поддержка `SSL_sendfile()` с kTLS).
+#### Взаимодействие `sendfile`, `tcp_nopush` и `tcp_nodelay`
 
-**Ограничения:**
-*   На-loaded системах (высокий RPS) kTLS может конфликтовать с фреймированием HTTP/2 в user-space. Тестируйте на производственных профилях нагрузки.
-*   NIC offload (`TLS_HW`) работает только для TLS 1.2. Для TLS 1.3 используется software mode (`TLS_SW`) в ядре.
-*   Не поддерживается для соединений, маршрутизируемых через tun/tap, VXLAN, wireguard.
+При раздаче статических файлов и проксировании Nginx объединяет три системных механизма ядра:
+
+1. **`sendfile on;`**  
+   Активирует системный вызов `sendfile()`. Ядро передает данные напрямую из Page Cache в кольцевой буфер сетевого адаптера (TX ring buffer), исключая перенос данных в память процесса (`read()`) и последующую запись в сокет (`write()`).
+2. **`sendfile_max_chunk 512k;`**  
+   Ограничивает максимальный объем данных, передаваемый за один системный вызов `sendfile()`. Без этого параметра один быстрый клиент, скачивающий файл размером 10 ГБ, заблокирует рабочий процесс, вызвав рост задержек (latency spike) для остальных сотен клиентов на этом же воркере.
+3. **`tcp_nopush on;`** (в Linux включает `TCP_CORK`)  
+   Указывает ядру накапливать исходящие данные и отправлять полный HTTP-заголовок ответа вместе с началом содержимого файла в одном полном сетевом кадре (MTU), минимизируя оверхед на заголовки пакетов. Работает только совместно с `sendfile on;`.
+4. **`tcp_nodelay on;`** (включает `TCP_NODELAY`)  
+   Отключает алгоритм Нагла (Nagle's algorithm), предписывающий ожидать подтверждения (ACK) перед отправкой мелких порций данных. Критически важен для HTTP Keepalive, REST API, HTTP/2 и HTTP/3, где задержка отправки даже одного управляющего фрейма или заголовка приводит к росту задержки.
+
+```text
+Клиентский запрос ──► Nginx
+                       │
+                       ├─► [tcp_nopush накапливает заголовок + тело до размера MTU]
+                       ├─► [sendfile передает данные Disk -> PageCache -> NIC]
+                       └─► [tcp_nodelay немедленно сбрасывает финальный неполный пакет]
+```
+
+#### Kernel TLS (kTLS)
+
+В стандартном TLS передача статики через `sendfile()` невозможна, так как данные должны быть зашифрованы в user-space библиотекой OpenSSL, что требует двух копирований (`диск -> RAM воркера -> сокет`).
+
+kTLS решает эту проблему:
+- Фаза рукопожатия (Handshake) и обмен ключами производятся в user-space (OpenSSL).
+- Симметричные сессионные ключи шифрования передаются в ядро Linux через вызов `setsockopt(..., SOL_TLS, TLS_TX, ...)`.
+- Ядро самостоятельно шифрует данные "на лету" при исполнении `sendfile()`.
+
+**Требования для kTLS:**
+- Ядро Linux 5.15+ (модуль `tls` загружен: `modprobe tls`).
+- OpenSSL 3.0+ с флагом `enable-ktls` (или встроенный в дистрибутив).
+- Nginx, собранный с поддержкой SSL (директива `ssl_conf_command Options KTLS;`).
 
 ```nginx
 http {
     ssl_conf_command Options KTLS;
 
     server {
-        listen 443 ssl;
-        ssl_ciphers TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256;
+        listen 443 ssl reuseport;
+        server_name cdn.example.com;
+
         sendfile on;
+        sendfile_max_chunk 1m;
         tcp_nopush on;
+        tcp_nodelay on;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:ECDHE-ECDSA-AES256-GCM-SHA384;
     }
 }
 ```
 
-## Практические сценарии
+---
 
-### Сценарий 1: Базовая конфигурация для высоконагруженного сервера
+### 4. Асинхронный ввод-вывод: `aio threads` и `directio`
 
-Полный baseline для отдачи статики и проксирования.
+Когда Nginx запрашивает файл с диска, и нужные страницы отсутствуют в оперативной памяти (промах Page Cache), системный вызов `read()` блокирует поток исполнения. В этот момент весь рабочий процесс замирает и не может обрабатывать сетевые события epoll тысяч других пользователей.
+
+Решение — вынос дисковых операций в пулы системных потоков (Thread Pools):
 
 ```nginx
+# В контексте main
+thread_pool default threads=32 max_queue=65536;
+
+http {
+    # В контексте http, server или location
+    aio threads=default;
+    directio 8m;
+    output_buffers 2 1m;
+}
+```
+
+- **`thread_pool default threads=32 max_queue=65536;`** — создает пул из 32 потоков ОС для обработки дискового чтения с очередью задач.
+- **`aio threads=default;`** — переводит чтение файлов в указанный пул потоков. Если данные уже в памяти, Nginx отдает их мгновенно через `sendfile`; если требуется обращение к накопителю — задача ставится в очередь потока, а воркер продолжает обрабатывать сеть.
+- **`directio 8m;`** — для файлов размером $\ge$ 8 МБ включает прямой ввод-вывод (`O_DIRECT`), минуя Page Cache. Предотвращает вымывание полезного кэша оперативной памяти тяжелыми медиафайлами и резервными копиями.
+
+---
+
+### 5. Кэширование файловых дескрипторов (`open_file_cache`)
+
+Каждое обращение к статическому файлу на диске требует вызовов `open()`, `fstat()` и последующего `close()`. При тысячах запросов в секунду это создает колоссальную нагрузку на VFS и блокировки inode ядра.
+
+```nginx
+http {
+    open_file_cache          max=100000 inactive=30s;
+    open_file_cache_valid    60s;
+    open_file_cache_min_uses 2;
+    open_file_cache_errors   on;
+}
+```
+
+- **`max=100000`** — предельное число дескрипторов в памяти воркера. При переполнении наименее используемые элементы вытесняются по алгоритму LRU.
+- **`inactive=30s`** — время жизни записи без обращений. Если за 30 секунд к файлу не обратились, дескриптор закрывается.
+- **`open_file_cache_valid 60s`** — интервал времени, по истечении которого Nginx проверяет актуальность метаданных файла на диске (не изменился ли inode, размер или права).
+- **`open_file_cache_min_uses 2`** — порог обращений за период `inactive`. Защищает кэш от засорения дескрипторами файлов, запрошенных однократно.
+- **`open_file_cache_errors on`** — кэширует ошибки отсутствия файлов (`ENOENT`, `EACCES`), исключая повторные дисковые поиски при сканировании ботами несуществующих URI.
+
+---
+
+### 6. Keepalive и пулы соединений
+
+Поддержание постоянных соединений снижает сетевой оверхед и задержку (RTT) за счет устранения повторных рукопожатий.
+
+#### Keepalive с клиентами
+- **`keepalive_timeout 65s;`** — время удержания соединения открытым в ожидании следующего запроса клиента.
+- **`keepalive_requests 10000;`** — предельное количество запросов, обслуживаемых в рамках одного TCP-соединения перед его принудительным закрытием. В высоконагруженных окружениях дефолтное значение 1000 рекомендуется увеличивать до `10000`–`100000`, чтобы клиенты не тратили время на повторные TLS-хэндшейки.
+- **`reset_timedout_connection on;`** — при наступлении таймаута сокет закрывается с отправкой TCP RST вместо стандартной 4-этапной процедуры FIN-ACK. Освобождает буферы сокета и дескриптор немедленно, не оставляя сокет в состоянии `FIN_WAIT1`/`FIN_WAIT2`.
+
+#### Upstream Keepalive (пулинг к бэкендам)
+
+> [!CAUTION]
+> В Nginx Open Source постоянные соединения к `upstream` **выключены по умолчанию**. Если директива `keepalive` не задана явно в блоке `upstream`, Nginx работает с бэкендами по протоколу HTTP/1.0 и закрывает TCP-сокет после каждого запроса (`Connection: close`), что при высоком RPS приводит к мгновенному исчерпанию диапазона локальных портов (`Cannot assign requested address`).
+
+```nginx
+upstream app_backend {
+    server 10.0.1.10:8080 max_fails=3 fail_timeout=10s;
+    server 10.0.1.11:8080 max_fails=3 fail_timeout=10s;
+
+    # Максимальное количество неактивных соединений, сохраняемых в пуле каждого воркера
+    keepalive 128;
+    # Общее количество запросов через одно keepalive соединение
+    keepalive_requests 10000;
+    # Время простоя соединения в пуле
+    keepalive_timeout 60s;
+}
+
+server {
+    listen 80;
+
+    location /api/ {
+        proxy_pass http://app_backend;
+
+        # Обязательные директивы для работы upstream keepalive:
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+```
+
+---
+
+### 7. Расчет буферов и потребления оперативной памяти
+
+Неконтролируемое увеличение размеров буферов — главная причина аварийного завершения Nginx под нагрузкой механизмом ядра Linux OOM-Killer.
+
+#### Формула оценки максимального потребления RAM
+
+$$\text{RAM}_{\text{max}} = (\text{worker\_processes} \times \text{worker\_connections} \times \text{Буфер\_соединения}) + \text{Shared\_Memory} + \text{Page\_Cache}$$
+
+Где базовый размер памяти на одно активное клиентское соединение складывается из:
+- Сетевых буферов сокета ядра (`rmem`/`wmem`).
+- Буферов заголовков: `client_header_buffer_size` (дефолт 1 КБ) + `large_client_header_buffers` (4 × 8 КБ).
+- Буфера тела запроса: `client_body_buffer_size` (обычно 16–128 КБ).
+- Буферов проксирования: `proxy_buffer_size` (4–8 КБ) + `proxy_buffers` (8 × 8 КБ = 64 КБ). Детальное управление поведением буферизации описано в руководстве по [буферизации и стримингу в Nginx](../Proxy/nginx_buffering_and_streaming.md).
+- Буфера TLS: `ssl_buffer_size` (дефолт 16 КБ).
+
+> [!TIP]
+> **Оптимизация TTFB и RAM через `ssl_buffer_size`:**  
+> Значение по умолчанию `ssl_buffer_size 16k;` оптимизировано под максимальную пропускную способность передачи больших файлов. Однако для интерактивных API и веб-страниц отправка блоков по 16 КБ задерживает передачу первого байта (TTFB), так как браузер не может начать разбор HTML/JSON до получения и расшифровки всего 16-килобайтного блока.  
+> Установка `ssl_buffer_size 4k;` (или `8k;`) снижает TTFB на 20–40% и экономит до 12 КБ оперативной памяти на каждое активное TLS-соединение.
+
+---
+
+### 8. Отличия Nginx и Angie в контексте производительности
+
+[Angie](../../Angie/angie_overview.md) — форк Nginx от оригинальной команды разработчиков, содержащий ряд архитектурных улучшений для производительности:
+
+| Параметр / Функция | Nginx Open Source | Angie | Влияние на DevOps/SRE |
+| :--- | :--- | :--- | :--- |
+| **Балансировка `least_time`** | Только в коммерческом Nginx Plus | Доступна в Open Source (`least_time header\|last_byte`) | Направляет трафик на наименее загруженные бэкенды на основе реальной задержки RTT. |
+| **Метрики производительности** | Базовый `stub_status` (7 метрик) | Модуль `status_zone` и встроенный эндпоинт `/metrics` | Нативный Prometheus-экспорт с разбивкой по виртуальным хостам и апстримам без сторонних демонов. |
+| **Динамическое управление Upstream** | Требуется reload (`nginx -s reload`) | REST API для изменения весов и адресов на лету | Нулевой сброс кэшей и переинициализации воркеров при масштабировании бэкендов. |
+| **Автоматический Upstream Keepalive** | Требует явной настройки `keepalive N` | Доступны оптимизированные дефолты и общие пулы | Меньше риск инцидентов с исчерпанием портов при первичной настройке. |
+
+---
+
+## Практические сценарии
+
+### Сценарий 1: Производственный baseline для высоконагруженного Reverse Proxy и API Gateway
+
+Конфигурация оптимизирована для серверов под нагрузкой от 20 000 до 100 000+ RPS. Включает `reuseport`, upstream keepalive, защиту от медленных клиентов и тюнинг TLS.
+
+Файл: `/etc/nginx/nginx.conf`
+
+```nginx
+user nginx;
 worker_processes auto;
-worker_rlimit_nofile 65535;
+worker_cpu_affinity auto;
+worker_rlimit_nofile 1048576;
+worker_shutdown_timeout 15s;
+pcre_jit on;
 
 events {
     worker_connections 65535;
-    multi_accept on;
     use epoll;
+    multi_accept on;
 }
 
 http {
-    # MIME-типы
-    include       mime.types;
+    include       /etc/nginx/mime.types;
     default_type  application/octet-stream;
 
-    # Zero-Copy и сетевой стек
+    # Логирование в буфер для минимизации дискового ввода-вывода
+    log_format main_perf '$remote_addr - $remote_user [$time_local] "$request" '
+                         '$status $body_bytes_sent "$http_referer" '
+                         '"$http_user_agent" rt=$request_time uct="$upstream_connect_time" '
+                         'uht="$upstream_header_time" urt="$upstream_response_time"';
+
+    access_log /var/log/nginx/access.log main_perf buffer=64k flush=5s;
+    error_log  /var/log/nginx/error.log warn;
+
+    # Сетевой стек и Zero-Copy
     sendfile            on;
     sendfile_max_chunk  512k;
     tcp_nopush          on;
     tcp_nodelay         on;
 
-    # Асинхронный дисковый I/O
-    aio                 threads=default;
-
-    # Кэширование дескрипторов
-    open_file_cache          max=10000 inactive=20s;
-    open_file_cache_valid    30s;
-    open_file_cache_min_uses 2;
-    open_file_cache_errors   on;
-
-    # Keepalive
-    keepalive_timeout  65s;
-    keepalive_requests 1000;
+    # Пулы соединений и таймауты
+    keepalive_timeout         65s;
+    keepalive_requests        10000;
     reset_timedout_connection on;
+    client_body_timeout       10s;
+    client_header_timeout     10s;
+    send_timeout              10s;
+
+    # Буферы клиентских запросов
+    client_body_buffer_size      64k;
+    client_max_body_size         16m;
+    client_header_buffer_size    1k;
+    large_client_header_buffers  4 8k;
+
+    # Оптимизация TLS
+    ssl_protocols             TLSv1.2 TLSv1.3;
+    ssl_ciphers               TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:ECDHE-ECDSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache         shared:SSL:50m;
+    ssl_session_timeout       1d;
+    ssl_session_tickets       off;
+    ssl_buffer_size           4k;
+
+    # Пул бэкендов с постоянными соединениями
+    upstream backend_cluster {
+        zone backend_zone 64k;
+        server 10.0.10.11:8080 max_fails=3 fail_timeout=10s;
+        server 10.0.10.12:8080 max_fails=3 fail_timeout=10s;
+
+        keepalive 256;
+        keepalive_requests 10000;
+        keepalive_timeout 60s;
+    }
 
     server {
-        listen 80;
-        server_name example.com;
-        root /var/www/html;
+        listen 80 default_server reuseport;
+        listen 443 ssl default_server reuseport;
+        server_name api.example.com;
+
+        ssl_certificate     /etc/ssl/certs/api.example.com.crt;
+        ssl_certificate_key /etc/ssl/private/api.example.com.key;
 
         location / {
-            try_files $uri $uri/ =404;
+            proxy_pass http://backend_cluster;
+
+            # Upstream keepalive
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+
+            # Заголовки проксирования
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Буферизация ответов
+            proxy_buffering           on;
+            proxy_buffer_size         8k;
+            proxy_buffers             16 8k;
+            proxy_busy_buffers_size   16k;
+            proxy_connect_timeout     3s;
+            proxy_read_timeout        10s;
+            proxy_send_timeout        10s;
         }
 
-        location ~* \.(jpg|jpeg|png|gif|ico|css|js)$ {
-            expires 365d;
-            add_header Cache-Control "public, immutable" always;
+        # Эндпоинт мониторинга для Prometheus / Zabbix
+        location /stub_status {
+            stub_status;
+            access_log off;
+            allow 127.0.0.1;
+            allow 10.0.0.0/8;
+            deny all;
+        }
+    }
+}
+```
+
+---
+
+### Сценарий 2: Высокопроизводительная раздача медиа и статики (Zero-Copy, Thread Pools, kTLS)
+
+Специализированная конфигурация для статических хранилищ, CDN-узлов и отдачи крупных файлов.
+
+```nginx
+# Определение пула потоков на уровне main
+thread_pool static_pool threads=64 max_queue=131072;
+
+http {
+    # Активация kTLS в OpenSSL
+    ssl_conf_command Options KTLS;
+
+    server {
+        listen 443 ssl reuseport;
+        server_name static.example.com;
+        root /var/www/static;
+
+        ssl_certificate     /etc/ssl/certs/static.crt;
+        ssl_certificate_key /etc/ssl/private/static.key;
+
+        # Zero-Copy и kTLS
+        sendfile            on;
+        sendfile_max_chunk  1m;
+        tcp_nopush          on;
+        tcp_nodelay         on;
+
+        # Асинхронный I/O и обход Page Cache для больших файлов
+        aio                 threads=static_pool;
+        directio            8m;
+        output_buffers      2 1m;
+
+        # Кэш дескрипторов
+        open_file_cache          max=200000 inactive=60s;
+        open_file_cache_valid    120s;
+        open_file_cache_min_uses 1;
+        open_file_cache_errors   on;
+
+        location / {
+            try_files $uri =404;
+            expires 30d;
+            add_header Cache-Control "public, immutable";
             access_log off;
         }
     }
 }
 ```
 
-### Сценарий 2: Валидация производительности
+---
 
-Используйте `curl` и системные утилиты для проверки:
+### Сценарий 3: Тюнинг ядра Linux под Nginx (`sysctl.d` и `systemd`)
 
-```bash
-# Проверка конфигурации
-nginx -t
-# → test is successful
+Настройка операционной системы для исключения узких мест в очередях ядра, сокетах и лимитах дескрипторов.
 
-# Проверка Zero-Copy (статистика sendfile)
-ss -tnp | grep nginx
-curl -I http://example.com/large-file.zip
-# В логах access.log должно отсутствовать время "writing" для статики
-
-# Проверка open_file_cache
-curl http://127.0.0.1/nginx_status
-# При включенном stub_status: "open file cache: 1024/10000"
-
-# Проверка worker affinity
-ps -o pid,psr,comm -p $(pgrep nginx)
-# Каждый worker должен быть привязан к своему ядру (при worker_cpu_affinity)
-
-# Проверка keepalive
-ss -tn state established '( dport = :80 )' | wc -l
-# Должен расти при множестве запросов от одного клиента
-```
-
-### Сценарий 3: Интеграция с systemd и лимитами
-
-Для production-систем настройте лимиты через systemd, чтобы они не сбрасывались при перезагрузке:
+#### Шаг 1: Конфигурация параметров ядра в `/etc/sysctl.d/99-nginx-performance.conf`
 
 ```ini
-# /etc/systemd/system/nginx.service.d/limits.conf
-[Service]
-LimitNOFILE=65535
-LimitNPROC=65536
+# Максимальный размер очереди невыбранных соединений listen() (должен соответствовать или превышать backlog в listen)
+net.core.somaxconn = 65535
+
+# Очередь входящих пакетов от сетевой карты до стека IP
+net.core.netdev_max_backlog = 65535
+
+# Максимальное количество сокетов, ожидающих завершения 3-way handshake (SYN-очередь)
+net.ipv4.tcp_max_syn_backlog = 65535
+
+# Безопасное переиспользование сокетов в состоянии TIME_WAIT для исходящих соединений (требует tcp_timestamps=1)
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_timestamps = 1
+
+# Расширение диапазона эфемерных портов для исходящих запросов к upstream
+net.ipv4.ip_local_port_range = 1024 65535
+
+# Сокращение времени удержания сокета в состоянии FIN-WAIT-2
+net.ipv4.tcp_fin_timeout = 15
+
+# Интервалы keepalive на уровне ядра Linux
+net.ipv4.tcp_keepalive_time = 300
+net.ipv4.tcp_keepalive_intvl = 15
+net.ipv4.tcp_keepalive_probes = 5
+
+# Отключение медленного старта после простоя соединения (критично для стабильного Keepalive в Web/API)
+net.ipv4.tcp_slow_start_after_idle = 0
+
+# Буферы приема и отправки данных сокетов (автоподстройка TCP и жесткие лимиты: 16 МБ max)
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+
+# Алгоритм контроля перегрузки BBR и дисциплина очередей FQ
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+
+# Глобальные лимиты открытых файлов на уровне ядра ОС
+fs.file-max = 2097152
+fs.nr_open = 2097152
 ```
 
+> [!WARNING]
+> Никогда не включайте параметр `net.ipv4.tcp_tw_recycle = 1`. Данный параметр нарушает работу клиентов, находящихся за общим корпоративным или провайдерским NAT (drop входящих SYN-пакетов из-за несовпадающих timestamps). В ядре Linux начиная с версии 4.12 параметр `tcp_tw_recycle` **полностью удален**.
+
+#### Шаг 2: Настройка лимитов службы systemd
+
+Файл: `/etc/systemd/system/nginx.service.d/override.conf`
+
+```ini
+[Service]
+LimitNOFILE=1048576
+LimitNPROC=524288
+LimitMEMLOCK=infinity
+# Защита от OOM-Killer: меньший приоритет на уничтожение процессом ядра
+OOMScoreAdjust=-500
+```
+
+#### Шаг 3: Применение параметров и валидация
+
 ```bash
-# Применение
+# Применение параметров ядра без перезагрузки сервера
+sysctl --system
+# → Applying /etc/sysctl.d/99-nginx-performance.conf ...
+
+# Применение изменений systemd
 systemctl daemon-reload
 systemctl restart nginx
 
-# Проверка
-cat /proc/$(pgrep -o nginx)/limits | grep "open files"
-# → Max open files            65535                65535                files
+# Проверка эффективных лимитов работающего master-процесса
+cat /proc/$(pgrep -o nginx)/limits | grep "Max open files"
+# → Max open files            1048576              1048576              files
 ```
 
-### Сценарий 4: kTLS в production
+---
 
-Включение kTLS с проверкой совместимости:
+### Сценарий 4: Привязка прерываний сетевой карты (IRQ), RPS/RFS и NUMA-тюнинг
 
+На многопроцессорных bare-metal серверах с архитектурой NUMA (Non-Uniform Memory Access) обращение процессора к оперативной памяти соседнего сокета через шину межпроцессорного соединения (QPI/UPI) увеличивает задержки.
+
+#### 1. Определение топологии NUMA
 ```bash
-# Проверка поддержки kTLS в ядре
-cat /proc/crypto | grep -i tls
-# Должен присутствовать алгоритм tls(aead)
+# Просмотр узлов NUMA и привязки CPU
+numactl --hardware
+# → available: 2 nodes (0-1)
+# → node 0 cpus: 0 1 2 3 4 5 6 7
+# → node 1 cpus: 8 9 10 11 12 13 14 15
 
-# Проверка OpenSSL
-openssl list -providers | grep -i tls
-# → name: OpenSSL TLS Provider
-
-# Включение kTLS в Nginx
-nginx -t
-# → test is successful (ошибка компиляции OpenSSL без ktls приведет к ошибке здесь)
-
-# Перезагрузка
-nginx -s reload
+# Определение, к какому NUMA-узлу подключена сетевая карта
+cat /sys/class/net/eth0/device/numa_node
+# → 0
 ```
 
-### Сценарий 5: Тюнинг ядра Linux под Nginx (sysctl)
-
-Высокая нагрузка на Nginx упирается не только в конфиг, но и в параметры сетевого стека ядра. Без системных лимитов даже правильный `worker_connections` не даст трафика — узким местом станут queue backlog и исчерпание портов.
-
-```bash
-# /etc/sysctl.d/99-nginx.conf
-net.core.somaxconn = 65535                    # очередь accept (должен быть ≥ backlog в listen)
-net.core.netdev_max_backlog = 16384           # очередь пакетов сетевого устройства
-net.ipv4.tcp_max_syn_backlog = 65535          # очередь SYN до установки соединения
-net.ipv4.tcp_tw_reuse = 1                     # переиспользование TIME_WAIT для исходящих
-net.ipv4.ip_local_port_range = 1024 65535     # диапазон эфемерных портов (для исходящих к upstream)
-net.ipv4.tcp_fin_timeout = 30                 # сокращение длительности TIME_WAIT
-net.ipv4.tcp_keepalive_time = 600             # таймаут keepalive TCP (для штатного соединения)
-net.ipv4.tcp_slow_start_after_idle = 0        # отключить медленный старт после простоя (для API)
-```
-
-Применение и проверка:
-
-```bash
-sysctl --system
-sysctl net.core.somaxconn
-# → net.core.somaxconn = 65535
-```
+#### 2. Конфигурация привязки воркеров и прерываний
+Если сетевой интерфейс `eth0` подключен к узлу NUMA 0, воркеры Nginx привязываются к ядрам узла 0, либо сетевые очереди распределяются равномерно:
 
 ```nginx
-# В nginx.conf должны совпадать с настройками ядра:
-listen 80 backlog=65535;    # backlog ≤ net.core.somaxconn
-worker_rlimit_nofile 65535; # ≤ fs.file-max / LimitNOFILE в systemd
-worker_connections 65535;
+# Привязка 8 воркеров к ядрам 0-7 (NUMA node 0)
+worker_processes 8;
+worker_cpu_affinity 00000001 00000010 00000100 00001000 00010000 00100000 01000000 10000000;
 ```
 
-Ориентиры:
+Для распределения обработки сетевых пакетов на уровне ядра Linux без выделенного демона `irqbalance` настраивается RPS (Receive Packet Steering):
 
-- **`fs.file-max`** (или `fs.nr_open`) — глобальный лимит открытых файлов в системе; если Nginx упирается в «too many open files», проверьте и `ulimit` процесса, и `fs.file-max`, и `systemd LimitNOFILE` (см. Сценарий 3).
-- **`net.core.somaxconn`** влияет на глубину очереди соединений; превышение даёт `connection refused` под всплеском.
-- Для **исходящих** соединений (к апстримам) критичен `ip_local_port_range` и `tcp_fin_timeout`, иначе на холодном `keepalive`-пуле возникает `connect() failed (99: Cannot assign requested address)`.
+```bash
+# Включение распределения очередей RX интерфейса eth0 по ядрам 0-7
+for file in /sys/class/net/eth0/queues/rx-*/rps_cpus; do
+    echo "000000ff" | sudo tee $file
+done
+# → 000000ff
+```
 
-Подробно про лимиты файлов и влияние на воркеры — см. [Установку и базовую настройку](../Core/nginx_setup.md) и [Диагностику Nginx](../Operations/nginx_troubleshooting.md).
+---
+
+### Сценарий 5: SRE-методология нагрузочного тестирования и поиска узких мест
+
+Методика нагрузочного тестирования позволяет выявить предел производительности сервера до ввода в эксплуатацию.
+
+```bash
+# 1. Нагрузочное тестирование через wrk (HTTP/1.1 Keepalive, 12 потоков, 1000 соединений, 60 секунд)
+wrk -t12 -c1000 -d60s --latency http://10.0.10.10/api/v1/health
+# → Running 1m test @ http://10.0.10.10/api/v1/health
+# →   12 threads and 1000 connections
+# →   Requests/sec:  98421.34
+# →   Latency   50%:   1.24ms
+# →   Latency   99%:   4.15ms
+
+# 2. Мониторинг отброшенных соединений в очередях ядра во время теста
+netstat -s | grep -E "listen|overflowed"
+# → 0 times the listen queue of a socket overflowed
+# → 0 SYNs to LISTEN sockets dropped
+
+# 3. Просмотр переполнения очереди сокета Nginx
+ss -lnt '( sport = :80 or sport = :443 )'
+# → State      Recv-Q  Send-Q   Local Address:Port
+# → LISTEN     0       65535    0.0.0.0:80
+# Примечание: Если Recv-Q > 0 и приближается к Send-Q — Nginx не успевает вызывать accept(),
+# требуется включить reuseport или увеличить worker_processes.
+
+# 4. Профилирование горячих функций ядра и Nginx через perf
+perf top --pid=$(pgrep -d',' nginx)
+# Позволяет выявить накладные расходы на копирование памяти, спинлоки или вызовы regex.
+```
+
+---
 
 ## Операции и команды
 
-| Задача | Команда / Директива | Ожидаемый результат |
+| Операция | Команда | Ожидаемый результат / Интерпретация |
 | :--- | :--- | :--- |
-| Проверка конфигурации | `nginx -t` | `test is successful` |
-| Применение конфигурации | `nginx -s reload` | Graceful reload без потерь соединений |
-| Проверка worker процессов | `ps -eo pid,psr,comm | grep nginx` | Worker'ы на отдельных ядрах |
-| Статистика соединений | `ss -tnp \| grep nginx` | Список активных соединений |
-| Лимиты дескрипторов | `cat /proc/$(pgrep -o nginx)/limits \| grep "open files"` | `65535` или выше |
-| open_file_cache | `curl http://127.0.0.1/nginx_status` | `open file cache: N/10000` |
-| Проверка sendfile | `strace -p $(pgrep -o nginx) -e trace=sendfile` | Системные вызовы `sendfile()` при отдаче статики |
-| Проверка kTLS | `openssl list -providers \| grep -i tls` | Наличие TLS Provider |
-| Graceful restart | `systemctl reload nginx` | `Reloading Nginx... done.` |
-| Проверка keepalive | `ss -tn state established '( dport = :80 )'` | Несколько соединений от одного IP |
-| Мониторинг RPS | `cat /var/log/nginx/access.log \| tail -n 1000 \| awk '{print $4}' \| sort \| uniq -c \| sort -rn \| head` | Распределение запросов по секундам |
+| **Синтаксическая проверка** | `nginx -t` | `nginx: configuration file /etc/nginx/nginx.conf test is successful` |
+| **Бесшовное применение конфигурации** | `nginx -s reload` | Обновление воркеров без сброса активных клиентских сессий. |
+| **Проверка статуса воркеров и ядер** | `ps -eo pid,psr,comm \| grep nginx` | Распределение воркеров по отдельным ядрам (`PSR` уникален для каждого воркера). |
+| **Проверка лимита открытых дескрипторов** | `cat /proc/$(pgrep -o nginx)/limits \| grep "open files"` | Значение `Max open files` равно параметру `worker_rlimit_nofile` (например, `1048576`). |
+| **Мониторинг сокетов в реальном времени** | `ss -s` | Сводка: `TCP: estab N, closed M, timewait K`. Контроль отсутствия взрывного роста `timewait`. |
+| **Проверка поддержки kTLS в ядре** | `cat /proc/crypto \| grep -i tls` | Наличие драйвера/алгоритма `tls` (`driver: tls-generic` или аппаратный offload). |
+| **Проверка модуля ядра kTLS** | `lsmod \| grep tls` | Вывод: `tls 118784 0` (модуль загружен в ядро). |
+| **Диагностика системных вызовов sendfile** | `strace -c -p $(pgrep -o nginx) -e trace=sendfile,writev,epoll_wait` | Статистика: преобладание `sendfile` над `writev` при раздаче статических файлов. |
+| **Опрос встроенного статуса** | `curl -s http://127.0.0.1/stub_status` | `Active connections: 450 \n server accepts handled requests \n 150000 150000 3500000` |
+| **Анализ сброшенных SYN-пакетов** | `nstat -az TcpExtListenOverflows TcpExtListenDrops` | Значения счетчиков должны быть равны `0` или не увеличиваться во времени. |
+
+---
 
 ## Устранение неполадок
 
-### Высокий CPU usage в воркерах
+### 1. 100% CPU на одном или нескольких воркерах
 
-**Симптом:** `top` показывает `%CPU` на уровне 100% на одном или нескольких воркерах, хотя запросы простые.
-
-**Причины и диагностика:**
-
-1.  **Динамическое сжатие на высоком уровне:**
-    ```bash
-    # Проверка уровня gzip
-    grep gzip_comp_level /etc/nginx/nginx.conf
-    # Рекомендуется 1–2 для динамического контента
-    ```
-
-2.  **Блокирующий I/O:**
-    ```bash
-    # Проверка активных файловых дескрипторов
-    ls /proc/$(pgrep -o nginx)/fd | wc -l
-    # Резкий рост может указывать на утечку дескрипторов
-    ```
-
-3.  **Некорректный worker_connections:**
-    ```bash
-    # Сравнение лимита и фактического использования
-    cat /proc/$(pgrep -o nginx)/limits | grep "open files"
-    ss -s | grep sockets
-    ```
-
-**Решение:**
-*   Переместите сжатие в CI/CD (pre-compression). Подробнее: [Оптимизация сжатия в Nginx](./nginx_compression.md).
-*   Убедитесь, что `aio threads` включен для дискового I/O.
-*   Увеличьте `worker_processes` при наличии свободных ядер.
-
-### 502/504 на статику
-
-**Симптом:** Nginx возвращает 502/504 на запросы к статическим файлам, которые существуют на диске.
+**Симптом:** Утилита `top`/`htop` фиксирует 100% утилизацию ядра одним процессом Nginx, при этом сетевой трафик умеренный.
 
 **Причины и диагностика:**
+1. **Катастрофический возврат в регулярных выражениях (ReDoS):**
+   Неоптимизированные конструкции в `location ~` или `rewrite` приводят к зависанию парсера PCRE.
+   ```bash
+   # Проверка активности компилятора PCRE JIT
+   grep -i pcre_jit /etc/nginx/nginx.conf
+   # Решение: включить pcre_jit on; оптимизировать регулярные выражения, заменить на префиксные location (^~).
+   ```
+2. **Динамическое сжатие Gzip на высоких уровнях:**
+   Директива `gzip_comp_level` со значениями 6–9 перегружает процессор.  
+   *Решение:* Снизить уровень до `1`–`3` для динамических ответов, либо использовать статическое предварительное сжатие gzip/brotli/zstd в CI/CD. Подробнее см. в [оптимизации сжатия в Nginx](./nginx_compression.md).
 
-1.  **Исчерпание `worker_connections`:**
-    ```bash
-    grep worker_connections /etc/nginx/nginx.conf
-    ss -s | grep -i "estab listen"
-    ```
+---
 
-2.  **Ошибки файловой системы:**
-    ```bash
-    dmesg | tail -n 50
-    # Ищите "input/output error", "readdir", "ext4"
-    ```
+### 2. Ошибка «worker_connections are not enough»
 
-3.  **Некорректные права доступа:**
-    ```bash
-    ls -la /var/www/html/path/to/file
-    # Nginx работает от пользователя nginx (не root)
-    ```
+**Симптом:** В `/var/log/nginx/error.log` фиксируются записи вида:  
+`2026/10/16 12:00:00 [alert] 12345#12345: 65535 worker_connections are not enough while connecting to upstream`
+
+**Причины и диагностика:**
+1. Превышен лимит одновременных соединений на процесс. На каждый проксируемый запрос тратится два дескриптора.
+2. Медленные бэкенды долго не отвечают, удерживая соединения открытыми.
+3. Отсутствует upstream keepalive, из-за чего соединения скапливаются в очереди.
 
 **Решение:**
-*   Увеличьте `worker_connections` и `worker_rlimit_nofile`.
-*   Проверьте `open_file_cache_errors on` для защиты от ботов.
-*   Убедитесь, что `user nginx` имеет права на чтение файлов.
+1. Увеличить `worker_connections` в секции `events {}` и `worker_rlimit_nofile` в секции `main`.
+2. Настроить пулинг `keepalive` в блоках `upstream`.
+3. Уменьшить защитные таймауты `proxy_connect_timeout` (2–3 секунды) и `proxy_read_timeout` (10–15 секунд).
 
-### Падение worker процессов (SIGSEGV, SIGABRT)
+---
 
-**Симптом:** В `error.log` появляются `worker process N exited on signal 11 (SIGSEGV)`.
+### 3. Ошибка «connect() failed (99: Cannot assign requested address)»
+
+**Симптом:** При обращении к upstream Nginx возвращает ошибку HTTP 502, а в `error.log` появляется `Cannot assign requested address`.
+
+**Причина:** Исчерпание пула локальных эфемерных TCP-портов. Nginx закрывает соединение к бэкенду после каждого запроса, сокеты переходят в состояние `TIME_WAIT` на 60 секунд, занимая кортеж `(src_ip, src_port, dst_ip, dst_port)`.
+
+**Решение:**
+1. **Обязательно включить upstream keepalive** в `upstream` (`keepalive 128;`) и добавить `proxy_http_version 1.1; proxy_set_header Connection "";`.
+2. Расширить пул локальных портов в `/etc/sysctl.conf`:
+   ```bash
+   sysctl -w net.ipv4.ip_local_port_range="1024 65535"
+   sysctl -w net.ipv4.tcp_tw_reuse=1
+   ```
+3. При необходимости взаимодействия с одним апстримом на экстремальных нагрузках — объявить в upstream несколько локальных IP-адресов бэкенда или настроить привязку через директиву `proxy_bind`.
+
+---
+
+### 4. Отказ в установке соединений («Connection refused» / дропы SYN-пакетов)
+
+**Симптом:** Клиенты жалуются на обрывы соединений при всплеске посещаемости, в метриках растут тайм-ауты подключения.
 
 **Диагностика:**
 ```bash
-# Проверка последних ошибок
-tail -n 100 /var/log/nginx/error.log | grep -E "signal|assert|panic"
-
-# Проверка версии Nginx на наличие известных CVE
-nginx -v 2>&1
-# Сравните с https://nginx.org/en/security_advisories/
+# Проверка счетчика переполнений очереди прослушивания
+netstat -s | grep "listen queue"
+# → 14502 times the listen queue of a socket overflowed
 ```
 
+**Причина:** Значение системного вызова `listen(..., backlog)` в Nginx меньше интенсивности входящих соединений, либо параметр ядра `net.core.somaxconn` ограничивает очередь.
+
 **Решение:**
-*   Обновите Nginx до последней стабильной версии (1.30.x на момент 2026 года).
-*   Отключите проблемные модули (например, `ngx_http_ssi_module`, если не используется).
-*   Включите core dump для глубокой диагностики: `worker_rlimit_core 512M;`.
+1. Синхронизировать директиву `listen` с параметром ядра:
+   ```nginx
+   listen 443 ssl backlog=65535 reuseport;
+   ```
+2. Установить в sysctl:
+   ```bash
+   sysctl -w net.core.somaxconn=65535
+   sysctl -w net.ipv4.tcp_max_syn_backlog=65535
+   ```
 
-### Высокий TTFB (Time To First Byte)
+---
 
-**Симптом:** `curl -o /dev/null -w "%{time_starttransfer}\n" http://example.com` показывает >200ms на статику.
+### 5. Рост задержек (Latency Spikes / TTFB) при отдаче статики
+
+**Симптом:** При высокой нагрузке время отдачи статических файлов скачкообразно вырастает с 2 мс до сотен миллисекунд.
 
 **Диагностика:**
 ```bash
-# Сравнение отдачи через Nginx и напрямую
-time curl -s -o /dev/null -w "%{time_total}\n" http://example.com/large-file
-time cat /var/www/html/large-file > /dev/null
+# Просмотр нагрузки на диск и времени ожидания I/O
+iostat -xz 1
+# Если %util > 80% или await > 10ms, дисковая подсистема перегружена
 ```
 
 **Решение:**
-*   Убедитесь, что `sendfile on;` включен.
-*   Проверьте `aio threads` для дисков без Page Cache.
-*   Для SSD: отключите `aio` и используйте `directio` только для исключительных случаев.
-*   Проверьте фрагментацию файловой системы: `filefrag -v /var/www/html/large-file`.
+1. Подключить пул потоков `thread_pool default threads=32 max_queue=65536;` и активировать `aio threads=default;`.
+2. Включить `directio 8m;`, чтобы файлы размером более 8 МБ не вытесняли горячий кэш страниц из оперативной памяти.
+3. Проверить параметры `open_file_cache`: кэширование дескрипторов предотвратит лишние дисковые обращения `stat()`.
 
-### OOM-Killer убивает Nginx
+---
 
-**Симптом:** В `dmesg` появляются `Out of memory: Kill process ... (nginx)`.
+### 6. OOM-Killer аварийно завершает Nginx
 
-**Причина:** Nginx потребляет больше памяти, чем выделено `worker_rlimit_nofile` × размер буферов + shared memory зоны.
+**Симптом:** В системном логе `dmesg` или `journalctl -k` появляется запись:  
+`Out of memory: Killed process 12345 (nginx) total-vm:..., anon-rss:...`
+
+**Причина:** Суммарный объем буферов соединений (`client_body_buffer_size`, `proxy_buffers`, `large_client_header_buffers`), помноженный на число активных клиентов, превысил физический объем доступной памяти сервера.
 
 **Решение:**
-*   Уменьшите `worker_rlimit_nofile` до разумных пределов (например, 65536).
-*   Увеличьте `proxy_buffer_size` и `proxy_buffers` только при необходимости (по умолчанию часто достаточно).
-*   Настройте `oom_score_adj` для Nginx: `systemctl edit nginx` → `[Service] OOMScoreAdjust=-500`.
+1. Рассчитать память по формуле из раздела 7 и оптимизировать размеры буферов.
+2. Установить директиву `proxy_max_temp_file_size` для предотвращения бесконтрольного роста временных буферов.
+3. Снизить защитный коэффициент завершения процесса через systemd: `OOMScoreAdjust=-500`.
+
+---
 
 ## Рекомендации
 
-1.  **Используйте `worker_processes auto;`** как baseline. Не задавайте значение вручную, кроме особых случаев (NUMA, container cgroups).
-2.  **Включайте `sendfile on;` и `tcp_nopush on;`** для всех серверов, отдающих статику или pre-compressed файлы.
-3.  **Настраивайте `open_file_cache`** при количестве файлов >1000. Это снижает нагрузку на inode cache ядра.
-4.  **Используйте `aio threads=default;`** на системах с HDD или медленными SSD, где Page Cache не справляется с объемом.
-5.  **Увеличивайте `worker_rlimit_nofile` через systemd**, а не через `ulimit` в скриптах запуска. Это гарантирует применение лимита при старте.
-6.  **Не повышайте уровень сжатия gzip выше 2** для динамического контента. Для статики используйте pre-compression (Brotli/Zstd) в CI/CD.
-7.  **Тестируйте kTLS на production-профиле** перед включением. На некоторых NIC/ядровых конфигурациях производительность может снизиться.
-8.  **Используйте upstream `keepalive`** при проксировании. Это исключает повторный handshake на каждый запрос.
-9.  **Мониторьте `ss -s` и `/proc/net/sockstat`** для своевременного обнаружения исчерпания портов или дескрипторов.
-10. **Обновляйте Nginx регулярно.** Версия 1.30.x (stable) и 1.31.x (mainline) получают исправления CVE и улучшения производительности.
+1. **Используйте `worker_processes auto;` и `worker_cpu_affinity auto;`** на выделенных серверах для минимизации миграции потоков между ядрами CPU и утилизации процессорных кэшей.
+2. **Включайте `reuseport` на высоконагруженных сокетах** с входящим потоком более 10 000 RPS. Это исключает межпроцессорные блокировки и обеспечивает равномерное распределение трафика ядром.
+3. **Всегда активируйте `keepalive` в блоках `upstream`** для микросервисов и API-шлюзов. Это предотвращает исчерпание диапазона портов и сокращает латентность запроса на время сетевого рукопожатия TCP и TLS.
+4. **Не оставляйте `proxy_http_version` в значении по умолчанию (1.0).** Для поддержания постоянных соединений с бэкендами обязательна связка `proxy_http_version 1.1; proxy_set_header Connection "";`.
+5. **Используйте системные пулы потоков (`aio threads`)** при отдаче статики с накопителей. Это устраняет блокировки цикла событий epoll при промахах Page Cache.
+6. **Оптимизируйте TTFB через `ssl_buffer_size 4k;`** на интерактивных веб-ресурсах и API, что ускоряет дешифрование первого кадра браузером и снижает потребление RAM.
+7. **Буферизуйте запись журнала доступа (`access_log ... buffer=64k flush=5s;`).** Синхронная запись логов на каждый запрос при 50 000 RPS способна полностью парализовать дисковую подсистему.
+8. **Контролируйте параметры ядра Linux.** Любые настройки Nginx бесполезны, если `net.core.somaxconn` или `fs.file-max` блокируют входящие очереди и дескрипторы на уровне ОС.
+9. **Отключайте `tcp_slow_start_after_idle`** в sysctl для предотвращения сброса окна перегрузки (congestion window) при периодических паузах между запросами в рамках одного Keepalive-соединения.
+10. **Проводите нагрузочное тестирование перед внедрением.** Используйте утилиты `wrk` или `k6`, профилируйте сервер утилитой `perf` и отслеживайте метрики очередей `ss -lnt` и `nstat`.
+
+---
 
 ## Дополнительная информация
 
-### Связанные файлы
+### Связанные файлы в базе знаний
 
-*   [Кэширование в Nginx и Angie](./Caching/overview.md) — серверное и клиентское кэширование.
-*   [Оптимизация сжатия (Gzip, Brotli, Zstandard)](./nginx_compression.md) — динамическое и статическое сжатие.
-*   [Адаптивная доставка изображений](./nginx_adaptive_content.md) — статическая доставка AVIF/WebP/JPEG XL.
-*   [Конфигурация HTTP/2 и HTTP/3](./nginx_http_versions.md) — настройка QUIC и HTTP/3.
-*   [Диагностика и устранение неисправностей Nginx](../Operations/nginx_troubleshooting.md) — методология поиска неполадок.
-*   [Тюнинг параметров ядра (sysctl)](../../../Linux/Core/kernel/sysctl.md) — сетевые и файловые лимиты.
-*   [Оптимизация TCP в Linux](../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md) — BBR, qdisc, RSS/RPS.
-*   [Обзор Nginx](../Core/nginx_overview.md) — архитектура, процессная модель, роли веб-сервера.
-*   [Обзор Angie](../../Angie/angie_overview.md) — форк с расширенными функциями (динамические апстримы, мониторинг).
-
-### Отличия Nginx и Angie в контексте производительности
-
-Nginx Open Source и Angie разделяют ядро, но отличаются набором модулей и стратегией releases:
-
-*   **Nginx (F5):** стабильная (1.30.x) и mainline (1.31.x) ветки. Акцент на стабильность и безопасность. kTLS, HTTP/3, Multipath TCP доступны в mainline.
-*   **Angie:** форк от оригинальной команды. Включает `least_time` (балансировка по времени ответа), `status_zone` с оптимизированной общей памятью (Angie 1.12), динамические апстримы. Выбор зависит от требований к мониторингу и скорости выхода фиксов.
+- **[Установка и базовая настройка Nginx](../Core/nginx_setup.md)** — архитектура мастер- и воркер-процессов, системные службы systemd, базовые директивы.
+- **[Обзор Nginx](../Core/nginx_overview.md)** — общая процессная модель, роли веб-сервера, обработка сигналов.
+- **[Буферизация и стриминг в Nginx](../Proxy/nginx_buffering_and_streaming.md)** — детальный разбор работы директив `proxy_buffering`, временных файлов и стриминга (SSE/gRPC).
+- **[Оптимизация сжатия (Gzip, Brotli, Zstandard)](./nginx_compression.md)** — динамическое и статическое предварительное сжатие, уровни компрессии, разгрузка CPU.
+- **[Конфигурация HTTP/2 и HTTP/3](./nginx_http_versions.md)** — многопоточность, мультиплексирование потоков, QUIC и `quic_bpf` с `reuseport`.
+- **[Диагностика и устранение неисправностей Nginx](../Operations/nginx_troubleshooting.md)** — пошаговый поиск причин деградации сервиса, дампы памяти и методология локализации сбоев.
+- **[Кэширование в Nginx и Angie](./Caching/overview.md)** — архитектура серверного и клиентского кэширования, разделяемая память.
+- **[Микрокэширование в Nginx](./Caching/microcaching.md)** — защита upstream-серверов от перегрузки кратковременным кэшированием.
+- **[Настройка параметров ядра (sysctl)](../../../Linux/Core/kernel/sysctl.md)** — глубокий системный тюнинг файловых и сетевых параметров ядра Linux.
+- **[Оптимизация TCP в Linux: Обзор](../../../Linux/Networking/Concepts/tcp_tuning/tcp_tuning_overview.md)** — алгоритмы контроля перегрузки BBR/CUBIC, расчет BDP, настройка qdisc и очередей сетевых адаптеров.
+- **[Обзор Angie](../../Angie/angie_overview.md)** — функционал форка Angie: динамические апстримы, встроенные метрики Prometheus и балансировка `least_time`.

@@ -245,10 +245,10 @@ volumes:
 
 Подробнее: [Downward API — доступ к метаданным Pod](../downward_api.md).
 
-**Поддерживаемые поля:**
-- Метаданные: `metadata.name`, `metadata.namespace`, `metadata.labels`, `metadata.annotations`, `metadata.uid`.
-- Сеть и хост: `status.podIP`, `status.hostIP`.
-- Лимиты и реквесты ресурсов: `limits.cpu`, `requests.cpu`, `limits.memory`, `requests.memory`, `limits.ephemeral-storage`.
+**Поддерживаемые поля в томах:**
+- Метаданные Pod: `metadata.name`, `metadata.namespace`, `metadata.uid`, `metadata.labels`, `metadata.annotations` (а также отдельные ключи `labels['key']`, `annotations['key']`).
+- Лимиты и реквесты ресурсов (`resourceFieldRef`): `limits.cpu`, `requests.cpu`, `limits.memory`, `requests.memory`, `limits.ephemeral-storage`, `requests.ephemeral-storage`, `hugepages-*`.
+- *Примечание:* сетевые и узловые поля (`status.podIP`, `status.podIPs`, `status.hostIP`, `status.hostIPs`, `spec.nodeName`, `spec.serviceAccountName`) доступны **только** через переменные окружения (`env.valueFrom.fieldRef`), но **не** поддерживаются в томах `downwardAPI`.
 
 ```yaml
 volumes:

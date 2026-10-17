@@ -1,641 +1,716 @@
 # Создание Secret в Kubernetes
 
+**Актуально для:** Kubernetes 1.30–1.32+ / kubectl 1.30+
+
 ## Определения
 
-**Создание Secret** — процесс формирования объекта API Kubernetes для хранения чувствительных данных. Секреты позволяют безопасно передавать учетные данные, ключи и сертификаты в контейнеры без их жесткой прошивки (hardcoding) в образы или манифесты.
+**Создание Secret** — процесс формирования объекта API Kubernetes (`v1/Secret`) для безопасного хранения и доставки чувствительных данных (паролей, токенов, ключей доступа, TLS-сертификатов) в контейнеры без жесткого внедрения (hardcoding) в образы или манифесты развертывания.
 
-**Base64 кодирование** — стандартный метод представления двоичных данных в формате ASCII, используемый в поле `data` объектов Secret. Base64 выбран, потому что:
-- Гарантирует безопасную передачу данных через текстовые протоколы (JSON, YAML).
-- Сохраняет целостность данных при транспортировке.
-- Является стандартом для встраивания бинарных данных в текстовые форматы.
+**Base64-кодирование** — бинарно-текстовая схема кодирования (RFC 4648), используемая в поле `data` объекта Secret для безопасной передачи произвольных бинарных последовательностей через текстовые протоколы JSON и YAML.
+- **Критическое различие:** Base64 — это **кодирование, а не шифрование**. Любой субъект с правами на чтение объекта через API (`kubectl get secret -o yaml`) или доступом к etcd может моментально восстановить открытый текст:
+  ```bash
+  echo "c3VwZXJzZWNyZXQ=" | base64 -d
+  # → supersecret
+  ```
+- Для реальной защиты данных в состоянии покоя (at-rest) требуется настройка `EncryptionConfiguration` на уровне `kube-apiserver` (см. [Хранение в etcd](etcd_storage.md) и [Безопасность Secret](security.md)).
 
-> **Критическое замечание:** Base64 — это **не шифрование**. Любой пользователь с доступом к манифесту (YAML) или etcd может мгновенно декодировать данные (`echo <base64> | base64 -d`).
+**stringData** — вспомогательное write-only поле спецификации Secret, позволяющее указывать значения в виде обычного текста без предварительного кодирования в Base64. `kube-apiserver` самостоятельно кодирует значения `stringData` в Base64 при обработке запроса и сохраняет их в поле `data`. При получении объекта через API поле `stringData` никогда не возвращается.
 
-**API-валидация** — при создании Secret через API Server выполняется проверка:
-- Структуры данных (наличие обязательных ключей для типизированных секретов).
-- Размера (лимит 1 MiB).
-- Корректности Base64-кодирования в поле `data`.
-- Существования указанного `type` (для нестандартных типов API вернет ошибку).
+**API-валидация и Admission** — многоэтапная проверка объекта API-сервером перед записью в etcd:
+- Проверка соответствия схеме OpenAPI v3 и ограничению на размер (не более 1 MiB).
+- Проверка корректности Base64-строк в `data` (валидные символы алфавита RFC 4648, корректный padding `=`).
+- Валидация структуры специализированных типов: наличие обязательных ключей (например, `tls.crt` и `tls.key` для типа `kubernetes.io/tls`).
+- Контроль прав RBAC и политики допуска (Admission Webhooks, OPA/Gatekeeper, Kyverno).
 
-Подробнее о защите данных см. [Безопасность Secret](security.md) и [Хранение в etcd](etcd_storage.md).
+**Неизменяемый Secret (Immutable Secret)** — объект Secret, созданный со свойством `immutable: true`. После успешной инициализации API Server блокирует любые мутации полей `data` и `stringData`, снижая нагрузку на control plane за счет отмены непрерывного опроса (watch) со стороны `kubelet`.
+
+---
 
 ## Основные концепции
 
+### Жизненный цикл создания Secret (API & Admission Pipeline)
+
+Создание Secret в Kubernetes представляет собой детерминированный конвейер обработки запроса на уровне Control Plane:
+
+```
+[ Клиент: kubectl / CI / Helm / Kustomize ]
+                    │
+                    ▼  (POST /api/v1/namespaces/{ns}/secrets)
+           [ kube-apiserver ]
+                    │
+                    ├─► 1. Аутентификация (X.509, Webhook, OIDC)
+                    ├─► 2. Авторизация RBAC (verbs: "create", resource: "secrets")
+                    ├─► 3. Mutating Admission Webhooks (модификация метаданных, инъекция меток)
+                    ├─► 4. Валидация схемы объекта (размер < 1 MiB, Base64 в data, обязательные ключи type)
+                    ├─► 5. Validating Admission Webhooks (Kyverno / OPA Gatekeeper: аудит безопасности)
+                    ├─► 6. Encryption at Rest (шифрование данных через EncryptionConfiguration)
+                    │
+                    ▼
+               [ etcd ] (/registry/secrets/{namespace}/{name})
+                    │
+                    ▼  (Watch / List события)
+         [ kubelet / Контроллеры ] (монтирование volume / инъекция env / запуск Pod)
+```
+
+1. **Аутентификация и RBAC:** проверяется, обладает ли инициатор запроса правом выполнения операции `create` над ресурсом `secrets` в целевом пространстве имен (`namespace`).
+2. **Mutating Webhooks:** перехватывают запрос до фиксации схемы; могут автоматически внедрять аннотации аудита или метки владения.
+3. **Схемная валидация:** `kube-apiserver` проверяет синтаксис имен ключей, декодирует Base64 для проверки целостности, проверяет валидность типа.
+4. **Validating Webhooks:** применяют корпоративные политики (например, запрет создания незашифрованных секретов определенного типа или блокировка секретов без владельца).
+5. **Шифрование at-rest:** если на Master-узлах настроен `EncryptionConfiguration` (провайдеры `kms`, `aescbc`, `secretbox`), API Server шифрует полезную нагрузку перед записью.
+6. **Запись в etcd:** сериализованный Protobuf-объект записывается по ключу `/registry/secrets/<namespace>/<name>`.
+
 ### Методы управления секретами
 
-1.  **Императивный (CLI):** создание через `kubectl create secret`. Удобно для отладки и разовых операций. Не требует написания YAML-манифестов.
-2.  **Декларативный (YAML):** описание структуры в файлах. Позволяет использовать `data` и `stringData`. Подходит для версионирования и GitOps.
-3.  **Генеративный (Kustomize/Helm):** автоматическая генерация на основе файлов или шаблонов во время деплоя. Стандарт для продакшн-сред.
-4.  **Операторы (External Secrets):** автоматическая синхронизация из внешних систем (HashiCorp Vault и другие хранилища). Рекомендуется для production.
-
-### Неизменяемые секреты (Immutable)
-
-При создании секрета можно добавить поле `immutable: true`. Это запретит любые изменения данных после создания объекта (защита от случайной перезаписи).
-
-**Преимущества:**
-- Снижение нагрузки на API Server: kubelet не опрашивает неизменяемые секреты после первого чтения.
-- Гарантия неизменности критичных данных (сертификаты, ключи шифрования).
-
-**Ограничение:** Для обновления неизменяемого секрета необходимо удалить старый и создать новый объект Secret, а затем пересоздать Pod или выполнить rollout restart.
-
-> **Примечание:** у `kubectl create secret` **нет флага** `--immutable`. Неизменяемый секрет можно создать только декларативным манифестом (или через Kustomize patch):
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: my-immutable-secret
-immutable: true
-stringData:
-  api_key: "7f5a8c..."
-```
-
-### Изменение в ServiceAccount Tokens (1.24+)
-
-Токены ServiceAccount больше не создаются автоматически как объекты Secret. Если требуется статический секрет для SA, его нужно создать вручную:
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: manual-sa-token
-  annotations:
-    kubernetes.io/service-account.name: "my-service-account"
-type: kubernetes.io/service-account-token
-```
-
-### Соглашения об именовании
-
-Kubernetes не накладывает строгих ограничений на имена Secret, но рекомендуется следовать общепринятым соглашениям:
-- Используйте lowercase и дефисы: `db-credentials`, `app-tls-cert`.
-- Избегайте спецсимволов и кириллицы.
-- Префикс типа для типизированных секретов: `tls-app-cert`, `docker-app-pull`.
-- Для секретов, связанных с приложением, добавляйте имя приложения: `myapp-db-password`.
+| Метод | Инструменты | Преимущества | Недостатки / Риски | Область применения |
+| :--- | :--- | :--- | :--- | :--- |
+| **Императивный** | `kubectl create secret` | Простота, скорость выполнения, применимость для аварийных сценариев | Команды сохраняются в `bash_history`; не версионируется в Git | Отладка, разовые операции на On-Premise стендах |
+| **Декларативный** | YAML-манифесты, `kubectl apply` | Поддержка `stringData`, воспроизводимость, совместимость с CI/CD | Риск коммита открытого манифеста в репозиторий Git | GitOps (только в связке с SOPS или Sealed Secrets) |
+| **Генеративный** | Kustomize (`secretGenerator`), Helm | Автоматическое добавление хеша к имени (`suffix-hash`), триггер rolling update | Требует настройки сборки шаблонов перед деплоем | Стандартные пайплайны GitOps / CD |
+| **Внешние операторы** | External Secrets Operator (ESO), HashiCorp Vault Agent | Централизованное хранилище, динамическая ротация, отсутствие секретов в Git | Дополнительные CRD и контроллеры в кластере | Production On-Premise инфраструктура |
 
 ### Поля data и stringData
 
-В манифесте Secret используются два поля для ввода данных:
+В спецификации `v1/Secret` определены два взаимосвязанных поля для передачи значений:
 
-| Поле | Формат значений | Когда использовать |
+| Параметр | Поле `data` | Поле `stringData` |
 | :--- | :--- | :--- |
-| `data` | Base64-закодированные | Автоматическое создание через скрипты, CI/CD, бинарные данные |
-| `stringData` | Открытый текст | Ручное редактирование манифестов, быстрое создание |
+| **Формат значений** | Base64-закодированные строки | Открытый текст (UTF-8) |
+| **Направление** | Чтение и запись (Read/Write) | Только запись (Write-Only) |
+| **Отображение в `kubectl get`** | Всегда возвращается в Base64 | Никогда не возвращается API-сервером |
+| **Сценарии использования** | Бинарные файлы (JKS, PKCS#12, ZIP), скрипты CI/CD | Ручное создание манифестов, конфигурации с открытым текстом |
 
-**Поведение полей:**
-- **Приоритет:** Если один и тот же ключ указан и в `data`, и в `stringData`, значение из `stringData` будет иметь приоритет и перезапишет `data`.
-- **Скрытие:** Поле `stringData` доступно только для записи и не отображается при выполнении `kubectl get secret -o yaml` (Kubernetes показывает только `data`).
-- **Автокодирование:** При сохранении манифеста Kubernetes автоматически кодирует значения из `stringData` в Base64 и переносит их в поле `data`.
+**Правила взаимодействия полей:**
+1. **Приоритет при коллизии:** если манифест содержит один и тот же ключ одновременно в `data` и `stringData`, значение из `stringData` имеет безусловный приоритет и перезаписывает значение в `data`.
+2. **Атомарная конвертация:** при поступлении запроса API Server преобразует все строки из `stringData` в Base64 и помещает их в `data`, после чего удаляет поле `stringData` из сохраняемого объекта.
+3. **Ловушка с переносами строк:** при кодировании вручную через утилиту `echo` перенос строки (`\n`, `0x0A`) попадает в результирующий пароль, если не указан ключ `-n`:
+   ```bash
+   # ОШИБКА: лишний байт переноса строки 0x0A
+   echo "admin_pass" | base64
+   # → YWRtaW5fcGFzcwo=
 
-**Практический нюанс — пробелы и переносы строк:**
-```bash
-# ОШИБКА: перенос строки попадёт в пароль
-echo "my-password" | base64
-# → bXktcGFzc3dvcmQK  (лишний символ 'K' в конце = символ переноса строки)
+   # ПРАВИЛЬНО: строго без переноса строки
+   echo -n "admin_pass" | base64
+   # → YWRtaW5fcGFzcw==
+   ```
 
-# ПРАВИЛЬНО: флаг -n убирает перенос
-echo -n "my-password" | base64
-# → bXktcGFzc3dvcmQ=
+### Типы Secret и встроенная валидация API
+
+Kubernetes поддерживает строгую типизацию объектов Secret через поле `type`. Тип определяет ожидания API Server и потребителей (Kubelet, Ingress-контроллеров):
+
+| Тип (`type`) | Назначение | Обязательные ключи в `data` | Особенности валидации API |
+| :--- | :--- | :--- | :--- |
+| `Opaque` | Универсальный тип по умолчанию | Произвольные ключи | Валидация содержимого отсутствует; допустимы любые пары ключ-значение |
+| `kubernetes.io/tls` | Сертификаты и ключи TLS/HTTPS | `tls.crt`, `tls.key` | Валидация X.509: приватный ключ должен соответствовать публичному сертификату; ключ без парольной фразы |
+| `kubernetes.io/dockerconfigjson` | Авторизация в приватных Container Registry | `.dockerconfigjson` | Содержимое должно быть валидным JSON-файлом формата Docker CLI (`auths`) |
+| `kubernetes.io/basic-auth` | Базовая HTTP-аутентификация | `username`, `password` | API Server требует наличия хотя бы одного из ключей при создании |
+| `kubernetes.io/ssh-auth` | Приватные ключи SSH | `ssh-privatekey` | Обязателен ключ `ssh-privatekey`; опционально `known_hosts` |
+| `kubernetes.io/service-account-token` | Долгоживущий токен ServiceAccount | `token` (генерируется API) | Требует аннотации `kubernetes.io/service-account.name`; токен выпускается контроллером |
+| `bootstrap.kubernetes.io/token` | Токены kubeadm bootstrap | `token-id`, `token-secret` | Имя объекта строго `bootstrap-token-<token-id>`; формат ID `[a-z0-9]{6}`, секрета `[a-z0-9]{16}` |
+
+> **Критическое замечание о CLI:** утилита `kubectl create secret` предоставляет встроенные подкоманды **только** для трех типов: `generic` (тип `Opaque`), `tls` и `docker-registry`. Подкоманд вида `kubectl create secret ssh-auth` или `basic-auth` **не существует**. Для их создания используется `kubectl create secret generic --type=...` либо декларативный манифест.
+
+### Неизменяемые секреты (Immutable Secrets)
+
+Установка флага `immutable: true` в корне спецификации Secret переводит объект в режим «только для чтения»:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: static-root-ca
+  namespace: production
+immutable: true
+data:
+  ca.crt: LS0tLS1CRUdJTi...
 ```
+
+**Преимущества для архитектуры и SRE:**
+- **Защита от сбоев конфигурации:** случайный `kubectl apply` или сбойный CI/CD шаг не сможет затереть критические сертификаты кластера или ключи шифрования баз данных.
+- **Масштабируемость Control Plane:** Kubelet не подписывается на события изменения (`watch`) неизменяемых секретов. При десятках тысяч подов в кластере это радикально снижает потребление CPU `kube-apiserver` и устраняет нагрузку на транзакционный журнал etcd.
+- **Ограничения:** для ротации данных невозможно выполнить `patch` или `apply`. Необходимо удалить старый Secret и создать новый (либо выпустить новый Secret с версионным именем, например `static-root-ca-v2`, и выполнить контролируемый rollout деплоймента).
+
+### Эволюция токенов ServiceAccount и очистка устаревших токенов (1.24+ и 1.31+)
+
+1. **Kubernetes 1.24+:** прекращено автоматическое создание бессрочных токенов `Secret` для каждого нового ServiceAccount. Все Pod'ы по умолчанию используют **Bound ServiceAccount Token Volume** — короткоживущие токены с привязкой к жизненному циклу конкретного Pod (`TokenRequest` API).
+2. **Ручное создание статических токенов:** если внешний инструмент (Prometheus, Bare-Metal CI/CD Runner, внешняя система мониторинга) требует постоянный токен, он описывается вручную через тип `kubernetes.io/service-account-token` с аннотацией целевого ServiceAccount:
+   ```yaml
+   apiVersion: v1
+   kind: Secret
+   metadata:
+     name: ci-runner-sa-token
+     namespace: monitoring
+     annotations:
+       kubernetes.io/service-account.name: "prometheus-k8s"
+   type: kubernetes.io/service-account-token
+   ```
+3. **Механизм `LegacyServiceAccountTokenCleanUp` (Kubernetes 1.31+ GA):**
+   - Контроллер `token-cleaner` в составе `kube-controller-manager` сканирует секреты типа `kubernetes.io/service-account-token`.
+   - Автоматически сгенерированные в старых версиях k8s токены, не имеющие явного использования более 365 дней, помечаются меткой:
+     ```yaml
+     metadata:
+       labels:
+         kubernetes.io/legacy-token-invalid-since: "2026-01-15"
+     ```
+   - Запросы к API с токенами, имеющими данную метку, отклоняются с кодом `401 Unauthorized`. Если токен остается неактивным после льготного периода, контроллер окончательно удаляет объект `Secret`.
+   - **Ручные токены защищены:** статические секреты, созданные пользователем с явной аннотацией `kubernetes.io/service-account.name`, очистке не подлежат.
+
+### Лимиты и системные ограничения
+
+- **Максимальный размер объекта:** жестко ограничен размером транзакции etcd — **1 MiB** (1 048 576 байт). Размер рассчитывается от сериализованного представления JSON/Protobuf со всеми метаданными и Base64-данными.
+- **Ограничение на имена ключей в `data`:** ключ должен состоять из буквенно-цифровых символов, точек (`.`), дефисов (`-`) и подчеркиваний (`_`) и не превышать длину 253 символа.
+- **Влияние на память Master-узлов:** каждый Secret постоянно находится в in-memory кэше `kube-apiserver` для обеспечения мгновенного отклика API. Хранение более 2 000–5 000 секретов в одном namespace приводит к росту RSS-памяти apiserver и замедлению селекторных запросов.
+- **Изоляция:** Secret изолирован в рамках своего `namespace`. Напрямую смонтировать Secret из пространства имен `infra` в Pod пространства имен `app` невозможно.
+
+---
 
 ## Практические сценарии
 
 ### Императивное создание (kubectl)
 
-#### Общие флаги kubectl create secret
+#### Сводная таблица параметров `kubectl create secret`
 
-| Флаг | Описание | Пример |
+| Параметр / Флаг | Описание | Пример синтаксиса |
 | :--- | :--- | :--- |
-| `--from-literal=key=value` | Добавить один ключ-значение | `--from-literal=user=admin` |
-| `--from-file=path` | Добавить из файла (имя ключа = имя файла) | `--from-file=./cert.pem` |
-| `--from-file=key=path` | Добавить из файла с указанием имени ключа | `--from-file=ssh-key=~/.ssh/id_rsa` |
-| `--from-env-file=path` | Импортировать все пары KEY=VALUE из файла | `--from-env-file=.env` |
-| `--type=type` | Задать тип секрета (по умолчанию `Opaque`) | `--type=kubernetes.io/basic-auth` |
-| `--append-hash` | Добавить к имени хеш содержимого (аналог Kustomize) | `--append-hash` |
-| `--dry-run=client` | Только сгенерировать YAML без отправки в API | `--dry-run=client -o yaml` |
-| `--dry-run=server` | Проверить валидацию на сервере (если доступен) | `--dry-run=server -o yaml` |
-| `-n, --namespace` | Указать namespace для создания | `-n production` |
-| `--save-config` | Сохранить конфигурацию в аннотациях (для kubectl apply) | `--save-config` |
-| `--output, -o` | Формат вывода (yaml, json) | `-o yaml` |
+| `--from-literal=KEY=VALUE` | Передача одной пары ключ-значение напрямую из CLI | `--from-literal=db_user=postgres` |
+| `--from-file=PATH` | Создание ключа с именем файла и содержимым файла | `--from-file=/etc/ssl/ca.crt` |
+| `--from-file=KEY=PATH` | Создание ключа с пользовательским именем из указанного файла | `--from-file=server.key=./private.key` |
+| `--from-file=DIR/` | Создание ключей из всех файлов внутри указанной директории | `--from-file=./configs/` |
+| `--from-env-file=PATH` | Парсинг пар `KEY=VALUE` из переменного окружения `.env` файла | `--from-env-file=.env.production` |
+| `--type=TYPE` | Назначение типа секрета (для подкоманды `generic`) | `--type=kubernetes.io/basic-auth` |
+| `--append-hash` | Добавление 10-символьного хеша содержимого к имени объекта | `--append-hash` |
+| `--dry-run=client` | Локальная генерация объекта без обращения к сети и кластеру | `--dry-run=client -o yaml` |
+| `--dry-run=server` | Валидация на стороне API Server без сохранения в etcd | `--dry-run=server -o yaml` |
+| `-n, --namespace` | Целевое пространство имен кластера | `-n backend-production` |
 
-> **Отличие `--dry-run=client` от `--dry-run=server`:**
-> - `client` — генерирует YAML локально без обращения к API Server. Быстрее, но не проверяет валидность на стороне сервера.
-> - `server` — отправляет запрос на API Server для валидации (проверка прав RBAC, существования namespace, структуры данных), но не создает объект. Требует доступа к кластеру.
+#### Создание из литералов (--from-literal) и экранирование в Shell
 
-#### Из литералов (literals)
+При передаче значений через командную строку спецсимволы (`$`, `!`, `"`, spaces, backticks) интерпретируются оболочкой Bash/Zsh до вызова kubectl:
 
 ```bash
-kubectl create secret generic db-credentials \
-  --from-literal=username=admin \
-  --from-literal=password='P@ssw0rd123!'
+# 1. Корректное экранирование в Bash: одинарные кавычки предотвращают интерполяцию переменных
+kubectl create secret generic backend-creds \
+  --namespace=production \
+  --from-literal=user='db_admin' \
+  --from-literal='password=P@$$w0rd!#2026'
+# → secret/backend-creds created
+
+# 2. Проверка созданных ключей без вывода значений:
+kubectl describe secret backend-creds -n production
+# → Name:         backend-creds
+# → Namespace:    production
+# → Labels:       <none>
+# → Annotations:  <none>
+# → Type:         Opaque
+# → Data
+# → ====
+# → password:  15 bytes
+# → user:      8 bytes
 ```
 
-**Квотирование специальных символов:** в zsh/bash аргументы `--from-literal` со спецсимволами (`$`, обратные кавычки, восклицательный знак, пробелы) необходимо заключать в одинарные кавычки, иначе shell выполнит подстановку:
+> **Гигиена командной строки (DevOps / SRE):** аргументы `--from-literal` сохраняются в файле истории оболочки (`~/.bash_history`) и видны в выводе `ps aux` в момент выполнения. Для production-систем:
+> 1. Начинайте команду с пробела при включенном `HISTCONTROL=ignorespace`.
+> 2. Используйте чтение из дескриптора stdin или защищенных временных файлов в памяти (`tmpfs`).
+
+#### Создание из файлов и директорий (--from-file)
+
+Флаг `--from-file` считывает содержимое файла байт-в-байт, сохраняя бинарную целостность:
 
 ```bash
-# ОШИБКА: $ будет подставлен shell'ом (часто → пустая строка)
-kubectl create secret generic api-creds \
-  --from-literal=api_key=$API_TOKEN --from-literal=token=$(cat token.txt)
+# Создание секрета из конкретного файла с переопределением имени ключа:
+kubectl create secret generic deployer-ssh-key \
+  --namespace=ci-cd \
+  --from-file=id_ed25519=/home/deployer/.ssh/id_ed25519
+# → secret/deployer-ssh-key created
 
-# ПРАВИЛЬНО: одинарные кавычки запрещают подстановку
-kubectl create secret generic api-creds \
-  --from-literal='api_key=$uperSecret' \
-  --from-literal='token=pa$$w0rd!'
-
-# ПРАВИЛЬНО: двойные кавычки сохраняют пробелы внутри строки
-kubectl create secret generic app-creds \
-  --from-literal="api_key=S3cret key with spaces"
+# Создание секрета со всеми файлами каталога (имена файлов станут ключами):
+# Каталог /opt/app/certs содержит: ca.pem, tls.crt, tls.key
+kubectl create secret generic internal-pki \
+  --namespace=monitoring \
+  --from-file=/opt/app/certs/
+# → secret/internal-pki created
 ```
 
-> **Замечание:** значения из `--from-literal` попадают в данные в Base64-виде — kubectl кодирует их автоматически без добавления переноса строки (в отличие от `echo | base64`). Однако значения из файлов через `--from-file` сохраняются **байт-в-байт**, включая завершающий перенос строки в файле.
+#### Создание из .env-файлов (--from-env-file)
 
-#### Из файлов или директорий
-
-```bash
-# Имя ключа будет соответствовать имени файла
-kubectl create secret generic ssh-key --from-file=id_rsa=~/.ssh/id_rsa
-
-# Все файлы в директории будут добавлены как ключи
-kubectl create secret generic app-configs --from-file=./configs/
-```
-
-#### Из файла .env (from-env-file)
-
-Формат файла `--from-env-file` — пары `KEY=VALUE`, комментарии начинаются с `#`:
+Файл формата `.env` позволяет импортировать набор переменных за одну операцию:
 
 ```bash
-# .env файл
-DB_HOST=localhost
+cat << 'EOF' > /tmp/app.env
+DB_HOST=192.168.10.50
 DB_PORT=5432
-DB_USER=admin
-DB_PASSWORD=supersecret
+DB_NAME=analytics_prod
+# Комментарии игнорируются
+API_KEY=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+EOF
 
-# Создание секрета из .env файла
-kubectl create secret generic app-env \
-  --from-env-file=.env
+kubectl create secret generic app-env-config \
+  --namespace=production \
+  --from-env-file=/tmp/app.env
+# → secret/app-env-config created
 
-# Результат: каждый ключ становится отдельным ключом в Secret
-# DB_HOST, DB_PORT, DB_USER, DB_PASSWORD
+# Обязательная очистка временного файла
+shred -u /tmp/app.env
 ```
 
-**Правила формата `--from-env-file`:**
+**Ограничения формата `--from-env-file`:**
+- Разделителем служит первый символ `=`. Имя ключа должно быть валидным идентификатором C/Bash (латиница, цифры, `_`). Имена с дефисами (`DB-HOST=...`) вызовут ошибку парсера.
+- Многострочные значения не поддерживаются.
+- **Запрет смешивания:** флаг `--from-env-file` нельзя объединять с `--from-file` или `--from-literal` в рамках одной команды CLI.
 
-- Каждая строка — пара `KEY=VALUE`; разделителем ключа и значения является **первый** символ `=`. Значение может содержать любые символы, включая `=`.
-- Комментарии начинаются с `#` (строка полностью пропускается). Пустые строки игнорируются, ведущие пробелы/табуляции обрезаются.
-- Если в строке нет символа `=`, значение берется из переменной окружения shell (`KEY` → `os.Getenv("KEY")`).
-- Имя ключа должно быть валидным именем переменной окружения (латиница, цифры, `_`; не может начинаться с цифры). Имена с дефисами (`DB-HOST`) вызовут ошибку.
-- Не поддерживает многострочные значения и экранирование спецсимволов.
-- **Нельзя комбинировать** `--from-env-file` с `--from-file` или `--from-literal` в одной команде — kubectl вернет ошибку валидации.
+#### Потоковая передача из stdin без сохранения на диск
 
-**Ограничение:** `--from-env-file` не поддерживает многострочные значения и значения с спецсимволами без экранирования. Для сложных конфигураций используйте `--from-file`.
-
-#### Из stdin
-
-Для автоматизации в скриптах можно передавать данные через stdin:
+Для безопасной автоматизации в CI/CD раннерах значения передаются через конвейер напрямую в память процесса:
 
 ```bash
-# Через pipe
-echo -n "my-secret-value" | kubectl create secret generic my-secret \
-  --from-file=token=/dev/stdin
-
-# Чтение из переменной
-SECRET_VALUE=$(openssl rand -base64 32)
-echo -n "$SECRET_VALUE" | kubectl create secret generic encryption-key \
-  --from-file=key=/dev/stdin
+# Генерация криптографически стойкого пароля и запись через pipe
+openssl rand -base64 32 | tr -d '\n' | kubectl create secret generic redis-auth \
+  --namespace=caching \
+  --from-file=redis-password=/dev/stdin
+# → secret/redis-auth created
 ```
 
-#### Генерация манифеста (Dry-run)
+#### Добавление хеша содержимого к имени (--append-hash)
 
-Для последующего шифрования через SOPS или Sealed Secrets:
+Флаг `--append-hash` вычисляет SHA256 от ключей и данных секрета и добавляет 10-значный суффикс к имени объекта:
 
 ```bash
-# Без обращения к API Server (быстрый вариант)
-kubectl create secret generic my-secret \
-  --from-literal=key=value \
-  --dry-run=client -o yaml > secret.yaml
-
-# С валидацией на сервере (требует доступ к кластеру)
-kubectl create secret generic my-secret \
-  --from-literal=key=value \
-  --dry-run=server -o yaml > secret.yaml
-
-# Создание в конкретном namespace
-kubectl create secret generic prod-db-creds \
-  --from-literal=password=$(openssl rand -base64 24) \
-  -n production \
-  --dry-run=client -o yaml > prod-secret.yaml
+kubectl create secret generic api-token \
+  --namespace=production \
+  --from-literal=token='Bearer-Token-X92' \
+  --append-hash
+# → secret/api-token-2k6d2m94t5 created
 ```
+Это поведение полностью аналогично генераторам Kustomize и позволяет избегать коллизий при обновлении.
 
-#### Копирование секретов между namespace
-
-```bash
-# Экспорт секрета из одного namespace
-kubectl get secret my-secret -n source-ns -o yaml > secret-backup.yaml
-
-# Удаление метаданных для создания в новом namespace
-# (убрать resourceVersion, uid, creationTimestamp, namespace)
-kubectl get secret my-secret -n source-ns -o json | \
-  jq 'del(.metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp, .metadata.namespace)' | \
-  kubectl apply -n target-ns -f -
-
-# Или через dry-run (автоматически удаляет server-side поля)
-kubectl get secret my-secret -n source-ns -o yaml | \
-  kubectl create -n target-ns -f - --dry-run=client -o yaml | \
-  kubectl apply -n target-ns -f -
-```
-
-### Декларативное создание (YAML)
-
-#### Поле stringData (Рекомендуется для ручного редактирования)
-
-Позволяет писать секреты в открытом виде. Kubernetes сам закодирует их в Base64.
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: app-secret
-  labels:
-    app: my-app
-    env: production
-stringData:
-  api_key: "7f5a8c..."
-  db_password: "S3cur3P@ss"
-```
-
-#### Поле data (Бинарные данные и CI/CD)
-
-Для бинарных файлов (JKS, сертификаты) или автоматического создания через скрипты:
-
-```bash
-# Кодирование в Base64
-echo -n "my-password" | base64
-# → bXktcGFzc3dvcmQ=
-```
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: binary-secret
-data:
-  keystore: <base64-encoded-jks>
-  password: bXktcGFzc3dvcmQ=
-```
-
-#### Создание с метками и аннотациями
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: db-credentials
-  labels:
-    app: my-app
-    env: production
-    team: backend
-  annotations:
-    description: "Основные учетные данные PostgreSQL"
-    managed-by: "helm"
-type: Opaque
-stringData:
-  username: "admin"
-  password: "S3cur3P@ss"
-```
-
-#### Специальные типы Secret
-
-**TLS Secret:**
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ingress-cert
-type: kubernetes.io/tls
-data:
-  tls.crt: <base64-encoded-cert>
-  tls.key: <base64-encoded-key>
-```
-
-> **Валидация при `kubectl create secret tls`:** команда проверяет, что пара «сертификат + приватный ключ» образует корректную X.509-пару через `tls.X509KeyPair`. При несовпадении вернется ошибка `error: failed to load key pair tls: private key does not match public key`, при отсутствии PEM-границ — `failed to find any PEM data in certificate input`, при зашифрованном (passphrase) ключе — `failed to parse private key` (ключ нужно предварительно расшифровать: `openssl rsa -in enc.key -out dec.key`).
-> **Порядок в цепочке:** при использовании сцепленного файла (leaf + intermediates + root) **первый** сертификат в файле сверяется с ключом. Нарушение порядка блоков `-----BEGIN...-----`/`-----END...-----` приводит к ошибке несоответствия. Для самостоятельной проверки пары до создания Secret:
-> ```bash
-> cert=$(openssl x509 -noout -pubkey -in tls.crt)
-> key=$(openssl pkey -pubout -in tls.key 2>/dev/null || openssl rsa -pubout -in tls.key 2>/dev/null)
-> [ "$cert" = "$key" ] && echo "OK: пара соответствует" || echo "FAIL: ключ не подходит к сертификату"
-> ```
-
-**Docker Registry Secret:**
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: regcred
-type: kubernetes.io/dockerconfigjson
-data:
-  .dockerconfigjson: <base64-encoded-docker-config>
-```
-
-**SSH Auth Secret:**
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ssh-key
-type: kubernetes.io/ssh-auth
-data:
-  ssh-privatekey: <base64-encoded-ssh-private-key>
-```
-
-**Basic Auth Secret:**
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: basic-auth
-type: kubernetes.io/basic-auth
-stringData:
-  username: "admin"
-  password: "S3cur3P@ss"
-```
-
-**Bootstrap Token Secret (kubeadm):**
-
-Секрет типа `bootstrap.kubernetes.io/token` используется `kubeadm` для временной аутентификации новых узлов при присоединении к кластеру. Автоматически создается командой `kubeadm token create` (по умолчанию TTL 24 часа):
-
-```bash
-# Создать токен + команду присоединения узла (включая Discovery CA hash)
-kubeadm token create --print-join-command
-
-# Создать через curl к API (эквивалент манифеста Secret)
-kubeadm token create --ttl=24h
-```
-
-**Ручное создание** (полезно для автоматизации и IaC):
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: bootstrap-token-<token-id>   # token-id: 6 символов [a-z0-9]
-  namespace: kube-system
-type: bootstrap.kubernetes.io/token
-stringData:
-  token-id: "<6-символьный id>"       # первая часть "aaaaaa.bbbbbbbbbbbbbbbb"
-  token-secret: "<16-символьный секрет>" # вторая часть токена
-  expiration: "2026-09-01T00:00:00Z"  # необязательно; TTL по умолчанию 24ч
-  usage-bootstrap-authentication: "true"   # разрешить аутентификацию узла
-  usage-bootstrap-signing: "true"          # разрешить подпись CSR
-  description: "Worker node join token"
-```
-
-Полное имя токена формируется как `<token-id>.<token-secret>`, например `abcdef.1234567890abcdef`. Подробнее о жизненном цикле: [Присоединение узлов](../../Installation/HA_Cluster_Bare_Metal/node_joining.md).
-
-### Генерация через Kustomize (secretGenerator)
-
-Стандарт для управления секретами в GitOps. Автоматически добавляет хеш содержимого к имени, что инициирует Rolling Update Подов при смене данных.
-
-```yaml
-# kustomization.yaml
-secretGenerator:
-- name: app-secrets
-  files:
-    - .env.prod
-  options:
-    disableNameSuffixHash: false  # false (по умолчанию) = хеш ДОБАВЛЯЕТСЯ к имени
-    labels:                       # метки, добавляемые к сгенерированному Secret
-      generated-by: kustomize
-      env: prod
-    annotations:
-      note: "Encrypt before commit (SOPS/Sealed Secrets)"
-```
-
-> **Ключевой нюанс:** хеш к имени добавляется **по умолчанию** (`disableNameSuffixHash: false`). Отключение хеша (`disableNameSuffixHash: true`) означает, что смена данных **не** вызовет пересоздание Pod — устаревшие значения останутся до ручного rollout restart. Для всего проекта опция задается через `generatorOptions` (применяется и к `configMapGenerator`). Ссылки на сгенерированные секреты (в Deployment, Pod) Kustomize автоматически переписывает на имя с хешем.
-
-**Дополнительные параметры Kustomize:**
-
-```yaml
-secretGenerator:
-# Из литералов
-- name: db-creds
-  literals:
-    - username=admin
-    - password=supersecret
-
-# Из файла с указанием имени ключа
-- name: tls-certs
-  files:
-    - tls.crt=certs/server.crt
-    - tls.key=certs/server.key
-
-# Из .env файла
-- name: app-env
-  envs:
-    - .env.production
-
-# С типом секрета
-- name: docker-reg
-  type: kubernetes.io/dockerconfigjson
-  files:
-    - .dockerconfigjson=docker-config.json
-```
-
-**Результат генерации:** Kustomize создаст Secret с именем вида `app-secrets-<suffix>`, где `<suffix>` — 10-символьный «безопасный» суффикс, производный от SHA256-хеша содержимого секрета (алфавит без гласных-подобных символов `0/1/3/a/e`, по аналогии с `GenerateName`). Это гарантирует, что при изменении данных появится новое имя и будет запущен Rolling Update Pod.
+---
 
 ### Императивное создание типизированных секретов
 
-> **Важно:** `kubectl create secret` поддерживает только **три** подкоманды — `generic`, `tls` и `docker-registry`. Подкоманд `ssh-auth`, `basic-auth` и `service-account-token` **не существует** (проверено на kubectl v1.37). Типизированные секреты (кроме TLS и Docker Registry) создаются через `generic` с флагом `--type` или декларативным манифестом.
+#### Секрет TLS/HTTPS (подкоманда `tls`)
+
+Команда `kubectl create secret tls` выполняет автоматическую валидацию соответствия сертификата приватному ключу:
 
 ```bash
-# TLS Secret (отдельная подкоманда; самопроверка пары ключ/сертификат)
-kubectl create secret tls ingress-cert --cert=tls.crt --key=tls.key
-
-# Docker Registry Secret (отдельная подкоманда)
-kubectl create secret docker-registry regcred \
-  --docker-server=<registry-url> \
-  --docker-username=<user> \
-  --docker-password=<pass> \
-  --docker-email=<email>
-
-# SSH Auth Secret (через generic с --type)
-kubectl create secret generic ssh-key \
-  --type=kubernetes.io/ssh-auth \
-  --from-file=ssh-privatekey=~/.ssh/id_rsa
-
-# Basic Auth Secret (через generic с --type)
-kubectl create secret generic basic-creds \
-  --type=kubernetes.io/basic-auth \
-  --from-literal=username=admin \
-  --from-literal=password='P@ssw0rd!'
+# Создание TLS-секрета для Ingress / Gateway API
+kubectl create secret tls ingress-wildcard-tls \
+  --namespace=gateway \
+  --cert=/etc/ssl/certs/fullchain.pem \
+  --key=/etc/ssl/certs/privkey.pem
+# → secret/ingress-wildcard-tls created
 ```
 
-**ServiceAccount Token:**
-Создание долгоживущего SA-токена в виде объекта `Secret` выполняется **только** декларативным манифестом с аннотацией `kubernetes.io/service-account.name` (см. раздел «Изменение в ServiceAccount Tokens (1.24+)»), так как подкоманды `kubectl create secret service-account-token` не существует:
+**Особенности работы с сертификатами:**
+1. **Порядок сертификатов в цепочке (Chained PEM):** в файле `fullchain.pem` первым должен следовать конечный листовой сертификат (Leaf/Server Certificate), затем промежуточные сертификаты CA (Intermediate CA), и в конце — корневой сертификат (Root CA). Если нарушить порядок, валидация вернет ошибку:
+   ```
+   error: failed to load key pair tls: private key does not match public key
+   ```
+2. **Парольная фраза:** приватный ключ не должен быть защищен паролем (passphrase). Если ключ зашифрован, его необходимо предварительно расшифровать:
+   ```bash
+   openssl rsa -in encrypted.key -out decrypted.key
+   ```
+
+#### Секрет приватного реестра (подкоманда `docker-registry`)
+
+Создание секрета типа `kubernetes.io/dockerconfigjson` для скачивания образов контейнеров (`imagePullSecrets`):
+
+```bash
+# Подключение к On-Premise реестру Harbor / Nexus / GitLab Registry
+kubectl create secret docker-registry harbor-pull-secret \
+  --namespace=production \
+  --docker-server=registry.internal.company.lan:5000 \
+  --docker-username=robot-k8s-deployer \
+  --docker-password='HarborRobotPassword123' \
+  --docker-email=devops@internal.company.lan
+# → secret/harbor-pull-secret created
+```
+
+**Проверка сгенерированного секрета:**
+```bash
+kubectl get secret harbor-pull-secret -n production -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq .
+# → {
+# →   "auths": {
+# →     "registry.internal.company.lan:5000": {
+# →       "username": "robot-k8s-deployer",
+# →       "password": "HarborRobotPassword123",
+# →       "email": "devops@internal.company.lan",
+# →       "auth": "cm9ib3QtazhzLWRlcGxveWVyOkhhcmJvclJvYm90UGFzc3dvcmQxMjM="
+# →     }
+# →   }
+# → }
+```
+
+#### Типизированные секреты SSH и Basic Auth (через `generic --type`)
+
+Поскольку отдельных подкоманд `ssh-auth` и `basic-auth` в `kubectl` нет, используется флаг `--type`:
+
+```bash
+# 1. SSH Auth Secret (для Git-sync, ArgoCD repo-creds):
+kubectl create secret generic git-deploy-key \
+  --namespace=argocd \
+  --type=kubernetes.io/ssh-auth \
+  --from-file=ssh-privatekey=/home/ci/.ssh/id_ed25519
+# → secret/git-deploy-key created
+
+# 2. Basic Auth Secret (для ingress-nginx basic auth или API):
+kubectl create secret generic internal-admin-auth \
+  --namespace=ingress-nginx \
+  --type=kubernetes.io/basic-auth \
+  --from-literal=username='opsadmin' \
+  --from-literal='password=ComplexVaultManagedPassword987!'
+# → secret/internal-admin-auth created
+```
+
+---
+
+### Декларативное создание (YAML-манифесты)
+
+#### Базовый манифест Opaque с полями stringData и data
 
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: my-sa-token
+  name: app-database-credentials
+  namespace: backend
+  labels:
+    app.kubernetes.io/name: payment-service
+    app.kubernetes.io/component: database
+    app.kubernetes.io/managed-by: manual
   annotations:
-    kubernetes.io/service-account.name: my-service-account
+    security.internal/owner: "devops-team"
+    security.internal/rotation-interval: "90d"
+type: Opaque
+stringData:
+  DB_USER: "payment_app"
+  DB_PASS: "SuperSecurePlainTextPassword"
+  DB_URL: "postgresql://10.244.5.12:5432/payments"
+data:
+  # Бинарный Java Keystore или закодированные данные
+  custom-keystore.jks: |
+    /u3+7QAAAAIAAAABAAAAAQAFYWRtaW4AAAFo...
+```
+
+#### Манифест Docker Registry для нескольких On-Premise реестров
+
+Если Pod должен скачивать разные слои из нескольких корпоративных реестров (Harbor и локальный Mirror), формируется манифест с объединенным `.dockerconfigjson`:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: multi-registry-creds
+  namespace: production
+type: kubernetes.io/dockerconfigjson
+stringData:
+  .dockerconfigjson: |
+    {
+      "auths": {
+        "harbor.company.lan": {
+          "auth": "cm9ib3QtaGFyYm9yOkNvbXBsZXhQYXNzMQ=="
+        },
+        "nexus.mirror.company.lan:8443": {
+          "auth": "Y2ktcmVhZGVyOkNvbXBsZXhQYXNzMg=="
+        }
+      }
+    }
+```
+
+#### Манифест Bootstrap Token для присоединения узлов кластера (kubeadm)
+
+Секрет типа `bootstrap.kubernetes.io/token` создается в пространстве имен `kube-system` для авторизации новых Worker-узлов при масштабировании Bare-Metal кластера:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bootstrap-token-9b2f4c
+  namespace: kube-system
+type: bootstrap.kubernetes.io/token
+stringData:
+  token-id: "9b2f4c"
+  token-secret: "81e94a5c6d3f0b21"
+  expiration: "2026-11-01T00:00:00Z"
+  usage-bootstrap-authentication: "true"
+  usage-bootstrap-signing: "true"
+  auth-extra-groups: "system:bootstrappers:kubeadm:default-node-token"
+  description: "Temporary join token for worker-node-04"
+```
+
+#### Манифест постоянного ServiceAccount Token
+
+Для интеграции сторонних Bare-Metal сервисов (мониторинг, скрипты автоматизации), которым требуется постоянный сервисный токен:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: prometheus-scraper-token
+  namespace: monitoring
+  annotations:
+    kubernetes.io/service-account.name: "prometheus-k8s"
 type: kubernetes.io/service-account-token
 ```
+> После применения манифеста `kube-controller-manager` автоматически сгенерирует ключи `token`, `ca.crt` и `namespace` и запишет их в поле `data`.
 
-Современной и более безопасной альтернативой является короткоживущий токен с привязкой к объекту (не создает объект `Secret`):
+---
 
-```bash
-kubectl create token my-service-account -n <namespace> --duration=2h
-# Токен с привязкой к конкретному Secret (аннулируется при удалении Secret)
-kubectl create token my-service-account \
-  --bound-object-kind Secret --bound-object-name my-sa-token
+### Генерация через Kustomize (secretGenerator)
+
+Генератор `secretGenerator` в `kustomization.yaml` является стандартом декларативного управления секретами в GitOps:
+
+```yaml
+# kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+generatorOptions:
+  disableNameSuffixHash: false # false (по умолчанию): хеш содержимого ДОБАВЛЯЕТСЯ к имени
+  labels:
+    managed-by: gitops-engine
+
+secretGenerator:
+  # 1. Из литералов
+  - name: api-service-creds
+    type: Opaque
+    literals:
+      - API_KEY=94a7cb9820f1a4e58b90
+      - API_SECRET=3f4e9102c8b76a
+
+  # 2. Из .env файла
+  - name: db-environment
+    envs:
+      - configs/prod.env
+
+  # 3. Из файлов сертификатов (TLS)
+  - name: ingress-internal-tls
+    type: kubernetes.io/tls
+    files:
+      - tls.crt=certs/server.crt
+      - tls.key=certs/server.key
 ```
 
-### Обновление (Patching)
+**Механика работы суффикса хеша (Suffix Hash):**
+- Kustomize вычисляет детерминированный SHA256 хеш содержимого секрета и добавляет его к имени (например, `api-service-creds-f7b58m94k2`).
+- При изменении любого значения в `configs/prod.env` генерируется новое имя объекта Secret.
+- Kustomize автоматически обновляет все ссылки на этот Secret в манифестах `Deployment`, `StatefulSet` и `Pod`, которые включены в ту же сборку.
+- При выполнении `kubectl apply` Kubernetes выполняет **Rolling Update** подов, гарантируя своевременное перечитывание обновленных секретов приложением.
 
-Для обновления конкретного ключа без перезаписи всего секрета:
+**Управление поведением (behavior):**
+В оверлеях Kustomize можно переопределять секреты с помощью директивы `behavior`:
+- `create` (по умолчанию) — создание нового секрета.
+- `replace` — полная замена базового секрета оверлейным.
+- `merge` — объединение ключей базового секрета и оверлея.
 
-```bash
-# Обновление через stringData
-kubectl patch secret db-credentials -p '{"stringData":{"password":"new-password"}}'
+---
 
-# Обновление через data (требует Base64)
-kubectl patch secret db-credentials -p '{"data":{"password":"'$(echo -n 'new-password' | base64)'"}}'
+### Обновление и патчинг (Patching & Server-Side Apply)
 
-# Добавление нового ключа
-kubectl patch secret db-credentials -p '{"stringData":{"new-key":"new-value"}}'
+#### Точечное обновление через `kubectl patch`
 
-# Удаление ключа (через JSON merge patch)
-kubectl patch secret db-credentials --type='json' -p='[{"op": "remove", "path": "/data/old-key"}]'
-```
-
-**Альтернативные способы обновления:**
-
-```bash
-# Интерактивное редактирование в $EDITOR (без ручного Base64)
-kubectl edit secret db-credentials
-# В редакторе меняйте значения в поле data (Base64) или добавьте stringData —
-# после сохранения значение из stringData перезапишет data
-
-# Декларативное обновление (измените файл и пере-примените)
-kubectl apply -f secret.yaml
-```
-
-> Для возможности `kubectl apply` корректно обновлять объект, созданный ранее через `kubectl create`, используйте `--save-config` при создании либо `kubectl create --dry-run=client -o yaml | kubectl apply -f -`. Без `last-applied-configuration` `apply` может выполнить merge-патч с пропущенными полями.
-
-### Валидация после создания
-
-После создания секрета рекомендуется выполнить проверку:
+Для изменения конкретного ключа без пересоздания всего объекта:
 
 ```bash
-# Проверка наличия секрета
-kubectl get secret my-secret -n <namespace>
+# 1. Обновление через stringData (JSON merge patch по умолчанию):
+kubectl patch secret app-database-credentials -n backend \
+  -p '{"stringData":{"DB_PASS":"NewRotatedPassword2026!"}}'
+# → secret/app-database-credentials patched
 
-# Просмотр деталей (без расшифровки данных)
-kubectl describe secret my-secret
+# 2. Обновление бинарного ключа в data (требуется предварительное кодирование в Base64):
+ENCODED_VAL=$(echo -n 'NewRotatedPassword2026!' | base64)
+kubectl patch secret app-database-credentials -n backend \
+  -p "{\"data\":{\"DB_PASS\":\"${ENCODED_VAL}\"}}"
+# → secret/app-database-credentials patched
 
-# Просмотр всех ключей в Base64
-kubectl get secret my-secret -o jsonpath='{.data}' | jq 'keys'
-
-# Просмотр конкретного ключа (с декодированием)
-kubectl get secret my-secret -o jsonpath='{.data.password}' | base64 -d
-echo
-
-# Проверка типа секрета
-kubectl get secret my-secret -o jsonpath='{.type}'
-
-# Проверка наличия лишних символов (перенос строки)
-kubectl get secret my-secret -o jsonpath='{.data.password}' | base64 -d | cat -A
-# Если в конце строки символ $ — лишний перенос строки
+# 3. Удаление конкретного устаревшего ключа через JSON Patch (RFC 6902):
+kubectl patch secret app-database-credentials -n backend --type='json' \
+  -p='[{"op": "remove", "path": "/data/DB_URL"}]'
+# → secret/app-database-credentials patched
 ```
 
-### Типичные ошибки при создании
+#### Server-Side Apply vs Client-Side Apply
 
-| Симптом | Причина | Решение |
+| Критерий | Client-Side Apply (`kubectl apply -f`) | Server-Side Apply (`kubectl apply --server-side -f`) |
 | :--- | :--- | :--- |
-| `Error: secrets "xxx" already exists` | Секрет с таким именем уже существует | Используйте `kubectl get secrets` для проверки; переименуйте или удалите старый |
-| `Error: the server doesn't have a resource type "secrets"` | API-сервер недоступен или устарела версия kubectl | Проверьте подключение: `kubectl cluster-info` |
-| `Error: Unable to connect to the server` | Нет доступа к API Server | Проверьте kubeconfig: `kubectl config view` |
-| `Error: secret is invalid` | Невалидная структура данных для типа | Проверьте обязательные ключи для типа (например, `tls.crt`/`tls.key` для `kubernetes.io/tls`) |
-| `Error: RequestEntityTooLarge` | Размер секрета превышает 1 MiB | Разделите данные или используйте внешнее хранилище |
-| `Error: forbidden` | RBAC запрещает создание секретов | Проверьте права: `kubectl auth can-i create secrets --namespace=<ns>` |
-| `error: unknown command "ssh-auth" for "kubectl create secret"` | Подкоманды `ssh-auth`/`basic-auth`/`service-account-token` не существуют | Используйте `kubectl create secret generic ... --type=...` или манифест |
-| `error: failed to load key pair tls: private key does not match public key` | Ключ не соответствует сертификату или нарушен порядок цепочки в PEM-файле | Проверьте пару через `openssl x509 -noout -pubkey` / `openssl pkey -pubout`; упорядочьте блоки leaf→root |
-| `parse error in --from-env-file ...` / `<key> is not a valid key name` | Некорректный синтаксис или невалидное имя ключа в env-файле | Соблюдайте формат `KEY=VALUE`, имена без дефисов; используйте `--from-file` для сложных значений |
-| `from-env-file cannot be combined with from-file or from-literal` | Смешение разных источников в одной команде | Разбейте на несколько `kubectl create` + `kubectl patch` или объедините через `--from-file` |
-| `cannot add key X, another key by that name already exists` | Дублирование одного ключа в источниках (`--from-literal`+`--from-file`) | Исключите повторяющиеся имена ключей |
-| `error: cannot give a key name for a directory path` | `--from-file=key=путь_к_директории` (для директорий имя ключа задавать нельзя) | Передавайте директорию без `key=` или перечислите файлы явно |
-| `error reading <path>: no such file or directory` | Путь к файлу-источнику указан неверно | Проверьте относительный/абсолютный путь относительно каталога запуска |
-| Секрет создан как `Opaque`, но должен работать как TLS/Registry/SSH | Не указан явный тип; `Opaque` не дает валидации ключей | Для типизированных секретов (TLS, dockerconfigjson, ssh-auth, basic-auth) всегда задавайте `type` — это включает проверку обязательных ключей и корректную обработку потребителями (Ingress, kubelet) |
-| Secret создан, но `stringData` не отображается | Это нормальное поведение | `stringData` — write-only поле; используйте `kubectl get secret -o json` для просмотра `data` |
+| **Где рассчитывается diff** | На стороне клиента (kubectl) | На стороне `kube-apiserver` |
+| **Аннотация `last-applied-configuration`** | Добавляется всегда; **содержит Base64-секрет целиком** | **Не используется**; отсутствует риск утечки секрета в аннотации |
+| **Управление полями** | Нет разделения владения полями | Отслеживается через `metadata.managedFields` |
+| **Конфликты полей** | Последний пишущий перезаписывает всё | API Server отклоняет запрос при конфликте с другим менеджером (ArgoCD/Flux) |
+
+```bash
+# Рекомендуемый способ декларативного применения манифеста Secret:
+kubectl apply --server-side -f secret-manifest.yaml --field-manager=devops-admin
+# → secret/app-database-credentials serverside-applied
+```
+
+---
+
+### Копирование и синхронизация секретов между Namespace
+
+Секреты ограничены своим `namespace`. Для тиражирования TLS-сертификата или ключа реестра (`imagePullSecret`) в другие пространства имен используются следующие паттерны:
+
+#### 1. Чистый экспорт/импорт через CLI
+
+При копировании необходимо удалить системные поля управления состоянием (`resourceVersion`, `uid`, `creationTimestamp`, `managedFields`, `namespace`):
+
+```bash
+kubectl get secret wildcard-tls -n ingress-system -o json | \
+  jq 'del(.metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp, .metadata.namespace, .metadata.managedFields)' | \
+  kubectl apply -n payment-production -f -
+# → secret/wildcard-tls created
+```
+
+#### 2. Автоматическая репликация (Kubernetes Reflector)
+
+Для On-Premise кластеров без облачных сервисов рекомендуется развертывание оператора Reflector (`emberstack/kubernetes-reflector`). Репликация настраивается через аннотации в исходном секрете:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: corporate-wildcard-tls
+  namespace: ingress-system
+  annotations:
+    reflector.v1.k8s.io/reflection-allowed: "true"
+    reflector.v1.k8s.io/reflection-allowed-namespaces: "payment-.*,monitoring,logging"
+    reflector.v1.k8s.io/reflection-auto-enabled: "true"
+type: kubernetes.io/tls
+data:
+  tls.crt: ...
+  tls.key: ...
+```
+Оператор автоматически создаст и будет синхронизировать зеркальные копии Secret во всех соответствующих пространствах имен при ротации сертификата.
+
+---
+
+## Операции и команды
+
+Справочник базовых операций инспекции, валидации и экспорта секретов:
+
+| Операция | Команда CLI | Ожидаемый результат / Назначение |
+| :--- | :--- | :--- |
+| **Список секретов** | `kubectl get secrets -n production` | Таблица секретов с типами, количеством ключей и возрастом |
+| **Детали объекта** | `kubectl describe secret my-secret -n production` | Метаданные и имена ключей с размерами в байтах (без раскрытия значений) |
+| **Декодирование ключа** | `kubectl get secret my-secret -n production -o jsonpath='{.data.password}' \| base64 -d; echo` | Вывод расшифрованного значения ключа в терминал |
+| **Список всех ключей** | `kubectl get secret my-secret -n production -o jsonpath='{.data}' \| jq 'keys'` | Массив имен ключей в формате JSON |
+| **Экспорт всех ключей** | `kubectl get secret my-secret -n production -o json \| jq -r '.data \| to_entries[] \| "\(.key) \(.value)"' \| while read k v; do echo "$v" \| base64 -d > "$k"; done` | Сохранение каждого ключа в отдельный файл в текущем каталоге |
+| **Проверка RBAC** | `kubectl auth can-i create secrets --namespace=production` | Проверка прав текущего контекста (`yes` или `no`) |
+| **Diff перед применением** | `kubectl diff -f secret.yaml` | Просмотр планируемых изменений полей перед записью |
+| **Удаление секрета** | `kubectl delete secret my-secret -n production` | Удаление объекта (`secret "my-secret" deleted`) |
+| **Удаление по селектору** | `kubectl delete secrets -l environment=ephemeral -n test` | Пакетное удаление секретов временных стендов |
+
+---
+
+## Диагностика и устранение неполадок
+
+### Сводная таблица типичных ошибок при создании
+
+| Симптом / Текст ошибки | Первопричина | Пошаговое решение |
+| :--- | :--- | :--- |
+| `Error: secrets "xxx" already exists` | Попытка выполнить `kubectl create` для объекта, который уже зарегистрирован в namespace | Используйте `kubectl apply` вместо `create`, добавьте `--dry-run=client -o yaml \| kubectl apply -f -`, либо удалите старый объект |
+| `error: failed to load key pair tls: private key does not match public key` | Приватный ключ не соответствует публичному сертификату при `kubectl create secret tls`, либо нарушен порядок цепочки | Проверьте публичные ключи сертификата и приватного ключа через OpenSSL (см. диагностический блок ниже) |
+| `error: failed to parse private key: ...` | Приватный ключ защищен парольной фразой (Passphrase) | Снимите пароль: `openssl rsa -in enc.key -out dec.key` и передайте расшифрованный файл |
+| `parse error in --from-env-file ... key name contains invalid characters` | Файл `.env` содержит строки с дефисами (`DB-USER=...`) или спецсимволы | Приведите имена к формату латинских букв, цифр и `_`; для несовместимых имен используйте `--from-file=KEY=PATH` |
+| `from-env-file cannot be combined with from-file or from-literal` | В одной команде `kubectl create secret` смешаны флаги разных источников | Разбейте команду на несколько вызовов с последующим `kubectl patch` или используйте генераторы Kustomize |
+| `Error from server (RequestEntityTooLarge): ... limit 1048576 bytes` | Размер полезной нагрузки секрета превысил 1 MiB (жесткий лимит транзакции etcd) | Вынесите бинарные артефакты в хранилище объектов (MinIO / Ceph S3), монтируйте большие файлы через PVC |
+| `Error from server (Forbidden): secrets is forbidden: User "xxx" cannot create resource` | Недостаточно прав в Role / RoleBinding пользователя или ServiceAccount | Настройте RBAC: добавьте правило `apiGroups: [""]`, `resources: ["secrets"]`, `verbs: ["create"]` для целевого namespace |
+| `error: unknown command "ssh-auth" for "kubectl create secret"` | Попытка вызвать несуществующую подкоманду `kubectl create secret ssh-auth` | Используйте `kubectl create secret generic name --type=kubernetes.io/ssh-auth --from-file=...` |
+| Приложение получает неверный пароль / ошибку аутентификации | В пароль попал скрытый байт переноса строки `\n` (`0x0A`) или `\r` (`0x0D`) | Проверьте наличие скрытых символов через `cat -A` и пересоздайте секрет через `echo -n` |
+| Поле `stringData` не отображается после создания манифеста | Ожидаемое поведение Kubernetes API | `stringData` — write-only поле. Проверяйте сохраненные данные через `kubectl get secret name -o jsonpath='{.data}'` |
+
+### Проверка скрытых символов и переносов строк
+
+Если приложение отклоняет пароль из смонтированного секрета:
+
+```bash
+# 1. Извлечение значения и инспекция непечатных символов:
+kubectl get secret app-database-credentials -n backend \
+  -o jsonpath='{.data.DB_PASS}' | base64 -d | cat -A
+# Если в выводе присутствует символ '$' на отдельной строке или '^M' — в значении содержится перевод строки:
+# admin_pass$  <-- '$' указывает на завершающий 0x0A
+
+# 2. Исправление секрета через patch со строгим подавлением перевода строки:
+kubectl patch secret app-database-credentials -n backend \
+  -p "{\"data\":{\"DB_PASS\":\"$(echo -n 'CorrectPasswordNoNewline' | base64)\"}}"
+# → secret/app-database-credentials patched
+```
+
+### Диагностика и сопоставление X.509 сертификата и TLS-ключа
+
+До отправки сертификатов в Kubernetes API убедитесь, что публичный ключ сертификата математически соответствует приватному ключу:
+
+```bash
+# Извлечение публичных ключей из сертификата и приватного ключа
+PUB_FROM_CERT=$(openssl x509 -noout -pubkey -in server.crt | openssl sha256)
+PUB_FROM_KEY=$(openssl pkey -pubout -in server.key 2>/dev/null | openssl sha256)
+
+if [ "$PUB_FROM_CERT" = "$PUB_FROM_KEY" ]; then
+    echo "OK: Пара сертификат/ключ валидна и готова к загрузке в Secret"
+else
+    echo "FAIL: Приватный ключ не соответствует сертификату!"
+fi
+# → OK: Пара сертификат/ключ валидна и готова к загрузке в Secret
+```
+
+### Проверка валидности .dockerconfigjson
+
+Для проверки корректности учетных данных секрета реестра без создания тестового Pod:
+
+```bash
+# Извлечение блока auth и декодирование логина/пароля
+kubectl get secret harbor-pull-secret -n production \
+  -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq -r '.auths[].auth' | base64 -d
+# → robot-k8s-deployer:HarborRobotPassword123
+```
+
+---
+
+## Лучшие практики (Best Practices)
+
+1. **GitOps без облачных сервисов (On-Premise Best Practices):**
+   - Никогда не храните манифесты Secret в системе контроля версий Git в незашифрованном виде.
+   - Используйте **[SOPS](../../../Security/Tools/sops_overview.md)** с локальными ключами `age` или корпоративным PGP/GPG кольцом ключей.
+   - Используйте **[Sealed Secrets](../../Security/sealed_secrets_overview.md)** от Bitnami: секреты шифруются асимметричным публичным ключом контроллера кластера и могут безопасно коммититься в репозиторий Git.
+   - Для масштабных On-Premise инсталляций применяйте **[External Secrets Operator (ESO)](external_managers.md)** с self-hosted инстансом HashiCorp Vault.
+
+2. **Предотвращение утечек из Shell History:**
+   - Не передавайте продакшн-пароли через флаг `--from-literal` в интерактивном терминале.
+   - Используйте передачу через stdin: `echo -n "$SECRET" | kubectl create secret ... --from-file=key=/dev/stdin`.
+   - Внедряйте утилиты сканирования репозиториев на предкоммитном этапе: `gitleaks`, `trivy` или `detect-secrets`.
+
+3. **Использование `immutable: true` для постоянных конфигураций:**
+   - Помечайте сертификаты удостоверяющих центров (Root CA), токены webhook-провайдеров и статические ключи как `immutable: true`.
+   - Это гарантирует защиту от случайной перезаписи и оптимизирует нагрузку на Control Plane.
+
+4. **Хеширование имен при развертывании:**
+   - Используйте генераторы Kustomize (`secretGenerator`) или флаг `kubectl create --append-hash`.
+   - Изменение конфигурации порождает новое имя объекта, запуская бессбойный Rolling Update подов вместо непредсказуемой частичной горячей замены файлов.
+
+5. **Принцип наименьших привилегий (RBAC):**
+   - Блокируйте кластерные права `get`, `list`, `watch` на ресурс `secrets` для сервисных аккаунтов приложений.
+   - Ограничивайте доступ разработчиков с помощью RBAC-правил с привязкой к конкретным именам (`resourceNames`):
+     ```yaml
+     rules:
+     - apiGroups: [""]
+       resources: ["secrets"]
+       resourceNames: ["app-config-secret"]
+       verbs: ["get", "patch"]
+     ```
+
+6. **Декларативное управление через Server-Side Apply:**
+   - Используйте `kubectl apply --server-side` вместо стандартного `kubectl apply`, чтобы исключить сохранение открытых секретов в аннотации `kubectl.kubernetes.io/last-applied-configuration`.
+
+---
 
 ## Дополнительная информация
 
-### Проверка на лишние символы
+### Связанные разделы базы знаний
 
-Если приложение не принимает пароль, проверьте наличие переноса строки (`$`) в конце:
-
-```bash
-kubectl get secret my-secret -o jsonpath='{.data.password}' | base64 -d | cat -A
-# Если в конце строки символ $ — лишний перенос строки
-
-# Исправление: пересоздайте секрет, используя `echo -n` (без переноса строки)
-kubectl create secret generic my-secret \
-  --from-literal=password=$(echo -n 'correct-password' | base64) \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-### Лимиты и ограничения при создании
-
-- **Размер объекта:** Максимальный размер Secret — **1 MiB** (включая метаданные и Base64-данные).
-- **Количество Secret на Namespace:** Рекомендуется не более 1000–2000 secrets для поддержания производительности.
-- **Ключи в data:** Ключи должны быть валидными в DNS-подходе (lowercase, alphanumeric, дефисы, точки).
-- **Длина имени ключа:** Ограничена размером etcd (максимальная длина ключа — 255 байт).
-- **Типы секретов:** Кастомные типы требуют обязательных ключей, иначе API вернет ошибку валидации.
-
-### Лучшие практики при создании
-
-1. **Используйте `--dry-run=client`** для генерации манифестов в CI/CD пайплайнах. Это гарантирует, что YAML-файлы будут валидны перед применением.
-2. **Избегайте `--from-literal` для длинных значений** — используйте `--from-file` для многострочных данных или сертификатов.
-3. **Для production используйте декларативный подход** (YAML) вместо императивного — это обеспечивает версионирование и reproducibility.
-4. **Указывайте `type` явно** в манифестах — это помогает валидации и документированию.
-5. **Добавляйте метки (labels)** для организации и фильтрации секретов.
-6. **Используйте `immutable: true`** для секретов, которые не будут меняться после создания.
-7. **Для GitOps** шифруйте секреты через SOPS или Sealed Secrets перед коммитом.
-8. **Валидируйте секреты** после создания (команды выше).
-9. **Для автоматической генерации паролей** используйте `openssl rand -base64 24` или `head -c 32 /dev/urandom | base64`.
-10. **Используйте `--append-hash` в CI/CD:** при императивном создании секрета флаг добавит к имени хеш содержимого, что вызовет пересоздание Pod при смене данных даже без Kustomize.
-11. **Не смешивайте источники в одной команде:** `--from-env-file` нельзя комбинировать с `--from-literal`/`--from-file`.
-12. **Храните env-файлы вне Git** (или в зашифрованном виде): файлы `.env` для `--from-env-file` и `--from-file` часто попадают в репозитории — добавьте их в `.gitignore` или шифруйте перед коммитом и расшифровывайте только на раннере CI.
-
-### Очистка и откат
-
-```bash
-# Удаление секрета
-kubectl delete secret my-secret -n <namespace>
-
-# Удаление всех секретов с определенным лейблом
-kubectl delete secrets -l env=test -n <namespace>
-
-# Откат через kubectl apply (если секрет был создан через save-config)
-kubectl apply -f secret-manifest.yaml --prune
-
-# Просмотр изменений перед применением (diff)
-kubectl diff -f secret-manifest.yaml
-```
-
-### GitOps и безопасность
-
-Никогда не храните секреты в Git в открытом виде. Используйте:
-- **[Sealed Secrets](../../Security/sealed_secrets_overview.md)** — шифрование для конкретного кластера.
-- **[SOPS](../../../Security/Tools/sops_overview.md)** — шифрование с использованием KMS/PGP.
-- **External Secrets Operator** — синхронизация из внешних хранилищ (рекомендуется для Production).
-
-### Смотрите также
-
-- [Основы Secret](secrets_basics.md) — обзор типов и архитектура.
-- [Использование Secret](using_secrets.md) — доставка в Pod.
-- [Безопасность Secret](security.md) — лучшие практики и KMS.
+- **[Основы Secret](secrets_basics.md)** — архитектура объекта, базовые концепции и типы.
+- **[Использование Secret](using_secrets.md)** — варианты монтирования томов, переменные окружения и нюансы обновления данных в Pod.
+- **[Безопасность Secret](security.md)** — шифрование в etcd, аудит доступа и RBAC.
+- **[Хранение в etcd](etcd_storage.md)** — настройка `EncryptionConfiguration`, провайдеры KMS и производительность базы данных.
+- **[Внешние менеджеры секретов](external_managers.md)** — интеграция с HashiCorp Vault и External Secrets Operator (ESO).
+- **[Секреты в Helm](helm_secrets.md)** — плагин helm-secrets, защита values-файлов.
+- **[Генераторы Kustomize](../../ToolsUtilities/kustomize/kustomize_generators.md)** — детальный обзор secretGenerator и ConfigMapGenerator.
+- **[Sealed Secrets](../../Security/sealed_secrets_overview.md)** — шифрование секретов для GitOps через контроллер Bitnami.
+- **[SOPS](../../../Security/Tools/sops_overview.md)** — шифрование файлов с использованием age и PGP.

@@ -605,6 +605,46 @@ wrk -t4 -c200 -d60s -R5000 --latency https://example.com/api/v1/health
 # → Requests/sec:   5000.08
 ```
 
+### Сценарий 9: Профилирование узких мест веб-сервера через `perf` и FlameGraph под нагрузкой
+
+При падении пропускной способности (RPS) или аномальном росте утилизации CPU на сервере под нагрузкой SRE необходимо локализовать причину без перезапуска или остановки сервиса.
+
+#### Шаг 1: Запись профиля стека вызовов работающего воркера через `perf`
+
+```bash
+# 1. Находим PID активных воркеров Nginx/Angie
+pgrep -f "nginx: worker process"
+# → 12051
+# → 12052
+
+# 2. Запуск сэмплирования стеков вызовов (99 Гц, 30 секунд, включая стек ядра)
+sudo perf record -F 99 -p 12051 -g -- sleep 30
+# → [ perf record: Woken up 12 times to write data ]
+# → [ perf record: Captured and wrote 3.125 MB perf.data (32415 samples) ]
+```
+
+#### Шаг 2: Генерация интерактивного FlameGraph (пламенного графа)
+
+```bash
+# 3. Декодирование сэмплов и построение графа вызовов
+sudo perf script | stackcollapse-perf.pl > /tmp/out.folded
+flamegraph.pl /tmp/out.folded > /var/www/reports/nginx_flamegraph.svg
+
+# Просмотр текстового отчета топ-функций прямо в консоли
+sudo perf report --stdio --no-children -n | head -n 25
+```
+
+#### Шаг 3: Диагностика типичных узких мест в отчете
+
+| Доминирующая функция / библиотека | Узкое место | Решение |
+| :--- | :--- | :--- |
+| `EVP_PKEY_verify`, `ecp_nistz256_*` (OpenSSL) | Слишком частые TLS-хэндшейки (исчерпание CPU на асимметричной криптографии) | Включить и расширить upstream `keepalive`; активировать сессионные тикеты TLS 1.3 / кэш сессий. |
+| `deflate_slow`, `BrotliCompressStream` | Чрезмерно высокий уровень динамического сжатия «на лету» | Снизить уровень Gzip до 4–5 или Brotli до 4; перевести тяжелую статику на AOT-прекомпрессию (`gzip_static on;`). |
+| `ngx_http_regex_exec`, `pcre_*` | Неэффективные регулярные выражения в блоках `location` / `rewrite` | Заменить регулярные выражения на префиксные (`^~ /api/`) или точные (`= /login`) совпадения. |
+| `__x64_sys_epoll_wait`, `do_epoll_wait` | Высокий оверхед переключения контекста и обработки прерываний | Включить `multi_accept on;`, настроить `SO_REUSEPORT` и распределение сетевых прерываний RPS. |
+
+- *Детальное руководство по профилированию ядра и процессов:* [Профилирование с помощью perf](../../../Linux/Diagnostics/Performance/perf.md) и [Методология непрерывного профилирования](../../../Concepts/Observability_and_Monitoring/profiling_deep_dive.md).
+
 ---
 
 ## Операции и команды

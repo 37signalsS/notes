@@ -892,14 +892,46 @@ fail2ban-client status angie-dos
 
 ---
 
-### Сценарий 14: Интеграция с локальным WAF (ModSecurity v3 / NAXSI)
+### Сценарий 14: Интеграция с локальным WAF (Coraza WAF / ModSecurity v3)
 
-Использование встроенного WAF на уровне Angie для выявления сигнатур сложных L7-атак без облачных сервисов.
+> [!WARNING]
+> **Статус технологий (EOL):** Проект ModSecurity v3 официально переведен компанией Trustwave в статус **End of Life (EOL)** и более не получает обновлений ядра. В современных высоконагруженных On-Premises инфраструктурах стандартом выступает **Coraza WAF** (написан на Go, поддерживает полную совместимость с правилами OWASP Core Rule Set v4 и подключается как динамический модуль C-shared или через WebAssembly). Подробнее: [Межсетевой экран веб-приложений (WAF)](../../../Security/ApplicationSecurity/waf.md).
+
+#### Вариант А: Современный стек — Coraza WAF с OWASP CRS v4
+
+Coraza исполняется в отдельной изолированной среде или подключается через динамический интерфейс, анализируя HTTP-трафик без утечек памяти:
+
+```nginx
+# Загрузка динамического модуля Coraza
+load_module modules/ngx_http_coraza_module.so;
+
+server {
+    listen 443 ssl reuseport;
+    server_name secure-portal.example.internal;
+
+    status_zone waf_portal_zone;
+
+    ssl_certificate /etc/angie/ssl/portal.crt;
+    ssl_certificate_key /etc/angie/ssl/portal.key;
+
+    # Активация Coraza WAF
+    coraza_waf on;
+    coraza_rules_file /etc/angie/coraza/coraza.conf;
+    coraza_rules_file /etc/angie/coraza/coreruleset/crs-setup.conf;
+    coraza_rules_file /etc/angie/coraza/coreruleset/rules/*.conf;
+
+    location / {
+        proxy_pass http://backend_portal;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+}
+```
+
+#### Вариант Б: Поддержка существующей инфраструктуры — ModSecurity v3 (Legacy)
 
 ```nginx
 # /etc/angie/http.d/waf.conf
-
-# Загрузка динамического модуля ModSecurity v3 (должен быть собран под текущую версию Angie)
 load_module modules/ngx_http_modsecurity_module.so;
 
 server {

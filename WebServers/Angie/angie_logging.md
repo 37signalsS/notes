@@ -605,6 +605,77 @@ nc -zvu 192.168.10.15 514
 
 ---
 
+### Сценарий 9: Потоковая доставка логов через агент Vector (ClickHouse / Loki) с маскированием PII
+
+В промышленной On-Premises инфраструктуре высокопроизводительный агент [Vector](../../Vector/vector_overview.md) читает JSON-логи Angie из файла или сокета, маскирует секретные данные и распределяет события в долговременное аналитическое хранилище ClickHouse и движок журналов Loki.
+
+Файл конфигурации агента `/etc/vector/vector.yaml`:
+
+```yaml
+sources:
+  angie_access_logs:
+    type: file
+    include:
+      - /var/log/angie/access.json
+    read_from: beginning
+
+transforms:
+  # Парсинг структурированного JSON из Angie
+  parse_angie_json:
+    type: remap
+    inputs:
+      - angie_access_logs
+    source: |
+      . = parse_json!(.message)
+      
+      # 1. Маскирование чувствительных данных (Bearer токены, пароли)
+      if exists(.http_authorization) {
+        .http_authorization = replace(.http_authorization, r'Bearer\s+[A-Za-z0-9\-\._~\+\/]+=*', "Bearer [REDACTED]")
+      }
+      
+      # 2. Нормализация числовых типов данных для ClickHouse
+      .status = to_int!(.status)
+      .request_time = to_float!(.request_time)
+      .body_bytes_sent = to_int!(.body_bytes_sent)
+
+sinks:
+  # Отправка структурированных логов в аналитическую СУБД ClickHouse
+  clickhouse_sink:
+    type: clickhouse
+    inputs:
+      - parse_angie_json
+    endpoint: "http://192.168.10.30:8123"
+    database: "logs"
+    table: "angie_access_log"
+    skip_unknown_fields: true
+
+  # Отправка в Grafana Loki для поиска по меткам
+  loki_sink:
+    type: loki
+    inputs:
+      - parse_angie_json
+    endpoint: "http://192.168.10.35:3100"
+    labels:
+      service: "angie"
+      host: "{{ host }}"
+      status: "{{ status }}"
+    encoding:
+      codec: json
+```
+
+Проверка синтаксиса и запуск агента Vector:
+
+```bash
+vector validate /etc/vector/vector.yaml
+# → Validating /etc/vector/vector.yaml
+# → Converted to Vector config: /etc/vector/vector.yaml
+# → Configuration successfully validated!
+
+sudo systemctl enable --now vector
+```
+
+---
+
 ### Анализ логов утилитами Linux (CLI Sysadmin Toolkit)
 
 Быстрый анализ инцидентов на сервере без развертывания тяжелых стеков сбора:

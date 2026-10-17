@@ -33,14 +33,13 @@ http:
         sourceCriterion:
           ipStrategy:
             depth: 1
-        # есть ещё addXForwardedHeaders: true | false (по умолчанию true)
 ```
 
 Полезные возможности v3:
 
-- `sourceCriterion.requestHost: true` — лимит на хост (без потери по IP);
-- `sourceCriterion.requestHeaderName: "X-Api-Key"` — лимит на API-ключ (важно: заголовок без дефисов/подчеркиваний не рвется);
-- `addXForwardedHeaders: true` (default) — добавляет `X-RateLimit-Limit`, `X-RateLimit-Remaining` (в поле ограничения не ломает поведение).
+- `sourceCriterion.requestHost: true` — лимит на хост;
+- `sourceCriterion.requestHeaderName: "X-Api-Key"` — лимит на заголовок (API-ключ);
+- Заголовки ответа: при 429 Traefik возвращает `Retry-After` и `X-Retry-In` (детальный разбор см. в [traefik-rate-limiting-deep.md](./traefik-rate-limiting-deep.md)).
 
 ### Распределённый RateLimit (Redis)
 
@@ -127,10 +126,10 @@ http:
     retry-mw:
       retry:
         attempts: 3
-        initialInterval: 1s
-        maxInterval: 8s
-        # includedStatusCodes: [500, 502, 503]   # по умолчанию 5xx + 3xx(редиректы)
-        # nonRetriableStatusCodes(...) -- переопределяет
+        initialInterval: 500ms
+        timeout: 3s
+        # status: ["500-599"]            # по умолчанию повторяются 5xx ошибки
+        # retryNonIdempotentMethod: false # защита неидемпотентных методов (POST/PATCH)
 ```
 
 Сброс счетчиков при новых запросах. Работает и для gRPC (ошибки пересчитываются как неуспешные). Важно: ретраи без буферизации тела — только для GET/HEAD (иначе повторить нечего).
@@ -327,7 +326,7 @@ curl -sv https://api.example.com/ 2>&1 | grep -i '^< x-rate-limit'
 | :--- | :--- | :--- |
 | **`429` на всех клиентов** | RateLimit по RemoteAddr за LB; отсутствие `depth` / нет `trustedIPs` | Настройте `sourceCriterion.ipStrategy.depth` + `forwardedHeaders` |
 | **Сервис открывается/закрывается хаотично** | `movingAverageWindow`/`checkPeriod` несоразмерны | Увеличьте окно, следите за latency-метриками |
-| **Retry не помогает** | Тело небуферизуемое / неретрай-код в `includedStatusCodes` | Буферизуйте/ограничьте статусы; помните, что повтор для POST возможен |
+| **Retry не помогает** | Тело больше `maxRequestBodyBytes` / статус не входит в `status` / метод POST при `retryNonIdempotentMethod: false` | Настройте `status`, увеличьте буфер тела или включите идемпотентность |
 | **WebSocket рвется** | `buffering`/`compress` в цепочке | Уберите стриминговые middleware для этих путей |
 | **Глобальный лимит обходит локальным** | Каждый инстанс считает в своей памяти | Включите Redis в `rateLimit` |
 

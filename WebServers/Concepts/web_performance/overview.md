@@ -596,6 +596,7 @@ net.ipv4.tcp_fin_timeout = 15
 - [WebPageTest — синтетическое тестирование](./webpagetest.md) — многопрогонное тестирование и водопадные диаграммы.
 - [PageSpeed Insights и CrUX](./pagespeed_insights.md) — полевые данные Google и анализ реального опыта.
 - [Image Optimization Pipeline](./image_optimization_pipeline.md) — пайплайны сборки и конвертации в WebP/AVIF.
+- [Font Optimization Pipeline](./font_optimization_pipeline.md) — пайплайны сборки, сабсеттинг WOFF2, unicode-range и устранение FOUT/FOIT.
 - [Circuit Breaker и деградация сервисов](./circuit_breaker_and_degradation.md) — защита от каскадных сбоев.
 - [Health Checks и Readiness](./health_checks_and_readiness.md) — проактивный мониторинг жизнеспособности апстримов.
 - [Zero-Downtime Deployment](./zero_downtime_deployment.md) — бесшовный перезапуск и ротация воркеров.

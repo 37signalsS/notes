@@ -1,528 +1,770 @@
 # Балансировка и проксирование L4-трафика (TCP/UDP) в Nginx
 
+**Актуально для:** Nginx 1.26+ (OSS/Plus) / 1.28+ (Mainline), Angie 1.6+ / 1.12.x
+
 ## Определения
 
-**Модуль stream в Nginx** — расширение функциональности Nginx, предоставляющее возможности для балансировки нагрузки и проксирования трафика на транспортном уровне (L4). Позволяет работать с протоколами, не основанными на HTTP: базами данных (MySQL, PostgreSQL), DNS, NTP, SSH и другими.
+**Модуль `stream` в Nginx** — подсистема Nginx (`ngx_stream_core_module`), обеспечивающая проксирование и балансировку сетевой нагрузки на транспортном уровне (L4 модели OSI). Модуль обрабатывает сырые TCP-соединения и UDP-датаграммы без декодирования прикладных протоколов, что позволяет обслуживать реляционные и NoSQL СУБД (PostgreSQL, MySQL, Redis), брокеры сообщений (RabbitMQ, Apache Kafka), службы каталогов (LDAP), DNS-серверы, SSH-бастионы и почтовые сервисы.
 
-**L4 (Transport Layer)** — уровень модели OSI, на котором Nginx работает с TCP/UDP-сессиями, оперируя IP-адресами и портами без разбора содержимого трафика (за исключением TLS SNI/ALPN при включенном `ssl_preread`).
+**L4 (Transport Layer) проксирование** — метод трансляции сетевого трафика, при котором балансировщик принимает решения о маршрутизации исключительно на основе сетевых заголовков (IP-адреса источника и назначения, TCP/UDP-порты), а также метаданных рукопожатия TLS (SNI/ALPN при использовании механизма Pre-read). Полезная нагрузка сессии пересылается между сокетами клиента и бэкенда в неизменном виде.
 
-**L7 (Application Layer)** — уровень модели OSI, где Nginx обрабатывает HTTP-трафик: заголовки, cookies, тело запроса, URI. Подробнее о принципах балансировки на этом уровне: [Обзор балансировки в Nginx](./Load_Balancing/overview_concepts.md).
+**L7 (Application Layer) проксирование** — метод обработки трафика (реализованный в блоке `http`), при котором сервер полностью разбирает прикладной протокол (HTTP/1.1, HTTP/2, HTTP/3, gRPC, WebSocket), анализирует URI, заголовки, куки и тело запроса. Подробнее: [Обзор и концепции балансировки](./Load_Balancing/overview_concepts.md).
 
-**SNI (Server Name Indication)** — расширение протокола TLS, позволяющее клиенту указать имя хоста во время handshake. Начиная с Nginx 1.25.5, модуль `stream` поддерживает директиву `server_name` для маршрутизации на основе SNI.
+**SNI (Server Name Indication)** — расширение протокола TLS, позволяющее клиенту передавать имя целевого хоста в открытом виде на этапе рукопожатия (`Client Hello`). Начиная с Nginx 1.25.5, блок `stream` поддерживает виртуальные серверы через директиву `server_name` для нативной маршрутизации TCP-сессий по SNI.
 
-**SSL Pre-read** — режим анализа Client Hello без терминации TLS. Позволяет извлекать SNI, выбранный протокол и ALPN-список для маршрутизации трафика на L4.
+**SSL/TLS Pre-read (`ssl_preread`)** — механизм анализа первых байтов входящего TCP-соединения (`Client Hello`) модулем `ngx_stream_ssl_preread_module` без терминации шифрования и без владения приватным ключом. Позволяет извлекать имя хоста SNI (`$ssl_preread_server_name`), поддерживаемые версии протоколов (`$ssl_preread_protocol`) и список ALPN (`$ssl_preread_alpn_protocols`).
 
-**Proxy Protocol** — протокол для передачи реального IP-адреса клиента через балансировщик, работающий на L4. Используется, когда Nginx стоит за внешним L4-балансировщиком (HAProxy, IPVS) и не может получить IP напрямую из TCP-соединения. Подробнее: [Proxy Protocol](../../../Networking/Protocols/proxy_protocol.md).
+**PROXY Protocol (v1 / v2)** — сетевой протокол (разработанный HAProxy), позволяющий передавать метаданные исходного клиентского подключения (реальный IP-клиента, клиентский порт, IP-балансировщика) внутри специального префиксного заголовка в начале TCP-потока. Подробнее: [Proxy Protocol](../../../Networking/Protocols/proxy_protocol.md).
 
-**Upstream (L4)** — именованная группа бэкенд-серверов в блоке `stream`, между которыми распределяется нагрузка. Алгоритмы балансировки и параметры `max_fails`/`fail_timeout` аналогичны HTTP-блоку. Подробнее: [Алгоритмы балансировки](./Load_Balancing/algorithms.md).
+**Прозрачное проксирование (`transparent`)** — режим работы (`proxy_bind ... transparent`), при котором исходящее соединение к бэкенду открывается с исходным IP-адресом клиента в качестве IP-отправителя. Требует прав ядра `CAP_NET_ADMIN`, поддержки TPROXY в сетевом стеке Linux и особой маршрутизации ответных пакетов. Подробнее: [Прозрачное проксирование в Linux](../../../Networking/Concepts/nat/transparent_proxy.md).
 
-**Зона (zone)** — разделяемая память для хранения состояния upstream-группы между рабочими процессами. Критична для корректной работы `least_conn` и sticky-сессий. В блоке `stream` поддерживается начиная с Nginx 1.25.5.
+**Upstream-пул (L4)** — именованная группа целевых серверов в контексте `stream`, между которыми распределяются входящие TCP/UDP-сессии на основе алгоритмов балансировки и механизмов контроля доступности (`max_fails`, `fail_timeout`).
+
+**Зона разделяемой памяти (`zone`)** — сегмент оперативной памяти, доступный всем рабочим процессам (`worker processes`) Nginx. Хранит конфигурацию группы и динамическое состояние серверов (счетчики активных соединений, веса, статусы доступности). Необходима для корректной работы алгоритма `least_conn` в многопроцессной архитектуре.
+
+**Модуль `ngx_stream_pass_module`** — модуль Nginx (появился в версии 1.25.5), позволяющий передавать входящее соединение из контекста `stream` напрямую в слушающий сокет другого блока (например, `http`) внутри того же экземпляра Nginx без оверхеда сетевого стека.
+
+---
 
 ## Основные концепции и архитектура
 
 ### Сравнение L4 и L7 проксирования
 
-| Характеристика | L4 (Transport Layer) | L7 (Application Layer) |
+| Характеристика | L4 (Модуль `stream`) | L7 (Модуль `http`) |
 | :--- | :--- | :--- |
-| **Уровень модели OSI** | Layer 4 (TCP, UDP) | Layer 7 (HTTP, HTTPS, gRPC) |
-| **Единица обработки** | Сессия или пакет | Запрос и ответ |
-| **Разбор содержимого** | Отсутствует (кроме TLS SNI/ALPN) | Полный (заголовки, cookies, тело) |
-| **Накладные расходы** | Минимальные (высокая производительность) | Более высокие (анализ прикладного уровня) |
-| **Возможности** | Балансировка, ограничение соединений, SSL Passthrough | Кэширование, модификация URI, WAF, rewrite |
-| **Директивы доступа** | `allow`/`deny` по IP | `allow`/`deny` + `auth_request` + `limit_req` |
+| **Уровень модели OSI** | Layer 4 (Транспортный: TCP, UDP) | Layer 7 (Прикладной: HTTP, HTTPS, gRPC, WebSocket) |
+| **Единица обработки** | Байтовый поток (TCP) или датаграмма (UDP) | Дискретный запрос (Request) и ответ (Response) |
+| **Инспекция содержимого** | Отсутствует (кроме TLS SNI/ALPN при Pre-read) | Полный синтаксический анализ структуры заголовков, URI, Cookies и тела |
+| **Накладные расходы CPU/RAM** | Минимальные (потоковая трансляция через сокетные буферы ядра) | Существенные (выделение памяти под структуры HTTP, разбор заголовков, сжатие) |
+| **Пропускная способность** | Максимальная (сотни тысяч сессий/сек на узел) | Ограничена вычислительной мощностью разбора протокола |
+| **Модификация данных** | Невозможна (за исключением вставки заголовка PROXY Protocol) | Полная трансформация запроса/ответа на лету (rewrite, add_header, sub_filter) |
+| **Кэширование данных** | Не поддерживается | Встроенное кэширование ответов бэкенда (`proxy_cache`) |
+| **Контроль доступа** | Ограничение по IP (`allow`/`deny`), лимит сессий (`limit_conn`) | `allow`/`deny`, HTTP Basic/Digest, `auth_request`, JWT, WAF |
+| **Безопасность TLS** | TLS Passthrough (сквозной) или L4 TLS Termination | Терминация TLS с анализом HTTP, валидация mTLS |
 
-### Архитектура процесса обработки L4-соединения в Nginx
+### Архитектура и жизненный цикл L4-сессии в Nginx
 
-Понимание жизненного цикла TCP/UDP-сессии необходимо для диагностики проблем производительности и таймаутов.
+Архитектура модуля `stream` построена на неблокирующем вводе-выводе и мультиплексировании событий (`epoll` в Linux) в рамках пула рабочих процессов (`worker_processes`).
 
-1.  **Прием соединения:** Клиент открывает TCP-соединение с Nginx. Воркер регистрирует событие в Event Loop (epoll/kqueue). Для UDP — принимает первый пакет и создает виртуальную сессию.
-2.  **Выбор server-блока:** Nginx сопоставляет IP:Port с блоком `server`. Если включен `ssl_preread`, на этом этапе анализируется Client Hello для извлечения SNI.
-3.  **Выбор upstream-сервера:** При наличии `proxy_pass` Nginx выбирает сервер из группы `upstream` по настроенному алгоритму (Round Robin, `least_conn` и др.). Без `zone` балансировка работает некорректно при нескольких воркерах.
-4.  **Установка соединения с бэкендом:** Берется соединение из пула (если настроено) или создается новое TCP/TLS-соединение. Для UDP создается виртуальная сессия к выбранному бэкенду.
-5.  **Проксирование:** Nginx передает данные между клиентом и бэкендом. Буферизация отключена по умолчанию (пакетный режим), что минимизирует задержку. При включенном `ssl_preread` расшифровка не выполняется.
-6.  **Возврат клиенту:** Данные передаются клиенту в потоковом режиме. Соединение либо закрывается по таймауту, либо возвращается в пул (для TCP).
-7.  **Обновление счетчиков:** Увеличиваются счетчики для выбранного upstream-сервера, если настроена `zone` или `status_zone` (Angie/Nginx Plus).
+```
+[ Клиент: TCP / UDP ]
+         │
+         ▼ (1. TCP SYN / UDP Datagram)
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Nginx Master Process                                                    │
+│   └── Worker Process (epoll loop, non-blocking I/O)                     │
+│        ├── 2. Listen Socket (reuseport, backlog, TCP_DEFER_ACCEPT)       │
+│        ├── 3. Pre-read Phase (ssl_preread: парсинг SNI / ALPN)           │
+│        ├── 4. Access Phase (limit_conn, allow / deny по CIDR)            │
+│        ├── 5. Upstream Selection (Shared Memory zone: RR, least_conn)    │
+│        ├── 6. Upstream Connect (non-blocking connect, proxy_connect_timeout) │
+│        ├── 7. Data Relaying (двунаправленный стриминг, кольцевые буферы)│
+│        └── 8. Session Close & Logging (сброс в stream access_log)       │
+└─────────────────────────────────────────────────────────────────────────┘
+         │
+         ▼ (PROXY Protocol v1/v2 + Payload)
+[ Upstream Сервер: PostgreSQL / MySQL / Redis / DNS ]
+```
 
-### Конфигурация и основные директивы
+#### Этапы жизненного цикла TCP-сессии:
 
-Блок `stream` располагается на верхнем уровне `nginx.conf`, на том же уровне иерархии, что и `http`. Базовая структура:
+1. **Прием соединения (Accept):** Воркер извлекает соединение из очереди `listen`. При включении директивы `listen ... reuseport` ядро Linux распределяет входящие SYN-пакеты между воркерами на уровне сетевого стека по 4-tuple хэшу (`src_ip`, `src_port`, `dst_ip`, `dst_port`), исключая конкуренцию за блокировки сокета.
+2. **Фаза предварительного анализа (Pre-read Phase):** Если включен `ssl_preread on;`, Nginx не инициирует соединение с бэкендом немедленно, а считывает первые байты входящего потока (`Client Hello`) в буфер `proxy_buffer_size`. Из пакета извлекаются переменные `$ssl_preread_server_name` и `$ssl_preread_alpn_protocols`.
+3. **Фаза контроля доступа (Access Phase):** Проверяются правила `allow` и `deny`. Оценивается счетчик открытых соединений в зоне `limit_conn`. Если лимит превышен, соединение сбрасывается (`TCP RST`) или закрывается (`TCP FIN`).
+4. **Выбор бэкенда (Upstream Selection):** На основе настроенного алгоритма (Round Robin, `least_conn`, `hash`) и состояния серверов в `zone` выбирается целевой сервер.
+5. **Установка соединения с бэкендом (Connect Phase):** Воркер выполняет системный вызов `connect()` к адресу бэкенда. Если соединение не устанавливается за время `proxy_connect_timeout`, сервер помечается сбойным, и при включенном `proxy_next_upstream` предпринимается попытка подключения к следующему узлу.
+6. **Двунаправленная ретрансляция данных (Relaying Phase):** После соединения Nginx пересылает байты между сокетом клиента и сокетом бэкенда. Буферизация на диск не выполняется; данные передаются через сокетные буферы ядра и локальные кольцевые буферы памяти `proxy_buffer_size`. Если включена директива `proxy_protocol on;`, перед клиентскими данными передается заголовок PROXY Protocol.
+7. **Завершение сессии (Close & Log):** При закрытии сокета одной из сторон или по истечении таймаута неактивности `proxy_timeout` сессия финализируется. Время сессии, переданные байты и статус записываются в `access_log`.
+
+#### Особенности обработки UDP-трафика:
+В силу отсутствия состояния соединения в протоколе UDP, Nginx эмулирует **виртуальную сессию**. 
+- Сессия инициируется при получении первого пакета на порт `listen ... udp`.
+- Nginx привязывает виртуальную сессию к конкретному бэкенду.
+- Завершение виртуальной сессии происходит по получению заданного числа пакетов от бэкенда (`proxy_responses`) либо по таймауту неактивности (`proxy_timeout`).
+- Для сервисов типа DNS (один запрос — один ответ) указание `proxy_responses 1;` и короткого `proxy_timeout 3s;` обязательно для предотвращения утечки файловых дескрипторов.
+
+### Конфигурационная структура блока `stream`
+
+Контекст `stream` объявляется на корневом уровне конфигурации `/etc/nginx/nginx.conf`, наряду с контекстами `events` и `http`:
 
 ```nginx
 # /etc/nginx/nginx.conf
+user nginx;
+worker_processes auto;
+worker_rlimit_nofile 65535;
+
+events {
+    worker_connections 16384;
+    use epoll;
+    multi_accept on;
+}
+
+# L7 HTTP-контекст
+http {
+    include /etc/nginx/mime.types;
+    # ... http-директивы ...
+}
+
+# L4 TCP/UDP-контекст
 stream {
     log_format basic '$remote_addr [$time_local] '
                      '$protocol $status $bytes_sent $bytes_received '
-                     '$session_time "$upstream_addr"';
+                     '$session_time "$upstream_addr" '
+                     '"$upstream_bytes_sent" "$upstream_bytes_received" "$upstream_connect_time"';
 
-    access_log /var/log/nginx/stream-access.log basic;
+    access_log /var/log/nginx/stream_access.log basic;
+    error_log  /var/log/nginx/stream_error.log warn;
 
     include /etc/nginx/stream.d/*.conf;
 }
 ```
 
-> **Примечание:** Подробное описание структуры конфигурации и блоков приведено в [Установка и базовая настройка Nginx](../Core/nginx_setup.md).
+### Алгоритмы балансировки L4
 
-### Логирование в модуле stream
+1. **Взвешенный Round Robin (по умолчанию):**
+   Соединения распределяются поочередно с учетом весов `weight`. Не требует объявления дополнительных директив.
+2. **Наименьшее число соединений (`least_conn`):**
+   Новое соединение направляется серверу с наименьшим количеством текущих активных сессий.
+   > [!IMPORTANT]
+   > Для корректной работы `least_conn` в многопроцессной среде (при `worker_processes > 1`) **обязательно** наличие директивы `zone` внутри `upstream`. Без `zone` каждый воркер ведет собственный изолированный учет соединений, что приводит к неравномерному распределению.
+3. **Хэширование ключа (`hash`):**
+   Обеспечивает привязку клиента к бэкенду. Синтаксис: `hash $remote_addr [consistent];`. Параметр `consistent` активирует алгоритм консистентного хэширования Ketama, минимизируя сброс сессий при масштабировании пула бэкендов.
+4. **Случайный выбор (`random`):**
+   Директива `random [two [least_conn]];` выбирает бэкенд случайно либо выбирает два случайных узла и отправляет соединение на узел с наименьшим числом активных сессий (Power of Two Random Choices).
+5. **Наименьшее время отклика (`least_time`):**
+   Доступен в Angie и Nginx Plus (коммерческая подписка). Выбирает сервер с минимальным временем соединения (`least_time connect`) или первого байта (`least_time first_byte`).
 
-По умолчанию логирование в модуле `stream` отключено. Настраивается через директиву `access_log`. В этом режиме фиксируются параметры сессии, а не отдельных запросов.
+### Оптимизация ядра Linux (Sysctl) для L4-балансировщика
 
-**Ключевые переменные:**
+L4-проксирование создает повышенную нагрузку на сетевой стек Linux, удерживая два сокета на каждое клиентское соединение. Ниже приведен базовый профиль тюнинга `/etc/sysctl.d/99-nginx-l4.conf`:
+
+```ini
+# /etc/sysctl.d/99-nginx-l4.conf
+
+# Расширение диапазона эфемерных портов для исходящих соединений к бэкендам
+net.ipv4.ip_local_port_range = 10240 65535
+
+# Повторное использование сокетов в состоянии TIME_WAIT для исходящих TCP-соединений
+net.ipv4.tcp_tw_reuse = 1
+
+# Максимальный размер очереди не полностью установленных соединений (SYN backlog)
+net.ipv4.tcp_max_syn_backlog = 16384
+
+# Максимальный размер очереди ожидания сокета listen (somaxconn)
+net.core.somaxconn = 16384
+
+# Максимальное число открытых сокетов в состоянии TIME_WAIT
+net.ipv4.tcp_max_tw_buckets = 262144
+
+# Защита от SYN-флуда
+net.ipv4.tcp_syncookies = 1
+
+# Тюнинг буферов приема и отправки сокетов (min, default, max в байтах)
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+
+# Очередь сетевой карты для входящих пакетов
+net.core.netdev_max_backlog = 16384
+```
+
+Применение параметров:
+```bash
+sysctl -p /etc/sysctl.d/99-nginx-l4.conf
+# → net.ipv4.ip_local_port_range = 10240 65535
+# → net.ipv4.tcp_tw_reuse = 1
+# → ...
+```
+
+### Логирование и переменные модуля `stream`
+
+В модуле `stream` директива `access_log` оперирует сессиями. Доступные системные переменные:
 
 | Переменная | Описание |
 | :--- | :--- |
 | `$remote_addr` / `$remote_port` | IP-адрес и порт клиента. |
-| `$time_local` | Локальное время в формате `dd/mmm/yyyy:hh:mm:ss`. |
-| `$protocol` | Используемый протокол (`TCP` или `UDP`). |
-| `$status` | Статус сессии (`200` — успешно, `403` — доступ запрещен, `500` — внутренняя ошибка). |
-| `$bytes_sent` / `$bytes_received` | Количество отправленных/полученных байтов. |
-| `$session_time` | Продолжительность сессии в секундах с точностью до миллисекунд. |
-| `$upstream_addr` | IP и порт бэкенда, обработавшего сессию. |
-| `$upstream_connect_time` | Время установления соединения с бэкендом. |
-| `$upstream_first_byte_time` | Время до получения первого байта данных от бэкенда. |
-| `$ssl_preread_server_name` | Имя сервера из SNI (требует `ssl_preread on`). |
-| `$ssl_preread_protocol` | Самая высокая версия протокола SSL/TLS, поддерживаемая клиентом. |
-| `$ssl_preread_alpn_protocols` | Список протоколов ALPN, присланных клиентом. |
+| `$protocol` | Транспортный протокол (`TCP` или `UDP`). |
+| `$status` | Код завершения сессии (`200` — успешно завершена, `400` — ошибка декодирования/pre-read, `403` — отклонено access-контролем, `500` — внутренняя ошибка, `502` — сбой бэкенда, `503` — сервис недоступен/лимиты, `504` — таймаут). |
+| `$session_time` | Полная продолжительность сессии в секундах с миллисекундной точностью. |
+| `$bytes_sent` / `$bytes_received` | Количество байтов, переданных клиенту и полученных от клиента. |
+| `$upstream_addr` | IP-адрес и порт выбранного бэкенда (или список через запятую при повторах). |
+| `$upstream_connect_time` | Время установления TCP-соединения с бэкендом (в секундах с миллисекундной точностью). |
+| `$upstream_first_byte_time` | Время ожидания первого байта ответа от бэкенда (TTFB на уровне L4). |
+| `$upstream_session_time` | Время взаимодействия с бэкендом. |
+| `$upstream_bytes_sent` / `$upstream_bytes_received` | Объем переданных бэкенду и принятых от бэкенда данных. |
+| `$ssl_preread_server_name` | Доменное имя из расширения SNI (требует `ssl_preread on;`). |
+| `$ssl_preread_protocol` | Версия TLS, предложенная клиентом в `Client Hello`. |
+| `$ssl_preread_alpn_protocols` | Список протоколов ALPN через запятую (например, `h2,http/1.1`). |
 
-### Безопасность и контроль доступа
+---
 
-В модуле `stream` доступны стандартные механизмы ограничения доступа по IP-адресам, аналогичные модулю `http`.
+## Практические сценарии и конфигурация
+
+### 1. Отказоустойчивое проксирование PostgreSQL (TCP) с разделением пулов Master и Read-Only
+
+Сценарий обеспечивает маршрутизацию трафика на запись (порт 5433) на единственный Master-узел, а трафика на чтение (порт 5434) — с балансировкой `least_conn` между репликами.
 
 ```nginx
-server {
-    listen 12345;
+# /etc/nginx/stream.d/postgresql.conf
 
-    allow 192.168.1.0/24;
-    allow 10.0.0.0/8;
+# Upstream для записи (Master)
+upstream pg_cluster_write {
+    zone pg_write_zone 64k;
+    server 192.168.10.11:5432 max_fails=2 fail_timeout=10s;
+    server 192.168.10.12:5432 backup; # Резервный узел при переключении роли
+}
+
+# Upstream для аналитики и чтения (Replicas)
+upstream pg_cluster_read {
+    zone pg_read_zone 128k;
+    least_conn;
+    server 192.168.10.12:5432 weight=2 max_fails=3 fail_timeout=15s;
+    server 192.168.10.13:5432 weight=2 max_fails=3 fail_timeout=15s;
+    server 192.168.10.14:5432 weight=1 max_fails=3 fail_timeout=15s;
+}
+
+# Ограничение параллельных соединений с одного IP-адреса
+limit_conn_zone $binary_remote_addr zone=pg_conn_limit:10m;
+
+# Сервер приема транзакций на запись
+server {
+    listen 5433 so_keepalive=on;
+    proxy_pass pg_cluster_write;
+
+    # Таймауты для СУБД: короткий коннект и длительное удержание сессии
+    proxy_connect_timeout 3s;
+    proxy_timeout 8h; # Защита от разрыва долгих транзакций и дампов
+    proxy_socket_keepalive on;
+    tcp_nodelay on;
+
+    limit_conn pg_conn_limit 50;
+
+    # Белый список доверенных подсетей приложения
+    allow 192.168.0.0/16;
+    allow 10.10.0.0/16;
     deny all;
-
-    proxy_pass backend_service;
-}
-```
-
-### Ограничение подключений
-
-В контексте `stream` можно ограничивать количество одновременных подключений (`limit_conn`), но нельзя ограничить частоту запросов (`limit_req`), так как на этом уровне понятие HTTP-запроса отсутствует.
-
-```nginx
-stream {
-    limit_conn_zone $binary_remote_addr zone=per_ip:10m;
-
-    server {
-        listen 12345;
-        limit_conn per_ip 10; # До 10 подключений с одного IP
-        proxy_pass backend_service;
-    }
-}
-```
-
-> **Примечание:** В отличие от HTTP-блока, в `stream` директива `limit_conn` применяется к TCP/UDP-сессиям, а не к запросам.
-
-### Оптимизация производительности
-
-Для высоконагруженных L4-сервисов (например, прокси для баз данных) критически важна минимальная задержка и эффективное использование ресурсов.
-
-**Директивы оптимизации:**
-
-| Директива | Описание | Рекомендация |
-| :--- | :--- | :--- |
-| `tcp_nodelay on;` | Отключает алгоритм Нагла (Nagle). По умолчанию `on`. | Критично для интерактивных протоколов и БД. |
-| `proxy_buffer_size <size>;` | Размер буфера для чтения заголовков ответа. | Обычно 16k достаточно; увеличивать для больших заголовков. |
-| `proxy_download_rate` / `proxy_upload_rate` | Ограничение скорости передачи данных на уровне сессии. | Использовать для защиты от исчерпания полосы. |
-| `proxy_bind <address> [transparent];` | Привязка исходящих соединений к конкретному IP. `transparent` позволяет бэкенду видеть IP клиента. | Требует настройки маршрутизации на уровне ОС. |
-| `proxy_requests <number>;` | (UDP) Количество клиентских запросов, после которых сессия закрывается. | Обязательно для UDP-сервисов. |
-| `listen ... deferred;` | (Linux) Включает `TCP_DEFER_ACCEPT`. | Полезно для минимизации ложных соединений. |
-| `worker_processes auto;` | Масштабирование на все ядра CPU. | Стандарт для производительности. |
-
-## Практические сценарии
-
-### Проксирование PostgreSQL (TCP) с балансировкой Master/Slave
-
-Сценарий распределения нагрузки между master-сервером БД (для записи) и slave-серверами (для чтения).
-
-**Пример конфигурации (`/etc/nginx/stream.d/postgresql.conf`):**
-
-```nginx
-# Группа для мастера (запись)
-upstream pg_master {
-    server 10.0.0.10:5432 max_fails=3 fail_timeout=30s;
 }
 
-# Группа для слейвов (чтение)
-upstream pg_slave {
-    zone pg_slave_zone 64k;
-    server 10.0.0.11:5432 weight=2 max_fails=3 fail_timeout=30s;
-    server 10.0.0.12:5432 weight=1 max_fails=3 fail_timeout=30s;
-}
-
-# Сервер для записи (Master)
+# Сервер приема запросов на чтение
 server {
-    listen 5433;
-    proxy_pass pg_master;
+    listen 5434 so_keepalive=on;
+    proxy_pass pg_cluster_read;
+
+    proxy_connect_timeout 2s;
+    proxy_timeout 1h;
+    proxy_socket_keepalive on;
+    tcp_nodelay on;
+
+    limit_conn pg_conn_limit 100;
+
+    allow 192.168.0.0/16;
+    allow 10.10.0.0/16;
+    deny all;
+}
+```
+
+### 2. Балансировка Redis / Key-Value хранилищ с консистентным хэшированием
+
+При отсутствии Redis Cluster балансировка пула серверов кэширования выполняется методом консистентного хэширования по IP-адресу клиента (`hash $remote_addr consistent`).
+
+```nginx
+# /etc/nginx/stream.d/redis.conf
+
+upstream redis_cache_pool {
+    zone redis_pool_zone 128k;
+    hash $remote_addr consistent;
+
+    server 10.20.1.21:6379 max_fails=2 fail_timeout=5s;
+    server 10.20.1.22:6379 max_fails=2 fail_timeout=5s;
+    server 10.20.1.23:6379 max_fails=2 fail_timeout=5s;
+}
+
+server {
+    listen 6380;
+    proxy_pass redis_cache_pool;
+
     proxy_connect_timeout 1s;
-    proxy_timeout 1h;
+    proxy_timeout 30s;
+    tcp_nodelay on;
 
-    limit_conn_zone $binary_remote_addr zone=per_ip_master:10m;
-    limit_conn per_ip_master 5;
-}
-
-# Сервер для чтения (Slaves)
-server {
-    listen 5434;
-    proxy_pass pg_slave;
-    proxy_connect_timeout 5s;
-    proxy_timeout 1h;
+    allow 10.20.0.0/16;
+    deny all;
 }
 ```
 
-**Разбор конфигурации:**
+### 3. Проксирование DNS (UDP и TCP на порту 53)
 
-1.  **Таймауты:**
-    - `proxy_connect_timeout` — время ожидания установления TCP-соединения с бэкендом (по умолчанию `60s`).
-    - `proxy_timeout` — время между двумя операциями чтения или записи (по умолчанию `10m`). Для БД и SSH важно ставить большие значения (часы), чтобы избежать обрыва длинных сессий.
-2.  **Health Checks:**
-    - **Пассивные проверки (OSS):** Nginx отслеживает ошибки соединения. Если сервер не отвечает `max_fails` раз в течение `fail_timeout`, он помечается как недоступный.
-    - **Активные проверки (Angie/Nginx Plus):** Nginx сам отправляет периодические запросы («пробы») к бэкендам через директиву `health_check`.
-3.  **Ограничения:** `limit_conn` предотвращает исчерпание пула соединений БД одним клиентом.
-
-### Проксирование MySQL (TCP) с балансировкой Master/Slave
-
-Аналогично PostgreSQL, но с учетом особенностей MySQL-протокола.
+DNS-трафик требует одновременной поддержки UDP (для стандартных запросов размером до 512/4096 байт) и TCP (для больших ответов EDNS0 и зонных трансферов AXFR/IXFR).
 
 ```nginx
-upstream mysql_master {
-    server 10.0.0.10:3306 max_fails=3 fail_timeout=30s;
+# /etc/nginx/stream.d/dns.conf
+
+upstream dns_backend_udp {
+    zone dns_udp_zone 64k;
+    server 10.50.0.10:53;
+    server 10.50.0.11:53;
 }
 
-upstream mysql_slave {
-    zone mysql_slave_zone 64k;
-    server 10.0.0.11:3306 weight=2 max_fails=3 fail_timeout=30s;
-    server 10.0.0.12:3306 weight=1 max_fails=3 fail_timeout=30s;
+upstream dns_backend_tcp {
+    zone dns_tcp_zone 64k;
+    least_conn;
+    server 10.50.0.10:53;
+    server 10.50.0.11:53;
 }
 
+# UDP DNS-прокси
 server {
-    listen 3307;
-    proxy_pass mysql_slave;
-    proxy_connect_timeout 5s;
-    proxy_timeout 1h;
+    listen 53 udp reuseport;
+    proxy_pass dns_backend_udp;
+
+    # Для UDP: завершать сессию после получения 1 ответа от резолвера
+    proxy_responses 1;
+    proxy_timeout 2s;
+    proxy_connect_timeout 1s;
+}
+
+# TCP DNS-прокси
+server {
+    listen 53 reuseport;
+    proxy_pass dns_backend_tcp;
+
+    proxy_timeout 10s;
+    proxy_connect_timeout 2s;
+    tcp_nodelay on;
 }
 ```
 
-### Проксирование DNS (UDP)
+### 4. Защищенный SSH-бастион с лимитом сессий и логированием
 
-Nginx может проксировать UDP-трафик, например для DNS-серверов.
-
-```nginx
-# /etc/nginx/stream.d/udp_dns.conf
-upstream dns_servers {
-    zone dns_upstreams 64k;
-    server 8.8.8.8:53;
-    server 1.1.1.1:53;
-}
-
-server {
-    listen 53 udp;
-    listen 53 tcp;
-
-    proxy_responses 1; # Ожидание одного ответа от бэкенда
-    proxy_timeout 3s;
-
-    proxy_pass dns_servers;
-}
-```
-
-**Особенности:**
-
-- `listen ... udp` — указывает на прослушивание UDP-трафика.
-- `proxy_responses <number>` — задает количество ожидаемых ответов от бэкенда перед закрытием UDP-сессии.
-- `proxy_requests <number>` — задает количество запросов от клиента, после которых сессия закрывается.
-- `proxy_timeout` — для UDP определяет время ожидания ответа.
-
-### Проксирование SSH
-
-Проксирование SSH через Nginx позволяет централизовать доступ к внутренним серверам, логировать сессии и ограничивать подключения.
+Использование Nginx перед кластером серверов Jump Host / Bastion позволяет скрыть реальные IP-адреса хостов, логировать продолжительность сессий и блокировать попытки перебора соединений.
 
 ```nginx
-upstream ssh_cluster {
+# /etc/nginx/stream.d/ssh_bastion.conf
+
+upstream ssh_servers {
     zone ssh_zone 64k;
-    server 10.0.0.20:22;
-    server 10.0.0.21:22 backup; # Резервный сервер
+    server 172.16.1.10:22 max_fails=2 fail_timeout=30s;
+    server 172.16.1.11:22 max_fails=2 fail_timeout=30s;
+    server 172.16.1.12:22 backup;
+}
+
+limit_conn_zone $binary_remote_addr zone=ssh_per_ip:10m;
+
+server {
+    listen 2222;
+    proxy_pass ssh_servers;
+
+    proxy_connect_timeout 5s;
+    proxy_timeout 4h;
+    proxy_socket_keepalive on;
+    tcp_nodelay on;
+
+    # Не более 3 одновременных SSH-соединений с одного внешнего IP
+    limit_conn ssh_per_ip 3;
+
+    allow 198.51.100.0/24; # Офисная подсеть
+    deny all;
+}
+```
+
+### 5. SSL/TLS Passthrough с маршрутизацией по SNI и ALPN (Nginx 1.25.5+)
+
+Сквозная передача шифрованного трафика без расшифровки на Nginx. Маршрутизация выполняется на основе SNI (`server_name` или `$ssl_preread_server_name`), сохраняя E2E-шифрование вплоть до бэкендов.
+
+```nginx
+# /etc/nginx/stream.d/tls_passthrough.conf
+
+upstream k8s_api_cluster {
+    zone k8s_api_zone 64k;
+    server 10.100.0.1:6443;
+    server 10.100.0.2:6443;
+}
+
+upstream gitlab_ssh_cluster {
+    zone gitlab_ssh_zone 64k;
+    server 10.100.0.10:22;
+}
+
+upstream web_ingress_cluster {
+    zone web_ingress_zone 64k;
+    server 10.100.0.20:443;
+    server 10.100.0.21:443;
+}
+
+# Вариант А: Использование нативных виртуальных серверов (Nginx 1.25.5+)
+server {
+    listen 443;
+    ssl_preread on;
+    server_name api.infra.local;
+    proxy_pass k8s_api_cluster;
+    proxy_connect_timeout 3s;
+    proxy_timeout 1h;
 }
 
 server {
-    listen 2222 tcp;
-
-    limit_conn_zone $binary_remote_addr zone=per_ip_ssh:10m;
-    limit_conn per_ip_ssh 3;
-
-    proxy_pass ssh_cluster;
-    proxy_timeout 1h;
-    proxy_connect_timeout 5s;
-}
-```
-
-### Маршрутизация на основе SNI и ALPN (Nginx 1.25.5+)
-
-С версии 1.25.5 Nginx поддерживает виртуальные серверы в модуле `stream` через SNI. Также можно использовать переменные `ssl_preread` для сложной маршрутизации через `map`.
-
-```nginx
-stream {
+    listen 443;
     ssl_preread on;
+    server_name git.infra.local;
+    proxy_pass web_ingress_cluster;
+    proxy_connect_timeout 3s;
+    proxy_timeout 1h;
+}
 
-    map $ssl_preread_alpn_protocols $backend_pool {
-        "h2"      http2_backend;
-        "http/1.1" http1_backend;
-        default    generic_backend;
-    }
+# Вариант Б: Мультиплексирование через map (поддерживает ALPN и не-TLS трафик)
+map $ssl_preread_server_name $tls_target_upstream {
+    api.infra.local     k8s_api_cluster;
+    git.infra.local     web_ingress_cluster;
+    default             web_ingress_cluster;
+}
 
-    server {
-        listen 443;
-        server_name db.example.com;
-        proxy_pass db_backend;
-    }
-
-    server {
-        listen 443;
-        proxy_pass $backend_pool;
-    }
+server {
+    listen 8443;
+    ssl_preread on;
+    proxy_pass $tls_target_upstream;
+    proxy_connect_timeout 3s;
+    proxy_timeout 1h;
 }
 ```
 
-Это позволяет использовать один IP и порт 443 для проксирования разных TCP-сервисов, разделяя их по доменному имени или версии протокола.
+### 6. SSL/TLS-терминация на L4 с взаимной аутентификацией (mTLS)
 
-### Передача соединения между модулями (pass)
-
-Модуль `ngx_stream_pass_module` позволяет передать принятое соединение в другой модуль (http, mail) напрямую. Это эффективнее, чем `proxy_pass` на локальный адрес.
+Nginx принимает зашифрованное соединение, валидирует клиентский сертификат (mTLS), расшифровывает поток и передает открытый TCP-трафик в защищенный внутренний контур.
 
 ```nginx
+# /etc/nginx/stream.d/tls_termination_mtls.conf
+
+upstream internal_legacy_db {
+    server 127.0.0.1:5432;
+}
+
+server {
+    listen 9443 ssl;
+
+    # Серверный сертификат
+    ssl_certificate     /etc/ssl/certs/db-proxy.crt;
+    ssl_certificate_key /etc/ssl/private/db-proxy.key;
+
+    # Настройки криптографии
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_session_cache shared:StreamSSL:20m;
+    ssl_session_timeout 4h;
+
+    # Взаимная аутентификация клиентов (mTLS)
+    ssl_client_certificate /etc/ssl/certs/internal_ca.crt;
+    ssl_verify_client on;
+    ssl_verify_depth 2;
+
+    proxy_pass internal_legacy_db;
+    proxy_timeout 2h;
+    proxy_connect_timeout 2s;
+    tcp_nodelay on;
+}
+```
+
+### 7. Использование PROXY Protocol (генерация и прием)
+
+Когда Nginx работает перед бэкендом, скрывая реальный IP-адрес клиента за NAT/проксированием, PROXY Protocol позволяет передать адрес клиента в заголовке соединения.
+
+#### Передача PROXY Protocol на бэкенд:
+```nginx
+# /etc/nginx/stream.d/frontend_lb.conf
+
+upstream backend_servers {
+    zone backend_zone 64k;
+    server 10.0.5.10:8000;
+    server 10.0.5.11:8000;
+}
+
+server {
+    listen 80;
+    proxy_pass backend_servers;
+
+    # Включение отправки заголовка PROXY Protocol v2 (или v1)
+    proxy_protocol on;
+    proxy_connect_timeout 3s;
+}
+```
+
+#### Прием PROXY Protocol бэкендом (другим Nginx):
+```nginx
+# /etc/nginx/conf.d/backend_receiver.conf (контекст http или stream)
+server {
+    listen 8000 proxy_protocol;
+
+    # Доверенные IP-адреса L4-балансировщиков
+    set_real_ip_from 10.0.5.0/24;
+    set_real_ip_from 192.168.1.5;
+
+    # Источник извлечения IP
+    real_ip_header proxy_protocol;
+
+    # Теперь в $remote_addr будет содержаться исходный IP клиента
+}
+```
+
+### 8. Прозрачное L4-проксирование (TPROXY / `proxy_bind transparent`)
+
+Позволяет целевому серверу видеть реальный IP-адрес клиента на уровне TCP/IP без изменений со стороны протоколов (без PROXY Protocol). Требует специальной настройки маршрутизации и iptables на хосте балансировщика.
+
+#### 1. Конфигурация Nginx:
+```nginx
+# /etc/nginx/stream.d/transparent_proxy.conf
+
+upstream raw_backend {
+    server 192.168.20.50:3306;
+}
+
+server {
+    listen 3306;
+
+    # Подмена адреса отправителя на реальный IP клиента
+    proxy_bind $remote_addr transparent;
+    proxy_pass raw_backend;
+
+    proxy_connect_timeout 2s;
+    proxy_timeout 1h;
+}
+```
+
+#### 2. Настройка прав процесса Nginx (Linux Capabilities):
+Воркеры Nginx (работающие не от `root`) должны обладать правами на связывание с нелокальными сокетами:
+```bash
+setcap 'cap_net_admin,cap_net_raw=+ep' /usr/sbin/nginx
+# → подтверждение применения прав
+getcap /usr/sbin/nginx
+# → /usr/sbin/nginx = cap_net_admin,cap_net_raw+ep
+```
+
+#### 3. Настройка сетевого стека Linux (iptables / nftables и policy routing):
+Ответные пакеты от бэкенда должны возвращаться через балансировщик (балансировщик выступает шлюзом либо пакеты перенаправляются правилами policy routing):
+
+```bash
+# Создание таблицы маршрутизации для локальной доставки
+ip rule add fwmark 1 lookup 100
+ip route add local 0.0.0.0/0 dev lo table 100
+
+# Маркировка транзитных пакетов через iptables (TPROXY)
+iptables -t mangle -A PREROUTING -p tcp -s 192.168.20.50 --sport 3306 -j MARK --set-mark 1
+```
+
+### 9. Межмодульная передача через `ngx_stream_pass_module` (Nginx 1.25.5+)
+
+Позволяет принимать зашифрованный L4-трафик на одном внешнем порту (например, 443), выполнять предварительный анализ или фильтрацию в `stream`, после чего передавать соединение в блок `http` без оверхеда локальных TCP-сокетов (`loopback`).
+
+```nginx
+# /etc/nginx/nginx.conf
 stream {
     server {
-        listen 443 ssl;
-        ssl_certificate /etc/nginx/certs/server.crt;
-        ssl_certificate_key /etc/nginx/certs/server.key;
+        listen 443;
+        ssl_preread on;
 
-        pass 127.0.0.1:8000;
+        # Если SNI совпадает с внутренним веб-сервисом, передаем в HTTP
+        server_name web.example.com;
+        pass 127.0.0.1:8443;
+    }
+
+    server {
+        listen 443;
+        ssl_preread on;
+
+        # Остальные запросы проксируются как сырой TCP на внешний хост
+        server_name db.example.com;
+        proxy_pass 10.0.0.5:5432;
     }
 }
 
 http {
     server {
-        listen 127.0.0.1:8000;
+        listen 127.0.0.1:8443 ssl;
+        ssl_certificate     /etc/ssl/certs/web.crt;
+        ssl_certificate_key /etc/ssl/private/web.key;
+
         location / {
-            return 200 "Hello from HTTP via Stream pass!";
+            return 200 "Served by HTTP module via Stream pass!\n";
         }
     }
 }
 ```
 
-### SSL/TLS терминация на L4
-
-Nginx принимает зашифрованные соединения, расшифровывает их и проксирует трафик в открытом виде на бэкенд.
-
-```nginx
-# /etc/nginx/stream.d/ssl_termination.conf
-upstream web_backend {
-    server 127.0.0.1:9001;
-}
-
-server {
-    listen 9443 ssl;
-    ssl_certificate /etc/nginx/certs/server.crt;
-    ssl_certificate_key /etc/nginx/certs/server.key;
-    proxy_pass web_backend;
-}
-```
-
-### SSL Pre-read (маршрутизация TLS vs SSH)
-
-Функция SSL Pre-read позволяет Nginx анализировать начало TCP-соединения (Client Hello) и определять тип трафика или имя сервера (SNI) без терминации SSL.
-
-**Пример: мультиплексирование HTTPS и SSH на порту 443**
-
-```nginx
-# /etc/nginx/stream.d/ssl_preread.conf
-map $ssl_preread_server_name $backend_by_sni {
-    hostnames;
-    default         ssh_backend;
-    www.example.com http_backend;
-}
-
-upstream http_backend { server 127.0.0.1:8080; }
-upstream ssh_backend { server 127.0.0.1:22; }
-
-server {
-    listen 443;
-    ssl_preread on;
-    proxy_pass $backend_by_sni;
-}
-```
-
-### Использование Proxy Protocol
-
-Proxy Protocol передает исходный IP клиента через прокси к бэкенду. Подробнее: [Proxy Protocol](../../../Networking/Protocols/proxy_protocol.md).
-
-```nginx
-# Фронтенд-балансировщик
-server {
-    listen 982;
-    proxy_pass 127.0.0.1:820 proxy_protocol;
-}
-
-# Бэкенд-сервер (другой Nginx)
-server {
-    listen 820 proxy_protocol;
-
-    set_real_ip_from 127.0.0.0/8;
-    real_ip_header proxy_protocol;
-
-    access_log /var/log/nginx/proxy-protocol-access.log basic;
-}
-```
+---
 
 ## Операции и команды
 
-### Валидация конфигурации
+### Валидация и перезагрузка без даунтайма
 
 ```bash
-# Проверка синтаксиса перед применением
+# 1. Проверка синтаксиса конфигурации с раскрытием всех include
 nginx -t
+# → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
 # → nginx: configuration file /etc/nginx/nginx.conf test is successful
 
-# Применение изменений без потери соединений (graceful reload)
+# 2. Перезагрузка конфигурации без обрыва активных соединений (Graceful Reload)
 nginx -s reload
-# → signal reload started
+# → отправлен сигнал HUP мастер-процессу Nginx
+
+# 3. Контроль выхода старых рабочих процессов при наличии долгоживущих TCP-сессий
+ps aux | grep "nginx: worker process is shutting down"
+# → nginx: worker process is shutting down (сессия удерживается клиентом)
 ```
 
-### Диагностика upstream через переменные в логах
+> [!TIP]
+> При использовании `nginx -s reload` в среде с долгоживущими L4-сессиями (БД, SSH) старые воркеры остаются в памяти до завершения всех подключений. Для принудительного ограничения времени их жизни используйте директиву `worker_shutdown_timeout 1h;` на уровне `main` в `nginx.conf`.
 
-Добавьте в `log_format` upstream-переменные для трассировки L4-сессий:
-
-```nginx
-log_format upstream_debug '$remote_addr - [$time_local] '
-                          '$upstream_addr $upstream_status $upstream_response_time';
-```
-
-Ключевые переменные upstream для L4:
-
-| Переменная | Описание |
-| :--- | :--- |
-| `$upstream_addr` | IP и порт бэкенда, обработавшего сессию. |
-| `$upstream_connect_time` | Время установки TCP-соединения с бэкендом. |
-| `$upstream_first_byte_time` | Время до получения первого байта данных от бэкенда. |
-| `$upstream_bytes_sent` | Объем данных, отправленных бэкенду. |
-| `$upstream_bytes_received` | Объем данных, полученных от бэкенда. |
-
-### Анализ логов и статистики
+### Анализ сетевых соединений и сокетов (Linux CLI)
 
 ```bash
-# Распределение сессий по бэкендам (требуется $upstream_addr в логе)
-awk '{print $NF}' /var/log/nginx/stream-access.log | sort | uniq -c | sort -rn | head -n 10
-# → 1500 10.0.0.1:5432
-# → 1480 10.0.0.2:5432
+# Проверка слушающих L4-портов Nginx (TCP и UDP)
+ss -lntup | grep nginx
+# → tcp  LISTEN 0 16384 0.0.0.0:5433  0.0.0.0:* users:(("nginx",pid=14201,fd=8))
+# → udp  UNCONN 0 16384 0.0.0.0:53    0.0.0.0:* users:(("nginx",pid=14201,fd=9))
 
-# Поиск сессий с аномально долгим ответом бэкенда
-awk '$upstream_first_byte_time > 1.0 {print $0}' /var/log/nginx/stream-access.log | head -n 20
+# Подсчет активных установленных соединений к конкретному upstream-пулу
+ss -nt state established '( dport = :5432 )' | wc -l
+# → 142
 
-# Поиск ошибок upstream в логе ошибок
-grep -E "upstream|connect() failed|connection refused" /var/log/nginx/error.log | tail -n 50
+# Мониторинг соединений в состоянии TIME_WAIT для портов СУБД
+ss -nt state time-wait '( dport = :5432 or sport = :5432 )' | wc -l
+# → 28
 
-# Проверка TCP-соединений к бэкенду
-ss -tnp | grep nginx | grep :5432
-# → ESTAB 0 0 10.0.0.5:54322 10.0.0.1:5432 users:(("nginx",pid=1234,fd=5))
+# Анализ размера очередей сокетов Recv-Q и Send-Q на балансировщике
+ss -lnt '( sport = :5433 )'
+# → State  Recv-Q  Send-Q  Local Address:Port  Peer Address:Port
+# → LISTEN 0       16384   0.0.0.0:5433        0.0.0.0:*
 ```
 
-### Проверка состояния upstream (Angie / Nginx Plus)
+### Анализ логов сессий и метрик L4
 
 ```bash
-# Запрос детальной статистики через REST API (Angie / Nginx Plus)
-curl -s http://127.0.0.1:8080/api/6/http/upstreams/pg_slave
-# → JSON с метриками по каждому бэкенду: active connections, responses, errors
+# Топ-10 клиентов по количеству открытых L4-сессий
+awk '{print $1}' /var/log/nginx/stream_access.log | sort | uniq -c | sort -rn | head -n 10
+# → 14200 192.168.1.105
+# →  8900 192.168.1.112
 
-# Проверка stub_status (Nginx OSS, только для http-блока)
-curl -s http://127.0.0.1:8080/nginx_status
-# → Active connections: 2
+# Распределение сессий по upstream-серверам (балансировочный баланс)
+awk '{print $(NF-3)}' /var/log/nginx/stream_access.log | tr -d '"' | sort | uniq -c | sort -rn
+# → 45120 192.168.10.12:5432
+# → 44980 192.168.10.13:5432
+# → 22510 192.168.10.14:5432
+
+# Поиск сессий с аномально долгим временем установления коннекта к бэкенду (> 100 мс)
+awk '$NF > 0.100 {print "Client:", $1, "Time:", $2, "Upstream:", $(NF-3), "ConnectTime:", $NF}' /var/log/nginx/stream_access.log | head -n 10
+# → Client: 192.168.1.55 Time: [17/Oct/2026:15:30:12] Upstream: 192.168.10.12:5432 ConnectTime: 0.145
+
+# Анализ ошибок подключения в error.log
+grep -E "upstream|connect\(\) failed|connection refused|limit_conn" /var/log/nginx/stream_error.log | tail -n 20
 ```
 
-### Тестирование failover
+### Тестирование пропускной способности и отказоустойчивости (Failover)
 
 ```bash
-# Остановить один бэкенд и проверить переключение
-systemctl stop postgresql@node1
+# 1. Замер пропускной способности TCP через Nginx с помощью iperf3
+# На бэкенде:
+iperf3 -s -p 5201
+# На клиенте через балансировщик (порт 5202):
+iperf3 -c 192.168.1.10 -p 5202 -t 10
+# → [ ID] Interval           Transfer     Bitrate         Retr
+# → [  5] 0.00-10.00 sec  11.4 GBytes  9.81 Gbits/sec    0             sender
 
-# Проверить, что сессии идут на оставшиеся узлы
-tail -f /var/log/nginx/stream-access.log
+# 2. Имитация аварии узла upstream (сброс пакетов через RST)
+iptables -A INPUT -p tcp --dport 5432 -j REJECT --reject-with tcp-reset
 
-# Вернуть узел и проверить, что Nginx снова начал отправлять на него трафик
-systemctl start postgresql@node1
+# 3. Проверка переключения Nginx на резервный сервер в stream_access.log
+tail -f /var/log/nginx/stream_access.log | grep "5432"
+# → 192.168.1.50 [17/Oct/2026:15:40:01] TCP 200 450 1200 0.012 "192.168.10.11:5432, 192.168.10.12:5432"
+# В логе видно: первый узел дал ошибку, сессия прозрачно переведена на второй узел
+
+# 4. Восстановление узла
+iptables -D INPUT -p tcp --dport 5432 -j REJECT --reject-with tcp-reset
 ```
+
+---
 
 ## Диагностика и устранение неполадок
 
-### Типичные ошибки L4
+### Таблица типичных неисправностей L4
 
-| Симптом | Причина | Диагностика и решение |
+| Симптом | Вероятная причина | Диагностика и решение |
 | :--- | :--- | :--- |
-| `connection refused` на все сессии | Все бэкенды недоступны или `upstream` указан с ошибкой | `nc -zv 10.0.0.10 5432` — проверить доступность бэкенда; `nginx -T \| grep upstream` — проверить конфигурацию |
-| `connection refused` на отдельные сессии | Один бэкенд недоступен, исчерпан `max_conns` или сработал `fail_timeout` | `grep` в `error.log` за записи о маркировке `down`; проверить, не установлен ли флаг `down` вручную |
-| Таймаут сессии | Бэкенд не ответил за `proxy_timeout`; утечка соединений на бэкенде | Увеличить `proxy_timeout`; `ss -s` — проверить количество сокетов в `TIME_WAIT`; проверить нагрузку на бэкенд (`top`, `htop`) |
-| `503 Service Unavailable` при нагрузке | Все серверы достигли лимитов соединений | Увеличить `limit_conn`; добавить серверы в `upstream`; проверить `worker_connections` |
-| Дисбаланс нагрузки | Неправильный `weight`, `ip_hash` за NAT, `least_conn` с быстрыми ошибками | Проверить веса; исключить неработающие бэкенды через `max_fails` |
-| Нет доступа к порту снаружи | Файрвол блокирует порт, Nginx не слушает ожидаемый интерфейс | `ss -tlnp \| grep nginx`; `iptables -L -n` или `firewall-cmd --list-all` |
-| `upstream sent too big header` | Бэкенд прислал слишком много заголовков | Увеличить `proxy_buffer_size` и `proxy_buffers` |
-| `no user in group list` при запуске | Пользователь, указанный в `user`, не существует | `id nginx` — проверить наличие пользователя; `cat /etc/group` — проверить группы |
-| Потеря пакетов UDP | `proxy_requests` слишком мал, `proxy_timeout` исчерпан | Увеличить `proxy_timeout`; проверить `proxy_requests` |
-| `SSL_do_handshake` failed | Несовпадение версий TLS, неверный сертификат, закрытый порт | `openssl s_client -connect host:port`; проверить `ssl_certificate` и `ssl_certificate_key` |
+| `111: Connection refused` при коннекте к бэкенду | Бэкенд-сервис остановлен, слушает только `127.0.0.1` или блокируется файрволом хоста бэкенда | Проверить доступность порта утилитой `nc -zv <backend_ip> <port>`. Проверить `ss -lntp` на бэкенде. Проверить правила `iptables` / `nftables` на бэкенде. |
+| `110: Connection timed out` в `stream_error.log` | Сетевой packet drop, маршрут недоступен, превышен `proxy_connect_timeout` | Проверить маршрут `ip route get <backend_ip>`. Снять дамп `tcpdump -nn -i any port <backend_port>`. Увеличить `proxy_connect_timeout` с 1s до 3s-5s при задержках в WAN. |
+| Сессия СУБД / SSH обрывается ровно через 10 минут | Срабатывает дефолтный `proxy_timeout 10m;` при паузе в передаче данных | Увеличить `proxy_timeout` в блоке `server` до `1h` или `8h`. Включить `proxy_socket_keepalive on;` и `so_keepalive=on` для отправки периодических TCP Keep-Alive зондов. |
+| `worker_connections are not enough` в error.log | Превышен лимит соединений на процесс Nginx | На каждое проксируемое соединение расходуется 2 дескриптора (клиент + бэкенд). Увеличить `worker_connections` в `events` (до 16384+) и установить `worker_rlimit_nofile` минимум в 2.5× от `worker_connections`. |
+| Неравномерная нагрузка в пуле при `least_conn` | Отсутствует директива `zone` в блоке `upstream` при нескольких рабочих процессах | Добавить `zone <name> 64k;` внутри `upstream`. Без `zone` воркеры не координируют счетчики активных сессий между собой. |
+| `bind() to 0.0.0.0:... failed (98: Address already in use)` | Конфликт портов с другим сервисом (например, локальный PostgreSQL занял 5432) | Найти конкурирующий процесс: `ss -lntp '( sport = :<port> )'`. Изменить порт в конфигурации Nginx либо привязать локальный демон к конкретному внутреннему IP. |
+| Ошибка `bind() failed (13: Permission denied)` при `proxy_bind transparent` | Процесс Nginx не имеет системных capabilities Linux для нелокального биндинга | Выдать бинарнику права: `setcap 'cap_net_admin,cap_net_raw=+ep' /usr/sbin/nginx`. Проверить статус SELinux / AppArmor (`audit2why` / `aa-status`). |
+| Бэкенд разрывает соединение сразу после рукопожатия | Включен `proxy_protocol on;`, но бэкенд не сконфигурирован на прием заголовка PROXY Protocol | Отключить `proxy_protocol on;` в Nginx либо включить поддержку PROXY Protocol на бэкенде (например, в PostgreSQL `proxy_protocol=on` или в Nginx `listen ... proxy_protocol;`). |
+| Потеря UDP-пакетов при пиковой нагрузке (DNS/Syslog) | Переполнение сокетных буферов приема UDP в ядре Linux | Увеличить параметры `net.core.rmem_max` и `net.core.rmem_default` через sysctl. Проверить дропы: `netstat -su \| grep "receive errors"`. В Nginx убедиться в наличии `proxy_responses` и `reuseport`. |
+| `403 Forbidden` в `stream_access.log` | Клиентский IP отклонен директивами `allow` / `deny` либо исчерпан `limit_conn` | Проверить `$remote_addr` клиента в логе. Сверить CIDR маски в блоке `server`. Проверить алерты лимитов в `stream_error.log` по слову `limiting connections`. |
 
-### Диагностические команды
+### Диагностические команды SRE / Sysadmin
 
 ```bash
-# Фактическая конфигурация upstream (распарсенная nginx)
-nginx -T | grep -A 20 "upstream"
+# 1. Трассировка TCP-рукопожатия между Nginx и бэкендом
+tcpdump -nn -i any "port 5432 and (tcp-syn != 0 or tcp-fin != 0 or tcp-rst != 0)"
+# → 15:42:01.102 IP 192.168.1.10.45231 > 192.168.10.11.5432: Flags [S]
+# → 15:42:01.103 IP 192.168.10.11.5432 > 192.168.1.10.45231: Flags [S.]
 
-# Проверка, что Nginx слушает ожидаемые порты
-ss -tlnp | grep nginx
+# 2. Мониторинг системных лимитов файловых дескрипторов процесса воркера Nginx
+PID=$(pgrep -f "nginx: worker process" | head -n 1)
+cat /proc/$PID/limits | grep -E "Max open files|Max processes"
+# → Max processes             128120               128120               processes 
+# → Max open files            65535                65535                files     
 
-# Поиск ошибок SSL между Nginx и бэкендом
-grep -E "SSL_do_handshake|certificate verify failed" /var/log/nginx/error.log
+# 3. Проверка фактического количества открытых файловых сокетов воркера
+ls -l /proc/$PID/fd | grep socket | wc -l
+# → 2341
 
-# Проверка количества соединений Nginx в состоянии TIME_WAIT
-ss -ant state time-wait '( dport = :5432 )' | wc -l
-
-# Мониторинг количества открытых файловых дескрипторов nginx
-cat /proc/$(pgrep -f "nginx: worker")/limits | grep "open files"
+# 4. Проверка дропов пакетов в очереди UDP сокета
+netstat -su | grep -E "packet receive errors|receive buffer errors"
+# → 0 packet receive errors
+# → 0 receive buffer errors
 ```
+
+---
 
 ## Лучшие практики
 
-### Производительность
+### Производительность и сайзинг
 
-1.  **Настраивайте `worker_processes` по количеству ядер CPU.** Используйте `worker_processes auto;` и `worker_cpu_affinity auto;` для привязки воркеров к ядрам, что минимизирует переключения контекста и использует L1/L2 кэши процессора.
-2.  **Устанавливайте `worker_rlimit_nofile` минимум в 2× `worker_connections`.** На каждое проксируемое соединение тратятся два дескриптора: клиент + бэкенд.
-3.  **Используйте `zone` для всех upstream-групп.** Без `zone` Nginx не сохраняет состояние соединений между рабочими процессами, что приводит к некорректной балансировке.
-4.  **Включайте `tcp_nodelay on;` для интерактивных протоколов и БД.** Отключение алгоритма Нагла снижает задержку при передаче небольших пакетов.
-5.  **Для UDP-сервисов всегда указывайте `proxy_timeout` и `proxy_requests`.** Без этих параметров UDP-сессия может висеть открытой indefinitely, приводя к утечке ресурсов.
+1. **Используйте `listen ... reuseport` на многоядерных серверах.** Опция позволяет каждому рабочему процессу Nginx иметь собственный слушающий сокет. Ядро распределяет входящие TCP SYN-пакеты по сокетам без блокировок, кардинально снижая задержку на ядрах CPU при высоком RPS.
+2. **Всегда объявляйте `zone` для групп `upstream`.** Без разделяемой памяти балансировка `least_conn` изолирована внутри воркеров, а динамическое изменение состояния узлов при пассивных health checks (`max_fails`) не синхронизируется между процессами.
+3. **Рассчитывайте файловые дескрипторы по формуле:**
+   $$\text{worker\_rlimit\_nofile} \ge \text{worker\_connections} \times 2 + 1024$$
+   Каждая L4-сессия занимает сокет входящего клиента и сокет исходящего подключения к бэкенду.
+4. **Отключайте алгоритм Нагла (`tcp_nodelay on;`).** Для интерактивных протоколов (СУБД, Redis, SSH) задержка отправки малых пакетов (Nagle algorithm buffering) недопустима. Опция `tcp_nodelay` включена в Nginx по умолчанию, но должна явно фиксироваться в production-конфигурациях.
+5. **Настраивайте буферы сокетов под пропускную способность.** Если через Nginx передаются большие объемы бинарных данных или потоковое видео/дампы, настройте директиву `proxy_buffer_size 64k;` (по умолчанию 16k).
 
 ### Эксплуатация (SRE)
 
-1.  **Логируйте upstream-переменные в stream-логах.** Добавьте `$upstream_addr`, `$upstream_connect_time`, `$upstream_first_byte_time` в `log_format`. Это основа для трассировки запросов и расчета SLA.
-2.  **Настраивайте алертинг на рост `fail_timeout` срабатываний.** Частые переключения бэкендов указывают на нестабильность инфраструктуры. Используйте `error.log` и access-логи.
-3.  **Тестируйте failover регулярно.** Периодически проверяйте, что `max_fails` и `fail_timeout` корректно переключают трафик при отключении бэкенда. Документируйте RTO (Recovery Time Objective) для сценариев отказа.
-4.  **Мониторите дисбаланс.** Дисбаланс более чем на 20% при использовании Round Robin или `least_conn` указывает на проблему с весами или медленный бэкенд.
-5.  **Резервное копирование конфигурации.** Перед изменением алгоритмов или параметров upstream создайте бэкап и проверяйте конфигурацию через `nginx -t`.
-6.  **Изолируйте management-интерфейсы.** Если используете `stub_status` или REST API (Angie/Plus), ограничьте доступ к ним firewall-правилами или директивами `allow/deny`.
-7.  **Используйте `status_zone` (Angie/Nginx Plus) для детальной статистики.** Это позволяет собирать метрики по каждому upstream и виртуальному хосту без сторонних модулей.
+1. **Разделяйте таймауты под специфику сервисов.**
+   - Для OLTP СУБД (PostgreSQL, MySQL): `proxy_connect_timeout 2s;`, `proxy_timeout 8h;`, `proxy_socket_keepalive on;`.
+   - Для DNS (UDP): `proxy_responses 1;`, `proxy_timeout 2s;`.
+   - Для микросервисов с короткими сессиями: `proxy_timeout 60s;`.
+2. **Включайте TCP Keep-Alive на обоих концах соединения.** Используйте параметр `listen ... so_keepalive=on` со стороны клиента и директиву `proxy_socket_keepalive on;` со стороны бэкенда. Это предотвращает silent drop соединений промежуточными межсетевыми экранами (stateful firewall conntrack timeout).
+3. **Контролируйте Graceful Reload долгоживущих сессий.** Задавайте `worker_shutdown_timeout` в контексте `main`. Это гарантирует, что после перезагрузки конфигурации старые воркеры не зависнут бесконечно, удерживая память и файловые дескрипторы.
+4. **Структурируйте конфигурационные файлы.** Разделяйте сервисы по отдельным файлам в `/etc/nginx/stream.d/*.conf`, логически изолируя сетевые сервисы (БД, SSH, DNS, брокеры сообщений).
 
 ### Безопасность
 
-1.  **Никогда не полагайтесь на L4-балансировку как на механизм безопасности.** Для контроля доступа используйте `allow`/`deny`, `limit_conn` или отдельный фаервол.
-2.  **Явно указывайте `max_fails` и `fail_timeout`** для каждого сервера в `upstream`. Без этих параметров Nginx по умолчанию использует `max_fails=1` и `fail_timeout=10s`, что может привести к частым переключениям при временных сбоях.
-3.  **Не используйте `backup`-серверы для активной нагрузки.** Они предназначены только для аварийного переключения и имеют более низкий приоритет.
-4.  **Ограничивайте количество соединений с одного IP.** Используйте `limit_conn_zone` и `limit_conn` для защиты от DDoS и исчерпания пула соединений.
-5.  **Используйте `proxy_bind transparent` с осторожностью.** Этот параметр позволяет бэкенду видеть реальный IP клиента, но требует корректной настройки маршрутизации на уровне ОС и может быть небезопасен.
+1. **Принцип наименьших привилегий для воркеров.** Рабочие процессы Nginx должны работать от непривилегированного пользователя (обычно `nginx`). Для связывания с низкими портами (< 1024) или использования `transparent` проксирования выдавайте специфичные Linux Capabilities (`cap_net_bind_service`, `cap_net_admin`), не запуская процессы от `root`.
+2. **Эшелонированная защита от DoS/DDoS.** Сочетайте ограничение параллельных сессий на уровне Nginx (`limit_conn_zone` + `limit_conn`) с сетевыми фильтрами ядра Linux (`iptables -m connlimit`, `nftables`, `net.ipv4.tcp_syncookies = 1`).
+3. **Явная изоляция бэкендов по CIDR.** Всегда ограничивайте доступ к критическим портам L4 (базы данных, бастионы) директивами `allow <subnet>; deny all;`, предотвращая несанкционированный доступ из публичных сетей.
+4. **Изолируйте интерфейсы управления.** Любые эндпоинты телеметрии (`stub_status`, Angie `status_zone` API) размещайте на локальном интерфейсе (`127.0.0.1`) либо на выделенном VLAN управления с жесткими ACL.
+
+---
 
 ## Дополнительная информация
 
 ### См. также
 
-- [Установка и базовая настройка Nginx](../Core/nginx_setup.md) — структура конфигурации, блок `stream`, системные лимиты.
-- [Балансировка и проксирование L4 в Angie](../../Angie/l4_balancing_and_proxying.md) — Angie-расширения: активные проверки, `status_zone`, slow start.
-- [Мониторинг Nginx с VTS, Prometheus и Grafana](../Operations/nginx_vts_monitoring_setup.md) — детальная статистика по виртуальным хостам и upstream-группам.
+- [Установка и базовая настройка Nginx](../Core/nginx_setup.md) — общая структура конфигурации, контекст `main`, `events` и лимиты ОС.
+- [Обзор веб-сервера Nginx](../Core/nginx_overview.md) — архитектура событийного цикла, воркеры, обработка ввода-вывода.
+- [Диагностика и устранение неполадок Nginx](../Operations/nginx_troubleshooting.md) — анализ системных ошибок ядра, исчерпания сокетов и памяти.
+- [Тюнинг производительности Nginx](../Performance/nginx_performance_tuning.md) — глубокая оптимизация сетевого стека, параметров TCP и ядра Linux.
+- [Обзор и концепции балансировки Nginx](./Load_Balancing/overview_concepts.md) — теоретические основы балансировки, зоны памяти и алгоритмы распределения.
+- [Практическая конфигурация балансировки](./Load_Balancing/practical_configuration.md) — расширенные сценарии настройки upstream-групп и failover.
+- [Балансировка и проксирование L4 в Angie](../../Angie/l4_balancing_and_proxying.md) — специфика Angie: нативная `status_zone`, MQTT Pre-read, slow start и активные проверки probe.
+- [Сетевой протокол PROXY Protocol](../../../Networking/Protocols/proxy_protocol.md) — спецификация формата v1 (текстовый) и v2 (бинарный), трансляция клиентских IP.
+- [Прозрачное проксирование в Linux](../../../Networking/Concepts/nat/transparent_proxy.md) — механизм TPROXY, правила iptables/nftables и таблицы маршрутизации.

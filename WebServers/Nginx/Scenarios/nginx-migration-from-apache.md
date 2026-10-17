@@ -1,490 +1,927 @@
 # Миграция с Apache на Nginx
 
+**Актуально для:** Nginx 1.26.x (Stable) / 1.28.x (Mainline), Apache HTTP Server 2.4.x, Linux (Debian 12 / Ubuntu 24.04 / RHEL 9 / Rocky Linux 9)
+
 ---
 
 ## Определения
 
-**Миграция веб-сервера** — плановый перенос обслуживания веб-трафика с Apache HTTP Server на Nginx: конфигурация, модули, правила перезаписи, аутентификация и логи переписываются под модель Nginx с сохранением внешнего поведения сервиса.
+**Миграция веб-сервера** — плановый технологический процесс перевода обслуживания входящего HTTP/HTTPS-трафика с Apache HTTP Server на Nginx: перенос виртуальных хостов, модулей, правил маршрутизации, списков доступа, параметров безопасности и логирования с сохранением или улучшением характеристик доступности сервиса.
 
-**Директива-аналог** — директива Nginx, выполняющая функцию Apache-директивы (например `Require ip` → `allow`/`deny`, `ProxyPass` → `proxy_pass`, `CustomLog` → `access_log`). Маппинг не всегда 1:1 из-за разницы моделей.
+**Директива-аналог** — директива Nginx, выполняющая эквивалентную семантическую функцию по отношению к директиве Apache (например, `Require ip` → `allow`/`deny`, `ProxyPass` → `proxy_pass`, `CustomLog` → `access_log`, `DirectoryIndex` → `index`). Прямое соответствие 1:1 существует не всегда из-за различий в архитектуре обработки запросов.
 
-**`.htaccess`** — распределённый конфигурационный файл Apache; в Nginx отсутствует. Все правила должны быть перенесены в централизованный конфиг, а сами файлы удалены из каталогов контента.
+**Распределенная конфигурация (`.htaccess`)** — механизм локальных конфигурационных файлов каталога в Apache, считываемый и интерпретируемый ядром сервера на каждый входящий HTTP-запрос при включенном `AllowOverride`. В архитектуре Nginx распределенная конфигурация отсутствует: все директивы компилируются в единое дерево в оперативной памяти при запуске демона.
 
-**`location`** — основной блок сопоставления в Nginx. В отличие от Apache `<Directory>` (сопоставление с файловой системой), `location` сопоставляется с URI запроса. Разница критична при переносе конфигурации.
+**Блок сопоставления (`location` vs `<Directory>`)** — фундаментальная единица маршрутизации запросов:
+- В Apache блок `<Directory>` осуществляет сопоставление с абсолютным путем в файловой системе сервера, а `<Location>` — с путем в URL.
+- В Nginx директива `location` выполняет сопоставление исключительно с нормализованным URI запроса.
 
-**PHP-FPM / uwsgi / proxy_pass** — способы обслуживания динамики в Nginx: бэкенд-процессы (PHP-FPM, uWSGI, gunicorn) или проксирование на приложение. Apache-style разделение статика/динамика сохраняется, но «движок» выносится из сервера.
+**Модели параллелизма (MPM vs Event-Driven)**:
+- **Apache Multi-Processing Modules (MPM):** `prefork` (один процесс на соединение), `worker` (пул процессов с фиксированным числом потоков), `event` (выделенные потоки-слушатели со сбросом Keep-Alive в неблокирующий режим).
+- **Nginx Master-Worker Event Loop:** мастер-процесс управляет непривилегированными рабочими процессами (`worker_processes`), каждый из которых использует однопоточный неблокирующий событийный цикл (системный вызов `epoll` в Linux) для мультиплексирования десятков тысяч одновременных сетевых соединений.
 
-**Side-by-side (dual-run) миграция** — стратегия, при которой Nginx разворачивается параллельно Apache (на другом порту/хосте), трафик переключается постепенно, а откат выполняется переключением обратно.
+**FastCGI Process Manager (PHP-FPM)** — независимый сервис обработки динамического PHP-кода по протоколу FastCGI. Заменяет встроенный модуль `mod_php` Apache, отделяя жизненный цикл веб-сервера от среды выполнения скриптов.
+
+**Промежуточный обратный прокси (Reverse Proxy Transition Pattern)** — архитектурная стратегия поэтапной миграции, при которой Nginx развертывается в качестве пограничного шлюза (Front-End) перед существующим экземпляром Apache (Back-End), терминируя TLS-сессии, отдавая статические файлы и проксируя динамические вызовы на Apache через локальный порт или UNIX-сокет.
+
+**Плавный перезапуск (Graceful / Hitless Reload)** — процедура обновления конфигурации или бинарных файлов без разрыва активных соединений клиентов: мастер-процесс Nginx проверяет валидность синтаксиса, запускает новый пул рабочих процессов с обновленным конфигом и плавно завершает старые воркеры по мере окончания обработки текущих сессий.
+
+**Параллельное развертывание (Side-by-side / Dual-Run)** — методология внедрения, при которой Nginx запускается на вспомогательном сетевом порту или изолированном IP-адресе параллельно работающему сервису Apache. Трафик перенаправляется канареечно или переключением портов после сквозного функционального тестирования.
 
 ---
 
-## Основные концепции
+## Архитектура и основные концепции
 
 ### Зачем мигрируют
 
-Nginx превосходит Apache в плотности соединений (событийный цикл epoll/kqueue), отдаче статики (`sendfile`, zero-copy) и предсказуемости конфигурации (считывается один раз при старте, без проверки `.htaccess` на каждый запрос). Архитектурное сравнение моделей — в [сравнение Nginx против Apache](../Proxy/Load_Balancing/additional_info_and_comparisons.md), здесь — только практика переноса.
+Переход с Apache HTTP Server на Nginx в DevOps/SRE-практике обусловлен следующими факторами:
 
-Миграция оправдана, когда:
-- рост конкурентных соединений упирается в модель «процесс/поток на запрос»;
-- `.htaccess`-фермы создают накладные расходы на проверки ФС;
-- нужна унифицированная edge-схема (TLS, кэш, балансировка) с единым централизованным конфигом;
-- legacy `mod_php`/`prefork` заменяется на PHP-FPM.
+1. **Плотность соединений и утилизация памяти:** Nginx удерживает 10 000 неактивных Keep-Alive соединений, расходуя порядка 2–4 МБ оперативной памяти. В Apache под управлением `mpm_prefork` аналогичная нагрузка требует выделения отдельного процесса на соединение, что исчерпывает оперативную память (гигабайты RAM) и приводит к сбоям по OOM Killer. Модель `mpm_event` сокращает разрыв, но все еще уступает Nginx по накладным расходам на переключение контекста потоков.
+2. **Нулевое копирование при отдаче статики (Zero-Copy I/O):** Nginx применяет системный вызов `sendfile()`, позволяющий передавать байты с диска напрямую в сетевой сокет внутри пространства ядра Linux, минуя промежуточную буферизацию в пространстве пользователя.
+3. **Устранение дискового I/O от `.htaccess`:** Apache вынужден выполнять системный вызов `stat()` для каждого каталога вверх по дереву файловой системы при каждом HTTP-запросе, если активна директива `AllowOverride All`. Nginx читает и парсит конфигурацию один раз при старте или перезагрузке, сохраняя древовидную структуру маршрутов в памяти.
+4. **Унификация пограничного шлюза (Edge Gateway):** Nginx объединяет в одном сервисе функционал высокоскоростного L7-балансировщика, кэширующего обратного прокси, шлюза сжатия данных (Gzip, Brotli) и точки терминации современных протоколов TLSv1.3, HTTP/2 и HTTP/3 (QUIC). Архитектурные особенности балансировки Nginx подробно рассмотрены в [сравнении балансировщиков нагрузки](../Proxy/Load_Balancing/additional_info_and_comparisons.md).
 
-### Различия, влияющие на перенос
+### Сравнительный анализ моделей обработки запросов
 
-| Аспект | Apache | Nginx |
+| Параметр | Apache HTTP Server 2.4 | Nginx 1.26+ / 1.28+ |
 |---|---|---|
-| Сопоставление директорий | `<Directory>` — путь в ФС, `<Location>` — URI | `location` — только URI |
-| Конфигурация | Динамическая, `.htaccess` на каждый запрос | Компилируется при старте, один файл |
-| Модули | Загружаются динамически (`LoadModule`) | Собираются в бинарь; OSS не допускает загрузку на лету |
-| Динамика приложений | `mod_php`, `mod_wsgi`, AJP-коннекторы | Внешние процессы: PHP-FPM, uWSGI, `proxy_pass` |
-| Виртуальные хосты | `<VirtualHost>` (default = первый совпавший) | `server` блок (выбор по `listen` + `server_name`) |
-| Merge order | Секции `<Directory>/<Location>/<Files>/<If>` сливаются по фиксированному порядку | Иерархия `http → server → location`; внутри `location` нет наследования-слияния |
-| Выбор блока | По merge-правилам | `=` > `^~` > regex (`~`,`~*`) в порядке появления > самый длинный префикс |
+| **Модель ввода-вывода (I/O)** | Процессы (`prefork`) / Потоки (`worker`, `event`) | Однопоточный неблокирующий Event Loop (`epoll`, `kqueue`) |
+| **Расход RAM на 10k соединений** | ~100–500 МБ (`event`) до >5 ГБ (`prefork`) | ~2–4 МБ |
+| **Управление конфигурацией** | Централизованная + распределенная (`.htaccess`) | Строго централизованная (файлы `*.conf`) |
+| **Загрузка модулей** | Динамическая в runtime (`LoadModule`) | Статическая компиляция или динамические модули `.so` через `load_module` |
+| **Исполнение динамики (PHP/Python)** | Встроенные интерпретаторы (`mod_php`, `mod_wsgi`) или FastCGI | Внешние сервисы по протоколам FastCGI, uWSGI, SCGI, HTTP (`proxy_pass`) |
+| **Селекция виртуального хоста** | Секция `<VirtualHost>` (первый совпавший по IP/порту) | Блок `server` (сопоставление по кортежу `listen` + `server_name`) |
+| **Порядок применения директив** | Сложный иерархический merge (`<Directory>` → `<Files>` → `<Location>`) | Иерархия `http` → `server` → `location`; внутри `location` нет слияния |
+| **Приоритет правил сопоставления** | По порядку фаз слияния ядра Apache | Точный (`=`) > Префикс без regex (`^~`) > Регулярные выражения (`~`, `~*`) > Длинный префикс |
 
-**Практический вывод:** правилу Apache `<Directory "/var/www/html">` в Nginx чаще всего соответствует `location / { root /var/www/html; }`, но проверять надо по URI, а не по пути. Преобразование `RewriteRule` из `.htaccess` — отдельная задача (см. ниже).
+### Разница в логике сопоставления правил маршрутизации
+
+Главный источник регрессий при миграции — различие между концепцией пути в файловой системе и пути в URI:
+
+- В Apache директива `<Directory "/var/www/site/admin">` привязывается к реальной файловой структуре. Если запрос приходит на `/admin/index.php` или `/secret-symlink/`, Apache проверяет права целевого файла на диске. Детали слияния секций описаны в [порядке слияния секций Apache](../../Apache/apache-config-merge-order.md).
+- В Nginx директива `location /admin/` анализирует исключительно HTTP URI. Если внутри `location` задан `root /var/www/site;`, Nginx конкатенирует значение `root` и `$uri`, формируя путь `/var/www/site/admin/`.
+- **Merge Order:** В Apache вложенные секции дополняют и переопределяют директивы родительских секций. В Nginx директивы модуля `ngx_http_headers_module` (например, `add_header`) не наследуются из блока `server`, если в текущем блоке `location` объявлен хотя бы один свой `add_header`.
+
+```
+Порядок сопоставления location в Nginx:
+[Входящий URI]
+      │
+      ├─► 1. Точное совпадение: location = /path
+      │      └─► [Найдено] ──► Немедленная обработка, поиск завершен
+      │
+      ├─► 2. Самый длинный префикс с запретом regex: location ^~ /path/
+      │      └─► [Найдено] ──► Немедленная обработка, поиск завершен
+      │
+      ├─► 3. Регулярные выражения: location ~ /path/ или ~* (case-insensitive)
+      │      └─► [Найдено] ──► Выбор первого совпавшего в порядке следования в конфиге
+      │
+      └─► 4. Стандартный префикс: location /path/
+             └─► Выбор наиболее специфичного (самого длинного) совпадения
+```
 
 ### Стратегии миграции
 
-1. **Big-bang с откатом:** останавливаем Apache, запускаем Nginx на тех же портах, проверяем, при проблеме возвращаемся. Быстро, но рискованно.
-2. **Side-by-side (рекомендуемая):** Nginx поднимается параллельно (`listen 8080` или отдельный IP/vhost), нагрузки постепенно переключаются (DNS / балансировщик), каждый шаг валидируется, откат — переключение обратно.
-3. **Поэтапная:** сначала статика/кэш/TLS на Nginx, динамика пока на Apache через `proxy_pass`; затем перенос динамики по приложениям.
+1. **Двухэтапная гибридная миграция (Nginx как Reverse Proxy):**
+   - *Фаза 1:* Nginx развертывается на портах 80/443. Apache переносится на внутренний локальный адрес `127.0.0.1:8080`.
+   - *Фаза 2:* Nginx терминирует TLS, выполняет сжатие, раздает статические файлы (`/static/`, `/images/`, `.css`, `.js`), а динамические запросы и сложные маршруты проксирует на Apache через `proxy_pass`.
+   - *Фаза 3:* Поэтапный разбор правил `.htaccess` и перевод приложений на нативный стек (PHP-FPM, uWSGI, Gunicorn).
+   - *Фаза 4:* Окончательный вывод Apache из эксплуатации.
+   - *Преимущества:* Нулевой простой (Zero Downtime), мгновенное снятие нагрузки со статики, возможность постепенной трансляции правил.
 
-### Предмиграционный аудит
+2. **Параллельный запуск (Side-by-side / Canary):**
+   - Nginx настраивается полностью независимо на портах 8080/8443 или на отдельном сетевом интерфейсе (IP alias).
+   - Инфраструктурные тесты выполняются синтетическими запросами.
+   - Переключение трафика осуществляется изменением записи в локальном DNS, перенастройкой внешнего балансировщика (HAProxy / Keepalived) либо атомарной сменой портов демонов через systemd.
+   - *Преимущества:* Изоляция боевого стенда, тривиальный и мгновенный откат.
 
-До переноса собрать полную картину эксплуатируемого Apache:
-
-- все `<VirtualHost>` и их `ServerName`/`ServerAlias`, порты;
-- список активных модулей (`apache2ctl -M`, `httpd -M`);
-- все `.htaccess`-файлы и правила в них;
-- `mod_rewrite`, `Redirect`, `Alias`;
-- конфигурации TLS (`SSLCertificateFile`, `SSLProtocol`, OCSP);
-- аутентификацию (htpasswd-файлы, LDAP), заголовки, редиректы.
-- backend-приложения, к которым обращается Apache (PHP, Python, Tomcat, статика).
+3. **Атомарное переключение (Big-Bang с откатом):**
+   - Подготовка полной конфигурации Nginx на тестовом стенде.
+   - Во время технологического окна сервис Apache останавливается, порты 80/443 освобождаются, и запускается демон Nginx.
+   - При обнаружении критических регрессий выполняется заранее подготовленный скрипт отката (`systemctl stop nginx && systemctl start apache2`).
+   - *Применение:* Изолированные системы, монолитные приложения с предсказуемой архитектурой.
 
 ---
 
 ## Практические сценарии
 
-### Сценарий 1: Инвентаризация и план переноса
+### Сценарий 1: Комплексный аудит существующего сервера Apache
+
+Перед началом миграции собираются полные диагностические данные о конфигурации, модулях, правилах перезаписи и сокетах.
 
 ```bash
-# модули и vhosts
-apache2ctl -M | sort
-apache2ctl -S
+# Проверка используемого MPM и списка загруженных модулей
+apache2ctl -M 2>/dev/null | sort || httpd -M 2>/dev/null | sort
+# → Loaded Modules:
+# →  core_module (static)
+# →  mpm_event_module (shared)
+# →  rewrite_module (shared)
+# →  ssl_module (shared)
+# →  remoteip_module (shared)
 
-# все .htaccess в DocumentRoot
-find /var/www -name '.htaccess' -print
+# Инвентаризация виртуальных хостов, имен доменов и портов
+apache2ctl -S 2>/dev/null || httpd -S 2>/dev/null
+# → VirtualHost configuration:
+# → *:80                   site.example.com (/etc/apache2/sites-enabled/site.conf:1)
+# → *:443                  site.example.com (/etc/apache2/sites-enabled/site-ssl.conf:1)
+# → port 80 namevhost site.example.com (/etc/apache2/sites-enabled/site.conf:1)
+# →         alias www.site.example.com
 
-# редиректы/rewrite (сразу оценки масштаба)
-grep -rE "RewriteRule|Redirect|RewriteCond" /etc/httpd/ /etc/apache2/ 2>/dev/null
+# Поиск всех файлов распределенной конфигурации .htaccess в веб-корнях
+find /var/www -type f -name '.htaccess' -exec ls -l {} +
+# → -rw-r--r-- 1 www-data www-data 428 Oct 12 10:14 /var/www/site/public/.htaccess
 
-# бэкенды, которые обслуживает Apache (proxy)
-grep -rE "ProxyPass|BalancerMember" /etc/httpd/ /etc/apache2/ 2>/dev/null
+# Выгрузка всех активных правил перенаправления и перезаписи URL
+grep -rnE "(RewriteEngine|RewriteRule|RewriteCond|Redirect|RedirectMatch)" /etc/apache2/ /etc/httpd/ 2>/dev/null
+# → /etc/apache2/sites-enabled/site.conf:14:    RewriteEngine On
+# → /etc/apache2/sites-enabled/site.conf:15:    RewriteCond %{HTTPS} off
+# → /etc/apache2/sites-enabled/site.conf:16:    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
 
-# TLS-параметры
-grep -rE "SSLCertificate|SSLProtocol|SSLCipherSuite|SSLUseStapling" /etc/httpd/ /etc/apache2/ 2>/dev/null
+# Проверка конфигурации SSL/TLS (сертификаты, протоколы, ключи)
+grep -rnE "(SSLCertificateFile|SSLCertificateKeyFile|SSLCACertificateFile|SSLProtocol)" /etc/apache2/ /etc/httpd/ 2>/dev/null
+# → /etc/apache2/sites-enabled/site-ssl.conf:8:    SSLCertificateFile /etc/ssl/certs/site.example.com.crt
+# → /etc/apache2/sites-enabled/site-ssl.conf:9:    SSLCertificateKeyFile /etc/ssl/private/site.example.com.key
+
+# Фиксация активных слушающих сокетов
+ss -tulpn | grep -E ':(80|443)\s'
+# → tcp   LISTEN 0      511          0.0.0.0:80        0.0.0.0:*    users:(("apache2",pid=1420,fd=4))
+# → tcp   LISTEN 0      511          0.0.0.0:443       0.0.0.0:*    users:(("apache2",pid=1420,fd=5))
 ```
 
-Результат — список участков конфигурации с приоритетами (статика/TLS → rewrite → auth → динамика).
+### Сценарий 2: Базовый виртуальный хост и маппинг директив
 
-### Сценарий 2: Базовый server-блок (маппинг директив)
-
-Apache:
+Исходный виртуальный хост Apache 2.4:
 
 ```apacheconf
+# /etc/apache2/sites-available/site.example.com.conf
 <VirtualHost *:80>
     ServerName site.example.com
     ServerAlias www.site.example.com
-    DocumentRoot /var/www/site
+    ServerAdmin sysadmin@example.com
+
+    DocumentRoot /var/www/site/public
     DirectoryIndex index.html index.php
-    ErrorLog logs/site_error.log
-    CustomLog logs/site_access.log combined
-    Options -Indexes
-    <Directory "/var/www/site">
+
+    ErrorLog ${APACHE_LOG_DIR}/site_error.log
+    CustomLog ${APACHE_LOG_DIR}/site_access.log combined
+
+    ServerTokens Prod
+    LimitRequestBody 16777216
+    Timeout 60
+    KeepAliveTimeout 15
+
+    <Directory "/var/www/site/public">
+        Options -Indexes +FollowSymLinks
         AllowOverride None
         Require all granted
     </Directory>
 </VirtualHost>
 ```
 
-Nginx:
+Эквивалентный блок `server` в Nginx 1.26+:
 
 ```nginx
+# /etc/nginx/conf.d/site.example.com.conf
 server {
     listen 80;
+    listen [::]:80;
     server_name site.example.com www.site.example.com;
 
-    root /var/www/site;
+    root /var/www/site/public;
     index index.html index.php;
 
-    error_log /var/log/nginx/site_error.log;
-    access_log /var/log/nginx/site_access.log main;
+    server_tokens off;             # Аналог ServerTokens Prod
+    client_max_body_size 16m;      # Аналог LimitRequestBody 16777216 байт
+    keepalive_timeout 15s;         # Аналог KeepAliveTimeout 15
+    send_timeout 60s;              # Аналог Timeout 60
 
-    autoindex off;                 # аналог Options -Indexes
+    autoindex off;                 # Аналог Options -Indexes
+    disable_symlinks off;          # Аналог Options +FollowSymLinks (разрешены)
+
+    access_log /var/log/nginx/site_access.log combined buffer=64k flush=5s;
+    error_log  /var/log/nginx/site_error.log warn;
 
     location / {
-        try_files $uri $uri/ =404; # fallback: 404 вместо листинга каталога
+        try_files $uri $uri/ =404; # Базовое сопоставление файлов с диска
     }
 }
 ```
 
-Таблица базового маппинга:
+#### Сводная таблица маппинга директив ядра
 
-| Apache | Nginx | Примечание |
-|---|---|---|
-| `Listen 80` / `Listen 443` | `listen 80;` / `listen 443 ssl;` | `ssl` — только при TLS |
-| `ServerName` / `ServerAlias` | `server_name` | wildcard: `*.example.com` |
-| `DocumentRoot` | `root` | путь напрямую без `<Directory>` |
-| `DirectoryIndex` | `index` | |
-| `ErrorLog` / `CustomLog` | `error_log` / `access_log` | форматы — через `log_format` и переменные |
-| `<Directory>` | `location /` | сопоставление по URI, а не ФС |
-| `<DirectoryMatch>` | `location ~` / `location ~*` | regex-локации |
-| `<Files~ "\.php$">` | `location ~ \.php$` | |
-| `Options -Indexes` | `autoindex off;` | и так по умолчанию |
-| `Options +FollowSymLinks` | по умолчанию разрешены | при запрете — `disable_symlinks on;` |
-| `AllowOverride All` | — (нет `.htaccess`) | правила переносятся в конфиг |
-| `ServerTokens Prod` | `server_tokens off;` | |
-| `AddDefaultCharset utf-8` | `charset utf-8;` | |
-| `LimitRequestBody` | `client_max_body_size` | аналог лимита тела запроса |
-| `Timeout` | `proxy_*_timeout`, `send_timeout` | таймауты на уровне блоков |
-| `KeepAliveTimeout` | `keepalive_timeout` | |
-| `mod_log_config`: `%r %s %b` | `$request $status $body_bytes_sent` | переменные вместо форматов |
+| Категория | Директива Apache 2.4 | Директива Nginx 1.26+ | Особенности поведения |
+|---|---|---|---|
+| **Сетевой сокет** | `Listen 80` | `listen 80;` | В Nginx можно явно задавать `reuseport`, `backlog=N` |
+| **Доменные имена** | `ServerName example.com`<br>`ServerAlias *.example.com` | `server_name example.com *.example.com;` | Поддерживаются точные совпадения, wildcards и regex |
+| **Файловый корень** | `DocumentRoot /var/www` | `root /var/www;` | В Nginx `root` конкатенирует URI: `root + $uri` |
+| **Индексный файл** | `DirectoryIndex index.php` | `index index.php;` | Поиск выполняется слева направо |
+| **Листинг каталога** | `Options +Indexes` / `-Indexes` | `autoindex on;` / `autoindex off;` | В Nginx по умолчанию `autoindex off;` |
+| **Символические ссылки** | `Options +FollowSymLinks` | `disable_symlinks off;` | В Nginx переходы по symlinks по умолчанию включены |
+| **Маскировка версии** | `ServerTokens Prod` | `server_tokens off;` | Скрывает номер версии в заголовках и стандартных страницах ошибок |
+| **Лимит тела запроса** | `LimitRequestBody 10485760` | `client_max_body_size 10m;` | В Nginx при превышении возвращается код `413 Payload Too Large` |
+| **Таймаут Keep-Alive** | `KeepAliveTimeout 15` | `keepalive_timeout 15s;` | Время удержания неактивного клиентского соединения |
+| **Кодировка ответов** | `AddDefaultCharset UTF-8` | `charset utf-8;` | Автоматически добавляет параметр кодировки в `Content-Type` |
+| **Страницы ошибок** | `ErrorDocument 404 /404.html` | `error_page 404 /404.html;` | Для внутреннего вызова рекомендуется использовать `internal;` |
 
-`main` — формат по умолчанию; при желании перенести формат combined дословно:
+### Сценарий 3: Перенос правил `.htaccess` и `mod_rewrite`
 
-```nginx
-http {
-    log_format main '$remote_addr - $remote_user [$time_local] '
-                    '"$request" $status $body_bytes_sent '
-                    '"$http_referer" "$http_user_agent"';
-}
-```
+В Nginx обработка правил маршрутизации выполняется модулем `ngx_http_rewrite_module`. Правила переносятся в контекст `server` или заменяются декларативной директивой `try_files`. Принципы работы механизма подробно изложены в руководстве по [перенаправлениям и перезаписи URI в Nginx](../Core/nginx_rewrite_rules_and_try_files.md) и правилам [Apache mod_rewrite](../../Apache/apache_rewrite_and_redirects.md).
 
-### Сценарий 3: Перенос `.htaccess` и mod_rewrite
+#### 1. Фронт-контроллер CMS/фреймворков (WordPress, Laravel, Symfony)
 
-`.htaccess` не существует в Nginx — каждое правило переносится в центр конфигурации. Типовые преобразования:
-
-| `.htaccess` / директива | Nginx |
-|---|---|
-| `Options -Indexes` | `autoindex off;` (по умолчанию) |
-| `deny from all` | `deny all;` |
-| `allow from 10.0.0.0/8` | `allow 10.0.0.0/8;` |
-| `AuthType Basic` + `AuthUserFile` | `auth_basic` + `auth_basic_user_file` |
-| `AddType text/html .shtml` | `types { text/html shtml; }` или `include mime.types;` |
-| `ExpiresByType text/css "access plus 30 days"` | `expires 30d;` (в `location` под файлы) |
-| `ErrorDocument 404 /404.html` | `error_page 404 /404.html;` |
-| `Header set X-Frame-Options SAMEORIGIN` | `add_header X-Frame-Options SAMEORIGIN always;` |
-| `php_value` / `php_flag` | параметры PHP-FPM (`fastcgi_param`) |
-
-**mod_rewrite → Nginx `rewrite`/`return`:**
-
+Apache (`.htaccess`):
 ```apacheconf
-# Apache: .htaccess
 RewriteEngine On
-RewriteRule ^/old/(.*)$ /new/$1 [R=301,L]
+RewriteBase /
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php [L,QSA]
 ```
 
+Nginx (`nginx.conf`):
 ```nginx
-# Nginx: внутри server (regex-rewrite на уровне сервера)
-rewrite ^/old/(.*)$ /new/$1 permanent;    # R=301
-#                       ^^^^^^^^^^^ — [L]=last подразумевается для redirect
+location / {
+    # Последовательная проверка: реальный файл -> реальная директория -> фронт-контроллер
+    try_files $uri $uri/ /index.php?$args;
+}
+```
+*Примечание:* Параметр `$args` обеспечивает передачу строки запроса (Query String), полностью дублируя флаг `[QSA]`.
+
+#### 2. Маппинг регулярных выражений и флагов
+
+Apache (`.htaccess`):
+```apacheconf
+RewriteEngine On
+
+# 301 Permanent Redirect c сохранением пути
+RewriteRule ^old-blog/(.*)$ /articles/$1 [R=301,L]
+
+# Нечувствительное к регистру сопоставление (NC) и запрет доступа (Forbidden)
+RewriteRule ^private/.* - [NC,F]
+
+# Запрос ресурса, который был удален навсегда (Gone)
+RewriteRule ^deprecated-api/.* - [G]
 ```
 
-**RewriteCond (хост) → `if` на уровне server (допустимый сценарий):**
+Nginx (`nginx.conf`):
+```nginx
+# 301 редирект: директива rewrite с флагом permanent
+rewrite ^/old-blog/(.*)$ /articles/$1 permanent;
+
+# Регистронезависимое совпадение (~*) и возврат статуса 403 (аналог [NC,F])
+location ~* ^/private/ {
+    return 403;
+}
+
+# Возврат статуса 410 Gone (аналог [G])
+location ^~ /deprecated-api/ {
+    return 410;
+}
+```
+
+#### 3. Нормализация хостов и принудительный редирект на HTTPS
+
+В Apache редирект часто строился на тяжелых конструкциях `RewriteCond`:
 
 ```apacheconf
+RewriteEngine On
+RewriteCond %{HTTPS} off [OR]
 RewriteCond %{HTTP_HOST} ^www\.(.*)$ [NC]
-RewriteRule ^(.*)$ http://%1$1 [R=301,L]
+RewriteRule ^ https://example.com%{REQUEST_URI} [R=301,L]
 ```
 
+В Nginx каноническим и наиболее быстрым методом является разделение виртуальных хостов на отдельные блоки `server`:
+
 ```nginx
-if ($host ~ ^www\.(.*)$) {
-    return 301 http://$1$request_uri;
+# Блок перенаправления с HTTP на HTTPS для всех доменов
+server {
+    listen 80;
+    listen [::]:80;
+    server_name example.com www.example.com;
+
+    return 301 https://example.com$request_uri;
+}
+
+# Блок канонизации имени хоста (редирект с www на non-www)
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name www.example.com;
+
+    ssl_certificate     /etc/ssl/certs/example.com.crt;
+    ssl_certificate_key /etc/ssl/private/example.com.key;
+
+    return 301 https://example.com$request_uri;
+}
+
+# Основной рабочий сервер
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name example.com;
+
+    ssl_certificate     /etc/ssl/certs/example.com.crt;
+    ssl_certificate_key /etc/ssl/private/example.com.key;
+    # ... конфигурация сайта ...
 }
 ```
 
-`$request_uri` сохраняет исходный URI с query-строкой — это эквивалент `[QSA]`.
+#### 4. Защита служебных файлов метаданных
 
-**Простой Redirect (без регулярных выражений):**
-
-```apacheconf
-Redirect 301 /about /o-kompanii
-```
+Apache автоматически скрывает файлы `.ht*`. Nginx отдает статические файлы «как есть», поэтому защиту dot-файлов (`.git`, `.env`, `.htaccess`) необходимо конфигурировать явно:
 
 ```nginx
-location = /about {
-    return 301 /o-kompanii;
+# Запрет доступа ко всем скрытым файлам и каталогам (начинающимся с точки), кроме .well-known
+location ~ /\.(?!well-known).* {
+    deny all;
+    access_log off;
+    log_not_found off;
 }
 ```
 
-**Важно:** не использовать `if` внутри `location` для перезаписи маршрутизации (непредсказуемое поведение). Тяжёлые rewrite-правила из приложений (CMS: WordPress, Joomla, Drupal) переносятся в типовой паттерн `try_files $uri $uri/ /index.php?$args;`.
+### Сценарий 4: Аутентификация и контроль доступа (ACL)
 
-### Сценарий 4: Аутентификация и авторизация
+#### 1. Basic-аутентификация через htpasswd
 
-**Basic Auth (htpasswd-файл совместим с Apache без перегенерации):**
+Файлы `.htpasswd`, созданные стандартной утилитой Apache `htpasswd`, совместимы с Nginx без перегенерации паролей (поддерживаются алгоритмы MD5 apr1 и Crypt):
 
+Apache:
 ```apacheconf
-# Apache
-AuthType Basic
-AuthName "Restricted"
-AuthUserFile /etc/httpd/.htpasswd
-Require valid-user
+<Location "/admin">
+    AuthType Basic
+    AuthName "Restricted Administration"
+    AuthUserFile /etc/apache2/.htpasswd
+    Require valid-user
+</Location>
 ```
 
+Nginx:
 ```nginx
-location /private/ {
-    auth_basic "Restricted";
+location /admin/ {
+    auth_basic "Restricted Administration";
     auth_basic_user_file /etc/nginx/.htpasswd;
 }
 ```
 
-**Доступ по IP (`Require ip`):**
+#### 2. Фильтрация по IP-адресам клиентов
 
+Apache 2.4:
 ```apacheconf
-Require ip 10.0.0.0/8
-Require ip 127.0.0.1
-```
-
-```nginx
-location /admin/ {
-    allow 10.0.0.0/8;
-    allow 127.0.0.1;
-    deny all;              # все остальные — 403
-}
-```
-
-**LDAP-аутентификация:** Nginx OSS не имеет встроенного LDAP-модуля (только Plus `ngx_http_auth_ldap_module` в коммерческой версии). Варианты: `ngx_http_auth_ldap_module` (сборка стороннего модуля) или вынос аутентификации на слой SSO (см. OIDC-интеграцию). В модуль `mod_auth_openidc` аналог — `ngx_http_auth_jwt_module`/`auth_request`.
-
-### Сценарий 5: Перенос динамики (PHP, Python, Tomcat)
-
-**PHP (`mod_php`/prefork → PHP-FPM):**
-
-```apacheconf
-# Apache (legacy mod_php или PHP-FPM через SetHandler)
-<FilesMatch \.php$>
-    SetHandler "proxy:fcgi://127.0.0.1:9000"
-</FilesMatch>
-```
-
-```nginx
-location ~ \.php$ {
-    include fastcgi_params;                        # Debian: /etc/nginx/fastcgi_params
-    fastcgi_pass 127.0.0.1:9000;                   # или unix:/run/php/php-fpm.sock
-    fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-}
-```
-
-**Python (mod_wsgi → uWSGI/gunicorn):**
-
-```nginx
-location / {
-    include uwsgi_params;                          # Debian: /etc/nginx/uwsgi_params
-    uwsgi_pass unix:/tmp/uwsgi.sock;               # uWSGI
-}
-# или HTTP-прокси на gunicorn/uvicorn
-location /api/ {
-    proxy_pass http://127.0.0.1:8000/;
-    proxy_set_header Host $host;
-}
-```
-
-**Tomcat/JSP (mod_proxy_ajp → HTTP-прокси):**
-
-Nginx не говорит по AJP; включаем HTTP-коннектор Tomcat (порт 8080) и проксируем:
-
-```nginx
-location /app/ {
-    proxy_pass http://tomcat:8080/app/;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-}
-```
-
-### Сценарий 6: Обратное проксирование и балансировка
-
-Apache:
-
-```apacheconf
-ProxyPass /api/ http://backend:8080/api/
-ProxyPassReverse /api/ http://backend:8080/api/
+<Directory "/var/www/site/public/internal">
+    Require ip 192.168.1.0/24
+    Require ip 10.10.50.15
+</Directory>
 ```
 
 Nginx:
+```nginx
+location /internal/ {
+    allow 192.168.1.0/24;
+    allow 10.10.50.15;
+    deny all;
+}
+```
+
+#### 3. SSO / LDAP аутентификация
+
+В Apache интеграция с LDAP выполняется через модуль `mod_authnz_ldap`, а с OpenID Connect — через `mod_auth_openidc`. В Nginx Open Source встроенная поддержка LDAP отсутствует. В корпоративных инфраструктурах применяется модуль `ngx_http_auth_request_module`:
 
 ```nginx
-location /api/ {
-    proxy_pass http://backend:8080/api/;   # с URI — замена части path
+location /secure/ {
+    # Проверка сессии через локальный демон аутентификации (Authelia, Vouch Proxy, OAuth2-Proxy)
+    auth_request /auth-verify;
+
+    auth_request_set $user $upstream_http_x_auth_request_user;
+    proxy_set_header X-User $user;
+
+    proxy_pass http://internal_backend;
+}
+
+location = /auth-verify {
+    internal;
+    proxy_pass http://127.0.0.1:9099/verify;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header X-Original-URI $request_uri;
+}
+```
+
+### Сценарий 5: Перенос динамических приложений (PHP, Python, Java/Tomcat)
+
+#### 1. Перенос стека PHP (с `mod_php` на PHP-FPM)
+
+Apache (`mod_php` или `mod_proxy_fcgi`):
+```apacheconf
+<FilesMatch \.php$>
+    SetHandler "proxy:unix:/run/php/php8.3-fpm.sock|fcgi://localhost/"
+</FilesMatch>
+```
+
+Nginx:
+Конфигурация включает защиту от выполнения произвольного кода при передаче несуществующих файлов интерпретатору (`try_files $fastcgi_script_name =404;`) и защиту от уязвимости HTTPoxy (`fastcgi_param HTTP_PROXY "";`):
+
+```nginx
+location ~ \.php$ {
+    # Защита от уязвимостей типа path-info и передачи несуществующих файлов на сокет PHP
+    try_files $uri =404;
+
+    fastcgi_split_path_info ^(.+\.php)(/.+)$;
+    fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+    fastcgi_index index.php;
+
+    include fastcgi_params;
+
+    fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    fastcgi_param PATH_INFO       $fastcgi_path_info;
+    fastcgi_param HTTP_PROXY      "";
+
+    # Тюнинг буферов для предотвращения сброса промежуточных данных на диск
+    fastcgi_buffer_size          32k;
+    fastcgi_buffers              8 16k;
+    fastcgi_busy_buffers_size    64k;
+    fastcgi_temp_file_write_size 64k;
+
+    fastcgi_connect_timeout 5s;
+    fastcgi_send_timeout    60s;
+    fastcgi_read_timeout    60s;
+}
+```
+
+Настройка пула PHP-FPM (`/etc/php/8.3/fpm/pool.d/www.conf`):
+```ini
+[www]
+user = www-data
+group = www-data
+listen = /run/php/php8.3-fpm.sock
+listen.owner = www-data
+listen.group = www-data
+listen.mode = 0660
+
+pm = dynamic
+pm.max_children = 50
+pm.start_servers = 10
+pm.min_spare_servers = 5
+pm.max_spare_servers = 20
+pm.max_requests = 1000
+```
+
+#### 2. Перенос стека Python (с `mod_wsgi` на Gunicorn/uWSGI)
+
+Apache (`mod_wsgi` daemon mode):
+```apacheconf
+WSGIDaemonProcess myapp processes=4 threads=2 display-name=%{GROUP} python-home=/var/www/myapp/venv
+WSGIProcessGroup myapp
+WSGIScriptAlias / /var/www/myapp/wsgi.py
+```
+
+Nginx + Gunicorn (через UNIX-сокет):
+
+```nginx
+# Запуск сервиса Gunicorn: gunicorn --workers 4 --bind unix:/run/myapp/gunicorn.sock myapp.wsgi:application
+location / {
+    proxy_pass http://unix:/run/myapp/gunicorn.sock;
+    proxy_http_version 1.1;
+
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_redirect default;                # аналог ProxyPassReverse
 }
 ```
 
-Балансировка (`mod_proxy_balancer` → `upstream`):
+#### 3. Перенос стека Java/Tomcat (с `mod_proxy_ajp` на HTTP Reverse Proxy)
 
+В Apache для связи с Tomcat традиционно применялся бинарный протокол AJP (`mod_proxy_ajp`). В современных системах протокол AJP признан устаревшим из-за уязвимости Ghostcat (CVE-2020-1938). Nginx не поддерживает протокол AJP в основном репозитории; трафик переводится на стандартный HTTP-коннектор Tomcat (порт 8080) с поддержкой Keep-Alive:
+
+Apache (`mod_proxy_ajp`):
 ```apacheconf
-# Apache
-<Proxy balancer://webcluster>
-    BalancerMember http://10.0.0.11:8080 route=node1
-    BalancerMember http://10.0.0.12:8080 route=node2
-    ProxySet stickysession=JSESSIONID
-</Proxy>
-ProxyPass / balancer://webcluster/
+ProxyPass /app ajp://127.0.0.1:8009/app
+ProxyPassReverse /app ajp://127.0.0.1:8009/app
 ```
+
+Nginx (`proxy_pass` по HTTP/1.1):
+```nginx
+upstream tomcat_cluster {
+    server 127.0.0.1:8080 max_fails=3 fail_timeout=10s;
+    keepalive 32;
+}
+
+location /app/ {
+    proxy_pass http://tomcat_cluster;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_cookie_path /app/ /app/;
+}
+```
+
+### Сценарий 6: Переходная архитектура — Nginx как Reverse Proxy перед Apache
+
+Данная схема обеспечивает прозрачный и безопасный перенос нагрузки. Nginx принимает внешние запросы, обрабатывает TLS и статику, а динамические вызовы передает на локальный Apache.
+
+```
+[Клиентский браузер]
+         │ HTTPS / HTTP/2 (порт 443)
+         ▼
+[Nginx Reverse Proxy]
+   │                 │
+   │ Отдача статики  │ Проксирование динамики (127.0.0.1:8080)
+   │ (.css, .js, img)│ Заголовки: X-Forwarded-For, X-Forwarded-Proto
+   ▼                 ▼
+[Диск сервера]    [Apache HTTP Server] (mpm_event)
+   /var/www/site     │
+                     ├─► mod_remoteip (восстановление реального IP)
+                     └─► Исполнение legacy .htaccess и скриптов
+```
+
+#### 1. Конфигурация Nginx (Front-End)
 
 ```nginx
-upstream webcluster {
-    server 10.0.0.11:8080;                 # route=node1 → weight/backup
-    server 10.0.0.12:8080;
-    keepalive 32;                          # пул соединений к бэкендам
-}
-
-server {
-    location / {
-        proxy_pass http://webcluster;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";    # для keepalive между Nginx и backend
-        # Sticky (OSS): ip_hash / hash $cookie_jsessionid; Plus: sticky cookie ...;
-    }
-}
-```
-
-**Sticky:** в OSS недоступна нативная STICKY-седация через cookie; применения: `ip_hash`, `hash $cookie_jsessionid consistent` или `hash $request_uri`. Для полноценных sticky-кук — Nginx Plus или Angie (drop-in замена Nginx).
-
-### Сценарий 7: TLS и редирект HTTP → HTTPS
-
-Apache:
-
-```apacheconf
-SSLEngine on
-SSLCertificateFile /etc/pki/tls/certs/site.crt
-SSLCertificateKeyFile /etc/pki/tls/private/site.key
-SSLProtocol all -TLSv1 -TLSv1.1
-```
-
-Nginx:
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name site.example.com;
-
-    ssl_certificate     /etc/pki/tls/certs/site.crt;
-    ssl_certificate_key /etc/pki/tls/private/site.key;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_session_cache   shared:SSL:10m;
-    ssl_session_timeout 1d;
+# /etc/nginx/sites-available/frontend-proxy.conf
+upstream apache_backend {
+    server 127.0.0.1:8080;
+    keepalive 64;
 }
 
 server {
     listen 80;
     server_name site.example.com;
-    return 301 https://$host$request_uri;   # аналог Redirect https
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name site.example.com;
+
+    ssl_certificate     /etc/ssl/certs/site.example.com.crt;
+    ssl_certificate_key /etc/ssl/private/site.example.com.key;
+
+    root /var/www/site/public;
+    index index.php index.html;
+
+    # 1. Прямая высокоскоростная отдача статических файлов через Nginx
+    location ~* \.(jpg|jpeg|png|gif|ico|css|js|pdf|txt|tar|gz|svg|woff2)$ {
+        expires 30d;
+        add_header Cache-Control "public, no-transform";
+        access_log off;
+        try_files $uri =404;
+    }
+
+    # 2. Запрет доступа к служебным файлам
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
+    # 3. Проксирование всех остальных запросов на Apache
+    location / {
+        proxy_pass http://apache_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Port $server_port;
+
+        proxy_connect_timeout 5s;
+        proxy_read_timeout    60s;
+        proxy_send_timeout    60s;
+
+        # Буферизация ответов для освобождения процессов Apache
+        proxy_buffering on;
+        proxy_buffer_size 16k;
+        proxy_buffers 8 32k;
+    }
 }
 ```
 
-### Сценарий 8: Статика, кэш и заголовки
+#### 2. Конфигурация Apache (Back-End)
+
+В Apache изменяется слушающий порт и включается модуль `mod_remoteip` для корректного определения клиентских IP-адресов в логах и правилах авторизации:
+
+```apacheconf
+# /etc/apache2/ports.conf (или /etc/httpd/conf/httpd.conf)
+Listen 127.0.0.1:8080
+
+# /etc/apache2/conf-available/remoteip.conf
+<IfModule mod_remoteip.c>
+    RemoteIPHeader X-Forwarded-For
+    RemoteIPInternalProxy 127.0.0.1
+</IfModule>
+```
+
+Формат логирования в `/etc/apache2/apache2.conf`:
+```apacheconf
+LogFormat "%a %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined_proxied
+CustomLog ${APACHE_LOG_DIR}/access.log combined_proxied
+```
+*Важно:* Спецификатор `%a` в Apache выводит реальный адрес клиента, определенный через `mod_remoteip`, тогда как стандартный `%h` вывел бы адрес `127.0.0.1`.
+
+### Сценарий 7: Обратное проксирование, балансировка и keepalive
+
+Apache (`mod_proxy_balancer`):
+```apacheconf
+<Proxy "balancer://appcluster">
+    BalancerMember "http://10.0.0.11:8080" route=node1 retry=5
+    BalancerMember "http://10.0.0.12:8080" route=node2 retry=5
+    ProxySet lbmethod=byrequests
+    ProxySet stickysession=JSESSIONID
+</Proxy>
+
+<VirtualHost *:80>
+    ServerName app.example.com
+    ProxyPass / balancer://appcluster/
+    ProxyPassReverse / balancer://appcluster/
+</VirtualHost>
+```
+
+Nginx:
+В Nginx Open Source балансировка настраивается через блок `upstream`. Для привязки сессий (Sticky Sessions) по cookie в OSS применяется детерминированное хэширование `hash $cookie_jsessionid consistent`:
 
 ```nginx
-location /static/ {
-    alias /var/www/site/static/;
-    expires 30d;                              # аналог ExpiresByType
-    add_header Cache-Control "public";        # add_header ... always (для 4xx/5xx)
-    access_log off;
+upstream app_cluster {
+    # Алгоритм Sticky Sessions по идентификатору cookie
+    hash $cookie_jsessionid consistent;
+
+    server 10.0.0.11:8080 max_fails=3 fail_timeout=10s;
+    server 10.0.0.12:8080 max_fails=3 fail_timeout=10s;
+
+    # Пул открытых соединений между воркерами Nginx и бэкендами
+    keepalive 32;
 }
 
-location ~ /\. {                              # скрыть dotfiles и .htaccess
-    deny all;
+server {
+    listen 80;
+    server_name app.example.com;
+
+    location / {
+        proxy_pass http://app_cluster;
+        proxy_http_version 1.1;
+        proxy_set_header Connection ""; # Очистка заголовка для удержания Keep-Alive
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Обработка сбоев и переключение на резервный узел
+        proxy_next_upstream error timeout http_502 http_503 http_504;
+        proxy_next_upstream_timeout 5s;
+        proxy_next_upstream_tries 3;
+    }
 }
 ```
 
-`add_header` в Nginx не наследуется в `location`, где определён свой `add_header`; безопасные заголовки размещают на уровне `http`/`server` либо повторяют в каждой локации.
+### Сценарий 8: Безопасный TLS/SSL, HTTP/2 и HTTP/3 (QUIC)
 
-### Сценарий 9: Параллельный запуск и откат
+Современная конфигурация Nginx исключает устаревший параметр `listen ... http2;` (начиная с Nginx 1.25.1 заменен директивой `http2 on;`) и реализует поддержку HTTP/3 по UDP.
+
+```nginx
+server {
+    # TCP-сокеты для HTTP/1.1 и HTTP/2
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+
+    # UDP-сокет для протокола HTTP/3 (QUIC)
+    listen 443 quic reuseport;
+    listen [::]:443 quic reuseport;
+    http3 on;
+
+    server_name site.example.com;
+
+    # Пути к сертификату и закрытому ключу
+    ssl_certificate         /etc/ssl/certs/site.example.com.fullchain.pem;
+    ssl_certificate_key     /etc/ssl/private/site.example.com.key;
+    ssl_trusted_certificate /etc/ssl/certs/site.example.com.ca-bundle.pem;
+
+    # Протоколы и безопасные шифры (Mozilla Intermediate)
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+
+    # Оптимизация возобновления сессий (Session Resumption)
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    # Проверка статуса сертификата (OCSP Stapling)
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    resolver 127.0.0.53 valid=300s;
+    resolver_timeout 5s;
+
+    # Объявление поддержки HTTP/3 клиентам через заголовок Alt-Svc
+    add_header Alt-Svc 'h3=":443"; ma=86400' always;
+
+    # Базовые заголовки безопасности
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+
+    root /var/www/site/public;
+    index index.html;
+}
+```
+
+### Сценарий 9: Оптимизация статического контента, кэширование и заголовки
+
+Nginx оптимизирует отдачу статических файлов за счет прямого взаимодействия с ядром ОС и механизмов предварительного сжатия:
+
+```nginx
+http {
+    # Передача файла из дискового кэша напрямую в сокет ядра Linux
+    sendfile on;
+
+    # Отправка заголовков и начала файла в одном сетевом пакете
+    tcp_nopush on;
+
+    # Отключение алгоритма Нагла для минимизации задержек интерактивных ответов
+    tcp_nodelay on;
+
+    # Динамическое сжатие Gzip
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss image/svg+xml;
+
+    # Использование предварительно сжатых файлов (.gz) при их наличии на диске
+    gzip_static on;
+}
+
+server {
+    listen 80;
+    server_name site.example.com;
+    root /var/www/site/public;
+
+    # Кэширование статических ассетов
+    location /static/ {
+        expires 365d;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+        log_not_found off;
+    }
+}
+```
+
+*Подводный камень наследования:* В Nginx директивы `add_header`, объявленные на уровне `http` или `server`, **полностью игнорируются** в блоке `location`, если внутри этого `location` определен хотя бы один локальный заголовок `add_header`. Если в локации со статикой задается `Cache-Control`, заголовки безопасности (`X-Frame-Options`, `X-Content-Type-Options`) необходимо повторить явно.
+
+### Сценарий 10: Пошаговый ввод в эксплуатацию, тестирование и откат (Rollback Runbook)
+
+Пошаговая инструкция перевода боевого трафика с Apache на Nginx с валидацией каждого этапа.
 
 ```bash
-# 1. Nginx на временном порту (Apache продолжает работать)
-sudo nginx -c /etc/nginx/nginx.conf
-sudo ss -tlnp | grep 8080                     # Nginx слушает 8080
-
-# 2. Проверка конфигурации перед переключением
+# 1. Запуск Nginx на вспомогательном порту (например, 8080) для предрелизного тестирования
 sudo nginx -t
+# → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
 # → nginx: configuration file /etc/nginx/nginx.conf test is successful
 
-# 3. Переключение: освободить 80/443, поднять Nginx там
-sudo systemctl stop httpd
-sudo nginx -s reload                          # перечитать конфиг с listen 80/443
-
-# 4. Валидация доступности
-curl -sI http://site.example.com/  | head -1
+# 2. Проверка соответствия заголовков и кодов ответов между Apache (80) и Nginx (8080)
+curl -sI -H "Host: site.example.com" http://127.0.0.1:80/ | head -n 5
 # → HTTP/1.1 200 OK
+# → Date: Sat, 17 Oct 2026 12:00:00 GMT
+# → Server: Apache/2.4.58 (Ubuntu)
+# → Content-Type: text/html; charset=UTF-8
 
-# 5. Откат (в любой момент)
-sudo nginx -s quit && sudo systemctl start httpd
+curl -sI -H "Host: site.example.com" http://127.0.0.1:8080/ | head -n 5
+# → HTTP/1.1 200 OK
+# → Date: Sat, 17 Oct 2026 12:00:01 GMT
+# → Server: nginx
+# → Content-Type: text/html; charset=utf-8
+
+# 3. Атомарное переключение сервисов через systemd
+# Остановка Apache и перевод Nginx на основные порты 80 и 443
+sudo systemctl stop apache2 && sudo systemctl restart nginx
+
+# 4. Проверка статуса сокетов и процесса Nginx
+sudo ss -tulpn | grep -E ':(80|443)\s'
+# → tcp   LISTEN 0      511          0.0.0.0:80        0.0.0.0:*    users:(("nginx",pid=28510,fd=6))
+# → tcp   LISTEN 0      511          0.0.0.0:443       0.0.0.0:*    users:(("nginx",pid=28510,fd=7))
+
+# 5. Проверка внешнего ответа после переключения
+curl -sI https://site.example.com/ | grep -E "(HTTP/|Server:)"
+# → HTTP/2 200
+# → server: nginx
+
+# 6. Отключение автозапуска Apache и включение автозапуска Nginx
+sudo systemctl disable apache2
+# → Removed /etc/systemd/system/multi-user.target.wants/apache2.service.
+sudo systemctl enable nginx
+# → Synchronizing state of nginx.service with SysV service script with /lib/systemd/systemd-sysv-install.
+# → Executing: /lib/systemd/systemd-sysv-install enable nginx
 ```
 
-Для edge-миграции без простоя — переключение через DNS (TTL) или внешний балансировщик: Nginx остаётся на внутренних портах, трафик льётся через LB.
+#### План экстренного отката (Rollback Runbook)
+
+Если после переключения обнаружены массовые ошибки (рост кодов 5xx, поломка авторизации):
+
+```bash
+# Немедленный возврат на исходный Apache
+sudo systemctl stop nginx && sudo systemctl start apache2
+
+# Валидация восстановления работы Apache
+sudo ss -tulpn | grep -E ':(80|443)\s'
+# → tcp   LISTEN 0      511          0.0.0.0:80        0.0.0.0:*    users:(("apache2",pid=31200,fd=4))
+
+curl -sI http://localhost/ | grep "Server:"
+# → Server: Apache/2.4.58 (Ubuntu)
+```
 
 ---
 
 ## Операции и команды
 
-| Операция | Команда | Назначение |
-|---|---|---|
-| Проверка конфигурации | `nginx -t` | `test is successful` — синтаксис корректен |
-| Полный дамп конфига | `nginx -T` | выгрузка всех `include` для аудита |
-| Graceful reload | `sudo nginx -s reload` | перечитывание конфига без разрыва соединений |
-| Остановка | `sudo nginx -s quit` | плавное завершение (сохраняет соединения) |
-| Инвентаризация модулей | `nginx -V 2>&1` | список `--with-...` (статические) |
-| Сравнение vhost-ов | `diff <(httpd -S) <(nginx -T)` | контроль полноты переноса |
-| Порты | `sudo ss -tlnp \| grep -E ':(80\|443)'` | кто слушает после переключения |
-| Логи 5xx в переходный период | `sudo tail /var/log/nginx/access.log` | `$status` — выявление регрессий |
+Сводная таблица эксплуатационных команд администратора:
 
-**Проверка переноса rewrite без влияния на пользователей:**
+| Операция | Команда | Назначение и ожидаемый результат |
+|---|---|---|
+| **Валидация синтаксиса** | `sudo nginx -t` | Проверка синтаксиса и путей к файлам сертификатов |
+| **Полный дамп конфигурации** | `sudo nginx -T \| grep -i "server_name"` | Разворачивание всех `include` для поиска дубликатов vhost |
+| **Бесшовная перезагрузка** | `sudo systemctl reload nginx` | Отправка сигнала `HUP` без разрыва клиентских TCP-сессий |
+| **Плавная остановка** | `sudo nginx -s quit` | Завершение работы после обработки активных запросов |
+| **Проверка версий и модулей** | `nginx -V` | Список параметров сборки, путей и динамических модулей |
+| **Анализ сокетов** | `sudo ss -tulpn \| grep -E ':(80\|443)'` | Определение демона, занимающего рабочие сетевые порты |
+| **Мониторинг журнала ошибок** | `sudo journalctl -u nginx -n 50 -f` | Просмотр системных событий запуска и аварийных воркеров |
+| **Контроль ошибок бэкенда** | `tail -f /var/log/nginx/error.log` | Отслеживание таймаутов FastCGI и недоступности `upstream` |
+
+#### Автоматизированный скрипт валидации кодов ответов
+
+Скрипт выполняет параллельный опрос критических эндпоинтов для проверки корректности миграции:
 
 ```bash
-# локальный деплой на временном порту, сравнение статусов
-for u in /about /contact /api/v1/users; do
-  a=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080$u)
-  echo "$u $a"
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET_HOST="127.0.0.1:8080"
+DOM_HEADER="site.example.com"
+
+declare -A ROUTES=(
+    ["/"]="200"
+    ["/index.php"]="200"
+    ["/static/style.css"]="200"
+    ["/nonexistent-page-test"]="404"
+    ["/admin/"]="401"
+)
+
+echo "Запуск верификации маршрутизации Nginx..."
+
+for uri in "${!ROUTES[@]}"; do
+    expected="${ROUTES[$uri]}"
+    actual=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: ${DOM_HEADER}" "http://${TARGET_HOST}${uri}")
+    if [[ "${actual}" == "${expected}" ]]; then
+        echo -e "[\e[32mOK\e[0m] ${uri} -> HTTP ${actual}"
+    else
+        echo -e "[\e[31mFAIL\e[0m] ${uri} -> Ожидалось: ${expected}, получено: ${actual}"
+    fi
 done
+# → Запуск верификации маршрутизации Nginx...
+# → [OK] / -> HTTP 200
+# → [OK] /index.php -> HTTP 200
+# → [OK] /static/style.css -> HTTP 200
+# → [OK] /nonexistent-page-test -> HTTP 404
+# → [OK] /admin/ -> HTTP 401
 ```
 
 ---
 
 ## Устранение неисправностей
 
-| Симптом | Причина | Решение |
-|---|---|---|
-| `404` при живом PHP | `location ~ \.php$` не проходит: root/alias не совпал, SCRIPT_FILENAME неверен | Проверить `$document_root` (`nginx -T`), `fastcgi_param SCRIPT_FILENAME` |
-| `404` после переноса CRM/CMS | .htaccess-rewrite утерян | Добавить `try_files $uri $uri/ /index.php?$args;` |
-| PHP скачивается файлом | Нет `fastcgi_pass` / `location ~ \.php$` | Включить блок PHP-FPM |
-| `403 Forbidden` для каталога | Неверный путь `root`/`alias` при запрете | Согласовать `location` с фактическим каталогом |
-| `.htaccess` выкачивается как файл | Nginx (в отличие от Apache) не скрывает dotfile | `location ~ /\. { deny all; }` и удалить `.htaccess` |
-| Редирect гоняет (loop) | rewrite c `return` в `location`, конфликт с `try_files` | Переписать в `return` на уровне server; `rewrite` + `last` |
-| www→root не работает | `if ($host ...)` отсутствует на уровне server | Добавить `return 301` в блок server |
-| Sticky не работает (сессия теряется) | несовпадение `hash`; кука JSESSIONID не в том алгоритме | `hash $cookie_jsessionid consistent`; для куки-route — Plus/Angie |
-| Тайм-ауты к бэкенду | `proxy_read_timeout` по умолчанию 60 c | Увеличить для долгих запросов/SSE |
-| 502 Bad Gateway | бэкенд (FPM/socket) не стартовал | `systemctl status php-fpm`; проверить `fastcgi_pass` и права сокета |
-| Нет доступа к статике после Auth Apache | `auth_basic` локации конфликтует | Вынести статику за пределы защищённой локации |
-| SELinux-блокировка (RHEL) | контексты/булеаны после переноса | `restorecon -Rv /var/www`; `setsebool -P httpd_can_network_connect 1` (прокси к backend) |
-| Порты 80/443 заняты Apache | оба сервиса пытаются слушать | Остановить httpd до переключения; side-by-side на 8080 |
+| Симптом | Возможная причина | Метод диагностики | Инженерное решение |
+|---|---|---|---|
+| **`404 Not Found` на статических файлах** | Несоответствие путей в директивах `root` и `alias`. | Выполнить `nginx -T`, сопоставить директиву `root` и URI. | Помнить: `root` добавляет `$uri` к пути, `alias` заменяет совпавшую часть `location`. |
+| **`404 Not Found` на всех страницах CMS** | Не перенесены правила Front-Controller из `.htaccess`. | Запрос на `/about` не находит файл на диске. | Добавить `try_files $uri $uri/ /index.php?$args;` в блок `location /`. |
+| **PHP-код скачивается как файл** | Отсутствует блок `location ~ \.php$` или директива `fastcgi_pass`. | Проверить ответ через `curl -I http://site/test.php` (Content-Type: application/x-httpd-php). | Сконфигурировать `fastcgi_pass` на сокет PHP-FPM и подключить `fastcgi_params`. |
+| **`403 Forbidden` при обращении к сайту** | 1. Нет индексного файла и выключен `autoindex`.<br>2. Права доступа на файлы каталога. | Проверить журнал `/var/log/nginx/error.log`: "directory index of ... is forbidden". | Установить права: `chown -R www-data:www-data /var/www/site` и проверить `index index.php index.html;`. |
+| **`403 Forbidden` на SELinux (RHEL/Rocky)** | Контекст безопасности файлов не соответствует `httpd_sys_content_t`. | Проверить журнал аудита: `ausearch -m avc -ts recent \| audit2why`. | Восстановить контекст: `restorecon -Rv /var/www/site` и включить `setsebool -P httpd_can_network_connect 1`. |
+| **`.htaccess` скачивается из браузера** | Nginx не скрывает файлы с точкой по умолчанию. | Запрос `curl http://site/.htaccess` отдает содержимое файла. | Добавить правило блокировки: `location ~ /\.(?!well-known).* { deny all; }` и удалить файлы `.htaccess`. |
+| **`502 Bad Gateway` при вызове динамики** | Демон PHP-FPM или gunicorn не запущен, либо не совпадают права на UNIX-сокет. | В `error.log`: "connect() to unix:/run/php/php8.3-fpm.sock failed (13: Permission denied / 111: Connection refused)". | 1. `systemctl restart php8.3-fpm`<br>2. Проверить `listen.owner` и `listen.group` в `www.conf`. |
+| **`504 Gateway Timeout`** | Превышен таймаут выполнения тяжелого скрипта бэкенда. | В `error.log`: "upstream timed out (110: Connection timed out)". | Увеличить `fastcgi_read_timeout 120s;` (или `proxy_read_timeout`) и `max_execution_time` в `php.ini`. |
+| **Бесконечный редирект (Redirect Loop)** | Конфликт между внешним HTTPS-терминатором и бэкендом (бэкенд не видит заголовок HTTPS). | В браузере: `ERR_TOO_MANY_REDIRECTS`. Проверка через `curl -sIL http://site/`. | Передавать бэкенду заголовок `proxy_set_header X-Forwarded-Proto $scheme;` (или `fastcgi_param HTTPS on;`). |
+| **Клиентский IP в приложении равен 127.0.0.1** | При миграции через Reverse Proxy на Apache не настроен `mod_remoteip`. | В логах Apache отображается только `127.0.0.1`. | Включить `mod_remoteip`, задать `RemoteIPHeader X-Forwarded-For` и доверенный прокси `RemoteIPInternalProxy 127.0.0.1`. |
+| **Заголовки безопасности пропадают в `location`** | Механизм переопределения `add_header` в дочерних блоках. | Проверить ответ через `curl -I`: заголовки сервера отсутствуют в ответах статики. | Повторить необходимые заголовки безопасности внутри блока `location` либо вынести их в отдельный файл `include`. |
 
 ---
 
 ## Лучшие практики
 
-1. **Side-by-side вместо big-bang:** Nginx поднимайте параллельно, переключайте трафик по шагам, держите откат в один шаг.
-2. **Полная инвентаризация до старта:** `.htaccess`-фермы и rewrite-правила — главный источник потерь; выявить до перехода.
-3. **Удалить `.htaccess`:** после переноса файлы удаляются из DocumentRoot (иначе — риск выкачивания как контента).
-4. **SEO-преемственность:** все старые URL должны отдавать 301 на новые (`return`/`rewrite permanent`), иначе потеря позиций.
-5. **Динамика через бэкенд-процессы:** PHP-FPM/uWSGI/gunicorn, а не модули в сервере; вынести security-заголовки на `server`-уровень с `add_header ... always`.
-6. **Валидация на реальном трафике:** сравнивать коды ответов и статus до/после (см. проверку `for u in ...`), мониторить 5xx первый момент после переключения.
-7. **Модули check-in advance:** если нужны LDAP-Auth или sticky-cookie — проверить наличие сторонних модулей/Plus заранее (в OSS придётся собирать или использовать обходные методы).
-8. **Формат логов:** форсировать совместимые поля лога во время переходного периода для анализа в старой BI-системе.
+1. **Предварительный аудит и инвентаризация:** До начала работ зафиксировать полный перечень доменов, алиасов, SSL-сертификатов, файлов `.htaccess` и внешних портов. Любая скрытая директива в `.htaccess` может привести к сбою бизнес-логики.
+2. **Использование переходной архитектуры (Reverse Proxy):** На высоконагруженных монолитах не переключать стек методом Big-Bang. Развертывание Nginx в качестве шлюза перед Apache дает 80% прироста производительности в первый день и оставляет время на вдумчивый рефакторинг rewrite-правил.
+3. **Полное удаление `.htaccess` после миграции:** После переноса правил в основной конфиг Nginx удалять файлы `.htaccess` из файловой системы. Это исключает риск утечки служебных данных и случайного возврата устаревших директив.
+4. **Сохранение SEO-веса URL:** Все исторические пути страниц должны сопровождаться корректными редиректами `301 Permanent Redirect` (`return 301 ...;`). Использование статуса `302` для постоянных правил недопустимо из-за риска деиндексации поисковыми системами.
+5. **Отказ от директивы `if` в блоках `location`:** Директива `if` внутри `location` выполняется на фазе rewrite и имеет недетерминированное поведение (известный антипаттерн "If is Evil"). Для разветвления логики использовать директивы `try_files`, `return`, именованные локации (`@name`) или модуль `map`.
+6. **Безопасная изоляция PHP-FPM:** Запускать пулы PHP-FPM через локальные UNIX-сокеты с правами `0660` и отдельными пользователями для разных приложений. На уровне Nginx всегда экранировать вызовы директивой `try_files $uri =404;`.
+7. **Контроль ротации журналов:** При отключении Apache скорректировать конфигурации в `/etc/logrotate.d/`. Для Nginx ротация выполняется отправкой сигнала `USR1` мастер-процессу (`kill -USR1 $(cat /run/nginx.pid)`), что заставляет воркеры атомарно переоткрыть дескрипторы лог-файлов без перезапуска демона.
+8. **Мониторинг метрик телеметрии:** Заменить опрос Apache `mod_status` (`/server-status`) на эндпоинт Nginx `stub_status` либо использовать специализированный экспортер метрик для Prometheus (`nginx-prometheus-exporter` или модуль `nginx-module-vts`).
+9. **Проверка прав SELinux и AppArmor:** На дистрибутивах семейств RHEL/CentOS/Rocky при смене путей к веб-корням (`/var/www` на отдельный диск) не отключать SELinux, а назначать правильные контексты `chcon -R -t httpd_sys_content_t /path` и сохранять их в базе через `semanage fcontext`.
 
 ---
 
@@ -492,6 +929,14 @@ done
 
 ### См. также
 
-*   [Сравнение Nginx и Apache (архитектура)](../Proxy/Load_Balancing/additional_info_and_comparisons.md) — различия моделей, когда что выбирать.
-*   [Миграция с Nginx на Angie](../../Angie/migration_from_nginx.md) — если конечной целью является Angie (drop-in замена Nginx).
-*   [Руководство по безопасности Nginx](../Security/nginx_security_guide.md) — ограничение доступа, dotfiles, SELinux-настройка.
+*   [Сравнение Nginx и Apache (архитектура)](../Proxy/Load_Balancing/additional_info_and_comparisons.md) — архитектурные модели, потребление ресурсов, алгоритмы балансировки.
+*   [Перенаправления и перезапись URI в Nginx](../Core/nginx_rewrite_rules_and_try_files.md) — подробный справочник директив `rewrite`, `return`, `try_files` и модуля `map`.
+*   [Best Practices для блоков Location](../Core/Location/best_practices.md) — оптимизация алгоритма поиска, структура префиксов и безопасность сопоставлений.
+*   [Примеры интеграции Location и PHP-FPM](../Core/Location/integration_examples.md) — тюнинг FastCGI, буферизация, таймауты и предотвращение уязвимостей.
+*   [Руководство по безопасности Nginx](../Security/nginx_security_guide.md) — ограничение доступа, скрытие служебных файлов, харденинг заголовков.
+*   [Харденинг Nginx: systemd, SELinux, AppArmor](../Security/nginx_systemd_selinux_hardening.md) — мандатный контроль доступа и изоляция процессов на уровне ОС.
+*   [Анализ и ротация логов Nginx](../Operations/nginx_log_analysis.md) — форматы `access_log`, ротация без простоя через `logrotate`.
+*   [Apache: Перенаправления и перезапись URL (mod_rewrite, mod_alias)](../../Apache/apache_rewrite_and_redirects.md) — детальный синтаксис директив и флагов Apache.
+*   [Apache: Обзор архитектуры и конфигурации](../../Apache/apache_overview.md) — модули MPM, конфигурация виртуальных хостов и `mod_remoteip`.
+*   [Apache: Порядок слияния секций конфигурации](../../Apache/apache-config-merge-order.md) — алгоритмы наследования и приоритеты директив Apache.
+*   [Миграция с Nginx на Angie](../../Angie/migration_from_nginx.md) — дальнейшая эволюция стека и переход на сервер Angie.

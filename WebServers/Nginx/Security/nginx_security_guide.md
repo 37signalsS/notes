@@ -1,620 +1,844 @@
 # Безопасность веб-сервера Nginx и Angie
 
+**Актуально для:** Nginx 1.26+ (OSS/Plus) / 1.28+ – 1.30.x (Mainline), Angie 1.6+ / 1.12.x, ModSecurity v3 / Coraza
+
 ## Определения
 
-**DoS (Denial of Service) / DDoS** — атаки, направленные на нарушение доступности сервиса через исчерпание ресурсов сервера (CPU, RAM, пропускная способность сети). В контексте Nginx/Angie рассматриваются на уровне L7 (HTTP-флуд, Slowloris, HPACK Bomb, Rapid Reset) и ниже.
+**DoS (Denial of Service) / DDoS** — атаки, направленные на нарушение доступности сервиса через исчерпание ресурсов сервера (CPU, оперативная память, пул соединений, дескрипторы файлов). В контексте Nginx/Angie нейтрализуются на уровне L7 (HTTP-флуд, Slowloris, Slow POST, HPACK Bomb, Rapid Reset).
 
-**WAF (Web Application Firewall)** — защитный экран прикладного уровня, анализирующий HTTP-трафик на наличие признаков атак (SQLi, XSS, RCE) с использованием наборов правил (например, OWASP CRS). В экосистеме Nginx/Angie реализуется через ModSecurity v3 или Coraza.
+**Rate Limiting** — механизм ограничения частоты запросов за единицу времени на основе алгоритма Leaky Bucket (протекающее ведро), сглаживающий всплески трафика (`burst`, `delay`) и отсекающий избыточные запросы с кодом ответа `429 Too Many Requests`.
 
-**Базовая аутентификация (`auth_basic`)** — метод проверки учетных данных в HTTP, передаваемых в заголовке `Authorization` в Base64. Требует обязательного TLS для защиты паролей от перехвата.
+**Connection Limiting** — ограничение количества одновременно поддерживаемых соединений с одного адреса или виртуального хоста, защищающее воркеры от исчерпания `worker_connections`.
 
-**Цифровая подпись ссылок (`secure_link`)** — механизм защиты контента от хотлинкинга и несанкционированного доступа через проверку хеш-суммы и времени жизни ссылки.
+**WAF (Web Application Firewall)** — межсетевой экран прикладного уровня L7, анализирующий HTTP-трафик на наличие признаков атак (SQLi, XSS, RCE, Path Traversal) с использованием наборов сигнатурных правил (OWASP CRS). В Nginx/Angie развертывается локально через `ngx_http_modsecurity_module` (ModSecurity v3) или модуль Coraza.
 
-**HTTP-заголовки безопасности (Security Headers)** — специальные инструкции для браузера, предотвращающие атаки на стороне клиента (XSS, Clickjacking, MIME-sniffing, Spectre/MDS через COOP/COEP).
+**Базовая аутентификация (`auth_basic`)** — метод проверки учетных данных по стандарту HTTP Basic Authentication, передаваемых в заголовке `Authorization` в формате Base64. Требует обязательного использования TLS для предотвращения перехвата паролей в открытом виде.
 
-**Content Security Policy (CSP)** — механизм контроля доверенных источников контента. В 2026 году стандарт использует `strict-dynamic` с nonces для защиты от обхода через доверенные CDN и исключает `unsafe-inline`.
+**Субреквест-аутентификация (`auth_request`)** — механизм делегирования авторизации внешнему сервису через внутренний HTTP-субреквест перед обработкой основного запроса.
 
-**HSTS (HTTP Strict Transport Security)** — заголовок, заставляющий браузер использовать исключительно HTTPS, предотвращая атаки SSL Stripping. В 2026 году базовый период — 2 года (`max-age=63072000`) с `includeSubDomains` и `preload`.
+**Цифровая подпись ссылок (`secure_link`)** — модуль проверки подлинности URL-адресов через валидацию криптографического хеша (MD5) и временной метки истечения срока жизни ссылки, предотвращающий хотлинкинг и несанкционированное скачивание.
 
-**Изоляция ресурсов (COOP/COEP/CORP)** — заголовки, предотвращающие утечки данных через побочные каналы (Spectre, MDS) в браузерной среде. В 2026 году являются обязательными для production-сайтов, обрабатывающих пользовательский контент.
+**HTTP-заголовки безопасности (Security Headers)** — директивы в HTTP-ответе веб-сервера, предписывающие браузеру включение механизмов изоляции и защиты (HSTS, CSP, X-Content-Type-Options, Permissions-Policy, COOP, COEP, CORP).
 
-**MTTR (Mean Time To Repair)** — среднее время восстановления сервиса после инцидента. TLS-инциденты (сертификат, шифры, ECH), сбои WAF или обход rate limiting напрямую влияют на MTTR, поэтому наличие runbook'ов и автоматизированных проверок является обязательным.
+**Content Security Policy (CSP)** — заголовок контроля доверенных источников контента. Исключает несанкционированное выполнение скриптов (`unsafe-inline`) и блокирует утечку данных через XSS.
 
-**Runbook** — пошаговая инструкция (playbook) для оператора/SRE по реагированию на типичный инцидент. Для Nginx/Angie включает команды диагностики, критерии escalation и шаги отката.
+**HSTS (HTTP Strict Transport Security)** — директива принудительного использования исключительно протокола HTTPS клиентом на заданный период времени (`max-age`), предотвращающая атаки класса SSL Stripping.
+
+**Изоляция браузерного контекста (COOP/COEP/CORP)** — заголовки `Cross-Origin-Opener-Policy`, `Cross-Origin-Embedder-Policy` и `Cross-Origin-Resource-Policy`, изолирующие сайт в отдельном процессе браузера для защиты от атак по побочным каналам (Spectre, Meltdown).
+
+**Request Smuggling (десинхронизация HTTP-запросов)** — класс атак, возникающий из-за расхождений в интерпретации границ запросов (`Content-Length` против `Transfer-Encoding`) между reverse proxy и бэкенд-сервером.
+
+**Fail2ban / Host IPS** — служба локального мониторинга журналов веб-сервера, автоматически транслирующая обнаруженные аномалии (перебор паролей, сканирование уязвимостей, срабатывание rate limit) в правила блокировки пакетного фильтра ядра Linux (`nftables`).
+
+**MTTR (Mean Time To Repair)** — среднее время восстановления штатной работы сервиса после сбоя или атаки. Наличие формализованных runbook'ов позволяет минимизировать простой при блокировках легитимного трафика или атаках на отказ.
+
+**Runbook** — регламентная пошаговая инструкция для системного администратора и SRE по локализации, диагностике и нейтрализации конкретных инцидентов безопасности.
 
 ## Основные концепции
 
 ### Многоуровневая архитектура защиты (Defense in Depth)
 
-Защита Nginx/Angie строится на эшелонированной модели. Каждый уровень закрывает определенный класс угроз, и прорыв на одном уровне не должен приводить к полной компрометации сервиса.
+Харденинг веб-сервера не является изолированной мерой, а функционирует как центральное звено эшелонированной защиты инфраструктуры:
 
 ```text
-Edge (L3/L4: scrubbing, nftables, BGP Flowspec)
+Сетевой периметр (L3/L4: nftables, SYN cookies, conntrack, BGP-маршрутизация)
     ↓
-Load Balancer (L4: SYN cookies, XDP, conntrack)
+Nginx / Angie (L7: Real IP, SSL termination, geo-filtering, timeouts, rate & connection limits)
     ↓
-Nginx/Angie (L7: rate limiting, connection limiting, WAF, security headers)
+Host-based WAF (ModSecurity v3 / Coraza: OWASP CRS, глубокая инспекция L7 payload)
     ↓
-Backend (приложение: auth, input validation, parameterized queries)
+Бэкенд-приложение (Аутентификация, валидация входных данных, параметризованные запросы)
 ```
 
-В отличие от отдельного WAF или файрвола, Nginx/Angie обеспечивает защиту на стыке L4 и L7, что делает его критическим элементом perimeter defense. Ключевое преимущество — обработка каждого запроса в рамках одного процесса с минимальной латентностью.
+Nginx/Angie выполняет функции пограничного шлюза (Reverse Proxy), принимая на себя основной объем сетевого и прикладного мусора. Отсечение атак до передачи запроса бэкенду сохраняет вычислительные ресурсы приложений и баз данных.
 
-### Особенности Angie по сравнению с Nginx OSS
+### Сравнение возможностей Angie и Nginx OSS в сфере безопасности
 
-Angie расширяет базовые механизмы защиты Nginx двумя критически важными возможностями:
-
-1. **Cluster Zone Sync (`sync`)**: Параметр `sync` в директивах `limit_req_zone` и `limit_conn_zone` позволяет синхронизировать состояние лимитов между несколькими узлами балансировщика в реальном времени. Это обеспечивает «честное» ограничение трафика во всем кластере, предотвращая обход порогов при распределенных атаках, где каждый отдельный бот не превышает локальный порог.
-
-2. **Расширенный API для observability**: Встроенные эндпоинты статуса (`/api/v1/http/limit_reqs/`, `/api/v1/http/limit_conns/`) позволяют автоматизированным системам мониторинга получать детальную статистику по лимитам в реальном времени без парсинга логов.
-
-### Векторы атак, специфичные для Nginx/Angie
-
-| Вектор | Механизм | Влияние | Критичность |
+| Возможность / Механизм | Nginx Open Source | Angie | Архитектурное преимущество для SRE |
 | :--- | :--- | :--- | :--- |
-| **Slowloris** | Медленная отправка заголовков, удержание соединений | Исчерпание `worker_connections` | Высокая |
-| **Slow POST (R.U.D.Y.)** | Медленная отправка тела через `Expect: 100-continue` | Исчерпание воркеров | Высокая |
-| **HPACK Bomb (HTTP/2)** | Переполнение сжатой таблицы заголовков | OOM, падение процесса | Высокая |
-| **Rapid Reset (HTTP/2/3)** | Каскадное открытие/сброс потоков | Высокая CPU нагрузка | Средняя |
-| **QUIC Flood (HTTP/3)** | UDP-флуд с поддельными Source IP | Исчерпание bandwidth/CPU | Средняя |
-| **Request Smuggling** | Несоответствие `Content-Length` и `Transfer-Encoding` | Обход WAF, кэш-отравление | Высокая |
-| **Hotlinking** | Несанкционированное использование статических файлов | Исчерпание bandwidth | Средняя |
+| **Cluster Zone Sync (`sync`)** | Отсутствует (только Nginx Plus) | Поддерживается из коробки | Синхронизация разделяемой памяти `limit_req` и `limit_conn` между несколькими серверами через cluster stream socket. Защищает от распределенных DoS, где отдельные узлы не видят суммарного трафика бота. |
+| **Лимит количества заголовков** | Косвенно через `large_client_header_buffers` | Директива `max_headers` (Angie 1.4+) | Прямой запрет запросов с аномальным количеством заголовков (защита от HPACK Bomb). |
+| **API метрик лимитов** | Требуются сторонние модули (`vts`) | Встроенный REST API (`/api/v1/http/limit_reqs/`) | Получение счетчиков `passed`, `delayed`, `rejected` в реальном времени для Prometheus без разбора логов. |
+| **ACME / Автоматизация сертификатов** | Внешние утилиты (Certbot, acme.sh) | Встроенный модуль `acme` | Автоматическая ротация TLS-сертификатов без внешних cron-скриптов. |
 
-### Жизненный цикл защищенного соединения
+### Анатомия векторов атак на веб-сервер
+
+| Вектор атаки | Механизм воздействия | Последствия для инфраструктуры | Метод нейтрализации в Nginx/Angie |
+| :--- | :--- | :--- | :--- |
+| **Slowloris** | Медленная побайтовая передача заголовков с удержанием открытых сокетов | Исчерпание пула `worker_connections`, отказ в обслуживании новых клиентов | `client_header_timeout 10s;` `large_client_header_buffers` |
+| **Slow POST (R.U.D.Y.)** | Медленная передача тела запроса (1 байт в несколько секунд) через `Content-Length` | Блокировка воркеров Nginx на чтении сокетов | `client_body_timeout 10s;` `client_body_buffer_size` |
+| **HPACK Bomb (HTTP/2)** | Отправка сжатых заголовков с циклическими ссылками в динамической таблице | Взрывное потребление памяти, OOM-killer воркера | Ограничение буферов заголовков, `max_headers` в Angie |
+| **HTTP/2 Rapid Reset (CVE-2023-44487)** | Мгновенная отправка кадров `RST_STREAM` сразу после открытия потоков | 100% утилизация CPU на обработку управляющих структур | `keepalive_requests`, обновление версий Nginx (1.25.3+), `limit_req` |
+| **HTTP Request Smuggling** | Разночтения `Content-Length` и `Transfer-Encoding: chunked` между прокси и бэкендом | Обход авторизации WAF, отравление кэша, подмена сессий | `proxy_request_buffering on;`, `proxy_http_version 1.1;`, очистка `Transfer-Encoding` |
+| **Web Shell в каталогах загрузки** | Загрузка файла `.php`/`.py` в общедоступный каталог и прямой вызов через URL | Удаленное исполнение кода (RCE) на сервере | Запрет исполнения скриптов в каталогах загрузки, принудительный `return 403` |
+| **Утечка служебных файлов** | Прямые запросы к `.git`, `.env`, `.bak`, `.conf` | Компрометация секретов, паролей к БД, API-ключей | `location ~ /\.(?!well-known)` с `return 404;` |
+
+### Жизненный цикл защищенного запроса в Nginx
 
 ```text
-Клиент → TCP handshake → TLS handshake (TLS 1.3, ECH, OCSP Stapling) →
-HTTP request → Nginx/Angie:
-  1. IP-фильтрация (allow/deny)
-  2. Rate limiting (limit_req)
-  3. Connection limiting (limit_conn)
-  4. WAF (ModSecurity/Coraza) — L7 инспекция
-  5. auth_request / auth_basic / auth_jwt
-  6. Backend response → Security Headers (CSP, HSTS, COOP/COEP)
+1. TCP Handshake → TLS Handshake (TLS 1.3, OCSP Stapling)
+   ↓
+2. Модуль Real IP (восстановление истинного $remote_addr из PROXY Protocol или X-Forwarded-For)
+   ↓
+3. Географическая и списочная фильтрация (allow / deny / geoip2 / map whitelist)
+   ↓
+4. Проверка лимитов соединений (limit_conn_zone)
+   ↓
+5. Проверка частоты запросов (limit_req_zone: leaky bucket, burst, delay/nodelay)
+   ↓
+6. Буферизация и тайм-ауты (client_header_timeout, client_body_timeout, client_max_body_size)
+   ↓
+7. Модуль WAF (инспекция ModSecurity v3 / Coraza: OWASP CRS)
+   ↓
+8. Проверка аутентификации (auth_basic / auth_request)
+   ↓
+9. Проксирование на бэкенд / отдача статики (proxy_request_buffering on, скрытие upstream-заголовков)
+   ↓
+10. Формирование ответа: Security Headers (HSTS, CSP, COOP/COEP с флагом always)
 ```
+
+### Критическая ловушка наследования директивы `add_header`
+
+В Nginx действует строгое архитектурное правило наследования директив модуля `ngx_http_headers_module`:
+
+> **Важно:** Если в дочернем блоке (например, `location`) определена хотя бы одна директива `add_header`, **все** директивы `add_header` из родительских блоков (`http`, `server`) полностью игнорируются и не применяются к ответу!
+
+Типичная ошибка SRE: задать базовые заголовки HSTS, CSP и X-Frame-Options в блоке `http {}`, а затем объявить `add_header Cache-Control ...` или CORS в `location /api/`. В результате все заголовки безопасности в ответах эндпоинта `/api/` полностью пропадают.
+
+**Архитектурное решение:** выносить эталонный набор заголовков безопасности в отдельный сниппет конфигурации (например, `/etc/nginx/snippets/security_headers.conf`) и подключать его через `include` во все блоки `server` и в каждый `location`, где объявляются локальные заголовки.
+
+Вторая обязательная деталь — параметр `always`. Без параметра `always` заголовки безопасности отправляются клиенту **только** при успешных статус-кодах (200, 201, 204, 206, 301, 302, 303, 304, 307, 308). При ошибках бэкенда или блокировках (400, 401, 403, 404, 429, 500, 502, 503) заголовки будут потеряны, если не указано `always`.
+
+### Алгоритм Rate Limiting: Leaky Bucket, Burst, Delay и Nodelay
+
+Директива `limit_req` работает по модели «протекающего ведра» с фиксированной скоростью утечки (`rate` в `r/s` или `r/m`).
+
+- **Без `burst`:** любой входящий запрос сверх частоты `rate` немедленно отклоняется с кодом `limit_req_status` (по умолчанию 503, в API рекомендуется 429).
+- **С параметром `burst=N`:** создается очередь ожидания на `N` слотов. Запросы, превышающие `rate`, помещаются в очередь и обрабатываются с искусственной задержкой `1/rate`, сглаживая пики.
+- **С параметрами `burst=N nodelay`:** запросы из очереди `N` обрабатываются немедленно без добавления задержки (без искусственного замедления ответа). Если входящий всплеск превышает размер очереди `burst`, избыток немедленно сбрасывается с кодом 429.
+- **С параметрами двухфазного лимитирования `burst=N delay=M`:** запросы до `M` слотов отдаются без задержки (`nodelay`), запросы между `M` и `N` обрабатываются с нарастающей задержкой, а все запросы сверх `N` — блокируются с кодом 429. Это оптимальная стратегия для интерактивных пользовательских интерфейсов.
 
 ## Практические сценарии
 
-### 1. Защита от Slowloris и Header Flooding на уровне Nginx
+### Сценарий 1: Защита от Slowloris, Slow POST и DoS по заголовкам
 
-Ограничение количества заголовков и размеров буферов для борьбы с медленными соединениями и HPACK Bomb.
+Конфигурация блокирует медленные атаки удержания соединений и переполнения памяти HTTP/2-заголовками на уровне блока `http`.
+
+`/etc/nginx/conf.d/00_dos_timeouts.conf`:
 
 ```nginx
 http {
-    # Лимит количества заголовков (Nginx 1.25.1+ / Angie 1.4+)
-    # Защищает от атак на парсер заголовков (HPACK Bomb в HTTP/2)
-    max_headers 100;
-
-    # Тайм-ауты для борьбы с медленными соединениями (Slowloris, Slow POST)
-    client_body_timeout 10s;
+    # Лимит времени на чтение заголовков и тела запроса между операциями чтения
     client_header_timeout 10s;
-    keepalive_timeout 65s;
-    send_timeout 10s;
+    client_body_timeout   10s;
 
-    # Буферы: защищают RAM от переполнения большими запросами
-    client_body_buffer_size 16k;
-    client_header_buffer_size 1k;
-    large_client_header_buffers 4 8k;
+    # Тайм-аут передачи ответа клиенту и поддержания keepalive
+    send_timeout          10s;
+    keepalive_timeout     65s 60s;
+    keepalive_requests    1000;
 
-    # Лимиты с корректным статус-кодом (429 Too Many Requests)
-    limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;
-    limit_req_status 429;
-    limit_conn_zone $binary_remote_addr zone=perip:10m;
-    limit_conn_status 429;
+    # Защита от исчерпания памяти при парсинге заголовков
+    client_header_buffer_size    1k;
+    large_client_header_buffers  4 8k;
+
+    # Ограничение размера тела запроса (предотвращает заливку терабайтов мусора)
+    client_max_body_size         10m;
+    client_body_buffer_size      128k;
+
+    # Для серверов Angie: прямой лимит на количество заголовков в запросе (защита от HPACK Bomb)
+    # В стандартном Nginx OSS закомментируйте эту строку (лимит определяется large_client_header_buffers)
+    max_headers                  100;
+
+    # Ограничение параллельных потоков HTTP/2 на одно соединение (снижение эффекта Rapid Reset)
+    http2_max_concurrent_streams 128;
 }
 ```
 
-### 2. Защита внутренних ресурсов (директива `internal`)
-
-Предотвращение прямого доступа к служебным эндпоинтам, доступным только для внутренних перенаправлений (`X-Accel-Redirect`, `error_page`, `auth_request`).
-
-```nginx
-location /internal-api/ {
-    # Эндпоинт доступен только через внутренние перенаправления
-    internal;
-    proxy_pass http://backend;
-}
-
-# Пример использования через X-Accel-Redirect
-location /download/ {
-    proxy_pass http://backend;
-    proxy_set_header X-Accel-Redirect /protected-files$uri;
-}
-```
-
-### 3. Блокировка конфиденциальных данных
-
-Защита файлов систем контроля версий и окружения. Полная методология с системным подходом описана в соответствующем SSoT.
-
-```nginx
-# Блокировка доступа ко всем скрытым файлам (начинающимся с точки),
-# кроме .well-known (для ACME, ECH)
-location ~ /\.(?!well-known) {
-    deny all;
-    return 404;
-}
-
-# Блокировка специфических файлов
-location ~ /(config\.php|wp-config\.php|\.env|composer\.json|\.git) {
-    deny all;
-    return 404;
-}
-
-    # Блокировка диапазона IP
-    deny 192.168.1.0/24;
-    deny 10.0.0.1;
-    allow all;
-}
-
-### 4. Запрет на выполнение скриптов в каталогах загрузки
-
-Критично для предотвращения атак типа Web Shell. Многокластерный контекст и тонкости настройки описаны в соответствующем SSoT.
-
-```nginx
-location /static/uploads/ {
-    # Запрет на выполнение PHP
-    location ~ \.php$ {
-        deny all;
-        return 403;
-    }
-    # Запрет на выполнение других скриптовых языков
-    location ~ \.(pl|py|sh|cgi|exe|js|jar)$ {
-        return 403;
-    }
-    # Принудительная отдача как статики (без обработки)
-    try_files $uri =404;
-}
-```
-
-### 5. Ограничение скорости отдачи (Bandwidth Limiting)
-
-Защита от исчерпания полосы пропускания при загрузке тяжелого контента.
-
-```nginx
-location /downloads/ {
-    # Первые 10 МБ отдаем без ограничений
-    limit_rate_after 10m;
-    # Затем ограничиваем скорость до 500 КБ/с
-    limit_rate 500k;
-}
-```
-
-### 6. Проверка подписи ссылок (secure_link)
-
-Защита от несанкционированного скачивания файлов и хотлинкинга.
-
-```nginx
-location /protected/ {
-    secure_link $arg_md5,$arg_expires;
-    secure_link_md5 "$secure_link_expires$uri secret_key";
-
-    if ($secure_link = "") { return 403; }
-    if ($secure_link = "0") { return 410; }
-    # Если проверка прошла, $secure_link будет "1"
-}
-```
-
-### 7. Сокрытие версии и заголовков бэкенда
-
-```nginx
-http {
-    # Скрытие версии Nginx/Angie в ответах
-    server_tokens off;
-    
-    # Лимит размера тела запроса (защита от загрузки гигантских файлов)
-    client_max_body_size 10M;
-}
-
-# В контексте проксирования
-location / {
-    # Скрытие информации о стеке бэкенда
-    proxy_hide_header X-Powered-By;
-    proxy_hide_header Server;
-    proxy_pass http://backend;
-}
-```
-
-### 8. Системные права доступа (Hardening)
+Проверка конфигурации и применения:
 
 ```bash
-# Исполняемые файлы и конфиги — только для root
-sudo chown -R root:root /etc/nginx
-sudo chmod -R 755 /etc/nginx
-sudo chmod 640 /etc/nginx/nginx.conf
+nginx -t
+# → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+# → nginx: configuration file /etc/nginx/nginx.conf test is successful
 
-# Директории сайта — владелец myuser, группа www-data
-sudo chown -R myuser:www-data /var/www/mysite
-sudo find /var/www/mysite -type d -exec chmod 755 {} \;
-sudo find /var/www/mysite -type f -exec chmod 644 {} \;
+systemctl reload nginx
 ```
 
-### 9. Гео-блокировка и условный доступ (geo, geoip2)
+### Сценарий 2: Комплексный Rate Limiting с белым списком для SRE и мониторинга
 
-Отсечение трафика из нецелевых регионов и гибкие правила на основе IP — типичный слой защиты перед WAF. Nginx-часть строится на `map`/`geo` (без внешних баз) и на `ngx_http_geoip2_module` (MaxMind GeoLite2) для геолокации.
+Проблема: включение жесткого Rate Limiting блокирует системы синтетического мониторинга (Prometheus Blackbox Exporter), внутренние чекеры балансировщиков и запросы системных инженеров.
+
+Решение: использование модуля `geo` совместно с `map`. Если IP-адрес входит в белый список, ключ зоны рассчитывается как пустая строка `""`. В Nginx запросы с пустым ключом лимитирования не учитываются в зонах и не блокируются.
+
+`/etc/nginx/conf.d/rate_limiting.conf`:
 
 ```nginx
-# Условная блокировка по стране через geoip2 + map
-geoip2 /etc/nginx/geo/Country.mmdb {
-    $geoip2_country_code default=RU country iso_code;
+# Определение белого списка доверенных IP (офис, мониторинг, локальные подсети)
+geo $whitelist_clients {
+    default        0;
+    127.0.0.1/32   1;
+    10.0.0.0/8     1;
+    192.168.1.0/24 1;
 }
 
-map $geoip2_country_code $is_blocked {
-    default    0;
-    RU         1;
-    CN         1;
-    KP         1;
+# Если клиент в белом списке — ключ зоны пуст (лимит не применяется)
+# Если клиент внешний — ключом становится компактный бинарный IP-адрес
+map $whitelist_clients $limit_key_by_ip {
+    0       $binary_remote_addr;
+    1       "";
 }
+
+# 10 МБ зоны памяти вмещают около 160 000 уникальных IPv4-адресов
+# cluster sync доступен в Angie PRO; в Nginx OSS параметр sync опускается
+limit_req_zone $limit_key_by_ip zone=api_general:10m rate=10r/s;
+limit_req_zone $limit_key_by_ip zone=login_strict:10m rate=1r/s;
+limit_conn_zone $limit_key_by_ip zone=conn_per_ip:10m;
+
+# Статус-код превышения лимитов (429 вместо устаревшего 503)
+limit_req_status 429;
+limit_conn_status 429;
+
+# Уровень логирования срабатывания лимитов
+limit_req_log_level warn;
 
 server {
-    if ($is_blocked) { return 403; }   # не рекомендуется: используйте limit_req/deny для масштаба
+    listen 443 ssl;
+    server_name api.example.corp;
+
+    # Ограничение числа параллельных соединений с одного не доверенного IP
+    limit_conn conn_per_ip 20;
+
+    # Публичный API с двухфазным сглаживанием всплесков
+    location /api/ {
+        # Первые 10 запросов сверх rate идут без задержки, следующие 10 — с задержкой
+        limit_req zone=api_general burst=20 delay=10;
+
+        proxy_pass http://backend_api;
+        proxy_set_header Host $host;
+
+        # Обработка ошибки превышения лимита с отдачей структурированного JSON
+        error_page 429 = @rate_limited_json;
+    }
+
+    # Чувствительный эндпоинт аутентификации (защита от брутфорса)
+    location /api/v1/auth/login {
+        limit_req zone=login_strict burst=3 nodelay;
+
+        proxy_pass http://backend_api;
+        error_page 429 = @rate_limited_json;
+    }
+
+    # Именованный location для отдачи информативного JSON при 429
+    location @rate_limited_json {
+        default_type application/json;
+        return 429 '{"error":"too_many_requests","message":"Rate limit exceeded. Please retry later."}';
+    }
 }
 ```
 
-Более масштабируемый путь — блокировка на уровне `deny`/allow по `geo`-директиве и внешнем firewall (nftables), т.к. `geo` статичен и не требует базы:
+### Сценарий 3: Восстановление реального IP-клиента (Real IP)
+
+При установке Nginx за L4/L7-балансировщиком или реверс-прокси все входящие запросы приходят с IP-адреса этого шлюза. Без настройки модуля `ngx_http_realip_module` rate limiting будет применять лимиты к балансировщику и заблокирует сразу всех пользователей сервиса.
+
+`/etc/nginx/conf.d/real_ip.conf`:
 
 ```nginx
-geo $blocked_zone {
-    include /etc/nginx/geo/*.conf;   # Nginx 1.29.8+ поддерживает wildcards в include
-    default 0;
-}
+# Доверенные адреса внутренних балансировщиков
+set_real_ip_from 10.100.0.0/24;
+set_real_ip_from 192.168.10.15/32;
+
+# Заголовок, содержащий цепочку клиентских IP
+real_ip_header   X-Forwarded-For;
+
+# При значении on берется последний недоверенный IP из цепочки X-Forwarded-For
+real_ip_recursive on;
+```
+
+При использовании PROXY Protocol (например, за HAProxy) директива меняется:
+
+```nginx
 server {
-    if ($blocked_zone) { return 403; }
+    listen 443 ssl proxy_protocol;
+    set_real_ip_from 10.100.0.1;
+    real_ip_header   proxy_protocol;
 }
 ```
 
-Полные примеры `geoip2`/`map` и настройка баз — в [Контроле доступа в Angie](../../Angie/angie_access_control.md) (директивы идентичны для Nginx OSS) и [Защите от DoS в Angie](../../Angie/High_Load/dos_protection.md). Поддержка `include`-wildcards в `geo` — в [Установке и базовой настройке Nginx](../Core/nginx_setup.md).
+### Сценарий 4: Эталонный набор Security Headers (Production Baseline)
 
-**Важно:** гео-блокировка по странам может ложно отсекать трафик через CDN/прокси (Source IP = IP CDN, а не клиента). Корректно обрабатывайте реальные IP через `real_ip`/Proxy Protocol (см. [Практическую конфигурацию балансировки](../Proxy/Load_Balancing/practical_configuration.md)), иначе блокировка по геолокации будет работать против легитимных пользователей.
+Создаем переиспользуемый файл сниппета заголовков.
 
-### 10. Rate Limiting: алгоритм limit_req в деталях
+`/etc/nginx/snippets/security_headers.conf`:
 
-`limit_req` реализует **leaky bucket**: запросы сверх `rate` ставятся в очередь размера `burst` и обрабатываются с паузой `1/rate` (режим `delay`, по умолчанию). Флаг `nodelay` убирает задержку — запросы из очереди обрабатываются немедленно. Превышение очереди возвращает `limit_req_status` (по умолчанию **503**, для API принято менять на **429**).
+```nginx
+# Принудительный HTTPS на 2 года с поддоменами и включением в список HSTS Preload
+add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+
+# Защита от MIME-sniffing (принудительное соблюдение Content-Type браузером)
+add_header X-Content-Type-Options "nosniff" always;
+
+# Защита от Clickjacking через iframes (разрешено только в рамках того же origin)
+add_header X-Frame-Options "SAMEORIGIN" always;
+
+# Политика передачи Referer (полный URL для Same-Origin, только домен для HTTPS cross-origin)
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+# Отключение доступа браузера к чувствительным API устройства (камера, микрофон, геолокация)
+add_header Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=()" always;
+
+# Заголовки строгой изоляции процессов браузера (защита от атак Spectre/Meltdown по побочным каналам)
+add_header Cross-Origin-Opener-Policy "same-origin" always;
+add_header Cross-Origin-Resource-Policy "same-origin" always;
+
+# Базовая политика безопасности контента (Content Security Policy)
+# В production настраивается под фронтенд-стек приложения
+add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'self'; form-action 'self'; base-uri 'self';" always;
+```
+
+Подключение сниппета в виртуальном хосте:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name service.example.corp;
+
+    include /etc/nginx/snippets/security_headers.conf;
+
+    location / {
+        proxy_pass http://backend_app;
+    }
+
+    # При переопределении заголовков в location сниппет подключается повторно!
+    location /static/ {
+        alias /var/www/static/;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        include /etc/nginx/snippets/security_headers.conf;
+    }
+}
+```
+
+### Сценарий 5: Блокировка конфиденциальных файлов и защита от Path Traversal
+
+Предотвращение утечки исходного кода, резервных копий, переменных окружения и конфигурационных файлов:
+
+`/etc/nginx/conf.d/block_sensitive_files.conf`:
+
+```nginx
+# 1. Блокировка доступа ко всем скрытым файлам и каталогам (начинающимся с точки),
+# кроме каталога .well-known (критично для прохождения проверок ACME Let's Encrypt / ECH)
+location ~ /\.(?!well-known).* {
+    deny all;
+    access_log off;
+    log_not_found off;
+    return 404;
+}
+
+# 2. Блокировка резервных копий, дампов БД, архивов, системных логов и файлов окружения
+location ~* (?i)\.(?:bak|backup|sql|tar|gz|tgz|zip|rar|env|conf|config|orig|old|swp|log|key|cert|pem|ini)$ {
+    deny all;
+    access_log off;
+    log_not_found off;
+    return 404;
+}
+
+# 3. Блокировка каталогов систем контроля версий и пакетных менеджеров
+location ~* /(?:\.git|\.svn|\.hg|node_modules|vendor|composer\.(?:json|lock)|package(?:-lock)?\.json) {
+    deny all;
+    access_log off;
+    log_not_found off;
+    return 404;
+}
+
+# 4. Защита служебных ресурсов через директиву internal (доступ только изнутри Nginx)
+location /internal-files/ {
+    internal;
+    alias /var/storage/protected/;
+}
+```
+
+### Сценарий 6: Запрет исполнения скриптов в каталогах загрузки (Anti-Webshell)
+
+Если веб-приложение позволяет пользователям загружать файлы (аватары, документы), злоумышленник может попытаться загрузить скрипт (`shell.php`, `.py`, `.sh`, `.jsp`) и вызвать его исполнение.
+
+`/etc/nginx/conf.d/uploads_hardening.conf`:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name app.example.corp;
+    root /var/www/app/public;
+
+    # Каталог пользовательских загрузок
+    location /uploads/ {
+        # Принудительное отключение исполнения PHP и любых интерпретаторов
+        location ~* \.(php|phtml|php3|php4|php5|php7|php8|phps|pl|py|cgi|sh|bash|exe|bin|jsp|asp|aspx)$ {
+            deny all;
+            return 403;
+        }
+
+        # Отдача только статики; файлы без совпадения возвращают 404
+        try_files $uri =404;
+
+        # Защита от MIME Confusion при загрузке вредоносных SVG/HTML
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Content-Disposition "attachment" always;
+    }
+}
+```
+
+### Сценарий 7: Ограничение HTTP-методов (`limit_except`)
+
+Большинство веб-интерфейсов требуют только безопасные методы чтения (`GET`, `HEAD`) и отправки форм (`POST`). Разрешение редких или небезопасных методов (`PUT`, `DELETE`, `CONNECT`, `TRACE`) создает вектор атаки на бэкенд.
+
+```nginx
+location / {
+    # Разрешаем только GET, HEAD, POST. Все остальные методы блокируются с кодом 405
+    limit_except GET HEAD POST {
+        deny all;
+    }
+
+    proxy_pass http://backend_app;
+}
+```
+
+### Сценарий 8: Сокрытие информации о стеке (Information Disclosure)
+
+Минимизация сведений о версиях серверного ПО затрудняет автоматизированное профилирование злоумышленниками.
+
+`/etc/nginx/conf.d/hide_server_info.conf`:
 
 ```nginx
 http {
-    # Зона: 1MB ≈ 16000 ключей $binary_remote_addr (32 байта ключ + служебные данные).
-    # Для rate в r/s на одного клиента делите объём зоны на ожидаемый RPS (правило 1/4).
-    limit_req_zone $binary_remote_addr zone=api:20m rate=10r/s;
+    # Скрытие версии Nginx в заголовке Server и на стандартных страницах ошибок
+    server_tokens off;
 
-    # Логирование факта срабатывания лимита (для алертов и анализа)
-    log_format access '$remote_addr - $status "$request" '
-                      'limit_req_status=$limit_req_status rt=$request_time';
-}
-
-server {
-    location /api/ {
-        limit_req zone=api burst=20 nodelay;      # очередь 20, без паузы
-        limit_req_status 429;
-        limit_req_log_level notice;
-        proxy_pass http://backend;
-
-        # Кастомное JSON-тело для 429 (опционально)
-        error_page 429 = @429_json;
-        location @429_json {
-            default_type application/json;
-            return 429 '{"error":"rate_limited"}';
-        }
-    }
-
-    # Режим dry run (Nginx 1.23.4+ / Angie): только логировать, не блокировать.
-    # Используйте для нагрузочного теста перед включением лимита в бой.
-    location /api/experimental/ {
-        limit_req zone=api burst=100 nodelay;
-        limit_req_dry_run on;                     # $limit_req_status = DRY_RUN
-        proxy_pass http://backend;
-
-        # Кастомное JSON-тело для 429 (опционально)
-        error_page 429 = @429_json;
-        location @429_json {
-            default_type application/json;
-            return 429 '{"error":"rate_limited"}';
-        }
-    }
-}
-```
-
-Ключевое:
-- **Размер зоны:** 1MB зоны ≈ 16k записей `$binary_remote_addr`. При высоком RPS выбирайте ключ точнее — `map`+`$server_name`+`$binary_remote_addr` или `limit_req_zone ... key=$binary_remote_addr zone=...` для раздельного лимита на маршрут.
-- **Несколько директив `limit_req`** в одном `location` суммируются как AND-условия (срабатывает самый строгий).
-- **`$limit_req_status`** (Nginx 1.17.1+): `PASSED`, `DELAYED`, `REJECTED`, `DELAYED_DRY_RUN`, `REJECTED_DRY_RUN` — пишите его в `log_format` для метрик отказа.
-- Для точного лимита по одновременным соединениям используйте `limit_conn` (не путать с частотой).
-
-Глубокий разбор (token bucket, кластерная синхронизация `sync`, Slowloris, HTTP/2 flood) — в [Защите от DoS в Angie](../../Angie/High_Load/dos_protection.md) и [Rate limiting и circuit breakers в HTTP](../../../Networking/Protocols/HTTP/http_rate_limiting_circuit_breakers.md).
-
-### 11. CORS (Cross-Origin Resource Sharing)
-
-CORS — политика браузера, разрешающая кросс-доменные запросы. Nginx как reverse proxy должен отдавать корректные `Access-Control-*` заголовки и обрабатывать **preflight** (`OPTIONS`) запросы, но не ослаблять их.
-
-```nginx
-# В контексте http: разрешённые Origin'ы без жёсткого списка в каждом server
-map $http_origin $cors_origin {
-    default                      "";
-    "~^https://app\.example\.com$"  $http_origin;
-    "~^https://(www\.)?admin\.example\.com$" $http_origin;
+    # В Angie PRO/Angie возможно полное переопределение строки Server:
+    # server_tokens "Web-Perimeter";
 }
 
 server {
     listen 443 ssl;
-    server_name api.example.com;
+    server_name portal.example.corp;
 
-    location /api/ {
-        if ($request_method = 'OPTIONS') {
-            add_header 'Access-Control-Allow-Origin' $cors_origin;
-            add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS';
-            add_header 'Access-Control-Allow-Headers' 'Authorization, Content-Type, X-Request-ID';
-            add_header 'Access-Control-Max-Age' '1728000';
-            add_header 'Content-Type' 'text/plain charset=UTF-8';
-            return 204;
-        }
+    location / {
+        proxy_pass http://backend_cluster;
 
-        add_header 'Access-Control-Allow-Origin' $cors_origin always;
-        add_header 'Access-Control-Allow-Credentials' 'true' always;
-        proxy_pass http://api_backend;
+        # Удаление заголовков, раскрывающих бэкенд-стек (Express, PHP, Kestrel, Python)
+        proxy_hide_header X-Powered-By;
+        proxy_hide_header Server;
+        proxy_hide_header X-AspNet-Version;
+        proxy_hide_header X-Runtime;
     }
 }
 ```
 
-- При пустом `$cors_origin` (Origin не в списке) заголовки не выдаются — браузер блокирует запрос.
-- **Не используйте `*`** вместе с `Allow-Credentials: true` — браузеры обязаны отклонить такой ответ.
-- Кэшируемые ответы с CORS требуют `add_header Vary "Origin"`: заголовок должен отличаться в зависимости от Origin, иначе CDN/кэш отдаст неверный вариант.
-- Полный разбор CORS (restricted origins, preflight, credentials) — в [CORS в Angie](../../Angie/angie-cors.md), готовый конфиг — [Сценарий 2 в «Безопасности HTTP»](../../../Networking/Protocols/HTTP/http_security_hardening.md).
+### Сценарий 9: Предотвращение Request Smuggling
 
-### 12. Контрабанда запросов (Request Smuggling)
+Атака десинхронизации возникает, когда Nginx пересылает запрос бэкенду по HTTP/1.1 с конвейеризацией или двойными заголовками длины.
 
-Атака основана на расхождении парсинга `Content-Length` и `Transfer-Encoding` между фронтендом (Nginx) и бэкендом/кэшем (см. типы CL.TE/TE.CL в таблице выше). Защита — единообразная обработка тела запроса на Nginx:
+`/etc/nginx/conf.d/request_smuggling_defense.conf`:
 
 ```nginx
 http {
-    # Явный HTTP/1.1 к апстриму и очистка опасных заголовков
+    # Обязательная буферизация тела запроса: Nginx читает тело целиком,
+    # пересчитывает точный Content-Length и отправляет бэкенду нормализованный запрос
+    proxy_request_buffering on;
+
+    # Явный протокол HTTP/1.1 к апстриму и разрыв постоянного keepalive в сомнительных окружениях
     proxy_http_version 1.1;
     proxy_set_header Connection "";
+
+    # Принудительное удаление опасного заголовка Transfer-Encoding при проксировании
     proxy_set_header Transfer-Encoding "";
 
-    # Буферизация тела — Nginx передаёт бэкенду единый Content-Length
-    proxy_request_buffering on;
-    client_body_buffer_size 128k;
+    # Отклонение запросов с некорректными символами в именах заголовков
+    ignore_invalid_headers on;
 }
 ```
 
-- `proxy_request_buffering on` (по умолчанию) читает тело целиком и передаёт его с корректным `Content-Length`, исключая двойной парсинг на стороне апстрима.
-- **Проверка:** `curl -v -H "Transfer-Encoding: chunked" -H "Content-Length: 4" -d "SMUGGLED" https://api.example.com/` — Nginx должен обработать запрос с `Content-Length`, а бэкенд не получить оба значения.
-- Полный сценарий предотвращения с валидацией — [Сценарий 7 в «Безопасности HTTP»](../../../Networking/Protocols/HTTP/http_security_hardening.md).
+### Сценарий 10: Защита ссылок от хотлинкинга (`secure_link`)
 
-### 13. Аутентификация клиентов: выбор метода
+Модуль `ngx_http_secure_link_module` генерирует хеш ссылки на основе секрета, URI и времени жизни.
 
-| Метод | Механизм | Применение |
-| :--- | :--- | :--- |
-| **`auth_basic`** | htpasswd + `Authorization: Basic` | Внутренние инструменты, защита dev-окружений; только поверх TLS |
-| **`auth_request`** | Внутренний subrequest к auth-эндпоинту (200/401/403) | SSO, OIDC, кастомные валидации со стороны приложения |
-| **JWT (`auth_jwt`)** | Валидация подписи/срока токена на Nginx (OpenSSL-based) | API-шлюзы без обращения к бэкенду; сотрудничает с `auth_request` |
-| **OIDC / LDAP / PAM** | Внешняя проверка через модули (обычно в Angie) | Корпоративный SSO, интеграция с Identity Provider |
+```nginx
+location /content/downloads/ {
+    root /var/storage;
 
-Базовые примеры `auth_basic`/`auth_request`/JWT и гео-доступ — в [Контроле доступа в Angie](../../Angie/angie_access_control.md). Протокольный уровень (Basic, Digest, Bearer, TLS client certs) — в [Аутентификации HTTP](../../../Networking/Protocols/HTTP/http_authentication.md); OAuth2/OIDC и JWT — в [oauth2_overview.md](../../../Security/Concepts/oauth2_overview.md) и [jwt_overview.md](../../../Security/Concepts/jwt_overview.md). Для mTLS запросов к серверу — [mTLS в Nginx](./TLS_SSL/nginx_mtls_configuration.md).
+    # Ожидаются аргументы URL вида: /content/downloads/archive.tar.gz?md5=HASH&expires=1798765432
+    secure_link $arg_md5,$arg_expires;
+    secure_link_md5 "$secure_link_expires$uri $remote_addr HardcodedClusterSecretKey2026";
+
+    # Если подпись не передана или некорректна
+    if ($secure_link = "") {
+        return 403;
+    }
+
+    # Если срок действия ссылки истек
+    if ($secure_link = "0") {
+        return 410; # Gone
+    }
+
+    # Файл отдается только при $secure_link = "1"
+}
+```
+
+### Сценарий 11: Контроль доступа: `auth_basic` и `auth_request`
+
+#### Вариант А: Ограничение доступа через `auth_basic` (для внутренних утилит SRE)
+
+```nginx
+location /monitoring/ {
+    auth_basic           "Restricted Access for Operations";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    # Белый список сетей, для которых пароль не требуется
+    satisfy any;
+    allow 192.168.1.0/24;
+    deny  all;
+
+    proxy_pass http://internal_monitoring;
+}
+```
+
+Генерация файла паролей с использованием хэширования `bcrypt` (утилита `htpasswd` из пакета `apache2-utils`):
+
+```bash
+htpasswd -B -c /etc/nginx/.htpasswd admin_sre
+# → New password: ...
+# → Re-type new password: ...
+# → Adding password for user admin_sre
+
+chmod 640 /etc/nginx/.htpasswd
+chown root:www-data /etc/nginx/.htpasswd
+```
+
+#### Вариант Б: Централизованная проверка через `auth_request`
+
+```nginx
+location /private/ {
+    # Отправка субреквеста на локальный сервис проверки прав
+    auth_request /auth-validator;
+
+    # Передача контекста пользователя из ответа auth-сервиса в приложение
+    auth_request_set $user_id $upstream_http_x_user_id;
+    proxy_set_header X-User-Id $user_id;
+
+    proxy_pass http://backend_app;
+}
+
+location = /auth-validator {
+    internal;
+    proxy_pass http://127.0.0.1:9090/validate;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header X-Original-URI $request_uri;
+}
+```
+
+### Сценарий 12: Интеграция Host-based WAF (ModSecurity v3 и Coraza)
+
+Интеграция модуля `ngx_http_modsecurity_module` с правилами OWASP Core Rule Set (CRS) v4.
+
+`/etc/nginx/conf.d/waf.conf`:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name portal.example.corp;
+
+    # Включение WAF для виртуального хоста
+    modsecurity on;
+    modsecurity_rules_file /etc/nginx/modsecurity/modsec_main.conf;
+
+    location / {
+        proxy_pass http://backend_portal;
+    }
+
+    # Исключение правил WAF для статики ради снижения задержки (latency)
+    location /static/ {
+        modsecurity off;
+        alias /var/www/portal/static/;
+    }
+}
+```
+
+Файл конфигурации `/etc/nginx/modsecurity/modsec_main.conf`:
+
+```apache
+# На начальном этапе внедрения используйте DetectionOnly
+# После тюнинга исключений переведите в On
+SecRuleEngine On
+
+# Обработка тела запроса
+SecRequestBodyAccess On
+SecRequestBodyLimit 13107200
+SecRequestBodyNoFilesLimit 131072
+
+# Журналирование инцидентов
+SecAuditEngine RelevantOnly
+SecAuditLogParts ABIJDEFHZ
+SecAuditLogType Serial
+SecAuditLog /var/log/modsecurity/audit.log
+
+# Подключение OWASP CRS
+Include /etc/nginx/modsecurity/crs/crs-setup.conf
+Include /etc/nginx/modsecurity/crs/rules/*.conf
+
+# SRE Тюнинг: отключение ложно сработавшего правила для конкретного пути
+# Например, правило 942100 (SQLi detection в специфическом API-пейлоаде)
+SecRuleUpdateTargetById 942100 "!ARGS:json_payload"
+```
+
+Подробная установка и сборка ModSecurity v3 и Coraza приведены в [WAF для веб-приложений](../../../Security/ApplicationSecurity/waf.md).
+
+### Сценарий 13: Харденинг прав доступа к файлам и каталогам (Linux DAC)
+
+Разграничение прав на файловую систему предотвращает подмену конфигурации и кражу TLS-ключей в случае компрометации непривилегированного процесса воркера:
+
+```bash
+# 1. Каталог конфигурации: владелец root, чтение воркерам
+chown -R root:root /etc/nginx
+find /etc/nginx -type d -exec chmod 755 {} \;
+find /etc/nginx -type f -exec chmod 644 {} \;
+
+# 2. Приватные ключи TLS: чтение доступно ТОЛЬКО мастер-процессу (root)
+chmod 700 /etc/nginx/ssl
+chmod 600 /etc/nginx/ssl/*.key
+
+# 3. Рабочие каталоги кэша и временных файлов: владелец www-data / nginx
+chown -R www-data:www-data /var/cache/nginx /var/log/nginx
+chmod 750 /var/cache/nginx /var/log/nginx
+
+# 4. Каталог веб-документов: файлы read-only для веб-сервера
+chown -R deployer:www-data /var/www/site
+find /var/www/site -type d -exec chmod 755 {} \;
+find /var/www/site -type f -exec chmod 644 {} \;
+```
+
+Полная изоляция процесса на уровне ядра через systemd-юнит и SELinux/AppArmor документирована в [Харденинге Nginx на уровне системы](./nginx_systemd_selinux_hardening.md).
 
 ## Операции и команды
 
-### Валидация конфигурации перед применением
+### Валидация и применение конфигурации
 
 ```bash
-# Проверка синтаксиса (обязательно перед reload)
+# Полная проверка синтаксиса перед перезагрузкой
 nginx -t
+# → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
 # → nginx: configuration file /etc/nginx/nginx.conf test is successful
 
-# Graceful reload без разрыва соединений
+# Просмотр полной собранной конфигурации с инспектированием директив безопасности
+nginx -T 2>/dev/null | grep -iE 'server_tokens|limit_req|limit_conn|ssl_protocols' | head -n 10
+# → server_tokens off;
+# → limit_req_zone $limit_key_by_ip zone=api_general:10m rate=10r/s;
+# → limit_req_status 429;
+# → ssl_protocols TLSv1.2 TLSv1.3;
+
+# Плавное применение изменений без разрыва активных соединений (Graceful Reload)
 systemctl reload nginx
-
-# Принудительная перезагрузка (при проблемах с graceful)
-systemctl restart nginx
-
-# Проверка статуса
-systemctl status nginx
-# → Active: active (running) since Tue 2025-09-22 12:00:00 UTC; 2h ago
+# → процесс перечитывает конфигурацию и запускает новых воркеров
 ```
 
-### Проверка активных слушающих портов
+### Инспекция сетевых сокетов и портов
 
 ```bash
-# TCP-порт 443
-ss -tlnpn | grep :443
-# → LISTEN 0 128 0.0.0.0:443 0.0.0.0:* users:(("nginx",pid=1234,fd=6))
+# Проверка слушающих TCP-сокетов Nginx
+ss -tlnpn '( sport = :80 or sport = :443 )'
+# → LISTEN 0 511 0.0.0.0:443 0.0.0.0:* users:(("nginx",pid=1542,fd=6),("nginx",pid=1543,fd=6))
 
-# UDP-порт 443 (для HTTP/3)
-ss -ulpn | grep :443
-# → UNCONN 0 0 0.0.0.0:443 0.0.0.0:* users:(("nginx",pid=1234,fd=7))
+# Проверка UDP-сокета 443 (HTTP/3 / QUIC)
+ss -ulpn '( sport = :443 )'
+# → UNCONN 0 0 0.0.0.0:443 0.0.0.0:* users:(("nginx",pid=1542,fd=7))
 ```
 
-### Проверка безопасности заголовков
+### Аудит заголовков безопасности через curl
 
 ```bash
-# Проверка заголовков через curl
-curl -I https://example.com 2>/dev/null | grep -iE "strict-transport|x-frame|x-content|permissions|cross-origin|content-security|server|server-tokens"
-# → Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
-# → X-Frame-Options: SAMEORIGIN
-# → X-Content-Type-Options: nosniff
-# → Permissions-Policy: geolocation=(), microphone=()
-# → Cross-Origin-Opener-Policy: same-origin
-# → Cross-Origin-Resource-Policy: same-origin
-# → Content-Security-Policy: default-src 'self'; ...
-# → Server: nginx  # должно отсутствовать при server_tokens off;
+# Проверка отправляемых заголовков безопасности
+curl -sI https://service.example.corp | grep -iE "strict-transport|x-frame|x-content|permissions|cross-origin|content-security|server"
+# → strict-transport-security: max-age=63072000; includeSubDomains; preload
+# → x-content-type-options: nosniff
+# → x-frame-options: SAMEORIGIN
+# → referrer-policy: strict-origin-when-cross-origin
+# → permissions-policy: geolocation=(), microphone=(), camera=(), payment=(), usb=()
+# → cross-origin-opener-policy: same-origin
+# → cross-origin-resource-policy: same-origin
+# → content-security-policy: default-src 'self'; ...
+# → server: nginx (версия отсутствует)
 ```
 
-### Мониторинг безопасности в реальном времени
+### Мониторинг событий безопасности в реальном времени
 
 ```bash
-# Логи Nginx с фильтром по security events
-journalctl -u nginx --since "1 hour ago" | grep -iE "denied|forbidden|limit_req|limit_conn|modsecurity|waf|blocked"
+# Отслеживание срабатываний Rate Limiting в логах Nginx
+tail -f /var/log/nginx/error.log | grep --line-buffered "limiting requests"
+# → 2026/10/17 14:10:05 [warn] 1543#1543: *12045 limiting requests, excess: 20.450 by zone "api_general", client: 198.51.100.44, server: api.example.corp, request: "GET /api/v1/feed HTTP/1.1"
 
-# Проверка количества заблокированных IP (если используется fail2ban)
-fail2ban-client status nginx-http-auth
-# → Status for the jail: nginx-http-auth
+# Проверка журнала системного юнита на наличие аварий воркеров и OOM
+journalctl -u nginx --since "1 hour ago" -p warning..alert --no-pager
+```
+
+### Интеграция с Fail2ban и управление блокировками
+
+```bash
+# Просмотр активного статуса джейла rate-limit блокировок
+fail2ban-client status nginx-limit-req
+# → Status for the jail: nginx-limit-req
 # → |- Filter
-# → |  |- Currently failed: 3
-# → |  |- Total failed:     142
-# → |  `- Journal matches:  _SYSTEMD_UNIT=nginx.service
+# → |  |- Currently failed: 4
+# → |  |- Total failed:     285
+# → `- Actions
+# →    |- Currently banned: 2
+# →    `- Banned IP list:   198.51.100.44 203.0.113.19
 
-# Статистика WAF (ModSecurity)
-tail -100 /var/log/modsecurity/audit.log | jq -r '.messages[].transaction.request.headers.host' | sort | uniq -c | sort -rn | head -10
+# Ручная разблокировка ложно заблокированного IP инженера
+fail2ban-client set nginx-limit-req unbanip 198.51.100.44
+# → 198.51.100.44
 ```
 
-### Управление службой Nginx
+### Нагрузочное тестирование Rate Limiting
+
+Проверка корректности выдачи кода `429 Too Many Requests` перед выводом в бой:
 
 ```bash
-# Проверка синтаксиса (обязательно перед reload)
-nginx -t
-# → nginx: configuration file /etc/nginx/nginx.conf test is successful
-
-# Graceful reload без разрыва соединений
-systemctl reload nginx
-
-# Принудительная перезагрузка (при проблемах с graceful)
-systemctl restart nginx
-
-# Проверка статуса
-systemctl status nginx
-# → Active: active (running) since Tue 2025-09-22 12:00:00 UTC; 2h ago
+# Генерация всплеска запросов циклом curl
+for i in {1..25}; do curl -s -o /dev/null -w "%{http_code}\n" https://api.example.corp/api/test; done | sort | uniq -c
+# → 10 200
+# → 15 429
 ```
 
 ## Устранение неполадок
 
-### Общая методология
+### Диагностическая методология SRE
 
-При поступлении alert'а или жалобы на доступность сервиса следуйте алгоритму:
+При возникновении инцидента безопасности или жалоб на блокировку легитимных клиентов:
 
-1. **Локализация уровня**: Определите, является ли проблема связанной с сетью (L3/L4), приложением (L7), WAF или конфигурацией Nginx/Angie.
-2. **Сбор контекста**: `nginx -T` (активная конфигурация), `journalctl -u nginx --since "10 minutes ago"`, `tail -100 /var/log/nginx/error.log`.
-3. **Валидация гипотезы**: `nginx -t`, `curl -I`, `ss -tlnpn`.
-4. **Устранение**: Внесите исправление, проверьте синтаксис, примените `reload`.
-5. **Верификация**: Повторите проверку, убедитесь, что alert'ы сняты.
+1. **Локализация уровня сбоя:**
+   - L3/L4 (сеть, nftables, SYN cookies, conntrack table exhaustion).
+   - L7 Nginx Core (ошибки парсинга, тайм-ауты, переполнение пула `worker_connections`).
+   - Модули безопасности (Rate Limiting `limit_req`, Connection Limiting `limit_conn`).
+   - Модуль WAF (ложные срабатывания ModSecurity/Coraza с кодом 403).
+2. **Сбор фактов:**
+   - Код ответа клиенту (`curl -v -I`).
+   - Системный лог ошибок: `/var/log/nginx/error.log`.
+   - Аудит WAF: `/var/log/modsecurity/audit.log`.
+   - Статус джейлов: `fail2ban-client status`.
+3. **Безопасная нейтрализация:** внесение корректировок, `nginx -t`, `systemctl reload nginx`, проверка метрик.
 
-### Типичные ошибки и решения
+### Сводная таблица инцидентов и решений
 
-#### Глобальный уровень (`http`)
-
-| Ошибка / Симптом | Причина | Решение |
+| Симптом / Ошибка в логе | Первопричина | Пошаговое решение для инженера |
 | :--- | :--- | :--- |
-| `no shared cipher` | В `ssl_ciphers` нет пересечения с клиентом | См. [Диагностика TLS/SSL](./TLS_SSL/nginx_tls_troubleshooting_and_compatibility.md) |
-| `shared zone "SSL" too small` | Переполнен `ssl_session_cache` | Увеличить размер зоны в `ssl_session_cache shared:SSL:50m;` |
-| `ssl_stapling: no data` | Отсутствует AIA или недоступен OCSP-responder | См. [Диагностика TLS/SSL](./TLS_SSL/nginx_tls_troubleshooting_and_compatibility.md) |
-| `limit_req zone ... not found` | Зона не определена в `http` блоке | Добавить `limit_req_zone` в `http`, выполнить `nginx -t` и `reload` |
-| `limit_conn_zone ... too small` | Зона переполнена | Увеличить размер зоны: `limit_conn_zone $binary_remote_addr zone=perip:20m;` |
-| `too many open files` | Достигнут лимит дескрипторов файлов | Увеличить `worker_rlimit_nofile` и `ulimit -n` в systemd-юните |
-| `worker_connections are not enough` | Исчерпан пул воркеров | Увеличить `worker_connections` в `events` блоке |
+| **Security Headers отсутствуют в ответах конкретного `/endpoint/`** | В целевом блоке `location` объявлена директива `add_header`, стершая родительские заголовки | Добавить `include /etc/nginx/snippets/security_headers.conf;` непосредственно внутрь данного `location`. |
+| **Заголовки безопасности пропадают при ошибках 404, 500, 502** | Директивы `add_header` объявлены без параметра `always` | Добавить параметр `always` в конец каждой директивы `add_header`. |
+| **Легитимные пользователи массово получают 429 при переходе на сайт** | 1. Запросы идут через внутренний балансировщик без восстановления Real IP.<br>2. Rate limit настроен без `burst`. | 1. Настроить `set_real_ip_from` и `real_ip_header X-Forwarded-For;`.<br>2. Добавить `burst=20 delay=10;` для сглаживания всплесков загрузки статических ассетов страницы. |
+| `could not allocate new entry in limit_req zone "..."` | Зона разделяемой памяти переполнена уникальными IP-адресами под воздействием распределенного DoS | 1. Увеличить размер зоны: `limit_req_zone ... zone=api_general:50m`.<br>2. Включить сброс неактивных записей или ужесточить фильтрацию на L3/L4. |
+| `ModSecurity: Access denied with code 403 (phase 2)` | Ложное срабатывание правила OWASP CRS на легитимный запрос приложения | Найти в `/var/log/modsecurity/audit.log` идентификатор сработавшего правила (`id "942100"`) и добавить `SecRuleRemoveById 942100` в конфигурацию хоста. |
+| `worker_connections are not enough while connecting to upstream` | Исчерпан пул соединений процесса воркера из-за флуда или медленных клиентов Slowloris | 1. Увеличить `worker_connections 4096;` в секции `events`.<br>2. Проверить системный лимит `worker_rlimit_nofile 65535;` и лимиты systemd-юнита (`LimitNOFILE=65535`). |
+| `client intended to send too large body` (код 413) | Тело загружаемого файла превышает лимит `client_max_body_size` | Увеличить `client_max_body_size 50m;` в целевом блоке `location /upload/`. |
+| `client sent invalid header line` (код 400) | Запрос содержит заголовки с недопустимыми символами (например, нижнее подчеркивание) | Если подчеркивания легитимны в API, включить `underscores_in_headers on;`. Иначе — отклонять как аномалию. |
 
-#### Уровень `server`
+### Аварийные регламенты (SRE Runbooks)
 
-| Ошибка / Симптом | Причина | Решение |
-| :--- | :--- | :--- |
-| `certificate verify failed` | Неполная цепочка или просроченный сертификат | См. [Диагностика TLS/SSL](./TLS_SSL/nginx_tls_troubleshooting_and_compatibility.md) |
-| `400 Bad Request (No required SSL certificate was sent)` | mTLS-конфигурация требует клиентский сертификат | См. [Конфигурация mTLS](./TLS_SSL/nginx_mtls_configuration.md) |
-| `403 Forbidden` | IP не в allow-списке или `deny all` | Проверить `allow`/`deny` в `location` или `server` блоке |
-| `404 Not Found` для скрытых файлов | Сработало правило блокировки `location ~ /\.` | Проверить regex в блоке, убедиться в корректности `deny` |
-| `413 Request Entity Too Large` | Превышен `client_max_body_size` | Увеличить `client_max_body_size` в соответствующем `server`/`location` |
+#### Runbook 1: Отражение активного HTTP-флуда (L7 DoS / DDoS)
 
-#### mTLS
+```text
+1. Локализация источника:
+   tail -n 1000 /var/log/nginx/access.log | awk '{print $1}' | sort | uniq -c | sort -rn | head -n 10
+2. Выявление целевого URL:
+   tail -n 1000 /var/log/nginx/access.log | awk '{print $7}' | sort | uniq -c | sort -rn | head -n 10
+3. Если атака идет с группы фиксированных IP:
+   Блокировка на уровне ядра Linux через nftables в обход Nginx:
+   nft add element inet filter blackhole { 198.51.100.55, 203.0.113.88 }
+4. Если атака распределенная (ботнет по всему пулу IP):
+   - Временное ужесточение зоны rate limiting в /etc/nginx/conf.d/rate_limiting.conf:
+     limit_req_zone $limit_key_by_ip zone=emergency:20m rate=3r/s;
+   - Перевод подозрительного location на аварийный лимит:
+     limit_req zone=emergency burst=5 nodelay;
+   - Сокращение таймаутов чтения:
+     client_body_timeout 5s; client_header_timeout 5s;
+   - Применение:
+     nginx -t && systemctl reload nginx
+5. Мониторинг стабилизации:
+   watch -n 1 "ss -s; ss -tlnpn '( sport = :443 )'"
+```
 
-| Ошибка / Симптом | Причина | Решение |
-| :--- | :--- | :--- |
-| `400 Bad Request (No required SSL certificate was sent)` | Клиент не предоставил сертификат | См. [Конфигурация mTLS](./TLS_SSL/nginx_mtls_configuration.md) |
-| `Handshake failure (Unknown CA)` | Издатель клиентского сертификата отсутствует в `ssl_client_certificate` | Добавить CA в `ssl_client_certificate`, проверить `ssl_verify_depth` |
-| `CRL is not valid yet` | Некорректная дата в CRL | Проверить `ssl_crl` и синхронизацию времени (NTP) |
+#### Runbook 2: Массовый шторм ложных срабатываний WAF после релиза приложения
 
-### Диагностика после изменений
-
-```bash
-# 1. Проверка синтаксиса
-nginx -t
-# → nginx: configuration file /etc/nginx/nginx.conf test is successful
-
-# 2. Применение конфигурации
-systemctl reload nginx
-
-# 3. Логи
-journalctl -u nginx --since "1 minute ago"
-
-# 4. Проверка заголовков
-curl -I https://example.com 2>/dev/null | grep -iE "strict-transport|x-frame|x-content|permissions|cross-origin|content-security|server"
+```text
+1. Подтверждение причины сбоя в логах аудита:
+   tail -n 50 /var/log/modsecurity/audit.log | grep -E "ModSecurity: Access denied|\[id \""
+2. Идентификация ID правила (например, [id "941100"] - XSS filter):
+   grep -o '\[id "[0-9]\+"\]' /var/log/modsecurity/audit.log | sort | uniq -c | sort -rn
+3. Вариант оперативного решения А (целевое исключение правила):
+   Добавить в /etc/nginx/modsecurity/modsec_main.conf:
+   SecRuleRemoveById 941100
+   Применить: nginx -t && systemctl reload nginx
+4. Вариант оперативного решения Б (аварийный перевод в DetectionOnly, если сбоят десятки правил):
+   В /etc/nginx/modsecurity/modsec_main.conf заменить:
+   SecRuleEngine DetectionOnly
+   Применить: nginx -t && systemctl reload nginx
+   Зафиксировать инцидент, передать логи разработчикам для адаптации правил.
 ```
 
 ## Рекомендации и лучшие практики
 
-### Чеклист SRE для Nginx/Angie безопасности
+### Чеклист SRE по харденингу Nginx/Angie
 
-- [ ] **DoS-защита**: `limit_req_zone`, `limit_conn_zone`, `client_header_timeout`, `client_body_timeout`, `max_headers` настроены на всех уровнях.
-- [ ] **Security Headers**: HSTS, CSP, COOP/COEP, Permissions-Policy присутствуют в production с `always`.
-- [ ] **WAF**: ModSecurity v3 или Coraza включен в режиме DetectionOnly на новых конфигурациях, затем переключен в `On`.
-- [ ] **Сокрытие версии**: `server_tokens off;` в `http` блоке.
-- [ ] **Скрытие заголовков бэкенда**: `proxy_hide_header Server`, `proxy_hide_header X-Powered-By`.
-- [ ] **Защита чувствительных файлов**: Регулярные выражения для `.git`, `.env`, `.ssh`, `wp-config.php` и т.д.
-- [ ] **Скрипты в uploads**: Запрет выполнения PHP/Perl/Python в каталогах загрузки.
-- [ ] **Мониторинг**: Alert'ы на `429`, `403`, `500`, рост `limit_req`/`limit_conn` отказов.
-- [ ] **Мониторинг fail2ban**: Проверка статуса джail'ов и количества заблокированных IP.
-- [ ] **Runbook**: Наличие пошаговой инструкции для инцидентов WAF, DoS, обхода rate limiting.
+- [ ] **Тайм-ауты соединений:** `client_body_timeout 10s`, `client_header_timeout 10s`, `send_timeout 10s` настроены глобально.
+- [ ] **Лимиты буферов:** `large_client_header_buffers 4 8k`, `client_header_buffer_size 1k`, `client_max_body_size` ограничен минимально необходимым значением.
+- [ ] **HTTP/2 & HTTP/3:** `http2_max_concurrent_streams 128`, версии Nginx обновлены для защиты от Rapid Reset.
+- [ ] **Rate Limiting:** `limit_req_zone` настроен с двухфазным сглаживанием (`burst` + `delay`), статус возврата переведен на `429`.
+- [ ] **Белые списки:** Мониторинг Prometheus, офисные VPN и внутренние балансировщики исключены из rate limiting через `geo` + `map`.
+- [ ] **Real IP:** Корректно восстановлен истинный `$remote_addr` через `set_real_ip_from` и `real_ip_header`.
+- [ ] **Security Headers:** Подключен сниппет с HSTS, CSP, X-Content-Type-Options, Permissions-Policy, COOP/COEP с обязательным флагом `always`.
+- [ ] **Проверка наследования `add_header`:** Все блоки `location`, переопределяющие заголовки, повторно подключают сниппет `security_headers.conf`.
+- [ ] **Сокрытие версий:** `server_tokens off;` включен, upstream-заголовки `Server` и `X-Powered-By` удаляются через `proxy_hide_header`.
+- [ ] **Скрытые и конфиденциальные файлы:** Блокировка `.git`, `.env`, `.bak`, `.sql`, `wp-config` с кодом ответа `404`.
+- [ ] **Каталоги загрузок:** Исполнение скриптов в каталогах пользовательских файлов заблокировано (`return 403`).
+- [ ] **Request Smuggling:** `proxy_request_buffering on;`, `proxy_http_version 1.1;`, `proxy_set_header Transfer-Encoding "";`.
+- [ ] **Модуль WAF:** ModSecurity v3 или Coraza подключен, настроено исключение ложных срабатываний через `SecRuleRemoveById`.
+- [ ] **Файловые права:** Конфигурация доступна только root (644/755), приватные ключи изолированы (600), кэш принадлежит `www-data`.
+- [ ] **Fail2ban:** Активны джейлы для блокировки повторяющихся нарушителей rate limit и 401/403 ошибок на уровне `nftables`.
 
-### Процедуры операционной поддержки
+### Базовые требования к версиям ПО (2026 Baseline)
 
-**Валидация после изменений:**
-```bash
-# 1. Проверка синтаксиса
-nginx -t
-
-# 2. Применение
-systemctl reload nginx
-
-# 3. Логи
-journalctl -u nginx --since "1 minute ago"
-
-# 4. Проверка заголовков
-curl -I https://example.com 2>/dev/null | grep -iE "strict-transport|x-frame|x-content|server"
-```
-
-**Откат изменений:**
-```bash
-# Если reload вызвал проблемы
-git checkout /etc/nginx/conf.d/example.com.conf  # или восстановите из бэкапа
-systemctl reload nginx
-```
-
-**Бэкап конфигурации:**
-```bash
-# Бэкап конфигурации
-tar czf /backup/nginx-vhosts-$(date +%F).tar.gz /etc/nginx/conf.d/
-
-# Бэкап сертификатов (если не используются Let's Encrypt)
-tar czf /backup/nginx-ssl-$(date +%F).tar.gz /etc/nginx/ssl/
-```
-
-### Совместимость и baseline (2026)
-
-| Компонент | Версия / Статус 2026 | Рекомендация |
+| Компонент | Рекомендуемая версия | Обоснование для производственной среды |
 | :--- | :--- | :--- |
-| **Nginx OSS** | 1.27+ LTS | Использовать модуль `ngx_http_modsecurity_module` или внешний reverse proxy для WAF. |
-| **Angie** | 1.5+ | Предпочтительна для кластерных сценариев с `sync` в лимитах. |
-| **ModSecurity** | 3.0.12+ | Использовать с OWASP CRS v4. |
-| **Coraza** | 1.x (Go + Wasm) | Современная альтернатива для высоконагруженных сред. |
-| **fail2ban** | 0.11.x (nftables backend) | Использовать nftables вместо ipset для O(1) блокировок. |
-| **TLS** | TLS 1.3 mandatory, 1.2 fallback | TLS 1.0/1.1 полностью выведены (RFC 8996). |
+| **Nginx OSS** | 1.26.x (Stable) / 1.28+ (Mainline) | Закрыты критические уязвимости HTTP/2 Rapid Reset (CVE-2023-44487), стабильный HTTP/3 QUIC. |
+| **Angie** | 1.6+ / 1.12.x | Нативная кластерная синхронизация лимитов `sync`, директива `max_headers`, встроенный API статистики. |
+| **ModSecurity** | 3.0.12+ | Стабильная кодовая база libmodsecurity3 с коннектором для Nginx. |
+| **OWASP CRS** | v4.x | Существенно снижен уровень ложных срабатываний по сравнению с v3, улучшена поддержка JSON API. |
+| **Fail2ban** | 0.11.x+ | Нативный бэкенд для `nftables` (высокая производительность блокировок O(1) без оверхеда iptables). |
+| **OpenSSL** | 3.0 LTS / 3.4+ / 3.5+ | Поддержка TLS 1.3, современных наборов шифров и аппаратного ускорения AES-NI. |
 
-### Производительность и overhead
+### Производительность и накладные расходы уровней защиты
 
-| Механизм | Влияние на latency | Рекомендация |
-| :--- | :--- | :--- |
-| `limit_req` / `limit_conn` | <1ms | Без ограничений, базовый hardening. |
-| `server_tokens off` | 0ms | Обязательно на production. |
-| Security Headers | 0ms | Обязательно на production. |
-| `auth_basic` | <5ms | Для внутренних ресурсов; для production используйте `auth_request` с OIDC. |
-| ModSecurity v3 | 5–20ms | На RPS > 10k рассмотреть Coraza или внешний WAF. |
-| Coraza | 2–10ms | Высокая производительность на Go. |
-| `secure_link` | <1ms | Для защиты статики от хотлинкинга. |
+| Уровень / Механизм защиты | Дополнительная задержка (Latency) | Нагрузка на RAM / CPU | Рекомендация SRE |
+| :--- | :--- | :--- | :--- |
+| `server_tokens off;` | 0 мс | 0% | Включать повсеместно во всех окружениях. |
+| Security Headers (`always`) | < 0.05 мс | < 0.1% | Включать повсеместно во всех окружениях. |
+| `limit_req` / `limit_conn` | < 0.5 мс | ~10 МБ RAM на 160k IP, минимальный CPU | Обязательный базовый слой для публичных API и форм аутентификации. |
+| `ngx_http_realip_module` | < 0.1 мс | Незначительная | Обязательно при наличии upstream-балансировщиков. |
+| `secure_link` (MD5) | < 0.3 мс | Минимальный оверхед CPU на хэш | Для защищенной раздачи медиаконтента и защиты от хотлинкинга. |
+| **ModSecurity v3 (OWASP CRS)** | **5 – 20 мс** | **~50–100 МБ RAM на воркер, до 25% CPU** | Использовать избирательно для публичных веб-форм и API. Отключать (`modsecurity off;`) для статических ассетов и медиа. |
+| **Coraza WAF (Go/Wasm)** | **2 – 8 мс** | **~30–50 МБ RAM, умеренный CPU** | Высокопроизводительная альтернатива ModSecurity для RPS > 10 000. |
 
 ## Дополнительная информация
 
 ### См. также
 
-*   **[Защита от DoS/DDoS в Angie/Nginx](../../Angie/High_Load/dos_protection.md)** — Rate Limiting, Connection Limiting, кластерная синхронизация и QUIC-защита.
-*   **[Безопасность HTTP в продакшене](../../../Networking/Protocols/HTTP/http_security_hardening.md)** — Security Headers, CORS, request smuggling, ModSecurity/NAXSI.
-*   **[WAF для Nginx/Angie (ModSecurity, Coraza)](../../../Security/ApplicationSecurity/waf.md)** — установка `ngx_http_modsecurity_module`, OWASP CRS, режимы DetectionOnly/On.
-*   **[fail2ban для защиты Nginx](../../../Linux/Security/Tools/fail2ban.md)** — джail'ы `nginx-limit-req`, `nginx-http-auth`, бан по Rate Limit/Auth-логам.
-*   **[Контроль доступа в Angie](../../Angie/angie_access_control.md)** — IP-фильтрация, `auth_basic`, `auth_request`, JWT, LDAP, PAM, гео-блокировка.
-*   **[CORS в Angie](../../Angie/angie-cors.md)** — `map $http_origin`, preflight, restricted origins, credentials.
-*   **[Rate limiting и circuit breakers](../../../Networking/Protocols/HTTP/http_rate_limiting_circuit_breakers.md)** — token/leaky bucket, burst, backpressure.
-*   **[Аутентификация HTTP](../../../Networking/Protocols/HTTP/http_authentication.md)** — схемы аутентификации на протокольном уровне.
+*   **[Харденинг Nginx на уровне системы: systemd-юнит, SELinux, AppArmor](./nginx_systemd_selinux_hardening.md)** — глубокая изоляция процесса Nginx, непривилегированный запуск (`User=nginx`), capability `CAP_NET_BIND_SERVICE`.
+*   **[Параметры виртуального хоста TLS/SSL](./TLS_SSL/nginx_tls_virtual_host_config.md)** — эталонная настройка TLS 1.3, шифров, сессионных тикетов и OCSP Stapling.
+*   **[Глобальные параметры TLS/SSL в Nginx](./TLS_SSL/nginx_tls_global_parameters.md)** — тюнинг SSL-кэша, криптографических библиотек и буферов TLS.
+*   **[Диагностика TLS/SSL](./TLS_SSL/nginx_tls_troubleshooting_and_compatibility.md)** — решение проблем с рукопожатием, сертификатами и совместимостью клиентов.
+*   **[Конфигурация mTLS в Nginx](./TLS_SSL/nginx_mtls_configuration.md)** — взаимная аутентификация клиентов по сертификатам x509.
+*   **[Защита от DoS-атак в Angie](../../Angie/High_Load/dos_protection.md)** — кластерная синхронизация зон `sync`, мониторинг лимитов через REST API.
+*   **[Контроль доступа в Angie](../../Angie/angie_access_control.md)** — разграничение доступа по IP, JWT-валидация и модули аутентификации.
+*   **[CORS в Angie](../../Angie/angie-cors.md)** — корректная обработка preflight-запросов и заголовков `Access-Control-*`.
+*   **[Безопасность HTTP в продакшене](../../../Networking/Protocols/HTTP/http_security_hardening.md)** — протокольный анализ Security Headers, CORS и предотвращения атак.
+*   **[Rate Limiting и устойчивость HTTP-сервисов](../../../Networking/Protocols/HTTP/http_rate_limiting_circuit_breakers.md)** — алгоритмы Token Bucket, Leaky Bucket и Circuit Breakers.
+*   **[WAF для веб-приложений (ModSecurity, NAXSI, Coraza)](../../../Security/ApplicationSecurity/waf.md)** — архитектура WAF, настройка OWASP CRS и управление правилами.
+*   **[fail2ban для защиты Linux-серверов](../../../Linux/Security/Tools/fail2ban.md)** — архитектура джейлов, фильтры логов и интеграция с `nftables`.
+*   **[Защита веб-серверов от ботов](../../Concepts/bot_protection.md)** — поведенческий анализ, honeypot-ловушки и гибридная фильтрация.
+*   **[Устранение неполадок Nginx](../Operations/nginx_troubleshooting.md)** — диагностика аварийных состояний, переполнения буферов и сбоев проксирования.

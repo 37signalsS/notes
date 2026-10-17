@@ -172,6 +172,20 @@
 
 ---
 
+### Angie Ingress Controller
+
+Официальное решение на базе российского веб-сервера Angie (реестровая запись Минцифры № 17604), выступающее прямой заменой `ingress-nginx` для On-Premises и импортозамещающих инфраструктур.
+
+**Особенности и преимущества:**
+- **Zero-Downtime Endpoints:** Обновление целевых IP подов в разделяемой памяти без тяжелого релоада процессов мастер-воркер.
+- **Совместимость с аннотациями:** Плавная миграция с `ingress-nginx` без изменения логики маршрутизации.
+- **Безопасность:** Поддержка ГОСТ TLS (Angie PRO) и режима ЗПС (Astra Linux Special Edition).
+- **Наблюдаемость:** Встроенный Status API и нативный экспорт метрик в Prometheus.
+
+**Подробное руководство:** **[Angie Ingress Controller в Kubernetes](../../../WebServers/Angie/angie_ingress_controller.md)** — архитектура, DaemonSet, Canary и Sidecar.
+
+---
+
 ## Сравнительные таблицы
 
 ### Технические характеристики
@@ -186,8 +200,9 @@
 | **Kong** | OpenResty (NGINX+Lua) | Полная | Плагины | Да | Operator |
 | **HAProxy** | HAProxy (C) | Полная (GW API v1) | SPOE/ModSec| Да | Аннотации |
 | **NGINX Fabric** | NGINX | Нативная | App Protect| Нет | Да |
+| **Angie Ingress** | Angie (C) | В разработке | Coraza / ModSec | NJS | Нативная (ACME / cert-manager) |
 
-> **Примечание:** Kong использует **OpenResty** (NGINX + LuaJIT), а не чистый NGINX. HAProxy Ingress поддерживает Gateway API через проект **haproxytech/kubernetes-ingress** с нативной поддержкой `HTTPRoute` и `Gateway`.
+> **Примечание:** Kong использует **OpenResty** (NGINX + LuaJIT), а не чистый NGINX. HAProxy Ingress поддерживает Gateway API через проект **haproxytech/kubernetes-ingress** с нативной поддержкой `HTTPRoute` и `Gateway`. Angie Ingress Controller документирован в [Angie Ingress Controller в Kubernetes](../../../WebServers/Angie/angie_ingress_controller.md).
 
 ---
 

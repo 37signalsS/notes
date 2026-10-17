@@ -659,6 +659,20 @@ curl -sI -H "Host: malicious-scanner.net" http://127.0.0.1/
     Всегда присваивайте каждому виртуальному серверу уникальную зону `status_zone <name>;`. Это позволяет без дополнительных затрат подключить сбор метрик в Prometheus через нативный модуль `ngx_http_prometheus_module` или консоль управления Angie Console.
 6.  **Управление версиями конфигурации (Infrastructure as Code):**
     Каталог `/etc/angie` должен быть инициализирован как локальный git-репозиторий или полностью управляться системой управления конфигурациями (Ansible, SaltStack) с обязательным прогоном `angie -t` на этапе валидации шаблона (`validate: 'angie -t -c %s'`).
+7.  **CI/CD тестирование конфигураций перед деплоем:**
+    Внедряйте автоматическую проверку пула конфигурационных файлов в пайплайнах (GitLab CI / GitHub Actions) в изолированном Docker-раннере. Для прохождения проверки синтаксиса генерируйте временные самоподписанные сертификаты-заглушки:
+    ```yaml
+    # Фрагмент .gitlab-ci.yml:
+    test_angie_config:
+      image: docker.angie.software/angie:1.12-alpine
+      stage: test
+      script:
+        - mkdir -p /etc/angie/ssl
+        - openssl req -x509 -nodes -days 1 -newkey rsa:2048 -keyout /etc/angie/ssl/dummy.key -out /etc/angie/ssl/dummy.crt -subj "/CN=test"
+        - angie -t -c /builds/$CI_PROJECT_PATH/etc/angie/angie.conf
+    ```
+8.  **Харденинг процесса на уровне ОС (systemd Sandboxing):**
+    Изолируйте сервис Angie от системных каталогов операционной системы с помощью drop-in файла `/etc/systemd/system/angie.service.d/hardening.conf` (`ProtectSystem=strict`, `ProtectHome=yes`, `NoNewPrivileges=yes`, `CapabilityBoundingSet=CAP_NET_BIND_SERVICE`). Подробный разбор и готовые манифесты: [Харденинг Nginx/Angie на уровне системы: systemd, SELinux, AppArmor](../Nginx/Security/nginx_systemd_selinux_hardening.md).
 
 ---
 
@@ -674,6 +688,9 @@ curl -sI -H "Host: malicious-scanner.net" http://127.0.0.1/
 
 *   **[Обзор Angie](./angie_overview.md)** — архитектура, отличия от Nginx и ключевые возможности.
 *   **[Установка Angie](./angie_installation.md)** — установка из официальных репозиториев для всех поддерживаемых дистрибутивов Linux.
+*   **[Angie Ingress Controller в Kubernetes](./angie_ingress_controller.md)** — использование Angie в роли Ingress-шлюза на On-Premises кластерах.
+*   **[Отказоустойчивость с BGP Anycast и ECMP](./angie_ha_with_bgp_anycast.md)** — построение горизонтально масштабируемого Active-Active кластера на базе BIRD 2 и сетевой фабрики.
+*   **[Диагностика и устранение неисправностей Angie](./angie_troubleshooting.md)** — SRE-руководство по локализации сбоев, профилированию 100% CPU и анализу очередей ядра.
 *   **[Виртуальные хосты и server_name в Angie](./angie-server-name.md)** — алгоритмы маршрутизации, маски (wildcards), регулярные выражения и SNI.
 *   **[Graceful Reload и Binary Upgrade в Angie](./angie-graceful-reload.md)** — механизм смены поколений процессов и обновление бинарного файла без простоя.
 *   **[Журналирование в Angie](./angie_logging.md)** — детальная настройка access/error логов, JSON-экранирование и фильтрация.
@@ -684,5 +701,5 @@ curl -sI -H "Host: malicious-scanner.net" http://127.0.0.1/
 *   **[Мониторинг Angie с помощью Prometheus](./angie_monitoring/angie_monitoring_prometheus.md)** — экспорт метрик в формате OpenMetrics.
 *   **[Управление доступом в Angie](./angie_access_control.md)** — директивы allow/deny, базовая аутентификация и ограничение прав.
 *   **[Миграция с Nginx на Angie](./migration_from_nginx.md)** — практические шаги бесшовного перехода с Nginx на Angie.
-*   **[Безопасность systemd](../../Linux/Security/Concepts/systemd_security.md)** — системные директивы изоляции сервисов и управление системными лимитами.
+*   **[Харденинг Nginx/Angie на уровне системы](../Nginx/Security/nginx_systemd_selinux_hardening.md)** — системные директивы изоляции сервисов, Capabilities, SELinux и AppArmor.
 *   **[Обзор Nginx](../Nginx/Core/nginx_overview.md)** — общая архитектура Nginx-совместимых веб-серверов.

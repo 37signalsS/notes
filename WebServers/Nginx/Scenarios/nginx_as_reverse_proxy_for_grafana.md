@@ -1,576 +1,954 @@
 # Nginx как обратный прокси для Grafana
 
-## 1. Определения
+**Актуально для:** Nginx 1.26.x (Stable) / 1.28.x (Mainline), Grafana 13.2.x / 12.4.x (LTS)
 
-**Nginx как обратный прокси для Grafana** — сценарий развёртывания, при котором Nginx выступает единой точкой входа, принимая запросы на стандартных портах (80/443) и перенаправляя их на внутренний порт Grafana (по умолчанию 3000). Это обеспечивает SSL/TLS-терминацию, скрытие внутренней инфраструктуры и централизованную аутентификацию.
+## Определения
 
-*   **[Nginx](../Core/nginx_overview.md)** — высокопроизводительный веб-сервер и обратный прокси.
-*   **[Grafana](../../../Grafana/grafana_overview.md)** — open-source платформа для визуализации и мониторинга данных. По умолчанию работает на порту `3000` (HTTP/HTTPS).
-*   **[Обратный прокси (Reverse Proxy)](../../../Networking/Concepts/proxy.md)** — сервер-посредник, принимающий запросы от клиентов и распределяющий их между внутренними серверами (бэкендами).
-*   **WebSocket / Upgrade** — механизм долгоживущих соединений, используемый Grafana Live и функциями реального времени. Требует явной передачи заголовков `Upgrade` и `Connection` через прокси.
-*   **Auth proxy** — режим аутентификации, при котором Nginx (или иной прокси) проверяет пользователя и передаёт его имя/группы в заголовках (например, `X-WEBAUTH-USER`). Grafana доверяет этим заголовкам и не запрашивает логин отдельно. См. детали в **[Управление пользователями и аутентификация](../../../Grafana/grafana_user_management_and_authentication.md)**.
-*   **Sub-path (подпуть)** — режим, при котором Grafana доступна не на корне домена, а по префиксу (например, `https://example.com/grafana/`). Требует синхронной настройки Nginx и Grafana (`root_url`, `serve_from_sub_path`).
+**Nginx как обратный прокси для Grafana** — архитектурный сценарий развёртывания, при котором веб-сервер Nginx выступает единой точкой входа (Reverse Proxy), принимая клиентские запросы на стандартных портах 80 и 443 и перенаправляя их на внутренний порт Grafana (по умолчанию `3000/TCP`). Решение обеспечивает централизованную терминацию SSL/TLS, балансировку нагрузки между узлами кластера, разграничение доступа к API, скрытие сетевой топологии и передачу контекста аутентификации.
 
-> Основные понятия Grafana (дашборды, панели, источники данных, провиженинг) описаны в **[Обзор Grafana](../../../Grafana/grafana_overview.md)**.
+*   **[Nginx](../Core/nginx_overview.md)** — высокопроизводительный HTTP-сервер, обратный прокси и балансировщик нагрузки с событийно-ориентированной архитектурой (event-driven).
+*   **[Grafana](../../../Grafana/grafana_overview.md)** — платформа визуализации метрик, логов, трассировок и оперативного мониторинга. По умолчанию запускает встроенный веб-сервер на порту `3000`.
+*   **[Обратный прокси (Reverse Proxy)](../../../Networking/Concepts/proxy.md)** — промежуточный сервер, принимающий запросы внешних клиентов и транслирующий их бэкенд-серверам в изолированном контуре.
+*   **Grafana Live (WebSocket)** — встроенная подсистема двусторонней потоковой передачи данных в реальном времени (endpoint `/api/live/`), используемая для live-обновления дашбордов и алертов. Требует обязательного проброса HTTP-заголовков `Upgrade` и `Connection`.
+*   **[Auth proxy](../../../Grafana/grafana_user_management_and_authentication.md)** — режим делегированной аутентификации, при котором Nginx (или внешний шлюз) производит проверку подлинности пользователя и передаёт его имя и роли в HTTP-заголовках (`X-WEBAUTH-USER`, `X-WEBAUTH-ROLE`). Grafana принимает доверенные заголовки без повторного запроса пароля.
+*   **Sub-path (подпуть)** — схема маршрутизации, при которой Grafana доступна не в корне домена, а по URL-префиксу (например, `https://monitoring.example.internal/grafana/`). Требует синхронного согласования директивы `proxy_pass` в Nginx и параметров `root_url` / `serve_from_sub_path` в Grafana.
+*   **Upstream Connection Pooling (`keepalive`)** — механизм Nginx для сохранения и переиспользования открытых TCP-соединений с бэкендами Grafana, предотвращающий исчерпание эфемерных портов и накладные расходы на TCP-handshake.
+*   **Пассивный Health Check и Failover** — встроенный механизм Nginx OSS (`max_fails`, `fail_timeout`, `proxy_next_upstream`), регистрирующий сбои реальных запросов и динамически исключающий неисправный узел Grafana из пула балансировки.
+*   **[Отказоустойчивый кластер Grafana (HA)](../../../Grafana/high_availability.md)** — схема active-active с несколькими узлами Grafana, подключёнными к общей внешней СУБД (PostgreSQL/MySQL), где Nginx распределяет трафик без необходимости привязки клиентских сессий (sticky sessions).
 
-## 2. Базовые концепции
+---
+
+## Базовые концепции и архитектура
 
 ### Архитектура решения
 
 ```
-Клиент → [ Nginx (SSL termination, auth, logging) ] → [ Grafana:3000 ]
-                                                       (single node или HA cluster)
+Клиенты (Браузеры / Grafana CLI / API / Webhook)
+                    │
+                    ▼ HTTPS (порт 443) [TLS 1.3, HTTP/2, HSTS, Rate Limiting]
+┌───────────────────────────────────────────────────────────────┐
+│                      Nginx Reverse Proxy                      │
+│   (TLS Termination, Auth Proxy, WebSocket, Buffer Tuning)     │
+└───────────────┬───────────────────────────────┬───────────────┘
+                │                               │
+     HTTP:3000 /│ Keepalive          HTTP:3000 /│ Keepalive
+     (Node 1)   │                    (Node 2)   │
+                ▼                               ▼
+┌───────────────────────────────┐┌───────────────────────────────┐
+│        Grafana Node 1         ││        Grafana Node 2         │
+│      (Stateless Worker)       ││      (Stateless Worker)       │
+│  Live / Alerting: Memberlist  ││  Live / Alerting: Memberlist  │
+└───────────────┬───────────────┘└───────────────┬───────────────┘
+                │                                │
+                └───────────────┬────────────────┘
+                                ▼
+┌───────────────────────────────────────────────────────────────┐
+│            Общая инфраструктура хранения состояния            │
+│  - СУБД (PostgreSQL / MySQL): сессии, дашборды, права         │
+│  - Redis (опционально): шина pub/sub для Grafana Live HA      │
+└───────────────────────────────────────────────────────────────┘
 ```
 
-Nginx размещается перед инсталляцией Grafana и выполняет следующие функции:
+Nginx размещается перед узлами Grafana и решает следующие инфраструктурные задачи:
 
-1. **Терминация SSL/TLS**: Вынос шифрования на Nginx. Один сертификат (Wildcard или Let's Encrypt) покрывает доступ к UI без необходимости настройки HTTPS в самой Grafana.
-2. **Балансировка и отказоустойчивость**: При HA-развёртывании Grafana (несколько инстансов с общей БД) Nginx распределяет запросы между узлами. При сбое одного инстанса трафик автоматически переключается.
-3. **Управление доступом**:
-    - Ограничение доступа по IP-адресам или через Basic Auth / Auth proxy (SSO через корпоративный IdP).
-    - Внедрение заголовков безопасности (HSTS, CSP, X-Frame-Options).
-    - Передача токенов аутентификации через кастомные заголовки (Auth proxy).
-4. **Поддержка WebSocket**: Grafana Live, real-time обновления дашбордов и уведомления используют WebSocket. Nginx должен корректно передавать заголовки `Upgrade` и `Connection`.
-5. **Оптимизация**: Кэширование статических ассетов, сжатие (Gzip/Brotli), буферизация для больших дашбордов и запросов Explore.
-6. **Логирование и аудит**: Централизованный доступный лог всех обращений с указанием реального IP-адреса клиента (`X-Forwarded-For`), времени и результата.
+1. **SSL/TLS-терминация:** Концентрация криптографической нагрузки на Nginx с централизованным обновлением сертификатов (включая автоматизацию Certbot/acme.sh или корпоративный внутренний PKI). На узлы Grafana трафик передаётся по быстрому локальному HTTP (или по внутреннему шифрованному каналу).
+2. **Балансировка нагрузки и отказоустойчивость:** Распределение трафика по пулу узлов Grafana. При падении одного из экземпляров директива `proxy_next_upstream` обеспечивает незаметный для пользователя повтор запроса на соседний узел.
+3. **Разграничение прав и защита периметра:**
+   - Ограничение доступа к административным API (`/api/admin/`, `/api/org/`) по белым спискам IP-адресов.
+   - Защита формы логина (`/login`) от перебора паролей через `limit_req_zone`.
+   - Внедрение заголовков безопасности браузера (`Strict-Transport-Security`, `X-Content-Type-Options`, `Content-Security-Policy`).
+4. **Полноценная поддержка Grafana Live (WebSockets):** Выделенная маршрутизация запросов к `/api/live/` с корректной обработкой протокола hop-by-hop и предотвращением разрыва долгоживущих TCP-сессий.
+5. **Оптимизация сетевого ввода-вывода и буферизация:** Тюнинг буферов Nginx предотвращает сброс больших ответов (JSON-выгрузки дашбордов, тяжелые выборки Explore) во временные файлы на диске (`proxy_temp`).
+6. **Централизованный аудит:** Регистрация клиентских запросов с фиксацией реального IP-адреса (`$remote_addr`), времени ответа апстрима (`$upstream_response_time`) и кодов возврата Grafana.
 
 ### Жизненный цикл запроса
 
-1. Клиент отправляет HTTPS-запрос на `grafana.example.com`.
-2. Nginx завершает TLS, проверяет заголовки, IP-клиент и (при необходимости) аутентификацию.
-3. Nginx выбирает upstream-сервер по round-robin или least_conn.
-4. При наличии `keepalive` в upstream соединение с бэкендом переиспользуется.
-5. Grafana обрабатывает запрос: авторизует пользователя, выполняет запрос к источнику данных, возвращает HTML/JSON/WebSocket-фрейм.
-6. Nginx передаёт ответ клиенту, добавляя заголовки безопасности.
+1. **Приём соединения:** Клиент устанавливает TLS-сессию с Nginx на порту 443. Происходит согласование TLS 1.3 и ALPN (`h2` или `http/1.1`).
+2. **Первичная фильтрация:** Nginx сверяет IP-адрес клиента с правилами `allow`/`deny` и проверяет лимит запросов в `limit_req`.
+3. **Определение маршрута:**
+   - Запросы к `/api/live/` классифицируются как WebSocket-трафик.
+   - Запросы к статическим ассетам или стандартному HTTP API отправляются в общий пул бэкендов.
+4. **Модификация заголовков:** Nginx добавляет служебные заголовки:
+   - `Host $host` — сохранение оригинального имени хоста, необходимого Grafana для валидации источника и генерации ссылок.
+   - `X-Real-IP $remote_addr` и `X-Forwarded-For $proxy_add_x_forwarded_for` — фиксация клиентского IP для логов и подсистем безопасности Grafana.
+   - `X-Forwarded-Proto $scheme` — указание исходного протокола (HTTPS), без которого Grafana не устанавливает флаг `Secure` на сессионные cookie и пытается выполнить циклический редирект на HTTP.
+5. **Проксирование и upstream keepalive:** Nginx выбирает узел из пула `upstream` (по алгоритму `least_conn` или `round-robin`) и передаёт запрос через переиспользуемый сокет пула `keepalive`.
+6. **Обработка в Grafana:** Экземпляр Grafana извлекает сессию пользователя из общей БД (PostgreSQL/MySQL), исполняет запрос и формирует ответ.
+7. **Возврат клиенту:** Nginx передаёт ответ клиенту, внедряя настроенные заголовки безопасности (`HSTS`, `nosniff`).
 
-### Специфика долгоживущих соединений
+### Специфика долгоживущих соединений и WebSocket
 
-Grafana использует **WebSocket** для функций реального времени (Grafana Live). Дополнительно, тяжелые запросы в **Explore** или при больших временных интервалах могут удерживать соединение несколько минут. Nginx по умолчанию имеет `proxy_read_timeout 60s`, поэтому требуется явное увеличение этого параметра.
+Grafana использует два типа долгоживущих HTTP/TCP-взаимодействий:
 
-В HA-режиме сессии пользователей хранятся в PostgreSQL/MySQL, а не в файловой системе, что позволяет Nginx балансировать запросы между несколькими инстансами Grafana без привязки сессий (sticky sessions).
+*   **Grafana Live (WebSocket):** Клиент держит постоянное полнодуплексное соединение для приёма push-уведомлений и потоковых графиков. Соединение начинается со стандартного HTTP-запроса с заголовками `Upgrade: websocket` и `Connection: Upgrade`. Прокси обязан передать эти заголовки на бэкенд, иначе апгрейд протокола будет сброшен с кодом `400 Bad Request`.
+*   **Тяжелые запросы Explore и построение панелей:** При выполнении аналитических запросов к медленным или нагруженным источникам данных (Loki, Elasticsearch, ClickHouse) соединение может ожидать ответа десятки секунд. Стандартный таймаут Nginx `proxy_read_timeout 60s` приводит к ошибкам `504 Gateway Time-out`. Значение должно быть увеличено минимум до `310s`.
 
-### Конфигурация Grafana для работы за прокси
+> **Важно: взаимодействие Upstream Keepalive и WebSocket:**  
+> Для работы пула `keepalive` с бэкендами Nginx требует директивы `proxy_http_version 1.1;` и очистки заголовка соединения: `proxy_set_header Connection "";`. Если же глобально в блоке `server` установить `proxy_set_header Connection $connection_upgrade;`, где маппинг возвращает `close` для обычных запросов, Nginx будет закрывать соединение с бэкендом после каждого HTTP-запроса, полностью отключая keepalive.  
+> Рекомендуемый подход в production — разделять конфигурацию: для эндпоинта `/api/live/` задавать параметры WebSocket, а для общего location `/` сохранять активный `keepalive`.
 
-Grafana должна «знать» внешний URL для корректной генерации ссылок, cookie и callback-адресов. Это настраивается в `grafana.ini` (секция `[server]`) или через переменные окружения `GF_SERVER_*`:
+### Конфигурация Grafana для работы за обратным прокси
 
-- `domain` — основной домен доступа (без протокола и пути).
-- `root_url` — полный внешний URL (обязательно с протоколом и завершающим слэшем).
-- `serve_from_sub_path` — флаг, включающий режим подпути (sub-path).
-- `enforce_domain` — принудительное перенаправление на указанный домен (полезно при множестве alias).
+Grafana генерирует ссылки, пути редиректов и параметры cookie на основе собственной конфигурации в `/etc/grafana/grafana.ini` (секция `[server]`):
 
-## 3. Практические сценарии
+*   `domain` — доменное имя, по которому пользователи обращаются к Nginx (например, `grafana.example.internal`).
+*   `root_url` — полный публичный URL с указанием схемы и завершающего слэша (например, `https://grafana.example.internal/` или `https://example.internal/grafana/`).
+*   `serve_from_sub_path` — флаг (`true`/`false`), указывающий Grafana, что внутренний маршрутизатор должен учитывать префикс подпути.
+*   `enforce_domain` — принудительный редирект, если клиент обратился по IP-адресу или по несовпадающему доменному имени.
 
-### 3.1. Предварительные требования
+---
 
-| Компонент | Требование | Примечание |
+## Практические сценарии
+
+### Предварительные требования
+
+| Компонент | Требование | Назначение / Обоснование |
 | :--- | :--- | :--- |
-| **ОС** | Debian 12 (Bookworm), Ubuntu 22.04/24.04 (Jammy/Noble), RHEL/Rocky 9 | Другие дистрибутивы на основе Debian/RHEL также поддерживаются |
-| **Nginx** | Версия 1.27+ | Рекомендуется `nginx-full` (Debian/Ubuntu) |
-| **Grafana** | Версия 13.2.x (OSS или Enterprise) | 12.x — LTS; 11.x — EOL (июнь 2026) |
-| **Сеть** | Доступ от Nginx до порта `3000` на Grafana-узлах | При HA — несколько адресов upstream |
-| **Права** | root или пользователь с правами sudo | Для управления Nginx и firewall |
-| **DNS** | A-запись `grafana.example.com` → IP-frontend Nginx | Или `/etc/hosts` для тестовых сред |
+| **Операционная система** | Debian 12 / Ubuntu 22.04, 24.04 / RHEL 9, Rocky Linux 9 | Стандартные дистрибутивы Linux без привязки к облачным платформам |
+| **Nginx** | Версия 1.26+ (Stable) или 1.28+ (Mainline) | Поддержка директивы `http2 on;`, пулов `keepalive` и расширенного логирования |
+| **Grafana** | 13.2.x (актуальная линия) или 12.4.x (LTS) | OSS или Enterprise, локальная установка через deb/rpm пакеты или бинарный релиз |
+| **Сетевой контур** | Порт 80/443 открыт на Nginx; порт 3000 доступен от Nginx к узлам Grafana | Firewall (nftables, iptables или firewalld) настроен на пропуск L7-трафика |
+| **Права доступа** | Учётная запись с правами `sudo` | Управление системными службами через systemd и редактирование `/etc/nginx/` |
+| **DNS-запись** | A/AAAA-запись `grafana.example.internal` → IP-адрес хоста Nginx | Локальный DNS-сервер (Bind9/Unbound) или `/etc/hosts` для тестовых стендов |
 
-**Начальное состояние системы:**
+**Проверка исходного состояния системы:**
 
 ```bash
-# Debian/Ubuntu
-sudo apt-get update && sudo apt-get install -y nginx curl gnupg apache2-utils
-
-# RHEL/Rocky
-sudo dnf install -y nginx curl
-
-# Проверка версии Nginx
+# Проверка версии и параметров сборки Nginx
 nginx -v
-# → nginx version: nginx/1.27.x
+# → nginx version: nginx/1.26.2
 
-# Проверка доступности Grafana из хоста Nginx
-curl -s http://10.0.2.10:3000/api/health
-# → {"database":"ok","memory":"ok"}
+# Проверка сетевой доступности Grafana с хоста Nginx
+curl -s -i http://127.0.0.1:3000/api/health
+# → HTTP/1.1 200 OK
+# → Content-Type: application/json
+# → {"commit":"...","database":"ok","version":"13.2.0"}
+
+# Проверка статуса службы Grafana
+systemctl is-active grafana-server
+# → active
 ```
 
-### 3.2. Сценарий 1: Базовый обратный прокси (одиночный узел)
+---
 
-Подходит для небольших инсталляций с одним экземпляром Grafana.
+### Сценарий 1: Базовый обратный прокси для одиночного узла
 
-**Шаг 1: Создание виртуального хоста**
+Классическая схема развёртывания: Nginx выполняет TLS-терминацию, перенаправляет HTTP на HTTPS, проксирует вызовы к локальному сервису Grafana и обрабатывает WebSocket-трафик Grafana Live.
 
-`/etc/nginx/conf.d/grafana.conf`:
+#### Шаг 1: Конфигурация Nginx
+
+Создайте файл виртуального хоста `/etc/nginx/conf.d/grafana.conf`:
+
 ```nginx
-# Маппинг для поддержки WebSockets (Grafana Live)
+# Маппинг заголовков для безопасного переключения протокола WebSocket
 map $http_upgrade $connection_upgrade {
     default upgrade;
     ''      close;
 }
 
-# Редирект с HTTP на HTTPS
+# HTTP: Безусловный редирект на защищённый протокол HTTPS
 server {
     listen 80;
     listen [::]:80;
-    server_name grafana.example.com;
+    server_name grafana.example.internal;
 
     location / {
         return 301 https://$host$request_uri;
     }
 }
 
+# HTTPS: Основной виртуальный хост
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name grafana.example.com;
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name grafana.example.internal;
 
-    ssl_certificate     /etc/letsencrypt/live/grafana.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/grafana.example.com/privkey.pem;
+    # Пути к сертификатам TLS
+    ssl_certificate     /etc/ssl/certs/grafana.example.internal.crt;
+    ssl_certificate_key /etc/ssl/private/grafana.example.internal.key;
 
-    ssl_protocols TLSv1.3;
+    # Параметры безопасности TLS (только современные надежные протоколы)
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
     ssl_prefer_server_ciphers off;
     ssl_session_timeout 1d;
-    ssl_session_cache shared:SSL:10m;
+    ssl_session_cache shared:GrafanaSSL:10m;
     ssl_session_tickets off;
 
-    add_header Strict-Transport-Security "max-age=63072000" always;
-    add_header X-Frame-Options "SAMEORIGIN";
-    add_header X-Content-Type-Options "nosniff";
+    # Заголовки безопасности браузера
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
 
+    # Базовые параметры проксирования
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_redirect off;
 
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
-
-    proxy_read_timeout 310s;
+    # Таймауты для тяжелых аналитических выборок и отчетов Explore
     proxy_connect_timeout 5s;
+    proxy_send_timeout 310s;
+    proxy_read_timeout 310s;
 
+    # Тюнинг буферов для передачи объемных JSON-структур дашбордов
+    proxy_buffering on;
+    proxy_buffer_size 16k;
+    proxy_buffers 8 32k;
+    proxy_busy_buffers_size 64k;
+
+    # Выделенный маршрут для WebSocket Grafana Live
+    location /api/live/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # Основной интерфейс и REST API
     location / {
-        proxy_pass http://localhost:3000;
+        proxy_pass http://127.0.0.1:3000;
+    }
+}
+```
 
-        # Оптимизация буферов для больших дашбордов и Explore
+> **Важно о синтаксисе HTTP/2:**  
+> Начиная с Nginx 1.25.1+, параметр `http2` директивы `listen` объявлен устаревшим (`deprecated`) и порождает предупреждение в логах. Современным стандартом является раздельное объявление `listen 443 ssl;` и включение директивы `http2 on;` в контексте блока `server`.
+
+#### Шаг 2: Настройка `grafana.ini`
+
+Отредактируйте `/etc/grafana/grafana.ini` на хосте Grafana:
+
+```ini
+[server]
+protocol = http
+http_addr = 127.0.0.1
+http_port = 3000
+domain = grafana.example.internal
+root_url = https://grafana.example.internal/
+enforce_domain = true
+enable_gzip = true
+```
+
+#### Шаг 3: Валидация и применение
+
+```bash
+# Валидация синтаксиса конфигурации Nginx
+sudo nginx -t
+# → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+# → nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+# Бесшовный reload Nginx
+sudo systemctl reload nginx
+
+# Перезапуск службы Grafana для применения параметров root_url
+sudo systemctl restart grafana-server
+
+# Проверка редиректа с HTTP на HTTPS
+curl -sI http://grafana.example.internal/ | grep -iE "HTTP/|Location"
+# → HTTP/1.1 301 Moved Permanently
+# → Location: https://grafana.example.internal/
+
+# Проверка ответа защищённого эндпоинта через HTTPS
+curl -sI https://grafana.example.internal/api/health
+# → HTTP/2 200
+# → content-type: application/json
+# → strict-transport-security: max-age=31536000; includeSubDomains
+```
+
+---
+
+### Сценарий 2: Отказоустойчивый кластер (High Availability Upstream)
+
+Сценарий для высоконагруженных окружений с несколькими активными узлами Grafana (Active-Active), общей базой данных (PostgreSQL) и пулом постоянных соединений `keepalive`.
+
+#### Шаг 1: Конфигурация Nginx с балансировкой
+
+`/etc/nginx/conf.d/grafana-ha.conf`:
+
+```nginx
+# Определение пула бэкендов Grafana
+upstream grafana_ha_backend {
+    # Метод распределения: наименьшее число активных соединений
+    least_conn;
+
+    # Узлы кластера с пассивным мониторингом сбоев
+    server 10.0.2.11:3000 max_fails=3 fail_timeout=10s;
+    server 10.0.2.12:3000 max_fails=3 fail_timeout=10s;
+    server 10.0.2.13:3000 max_fails=3 fail_timeout=10s;
+
+    # Пул активных открытых соединений к бэкендам
+    keepalive 32;
+}
+
+# Маппинг для WebSockets
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name grafana-cluster.example.internal;
+
+    ssl_certificate     /etc/ssl/certs/grafana-cluster.example.internal.crt;
+    ssl_certificate_key /etc/ssl/private/grafana-cluster.example.internal.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # Общие заголовки проксирования
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_redirect off;
+
+    # Политика автоматического переключения при сбое (Failover)
+    proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+    proxy_next_upstream_tries 3;
+    proxy_next_upstream_timeout 10s;
+
+    # WebSocket-маршрут к кластеру Grafana Live
+    location /api/live/ {
+        proxy_pass http://grafana_ha_backend;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;
+    }
+
+    # Основной трафик с активным upstream keepalive
+    location / {
+        proxy_pass http://grafana_ha_backend;
+
+        # Очистка заголовка Connection обязательна для работы keepalive к upstream
+        proxy_set_header Connection "";
+
+        proxy_read_timeout 310s;
+        proxy_connect_timeout 5s;
+
         proxy_buffers 8 32k;
         proxy_buffer_size 64k;
     }
 }
 ```
 
-> **Важно:** синтаксис `listen 443 ssl http2;` является актуальным для Nginx 1.25+. Устаревший вариант `http2 on;` внутри блока `server` не рекомендуется.
+#### Шаг 2: Требования к конфигурации узлов Grafana в кластере
 
-**Шаг 2: Настройка Grafana**
+На **каждом** узле кластера (`10.0.2.11`, `10.0.2.12`, `10.0.2.13`) в файле `grafana.ini`:
 
-`/etc/grafana/grafana.ini`:
-```ini
-[server]
-domain = grafana.example.com
-root_url = https://grafana.example.com/
-enable_gzip = true
-```
+1. Подключение к общей СУБД (PostgreSQL/MySQL):
+   ```ini
+   [database]
+   type = postgres
+   host = postgres-lb.example.internal:5432
+   name = grafana
+   user = grafana_user
+   password = SecretDbPassword123
+   ```
+2. Синхронизированный ключ шифрования секретов источников (обязан быть идентичным!):
+   ```ini
+   [security]
+   secret_key = SuperSecretClusterEncryptionKeySynchronizedAcrossAllNodes
+   ```
+3. Единый внешний адрес и шина для Grafana Live:
+   ```ini
+   [server]
+   domain = grafana-cluster.example.internal
+   root_url = https://grafana-cluster.example.internal/
 
-Или через переменные окружения (предпочтительно для контейнеров):
+   [live]
+   ha_engine = redis
+   ha_engine_address = redis-ha.example.internal:6379
+   ```
+
+#### Шаг 3: Проверка балансировки и отказоустойчивости
 
 ```bash
-GF_SERVER_DOMAIN=grafana.example.com
-GF_SERVER_ROOT_URL=https://grafana.example.com/
-GF_SERVER_ENABLE_GZIP=true
+# Тест балансировки запросов (должны отвечать разные узлы кластера)
+for i in {1..6}; do
+    curl -s -i https://grafana-cluster.example.internal/api/health | grep -i "date"
+done
+
+# Проверка активных соединений пула keepalive с хоста Nginx
+ss -tnp '( dport = :3000 )'
+# → ESTAB 0 0 10.0.2.1:54320 10.0.2.11:3000 users:(("nginx",pid=1234,fd=12))
+# → ESTAB 0 0 10.0.2.1:54322 10.0.2.12:3000 users:(("nginx",pid=1234,fd=13))
+# → ESTAB 0 0 10.0.2.1:54324 10.0.2.13:3000 users:(("nginx",pid=1234,fd=14))
 ```
 
-**Шаг 3: Валидация и применение**
+---
 
-```bash
-# Проверка синтаксиса Nginx
-sudo nginx -t
-# → nginx: configuration file /etc/nginx/nginx.conf test is successful
+### Сценарий 3: Размещение Grafana в подпути (Sub-path)
 
-# Перезагрузка конфигурации
-sudo systemctl reload nginx
+Используется, когда домен разделяется между несколькими приложениями, и Grafana должна открываться по адресу `https://portal.example.internal/grafana/`.
 
-# Проверка доступности
-curl -s -o /dev/null -w "%{http_code}" https://grafana.example.com/api/health
-# → 200
+#### Шаг 1: Конфигурация Nginx
 
-# Проверка редиректа с HTTP на HTTPS
-curl -s -o /dev/null -w "%{redirect_url}" http://grafana.example.com/
-# → https://grafana.example.com/
-```
-
-### 3.3. Сценарий 2: Работа в подпути (sub-path)
-
-Если Grafana должна быть доступна по адресу `https://example.com/grafana/`, необходимо внести синхронные изменения в Nginx и Grafana.
-
-**Nginx:**
+Фрагмент конфигурации виртуального хоста `/etc/nginx/conf.d/portal.conf`:
 
 ```nginx
-location /grafana/ {
-    proxy_pass http://localhost:3000/;  # Обратите внимание на слэш в конце
+# Обязательный редирект с адреса без слэша на адрес со слэшем
+location = /grafana {
+    return 301 https://$host/grafana/;
+}
+
+# Обработка WebSocket внутри подпути
+location /grafana/api/live/ {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 3600s;
+}
+
+# Основная локация подпути Grafana
+location /grafana/ {
+    # Внимание: URI в proxy_pass НЕ указывается!
+    # Nginx передает запрос '/grafana/...' как есть, поскольку Grafana сама знает свой подпуть.
+    proxy_pass http://127.0.0.1:3000;
 
     proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Port $server_port;
+
+    # Запрет переписывания заголовков Location от Grafana
+    proxy_redirect off;
 
     proxy_read_timeout 310s;
+    proxy_buffers 8 32k;
+    proxy_buffer_size 64k;
 }
 ```
 
-> Обратите внимание: слэш в конце `proxy_pass` обязателен. Без него Nginx передаст запрос с исходным путём (`/grafana/login`), что приведёт к 404 в Grafana.
+> **Архитектурный принцип согласования путей:**  
+> Когда в `grafana.ini` включён параметр `serve_from_sub_path = true`, встроенный маршрутизатор Grafana ожидает запросы, начинающиеся с `/grafana/...`.  
+> Если в Nginx ошибочно указать завершающий слэш в `proxy_pass` (`proxy_pass http://127.0.0.1:3000/;`), Nginx удалит префикс `/grafana/` и передаст в Grafana корень `/`. В результате Grafana вернёт циклический редирект или ошибку `404 Not Found`.
 
-**Grafana:**
+#### Шаг 2: Настройка `grafana.ini` для подпути
 
 ```ini
 [server]
-root_url = https://example.com/grafana/
+domain = portal.example.internal
+root_url = https://portal.example.internal/grafana/
 serve_from_sub_path = true
 ```
 
-**Валидация:**
+#### Шаг 3: Валидация
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}" https://example.com/grafana/api/health
-# → 200
+# Проверка редиректа с /grafana на /grafana/
+curl -sI https://portal.example.internal/grafana | grep -iE "HTTP/|Location"
+# → HTTP/2 301
+# → location: https://portal.example.internal/grafana/
+
+# Проверка доступности API через подпуть
+curl -sI https://portal.example.internal/grafana/api/health
+# → HTTP/2 200
+# → content-type: application/json
 ```
 
-### 3.4. Сценарий 3: Auth proxy (SSO через Nginx)
+---
 
-Используется, когда перед Grafana уже стоит корпоративный прокси (Nginx/Apache/Traefik), который сам аутентифицирует пользователя (например, через `auth_request` к Keycloak, mTLS или Apache mod_auth). Grafana доверяет заголовкам, переданным прокси.
+### Сценарий 4: Аутентификация через Auth Proxy (SSO на уровне прокси)
 
-> Детали настройки Grafana для auth proxy см. в **[Управление пользователями и аутентификация](../../../Grafana/grafana_user_management_and_authentication.md)**.
+Сценарий делегирования аутентификации: Nginx проверяет права пользователя (например, через mTLS-сертификат, внешний сервис через `auth_request` или Basic Auth) и передаёт логин и роль в HTTP-заголовках на бэкенд Grafana.
 
-**Grafana (`grafana.ini`):**
+#### Шаг 1: Конфигурация Nginx
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name grafana-sso.example.internal;
+
+    ssl_certificate     /etc/ssl/certs/grafana-sso.crt;
+    ssl_certificate_key /etc/ssl/private/grafana-sso.key;
+
+    # Пример проверки через внутренний auth-эндпоинт компании
+    location = /internal_auth {
+        internal;
+        proxy_pass http://10.0.1.50:8080/verify_session;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-URI $request_uri;
+    }
+
+    location / {
+        # Делегирование проверки внешнему модулю
+        auth_request /internal_auth;
+
+        # Извлечение данных пользователя из ответа auth-сервиса
+        auth_request_set $auth_user $upstream_http_x_user_login;
+        auth_request_set $auth_role $upstream_http_x_user_role;
+        auth_request_set $auth_email $upstream_http_x_user_email;
+
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Передача доверенных заголовков аутентификации в Grafana
+        proxy_set_header X-WEBAUTH-USER $auth_user;
+        proxy_set_header X-WEBAUTH-ROLE $auth_role;
+        proxy_set_header X-WEBAUTH-EMAIL $auth_email;
+
+        # Безопасность: очистка клиентских заголовков при неавторизованном запросе
+        proxy_set_header Authorization "";
+    }
+}
+```
+
+#### Шаг 2: Настройка Grafana Auth Proxy (`grafana.ini`)
 
 ```ini
 [server]
-root_url = https://grafana.example.internal/
+domain = grafana-sso.example.internal
+root_url = https://grafana-sso.example.internal/
 
 [auth.proxy]
 enabled = true
 header_name = X-WEBAUTH-USER
 header_property = username
 auto_sign_up = true
-headers = Name:X-WEBAUTH-NAME Role:X-WEBAUTH-ROLE Email:X-WEBAUTH-EMAIL Groups:X-WEBAUTH-GROUPS
 sync_ttl = 60
+
+# Маппинг дополнительных атрибутов пользователя
+headers = Role:X-WEBAUTH-ROLE Email:X-WEBAUTH-EMAIL
+
+# КРИТИЧЕСКИ ВАЖНО: список доверенных IP-адресов, от которых принимаются заголовки!
+# Запросы с заголовком X-WEBAUTH-USER от любых других IP будут отвергнуты.
+whitelist = 127.0.0.1, 10.0.2.1
 ```
 
-**Nginx:**
+#### Шаг 3: Валидация
+
+```bash
+# Тестовый запрос через прокси с эмуляцией заголовков auth-сервиса
+curl -s -H "X-WEBAUTH-USER: alexey" \
+     -H "X-WEBAUTH-ROLE: Editor" \
+     -H "X-WEBAUTH-EMAIL: alexey@example.internal" \
+     http://127.0.0.1:3000/api/user
+# → {"id":2,"email":"alexey@example.internal","name":"","login":"alexey","theme":"","orgId":1,"isGrafanaAdmin":false,"isDisabled":false,"isExternal":true,"updatedAt":"..."}
+```
+
+---
+
+### Сценарий 5: Защита периметра (IP-Allowlist и Rate Limiting)
+
+Защита панели управления и служебных интерфейсов от подбора паролей, сканирования и несанкционированного доступа из внешней сети.
+
+#### Конфигурация Nginx
+
+`/etc/nginx/conf.d/grafana-security.conf`:
 
 ```nginx
-location / {
-    auth_request /auth;                       # внешняя проверка у прокси/IdP
-    proxy_set_header X-WEBAUTH-USER $authenticated_user;
-    proxy_set_header X-WEBAUTH-ROLE $authenticated_role;   # Viewer/Editor/Admin
-    proxy_set_header X-WEBAUTH-GROUPS $authenticated_groups;
+# Ограничение частоты запросов к форме аутентификации (10 запросов в минуту с одного IP)
+limit_req_zone $binary_remote_addr zone=grafana_login_limit:10m rate=10r/m;
 
-    # Защита: запретить клиенту протащить поддельный заголовок
-    proxy_hide_header X-WEBAUTH-USER;
+# Ограничение параллельных соединений с одного адреса
+limit_conn_zone $binary_remote_addr zone=grafana_conn_limit:10m;
 
-    proxy_pass http://127.0.0.1:3000;
-}
-```
-
-**Валидация:**
-
-```bash
-# Вход через прокси → Grafana создаёт/обновляет пользователя по X-WEBAUTH-USER
-curl -s -H "Authorization: Bearer <ADMIN_TOKEN>" http://grafana.example.com/api/user | jq .
-# → {"login":"ivanov","role":"Admin",...}
-```
-
-### 3.5. Сценарий 4: Защищённый доступ (Basic Auth + IP-allowlist)
-
-Для ограничения доступа к чувствительным endpoint'ам рекомендуется комбинация IP-allowlist и Basic Auth.
-
-**Создание файла паролей:**
-
-```bash
-# Установка утилиты
-sudo apt-get install -y apache2-utils
-
-# Создание файла .htpasswd
-sudo htpasswd -c /etc/nginx/.htpasswd admin
-# → New password:
-# → Re-type new password:
-# → Adding password for user admin
-
-# Проверка
-cat /etc/nginx/.htpasswd
-# → admin:$apr1$H6JkCXlJ$lZp...
-```
-
-**Обновление location-блоков (для API-метрик Grafana):**
-
-```nginx
-location /api/ {
-    satisfy any;
-    allow 10.0.0.0/24;
-    deny all;
-
-    auth_basic "Grafana Management";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-
-    proxy_pass http://localhost:3000;
-}
-```
-
-> `satisfy any` разрешает доступ, если выполняется хотя бы одно условие (IP ИЛИ Basic Auth). Если требуется одновременная проверка обоих условий — используйте `satisfy all`.
-
-**Валидация:**
-
-```bash
-# Проверка из разрешённой подсети (должен пройти без запроса пароля)
-curl -s -o /dev/null -w "%{http_code}" https://grafana.example.com/api/health
-# → 200
-
-# Проверка извне (должен запросить пароль)
-curl -s -o /dev/null -w "%{http_code}" https://admin:password@grafana.example.com/api/health
-# → 200
-```
-
-### 3.6. Сценарий 5: Развёртывание на bare metal и systemd
-
-На production-серверах Nginx и Grafana разворачиваются как системные службы с настройкой автоматического старта и перезапуска при сбоях.
-
-**Проверка статуса Nginx:**
-
-```bash
-sudo systemctl status nginx
-# → ● nginx.service - A high performance web server and a reverse proxy server
-# →    Loaded: loaded (/lib/systemd/system/nginx.service; enabled; vendor preset: enabled)
-# →    Active: active (running) since Mon 2026-09-22 10:00:00 UTC; 1h 30min ago
-```
-
-**Проверка статуса Grafana:**
-
-```bash
-sudo systemctl status grafana-server
-# → ● grafana-server.service - Grafana instance
-# →    Loaded: loaded (/lib/systemd/system/grafana-server.service; enabled; vendor preset: enabled)
-# →    Active: active (running) since Mon 2026-09-22 10:00:30 UTC; 1h 29min ago
-```
-
-**Автоматический reload Nginx при изменении конфигурации (опционально):**
-
-```ini
-# /etc/systemd/system/nginx-reload.path
-[Unit]
-Description=Watch Nginx config changes
-
-[Path]
-PathModified=/etc/nginx/conf.d/
-PathModified=/etc/nginx/sites-enabled/
-
-[Install]
-WantedBy=multi-user.target
-
-# /etc/systemd/system/nginx-reload.service
-[Unit]
-Description=Reload Nginx on config change
-
-[Service]
-Type=oneshot
-ExecStart=/usr/sbin/nginx -t && /bin/systemctl reload nginx
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now nginx-reload.path
-```
-
-### 3.7. Сценарий 6: Мониторинг и проверка здоровья
-
-Для отслеживания работоспособности прокси и бэкенда используется комбинация Nginx stub_status и проверок Grafana API.
-
-**Активация stub_status:**
-
-```nginx
 server {
-    listen 127.0.0.1:8080;
-    server_name _;
+    listen 443 ssl;
+    http2 on;
+    server_name grafana-secure.example.internal;
 
-    location /nginx_status {
-        stub_status on;
+    ssl_certificate     /etc/ssl/certs/grafana.crt;
+    ssl_certificate_key /etc/ssl/private/grafana.key;
+
+    # Защита от перебора паролей на странице логина
+    location = /login {
+        limit_req zone=grafana_login_limit burst=5 nodelay;
+        limit_conn grafana_conn_limit 10;
+
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Ограничение доступа к системному API метрик и администрирования
+    location ^~ /api/admin/ {
+        # Доступ разрешен только инженерам из доверенной management-подсети
+        allow 10.0.100.0/24;
         allow 127.0.0.1;
         deny all;
+
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Основная локация
+    location / {
+        limit_conn grafana_conn_limit 25;
+
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 ```
 
-```bash
-curl http://127.0.0.1:8080/nginx_status
-# → Active connections: 2
-# → server accepts handled requests
-# → 12345 12345 67890
-# → Reading: 0 Writing: 1 Waiting: 1
-```
-
-**Интеграция с Prometheus Node Exporter (textfile collector):**
+#### Валидация правил фильтрации
 
 ```bash
-#!/bin/bash
-# /usr/local/bin/grafana-proxy-metrics.sh
+# Проверка доступа к /api/admin/ из запрещенного IP-адреса
+curl -sI https://grafana-secure.example.internal/api/admin/settings
+# → HTTP/2 403
+# → content-type: text/html
 
-STATUS=$(curl -s http://127.0.0.1:8080/nginx_status)
-ACTIVE=$(echo "$STATUS" | awk '/Active connections:/ {print $3}')
-WAITING=$(echo "$STATUS" | awk '/Waiting:/ {print $NF}')
-
-cat <<EOF > /var/lib/node_exporter/textfile_collector/grafana_proxy.prom
-grafana_proxy_active_connections $ACTIVE
-grafana_proxy_waiting_connections $WAITING
-EOF
+# Проверка срабатывания rate limiting при частых запросах к /login
+for i in {1..8}; do
+    curl -s -o /dev/null -w "%{http_code}\n" https://grafana-secure.example.internal/login
+done
+# → 200
+# → 200
+# → 200
+# → 200
+# → 200
+# → 200
+# → 503
+# → 503
 ```
+
+---
+
+### Сценарий 6: Развёртывание на Bare-Metal и системная интеграция systemd
+
+На production-серверах Nginx и Grafana управляются через systemd с настройкой повышенных лимитов файловых дескрипторов для поддержки тысяч одновременных WebSocket-соединений.
+
+#### Шаг 1: Системные лимиты дескрипторов (systemd override)
+
+Создайте оверрайд конфигурации службы Nginx `/etc/systemd/system/nginx.service.d/limits.conf`:
 
 ```ini
-# /etc/systemd/system/grafana-proxy-metrics.service
+[Service]
+LimitNOFILE=65536
+```
+
+Примените изменения:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart nginx
+
+# Проверка примененных лимитов у запущенного процесса Nginx
+cat /proc/$(pgrep -o nginx)/limits | grep "Max open files"
+# → Max open files            65536                65536                files
+```
+
+#### Шаг 2: Настройка параметров воркеров в `nginx.conf`
+
+В секциях `main` и `events` `/etc/nginx/nginx.conf`:
+
+```nginx
+worker_processes auto;
+worker_rlimit_nofile 65536;
+
+events {
+    worker_connections 8192;
+    use epoll;
+    multi_accept on;
+}
+```
+
+---
+
+### Сценарий 7: Мониторинг прокси и экспорт метрик в Prometheus
+
+Сбор оперативных метрик производительности и сетевых подключений Nginx для последующей визуализации в самой Grafana.
+
+#### Конфигурация локального эндпоинта stub_status
+
+`/etc/nginx/conf.d/status.conf`:
+
+```nginx
+server {
+    listen 127.0.0.1:8080;
+    server_name 127.0.0.1;
+
+    location = /nginx_status {
+        stub_status;
+        allow 127.0.0.1;
+        deny all;
+        access_log off;
+    }
+}
+```
+
+Проверка вывода метрик:
+
+```bash
+curl -s http://127.0.0.1:8080/nginx_status
+# → Active connections: 5
+# → server accepts handled requests
+# →  1420 1420 3890
+# → Reading: 0 Writing: 2 Waiting: 3
+```
+
+#### Скрипт сборщика метрик для Prometheus Node Exporter
+
+Создайте скрипт `/usr/local/bin/nginx-status-collector.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATUS_URL="http://127.0.0.1:8080/nginx_status"
+OUTPUT_FILE="/var/lib/node_exporter/textfile_collector/nginx_proxy.prom"
+TMP_FILE="${OUTPUT_FILE}.$$"
+
+RAW_DATA=$(curl -fsS "$STATUS_URL")
+
+ACTIVE=$(echo "$RAW_DATA" | awk '/Active connections:/ {print $3}')
+READING=$(echo "$RAW_DATA" | awk '/Reading:/ {print $2}')
+WRITING=$(echo "$RAW_DATA" | awk '/Writing:/ {print $4}')
+WAITING=$(echo "$RAW_DATA" | awk '/Waiting:/ {print $6}')
+
+cat <<EOF > "$TMP_FILE"
+# HELP nginx_active_connections Current number of active client connections
+# TYPE nginx_active_connections gauge
+nginx_active_connections $ACTIVE
+# HELP nginx_reading_connections Connections where Nginx is reading request header
+# TYPE nginx_reading_connections gauge
+nginx_reading_connections $READING
+# HELP nginx_writing_connections Connections where Nginx is writing response back to client
+# TYPE nginx_writing_connections gauge
+nginx_writing_connections $WRITING
+# HELP nginx_waiting_connections Idle client connections waiting for request
+# TYPE nginx_waiting_connections gauge
+nginx_waiting_connections $WAITING
+EOF
+
+mv "$TMP_FILE" "$OUTPUT_FILE"
+```
+
+Сделайте скрипт исполняемым и добавьте таймер systemd:
+
+```bash
+sudo chmod +x /usr/local/bin/nginx-status-collector.sh
+```
+
+`/etc/systemd/system/nginx-metrics.service`:
+
+```ini
 [Unit]
-Description=Collect Nginx metrics for Grafana proxy
+Description=Collect Nginx stub_status metrics for Prometheus
+After=network.target nginx.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/grafana-proxy-metrics.sh
+User=root
+ExecStart=/usr/local/bin/nginx-status-collector.sh
 ```
 
-```bash
-# Запуск каждые 30 секунд через systemd timer
-sudo systemctl enable --now grafana-proxy-metrics.timer
+`/etc/systemd/system/nginx-metrics.timer`:
+
+```ini
+[Unit]
+Description=Run Nginx metrics collector every 15 seconds
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=15s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
 ```
 
-### 3.8. Сценарий 7: Graceful shutdown и обслуживание
-
-При обновлении кластера Grafana требуется переконфигурация Nginx без разрыва соединений.
+Активация таймера:
 
 ```bash
-# 1. Graceful shutdown Grafana через systemd
-sudo systemctl reload grafana-server
+sudo systemctl daemon-reload
+sudo systemctl enable --now nginx-metrics.timer
 
-# 2. Или полная остановка (с разрывом соединений)
-sudo systemctl stop grafana-server
+# Проверка наличия собранных метрик
+cat /var/lib/node_exporter/textfile_collector/nginx_proxy.prom
+# → nginx_active_connections 5
+# → nginx_reading_connections 0
+# → nginx_writing_connections 2
+# → nginx_waiting_connections 3
+```
 
-# 3. Reload Nginx (без разрыва соединений)
+---
+
+### Сценарий 8: Эксплуатационные процедуры (Graceful Reload, Ротация и Откат)
+
+#### 1. Бесшовное применение изменений конфигурации (Graceful Reload)
+
+При изменении настроек upstream или правил маршрутизации нельзя перезапускать сервис командой `systemctl restart nginx`, так как это приведет к обрыву активных сессий Grafana Live:
+
+```bash
+# 1. Обязательная предварительная проверка синтаксиса
+sudo nginx -t
+# → nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+# 2. Плавная перезагрузка воркеров (старые воркеры дообслуживают WebSocket, новые принимают трафик)
 sudo systemctl reload nginx
 
-# 4. Quit Nginx (завершение после обработки текущих запросов)
-sudo nginx -s quit
+# 3. Проверка статуса службы
+systemctl is-active nginx
+# → active
 ```
 
-> **Важно:** `nginx -s quit` завершает worker-процессы после обработки текущих запросов, но не запускает новые. `systemctl reload nginx` выполняет graceful restart: старые worker'ы завершают обработку, новые поднимаются сразу.
+#### 2. Настройка ротации журналов доступа (`logrotate`)
 
-## 4. Операции и команды
+`/etc/logrotate.d/nginx`:
+
+```ini
+/var/log/nginx/*log {
+    daily
+    missingok
+    rotate 14
+    compress
+    delaycompress
+    notifempty
+    create 0640 www-data adm
+    sharedscripts
+    prerotate
+        if [ -d /etc/logrotate.d/httpd-prerotate ]; then \
+            run-parts /etc/logrotate.d/httpd-prerotate; \
+        fi \
+    endscript
+    postrotate
+        invoke-rc.d nginx rotate >/dev/null 2>&1
+    endscript
+}
+```
+
+#### 3. Процедура отката конфигурации (Rollback)
+
+В случае обнаружения деградации после reload:
+
+```bash
+# 1. Восстановление резервной копии конфигурации
+sudo cp /etc/nginx/conf.d/grafana.conf.bak /etc/nginx/conf.d/grafana.conf
+
+# 2. Проверка валидности
+sudo nginx -t
+
+# 3. Применение рабочей конфигурации
+sudo systemctl reload nginx
+```
+
+---
+
+## Операции и команды
 
 ### Управление Nginx
 
-| Действие | Команда | Примечание |
+| Действие | Команда | Назначение |
 | :--- | :--- | :--- |
-| **Проверка конфигурации** | `nginx -t` | Обязательно выполнять перед применением изменений. |
-| **Reload (Graceful)** | `nginx -s reload` или `systemctl reload nginx` | Подхват новых конфигов без разрыва соединений. |
-| **Reopen логов** | `nginx -s reopen` | Повторное открытие лог-файлов. |
-| **Quit (Graceful stop)** | `nginx -s quit` | Завершение после обработки текущих запросов. |
-| **Stop (Force stop)** | `nginx -s stop` | Немедленная остановка. |
-| **Статус через systemd** | `systemctl status nginx` | Проверка активного статуса службы. |
+| **Проверка синтаксиса** | `sudo nginx -t` | Валидация всех подключенных конфигурационных файлов |
+| **Плавный перезапуск (Reload)** | `sudo systemctl reload nginx` | Применение новых конфигов без сброса TCP/WebSocket-соединений |
+| **Статус процесса** | `sudo systemctl status nginx` | Проверка времени аптайма и PID master/worker |
+| **Проверка открытых портов** | `ss -tlnp \| grep nginx` | Проверка привязки портов 80, 443 к процессам Nginx |
+| **Просмотр загруженных модулей** | `nginx -V 2>&1 \| tr ' ' '\n' \| grep _module` | Список модулей, собранных в текущий бинарный файл |
 
-### Управление Grafana
-
-| Действие | Команда | Примечание |
-| :--- | :--- | :--- |
-| **Проверка статуса** | `systemctl status grafana-server` | Активный статус службы. |
-| **Reload конфигурации** | `systemctl reload grafana-server` | Перечитывание `grafana.ini` (не все параметры поддерживают reload). |
-| **Перезапуск** | `systemctl restart grafana-server` | Полный перезапуск процесса. |
-| **Логи в реальном времени** | `journalctl -u grafana-server -f` | Мониторинг логов службы. |
-| **Сброс пароля admin** | `grafana cli admin reset-admin-password <new_password>` | Требует доступа к консоли сервера. |
-| **Проверка здоровья API** | `curl -s http://localhost:3000/api/health` | Должен вернуть `{"database":"ok","memory":"ok"}`. |
-| **Список плагинов** | `grafana cli plugins ls` | Проверка установленных расширений. |
-
-### Диагностика Nginx upstream
+### Диагностика сетевых соединений и Upstream
 
 ```bash
-# Просмотр активных upstream-соединений
-ss -tnp | grep :3000 | grep ESTAB | wc -l
-# → 12
+# Подсчет активных WebSocket-соединений к Grafana (порт 3000)
+ss -tnp '( dport = :3000 )' | grep ESTAB | wc -l
+# → 42
 
-# Проверка переменной upstream_addr в логах
-awk '{print $NF}' /var/log/nginx/grafana_access.log | sort | uniq -c | sort -rn
-# →     45 10.0.2.10:3000
-# →     38 10.0.2.11:3000
+# Мониторинг времени ответа апстрима в реальном времени (лог должен содержать $upstream_response_time)
+tail -f /var/log/nginx/access.log | awk '{print $7, "HTTP-"$9, "RespTime="$NF}'
+# → /api/datasources/proxy/1/api/v1/query_range HTTP-200 RespTime=0.342
+# → /api/live/ws HTTP-101 RespTime=3600.120
 
-# Проверка ошибок upstream
-grep "upstream timed out" /var/log/nginx/error.log
-# → 2026/09/22 10:00:00 [error] 1234#1234: *5678 upstream timed out (110: Connection timed out) ...
-
-# Проверка WebSocket-соединений
-ss -tnp | grep nginx | grep 3000 | grep ESTAB | wc -l
-# → 8
+# Проверка регистрации ошибок обрыва соединения со стороны бэкенда
+grep -iE "upstream timed out|connection refused" /var/log/nginx/error.log | tail -n 5
+# → 2026/09/22 14:10:05 [error] 1234#1234: *567 upstream timed out (110: Connection timed out) while reading response header from upstream, client: 10.0.1.5, server: grafana.example.internal, request: "GET /api/datasources/proxy/1/query HTTP/2.0", upstream: "http://10.0.2.11:3000/api/datasources/proxy/1/query"
 ```
 
-### Анализ логов
+---
 
-```bash
-# Мониторинг ошибок в реальном времени
-tail -f /var/log/nginx/error.log | grep -i "upstream\|grafana"
+## Диагностика и устранение неисправностей
 
-# Фильтрация по коду ответа Grafana
-awk '$9 ~ /5[0-9]{2}/' /var/log/nginx/grafana_access.log | tail -n 20
-
-# Проверка времени ответа upstream
-awk '{print $NF}' /var/log/nginx/grafana_access.log | awk -F'=' '{print $2}' | sort -n | tail -n 10
-```
-
-## 5. Устранение неисправностей
-
-| Ошибка / симптом | Вероятная причина | Решение |
+| Симптом / Ошибка в логах | Первопричина | Метод локализации и устранение |
 | :--- | :--- | :--- |
-| `upstream timed out (110: Connection timed out)` | Grafana не отвечает или перегружена (тяжёлые запросы Explore). | Проверьте доступность Grafana напрямую: `curl http://<backend>:3000/api/health`. Увеличьте `proxy_read_timeout` до 310s. Проверьте CPU/memory на серверах Grafana. |
-| `502 Bad Gateway` | Grafana не запущена или порт закрыт. | Проверьте `ss -ltnp \| grep 3000`. Убедитесь что firewall разрешает трафик между Nginx и Grafana. |
-| `504 Gateway Timeout` | Запрос превысил `proxy_read_timeout`. | Увеличьте `proxy_read_timeout` до 310s. Проверьте наличие долгих запросов к источникам данных. |
-| `WebSocket connection failed` | Отсутствуют заголовки `Upgrade` / `Connection`. | Убедитесь что настроен `map $http_upgrade $connection_upgrade` и `proxy_set_header Upgrade $http_upgrade;`. |
-| `Origin not allowed` | Заголовок `Host` в Nginx не совпадает с `domain` в `grafana.ini`. | Убедитесь что `server_name` в Nginx совпадает с `domain` в Grafana. |
-| `Редирект на http вместо https` | Отсутствует заголовок `X-Forwarded-Proto`. | Добавьте `proxy_set_header X-Forwarded-Proto $scheme;` в location-блок. |
-| `Пустой белый экран` | Неверный `root_url` или смешанный контент (Mixed Content). | Проверьте что `root_url` начинается с `https://`. Убедитесь что CSP разрешает скрипты Grafana. |
-| `Permission denied` при чтении `.htpasswd` | Неправильные права на файл. | Установите права: `sudo chmod 640 /etc/nginx/.htpasswd && sudo chown root:www-data /etc/nginx/.htpasswd`. |
-| `could not build optimal proxy_headers_hash` | Слишком много заголовков в `proxy_set_header`. | Увеличьте `proxy_headers_hash_max_size` (по умолчанию 512). |
-| `worker_connections are not enough` | Большое количество WebSocket-соединений. | Увеличьте `worker_connections` в `events {}` (например, до 4096) и `worker_rlimit_nofile` в `main {}`. |
-| `Cookie не устанавливается / вечный редирект` | `root_url` указан с `http` или отсутствует `X-Forwarded-Proto`. | Укажите `root_url=https://...` и передавайте `X-Forwarded-Proto`. |
-| `Auth proxy не работает — пользователь не создаётся` | Прокси не проставляет заголовок `X-WEBAUTH-USER`. | Проверьте конфигурацию `auth_request` upstream. В логах Grafana ищите `auth.proxy: ...`. |
+| `502 Bad Gateway` в браузере; в error.log: `connect() failed (111: Connection refused)` | Служба `grafana-server` не запущена, либо локальный firewall блокирует порт 3000. | 1. Проверить статус службы: `systemctl status grafana-server`.<br>2. Проверить прослушивание порта: `ss -tlnp \| grep 3000`.<br>3. Убедиться, что `http_addr` в `grafana.ini` разрешает входящие соединения от Nginx. |
+| `504 Gateway Time-out` на тяжелых запросах Explore или дашбордах с сотнями графиков | Запрос к источнику данных выполняется дольше, чем `proxy_read_timeout` в Nginx (по умолчанию 60s). | Увеличить `proxy_read_timeout` до `310s` (или `600s`) в блоке `location /`. Проверить производительность бэкенд-хранилища метрик (Loki, Prometheus). |
+| `WebSocket connection failed: Error during WebSocket handshake: Unexpected response code: 400` | Nginx не передает заголовки `Upgrade` и `Connection` на эндпоинт `/api/live/`. | 1. Убедиться в наличии блока `map $http_upgrade $connection_upgrade`.<br>2. Добавить явный блок `location /api/live/` с директивами `proxy_set_header Upgrade $http_upgrade;` и `proxy_set_header Connection $connection_upgrade;`. |
+| `Origin not allowed` в консоли браузера при попытке подключения Grafana Live | Заголовок `Host`, переданный Nginx, не совпадает со значением параметра `domain` в `grafana.ini`. | Проверить соответствие: `server_name` в Nginx, заголовок `proxy_set_header Host $host;` и параметр `domain` в `grafana.ini` должны содержать одинаковый FQDN. |
+| Белый экран и цикличный редирект (301/302 loop) при размещении в подпути (`/grafana/`) | Несовпадение завершающих слэшей в `proxy_pass` при активном параметре `serve_from_sub_path = true`. | При `serve_from_sub_path = true` Nginx **не должен** удалять префикс. Замените `proxy_pass http://127.0.0.1:3000/;` на `proxy_pass http://127.0.0.1:3000;`. |
+| Редирект на HTTP вместо HTTPS при переходе по ссылкам внутри Grafana | Отсутствует заголовок `X-Forwarded-Proto $scheme;`, из-за чего Grafana считает внешний протокол незащищенным. | Добавить `proxy_set_header X-Forwarded-Proto $scheme;` и `proxy_redirect off;` в контекст `server` или `location /`. |
+| `an upstream response is buffered to a temporary file` в `error.log` | Объем JSON-ответа от Grafana превышает размер оперативных буферов Nginx `proxy_buffers`. | Увеличить буферы в Nginx: `proxy_buffer_size 16k; proxy_buffers 8 32k; proxy_busy_buffers_size 64k;`. |
+| Предупреждение Nginx: `the "http2" parameter of the "listen" directive is deprecated` | Использование устаревшего синтаксиса Nginx до версии 1.25.1. | Заменить строку `listen 443 ssl http2;` на раздельные директивы `listen 443 ssl;` и `http2 on;`. |
+| `Auth proxy: User not found` / доступ запрещен при включенном `[auth.proxy]` | IP-адрес хоста Nginx отсутствует в белом списке `whitelist` в `grafana.ini`. | В секции `[auth.proxy]` файла `grafana.ini` прописать `whitelist = 127.0.0.1, <IP_NGINX>`. |
+| `worker_connections are not enough while connecting to upstream` | Превышен лимит одновременных сокетов из-за большого числа открытых вкладок с WebSocket. | В `/etc/nginx/nginx.conf` поднять `worker_connections 8192;` и системный лимит `worker_rlimit_nofile 65536;`. |
 
-## 6. Рекомендации и лучшие практики
+---
+
+## Рекомендации и лучшие практики
 
 ### Безопасность
 
-1. **Ограничьте доступ к API Grafana.** Endpoints `/api/` должны быть доступны только из внутренней сети. Используйте `allow/deny` в связке с Basic Auth или Auth proxy.
-2. **Используйте TLS 1.3.** Запретите старые протоколы: `ssl_protocols TLSv1.3;`. TLS 1.2 допускается только при необходимости поддержки устаревших клиентов.
-3. **Включайте HSTS.** `add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;`.
-4. **Скрывайте заголовок версии Nginx.** `server_tokens off;` в блоке `http {}`.
-5. **Защита от поддельных заголовков (Auth proxy).** Используйте `proxy_hide_header X-WEBAUTH-USER;`, чтобы клиент не мог подставить собственный заголовок.
-6. **Ротация логов.** Настройте `logrotate` для `/var/log/nginx/grafana_access.log` и `error.log`. Ротация раз в день, хранение 30 дней.
-7. **Защита от DDoS.** Ограничьте количество одновременных соединений с одного IP: `limit_conn_zone $binary_remote_addr zone=addr:10m; limit_conn addr 10;`.
+1. **Изоляция сетевого порта Grafana:** В production Grafana не должна быть доступна извне напрямую в обход Nginx. Задавайте `http_addr = 127.0.0.1` в `grafana.ini` (при размещении на одном хосте) или настраивайте firewall на пропуск порта 3000 только с IP-адресов прокси-серверов.
+2. **Только современные протоколы TLS:** Отключайте устаревшие протоколы SSLv3, TLS 1.0 и TLS 1.1. Используйте директиву `ssl_protocols TLSv1.2 TLSv1.3;`.
+3. **Защита cookie:** Всегда передавайте `proxy_set_header X-Forwarded-Proto $scheme;`. В сочетании с `cookie_secure = true` в `grafana.ini` это предотвращает перехват сессионных cookie через незащищенный канал.
+4. **Защита от внедрения через Auth Proxy:** При использовании режима `[auth.proxy]` строго настраивайте параметр `whitelist = ...` в `grafana.ini` и удаляйте потенциально поддельные клиентские заголовки авторизации в Nginx.
+5. **Маскировка версии веб-сервера:** Отключайте вывод версии Nginx в заголовках ответов и на страницах ошибок: `server_tokens off;` в контексте `http`.
 
-### Производительность
+### Производительность и оптимизация
 
-8. **Используйте `keepalive` в upstream.** При HA-развёртывании добавьте upstream-блок с `keepalive 32` для снижения задержек handshake.
-9. **Настройте `proxy_http_version 1.1`.** Обязательно для WebSocket и keepalive.
-10. **Отключите `proxy_set_header Connection`.** Значение `""` позволяет Nginx управлять заголовком Connection самостоятельно.
-11. **Настройте буферы.** `proxy_buffers 8 32k; proxy_buffer_size 64k;` ускоряют загрузку больших дашбордов и ответов Explore.
-12. **Увеличьте `worker_connections`.** При большом количестве WebSocket-соединений установите `worker_rlimit_nofile 65536` и `worker_connections 4096`.
+6. **Использование Upstream Keepalive:** В кластерных развёртываниях обязательно настраивайте блок `upstream` с директивой `keepalive 32;` и передавайте `proxy_set_header Connection "";` для стандартного HTTP-трафика. Это снижает время отклика интерфейса на 15–25% за счет ликвидации лишних фаз TCP handshake.
+7. **Раздельная маршрутизация WebSocket:** Направляйте запросы к `/api/live/` в отдельный `location` с таймаутом `3600s`, не увеличивая избыточно глобальный таймаут `proxy_read_timeout` для всех остальных HTTP-эндпоинтов.
+8. **Тюнинг буферизации для больших панелей:** Дашборды со множеством панелей могут генерировать единовременные ответы объемом в несколько мегабайт. Значения `proxy_buffers 8 32k;` и `proxy_buffer_size 16k;` избавляют диск от лишних операций ввода-вывода.
+9. **Сжатие трафика (Gzip/Brotli):** Рекомендуется оставлять сжатие включенным на стороне Grafana (`enable_gzip = true` в `[server]`), чтобы Nginx проксировал уже сжатый контент без дополнительных затрат процессорного времени фронтенда.
 
-### Эксплуатация
+### Эксплуатационная надежность
 
-13. **Тестируйте обновления в staging.** Любое изменение конфигурации Nginx или Grafana должно проходить через среду, идентичную production.
-14. **Ведите changelog конфигурации.** Используйте Git для хранения `nginx.conf`, `grafana.ini` и провиженинга.
-15. **Настраивайте алертинг.** Добавьте алёрты на 5xx ошибки Nginx, недоступность upstream и превышение времени ответа.
-16. **Тестируйте отказоустойчивость.** Периодически отключайте один узел Grafana и проверяйте, что Nginx переключает трафик без ошибок.
-17. **Используйте провиженинг.** Дашборды, источники данных и алерты должны храниться в Git, а не только в БД Grafana.
+10. **Хранение конфигураций в системе контроля версий:** Файлы `/etc/nginx/conf.d/grafana.conf` и `/etc/grafana/grafana.ini` должны быть версионированы в Git (через Ansible, SaltStack или Puppet).
+11. **Тестирование перед reload:** Автоматизируйте пайплайны деплоя так, чтобы команда `systemctl reload nginx` вызывалась только после успешного завершения `nginx -t`.
+12. **Разделение прав на сертификаты:** Файлы закрытых ключей TLS (`privkey.pem`) должны принадлежать суперпользователю `root:root` с правами доступа `0600` или специализированной системной группе прокси-сервера.
 
-## 7. Дополнительная информация
+---
 
-### Критические ограничения
+## Дополнительная информация
 
-1. **Запрет `try_files`**: В блоке `location /` при проксировании к Grafana нельзя использовать `try_files`. Nginx попытается найти файл на диске и вернёт 404, так как Grafana отдаёт контент динамически через свой бэкенд.
-2. **Заголовки безопасности и CSP**: Если вы используете `Content-Security-Policy` (CSP) на уровне Nginx, убедитесь что разрешены скрипты и инлайновые стили, необходимые для работы Grafana, либо используйте встроенные механизмы CSP в `grafana.ini`.
-3. **Тайм-ауты**: Для работы тяжелых запросов в Explore или при использовании больших интервалов времени `proxy_read_timeout` должен быть не менее 310s.
+### Критические архитектурные ограничения
+
+1. **Запрет директивы `try_files` в корневом location:**  
+   В блоке `location /` при проксировании запросов к Grafana **запрещено** использовать директиву `try_files $uri $uri/ =404;`. Поскольку Grafana генерирует весь пользовательский интерфейс динамически через собственный Go-бэкенд, Nginx попытается найти файл на локальной файловой системе прокси и вернет ошибку `404 Not Found`.
+2. **Ограничения CSP (Content Security Policy):**  
+   Если в Nginx внедряется строгий заголовок `Content-Security-Policy`, он может заблокировать выполнение внешних плагинов и рендеринг панелей Grafana. Безопаснее настраивать CSP штатными средствами Grafana в секции `[security]` (`custom_response_headers`).
+3. **Отказоустойчивость Grafana Live в HA:**  
+   Если за Nginx работает несколько узлов Grafana, стандартный gossip-механизм Memberlist синхронизирует состояние алертов, но **не синхронизирует** потоки WebSocket Grafana Live. Для работы Grafana Live в кластере обязательно требуется внешний Redis (`[live] ha_engine = redis`).
 
 ### См. также
 
-*   **[Обзор Nginx](../Core/nginx_overview.md)**
-*   **[Обзор Grafana](../../../Grafana/grafana_overview.md)** — архитектура, версии, конфигурация.
-*   **[Прокси-серверы: концепции](../../../Networking/Concepts/proxy.md)**
-*   **[Управление пользователями и аутентификация](../../../Grafana/grafana_user_management_and_authentication.md)** — auth proxy, SSO, RBAC.
-*   **[Оптимизация TLS/SSL в Nginx](../Security/TLS_SSL/nginx_tls_ssl_overview.md)**
+*   **[Обзор Nginx](../Core/nginx_overview.md)** — архитектура, жизненный цикл воркеров, обработка запросов.
+*   **[Обзор Grafana](../../../Grafana/grafana_overview.md)** — архитектурные уровни, компоненты, базовая конфигурация.
+*   **[Высокая доступность Grafana (HA)](../../../Grafana/high_availability.md)** — построение active-active кластера, SNE, gossip-протокол Memberlist, требования к СУБД.
+*   **[Управление пользователями и аутентификация в Grafana](../../../Grafana/grafana_user_management_and_authentication.md)** — детальная настройка Auth Proxy, LDAP, SAML, роли.
+*   **[Безопасность и жесткая настройка Grafana](../../../Grafana/grafana_security_hardening.md)** — изоляция сетевого периметра, CSP, HTTPS.
+*   **[Настройка виртуальных хостов TLS в Nginx](../Security/TLS_SSL/nginx_tls_virtual_host_config.md)** — генерация параметров Диффи-Хеллмана, современные cipher suites, OCSP Stapling.
+*   **[Балансировка нагрузки: практическая конфигурация](../Proxy/Load_Balancing/practical_configuration.md)** — детальный разбор директив `upstream`, алгоритмов и failover.

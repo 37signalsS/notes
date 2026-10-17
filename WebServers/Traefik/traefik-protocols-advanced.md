@@ -48,7 +48,7 @@ WebSocket и SSE проксируются прозрачно (без специ�
 
 ### TCP
 
-TCP-роутеры способны маршрутизировать произвольный L4-трафик (PostgreSQL, SSH, SMTP, Redis) по `HostSNI` и/или `ClientIP`. TCP-сервис поддерживает health check на уровне соединения (успешный TCP-connect = healthy; при необходимости — обменом пейлоадом `send`/`expect`).
+TCP-роутеры способны маршрутизировать произвольный L4-трафик (PostgreSQL, SSH, SMTP, Redis) по `HostSNI` и/или `ClientIP`. Обратите внимание: нативный активный `healthCheck` для TCP- и UDP-сервисов в Traefik OSS отсутствует (активные проверки поддерживаются только для HTTP/gRPC). Доступность L4-бэкендов контролируется внешними средствами (оркестратором, Consul, внешним балансировщиком).
 
 Реальный IP клиента в TCP-режиме передается PROXY protocol — на TCP-слушателе Traefik (входящий трафик) или при соединении с бэкендом (внутри TCP ServersTransport через `proxyProtocol.version`).
 
@@ -126,10 +126,6 @@ tcp:
       loadBalancer:
         servers:
           - address: "10.0.0.10:5432"
-        healthCheck:
-          send: "SELECT 1;"
-          interval: "10s"
-          timeout: "3s"
 ```
 
 ### Сценарий 5: UDP (например, DNS/DOH-forward)
@@ -173,10 +169,6 @@ tcp:
   services:
     pg-service:
       loadBalancer:
-        healthCheck:
-          send: "SELECT 1;"
-          interval: "10s"
-          timeout: "3s"
         servers:
         - address: "10.0.0.10:5432"
 ```
@@ -195,11 +187,6 @@ tcp:
   services:
     redis-service:
       loadBalancer:
-        healthCheck:
-          send: "PING\r\n"
-          expect: "PONG"
-          interval: "5s"
-          timeout: "2s"
         servers:
         - address: "10.0.0.20:6379"
 ```

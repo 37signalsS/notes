@@ -1,319 +1,707 @@
-# Балансировка нагрузки Nginx: Sticky Sessions (Прилипание сессий)
+# Балансировка нагрузки Nginx и Angie: Sticky Sessions (Прилипание сессий)
+
+**Актуально для:** Nginx 1.26+ (OSS/Plus) / Angie 1.6+
 
 ## Определения
 
-**Sticky Sessions (Прилипание сессий, Session Affinity)** — механизм балансировщика, обеспечивающий направление всех запросов от одного клиента на один и тот же бэкенд в течение всей сессии. Применяется для stateful-приложений, хранящих данные сессии (корзины, авторизацию) в локальной памяти конкретного экземпляра.
+**Sticky Sessions (Прилипание сессий, Session Affinity, Session Persistence)** — механизм распределения трафика, при котором обратный прокси-сервер гарантированно направляет все повторные запросы определенного клиента на один и тот же целевой бэкенд в течение срока жизни его сеанса. Применяется для stateful-приложений, хранящих контекст пользователя (авторизацию, кэш объектов, корзину) в локальной оперативной памяти конкретного инстанса.
 
-**Cookie-based affinity** — метод, при котором балансировщик устанавливает или читает HTTP-куку для идентификации сервера, назначенного клиенту.
+**Cookie-based Affinity (Привязка по cookie)** — метод сессионной привязки, при котором балансировщик внедряет собственную HTTP-куку в ответ сервера (или считывает существующую) и использует ее значение для идентификации закрепленного бэкенда.
 
-**Learn mode** — метод, при котором Nginx извлекает идентификатор сессии из ответа бэкенда (например, `PHPSESSID`, `JSESSIONID`) и запоминает соответствие «сессия → сервер» в разделяемой памяти.
+**Learn Mode (Режим обучения, Session Tracking)** — механизм глубокого отслеживания сессий, при котором балансировщик инспектирует заголовки ответа бэкенда (`Set-Cookie`), извлекает сгенерированный приложением идентификатор (например, `JSESSIONID`, `PHPSESSID`) и динамически сохраняет отображение «ID сессии → бэкенд» в разделяемой оперативной памяти (`shared memory`).
 
-**Route-based affinity** — метод привязки по значению переменной (URI-параметр, заголовок), когда клиент или фронтенд явно указывает целевой сервер.
+**Route-based Affinity (Маршрутизация по маршруту)** — метод диспетчеризации, при котором клиент или фронтенд явно передает идентификатор целевого сервера в URI-параметре, заголовке или теле запроса, а балансировщик сопоставляет его с параметром `route` в определении директивы `server`.
 
-**Zone (разделяемая память)** — участок shared memory в блоке `upstream`, в котором хранятся таблицы сессий и состояния серверов. Обязательна для работы `sticky` в Nginx Plus и Angie.
+**Зона разделяемой памяти (Shared Memory Zone, `zone`)** — сегмент RAM, выделяемый master-процессом Nginx/Angie через системные вызовы `mmap()`/`shmget()`, доступный всем рабочим процессам (`worker processes`). Необходим для централизованного хранения таблиц соответствия сессий, счетчиков сбоев и состояний серверов.
+
+**Консистентное хеширование (Consistent Hashing, Ketama)** — метод балансировки (`hash ... consistent`), при котором ключи запросов отображаются на фиксированное кольцо виртуальных слотов. Обеспечивает сохранение привязки подавляющего большинства сессий ($1 - 1/N$) при динамическом добавлении или выводе бэкенд-узлов из строя.
+
+**Режим дренажа (Connection Draining, `drain`)** — состояние постепенного вывода бэкенда из эксплуатации, при котором сервер перестает принимать новые клиентские сессии, но продолжает бесперебойно обслуживать уже привязанные существующие sticky-сессии до их естественного завершения.
+
+**Десинхронизация сессий (Session Thrashing / Session Hopping)** — дефект маршрутизации в многоузловых кластерах балансировки, при котором запросы одного и того же клиента поочередно попадают на разные бэкенды из-за отсутствия синхронизации сессионных таблиц между независимыми балансировщиками.
+
+**Режим отказа от переключения (Strict Mode / `no_fallback`)** — директивное поведение балансировщика, запрещающее автоматический переброс клиента на резервный узел в случае аварии закрепленного бэкенда. Балансировщик немедленно возвращает HTTP-статус `502 Bad Gateway`, предотвращая рассинхронизацию stateful-данных в распределенной системе.
+
+**Синхронизация состояния кластера (`zone_sync`)** — протокол межсерверной репликации разделяемой памяти в Nginx Plus и Angie, синхронизирующий таблицы sticky-сессий между несколькими физическими или виртуальными хостами балансировки по TCP.
+
+**Перекос сессионной нагрузки (Session Skew)** — неравномерное распределение трафика по узлам upstream-пула, вызванное концентрацией активных долгоживущих сессий на ограниченном числе серверов либо балансировкой по общему IP-адресу через NAT.
+
+---
 
 ## Основные концепции и архитектура
 
+### Архитектурная модель: Master-Worker и привязка сессий
+
+Nginx реализует неблокирующую событийно-ориентированную многопроцессную модель. Все рабочие процессы (`workers`) обрабатывают входящие сетевые сокеты параллельно. Для корректной маршрутизации сессионных запросов критически важен уровень разделения состояния:
+
+```
+БЕЗ ОБЩЕЙ ПАМЯТИ (Nginx OSS без сторонних модулей):
+┌─────────────────────────┐         ┌─────────────────────────┐
+│ Worker Process 1        │         │ Worker Process 2        │
+│ Хеш-таблица ключей      │         │ Хеш-таблица ключей      │
+│ (Локальна для воркера)  │         │ (Локальна для воркера)  │
+└────────────┬────────────┘         └────────────┬────────────┘
+             │                                   │
+             ▼                                   ▼
+    [ Входящий запрос ]                 [ Входящий запрос ]
+    (Привязка гарантируется только детерминированными алгоритмами: ip_hash, hash consistent)
+
+С ОБЩЕЙ ПАМЯТЬЮ (Angie / Nginx Plus / zone):
+┌─────────────────────────┐         ┌─────────────────────────┐
+│ Worker Process 1        │         │ Worker Process 2        │
+└────────────┬────────────┘         └────────────┬────────────┘
+             │                                   │
+             └─────────────────┬─────────────────┘
+                               ▼
+        ┌───────────────────────────────────────────────┐
+        │        Shared Memory Zone (`zone` 10M)        │
+        │ ┌───────────────────────────────────────────┐ │
+        │ │ Session ID Table (LRU-список):            │ │
+        │ │ - 'sess_9f81a7'  → Backend 10.0.1.11:8080 │ │
+        │ │ - 'sess_4b2c19'  → Backend 10.0.1.12:8080 │ │
+        │ ├───────────────────────────────────────────┤ │
+        │ │ Server Flags:                             │ │
+        │ │ - Node 10.0.1.11: UP                      │ │
+        │ │ - Node 10.0.1.12: DRAIN (допуск sticky)   │ │
+        │ └───────────────────────────────────────────┘ │
+        └───────────────────────────────────────────────┘
+```
+
 ### Жизненный цикл sticky-запроса
 
-1. **Первый запрос клиента** (кука отсутствует или сессия не найдена):
-   - Nginx выбирает бэкенд по configured balancing method (Round Robin, Least Conn и т.д.).
-   - Если метод `sticky cookie` — Nginx генерирует куку со значением, соответствующим выбранному серверу.
-   - Если метод `sticky learn` — Nginx ждет ответа бэкенда, извлекает ID сессии из заголовка `Set-Cookie` и сохраняет пару «ID → сервер» в zone.
+Прохождение сетевого пакета через балансировщик зависит от выбранного метода и наличия сессионных маркеров:
 
-2. **Последующие запросы**:
-   - Nginx ищет сессию в zone по значению куки (`lookup`) или переменной (`route`).
-   - Если сессия найдена и сервер доступен — запрос направляется именно на него.
-   - Если сессия найдена, но сервер недоступен — поведение зависит от режима:
-     - По умолчанию: запрос передается другому серверу (сессия сбрасывается).
-     - С параметром `strict`: возвращается `502 Bad Gateway`.
+```
+[ Клиентский запрос ]
+         │
+         ▼
+Проверка наличия сессионного маркера в запросе?
+   ├── [ НЕТ (Первичный запрос) ] ──┐
+   │                                ▼
+   │                  Выбор бэкенда по базовому алгоритму
+   │                  (Round Robin, Least Conn, Random)
+   │                                │
+   │                                ▼
+   │                  Передача запроса на бэкенд
+   │                                │
+   │                                ▼
+   │                  Формирование ответа бэкендом
+   │                                │
+   │         ┌──────────────────────┴──────────────────────┐
+   │         ▼ (sticky cookie)                             ▼ (sticky learn)
+   │    Nginx генерирует куку                          Nginx перехватывает Set-Cookie,
+   │    и добавляет в Set-Cookie                       заносит пару ID→Server в zone
+   │         │                                             │
+   │         └──────────────────────┬──────────────────────┘
+   │                                ▼
+   │                    Возврат клиенту с кукой
+   │
+   └── [ ДА (Повторный запрос с Cookie / Route) ] ──┐
+                                                    ▼
+                                   Поиск сервера в zone / хэш-кольце
+                                                    │
+                   ┌────────────────────────────────┴────────────────────────────────┐
+                   ▼ [ Сервер найден и UP/DRAIN ]                                    ▼ [ Сервер DOWN ]
+          Отправка запроса на                                           Задан флаг strict / no_fallback?
+          закрепленный бэкенд                                                ├── [ ДА ] ──→ 502 Bad Gateway
+                                                                             └── [ НЕТ ] ─→ Переключение на другой узел
+                                                                                            (Сброс старой сессии)
+```
 
-3. **Истечение сессии**:
-   - Запись удаляется из zone по таймауту неактивности (`timeout` в `learn` или `expires` в `cookie`).
+### Сравнительный анализ механизмов прилипания
 
-### Сравнение методов прилипания
+| Метод | Платформа | Механизм привязки | Нагрузка на память балансировщика | Зависимость от бэкенда | Поведение при падении узла |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`sticky cookie`** | Plus / Angie | Балансировщик выставляет собственную куку с зашифрованным/явным ID узла | Минимальная ($O(1)$, не требует таблицы сессий) | Полностью автономен от приложения | Переключение на новый узел или `502` при `no_fallback` |
+| **`sticky learn`** | Plus / Angie | Парсинг `Set-Cookie` ответа и сохранение связки `SessionID → Node` в RAM | Зависит от числа сессий (~150 байт на сессию в `zone`) | Требует генерации Cookie приложением | Переключение или `502`; запись удаляется по таймауту |
+| **`sticky route`** | Plus / Angie | Чтение URI-параметра или заголовка по правилам `map` | Минимальная ($O(1)$) | Приложение или клиент должны проставлять route-ID | Переключение или `502` |
+| **`hash ... consistent`** | Nginx OSS / Plus / Angie | Консистентное хеширование значения куки приложения (`$cookie_name`) | Фиксированная (память под Ketama-кольцо серверов) | Приложение должно генерировать Cookie | Рехеширование только $1/N$ сессий на соседние узлы |
+| **`ip_hash`** | Nginx OSS / Plus / Angie | Хеширование IP-адреса клиента (/24 для IPv4, полный адрес для IPv6) | Минимальная ($O(1)$) | Не зависит от приложения | Перенаправление трафика клиента на другой узел |
+| **`sticky-module-ng`** | Nginx OSS (сторонний модуль) | Внедрение куки с MD5/SHA1-хешем сокета бэкенда | Минимальная (stateless) | Полностью автономен | Переключение или `502` при флаге `no_fallback` |
 
-| Метод | Механизм | Плюсы | Минусы |
-| :--- | :--- | :--- | :--- |
-| **cookie** | Nginx сам вставляет куку с идентификатором сервера. | Не зависит от логики приложения; не требует зоны для самого cookie (требуется для `learn`). | Требует поддержки кук на клиенте; дополнительный размер ответа. |
-| **learn** | Nginx «изучает» ID сессии из кук приложения (PHPSESSID, JSESSIONID). | Прозрачен для приложения; не вносит лишних кук. | Требует выделенной zone; зависит от совпадения имен cookie. |
-| **route** | Привязка к серверу по идентификатору в URI или заголовке. | Клиент или фронтенд может явно выбирать сервер. | Риск DoS-на конкретный узел без защиты; требует валидации входных данных. |
+### Проблема масштабирования и кластерной высокой доступности (HA)
 
-### Взаимодействие с другими директивами
+В высоконагруженных инфраструктурах уровень балансировки строится из двух и более серверов Nginx/Angie, объединенных виртуальным IP-адресом (VIP через Keepalived / VRRP) или протоколом BGP (ECMP Anycast).
 
-- **Keepalive:** `sticky` работает поверх keepalive-соединений с бэкендами. Привязка гарантирует логическую связность сессии даже при переподключениях на уровне TCP.
-- **Failover:** При недоступности «прилипшего» сервера Nginx может переключиться на другой бэкенд, если параметр `strict` не установлен.
-- **Ограничения совместимости:** `sticky` несовместим с методами `hash`, `ip_hash` и `random` в рамках одного блока `upstream`.
+```
+                      [ Сеть / Клиенты ]
+                              │
+               ┌──────────────┴──────────────┐
+               ▼ (Anycast BGP / VRRP VIP)    ▼
+     ┌───────────────────┐         ┌───────────────────┐
+     │ Nginx Balancer 01 │         │ Nginx Balancer 02 │
+     └─────────┬─────────┘         └─────────┬─────────┘
+               │                             │
+               │   zone_sync (TCP порт 9000) │
+               │◄───────────────────────────►│
+               │                             │
+       ┌───────┴─────────────────────────────┴───────┐
+       ▼                                             ▼
+┌──────────────┐                             ┌──────────────┐
+│ Backend Node │                             │ Backend Node │
+│ 10.0.1.11    │                             │ 10.0.1.12    │
+└──────────────┘                             └──────────────┘
+```
 
-### Доступность по версиям
+1. **Stateless-подход (`sticky cookie`, `sticky route`, `hash consistent`):**
+   - Значение куки содержит зашифрованный или хэшированный идентификатор бэкенда либо ключ для хэш-кольца.
+   - Любой экземпляр Nginx в кластере вычисляет один и тот же целевой узел независимо от других балансировщиков. Межсерверная репликация оперативной памяти **не требуется**.
+2. **Stateful-подход (`sticky learn`):**
+   - Таблица сессий создается локально в оперативной памяти того инстанса Nginx, через который прошел первый ответ бэкенда.
+   - Если последующий запрос клиента через Anycast/VRRP маршрутизируется на второй балансировщик, сессия теряется (Session Hopping), так как второй балансировщик не имеет записи в своей локальной `zone`.
+   - **Решение:** включение модуля синхронизации кластерного состояния (`zone_sync` в Nginx Plus и Angie) через выделенный TCP-порт синхронизации.
 
-| Функция | Nginx OSS | Nginx Plus | Angie |
-| :--- | :--- | :--- | :--- |
-| `sticky cookie` | Нет | Да | Да |
-| `sticky learn` | Нет | Да | Да |
-| `sticky route` | Нет | Да | Да |
-| Параметр `strict` | Нет | Да | Да |
-| Параметр `secret` / `hmac` | Нет | Нет | Зависит от версии |
-| Режим `drain` для серверов | Нет | Да | Да |
-
-Для Nginx OSS прилипание сессий доступно только через:
-- `ip_hash` — привязка по IP-адресу клиента.
-- `hash` — привязка по произвольной переменной (URI, cookie, заголовок).
-- Сторонние модули: `nginx-sticky-module-ng`, `ngx_http_upstream_session_sticky_module`.
+---
 
 ## Практические сценарии
 
-### Настройка через метод cookie
+### Сценарий 1: Корпоративная настройка sticky cookie (Nginx Plus и Angie)
 
-Nginx создает собственную куку для отслеживания сессии.
+Сценарий обеспечивает создание балансировщиком собственной защищенной куки с ограничением области видимости и флагами безопасности `HttpOnly`, `Secure` и `SameSite=Lax`.
 
 ```nginx
-upstream backend_cluster {
-    zone backend_zone 64k;
-    server 10.0.0.1:8080;
-    server 10.0.0.2:8080;
+# /etc/nginx/conf.d/upstream_sticky_cookie.conf
 
-    sticky cookie srv_id expires=1h domain=.example.com path=/ secure httponly samesite=lax;
+upstream enterprise_backend {
+    # Зона разделяемой памяти для синхронизации статусов серверов между воркерами
+    zone upstream_enterprise_zone 256k;
+
+    # Бэкенд-серверы кластера
+    server 10.0.1.11:8080 max_fails=3 fail_timeout=10s;
+    server 10.0.1.12:8080 max_fails=3 fail_timeout=10s;
+    server 10.0.1.13:8080 max_fails=3 fail_timeout=10s;
+
+    # Сессионная привязка по куке srv_id
+    sticky cookie srv_id 
+        expires=2h 
+        domain=app.company.local 
+        path=/ 
+        httponly 
+        secure 
+        samesite=lax;
+
+    # Пул постоянных TCP-соединений к бэкендам
+    keepalive 32;
+    keepalive_requests 1000;
+    keepalive_timeout 60s;
+}
+
+server {
+    listen 443 ssl default_server;
+    server_name app.company.local;
+
+    ssl_certificate /etc/ssl/certs/app.company.local.crt;
+    ssl_certificate_key /etc/ssl/private/app.company.local.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location / {
+        proxy_pass http://enterprise_backend;
+
+        # Обеспечение работы keepalive-пула
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+
+        # Передача служебных заголовков
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Таймауты ожидания ответа
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
 }
 ```
 
-**Проверка:**
+**Проверка синтаксиса и тест работы:**
 
 ```bash
 nginx -t
+# → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
 # → nginx: configuration file /etc/nginx/nginx.conf test is successful
-curl -I http://app.example.com/
-# → Set-Cookie: srv_id=a; Expires=...; Path=/; Secure; HttpOnly; SameSite=Lax
+
+nginx -s reload
+# → 2026/10/17 15:45:00 [notice] signal process started
+
+# Первый запрос: получение Set-Cookie от Nginx
+curl -k -I https://app.company.local/
+# → HTTP/1.1 200 OK
+# → Set-Cookie: srv_id=a8f5c1e2b3c4; Expires=Sat, 17-Oct-2026 17:45:00 GMT; Path=/; Domain=app.company.local; Secure; HttpOnly; SameSite=Lax
 ```
 
-**Ключевые параметры:**
-- `expires`: Время жизни куки. Если не указано — сессионная кука (удаляется при закрытии браузера).
-- `secure` / `httponly` / `samesite`: Флаги безопасности. `samesite=lax` или `strict` защищают от CSRF.
-- `domain` / `path`: Область видимости куки.
+### Сценарий 2: Отслеживание сессий приложения через sticky learn и zone_sync
 
-### Настройка через метод learn (отслеживание сессий приложения)
-
-Используется, когда приложение уже генерирует идентификатор сессии. Nginx запоминает соответствие «ID сессии → IP сервера» в таблице разделяемой памяти.
+Используется в архитектурах Java (Tomcat / Spring) или PHP (PHP-FPM), где сессионные маркеры генерируются самим бэкендом (`JSESSIONID`, `PHPSESSID`). Таблица соответствий хранится в `zone` и реплицируется между балансировщиками через `zone_sync`.
 
 ```nginx
-upstream php_app {
-    zone sessions_zone 1m;
-    server 10.1.1.10:9000;
-    server 10.1.1.11:9000;
+# /etc/nginx/conf.d/upstream_sticky_learn.conf
 
+upstream java_app_cluster {
+    # Зона состояния серверов
+    zone java_cluster_zone 128k;
+
+    server 10.0.2.11:8080 max_fails=2 fail_timeout=5s;
+    server 10.0.2.12:8080 max_fails=2 fail_timeout=5s;
+
+    # Обучение на куке приложения JSESSIONID
     sticky learn
-        zone=client_sessions:2m
-        create=$upstream_cookie_phpsessid
-        lookup=$cookie_phpsessid
-        timeout=1h;
+        create=$upstream_cookie_jsessionid
+        lookup=$cookie_jsessionid
+        zone=java_sessions_table:16m
+        timeout=30m
+        sync;
+
+    keepalive 16;
+}
+
+# Блок синхронизации памяти кластера (Stream-контекст в /etc/nginx/nginx.conf)
+# stream {
+#     server {
+#         listen 10.0.0.1:9000;
+#         zone_sync;
+#         zone_sync_server 10.0.0.2:9000;
+#     }
+# }
+```
+
+**Параметры директивы:**
+- `create`: переменная ответа бэкенда, откуда Nginx считывает новый токен (из `Set-Cookie`).
+- `lookup`: переменная запроса клиента, по которой производится поиск существующего сопоставления (из `Cookie`).
+- `zone`: имя и размер сегмента разделяемой памяти. 16 МБ вмещает ~100 000 активных записей.
+- `timeout`: время отсутствия активности по сессии, по истечении которого запись освобождается по алгоритму LRU.
+- `sync`: директива синхронизации таблицы через модуль `ngx_stream_zone_sync_module`.
+
+### Сценарий 3: Маршрутизация по идентификатору в URL или заголовке (sticky route)
+
+Применяется в распределенных системах, где клиент получает закрепленный узел при логине и передает его в URL-параметре или служебном заголовке `X-Server-Route`.
+
+```nginx
+# /etc/nginx/conf.d/upstream_sticky_route.conf
+
+# Маппинг для извлечения идентификатора маршрута из URI или заголовка
+map $http_x_server_route $route_from_header {
+    default $http_x_server_route;
+}
+
+map $arg_route $route_token {
+    default $arg_route;
+    ""      $route_from_header;
+}
+
+upstream partitioned_backends {
+    zone partitioned_zone 128k;
+
+    # Явное назначение идентификаторов маршрута серверам
+    server 10.0.3.11:8080 route=node_a max_fails=2 fail_timeout=10s;
+    server 10.0.3.12:8080 route=node_b max_fails=2 fail_timeout=10s;
+    server 10.0.3.13:8080 route=node_c max_fails=2 fail_timeout=10s;
+
+    # Маршрутизация по вычисленному токену
+    sticky route $route_token;
+
+    keepalive 16;
+}
+
+server {
+    listen 80;
+    server_name route.company.local;
+
+    location / {
+        proxy_pass http://partitioned_backends;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+    }
 }
 ```
 
-**Проверка:**
+**Проверка маршрутизации:**
 
 ```bash
-curl -I http://php.example.com/
-# → Set-Cookie: PHPSESSID=abc123... (от бэкенда)
-# Nginx запомнил: PHPSESSID=abc123 → 10.1.1.10:9000
-curl -I http://php.example.com/ --cookie "PHPSESSID=abc123"
-# → запрос направлен на 10.1.1.10:9000
+# Запрос с указанием целевого узла в GET-параметре
+curl -s http://route.company.local/?route=node_b | grep "Server-ID"
+# → Server-ID: 10.0.3.12
+
+# Запрос с указанием целевого узла в HTTP-заголовке
+curl -s -H "X-Server-Route: node_a" http://route.company.local/ | grep "Server-ID"
+# → Server-ID: 10.0.3.11
 ```
 
-**Особенности метода learn:**
-- `create`: Переменная, из которой извлекается ID сессии при первом ответе бэкенда (обычно из `Set-Cookie`).
-- `lookup`: Переменная, по которой ищется сессия в последующих запросах клиента (обычно из `Cookie`).
-- `timeout`: Время неактивности сессии, после которого запись удаляется из памяти.
-- `header` (Angie/Nginx Plus): Если указан, сессия создается при получении заголовков, а не при завершении ответа.
+### Сценарий 4: Production-Grade Sticky Sessions в Nginx Open Source (OSS)
 
-### Настройка через метод route (маршрутизация по переменной)
+В открытой версии Nginx отсутствует нативная директива `sticky`. Использование чистого `hash $cookie_jsessionid consistent;` содержит критический дефект архитектуры: **при первом запросе клиента кука отсутствует (`""`), поэтому все новые пользователи попадают на один и тот же единственный бэкенд**, создавая лавинообразную перегрузку ("проблема холодного старта").
 
-Обычно используется, когда идентификатор бэкенда передается в параметрах URL или в кастомном заголовке.
+Решение уровня Senior DevOps/SRE: комбинирование директив `map` и `hash ... consistent`:
 
 ```nginx
-map $request_uri $route_uri {
-    ~jsessionid=.+\.(?P<route>\w+)$ $route;
+# /etc/nginx/conf.d/oss_sticky_consistent_hash.conf
+
+# Формирование ключа хеширования: если куки нет, хешируем по уникальному ID запроса или IP
+map $cookie_APP_SESSION $sticky_distribution_key {
+    default $cookie_APP_SESSION;
+    # На первом запросе используем комбинацию IP и порта либо request_id для равномерного размазывания
+    ""      $remote_addr;
 }
 
-upstream dynamic_route {
-    sticky route $route_uri;
-    server 127.0.0.1:9000 route=a;
-    server 127.0.0.1:9001 route=b;
+upstream oss_stateful_cluster {
+    # Консистентное хеширование по сбалансированному ключу
+    hash $sticky_distribution_key consistent;
+
+    server 10.0.4.11:8080 max_fails=3 fail_timeout=10s;
+    server 10.0.4.12:8080 max_fails=3 fail_timeout=10s;
+    server 10.0.4.13:8080 max_fails=3 fail_timeout=10s;
+
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name oss-sticky.company.local;
+
+    location / {
+        proxy_pass http://oss_stateful_cluster;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+
+        # Отказоустойчивый переход при аварии сервера во время обработки
+        proxy_next_upstream error timeout http_502 http_503;
+        proxy_next_upstream_tries 2;
+    }
 }
 ```
 
-### Плавный вывод сервера (drain)
+### Сценарий 5: Использование стороннего динамического модуля nginx-sticky-module-ng (Nginx OSS)
 
-В Nginx Plus и Angie поддерживается режим `drain`, который позволяет плавно вывести сервер из эксплуатации. Сервер перестает принимать новых клиентов, но продолжает обслуживать существующие sticky-сессии.
+Для систем на Nginx Open Source, требующих создания полноценных сессионных cookie без коммерческой лицензии, применяется проверенный динамический модуль `nginx-sticky-module-ng`.
 
 ```nginx
-upstream backend {
-    zone b_zone 64k;
-    server 10.0.0.1:8080 drain;
-    server 10.0.0.2:8080;
+# /etc/nginx/nginx.conf (в начале файла конфигурации)
+# load_module modules/ngx_http_sticky_module.so;
+
+upstream third_party_sticky_pool {
+    server 10.0.5.11:8080;
+    server 10.0.5.12:8080;
+
+    # Синтаксис директивы стороннего модуля:
+    # name: имя cookie (по умолчанию route)
+    # hash: алгоритм хеширования (index, md5, sha1)
+    # no_fallback: при падении сервера возвращать 502 вместо сброса на другой узел
+    sticky name=CUSTOM_ROUTE 
+           domain=company.local 
+           path=/ 
+           expires=1h 
+           hash=sha1 
+           no_fallback;
+
+    keepalive 16;
 }
 ```
 
-### Обработка отказов (strict)
+### Сценарий 6: Плавный вывод бэкенда на обслуживание (Connection Draining)
 
-По умолчанию, если сервер, к которому «прилип» клиент, становится недоступным, Nginx перенаправляет запрос на другой живой сервер. Параметр `strict` изменяет это поведение:
+При плановом обновлении версии приложения на бэкенде недопустимо грубо обрывать сессии клиентов. Включение режима `drain` позволяет серверу дообслужить текущих пользователей, не принимая новых.
+
+#### Вариант А: Статическая конфигурация (Nginx Plus / Angie)
 
 ```nginx
-sticky cookie srv_id expires=1h strict;
+upstream maintenance_cluster {
+    zone maint_zone 128k;
+
+    # Сервер переведен в режим обслуживания: новые клиенты не назначаются, старые обслуживаются
+    server 10.0.6.11:8080 drain;
+    server 10.0.6.12:8080;
+    server 10.0.6.13:8080;
+
+    sticky cookie srv_id expires=1h domain=.company.local path=/;
+}
 ```
 
-С `strict` Nginx вернет `502 Bad Gateway`, если целевой сервер недоступен, вместо сброса сессии.
+#### Вариант Б: Динамическое управление через REST API без reload (Angie / Nginx Plus)
+
+```bash
+# 1. Просмотр текущего статуса серверов в пуле maintenance_cluster
+curl -s http://127.0.0.1:8000/api/http/upstreams/maintenance_cluster/servers | jq .
+
+# 2. Перевод сервера с индексом 0 (10.0.6.11:8080) в режим DRAIN на лету
+curl -X PATCH \
+     -H "Content-Type: application/json" \
+     -d '{"drain": true}' \
+     http://127.0.0.1:8000/api/http/upstreams/maintenance_cluster/servers/0
+# → {"id":0,"server":"10.0.6.11:8080","weight":1,"max_conns":0,"max_fails":1,"fail_timeout":"10s","backup":false,"down":false,"drain":true}
+
+# 3. Мониторинг убывания активных сессий на выводимом узле
+watch -n 1 'curl -s http://127.0.0.1:8000/api/http/upstreams/maintenance_cluster/servers/0 | jq "{server, active: .active, requests: .requests}"'
+
+# 4. Возврат сервера в штатный режим после завершения регламентных работ
+curl -X PATCH \
+     -H "Content-Type: application/json" \
+     -d '{"drain": false}' \
+     http://127.0.0.1:8000/api/http/upstreams/maintenance_cluster/servers/0
+# → {"id":0,"server":"10.0.6.11:8080", ... ,"drain":false}
+```
+
+### Сценарий 7: SRE-наблюдаемость и логирование эффективности Sticky Sessions
+
+Для мониторинга качества работы сессионной привязки в структурированный журнал доступа Nginx добавляются переменные состояния сессии, адреса фактического бэкенда и сетевые задержки.
+
+```nginx
+# /etc/nginx/conf.d/sticky_monitoring.conf
+
+# Формат лога с отслеживанием статуса сессионной липкости
+# В Angie поддерживается специализированная переменная $upstream_sticky_status (HIT, MISS, NEW, BYPASS)
+log_format sticky_analytics escape=json '{'
+    '"time_local":"$time_iso8601",'
+    '"remote_addr":"$remote_addr",'
+    '"request_method":"$request_method",'
+    '"request_uri":"$request_uri",'
+    '"status":$status,'
+    '"upstream_addr":"$upstream_addr",'
+    '"upstream_status":"$upstream_status",'
+    '"upstream_connect_time":"$upstream_connect_time",'
+    '"upstream_response_time":"$upstream_response_time",'
+    '"sticky_cookie_val":"$cookie_srv_id",'
+    '"sticky_status":"$upstream_sticky_status"'
+'}';
+
+server {
+    listen 80;
+    server_name monitoring.company.local;
+
+    access_log /var/log/nginx/sticky_access.log sticky_analytics;
+
+    location / {
+        proxy_pass http://enterprise_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+}
+```
+
+---
 
 ## Операции и команды
 
-### Валидация конфигурации
+### Валидация конфигурации и безопасная перезагрузка
 
 ```bash
-# Проверка синтаксиса перед применением
+# 1. Проверка синтаксиса и целостности всех конфигурационных файлов
 nginx -t
+# → nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
 # → nginx: configuration file /etc/nginx/nginx.conf test is successful
 
-# Грациозная перезагрузка без потери соединений
+# 2. Вывод полной итоговой конфигурации с раскрытием всех include-директив
+nginx -T | grep -A 15 "sticky"
+
+# 3. Грациозная перезагрузка конфигурации (Master передает сигнал воркерам без сброса TCP-сокетов)
 nginx -s reload
-# → signal reload started
+# → 2026/10/17 15:50:12 [notice] signal process started
 ```
 
-### Отладка sticky-сессий
+### Тестирование сессионной привязки и отказоустойчивости утилитой curl
 
 ```bash
-# Включение debug-лога для sticky-модуля (Angie/Nginx Plus)
-# В конфигурации:
-# upstream backend {
-#     sticky cookie srv_id expires=1h;
-#     # ...
-# }
-# server {
-#     error_log /var/log/nginx/sticky_debug.log debug;
-# }
+# Шаг 1: Выполнение первого запроса с сохранением полученных кук в jar-файл
+curl -k -i -s -c /tmp/cookie_jar.txt https://app.company.local/api/whoami | grep -i "Set-Cookie"
+# → Set-Cookie: srv_id=node_01_hash; Path=/; Domain=app.company.local; Secure; HttpOnly; SameSite=Lax
 
-# Проверка заголовков Set-Cookie от Nginx
-curl -I http://app.example.com/
-# → Set-Cookie: srv_id=a; Expires=...
+# Шаг 2: Просмотр содержимого сохраненного файла кук
+cat /tmp/cookie_jar.txt
+# → app.company.local   FALSE   /   TRUE    1792243200  srv_id  node_01_hash
 
-# Проверка, что сессия сохраняется при повторных запросах
-curl -v http://app.example.com/ -c /tmp/cookies.txt
-# В логах access.log с upstream_debug:
-# 10.0.0.10 - [22/Sep/2026:12:00:00] 10.0.0.1:8080 200 0.005
+# Шаг 3: Выполнение серии из 10 повторных запросов с передачей сохраненного cookie
+for i in {1..10}; do
+    curl -k -s -b /tmp/cookie_jar.txt https://app.company.local/api/whoami | jq -r .handled_by
+done | sort | uniq -c
+# →     10 10.0.1.11:8080
+# (Все 10 запросов гарантированно направлены на закрепленный узел)
+
+# Шаг 4: Тестирование отказоустойчивости (Failover)
+# Имитируем падение закрепленного бэкенда 10.0.1.11
+ssh node-01 "systemctl stop backend-app"
+
+# Запрос с прежней кукой в режиме без strict/no_fallback
+curl -k -s -b /tmp/cookie_jar.txt https://app.company.local/api/whoami | jq -r .handled_by
+# → 10.0.1.12:8080
+# (Nginx прозрачно перенаправил запрос на живой узел 10.0.1.12)
+
+# Запрос с прежней кукой при включенном strict/no_fallback
+curl -k -i -s -b /tmp/cookie_jar.txt https://app.company.local/api/whoami | head -n 1
+# → HTTP/1.1 502 Bad Gateway
 ```
 
-### Мониторинг распределения сессий
+### SRE-команды анализа журналов и метрик
 
 ```bash
-# Анализ распределения по бэкендам (требует $upstream_addr в логе)
-awk '{print $NF}' /var/log/nginx/access.log | sort | uniq -c | sort -rn | head -n 10
+# 1. Расчет коэффициента перекоса (Session Skew) по бэкендам за последний час
+awk '{print $NF}' /var/log/nginx/access.log | cut -d: -f1 | sort | uniq -c | awk '
+{
+    count[NR] = $1;
+    server[NR] = $2;
+    total += $1;
+}
+END {
+    avg = total / NR;
+    printf "=== Анализ распределения нагрузки (Total: %d, Avg: %.1f) ===\n", total, avg;
+    for (i = 1; i <= NR; i++) {
+        dev = ((count[i] - avg) / avg) * 100;
+        printf "Сервер %-15s: %8d запросов (%+6.1f%% от среднего)\n", server[i], count[i], dev;
+    }
+}'
 
-# Подсчет 502/504 ошибок (возможный признак проблем с strict или недоступностью бэкендов)
-grep -E "\" 502 |\" 504 " /var/log/nginx/access.log | tail -n 20
+# 2. Подсчет соотношения статусов sticky-сессий (Angie лог)
+grep -o '"sticky_status":"[^"]*"' /var/log/nginx/sticky_access.log | sort | uniq -c | sort -rn
+# → 45210 "sticky_status":"HIT"
+# →  8450 "sticky_status":"NEW"
+# →   312 "sticky_status":"MISS"
 
-# Проверка состояния zone в логах (Angie)
-curl http://localhost:8000/api/http/upstreams 2>/dev/null | jq .
+# 3. Выявление 502/504 ошибок, связанных с привязанными сессиями при отказе серверов
+awk -F'"' '$10 ~ /^(502|504)$/ {print $0}' /var/log/nginx/access.log | tail -n 20
+
+# 4. Проверка ошибок нехватки памяти под сессионную зону в error.log
+grep -i "could not allocate shared memory" /var/log/nginx/error.log
+# → 2026/10/17 15:52:00 [alert] 1234#1234: could not allocate shared memory in sticky learn "java_sessions_table"
 ```
 
-### Диагностика с curl
-
-```bash
-# Проверка установки sticky-куки
-curl -I http://app.example.com/ -c /tmp/cookies.txt
-# Искать Set-Cookie: srv_id=...
-
-# Проверка повторного использования сессии
-curl -I http://app.example.com/ -b /tmp/cookies.txt
-# Запрос должен попасть на тот же бэкенд
-
-# Проверка workera sticky-сессий для stateful API
-for i in $(seq 1 10); do curl -s http://app.example.com/api/host; done | sort | uniq -c
-```
+---
 
 ## Диагностика и устранение неполадок
 
-### Типичные ошибки
+### Матрица типичных сбоев
 
-| Симптом | Причина | Решение |
-| :--- | :--- | :--- |
-| `502 Bad Gateway` при `strict` | Целевой бэкенд недоступен | Убедиться, что сервер доступен; проверить `max_fails` и `fail_timeout`; временно отключить `strict` |
-| Сессия не сохраняется (кука отсутствует) | Клиент блокирует куки или `path`/`domain` некорректны | Проверить браузерные DevTools → Application → Cookies; убедиться, что `path=/` и `domain` корректны |
-| Дисбаланс после добавления серверов | Используется `ip_hash` без `consistent` | Для Nginx OSS: перейти на `hash $variable consistent`; для sticky: добавить серверы вручную и сбросить сессии |
-| Высокое потребление shared memory | Слишком маленький размер `zone` для `learn` | Увеличить `zone=...:10m`; мониторить `error.log` на `could not allocate` |
-| Потеря сессий при перезагрузке Nginx | `zone` не сохранена (по умолчанию in-memory) | Для Nginx Plus/Angie можно использовать `state` директиву для персистентности зоны |
-| Все запросы идут на один бэкенд | `backup`-серверы неправильно настроены или `weight=0` | Проверить конфигурацию `upstream`; убедиться, что `backup` используется только для резерва |
-| `sticky` не работает с keepalive | Отсутствует `proxy_http_version 1.1` или `Connection ""` | Добавить в `location`: `proxy_http_version 1.1; proxy_set_header Connection "";` |
+| Симптом | Корневая причина (Root Cause) | Метод подтверждения / Диагностика | Решение (Remediation) |
+| :--- | :--- | :--- | :--- |
+| **`502 Bad Gateway` при обращении клиентов** | Сервер, к которому привязан клиент, упал, а в конфигурации задан `strict` или `no_fallback` | `curl -v -b "srv_id=..." https://...`<br>Поиск `502` в access.log | Если потеря сессии допустима — отключить `strict`/`no_fallback`. Проверить доступность бэкенда (`systemctl status`). Настроить адекватные `max_fails` и `fail_timeout`. |
+| **Сессия не удерживается, клиент «прыгает» по серверам** | 1. Браузер отклоняет Cookie из-за `Secure` при обращении по HTTP.<br>2. Несовпадение домена (`domain`) или пути (`path`).<br>3. Кластер из нескольких Nginx без `zone_sync`. | Инспекция заголовков через `curl -I`. Проверка `Storage -> Cookies` в браузере. Анализ логов обоих балансировщиков. | Выставлять флаг `secure` только при работе по HTTPS. Задать `path=/`. Для `learn` в кластере настроить `zone_sync` или перейти на `sticky cookie`. |
+| **Катастрофический перекос нагрузки (Session Skew > 80%)** | 1. Балансировка Nginx OSS по `ip_hash`, когда тысячи клиентов идут через единый корпоративный прокси/NAT.<br>2. Использование `hash $cookie` без fallback на пустую куку. | Команда анализа распределения `awk` по логам. Проверка поля `$remote_addr`. | 1. Заменить `ip_hash` на `hash $sticky_distribution_key consistent` со fallback через `map`.<br>2. Использовать `sticky cookie`. |
+| **Alert: `could not allocate shared memory`** | Сегмент `zone` в директиве `sticky learn` переполнен, а старые сессии не успевают вытесняться | Поиск строки в `/var/log/nginx/error.log` | Увеличить размер зоны (`zone=...:64m`). Уменьшить `timeout` неактивных сессий (например, с `2h` до `30m`). |
+| **Потеря сессий всеми пользователями при reload/restart** | Таблица сессий находится только в RAM и сбрасывается при рестарте службы Nginx | Проверка времени перезапуска процесса `ps aux \| grep nginx` | В Nginx Plus/Angie использовать сохранение состояния upstream: директива `state /var/lib/nginx/state/upstream.conf;`. |
+| **Частый сброс сессий при масштабировании пула** | В Nginx OSS используется `hash` без ключевого слова `consistent` | Анализ конфигурации upstream на отсутствие `consistent` | Добавить флаг `consistent` к директиве `hash` для использования консистентного кольца Ketama. |
+| **Сброс сессий при междоменных переходах** | В куке выставлен строгий атрибут `SameSite=Strict`, блокирующий отправку куки при внешних редиректах | Анализ заголовка `Set-Cookie` в ответе сервера | Смягчить политику безопасности до `SameSite=Lax`. |
 
-### Диагностические команды
+### Диагностические сценарии
+
+#### Диагностика переполнения Shared Memory Zone
+
+При переполнении памяти таблицы сессий `sticky learn` балансировщик прекращает запоминать новые сессии, что приводит к нарушению логики stateful-приложений:
 
 ```bash
-# Поиск ошибок sticky и upstream в логе
-grep -iE "sticky|upstream|502|504" /var/log/nginx/error.log | tail -n 50
+# 1. Поиск критических событий распределения памяти
+grep -E "could not allocate|no memory" /var/log/nginx/error.log
 
-# Анализ распределения запросов по бэкендам
-awk '{print $NF}' /var/log/nginx/access.log | sort | uniq -c | sort -rn | head -n 10
+# 2. Проверка утилизации зон памяти через статусную панель или API Angie
+curl -s http://127.0.0.1:8000/api/http/zones | jq .
 
-# Проверка заголовков Set-Cookie в ответах
-curl -I http://app.example.com/ 2>/dev/null | grep -i "set-cookie"
-
-# Проверка, что запросы с кукой попадают на правильный бэкенд
-curl -v http://app.example.com/ -c /tmp/cookies.txt -b /tmp/cookies.txt 2>&1 | grep -E "< HTTP|X-Upstream"
-
-# Поиск переполнения shared memory zone
-grep "could not allocate" /var/log/nginx/error.log
-
-# Просмотр конфигурации upstream
-nginx -T | grep -A 20 "upstream"
+# 3. Расчет требуемого объема памяти:
+# Формула: Записи = Память_байт / ~160 байт
+# 1 МБ ~ 6 500 одновременных сессий
+# 16 МБ ~ 100 000 одновременных сессий
+# 64 МБ ~ 400 000 одновременных сессий
 ```
+
+#### Диагностика отсутствия передачи Cookie браузером
+
+Если Nginx отдает `Set-Cookie`, но браузер в последующих запросах не включает заголовок `Cookie`:
+
+```bash
+# Тест 1: Проверка атрибута Secure при тестировании без валидного HTTPS
+curl -k -I https://app.company.local/ | grep -i "set-cookie"
+# Если в ответе присутствует "Secure", а тестирование идет по незащищенному каналу HTTP, браузер отклонит куку
+
+# Тест 2: Проверка атрибута Domain
+# Если Domain=.app.company.local, а запрос отправлен на http://company.local, кука не применится
+```
+
+---
 
 ## Лучшие практики
 
-### Производительность
+### Архитектура и планирование емкости
 
-1. **Используйте `zone` адекватного размера.** Для `learn` рассчитайте размер на основе ожидаемого количества одновременных сессий: примерно 1MB на 80 000–100 000 записей.
-2. **Включайте `keepalive` в `upstream`.** Без keepalive Nginx использует HTTP/1.0 и закрывает соединение после каждого запроса, создавая избыточную нагрузку.
-3. **Избегайте `sticky` без необходимости.** Sticky-сессии нарушают балансировку и усложняют масштабирование. Для stateless-приложений используйте общие хранилища сессий (Redis, Memcached).
-4. **Используйте `samesite=lax` или `strict`** для кук sticky-сессий, чтобы минимизировать поверхность атаки CSRF.
+1. **Формула расчета разделяемой памяти для `sticky learn`:**
+   Каждая активная сессия в разделяемой памяти требует структуру связного списка LRU, хеш-таблицы и буфер строковых значений. 
+   $$\text{RAM}_{\text{bytes}} \approx N_{\text{sessions}} \times (S_{\text{overhead}} + L_{\text{cookie}} + L_{\text{ip\_port}})$$
+   - Средний оверхед ядра Nginx/Angie на одну запись: $\approx 128 - 160$ байт.
+   - Для пула на $100\,000$ одновременных активных пользователей минимальный размер зоны составляет:
+     $$100\,000 \times 160 \text{ байт} = 16\,000\,000 \text{ байт} \approx 16\text{ МБ}$$
+   - Рекомендуется закладывать двукратный запас по емкости (`zone=sessions:32m`), чтобы исключить преждевременное LRU-вытеснение активных сессий при пиках трафика.
+
+2. **Приоритет Stateless-архитектуры над Sticky:**
+   Sticky Sessions нарушают равномерность утилизации вычислительных ресурсов кластера и усложняют автомасштабирование. 
+   - **Инженерная рекомендация:** использовать Sticky Sessions как временную переходную меру для легаси-приложений. Для современных сервисов сессионные данные необходимо выносить во внешние распределенные хранилища in-memory (Redis, KeyDB, Dragonfly) с репликацией Sentinel/Cluster, что позволяет перевести балансировщик на абсолютно stateless алгоритмы `least_conn` или `random two`.
+
+3. **Синхронизация Keepalive и Sticky:**
+   Привязка сессии логически изолирована от физических сокетов. Обязательно настраивайте `keepalive` в блоке `upstream` совместно со sticky-сессиями:
+   ```nginx
+   upstream app_pool {
+       zone app_pool_zone 128k;
+       server 10.0.1.11:8080;
+       server 10.0.1.12:8080;
+       sticky cookie srv_id;
+       keepalive 32;
+   }
+   ```
+   Это снижает задержку на TCP/TLS-рукопожатия между Nginx и целевым бэкендом, даже когда клиент выполняет разнесенные во времени запросы.
 
 ### Безопасность
 
-1. **Никогда не полагайтесь на sticky как на механизм контроля доступа.** Sticky-сессии обеспечивают маршрутизацию, но не аутентификацию.
-2. **Явно указывайте `max_fails` и `fail_timeout`** для каждого сервера. Без этих параметров Nginx по умолчанию использует `max_fails=1` и `fail_timeout=10s`, что может привести к частым переключениям при временных сбоях.
-3. **Ограничьте область действия куки:** Используйте `path=/app` вместо `path=/`, если приложение занимает один префикс.
-4. **Не используйте `backup`-серверы для активной нагрузки с sticky.** Backup-серверы имеют более низкий приоритет и не участвуют в стандартном распределении.
-5. **Изолируйте management-интерфейсы.** Если используете `status_zone` или API Angie/Nginx Plus, ограничьте доступ через `allow/deny` или firewall.
+1. **Защита топологии инфраструктуры (Anti-Information Disclosure):**
+   Никогда не используйте реальные IP-адреса или имена хостов в значениях sticky cookie. 
+   - В Nginx Plus и Angie значение куки по умолчанию генерируется в виде шестнадцатеричного хеша.
+   - В сторонних модулях и `sticky route` применяйте абстрактные токены (`node_a`, `node_b`) либо алгоритмы шифрования с секретом (`secret / hmac`), чтобы злоумышленник не мог составить карту внутренней локальной сети.
+
+2. **Обязательные флаги защиты Cookie:**
+   Сессионная кука балансировщика должна быть защищена на уровне браузера:
+   - `httponly`: предотвращает хищение идентификатора через XSS-атаки с помощью JavaScript (`document.cookie`).
+   - `secure`: гарантирует передачу куки исключительно по шифрованному каналу TLS/HTTPS, исключая перехват в открытых Wi-Fi/Ethernet-сетях (Man-in-the-Middle).
+   - `samesite=lax` или `samesite=strict`: защищает пользователя от межсайтовой подделки запроса (CSRF). Для стандартных приложений оптимален режим `lax`.
+
+3. **Защита от таргетированного DoS через Route Poisoning:**
+   При использовании `sticky route` злоумышленник может слать миллионы запросов с жестко заданным заголовком `X-Server-Route: node_a`, стремясь перегрузить конкретный инстанс. Обязательно сопровождайте маршрутизацию жесткими лимитами скорости (`limit_req_zone`).
 
 ### Эксплуатация (SRE)
 
-1. **Логирование upstream-переменных:** Добавьте в `log_format` переменные `$upstream_addr`, `$upstream_status`, `$upstream_response_time`:
+1. **Контроль коэффициента перекоса (Session Skew):**
+   Настройте в Prometheus / VictoriaMetrics сбор метрик распределения запросов по upstream-узлам. Если отношение максимального числа запросов к минимальному в пуле превышает $1.5$ (перекос более $30\%$), необходимо:
+   - Проверить наличие бот-трафика или поисковых роботов с единых IP-адресов.
+   - Проверить корректность времени жизни куки (`expires`).
+   - Для Nginx OSS — убедиться в наличии директивы `consistent` в `hash`.
 
-    ```nginx
-    log_format upstream_debug '$remote_addr - [$time_local] '
-                              '$upstream_addr $upstream_status $upstream_response_time';
-    ```
+2. **Регламент вывода серверов в регламентное обслуживание:**
+   При выполнении Rolling Update для stateful-приложений:
+   1. Перевести узел в режим `drain` (через API или конфигурацию).
+   2. Выждать интервал таймаута сессии (`timeout` или `expires`), чтобы активные пользователи завершили работу.
+   3. Убедиться через API, что счетчик `active connections` узла равен нулю.
+   4. Остановить приложение, накатить обновление и запустить сервис.
+   5. Снять флаг `drain`.
 
-2. **Мониторинг дисбаланса sticky-нагрузки:** Регулярно проверяйте распределение запросов по бэкендам. Дисбаланс более чем на 20% при использовании `sticky cookie` или `learn` указывает на некорректный размер zone, утечку сессий или падающий бэкенд.
-3. **Алертинг на 502/504 при strict:** Если используется `strict`, настройте оповещение на `502 Bad Gateway` — это означает, что клиент потерял сессию из-за недоступности целевого бэкенда.
-4. **Плановое изменение состава upstream:** При добавлении/удалении серверов из группы с `sticky` ожидайте каскадный сброс сессий. Для `learn` убедитесь, что zone имеет достаточный размер для новых записей.
-5. **Тестирование failover:** Периодически проверяйте поведение sticky при отключении бэкенда:
+3. **Интеграция с проверками доступности (Health Checks):**
+   Сочетайте sticky-сессии с активными проверками доступности (`health_check` в Plus/Angie):
+   ```nginx
+   location / {
+       proxy_pass http://enterprise_backend;
+       health_check interval=2s fails=2 passes=2 uri=/healthz;
+   }
+   ```
+   При падении бэкенда Nginx снимет трафик с узла до того, как клиент столкнется с таймаутом соединения.
 
-    ```bash
-    systemctl stop app@node1
-    curl -I http://app.example.com/ -b /tmp/cookies.txt
-    # С strict: 502; без strict: 200 с нового бэкенда
-    systemctl start app@node1
-    ```
-
-6. **Резервное копирование конфигурации:** Перед изменением параметров `sticky` или `zone` создайте бэкап и проверяйте конфигурацию через `nginx -t`.
+---
 
 ## Дополнительная информация
 
 ### Связанные документы
 
-- **[Обзор и концепции балансировки](./overview_concepts.md)** — базовые принципы распределения трафика и архитектура upstream.
-- **[Алгоритмы балансировки](./algorithms.md)** — разбор методов `round-robin`, `least_conn`, `ip_hash` и их взаимодействие с sticky.
-- **[Практическая конфигурация балансировки](./practical_configuration.md)** — настройка `upstream`, `proxy_pass`, failover и keepalive.
+- **[Обзор и концепции балансировки](./overview_concepts.md)** — архитектура upstream, зоны разделяемой памяти и обработка трафика.
+- **[Алгоритмы балансировки](./algorithms.md)** — детальный разбор циклических, адаптивных и хеширующих методов (`least_conn`, `least_time`, `hash consistent`, `random two`).
+- **[Практическая конфигурация балансировки](./practical_configuration.md)** — типовые production-конфигурации, управление буферизацией, пулы `keepalive` и переключение сбоев `proxy_next_upstream`.
+- **[Проверки доступности и мониторинг](./health_checks_and_monitoring.md)** — настройка активных и пассивных проверок работоспособности узлов upstream.
+- **[Дополнительная информация и сравнение](./additional_info_and_comparisons.md)** — глубокое сравнение функционала Nginx Open Source, Nginx Plus и Angie.
 
-### Примечания
+### Инженерные примечания
 
-- В Nginx Open Source базовый набор алгоритмов (Round Robin, Least Connections, Hash, IP Hash, Random) доступен без дополнительных модулей. Для sticky-сессий используйте `ip_hash` или `hash`, либо сторонние модули.
-- В Nginx Plus и Angie sticky-сессии являются встроенной функцией upstream. Angie с версии 1.2.0 поддерживает `cookie`, `learn` и `route`, а с более поздних версий — режим `drain` и переменную `$upstream_sticky_status`.
-- `sticky` несовместим с `hash`, `ip_hash` и `random` в одном блоке `upstream`. При необходимости комбинации методов используйте внешнее хранилище сессий (Redis/Memcached) для по-настоящему stateless-архитектуры.
+- **Несовместимость директив:** В рамках одного блока `upstream` директива `sticky` взаимно исключает использование алгоритмов `ip_hash`, `hash`, `least_conn` и `random`. При объявлении `sticky` базовым алгоритмом распределения новых (первичных) сессий становится взвешенный Round Robin.
+- **Ограничения Nginx Open Source:** В Nginx OSS отсутствует встроенная поддержка директивы `sticky` и механизма `drain`. Полноценная сессионная привязка в OSS достигается либо через консистентное хеширование (`hash $var consistent;` с fallback через `map`), либо компиляцией со сторонним динамическим модулем `nginx-sticky-module-ng`.
+- **Синхронизация памяти в Angie и Nginx Plus:** Для обеспечения бесшовной сессионной привязки в кластерах с несколькими балансировщиками (VRRP / BGP Anycast) при использовании `sticky learn` обязательно настраивается модуль репликации оперативной памяти `zone_sync` в блоке `stream`.

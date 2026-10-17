@@ -1,47 +1,48 @@
 # Метки, аннотации и выбор узлов для Pod
 
+**Актуально для:** Kubernetes 1.30+
+
 ## Определения
 
-**Labels (Метки)** — пары «ключ-значение», прикрепляемые к объектам Kubernetes. Предназначены для идентификации, группировки и выборки объектов через селекторы (Selectors). Подробнее: [Метаданные, метки и аннотации](../../Concepts/metadata_and_labels.md).
-
-**Annotations (Аннотации)** — неидентифицирующие метаданные для хранения произвольной вспомогательной информации (версии сборки, JSON-конфиги, параметры внешних инструментов). Не используются для выборки объектов.
-
-**Label Selector (Селектор меток)** — механизм фильтрации объектов по меткам. Поддерживает два типа: **на основе равенства** (`env = production`) и **на основе множеств** (`env in (prod, staging)`). Используется в Deployment, Service, NetworkPolicy и других ресурсах.
-
-**Node Selection (Выбор узла)** — процесс управления размещением подов в кластере через указание требований к узлу (Node).
-
-**nodeSelector** — простейший механизм фильтрации узлов на основе меток. Pod будет запланирован только на ту Node, которая обладает всеми метками, указанными в селекторе. Работает как **логическое «И»** для всех указанных пар ключ-значение.
-
-**nodeName** — способ прямой привязки Pod к конкретной Node по её имени. Игнорирует механизмы планировщика (scheduler) и ограничения Taints (тейнов).
+* **Labels (Метки)** — пары «ключ-значение», прикрепляемые к объектам Kubernetes (Pod, Node, Service и др.). Предназначены для идентификации, группировки и выборки объектов через селекторы (Selectors). Индексируются API-сервером в памяти и в etcd для быстрого поиска. Подробнее: [Метаданные, метки и аннотации](../../Concepts/metadata_and_labels.md).
+* **Annotations (Аннотации)** — неидентифицирующие пары «ключ-значение» для хранения вспомогательных неструктурированных метаданных (JSON-конфигурации, версионирование, параметры внешних агентов мониторинга и сборщиков логов). Не индексируются и не используются для фильтрации объектов селекторами.
+* **Label Selector (Селектор меток)** — ключевой фильтрационный механизм Kubernetes. Поддерживает два типа: **на основе равенства** (`equality-based`: `=`, `==`, `!=`) и **на основе множеств** (`set-based`: `in`, `notin`, `exists`, `doesnotexist`). Применяется в контроллерах (Deployment, StatefulSet), сервисах (Service) и сетевых политиках (NetworkPolicy).
+* **Node Selection (Выбор узлов)** — процесс ограничения набора узлов кластера, на которых разрешено запускать конкретный Pod.
+* **nodeSelector** — базовый декларативный механизм привязки Pod к узлам по точным совпадениям меток. Принимает карту строк (`map[string]string`). Планировщик (`kube-scheduler`) назначает Pod только на узлы, содержащие абсолютно все указанные пары ключ-значение (логическое «И»).
+* **nodeName** — способ жесткого назначения Pod на конкретный узел по его системному имени (`spec.nodeName`). Полностью обходит планировщик (`kube-scheduler`), игнорируя Taints, политики сходства и доступность ресурсов.
+* **Системные метки узлов (Well-Known Labels)** — зарезервированные системные метки ядра Kubernetes (`kubernetes.io/*`, `k8s.io/*`), автоматически выставляемые `kubelet` или контроллерами топологии (`kubernetes.io/hostname`, `kubernetes.io/os`, `kubernetes.io/arch`, `node-role.kubernetes.io/*`, `topology.kubernetes.io/zone`).
+* **Ключ топологии (Topology Key)** — имя метки узла, определяющее границу физического или логического домена отказа (сервер, стойка, серверный зал, дата-центр).
 
 ---
 
-## Базовые концепции
+## Базовые концепции и архитектура
 
 ### Механизмы управления размещением
 
-| Механизм | Описание | Уровень сложности | Рекомендация |
-| :--- | :--- | :--- | :--- |
-| `nodeSelector` | Привязка по точному совпадению меток | Низкий | Для простых сценариев |
-| [Node Affinity](../../Scheduling/affinity.md) | Расширенные правила с логическими операторами | Средний | Основной метод для сложных топологий |
-| [Taints / Tolerations](../../Scheduling/taints_and_tolerations.md) | Запрет или разрешение размещения на узлах | Средний | Для изоляции ресурсов |
-| `nodeName` | Прямая запись имени узла в спецификацию | Критический | **Не рекомендуется** для Prod |
+В Kubernetes предусмотрена многоуровневая система управления размещением подов на узлах:
+
+| Механизм | Описание | Уровень сложности | Роль в планировании | Рекомендация для Production |
+| :--- | :--- | :--- | :--- | :--- |
+| `nodeSelector` | Фильтрация по точному совпадению меток | Низкий | Жесткий фильтр (`Filter`) | Базовый выбор пулов узлов (типы дисков, роли серверов) |
+| [Node Affinity](../../Scheduling/affinity.md) | Гибкие правила с логическими операторами (`In`, `NotIn`, `Gt`, `Lt`) | Средний | Жесткий (`required`) и мягкий (`preferred`) | Основной стандарт для сложных топологий и балансировки |
+| [Taints и Tolerations](../../Scheduling/taints_and_tolerations.md) | Механизм отталкивания нежелательных подов от узлов | Средний | Допуск (`Admission/Filter`) | Изоляция критических нод (Control Plane, GPU, выделенный контур) |
+| `nodeName` | Прямая запись имени узла в манифест Pod | Минимальный | Обход планировщика | **Запрещен** для прикладных рабочих нагрузок (только системные утилиты) |
 
 ### Типы Label Selectors
 
-Kubernetes поддерживает два типа селекторов, используемых в различных ресурсах:
+Kubernetes поддерживает два формата селекторов меток в зависимости от ресурса:
 
-**1. Equality-based (на основе равенства):**
-Используется в `spec.selector` Service и других «старых» ресурсах.
-- `env = production` — ключ `env` должен иметь значение `production`
-- `tier != frontend` — ключ `tier` не должен быть `frontend`
+#### 1. Equality-based (на основе равенства)
+Используется в традиционных ресурсах (например, `spec.selector` у `Service`), а также в `kubectl`:
+* `env = production` или `env == production` — ключ `env` обязан иметь значение `production`.
+* `tier != frontend` — ключ `tier` не равен `frontend` либо вовсе отсутствует на объекте.
 
-**2. Set-based (на основе множеств):**
-Современный подход через `matchExpressions` в Deployment, Job, DaemonSet.
-- `env in (prod, staging)` — значение входит в список
-- `tier notin (backup)` — значение не входит в список
-- `partition` — ключ просто существует (любое значение)
-- `!partition` — ключ отсутствует
+#### 2. Set-based (на основе множеств)
+Современный подход, используемый в `spec.selector.matchExpressions` у контроллеров (`Deployment`, `DaemonSet`, `StatefulSet`, `Job`), в `NetworkPolicy` и `PodAffinity`:
+* `In` — значение метки входит в заданный список (`env in (production, staging)`).
+* `NotIn` — значение метки не входит в заданный список или ключ отсутствует (`tier notin (backup, test)`).
+* `Exists` — ключ присутствует на объекте (любое значение, например `partition`).
+* `DoesNotExist` — ключ отсутствует на объекте (`!partition`).
 
 ```bash
 # Фильтрация по equality-based селектору
@@ -50,804 +51,900 @@ kubectl get pods -l env=production
 # Фильтрация по set-based селектору
 kubectl get pods -l "env in (production, staging),tier=frontend"
 
-# Комбинированный селектор
+# Комбинированный селектор (проверка равенства, множества и отсутствия метки)
 kubectl get pods -l "app=nginx,env in (prod,staging),!deprecated"
 
-# Фильтрация по нескольким значениям одного ключа
-kubectl get pods -l "env in (dev,staging)"
+# Проверка наличия метки с любым значением
+kubectl get pods -l "monitoring"
 ```
 
-### Особенности nodeSelector
+### Принцип работы nodeSelector в kube-scheduler
 
-Использование `nodeSelector` является наиболее быстрым и производительным способом ограничить круг узлов для приложения. Если планировщик не находит ни одного узла, удовлетворяющего всем условиям (логическое «И»), Pod переходит в фазу `Pending`.
+При планировании пода `kube-scheduler` выполняет двухфазный цикл:
+1. **Filtering (Фильтрация / Predicates):** Планировщик отсеивает узлы, не способные принять Pod. На этой фазе плагин `NodeAffinity` проверяет поле `spec.nodeSelector`.
+   * Для каждого узла проверяются все пары ключ-значение из `nodeSelector`.
+   * Каждое условие вычисляется по логическому «И» (`AND`).
+   * Если узел не имеет хотя бы одной указанной метки или ее значение не совпадает, узел исключается из списка кандидатов.
+   * Если ни один узел не подошел, Pod переходит в статус `Pending` с событием `FailedScheduling`.
+2. **Scoring (Оценка / Priorities):** Оставшиеся узлы ранжируются. Сам `nodeSelector` не участвует в начислении баллов (он либо пройден, либо нет; весовые коэффициенты доступны только в `Node Affinity`).
 
-**Ограничения nodeSelector (в сравнении с Node Affinity):**
+**Сравнение nodeSelector и Node Affinity:**
 
-| Критерий | nodeSelector | Node Affinity |
+| Критерий | `nodeSelector` | Node Affinity (`spec.affinity.nodeAffinity`) |
 | :--- | :--- | :--- |
-| Синтаксис | Только `key=value` | `In`, `NotIn`, `Exists`, `DoesNotExist`, `Gt`, `Lt` |
-| Мягкие правила | Нет | `preferredDuringSchedulingIgnoredDuringExecution` |
-| Отрицание | Нет | `DoesNotExist`, `NotIn` (anti-affinity) |
-| Вес (приоритет) | Нет | 1-100 для preferred правил |
+| Синтаксис | Простая карта `key: value` | Структурированные `matchExpressions` и `matchFields` |
+| Поддерживаемые операторы | Только точное совпадение (`=`) | `In`, `NotIn`, `Exists`, `DoesNotExist`, `Gt`, `Lt` |
+| Мягкие правила (Preferences) | Отсутствуют (только жесткий отказ) | Поддерживаются (`preferredDuringSchedulingIgnoredDuringExecution`) |
+| Веса правил | Нет | Вес от 1 до 100 для приоритезации узлов |
+| Изменение во время работы | Не выселяет работающий Pod | Игнорируется во время исполнения (`IgnoredDuringExecution`) |
 
-**Рекомендации:**
-- Не привязывайтесь к системной метке `kubernetes.io/hostname`, так как узлы могут пересоздаваться с новыми именами (особенно в облаках).
-- Используйте логические метки ролей или характеристик (например, `disktype: ssd`, `gpu: "true"`).
-- Для сложных сценариев (отрицание, предпочтения, числовое сравнение) переходите на [Node Affinity](../../Scheduling/affinity.md).
+### Особенности и риски прямого назначения через nodeName
 
-### Опасности использования nodeName
-
-Поле `nodeName` в спецификации Pod (`spec.nodeName`) заставляет систему обойти процесс планирования.
-
-**Последствия:**
-1.  **Отсутствие отказоустойчивости:** если указанный узел выйдет из строя, Pod не будет перезапущен на другом узле автоматически.
-2.  **Игнорирование ограничений:** Pod может быть запущен на узле, где недостаточно ресурсов (CPU, память) или установлены запрещающие Taints.
-3.  **Конфликты:** если узел не существует или недоступен, Pod останется в состоянии ожидания вечно.
-
-> **Почему `nodeName` до сих пор существует:** Исторически использовался контроллерами (например, DaemonSet Controller) для прямого назначения подов. В современных версиях Kubernetes для этой цели используются Scheduler Framework или Eviction Controller.
-
-### Типичные аннотации в DevOps/SRE
-
-Аннотации делятся на несколько категорий по области применения:
-
-| Категория | Пример ключа | Описание |
-| :--- | :--- | :--- |
-| **История изменений** | `kubernetes.io/change-cause` | Причина последнего обновления Deployment (видна в `rollout history`) |
-| **Мониторинг** | `prometheus.io/scrape`, `prometheus.io/port` | Автообнаружение Prometheus для scrape |
-| **Ingress** | `nginx.ingress.kubernetes.io/*` | Управление поведением NGINX Ingress Controller |
-| **Service Mesh** | `sidecar.istio.io/inject` | Автоматическое внедрение sidecar |
-| **Секреты** | `vault.hashicorp.com/agent-inject` | Интеграция с HashiCorp Vault |
-| **Security** | `pod-security.kubernetes.io/*` | Управление Pod Security Admission |
-| **Сбор логов** | `fluentbit.io/parser` | Парсер для Fluent Bit |
-| **Контроль версий** | `helm.sh/revision` | Номер ревизии Helm-чарта |
-| **Документация** | `description`, `team`, `cost-center` | Метаданные для поиска и аудита |
-
-> **Подробнее:** Список рекомендованных меток и поле `metadata` — [Метаданные, метки и аннотации](../../Concepts/metadata_and_labels.md).
-
-### Референс kubectl-команд для работы с метками и аннотациями
-
-#### Метки (Labels)
-
-```bash
-# Добавить метку к Pod
-kubectl label pod <pod-name> env=production
-
-# Добавить метку к узлу
-kubectl label node <node-name> disktype=ssd
-
-# Перезаписать существующую метку (без --overwrite ошибка)
-kubectl label pod <pod-name> env=staging --overwrite
-
-# Удалить метку (минус после ключа)
-kubectl label pod <pod-name> env-
-
-# Показать все метки Pod
-kubectl get pods --show-labels
-
-# Фильтрация по меткам (equality-based)
-kubectl get pods -l env=production
-kubectl get pods -l "app != nginx"
-
-# Фильтрация по меткам (set-based)
-kubectl get pods -l "env in (prod,staging)"
-kubectl get pods -l "env in (prod,staging),tier=frontend"
-
-# Фильтрация по меткам узлов
-kubectl get nodes -l disktype=ssd
-
-# Подсчет Pod по метке
-kubectl get pods --no-headers -l app=nginx | wc -l
-
-# Вывод только имен Pod с определенной меткой
-kubectl get pods -l env=production -o name
-
-# Фильтрация по 존재ующей/отсутствующей метке
-kubectl get pods -l "app"          # есть метка app (любое значение)
-kubectl get pods -l '!deprecated'  # метка deprecated отсутствует
-```
-
-#### Аннотации (Annotations)
-
-```bash
-# Добавить аннотацию к Deployment
-kubectl annotate deployment/my-app kubernetes.io/change-cause="Обновление до v1.2.3"
-
-# Добавить аннотацию к Pod
-kubectl annotate pod <pod-name> description="временный инстанс для отладки"
-
-# Перезаписать аннотацию
-kubectl annotate deployment/my-app kubernetes.io/change-cause="Hotfix CVE-123" --overwrite
-
-# Удалить аннотацию
-kubectl annotate pod <pod-name> description-
-
-# Просмотр аннотаций через jsonpath
-kubectl get pod <pod-name> -o jsonpath='{.metadata.annotations}'
-
-# Просмотр конкретной аннотации
-kubectl get pod <pod-name> -o jsonpath='{.metadata.annotations.prometheus\.io/scrape}'
-
-# Просмотр аннотаций всех Pod (табличный вид)
-kubectl get pods -o custom-columns="NAME:.metadata.name,CHANGE:.metadata.annotations.kubernetes\.io/change-cause"
-
-# Поиск Pod с определенной аннотацией (через jsonpipe или jq)
-kubectl get pods -o json | jq -r '.items[] | select(.metadata.annotations["team"] == "platform") | .metadata.name'
-```
-
-#### Просмотр и отладка
-
-```bash
-# Получить Pod с полным описанием (включая метки и аннотации)
-kubectl get pod <pod-name> -o yaml
-
-# Получить метки Pod через jsonpath
-kubectl get pod <pod-name> -o jsonpath='{.metadata.labels}'
-
-# Получить аннотации Pod через jsonpath
-kubectl get pod <pod-name> -o jsonpath='{.metadata.annotations}'
-
-# Кастомный вывод с метками
-kubectl get pods -o custom-columns="NAME:.metadata.name,ENV:.metadata.labels.env,TIER:.metadata.labels.tier"
-
-# Поиск Pod, принадлежащих конкретному Deployment через метки
-kubectl get pods -l app=my-app,controller-uid=<uid>
-
-# Мониторинг изменений меток в реальном времени
-kubectl get pods -w --show-labels
-```
-
----
-
-## Практические сценарии
-
-### Сценарий 1: Маркировка узлов и привязка Pod
-
-Классический паттерн для выделения узлов под специфические задачи.
-
-**Шаг 1: Маркировка узла**
-```bash
-# Метка для типа диска
-kubectl label node worker-01 disktype=ssd
-
-# Метка для роли узла
-kubectl label node worker-02 node-role.kubernetes.io/ingress=true
-
-# Метка для зоны доступности
-kubectl label node worker-03 topology.kubernetes.io/zone=eu-central-1a
-
-# Проверка меток узла
-kubectl get node worker-01 --show-labels
-# → NAME         STATUS   ROLES    AGE   VERSION   LABELS
-# → worker-01    Ready    <none>   30d   v1.30.0   disktype=ssd,...
-```
-
-**Шаг 2: Манифест Pod с nodeSelector**
+Поле `spec.nodeName` заставляет систему обойти весь планировщик:
 ```yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: my-app
-  labels:
-    app: my-app
-    env: production
+  name: direct-bound-pod
 spec:
-  nodeSelector:
-    disktype: ssd          # Только на узлах с SSD
-    topology.kubernetes.io/zone: eu-central-1a  # Только в зоне eu-central-1a
+  nodeName: worker-node-03
   containers:
   - name: app
     image: nginx:1.27
 ```
 
-**Шаг 3: Проверка назначения**
-```bash
-kubectl get pod my-app -o wide
-# → NAME     READY   STATUS    NODE        
-# → my-app   1/1     Running   worker-01
+**Архитектурный механизм:**
+1. При отправке такого манифеста в API-сервер поле `spec.nodeName` уже заполнено.
+2. `kube-scheduler` отслеживает только поды с пустым `spec.nodeName` (`spec.nodeName == ""`). Следовательно, планировщик полностью игнорирует данный Pod.
+3. Демон `kubelet`, запущенный на сервере `worker-node-03`, обнаруживает через Watch-запрос, что ему назначен данный Pod, и напрямую приступает к запуску контейнеров.
 
-# Проверка, почему Pod не планируется (если Pending)
-kubectl describe pod my-app | grep -A 5 "Events:"
-# → Warning  FailedScheduling  0/5 nodes are available: 5 node(s) didn't match node selector.
+**Опасности использования в Production:**
+1. **Отсутствие отказоустойчивости:** Если узел `worker-node-03` выйдет из строя (Kernel Panic, отказ питания, сетевой сплит), Pod останется привязанным к мертвому узлу и не будет пересоздан на исправном оборудовании.
+2. **Игнорирование Taints и ресурсов:** `kubelet` запускает Pod даже если на узле выставлены запрещающие тейны (`NoSchedule`) или на узле исчерпана память/процессор. Это ведет к падению контейнеров в состояние `OutOfmemory` или `Evicted`.
+3. **Зависание при ошибке имени:** Если в имени узла допущена опечатка (например, `worker-node-99`), Pod навечно зависнет в фазе `Pending`, и ни один контроллер или планировщик не выдаст диагностического предупреждения.
+
+> **Назначение в системной архитектуре:** `nodeName` исторически использовался контроллерами (в частности, `DaemonSet Controller` в старых версиях k8s) и служебными компонентами восстановления кластера (например, запуском статических подов kube-apiserver и etcd).
+
+### Метки против Аннотаций: различия и внутренняя организация
+
+| Характеристика | Метки (Labels) | Аннотации (Annotations) |
+| :--- | :--- | :--- |
+| **Основное назначение** | Идентификация, группировка, выборка объектов | Хранение структурированных метаданных, конфигураций |
+| **Индексация API-сервером** | Индексируются в памяти API-сервера | Не индексируются, хранятся в JSON-теле объекта |
+| **Использование в селекторах** | Да (`kubectl get -l`, Service, Deployment) | Нет (нельзя фильтровать через `--selector`) |
+| **Ограничение длины ключа** | До 63 символов (плюс префикс DNS до 253 символов) | До 63 символов (плюс префикс DNS до 253 символов) |
+| **Ограничение длины значения** | До 63 символов (буквы, цифры, дефис, точка, `_`) | Нет жесткого лимита на строку (общий размер объекта до 1–1.5 МБ в etcd) |
+| **Формат данных** | Простые строки, строгий regex RFC 1123 | Любой текст: сериализованный JSON, PEM-сертификаты, base64 |
+
+### Стандартные и служебные аннотации в практике DevOps/SRE
+
+В инфраструктуре без облачных провайдеров аннотации служат ключевым средством интеграции компонентов экосистемы:
+
+| Категория | Пример аннотации | Описание и влияние на систему |
+| :--- | :--- | :--- |
+| **Rollout / Аудит** | `kubernetes.io/change-cause` | Содержит причину ревизии, отображается в `kubectl rollout history` |
+| **Мониторинг** | `prometheus.io/scrape: "true"` | Директива для Prometheus Service Discovery выполнять сбор метрик |
+| | `prometheus.io/port: "9090"` | Порт экспортера метрик пода |
+| | `prometheus.io/path: "/metrics"` | URI эндпоинта метрик |
+| **Логирование** | `fluentbit.io/parser: "json"` | Указание сборщику Fluent Bit использовать специализированный парсер |
+| **Ingress-контроллеры** | `nginx.ingress.kubernetes.io/backend-protocol` | Управление TLS/HTTP протоколом связи Ingress с бекендом |
+| | `nginx.ingress.kubernetes.io/proxy-body-size` | Максимальный размер тела клиентского запроса (напр. `50m`) |
+| **Безопасность (PSA)** | `pod-security.kubernetes.io/enforce` | Уровень изоляции неймспейса (`privileged`, `baseline`, `restricted`) |
+| **Управление ревизиями** | `helm.sh/revision` | Номер установленной ревизии Helm-релиза |
+| **SRE-эксплуатация** | `operations.company.com/runbook` | Прямая ссылка на инструкцию по дежурству (Runbook/Playbook) |
+| | `operations.company.com/oncall` | Контактный канал или адрес дежурного инженера |
+
+---
+
+## Практические сценарии
+
+### Сценарий 1: Маркировка оборудования узлов и целевая привязка Pod
+
+Выделение серверов с высокоскоростными NVMe-накопителями и размещение подов базы данных в пределах заданного серверного зала / стойки (`zone-a`).
+
+**Шаг 1: Маркировка узлов физического кластера**
+```bash
+# Маркировка типа дисковой подсистемы
+kubectl label node worker-01.corp storage-tier=nvme
+
+# Маркировка физической стойки / серверной зоны (On-Premise topology)
+kubectl label node worker-01.corp topology.kubernetes.io/zone=zone-a
+
+# Проверка назначенных меток
+kubectl get node worker-01.corp --show-labels
+# → NAME              STATUS   ROLES    AGE   VERSION   LABELS
+# → worker-01.corp   Ready    <none>   45d   v1.30.0   storage-tier=nvme,topology.kubernetes.io/zone=zone-a,...
 ```
 
-> **Подробнее:** Если nodeSelector не помогает, используйте [Node Affinity](../../Scheduling/affinity.md) для более гибких правил или [Taints и Tolerations](../../Scheduling/taints_and_tolerations.md) для изоляции узлов.
+**Шаг 2: Манифест пода с селектором узлов**
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: postgres-primary
+  namespace: database
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: primary
+spec:
+  nodeSelector:
+    storage-tier: nvme
+    topology.kubernetes.io/zone: zone-a
+  containers:
+  - name: postgres
+    image: postgres:16.4
+    resources:
+      requests:
+        cpu: "2"
+        memory: 4Gi
+      limits:
+        cpu: "4"
+        memory: 8Gi
+    ports:
+    - containerPort: 5432
+      name: postgresql
+```
 
-### Сценарий 2: Привязка DaemonSet к группе узлов
+**Шаг 3: Проверка успешного назначения и валидация**
+```bash
+# Проверка размещения пода на узле
+kubectl get pod postgres-primary -n database -o wide
+# → NAME               READY   STATUS    RESTARTS   AGE   IP            NODE              NOMINATED NODE   READINESS GATES
+# → postgres-primary   1/1     Running   0          42s   10.244.1.45   worker-01.corp    <none>           <none>
 
-Запуск агентов мониторинга только на узлах, предназначенных для обработки внешнего трафика (Ingress-ноды).
+# Диагностика в случае зависания в Pending
+kubectl describe pod postgres-primary -n database | grep -A 4 "Events:"
+# → Events:
+# →   Type     Reason            Age   From               Message
+# →   ----     ------            ----  ----               -------
+# →   Warning  FailedScheduling  12s   default-scheduler  0/6 nodes are available: 6 node(s) didn't match Pod's node selector.
+```
+
+### Сценарий 2: Привязка DaemonSet к специализированным узлам
+
+Запуск агентов сбора сетевого трафика и балансировки только на выделенных Edge/Ingress-серверах bare-metal инфраструктуры.
 
 ```yaml
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: traffic-monitor
-  namespace: monitoring
+  name: edge-proxy-daemon
+  namespace: infrastructure
+  labels:
+    app.kubernetes.io/name: edge-proxy
 spec:
   selector:
     matchLabels:
-      name: monitor
+      app.kubernetes.io/name: edge-proxy
   template:
     metadata:
       labels:
-        name: monitor
-        app: traffic-monitor
+        app.kubernetes.io/name: edge-proxy
     spec:
+      # Запуск только на серверах, имеющих роль ingress-маршрутизаторов
       nodeSelector:
         node-role.kubernetes.io/ingress: "true"
       containers:
-      - name: agent
-        image: monitor-agent:1.2.0
+      - name: proxy
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+          hostPort: 80
+        - containerPort: 443
+          hostPort: 443
         resources:
           requests:
-            cpu: 50m
-            memory: 64Mi
+            cpu: 500m
+            memory: 512Mi
           limits:
-            cpu: 200m
-            memory: 128Mi
+            cpu: "2"
+            memory: 2Gi
 ```
 
-**Проверка:**
+**Валидация запуска:**
 ```bash
-# Узлы с ролью Ingress
+# Просмотр узлов с ролью ingress
 kubectl get nodes -l node-role.kubernetes.io/ingress=true
+# → NAME              STATUS   ROLES     AGE   VERSION
+# → edge-01.corp     Ready    ingress   90d   v1.30.0
+# → edge-02.corp     Ready    ingress   90d   v1.30.0
 
-# Поды DaemonSet и их расположение
-kubectl get pods -n monitoring -l name=monitor -o wide
-# → NAME                READY   STATUS    NODE
-# → traffic-monitor-abc   1/1     Running   ingress-01
-# → traffic-monitor-def   1/1     Running   ingress-02
+# Проверка размещения DaemonSet
+kubectl get pods -n infrastructure -l app.kubernetes.io/name=edge-proxy -o wide
+# → NAME                      READY   STATUS    NODE
+# → edge-proxy-daemon-5x8qf   1/1     Running   edge-01.corp
+# → edge-proxy-daemon-9m2kl   1/1     Running   edge-02.corp
 ```
 
-### Сценарий 3: Blue-Green деплой через метки
+### Сценарий 3: Переключение трафика Blue-Green через селекторы Service
 
-Переключение трафика между версиями приложения через изменение меток Service.
+Мгновенное переключение пользовательского трафика между версиями без перезапуска подов.
 
-**Шаг 1: Развертывание синей (текущей) версии**
+**Шаг 1: Развертывание Blue (текущей) и Green (новой) версий**
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: my-app-blue
+  name: payment-service-blue
+  namespace: default
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: my-app
-      version: blue
+      app: payment-api
+      deployment-color: blue
   template:
     metadata:
       labels:
-        app: my-app
-        version: blue
+        app: payment-api
+        deployment-color: blue
     spec:
       containers:
-      - name: app
-        image: my-app:v1.0.0
+      - name: api
+        image: payment-service:1.8.0
+        ports:
+        - containerPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service-green
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: payment-api
+      deployment-color: green
+  template:
+    metadata:
+      labels:
+        app: payment-api
+        deployment-color: green
+    spec:
+      containers:
+      - name: api
+        image: payment-service:1.9.0
+        ports:
+        - containerPort: 8080
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: my-app
+  name: payment-service
+  namespace: default
 spec:
   selector:
-    app: my-app
-    version: blue    # ← активная версия
+    app: payment-api
+    deployment-color: blue    # Направляет трафик на Blue
   ports:
   - port: 80
     targetPort: 8080
 ```
 
-**Шаг 2: Развертывание зеленой (новой) версии**
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: my-app-green
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: my-app
-      version: green
-  template:
-    metadata:
-      labels:
-        app: my-app
-        version: green
-    spec:
-      containers:
-      - name: app
-        image: my-app:v2.0.0
-```
-
-**Шаг 3: Переключение трафика**
+**Шаг 2: Валидация и переключение Service на Green**
 ```bash
-# Переключение Service на зеленую версию
-kubectl patch service my-app -p '{"spec":{"selector":{"version":"green"}}}'
+# Проверка текущих Endpoints сервиса (видны только IP подов Blue)
+kubectl get endpoints payment-service
+# → NAME              ENDPOINTS                                   AGE
+# → payment-service   10.244.1.12:8080,10.244.2.15:8080,10.244.3.8:8080   5d
 
-# Проверка: Service теперь направляет на зеленую версию
-kubectl get svc my-app -o yaml | grep -A 5 selector
-# → selector:
-# →   app: my-app
-# →   version: green
+# Атомарное переключение селектора сервиса на green
+kubectl patch service payment-service -p '{"spec":{"selector":{"deployment-color":"green"}}}'
+# → service/payment-service patched
 
-# Откат при необходимости
-kubectl patch service my-app -p '{"spec":{"selector":{"version":"blue"}}}'
+# Проверка обновления селектора
+kubectl get service payment-service -o jsonpath='{.spec.selector}'
+# → {"app":"payment-api","deployment-color":"green"}
+
+# Мгновенный откат при возникновении сбоя в новой версии
+kubectl patch service payment-service -p '{"spec":{"selector":{"deployment-color":"blue"}}}'
+# → service/payment-service patched
 ```
 
-> **Важно:** Blue-Green деплой требует удвоения ресурсов на время переключения. После проверки новой версии старую версию можно удалить или оставить как fallback.
+### Сценарий 4: Долевой Canary-релиз на основе реплик с общим селектором меток
 
-### Сценарий 4: Canary-релиз через метки
+Маршрутизация ~10% трафика на новую версию за счет соотношения реплик.
 
-Масштабирование новой версии на 10% трафика через количество реплик.
-
-**Шаг 1: Основная версия (90% трафика)**
 ```yaml
+# Основная стабильная версия: 9 реплик (90% трафика)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: my-app-stable
+  name: auth-service-stable
 spec:
   replicas: 9
   selector:
     matchLabels:
-      app: my-app
-      track: stable
+      app: auth-service
+      release-track: stable
   template:
     metadata:
       labels:
-        app: my-app
-        track: stable
+        app: auth-service
+        release-track: stable
     spec:
       containers:
-      - name: app
-        image: my-app:v1.0.0
-```
-
-**Шаг 2: Canary-версия (10% трафика)**
-```yaml
+      - name: auth
+        image: auth-service:2.4.1
+        ports:
+        - containerPort: 8080
+---
+# Canary-версия: 1 реплика (10% трафика)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: my-app-canary
+  name: auth-service-canary
 spec:
-  replicas: 1    # 1 из 10 = 10% трафика
+  replicas: 1
   selector:
     matchLabels:
-      app: my-app
-      track: canary
+      app: auth-service
+      release-track: canary
   template:
     metadata:
       labels:
-        app: my-app
-        track: canary
+        app: auth-service
+        release-track: canary
     spec:
       containers:
-      - name: app
-        image: my-app:v2.0.0
-```
-
-**Шаг 3: Service с общим селектором**
-```yaml
+      - name: auth
+        image: auth-service:2.5.0
+        ports:
+        - containerPort: 8080
+---
+# Общий Service, выбирающий поды ТОЛЬКО по app: auth-service
 apiVersion: v1
 kind: Service
 metadata:
-  name: my-app
+  name: auth-service
 spec:
   selector:
-    app: my-app    # ← селектор по общему ключу
+    app: auth-service    # Метка присутствует в обоих Deployment
   ports:
   - port: 80
     targetPort: 8080
 ```
 
-**Шаг 4: Увеличение доли canary**
+**Проверка распределения конечных точек (Endpoints):**
 ```bash
-# Увеличение до 30% трафика
-kubectl scale deployment my-app-canary --replicas=3
+# Получение общего списка подов под сервисом
+kubectl get pods -l app=auth-service -L release-track
+# → NAME                                   READY   STATUS    RESTARTS   AGE   RELEASE-TRACK
+# → auth-service-stable-65d89f78f-a1b2c   1/1     Running   0          12h   stable
+# → auth-service-stable-65d89f78f-d3e4f   1/1     Running   0          12h   stable
+# → ... (еще 7 стабильных подов)
+# → auth-service-canary-84b8d76d4-z9y8x   1/1     Running   0          5m    canary
 
-# Проверка распределения
-kubectl get pods -l app=my-app -o wide
-# → NAME                   READY   STATUS    NODE
-# → my-app-stable-xxx      1/1     Running   worker-01
-# → my-app-stable-yyy      1/1     Running   worker-02
-# → my-app-stable-zzz      1/1     Running   worker-03
-# → my-app-canary-aaa      1/1     Running   worker-04  ← canary
-# → my-app-canary-bbb      1/1     Running   worker-05  ← canary
-# → my-app-canary-ccc      1/1     Running   worker-06  ← canary
+# Увеличение доли Canary до 30% (3 реплики canary и 7 стабильных)
+kubectl scale deployment auth-service-canary --replicas=3
+kubectl scale deployment auth-service-stable --replicas=7
 ```
 
-### Сценарий 5: Метки для NetworkPolicy
+### Сценарий 5: Сетевая изоляция микросервисов с помощью меток в NetworkPolicy
 
-Использование меток для управления сетевым трафиком между Pod.
+Ограничение доступа к базе данных: доступ разрешен только подам с меткой `role: backend-worker`.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-frontend-to-backend
+  name: isolate-database-ingress
   namespace: production
 spec:
+  # Политика применяется к подам базы данных
   podSelector:
     matchLabels:
-      app: backend    # ← применяется к Pod с этой меткой
+      app.kubernetes.io/name: redis-cache
   policyTypes:
   - Ingress
   ingress:
   - from:
+    # Разрешено подключение только от подов с указанной меткой
     - podSelector:
         matchLabels:
-          app: frontend    # ← разрешен трафик только от frontend
+          role: backend-worker
+          security-zone: internal
     ports:
     - protocol: TCP
-      port: 8080
+      port: 6379
 ```
 
-**Проверка:**
+**Валидация:**
 ```bash
-# Pod, к которым применяется политика
-kubectl get pods -n production -l app=backend
+# Список защищаемых подов
+kubectl get pods -n production -l app.kubernetes.io/name=redis-cache --show-labels
 
-# Pod, которым разрешен доступ
-kubectl get pods -n production -l app=frontend
+# Список подов, имеющих право подключения
+kubectl get pods -n production -l "role=backend-worker,security-zone=internal"
 ```
 
-> **Подробнее:** Полное руководство по NetworkPolicy — [Сетевые политики](../../Networking/Network/network_overview.md).
+### Сценарий 6: Учет ресурсов и квотирование через метки Namespace и ResourceQuota
 
-### Сценарий 6: Метки для Resource Quota и Cost Allocation
-
-Метки для отслеживания потребления ресурсов по командам/проектам.
+Структурирование кластера для мультиарендности (Multi-Tenancy) и привязки к центрам затрат.
 
 ```yaml
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: team-platform
+  name: core-banking
   labels:
-    team: platform
-    cost-center: cc-12345
-    env: production
+    business-unit: retail-finance
+    cost-center: "10440"
+    environment: production
 ---
 apiVersion: v1
 kind: ResourceQuota
 metadata:
-  name: team-quota
-  namespace: team-platform
+  name: compute-quota
+  namespace: core-banking
 spec:
   hard:
-    requests.cpu: "10"
-    requests.memory: 20Gi
-    limits.cpu: "20"
-    limits.memory: 40Gi
-    pods: "50"
+    requests.cpu: "32"
+    requests.memory: 64Gi
+    limits.cpu: "64"
+    limits.memory: 128Gi
+    pods: "100"
 ```
 
-**Проверка потребления:**
+**Проверка квоты и аудит по меткам подразделений:**
 ```bash
-# Потребление квоты в namespace
-kubectl get resourcequota -n team-platform
-# → NAME       AGE   REQUEST      LIMIT
-# → team-quota  30d   cpu: 6/10    cpu: 12/20
-#                      mem: 15Gi/20Gi   mem: 30Gi/40Gi
+# Поиск всех неймспейсов департамента retail-finance
+kubectl get namespaces -l business-unit=retail-finance --show-labels
+# → NAME           STATUS   AGE   LABELS
+# → core-banking   Active   30d   business-unit=retail-finance,cost-center=10440,environment=production
 
-# Поды команды platform с их потреблением
-kubectl get pods -n team-platform -l team=platform -o custom-columns="NAME:.metadata.name,CPU_REQ:.spec.containers[*].resources.requests.cpu,MEM_REQ:.spec.containers[*].resources.requests.memory"
+# Инспекция потребления квоты
+kubectl get resourcequota compute-quota -n core-banking
+# → NAME            AGE   REQUEST                               LIMIT
+# → compute-quota   30d   cpu: 18/32, memory: 42Gi/64Gi        cpu: 34/64, memory: 80Gi/128Gi
 ```
 
-### Сценарий 7: Аннотации для мониторинга и сбора логов
+### Сценарий 7: Автоматизация мониторинга и сбора логов через аннотации Pod
 
-Настройка Prometheus и Fluent Bit через аннотации Pod.
+Передача расширенных инструкций для Prometheus Service Discovery и Fluent Bit без изменения конфигурации самого сборщика.
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: my-app
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: my-app
-  template:
-    metadata:
-      labels:
-        app: my-app
-        env: production
-      annotations:
-        # Prometheus: автообнаружение
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
-        prometheus.io/path: "/metrics"
-
-        # Fluent Bit: парсер логов
-        fluentbit.io/parser: "json"
-
-        # Описание для Operations
-        description: "Основной API-сервис обработки платежей"
-        team: "platform"
-        on-call: "platform-oncall@company.com"
-
-        # Причина создания (видна в rollout history)
-        kubernetes.io/change-cause: "Разворачивание v2.1.0 с фиксом CVE-2026-1234"
-    spec:
-      containers:
-      - name: app
-        image: my-app:v2.1.0
-        ports:
-        - containerPort: 8080
-          name: http
-        - containerPort: 9090
-          name: metrics    # ← Prometheus scrape порт
-```
-
-**Проверка:**
-```bash
-# Просмотр аннотаций Prometheus
-kubectl get pod -l app=my-app -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.prometheus\.io/scrape}{"\n"}{end}'
-# → my-app-abc123    true
-# → my-app-def456    true
-# → my-app-ghi789    true
-```
-
-### Сценарий 8: Равномерное распределение по зонам (v1.30+)
-
-Использование `topologySpreadConstraints` для обеспечения высокой доступности.
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: my-app
-spec:
-  replicas: 6
-  selector:
-    matchLabels:
-      app: my-app
-  template:
-    metadata:
-      labels:
-        app: my-app
-    spec:
-      topologySpreadConstraints:
-        # Распределение по зонам доступности
-        - maxSkew: 1
-          topologyKey: topology.kubernetes.io/zone
-          whenUnsatisfiable: DoNotSchedule
-          labelSelector:
-            matchLabels:
-              app: my-app
-        # Распределение по узлам внутри зоны
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app: my-app
-      containers:
-      - name: app
-        image: nginx:1.27
-```
-
-> **Подробнее:** Полное руководство по Affinity и Topology Spread — [Управление размещением подов](../../Scheduling/affinity.md).
-
-### Сценарий 9: Обслуживание узла с сохранением критических Pod
-
-Комбинирование `nodeSelector`, `tolerations` и `kubectl label` для безопасного обслуживания.
-
-```bash
-# 1. Добавить метку "maintenance" к узлу для обслуживания
-kubectl label node worker-01 maintenance=true
-
-# 2. (Опционально) Добавить taint для запрета новых подов
-kubectl taint node worker-01 maintenance=true:NoSchedule
-```
-
-**Манифест критического Pod с допуском:**
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: critical-service
+  name: order-processor
+  namespace: default
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: critical-service
+      app: order-processor
   template:
     metadata:
       labels:
-        app: critical-service
+        app: order-processor
+        tier: backend
+      annotations:
+        # Автообнаружение и сбор метрик Prometheus
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9102"
+        prometheus.io/path: "/metrics"
+        
+        # Инструкция парсеру Fluent Bit
+        fluentbit.io/parser: "json"
+        
+        # Операционные SRE-метаданные
+        operations.company.com/component: "orders"
+        operations.company.com/runbook: "https://wiki.corp/sre/runbooks/orders"
+        operations.company.com/oncall: "#sre-orders-channel"
+        
+        # Фиксация ревизии в rollout history
+        kubernetes.io/change-cause: "Release 2.4.0: оптимизация пакетной обработки заказов"
     spec:
-      # Не планировать на узлы с maintenance=true
-      nodeSelector:
-        maintenance: "false"
-
-      # Но разрешить继续 работу если уже на таком узле
-      tolerations:
-      - key: "maintenance"
-        operator: "Equal"
-        value: "true"
-        effect: "NoSchedule"
       containers:
-      - name: app
-        image: critical-service:v1.0
+      - name: processor
+        image: order-processor:2.4.0
+        ports:
+        - containerPort: 8080
+          name: api
+        - containerPort: 9102
+          name: metrics
 ```
 
-**Проверка:**
+**Проверка аннотаций в реальном времени:**
 ```bash
-# Поды на обслуживаемом узле
-kubectl get pods -o wide | grep worker-01
-
-# Новые поды не планируются на worker-01
-kubectl describe node worker-01 | grep -A 3 "Taints"
-# → Taints: maintenance=true:NoSchedule
-
-# Завершение обслуживания: удаление метки и taint
-kubectl label node worker-01 maintenance-
-kubectl taint node worker-01 maintenance=true:NoSchedule-
+# Извлечение аннотаций мониторинга подов
+kubectl get pods -l app=order-processor -o custom-columns="NAME:.metadata.name,SCRAPE:.metadata.annotations.prometheus\.io/scrape,PORT:.metadata.annotations.prometheus\.io/port"
+# → NAME                              SCRAPE   PORT
+# → order-processor-78d789b5c-2p8xm   true     9102
+# → order-processor-78d789b5c-k9w4n   true     9102
 ```
 
-### Сценарий 10: Использование аннотаций для документирования изменений
+### Сценарий 8: Балансировка реплик по физическим доменам отказа через TopologySpreadConstraints
 
-Ведение аудита ручных изменений через аннотации.
+Гарантия отказоустойчивости сервиса на уровне физических серверов и серверных стоек без применения устаревших жестких правил `podAntiAffinity`. Подробнее: [Affinity и TopologySpread](../../Scheduling/affinity.md).
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resilient-gateway
+  namespace: default
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: resilient-gateway
+  template:
+    metadata:
+      labels:
+        app: resilient-gateway
+    spec:
+      topologySpreadConstraints:
+      # Правило 1: Равномерно по серверным стойкам/зонам (zone-a, zone-b)
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: resilient-gateway
+      # Правило 2: Равномерно по серверам внутри стойки
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: resilient-gateway
+      containers:
+      - name: gateway
+        image: nginx:1.27
+```
+
+### Сценарий 9: Вывод узла на обслуживание (Cordon, Drain, метки и Taints)
+
+Безопасное проведение плановых работ (замена оперативной памяти, обновление ядра Linux) с блокировкой повторного размещения.
 
 ```bash
-# Зафиксировать причину изменения в Deployment
-kubectl annotate deployment/my-app \
-  kubernetes.io/change-cause="Ручное масштабирование до 5 реплик из-за пиковой нагрузки"
+# 1. Запрет назначения новых подов штатной командой
+kubectl cordon worker-02.corp
+# → node/worker-02.corp cordoned
 
-# Просмотр истории изменений
-kubectl rollout history deployment/my-app
+# 2. Установка информационной метки для системных администраторов
+kubectl label node worker-02.corp maintenance=in-progress --overwrite
+# → node/worker-02.corp labeled
+
+# 3. Безопасное выселение подов с соблюдением PodDisruptionBudget
+kubectl drain worker-02.corp --ignore-daemonsets --delete-emptydir-data --timeout=300s
+# → evicting pod default/order-processor-78d789b5c-2p8xm...
+# → node/worker-02.corp drained
+
+# (Проведение аппаратных работ на сервере и его перезагрузка)
+
+# 4. Возврат узла в строй
+kubectl label node worker-02.corp maintenance-
+# → node/worker-02.corp unlabeled
+
+kubectl uncordon worker-02.corp
+# → node/worker-02.corp uncordoned
+```
+
+### Сценарий 10: SRE-паттерн «Карантин сбойного пода» (Quarantine Pattern)
+
+Изоляция аварийного экземпляра пода (утечка памяти, дедлок, высокая нагрузка на CPU) для снятия дампов памяти, профилирования и анализа без влияния на пользователей.
+
+**Принцип:** Если изменить метку пода, на которую ориентируются `Service` и `ReplicaSet`:
+1. `Service` мгновенно исключает Pod из списка адресов балансировки (Endpoints).
+2. `ReplicaSet` видит нехватку одной реплики с меткой `app: payment-api` и автоматически запускает свежий здоровый Pod взамен.
+3. Изолированный Pod **не удаляется**, продолжая работать в текущем аварийном состоянии, доступный для `kubectl exec`, `gdb` или снятия heap-дампа.
+
+```bash
+# 1. Находим сбойный Pod под нагрузкой
+kubectl get pods -l app=payment-api
+# → NAME                           READY   STATUS    RESTARTS   AGE
+# → payment-api-65d89f78f-problem  1/1     Running   4          1d
+
+# 2. Снимаем рабочую метку приложения и добавляем метку карантина
+kubectl label pod payment-api-65d89f78f-problem app- quarantine=true --overwrite
+# → pod/payment-api-65d89f78f-problem labeled
+
+# 3. Проверяем: ReplicaSet тут же поднял новый pod
+kubectl get pods -l app=payment-api
+# → NAME                           READY   STATUS    RESTARTS   AGE
+# → payment-api-65d89f78f-problem  1/1     Running   4          1d  (НЕТ В СПИСКЕ, так как нет app=payment-api)
+# → payment-api-65d89f78f-newpod   1/1     Running   0          5s  (Новый рабочий экземпляр)
+
+# 4. Проверяем, что эндпоинты сервиса очищены от сбойного пода
+kubectl get endpoints payment-service
+# (IP проблемного пода больше не получает клиентский трафик)
+
+# 5. Проведение диагностики инженером внутри изолированного пода
+kubectl exec -it payment-api-65d89f78f-problem -- kill -3 1  # Снятие thread dump Java/Go
+
+# 6. После завершения анализа удаляем изолированный pod вручную
+kubectl delete pod payment-api-65d89f78f-problem
+```
+
+### Сценарий 11: Аудит изменений и откат релизов через аннотацию kubernetes.io/change-cause
+
+Включение расширенной трассировки ручных и автоматических обновлений.
+
+```bash
+# Фиксация изменения перед обновлением версии контейнера
+kubectl annotate deployment/order-processor \
+  kubernetes.io/change-cause="Hotfix CVE-2026-3841: обновление базового образа openssl" \
+  --overwrite -n default
+# → deployment.apps/order-processor annotated
+
+# Выполнение самого обновления образа
+kubectl set image deployment/order-processor processor=order-processor:2.4.1 -n default
+# → deployment.apps/order-processor image updated
+
+# Просмотр истории ревизий Deployment
+kubectl rollout history deployment/order-processor -n default
+# → deployment.apps/order-processor 
 # → REVISION  CHANGE-CAUSE
-# → 1         <none>
-# → 2         Обновление образа до v1.1.0
-# → 3         Ручное масштабирование до 5 реплик из-за пиковой нагрузки
+# → 1         Release 2.3.0
+# → 2         Release 2.4.0: оптимизация пакетной обработки заказов
+# → 3         Hotfix CVE-2026-3841: обновление базового образа openssl
 
-# Добавить аннотацию с contact person для алертов
-kubectl annotate pod <pod-name> \
-  on-call="platform@company.com" \
-  escalation="sre-lead@company.com"
+# Быстрый откат на предыдущую стабильную ревизию при деградации метрик
+kubectl rollout undo deployment/order-processor --to-revision=2 -n default
+# → deployment.apps/order-processor rolled back
 ```
 
 ---
 
-## Troubleshooting: типичные ошибки
+## Операции и команды
 
-### Ошибка 1: Pod в состоянии Pending с ошибкой nodeSelector
+### Управление метками (Labels)
 
-**Сообщение:**
+```bash
+# 1. Добавить метку к объекту
+kubectl label pod web-server-01 env=production
+# → pod/web-server-01 labeled
+
+# 2. Добавить метку к физическому узлу
+kubectl label node worker-01.corp hardware-tier=highmem
+# → node/worker-01.corp labeled
+
+# 3. Перезаписать существующую метку (флаг --overwrite обязателен)
+kubectl label pod web-server-01 env=staging --overwrite
+# → pod/web-server-01 labeled
+
+# 4. Удалить метку (знак минус после имени ключа)
+kubectl label pod web-server-01 env-
+# → pod/web-server-01 unlabeled
+
+# 5. Показать все метки объектов при выводе
+kubectl get pods --show-labels
+
+# 6. Вывести определенные метки в отдельных колонках таблицы
+kubectl get pods -L env,tier,app.kubernetes.io/version
+
+# 7. Подсчитать количество подов по конкретной метке
+kubectl get pods -l app=nginx --no-headers | wc -l
+# → 12
 ```
-0/5 nodes are available: 5 node(s) didn't match node selector.
+
+### Управление аннотациями (Annotations)
+
+```bash
+# 1. Добавить аннотацию к Deployment
+kubectl annotate deployment/api-gateway kubernetes.io/change-cause="Обновление таймаутов прокси"
+# → deployment.apps/api-gateway annotated
+
+# 2. Перезаписать существующую аннотацию
+kubectl annotate deployment/api-gateway kubernetes.io/change-cause="Патч Nginx 1.27.1" --overwrite
+# → deployment.apps/api-gateway annotated
+
+# 3. Удалить аннотацию (знак минус после имени ключа)
+kubectl annotate deployment/api-gateway kubernetes.io/change-cause-
+# → deployment.apps/api-gateway annotated
+
+# 4. Просмотр всех аннотаций в формате JSON через jsonpath
+kubectl get pod web-server-01 -o jsonpath='{.metadata.annotations}'
+
+# 5. Извлечение значения конкретной аннотации (экранирование точек в ключе обязательно)
+kubectl get pod web-server-01 -o jsonpath='{.metadata.annotations.prometheus\.io/scrape}'
+# → true
 ```
 
-**Причина:** Ни один узел в кластере не обладает всеми метками, указанными в `nodeSelector`.
+### Фильтрация и выборка по селекторам
+
+```bash
+# 1. Селектор равенства (Equality-based): точное совпадение
+kubectl get pods -l env=production
+
+# 2. Селектор неравенства: значение не равно заданному
+kubectl get pods -l "tier!=frontend"
+
+# 3. Селектор множеств: совпадение с одним из вариантов
+kubectl get pods -l "env in (production, staging)"
+
+# 4. Селектор множеств: исключение списка значений
+kubectl get pods -l "env notin (test, dev)"
+
+# 5. Проверка наличия метки с любым значением (Existence)
+kubectl get pods -l "security-zone"
+
+# 6. Проверка отсутствия метки у объектов (Negation)
+kubectl get pods -l '!deprecated'
+
+# 7. Комплексный фильтр: логическое «И» через запятую
+kubectl get pods -l "app=auth,env=production,!canary"
+
+# 8. Поиск узлов кластера с определенной архитектурой процессора и дисками
+kubectl get nodes -l "kubernetes.io/arch=amd64,storage-tier=nvme"
+```
+
+### Пакетные операции для системного администратора
+
+```bash
+# 1. Массовая маркировка группы узлов по общему признаку
+for node in $(kubectl get nodes -l "node-role.kubernetes.io/worker=" -o name); do
+  kubectl label $node datacenter=dc-primary rack=rack-01 --overwrite
+done
+
+# 2. Поиск подов, у которых отсутствует обязательная метка env (аудит безопасности)
+kubectl get pods -A -l '!env' --no-headers -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name"
+
+# 3. Массовое удаление завершенных Job по метке
+kubectl delete jobs -l "batch-job=nightly-sync,status=completed"
+```
+
+---
+
+## Диагностика и устранение неполадок (Troubleshooting)
+
+### Ошибка 1: Pod в состоянии Pending из-за несовпадения nodeSelector
+
+**Симптом:** Pod бесконечно находится в состоянии `Pending`.
 
 **Диагностика:**
 ```bash
-# Какие метки требуются
-kubectl get pod <pod-name> -o jsonpath='{.spec.nodeSelector}'
-# → {"disktype":"ssd","zone":"eu-central-1a"}
-
-# Какие метки есть на узлах
-kubectl get nodes --show-labels | grep disktype
-# → worker-01   Ready   ...   disktype=hdd,...
-# → worker-02   Ready   ...   disktype=ssd,zone=eu-central-1a,...
-
-# Проверка: все ли нужные метки есть на worker-02
-kubectl get node worker-02 --show-labels | tr ',' '\n' | grep -E "disktype|zone"
-# → disktype=ssd
-# → zone=eu-central-1a
+kubectl describe pod <pod-name>
+# → Events:
+# →   Type     Reason            Age   From               Message
+# →   ----     ------            ----  ----               -------
+# →   Warning  FailedScheduling  24s   default-scheduler  0/10 nodes are available: 10 node(s) didn't match Pod's node selector.
 ```
 
-**Решение:** Добавить недостающие метки к узлам:
-```bash
-kubectl label node worker-01 disktype=ssd
-kubectl label node worker-01 zone=eu-central-1a
-```
-
-### Ошибка 2: Невозможно перезаписать метку
-
-**Сообщение:**
-```
-Error from server (NotFound): pods "my-pod" not found
-```
-или
-```
-error: "env" already has a value "production", and --overwrite is false
-```
-
-**Причина:** Метка уже существует, а флаг `--overwrite` не указан.
+**Анализ причин:**
+1. Проверяем, какие требования выставлены в поде:
+   ```bash
+   kubectl get pod <pod-name> -o jsonpath='{.spec.nodeSelector}'
+   # → {"disktype":"nvme","rack":"r-04"}
+   ```
+2. Проверяем наличие таких меток на узлах кластера:
+   ```bash
+   kubectl get nodes -L disktype,rack
+   # → NAME             STATUS   ROLES    AGE   VERSION   DISKTYPE   RACK
+   # → worker-01.corp   Ready    <none>   10d   v1.30.0   ssd        r-01
+   # → worker-02.corp   Ready    <none>   10d   v1.30.0   ssd        r-02
+   ```
 
 **Решение:**
-```bash
-# Использовать --overwrite для перезаписи
-kubectl label pod my-pod env=staging --overwrite
+* Если узел с таким оборудованием существует, назначьте недостающие метки:
+  ```bash
+  kubectl label node worker-01.corp disktype=nvme rack=r-04
+  ```
+* Если метки были указаны с опечаткой в манифесте, исправьте `spec.nodeSelector` и примените манифест заново.
 
-# Или сначала удалить, потом добавить
-kubectl label pod my-pod env-
-kubectl label pod my-pod env=staging
+---
+
+### Ошибка 2: Ошибка при попытке перезаписать существующую метку
+
+**Симптом:** При выполнении `kubectl label` команда завершается ошибкой:
+```
+error: 'env' already has a value ('production'), and --overwrite is false
 ```
 
-### Ошибка 3: Deployment не находит Pod после изменения меток
+**Причина:** Защита от случайной перезаписи ключевых метаданных кластера.
 
-**Причина:** Изменение `template.metadata.labels` без обновления `spec.selector` (что невозможно для уже созданного Deployment).
+**Решение:**
+* Передать явный флаг разрешения перезаписи `--overwrite`:
+  ```bash
+  kubectl label pod <pod-name> env=staging --overwrite
+  # → pod/<pod-name> labeled
+  ```
+* Либо сначала явно удалить старую метку, затем установить новую:
+  ```bash
+  kubectl label pod <pod-name> env-
+  kubectl label pod <pod-name> env=staging
+  ```
 
-**Важно:** Поле `spec.selector` является **неизменяемым** после создания Deployment. Нельзя:
-- Изменить ключи в `spec.selector.matchLabels`
-- Добавить Pod с другими метками в Deployment
+---
 
-**Решение:** Создать новый Deployment с правильными метками:
-```bash
-# Проверить текущие метки Deployment
-kubectl get deployment my-app -o jsonpath='{.spec.selector.matchLabels}'
-# → {"app":"my-app","track":"stable"}
+### Ошибка 3: Потеря управления подами при попытке модификации spec.selector у Deployment
 
-# Если нужно изменить метки — создать новый Deployment
-kubectl create deployment my-app-v2 --image=my-app:v2.0 -o yaml --dry-run=client | \
-  kubectl patch --type=strategic -p '{"spec":{"selector":{"matchLabels":{"app":"my-app","track":"v2"}}}}' -f - | \
-  kubectl apply -f -
+**Симптом:** При попытке отредактировать поле `spec.selector` существующего объекта `Deployment` команда `kubectl apply` или `kubectl edit` завершается ошибкой:
+```
+The Deployment "my-app" is invalid: spec.selector: Invalid value: ...: field is immutable
 ```
 
-### Ошибка 4: Pod планируется на неправильный узел (nodeName)
+**Архитектурная причина:** Поле `spec.selector` контроллеров (`Deployment`, `StatefulSet`, `DaemonSet`) является **неизменяемым** (`immutable`) с момента создания объекта. Изменение селектора привело бы к тому, что существующие поды стали бы «сиротами» (Orphaned Pods), а контроллер начал бы создавать новый дублирующий набор подов.
 
-**Причина:** Прямое указание `spec.nodeName` обходит все проверки.
+**Решение:**
+1. Не меняйте селектор у запущенного Deployment. Если требуется провести миграцию структуры меток, создайте новый параллельный Deployment с новым именем и новым селектором, переключите трафик через `Service`, после чего удалите старый Deployment.
+2. Если Deployment тестовый и простой допустим:
+   ```bash
+   # Удаление только контроллера с сохранением подов
+   kubectl delete deployment my-app --cascade=orphan
+   # Создание манифеста с обновленным селектором и его применение
+   kubectl apply -f deployment-new-selector.yaml
+   ```
+
+---
+
+### Ошибка 4: Pod привязан через nodeName к аварийному узлу
+
+**Симптом:** Pod находится в статусе `Pending` или `NodeLost`, при этом в секции `Events` отсутствуют сообщения от `kube-scheduler`.
 
 **Диагностика:**
 ```bash
-# Проверить, что Pod привязан к конкретному узлу
+# Проверка наличия жесткой привязки узла
 kubectl get pod <pod-name> -o jsonpath='{.spec.nodeName}'
-# → worker-03
+# → worker-05.corp
 
-# Проверить, есть ли проблемы с этим узлом
-kubectl describe node worker-03 | grep -A 5 "Conditions:"
+# Проверка физического состояния этого узла
+kubectl get node worker-05.corp
+# → NAME              STATUS     ROLES    AGE   VERSION
+# → worker-05.corp   NotReady   <none>   35d   v1.30.0
 ```
 
-**Решение:** Убрать `nodeName` из манифеста и использовать `nodeSelector` или `nodeAffinity`:
-```yaml
-# Вместо:
-# spec:
-#   nodeName: worker-03
+**Причина:** Применение поля `spec.nodeName` исключило участие планировщика. Pod был жестко назначен на узел `worker-05.corp`, который находится в сбое (`NotReady` или выключен). Никакой автоэвакуации планировщик выполнить не может.
 
-# Использовать:
-spec:
-  nodeSelector:
-    role: dedicated
-```
+**Решение:**
+1. Удалите зависший под: `kubectl delete pod <pod-name> --grace-period=0 --force`.
+2. Замените в спецификации пода или его шаблоне поле `spec.nodeName` на `spec.nodeSelector` или правила `spec.affinity.nodeAffinity`:
+   ```yaml
+   # Запрещено в production:
+   # spec:
+   #   nodeName: worker-05.corp
 
-### Ошибка 5: Аннотация не видна в rollout history
+   # Рекомендуемый подход:
+   spec:
+     nodeSelector:
+       node-role.kubernetes.io/worker: "true"
+   ```
 
-**Причина:** Аннотация `kubernetes.io/change-cause` добавлена после создания ревизии или не была изменена.
+---
+
+### Ошибка 5: Аннотация kubernetes.io/change-cause не попадает в историю выкатки
+
+**Симптом:** При выполнении `kubectl rollout history deployment/<name>` в колонке `CHANGE-CAUSE` отображается `<none>`.
+
+**Причина:** Аннотация `kubernetes.io/change-cause` была добавлена к `metadata.annotations` самого Deployment **после** того, как ревизия уже создалась, либо аннотация была добавлена не в тот уровень манифеста.
 
 **Диагностика:**
 ```bash
-# Проверить аннотации текущей версии
-kubectl get deployment my-app -o jsonpath='{.spec.template.metadata.annotations}'
-
-# Проверить историю
-kubectl rollout history deployment/my-app
+# Проверка, где установлена аннотация
+kubectl get deployment <name> -o jsonpath='{.metadata.annotations.kubernetes\.io/change-cause}'
+kubectl get deployment <name> -o jsonpath='{.spec.template.metadata.annotations.kubernetes\.io/change-cause}'
 ```
 
-**Решение:** Аннотацию нужно добавлять/изменять **до** каждого обновления Deployment:
+**Решение:**
+Аннотацию необходимо обновлять **одновременно** или **непосредственно перед** триггером новой ревизии (`set image`, обновление конфига в шаблоне):
 ```bash
-# Перед обновлением образа
-kubectl annotate deployment/my-app \
-  kubernetes.io/change-cause="Обновление до v2.0.0" \
-  --overwrite
+# Способ 1: Аннотирование перед обновлением
+kubectl annotate deployment/my-app kubernetes.io/change-cause="Патч CVE-2026-1102" --overwrite
+kubectl set image deployment/my-app app=my-app:v1.9.1
 
-# Затем обновить образ
-kubectl set image deployment/my-app app=my-app:v2.0.0
+# Способ 2: Использование флага --record устарело (deprecated), используйте явную аннотацию
 ```
 
-### Ошибка 6: DaemonSet не запускается на Control Plane
+---
 
-**Сообщение:**
+### Ошибка 6: DaemonSet не планируется на узлы Control Plane
+
+**Симптом:** Поды системного DaemonSet (например, агент сбора логов node-exporter) запускаются только на Worker-нодах, пропуская мастер-узлы.
+
+**Диагностика:**
+```bash
+kubectl describe node control-plane-01.corp | grep -A 3 "Taints:"
+# → Taints:             node-role.kubernetes.io/control-plane:NoSchedule
 ```
-0/1 nodes are available: 1 node(s) had taint {node-role.kubernetes.io/control-plane: }, that the pod didn't tolerate.
-```
 
-**Причина:** Узлы Control Plane имеют taint `node-role.kubernetes.io/control-plane:NoSchedule`.
+**Причина:** Узлы Control Plane по умолчанию защищены тейном `NoSchedule`. `nodeSelector` выполняет притяжение подов к узлам, но **не дает допуска** сквозь защитные `Taints`.
 
-**Решение:** Добавить toleration в DaemonSet:
+**Решение:**
+В манифест `DaemonSet` необходимо добавить явную секцию `tolerations`:
 ```yaml
 spec:
   template:
@@ -860,24 +957,133 @@ spec:
 
 ---
 
+### Ошибка 7: «Война контроллеров» (Controller Thrashing) из-за пересекающихся селекторов
+
+**Симптом:** Постоянное создание и удаление подов; счетчик рестартов и генераций подов стремительно растет; сервис возвращает нестабильные ответы.
+
+**Причина:** Два разных `Deployment` (или `ReplicaSet`) в одном namespace имеют одинаковые или частично пересекающиеся селекторы `spec.selector.matchLabels` (например, оба настроены на `app: web`). Контроллер Deployment A считает поды Deployment B своими избыточными репликами и пытается их удалить. Одновременно контроллер Deployment B видит нехватку подов и создает новые.
+
+**Диагностика:**
+```bash
+# Просмотр всех Deployment и их селекторов в одном namespace
+kubectl get deployment -o custom-columns="NAME:.metadata.name,SELECTOR:.spec.selector.matchLabels"
+# → NAME         SELECTOR
+# → web-legacy   map[app:web]
+# → web-next     map[app:web]   <-- ОШИБКА: Дублирование селектора!
+```
+
+**Решение:**
+1. Разграничьте селекторы контроллеров. Добавьте уникальный идентификатор приложения или компонента:
+   * Для Deployment A: `app: web-legacy`
+   * Для Deployment B: `app: web-next`
+2. Всегда используйте стандартные префиксы и составные метки (`app.kubernetes.io/name`, `app.kubernetes.io/instance`).
+
+---
+
+### Ошибка 8: Ошибка маршрутизации (пустой список Endpoints) из-за опечатки в селекторе Service
+
+**Симптом:** Запросы к сервису возвращают `502 Bad Gateway` или зависают по таймауту; `curl http://my-service` не работает.
+
+**Диагностика:**
+```bash
+# 1. Проверяем список Endpoints сервиса
+kubectl get endpoints my-service
+# → NAME         ENDPOINTS   AGE
+# → my-service   <none>      2d   <-- Эндпоинты отсутствуют!
+
+# 2. Смотрим, какой селектор ищет Service
+kubectl get service my-service -o jsonpath='{.spec.selector}'
+# → {"app":"frontend","tier":"web"}
+
+# 3. Смотрим реальные метки запущенных подов
+kubectl get pods --show-labels
+# → NAME                        LABELS
+# → frontend-789bf8d4-5m92k     app=frontend,tier=api   <-- Опечатка: tier=api вместо tier=web!
+```
+
+**Решение:**
+Синхронизируйте селектор `Service` с реальными метками в шаблоне `Deployment`:
+```bash
+# Исправление селектора на живом сервисе
+kubectl patch service my-service -p '{"spec":{"selector":{"app":"frontend","tier":"api"}}}'
+# → service/my-service patched
+
+# Проверка появления сетевых адресов
+kubectl get endpoints my-service
+# → NAME         ENDPOINTS                           AGE
+# → my-service   10.244.1.20:8080,10.244.2.33:8080   2d
+```
+
+---
+
+### Ошибка 9: Pod зависает в Pending при валидном nodeSelector из-за нехватки ресурсов или Taints
+
+**Симптом:** Узел с метками из `nodeSelector` существует, но планировщик отказывается запускать туда Pod.
+
+**Диагностика:**
+```bash
+kubectl describe pod <pod-name>
+# → Events:
+# →   Warning  FailedScheduling  default-scheduler  0/5 nodes are available: 1 node(s) had untolerated taint {node.kubernetes.io/disk-pressure: }, 4 node(s) didn't match Pod's node selector.
+```
+
+**Причина:** Фаза фильтрации планировщика (`Filter`) проверяет комплекс условий: совпадение `nodeSelector`, отсутствие давления на диски/память (`Taints: DiskPressure / MemoryPressure`) и наличие доступных запрошенных ресурсов (`cpu` и `memory requests`). Даже если метки совпали, узел отклоняется по другим предикатам.
+
+**Решение:**
+1. Проверьте аллокацию ресурсов на целевом узле: `kubectl describe node <node-name> | grep -A 7 "Allocated resources"`.
+2. Если на узле выставлен системный тейн сбоя (`DiskPressure`), устраните причину (очистка неиспользуемых контейнеров/образов через `crictl rmi --prune`).
+
+---
+
+### Ошибка 10: Ошибка валидации формата метки или аннотации (RFC 1123)
+
+**Симптом:** При попытке применить манифест возвращается ошибка API-сервера:
+```
+The Pod "test-app" is invalid: metadata.labels: Invalid value: "production server": a valid label must be an empty string or consist of alphanumeric characters, '-', '_' or '.', and must start and end with an alphanumeric character
+```
+
+**Причина:** Значения и ключи меток обязаны соответствовать жесткому формату (до 63 символов, только цифры, буквы латиницы, `-`, `_`, `.`). Пробелы, двоеточия, слеши в значении (value) меток **запрещены**.
+
+**Решение:**
+* Если требуется сохранить строку с пробелами, описанием или URL — переместите эти данные из `metadata.labels` в `metadata.annotations`. В аннотациях разрешены любые символы и строковые форматы.
+
+---
+
 ## Best Practices
 
-1. **Используйте префиксы для меток**: Формат `company.com/team=platform` предотвращает конфликты с системными метками и метками сторонних инструментов (Helm, ArgoCD).
-2. **Не используйте `nodeName` в Production**: Вместо этого применяйте `nodeSelector` или `nodeAffinity` для отказоустойчивости и гибкости.
-3. **Изменяйте `spec.selector` только при создании Deployment**: Поле неизменяемо. Планируйте имена меток заранее.
-4. **Комбинируйте `nodeSelector` с `tolerations`**: Для выделенных узлов (GPU, CI) используйте связку: Taints отталкивают чужие Pod, а nodeSelector притягивает нужные.
-5. **Используйте `--overwrite` осознанно**: Не перезаписывайте метки без проверки — это может сломать селекторы Service или Deployment.
-6. **Фиксируйте изменения через аннотации**: Добавляйте `kubernetes.io/change-cause` перед каждым обновлением для аудита и отката.
-7. **Для мониторинга используйте аннотации, а не метки**: Prometheus, Fluent Bit и другие инструменты читают аннотации для автообнаружения — не перегружайте ими системные метки.
-8. **Проверяйте распределение после изменений**: Используйте `kubectl get pods -o wide -l app=<name>` для визуальной проверки, что Pod распределяются корректно.
-9. **Для NetworkPolicy используйте метки приложения, а не узла**: Сетевые политики работают на уровне Pod, а не узлов.
-10. **Избегайте хранения секретов в аннотациях**: Аннотации видны всем, кто имеет доступ к namespace. Используйте [Secrets](../../Security/application_secrets_management.md) или External Secrets Operator.
+1. **Используйте общепринятую таксономию меток**:
+   Применяйте рекомендованные сообществом метки Kubernetes (`app.kubernetes.io/name`, `app.kubernetes.io/instance`, `app.kubernetes.io/version`, `app.kubernetes.io/component`, `app.kubernetes.io/part-of`, `app.kubernetes.io/managed-by`). Это гарантирует предсказуемую интеграцию с Helm, ArgoCD и системами телеметрии.
+2. **Используйте префиксы компании для кастомных метаданных**:
+   Для внутренних служебных меток всегда применяйте формат FQDN-префикса: `company.com/team`, `company.com/cost-center`, `company.com/sla`. Это исключает коллизии имен с системными метками платформы.
+3. **Строго разделяйте идентификацию и метаданные**:
+   * В **Labels** заносите только то, по чему производится фильтрация, маршрутизация трафика или планирование (`env`, `app`, `tier`, `node-role`).
+   * В **Annotations** размещайте служебные параметры: timestamp сборки, хеш git-коммита, имя автора, ссылки на Runbook, настройки парсеров логов и скрейпинга метрик.
+4. **Категорический отказ от `nodeName` в продуктивных средах**:
+   Никогда не указывайте `spec.nodeName` в манифестах прикладных сервисов. Для таргетирования оборудования используйте `nodeSelector`, а для комплексных сценариев — `nodeAffinity`.
+5. **Применяйте паттерн «Карантин сбойного пода» (Quarantine)**:
+   При расследовании инцидентов изолируйте аварийные поды от трафика путем снятия рабочей метки селектора, сохраняя контейнер в запущенном состоянии для глубокого профилирования и анализа дампов памяти.
+6. **Помните о неизменяемости селекторов контроллеров**:
+   Проектируйте `spec.selector.matchLabels` в `Deployment` на ранних этапах. Изменить их «на лету» без пересоздания ресурса невозможно.
+7. **Стандартизируйте профили узлов в физической инфраструктуре (Bare-Metal)**:
+   Вместо привязки к временным сетевым именам серверов (`kubernetes.io/hostname`), маркируйте узлы кластера по физическим характеристикам:
+   * Тип дисков: `storage-tier=nvme`, `storage-tier=hdd`
+   * Сетевая специфика: `network-speed=25g`, `network-zone=dmz`
+   * Физическое размещение: `topology.kubernetes.io/zone=zone-a`, `topology.kubernetes.io/rack=r12`
+   * Процессорная архитектура: системная метка `kubernetes.io/arch=amd64` / `arm64`
+8. **Комбинируйте `nodeSelector` с `Taints` и `Tolerations`**:
+   Для выделения специализированных нод (например, серверов с тяжелой дисковой подсистемой или лицензируемым ПО) одного `nodeSelector` недостаточно: чужие поды без селектора все равно смогут занять эти узлы. Устанавливайте `Taint` для отталкивания чужих подов, а `nodeSelector` + `Toleration` — для притяжения целевых.
+9. **Контролируйте обязательные метки через Admission Controllers**:
+   Внедряйте политики валидации (например, с помощью Kyverno или OPA Gatekeeper), запрещающие запуск подов без обязательных меток ответственности (`company.com/team`, `company.com/env`).
+10. **Не храните секреты и токены в аннотациях**:
+    Аннотации не являются зашифрованными данными etcd по умолчанию и легко читаются любым пользователем с правами `get pods`. Пароли, сертификаты и API-ключи должны храниться исключительно в [Secrets](../../Security/application_secrets_management.md) или монтироваться через HashiCorp Vault / External Secrets Operator.
 
 ---
 
 ## Связанные темы
 
-* [Метаданные, метки и аннотации в Kubernetes](../../Concepts/metadata_and_labels.md) — стандарты именования, рекомендованные метки, лимиты.
-* [Node Affinity и Topology Spread](../../Scheduling/affinity.md) — гибкие правила планирования и распределения по зонам.
-* [Taints и Tolerations](../../Scheduling/taints_and_tolerations.md) — механизмы отталкивания подов с узлов.
-* [Сетевые политики (NetworkPolicy)](../../Networking/Network/network_overview.md) — управление трафиком по меткам Pod.
+* [Метаданные, метки и аннотации в Kubernetes](../../Concepts/metadata_and_labels.md) — базовые структуры метаданных, системные поля объекта, архитектура хранения в etcd.
+* [Node Affinity и Topology Spread Constraints](../../Scheduling/affinity.md) — гибкие правила планирования, приоритеты, веса и распределение по физическим доменам отказа.
+* [Taints и Tolerations: изоляция узлов](../../Scheduling/taints_and_tolerations.md) — механизмы отталкивания нежелательных подов от выделенных серверов кластера.
+* [Сетевые политики (NetworkPolicy)](../../Networking/Network/network_overview.md) — правила межсервисной изоляции трафика с использованием селекторов меток Pod.
+* [Диагностика зависания Pod в состоянии Pending](../../Troubleshooting/Common_Errors/pod_pending/common_cases_and_solutions.md) — анализ причин блокировки планирования, включая несовпадения предикатов селектора узлов.
+* [Безопасность и управление секретами приложений](../../Security/application_secrets_management.md) — безопасное хранение конфиденциальных данных без компрометации метаданных.
