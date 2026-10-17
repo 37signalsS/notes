@@ -1,6 +1,6 @@
 # Политики безопасности Istio
 
-**Актуально для:** Istio 1.30+
+**Актуально для:** Istio 1.31.x
 
 ## Определения
 
@@ -9,7 +9,7 @@
 2.  **Аутентификация (Authentication):** Проверка подлинности отправителя (mTLS) и конечного пользователя (JWT/OIDC).
 3.  **Авторизация (Authorization):** Управление доступом на основе политик (L4–L7), определяющих, «кто», «куда» и «как» может обращаться.
 
-В 2026 году (версии 1.32+) основным интерфейсом управления безопасностью стал **Gateway API** (GAMMA), а механизмы mTLS инкапсулированы в протокол **HBONE** для поддержки Ambient Mesh.
+В 2026 году (Istio 1.31.x) основным интерфейсом управления безопасностью стал **Gateway API** (GAMMA), а механизмы mTLS инкапсулированы в протокол **HBONE** для поддержки Ambient Mesh.
 
 ---
 
@@ -28,10 +28,10 @@ Istio использует идентификаторы **SPIFFE ID** для п�
 
 ### 1. Peer Authentication (mTLS)
 
-Ресурс `PeerAuthentication` определяет, как прокси принимают входящие соединения. В 2026 году mTLS между узлами в Ambient Mesh выполняется компонентом **Ztunnel**.
+Ресурс `PeerAuthentication` определяет, как прокси принимают входящие соединения. В Ambient Mesh (Istio 1.31.x) mTLS между узлами выполняется компонентом **Ztunnel**.
 
 **Режимы работы (`mode`):**
-- **`STRICT` (Стандарт 2026):** Разрешен ТОЛЬКО mTLS-трафик. Любые запросы в открытом тексте блокируются.
+- **`STRICT` (рекомендуемо для 1.31.x):** Разрешен ТОЛЬКО mTLS-трафик. Любые запросы в открытом тексте блокируются.
 - **`PERMISSIVE`:** Принимает mTLS и Plain Text. Используется исключительно для временной миграции (не рекомендуется для продакшена).
 - **`DISABLE`:** mTLS отключен.
 
@@ -43,7 +43,7 @@ Istio использует идентификаторы **SPIFFE ID** для п�
 **Пример: Глобальный Strict mTLS (istio-system)**
 
 ```yaml
-apiVersion: security.istio.io/v1beta1
+apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata:
   name: default
@@ -56,7 +56,7 @@ spec:
 **Пример: PERMISSIVE для конкретного порта (миграция)**
 
 ```yaml
-apiVersion: security.istio.io/v1beta1
+apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata:
   name: legacy-migration
@@ -83,7 +83,7 @@ spec:
 Проверяет токены конечных пользователей (JWT) от внешних провайдеров (Auth0, Keycloak, Okta). Ресурс работает только для L7-трафика, проходящего через Envoy (sidecar или waypoint); в Ambient Mesh L4-трафик через Ztunnel не проверяет JWT.
 
 ```yaml
-apiVersion: security.istio.io/v1beta1
+apiVersion: security.istio.io/v1
 kind: RequestAuthentication
 metadata:
   name: jwt-auth
@@ -103,9 +103,9 @@ spec:
 - `issuer`: идентификатор провайдера токенов.
 - `jwksUri`: URL с открытыми ключами для проверки подписи.
 - `audiences`: список допустимых значений claims `aud`. Если не указан, проверка отключена.
-- `forwardOriginalToken`: передавать исходный JWT в заголовке `Authorization` бэкенду (по умолчанию `true`).
+- `forwardOriginalToken`: передавать исходный JWT в заголовке `Authorization` бэкенду (по умолчанию `false`).
 
-**CORS:** Istio не предоставляет отдельного ресурса CORS. Настройка CORS-headers осуществляется через `EnvoyFilter` или `TrafficExtension` (Lua) на уровне Waypoint/Sidecar.
+**CORS:** Istio не предоставляет отдельного ресурса CORS. Настройка CORS-headers осуществляется через `EnvoyFilter` или Lua-скрипты на уровне Waypoint/Sidecar (см. раздел [Внешняя авторизация (ExtAuthz)](#внешняя-авторизация-extauthz)).
 
 ---
 
@@ -251,7 +251,7 @@ spec:
 С 2026 года mTLS между Gateway и бэкендом настраивается через `BackendTLSPolicy` (Gateway API). Это отделяет конфигурацию TLS от специфики mesh и работает с любым совместимым шлюзом.
 
 ```yaml
-apiVersion: gateway.networking.k8s.io/v1alpha2
+apiVersion: gateway.networking.k8s.io/v1
 kind: BackendTLSPolicy
 metadata:
   name: backend-mtls
@@ -274,13 +274,32 @@ spec:
 
 ## Внешняя авторизация (ExtAuthz)
 
-Для делегирования авторизации на внешний сервис (OPA, Envoy External Authorization, кастомный API) используйте `TrafficExtension` с Lua или Wasm-расширением, либо `EnvoyFilter`.
+Для делегирования авторизации на внешний сервис (OPA, Envoy External Authorization, кастомный API) используйте `extensionProviders` в MeshConfig + `AuthorizationPolicy` с `action: CUSTOM`, либо `EnvoyFilter` для точечной настройки.
 
-**Вариант 1: TrafficExtension (Lua) для Waypoint/Sidecar:**
+**Вариант 1: extensionProviders + AuthorizationPolicy (рекомендуемо для 1.31.x)**
+
+Современный подход — объявить провайдер ext_authz в `MeshConfig` и привязать его через `AuthorizationPolicy` с `action: CUSTOM`. Работает в Ambient (Ztunnel L4 + Waypoint L7) и в Sidecar-модели.
 
 ```yaml
-apiVersion: extensions.istio.io/v1alpha1
-kind: TrafficExtension
+# 1. Добавьте extensionProviders в MeshConfig (IstioOperator или ConfigMap istio)
+extensionProviders:
+- name: "ext-authz"
+  envoyExtAuthz:
+    httpService:
+      serverUri:
+        uri: ext-authz.prod.svc.cluster.local
+        cluster: outbound|8080||ext-authz.prod.svc.cluster.local
+        timeout: 2s
+      authorizationRequest:
+        headersToAddBack:
+        - key: x-ext-authz
+          value: "%REQ(x-ext-authz)%"
+```
+
+```yaml
+# 2. AuthorizationPolicy с action: CUSTOM для привязки к провайдеру
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
 metadata:
   name: ext-authz-check
   namespace: prod
@@ -288,22 +307,16 @@ spec:
   selector:
     matchLabels:
       app: api-server
-  phase: AUTHZ
-  priority: 100
-  lua:
-    inlineCode: |
-      function envoy_on_request(req)
-        local authz_header = req:headers():get("x-ext-authz")
-        if authz_header == "allow" then
-          return
-        end
-        req:headers():add(":status", "403")
-        req:headers():add("content-type", "application/json")
-        req:body():setBytes('{"error":"forbidden"}')
-      end
+  action: CUSTOM
+  provider:
+    name: "ext-authz"
+  rules:
+  - to:
+    - operation:
+        paths: ["/api/*"]
 ```
 
-**Вариант 2: EnvoyFilter (кластерный):**
+**Вариант 2: EnvoyFilter (для точечной настройки или Sidecar-модели без extensionProviders):**
 
 ```yaml
 apiVersion: networking.istio.io/v1alpha3
@@ -399,7 +412,7 @@ kubectl get configmap istio-ca-root-cert -n istio-system -o yaml
 
 ### Внешний CA (Vault / SPIRE / cert-manager)
 
-Если используется внешний CA, настройте `MeshConfig` или `Citadel` для подключения к нему:
+Если используется внешний CA, настройте `MeshConfig` или istiod для подключения к нему:
 
 ```yaml
 apiVersion: install.istio.io/v1alpha1
@@ -433,7 +446,7 @@ spec:
 ```bash
 # Примените BackendTLSPolicy для сервиса
 cat <<EOF | kubectl apply -f -
-apiVersion: gateway.networking.k8s.io/v1alpha2
+apiVersion: gateway.networking.k8s.io/v1
 kind: BackendTLSPolicy
 metadata:
   name: gateway-backend-tls
@@ -505,7 +518,7 @@ spec:
 ```bash
 # 1. Включите PERMISSIVE и сбор логов
 kubectl apply -f - <<EOF
-apiVersion: security.istio.io/v1beta1
+apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata:
   name: migrate-to-strict
@@ -535,7 +548,7 @@ istioctl proxy-config secret deploy/my-app -n prod -o json | jq '.dynamicActiveS
 ```bash
 # 1. RequestAuthentication
 cat <<EOF | kubectl apply -f -
-apiVersion: security.istio.io/v1beta1
+apiVersion: security.istio.io/v1
 kind: RequestAuthentication
 metadata:
   name: api-jwt
@@ -733,8 +746,8 @@ istioctl proxy-config secret deploy/my-app -n prod -o json | jq '.dynamicActiveS
 ```bash
 # 1. Включите access-логи через Telemetry API
 cat <<EOF | kubectl apply -f -
-apiVersion: telemetry.istio.io/v1alpha1
-kind: Telemetry
+    apiVersion: telemetry.istio.io/v1
+    kind: Telemetry
 metadata:
   name: enable-access-logging
   namespace: my-app
