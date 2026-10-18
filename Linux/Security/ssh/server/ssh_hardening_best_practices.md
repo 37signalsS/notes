@@ -83,6 +83,24 @@
 | **`ExposeAuthInfo`** | `no` | Не раскрывать информацию о методах аутентификации до входа. |
 | **`FingerprintHash`** | `sha256` | Алгоритм хеширования для отпечатков ключей в логах. |
 
+### Ловушка `sshd_config.d`: первый выигрывает, cloud-init мешает
+
+`sshd` применяет **первое** найденное значение директивы, а не последнее (man sshd_config: «for each keyword, the first obtained value will be used»). Директива `Include /etc/ssh/sshd_config.d/*.conf` стоит в начале основного конфига, и файлы в каталоге обрабатываются **в алфавитном порядке**. Следствие: drop-in, который читается раньше, «побеждает» любой более поздний файл с той же директивой.
+
+На облачных образах Ubuntu cloud-init создаёт `/etc/ssh/sshd_config.d/50-cloud-init.conf` (нередко с `PasswordAuthentication yes`). Файл `99-hardening.conf` при этом **не переопределяет** парольную аутентификацию: `50-` идёт по алфавиту раньше `99-`, и его значение уже зафиксировано. Проверить итог можно только эффективной конфигурацией:
+
+```bash
+sudo sshd -T | grep -i passwordauthentication
+# Ожидаемый результат при корректном hardening:
+# passwordauthentication no
+```
+
+**Правила:**
+1. Безопасностно-критичные директивы (`PasswordAuthentication`, `PermitRootLogin`, `AuthenticationMethods`) размещать в drop-in с префиксом, идущим **раньше** cloud-init — например, `00-hardening.conf`.
+2. Либо явно удалить конфликтующий файл cloud-init: `sudo rm /etc/ssh/sshd_config.d/50-cloud-init.conf` (учтите, что cloud-init может пересоздать его при повторном `cloud-init init`).
+3. Перед перезапуском всегда проверять синтаксис (`sudo sshd -t`) и **итог** (`sudo sshd -T`), а не содержимое отдельных файлов.
+4. Не закрывать текущую SSH-сессию, пока новым ключом/подключением не подтверждён вход — иначе при ошибке в конфиге можно потерять доступ.
+
 ### Современные алгоритмы (Стандарты 2026)
 
 Для обеспечения долгосрочной безопасности (включая защиту от квантовых угроз) следует ограничить поддерживаемые алгоритмы. Ниже приведены рекомендации для OpenSSH 9.8+ с поддержкой PQC.
@@ -171,8 +189,8 @@ sudo chmod 755 /sftp/data
 sudo chown sftpuser:sftpuser /sftp/data/{upload,download,archive}
 sudo chmod 700 /sftp/data/{upload,download,archive}
 
-# 3. Настройка sshd_config (в sshd_config.d/99-hardening.conf)
-sudo tee -a /etc/ssh/sshd_config.d/99-hardening.conf << 'EOF'
+# 3. Настройка sshd_config (в sshd_config.d/00-hardening.conf; префикс 00 — чтобы переопределять cloud-init, см. «Ловушка sshd_config.d»)
+sudo tee -a /etc/ssh/sshd_config.d/00-hardening.conf << 'EOF'
 
 # SFTP-only chroot
 Match Group sftpusers
@@ -655,7 +673,7 @@ ssh_compliance_gate:
 sudo mkdir -p /etc/ssh/sshd_config.d
 
 # 2. Создание файла закалки
-sudo tee /etc/ssh/sshd_config.d/99-hardening.conf << 'EOF'
+sudo tee /etc/ssh/sshd_config.d/00-hardening.conf << 'EOF'
 # Аутентификация
 PubkeyAuthentication yes
 PasswordAuthentication no
@@ -873,7 +891,7 @@ sudo chmod 600 /home/breakglass/.ssh/authorized_keys
 sudo chown -R breakglass:breakglass /home/breakglass/.ssh
 
 # 4. Отдельный Match-блок в основном sshd_config (только для breakglass)
-sudo tee -a /etc/ssh/sshd_config.d/99-hardening.conf << 'EOF'
+sudo tee -a /etc/ssh/sshd_config.d/00-hardening.conf << 'EOF'
 
 # Break-glass доступ: только FIDO2, только с консоли/IPMI подсети
 Match User breakglass Address 192.168.100.0/24
@@ -953,7 +971,7 @@ sudo sshd -t
 
 # 3. Применение через drop-in (рекомендуется) или атомарная замена
 # Вариант A: Drop-in (безопаснее, изолирует изменения)
-sudo tee /etc/ssh/sshd_config.d/99-hardening.conf << 'EOF'
+sudo tee /etc/ssh/sshd_config.d/00-hardening.conf << 'EOF'
 # ... новые параметры ...
 EOF
 

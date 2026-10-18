@@ -1,12 +1,14 @@
 # Управление сертификатами сервисов в двухуровневом CA
 
+**Актуально для:** OpenSSL 3.0+
+
 ## Определения
 
 **Сертификат сервиса (Service Certificate)** — цифровой документ стандарта X.509, используемый для идентификации узлов (веб-серверов, API, БД) и шифрования трафика. В двухуровневой иерархии подписывается исключительно **Intermediate CA**.
 
 **CA (Certificate Authority)** — доверенная сторона в PKI. В данной модели корень (Root) изолирован, а промежуточный узел (Intermediate) является «выпускающим».
 
-**OpenSSL 3.0+** — современная версия криптографического инструментария. В 2026 году рекомендуется использовать его архитектуру провайдеров для обеспечения соответствия стандартам безопасности.
+**OpenSSL 3.0+** — криптографический тулсет с модульной архитектурой провайдеров (Default, Legacy, FIPS). Команда `openssl rsa` находится в режиме поддержки (maintenance mode) — для универсальной проверки key/cert используйте `openssl pkey`/`openssl x509 -pubkey` (см. [Утилиты и диагностика](./common_utilities.md#проверка-соответствия-ключа-и-сертификата)). Полная поддержка NIST PQC (ML-KEM, ML-DSA, SLH-DSA) доступна, начиная с OpenSSL 3.5.
 
 **mTLS (Mutual TLS)** — стандарт безопасности, требующий наличия сертификатов у обеих сторон соединения.
 
@@ -64,7 +66,7 @@
 ### Ограничения двухуровневой архитектуры
 
 - **`pathlen:0`:** Intermediate CA не может подписывать дочерние CA. Для создания подчинённого CA требуется перевыпуск Intermediate с другим `pathlen`.
-- **Зависимость от Intermediate:** все сервисные сертификаты становятся недействительными при истечении или отзыве Intermediate CA.
+- **Зависимость от Intermediate:** все сервисные сертификаты становятся недействительными при истечении или отзеве Intermediate CA.
 - **Распространение bundle:** при ротации Intermediate CA требуется обновить `ca-chain.crt` на всех серверах и в доверенных хранилищах.
 
 ## Предварительные требования
@@ -109,7 +111,7 @@ sudo apk add openssl openssl-dev
 | Роль | Обязанности |
 | :--- | :--- |
 | **Владелец сервиса** | Генерация ключа, создание CSR, установка сертификата, мониторинг срока действия |
-| **Администратор Intermediate CA** | Валидация CSR, настройка SAN, подпись, отзыв, генерация CRL |
+| **Администратор Intermediate CA** | Валидация CSR, настройка SAN, подпись, отзев, генерация CRL |
 | **Администратор Root CA** | Подпись нового Intermediate CA, ротация корня (раз в 5–10 лет) |
 
 ## Практические сценарии
@@ -118,15 +120,15 @@ sudo apk add openssl openssl-dev
 
 #### Вариант А: Классический RSA-4096
 ```bash
-openssl genrsa -out service.key 4096
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out service.key
 openssl req -new -key service.key -out service.csr \
     -subj "/C=RU/ST=Moscow/O=Org/OU=IT/CN=service.local"
 ```
 
 #### Вариант Б: Современный ECDSA P-384 (Рекомендуется)
 ```bash
-openssl req -new -newkey ec:<(openssl ecparam -name secp384r1) -nodes \
-    -keyout service.key -out service.csr \
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-384 -out service.key
+openssl req -new -key service.key -out service.csr \
     -subj "/C=RU/ST=Moscow/O=Org/OU=IT/CN=service.local"
 ```
 
@@ -179,6 +181,8 @@ Data Base Updated
 - **Debian/Ubuntu/Angie:** `sudo cp root.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates`
 - **RHEL/CentOS/Fedora:** `sudo cp root.crt /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust`
 - **Alpine:** `sudo cp root.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates`
+- **macOS:** `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain root.crt`
+- **Windows Server:** `certutil -addstore "Root" root.crt`
 
 #### Docker-контейнеры
 
@@ -196,14 +200,17 @@ keytool -import -alias root-ca -file root.crt \
     -keystore $JAVA_HOME/lib/security/cacerts -storepass changeit -noprompt
 ```
 
+> **Важно:** приватные ключи сервисов также можно добавлять в Java Keystore через PKCS#12 (см. сценарий 7).
+
 ### 4. Верификация перед запуском
 
 Всегда проверяйте соответствие ключа сертификату и целостность цепочки:
 
 ```bash
-# Проверка пары (хеши должны совпасть)
-openssl x509 -noout -modulus -in service.crt | openssl sha256
-openssl rsa -noout -modulus -in service.key | openssl sha256
+# Проверка пары: хеши публичных ключей должны совпасть (универсальный метод для RSA/ECDSA/Ed25519)
+openssl pkey -in service.key -pubout -outform DER | openssl sha256
+openssl x509 -in service.crt -pubkey -noout -outform DER | openssl sha256
+# → Хеши должны совпадать
 
 # Проверка цепочки доверия (через Bundle)
 openssl verify -CAfile intermediate-ca/ca-chain.crt service.crt
@@ -212,7 +219,7 @@ openssl verify -CAfile intermediate-ca/ca-chain.crt service.crt
 
 > **Примечание:** полный набор диагностических команд (просмотр расширений, проверка SAN, тестирование через `s_client`, верификация mTLS) приведён в **[Утилиты и диагностика](./common_utilities.md)**.
 
-### 5. Отзыв скомпрометированного сертификата
+### 5. Отзев скомпрометированного сертификата
 
 ```bash
 cd intermediate-ca
@@ -220,7 +227,7 @@ openssl ca -config openssl.cnf -revoke ../service.crt
 openssl ca -config openssl.cnf -gencrl -out crl/crl.pem
 ```
 
-После отзыва убедитесь, что сервис перестаёт получать доступ к защищённым ресурсам, а новый CRL распространён на все серверы, которые его проверяют.
+После отзева убедитесь, что сервис перестаёт получать доступ к защищённым ресурсам, а новый CRL распространён на все серверы, которые его проверяют.
 
 ### 6. Выпуск клиентского сертификата для mTLS
 
@@ -229,7 +236,7 @@ openssl ca -config openssl.cnf -gencrl -out crl/crl.pem
 #### Шаг 1: Генерация ключа и CSR на стороне клиента
 
 ```bash
-openssl genrsa -out client.key 4096
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out client.key
 openssl req -new -key client.key -out client.csr \
     -subj "/C=RU/ST=Moscow/O=Org/OU=IT/CN=service-client"
 ```
@@ -281,6 +288,16 @@ openssl pkcs12 -in service.p12 -out service.pem \
     -nodes -clcerts
 ```
 
+#### PEM → Java Keystore (JKS)
+```bash
+# pkcs12 → JKS
+keytool -importkeystore -dest storepass changeit \
+    -dest keypass changeit \
+    -dest keystore service.jks \
+    -srckeystore service.p12 -srcstoretype PKCS12 \
+    -srcstorepass changeit -alias "service.local"
+```
+
 ### 8. Обработка wildcard-сертификатов
 
 Wildcard-сертификаты (`*.service.local`) выпускаются аналогично обычным, но SAN должен содержать как wildcard, так и конкретные имена:
@@ -302,11 +319,14 @@ IP.1  = 10.0.5.10
 ```bash
 openssl x509 -in service.crt -noout -enddate
 # → notAfter=Jan  1 00:00:00 2026 GMT
+
+# Быстрая проверка (выход 0 = сертификат действителен ≥ 30 дней)
+openssl x509 -in service.crt -noout -checkend 2592000
 ```
 
 #### Шаг 2: Генерация нового ключа и CSR
 ```bash
-openssl genrsa -out service.key 4096
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out service.key
 openssl req -new -key service.key -out service.csr \
     -subj "/C=RU/ST=Moscow/O=Org/OU=IT/CN=service.local"
 ```
@@ -333,8 +353,8 @@ openssl ca -config openssl.cnf -in ../service.csr -out ../service.crt \
 set -euo pipefail
 
 INTERMEDIATE_DIR="/opt/pki/intermediate-ca"
-CSR_PATH="${1:-/tmp/service.csr}"
-CERT_OUT="${2:-/tmp/service.crt}"
+CSR_PATH="${1:?Укажите путь к CSR}"
+CERT_OUT="${2:?Укажите путь для выходного сертификата}"
 DAYS="${3:-365}"
 SAN_DNS="${4:-my-service.local}"
 SAN_IP="${5:-10.0.0.10}"
@@ -359,6 +379,7 @@ openssl ca -config "${INTERMEDIATE_DIR}/openssl.cnf" \
     -extensions v3_server_cert \
     -extfile /tmp/v3_server_tmp.cnf \
     -days "${DAYS}" -md sha512 -notext \
+    -batch \
     -in "${CSR_PATH}" \
     -out "${CERT_OUT}"
 
@@ -377,46 +398,130 @@ openssl verify -CAfile intermediate-ca/ca-chain.crt /tmp/service.crt
 # → /tmp/service.crt: OK
 ```
 
-## Дополнительная информация
+## Рекомендации и лучшие практики
 
-### Автоматизация (on-premise)
+### Планирование срока действия
 
-Для масштабируемых on-premise-систем рекомендуется интеграция с **Ansible** для автоматической ротации и распространения сертификатов. Ansible-плейбуки могут выполнять подпись CSR на Intermediate CA, распространение `ca-chain.crt` и перезапуск сервисов без зависимостей от облачных платформ.
+- **Root CA:** 10–20 лет (редкая ротация, хранится offline).
+- **Intermediate CA:** 3–5 лет (периодическая ротация для ограничения blast radius).
+- **Сертификаты сервисов:** 90–365 дней (автоматическая ротация — предпочтительнее).
+- **Client certificates для mTLS:** 30–90 дней (короткий срок для ограничения экспозиции).
 
-Пример сценария для Nagios/Zabbix/Prometheus:
-```bash
-#!/usr/bin/env bash
-HOST="$1"
-PORT="${2:-443}"
-DAYS_WARN="${3:-30}"
+### Управление ключами
 
-EXP_DATE=$(echo | openssl s_client -connect "$HOST:$PORT" -servername "$HOST" 2>/dev/null \
-  | openssl x509 -noout -enddate 2>/dev/null \
-  | cut -d= -f2)
+- Приватные ключи сервисов всегда хранятся с правами `600` и принадлежат сервисному пользователю (не `root`, не `www-data`).
+- Root CA ключ — строго offline (USB-HSM, Papertape backup), никогда не на сервере с сетевым доступом.
+- Intermediate CA ключ — в защищённом сегменте, но доступен для операций подписи.
 
-if [ -z "$EXP_DATE" ]; then
-  echo "FAIL: $HOST не отвечает или не предоставляет сертификат"
-  exit 1
-fi
+### Автоматизация ротации
 
-EXP_EPOCH=$(date -j -f "%b %d %H:%M:%S %Y %Z" "$EXP_DATE" +%s 2>/dev/null || \
-            date -d "$EXP_DATE" +%s)
-NOW_EPOCH=$(date +%s)
-DAYS_LEFT=$(( (EXP_EPOCH - NOW_EPOCH) / 86400 ))
+Для массовой ротации используйте Ansible-плейбуки (см. **[Ansible certificate management](../../../../Ansible/ansible_certificate_management.md)**, если доступно):
 
-if [ "$DAYS_LEFT" -lt 0 ]; then
-  echo "CRITICAL: $HOST сертификат истёк $(( -DAYS_LEFT )) дней назад"
-elif [ "$DAYS_LEFT" -lt "$DAYS_WARN" ]; then
-  echo "WARNING: $HOST сертификат истекает через $DAYS_LEFT дней"
-else
-  echo "OK: $HOST сертификат действителен ещё $DAYS_LEFT дней"
-fi
+```yaml
+# Минимальный playbook для ротации сертификата
+- hosts: webservers
+  vars:
+    cert_days_min: 30
+  tasks:
+    - name: Проверить срок действия сертификата
+      shell: |
+        echo | openssl s_client -connect "{{ inventory_hostname }}:443" 2>/dev/null \
+          | openssl x509 -noout -checkend "{{ cert_days_min * 86400 }}"
+      register: cert_check
+      changed_when: false
+      ignore_errors: true
+
+    - name: Сообщить о необходимости ротации
+      debug:
+        msg: "Certificate on {{ inventory_hostname }} expires soon"
+      when: cert_check.rc != 0
 ```
 
+> **Примечание:** скрипты мониторинга для Nagios/Zabbix/Prometheus, а также полный чек-лист перед деплоем — в **[Утилиты и диагностика](./common_utilities.md)**.
+
+## Ограничения и крайние случаи
+
+- **Ротация Intermediate CA:** при смене Intermediate CA все ранее выписанные сертификаты остаются действительными до своего `notAfter`, но новые сертификаты будут подписаны другим издателем. Bundle (`ca-chain.crt`) на всех серверах должен быть обновлён для новых сертификатов.
+- **Дублирование серийного номера:** OpenSSL использует `index.txt` для отслеживания выписанных сертификатов. Если серийный номер уже существует (например, после ручного редактирования), подпись завершится ошибкой `ERROR: ... already in DB`. Очищайте `index.txt` только при полной переинициализации CA.
+- **Совпадение key и cert:** сертификат может визуально выглядеть корректно, но приватный ключ не соответствовать публичному. Всегда проверяйте пару через хеши публичных ключей (см. сценарий 4).
+- **SAN без CN:** если в CSR нет расширения `subjectAltName`, OpenSSL 3.0+ не будет его автоматически добавлять из `CN`. Всегда указывайте SAN явно в `openssl.cnf`.
+- **Граничные IP-адреса:** IP-адреса в SAN поддерживаются, но только IPv4 и IPv6 в стандартном виде. DNS-имена не должны содержать IP-адреса.
+- **Срок действия Intermediate CA истек:** если Intermediate CA истёк, ни один сервисный сертификат на его основе больше не проходит верификацию, даже если сервисный сертификат ещё действителен.
+- **Ограничение `pathlen`:** если Intermediate CA создан с `pathlen:0`, невозможно выпустить сертификат с `CA:TRUE` для вложенного CA — только конечные сертификаты (`CA:FALSE`).
+- **Отзов сертификата и CRL:** если CRL-проверка включена на клиенте (`-crl_check`), отозванный сертификат будет отклоняться даже если CRL не распространён на всех серверах. Используйте стратегию "CRL first, then deploy cert".
+
+## Очистка и откат изменений
+
+### Удаление временных файлов
+
+```bash
+# Удаление временных сертификатов и ключей
+rm -f service.key service.csr service.crt service.der service.pem service.p12 service.jks
+
+# Очистка кэша OpenSSL и временных конфигов
+rm -f /tmp/v3_server_tmp.cnf
+rm -rf ~/.openssl/
+```
+
+### Отзев сертификата при компрометации
+
+```bash
+cd intermediate-ca
+# Отзев сертификата с указанием причины
+openssl ca -config openssl.cnf -revoke ../compromised.crt -crl_reason keyCompromise
+
+# Регенерация CRL
+openssl ca -config openssl.cnf -gencrl -out crl/crl.pem
+
+# Распространение обновлённого CRL на все серверы
+rsync -av crl/crl.pem ca-server:/opt/pki/crl/
+rsync -av crl/crl.pem web-server:/etc/ssl/crl/
+```
+
+### Отзев клиентского сертификата (mTLS)
+
+Для отзова клиентского сертификата используйте расширение `extendedKeyUsage = clientAuth`:
+
+```bash
+cd intermediate-ca
+openssl ca -config openssl.cnf -revoke ../compromised_client.crt \
+    -crl_reason keyCompromise -gencrl -out crl/crl.pem
+```
+
+### Удаление записи из index.txt (pre-deployment)
+
+Если сертификат был выпущен, но не установлен, удалите запись из `index.txt`:
+
+```bash
+cd intermediate-ca
+# Просмотр записей в БД CA
+openssl ca -config openssl.cnf -list -serial <serial_number>
+
+# Удаление записи (только для неустановленных сертификатов)
+# В index.txt найдите строку с соответствующим серийным номером и удалите её
+```
+
+> **Важно:** если сертификат уже установлен на серверах, удаление из `index.txt` недостаточно — необходимо выполнить отзов через `openssl ca -revoke`.
+
+### Откат изменений в CI/CD
+
+При ошибке в пайплайне подписи всегда удаляйте временные артефакты:
+
+```bash
+# Очистка в CI/CD-скрипте (добавьте в finally/before_script)
+rm -f /tmp/v3_server_tmp.cnf /tmp/service.crt /tmp/service.csr
+```
+
+> Полная инструкция по очистке trust store и CI/CD-автоматизации — в **[Утилиты и диагностика](./common_utilities.md#очистка-и-откат-изменений)** и **[Утилиты и диагностика](./common_utilities.md#автоматизация-в-cicd)**.
+
+## Дополнительная информация
+
 ### Связанные темы
-- **[Настройка Intermediate CA](./intermediate_ca_setup.md)** — подготовка выпускающего узла.
+- **[Настройка Intermediate CA](./intermediate_ca_setup.md)** — подготовка выпускующего узла.
 - **[Утилиты и диагностика](./common_utilities.md)** — команды проверки и TLS-тесты.
 - **[Алгоритм диагностики](./troubleshooting_flowchart.md)** — decision-tree для поиска проблем с сертификатами.
 - **[Интеграция с SIEM](./siem_integration.md)** — аудит операций CA, syslog, auditd, алертинг.
+- **[OCSP responder](../ocsp_responder.md)** — настройка OCSP-ответчика.
+- **[CRL Distribution Points](../crl_distribution_points.md)** — настройка распределения CRL.
 - **[Обзор двухуровневого CA](./overview.md)** — архитектурные принципы.
-- **[Обзор PKI](../../../Concepts/pki_overview.md)** — теория X.509 и отзывов.
+- **[Обзор PKI](../../../Concepts/pki_overview.md)** — теория X.509 и отзовов.

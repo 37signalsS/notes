@@ -139,6 +139,7 @@ sudo sshd -T | grep kexalgorithms
 
 # 4. Анализ последних попыток входа
 # Список последних 10 неудачных входов из базы btmp
+# На Debian 13+/Ubuntu 24.10+: lslogins --failed (lastb удалён)
 sudo lastb -n 10
 
 # 5. Статистика блокировок fail2ban
@@ -206,7 +207,8 @@ sudo sshd -t
 
 # 3. Применение через drop-in (рекомендуется) или атомарная замена
 # Вариант A: Drop-in (безопаснее, изолирует изменения)
-sudo tee /etc/ssh/sshd_config.d/99-hardening.conf << 'EOF'
+# Префикс 00 — чтобы переопределять 50-cloud-init.conf (первое значение в sshd_config.d побеждает)
+sudo tee /etc/ssh/sshd_config.d/00-hardening.conf << 'EOF'
 # ... новые параметры ...
 EOF
 
@@ -272,7 +274,7 @@ sudo chmod 600 /home/breakglass/.ssh/authorized_keys
 sudo chown -R breakglass:breakglass /home/breakglass/.ssh
 
 # 4. Отдельный Match-блок в основном sshd_config (только для breakglass)
-sudo tee -a /etc/ssh/sshd_config.d/99-hardening.conf << 'EOF'
+sudo tee -a /etc/ssh/sshd_config.d/00-hardening.conf << 'EOF'
 
 # Break-glass доступ: только FIDO2, только с консоли/IPMI подсети
 Match User breakglass Address 192.168.100.0/24

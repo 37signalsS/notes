@@ -104,6 +104,8 @@ sudo chmod 600 /etc/ssh/sshd_config.orig
 | `/var/log/lastlog` | Все | Время последнего входа каждого пользователя |
 | `/var/log/audit/audit.log` | Все (с auditd) | Ядерные события: доступ к sshd_config, ключам, execve |
 
+> **Debian 13+, Ubuntu 24.10+, Fedora 43+:** `last`, `lastb` и `lastlog` **удалены** из util-linux/login: форматы `wtmp`/`btmp`/`lastlog` не переживают 2038 год, upstream отказался от их доработки (Debian release notes 5.1.9). Замены: `wtmpdb last` (пакеты `wtmpdb`, `libpam-wtmpdb`), `lslogins --failed` (вместо `lastb`), `lastlog2` (пакеты `lastlog2`, `libpam-lastlog2`). На этих дистрибутивах приоритетным источником истории входов остаётся `journalctl -u ssh` / `journalctl -u sshd` — он не зависит от устаревших бинарных форматов. На Debian 12 / Ubuntu 24.04 LTS команды `last`/`lastb`/`lastlog` ещё работают, но новые системы лучше сразу строить на journalctl + wtmpdb.
+
 ### Уровни и параметры логирования sshd
 
 Настройка детализации в `/etc/ssh/sshd_config` осуществляется двумя основными директивами:
@@ -232,6 +234,7 @@ grep "Failed" /var/log/auth.log | awk '{print $(NF-3)}' | sort | uniq -c | sort 
 journalctl -u ssh --since "24 hours ago" | grep "Failed" | awk '{print $(NF-3)}' | sort | uniq -c | sort -rn
 
 # Просмотр бинарного журнала неудачных входов (всех, включая консольные)
+# На Debian 13+/Ubuntu 24.10+: lslogins --failed (lastb удалён, см. примечание выше)
 lastb | head -20
 # → admin   ssh:notty    1.2.3.4    Fri Aug  8 12:00 - 12:00 (00:00)
 
@@ -254,6 +257,7 @@ sudo fail2ban-client status sshd
 
 ```bash
 # Список последних 20 успешных входов
+# На Debian 13+/Ubuntu 24.10+: wtmpdb last (last удалён, см. примечание выше)
 last -n 20
 # → userpts/0  192.168.1.10  Fri Aug  8 10:00   still logged in
 
@@ -261,6 +265,7 @@ last -n 20
 last username
 
 # Просмотр времени последнего входа всех системных пользователей
+# На Debian 13+/Ubuntu 24.10+: lastlog2 (lastlog удалён)
 lastlog | grep -v "Never logged in"
 # → root             pts/0    192.168.1.5    Fri Aug  8 09:15:20 +0300 2026
 

@@ -304,6 +304,75 @@ groups:
           description: "P99 latency is {{ $value }}s (threshold: 2s)"
 ```
 
+#### Security: успешный SSH-вход
+
+Минимальный набор security-алертов для сервера, подключённого к интернету. Ловит вход после подбора пароля/ключа — раньше, чем сработают алерты на нагрузку от майнера или спам-рассылки. `job` и фильтр по строке зависят от того, как логи SSH доставлены в Loki (journald → Alloy, rsyslog и т.д.) — подставьте свой stream.
+
+```yaml
+      - alert: SSHAcceptedLogin
+        expr: |
+          sum(count_over_time({job=~".+"} |~ "Accepted (password|publickey|keyboard-interactive)" [5m]))
+          > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Успешный SSH-вход: {{ $value }} событий за 5 минут"
+          description: "Каждый Accepted должен быть объясним: кто, откуда, почему именно сейчас"
+```
+
+#### Warning: всплеск неудачных попыток SSH (прицельный подбор)
+
+`Invalid user` — шум ботов по несуществующим именам; сотни `Failed password` для **существующего** пользователя — признак целенаправленного перебора, часто предшествует успешному входу.
+
+```yaml
+      - alert: SSHFailedPasswordSpike
+        expr: |
+          sum(count_over_time({job=~".+"} |= "Failed password" [10m])) by (job)
+          > 50
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Всплеск Failed password на {{ $labels.job }}"
+          description: "{{ $value }} неудачных попыток за 10 минут — проверить fail2ban и ignoreip"
+```
+
+#### Warning: создан новый пользователь системы
+
+Создание учётной записи вне change-window — типичный шаг при удержании доступа (attacker persistence). Источник: строки `useradd`/`adduser`/`newusers` в auth-логах или auditd (`USER_ADD`).
+
+```yaml
+      - alert: SystemUserCreated
+        expr: |
+          sum(count_over_time({job=~".+"} |~ "(useradd|adduser|newusers|USER_ADD)" [5m])) by (job)
+          > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Создан новый пользователь на {{ $labels.job }}"
+          description: "Проверить: легитимен ли useradd; сверить с cron, authorized_keys, sudoers"
+```
+
+#### Critical: логи сервера перестали приходить (absence alerting)
+
+Алерты на присутствие аномалий не спасают, когда **нет данных**. Если агент (Alloy) упал, сервер скомпрометирован и выключил логирование, или сеть отвалилась — Loki просто перестаёт получать строки. Алерт на отсутствие потока с конкретного job за окно, большее интервала скрейпа.
+
+```yaml
+      - alert: LogsStoppedArriving
+        expr: |
+          absent_over_time({job="ssh"}[10m])
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Логи {{ $labels.job }} не приходят в Loki более 10 минут"
+          description: "Агент умер, хост недоступен или логирование отключено. Проверить Alloy/node_exporter"
+```
+
+> **Связанные темы:** мониторинг хостовых метрик (CPU/диск/трафик) — [Prometheus alerts](../Prometheus/concepts/metric_types/alerts.md), [Node Exporter](../Prometheus/Exporters/node_exporter.md); поведение при компрометации — [Incident Response](../Linux/Security/Concepts/incident_response.md).
+
 ---
 
 ## Интеграция с Alertmanager

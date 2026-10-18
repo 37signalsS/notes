@@ -46,10 +46,12 @@
 
 ### Чек-лист начального анализа
 
+> **Правило первого часа:** ничего не перезагружать и не убивать подозрительный процесс до сбора доказательств. Вибро-данные теряются при kill/reboot: откуда запущен процесс, от чьего имени, какие аргументы, какие файлы открыл. Сначала зафиксировать картину (`top`/`ps`, логи, `ss`), затем — сдерживание.
+
 ```bash
 # 1. Быстрая оценка системы
 uptime                    # Простой системы
-last -20                  # Последние входы
+last -20                  # Последние входы (Debian 13+/Ubuntu 24.10+: wtmpdb last)
 w                         # Текущие пользователи
 ps auxf                   # Дерево процессов
 top -bn1 | head -20       # Топ процессов по CPU/памяти
@@ -205,7 +207,7 @@ sudo lynis audit system
 Триггер: Алерт fail2ban > 5 банов за 10 минут ИЛИ > 100 Failed password в логах
 
 1. ОБНАРУЖЕНИЕ
-   -.lastb | wc -l                          # Количество неудачных входов
+   - lastb | wc -l                           # Количество неудачных входов (Debian 13+/Ubuntu 24.10+: lslogins --failed)
    - journalctl -u sshd --since "1 hour ago" | grep "Failed password" | \
      awk '{print $11}' | sort | uniq -c | sort -rn | head  # Топ IP
 
@@ -235,19 +237,23 @@ sudo lynis audit system
 Триггер: Подозрительная активность от легитимного аккаунта
 (вход в нерабочее время, необычные команды, доступ к чувствительным данным)
 
-1. СДЕРЖАНИЕ (немедленно)
+1. СДЕРЖАНИЕ (немедленно, без уничтожения улик)
    - usermod -L <username>                   # Блокировка пароля
    - chsh -s /usr/sbin/nologin <username>    # Запрет входа
-   - kill -9 $(pgrep -u <username>)          # Остановка процессов
    - iptables -I INPUT -s <source_ip> -j DROP  # Блокировка IP (если известен)
+   # kill процессов — ТОЛЬКО после сбора доказательств (см. шаг 2): иначе теряются
+   # PID, дерево процессов и /proc-артефакты
 
 2. СБОР ДОКАЗАТЕЛЕЙ
-   - last -50 <username>                     # История входов
-   - lastb -50 <username>                    # Неудачные попытки
+   - last -50 <username>                     # История входов (Debian 13+/Ubuntu 24.10+: wtmpdb last)
+   - lastb -50 <username>                    # Неудачные попытки (Debian 13+: lslogins --failed)
    - ps auxf | grep <username>               # Текущие процессы
    - ls -la /home/<username>/.ssh/           # SSH-ключи
    - cat /home/<username>/.bash_history      # История команд
    - find / -user <username> -mtime -1 2>/dev/null  # Изменённые файлы
+
+2а. ОСТАНОВКА ПРОЦЕССОВ (после фиксации улик)
+   - kill -9 $(pgrep -u <username>)          # Остановка процессов
 
 3. АНАЛИЗ
    - Проверка cron-задач: crontab -u <username> -l

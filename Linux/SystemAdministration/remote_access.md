@@ -406,7 +406,7 @@ docker ps
 who
 # → user1    pts/0        2026-09-13 10:00 (10.0.0.1)
 
-# История входов
+# История входов (Debian 13+/Ubuntu 24.10+: wtmpdb last — last удалён из-за 2038)
 last -f /var/log/wtmp
 # → user1    pts/0        10.0.0.1              Mon Sep 13 10:00   still logged in
 

@@ -262,6 +262,8 @@ fi
 
 ### SaltStack: Declarative password aging
 
+> **См. также:** полное руководство по управлению пользователями и группами в SaltStack — [User_Creation.md](../../SaltStack/User_Creation.md).
+
 ```yaml
 # /srv/salt/users.sls
 users:

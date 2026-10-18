@@ -552,7 +552,7 @@ salt-run state.orchestrate orch.deploy                       # → примен�
 - **Segregation:** `publisher_acl_blacklist` для блокировки опасных модулей (`cmd`, `state`) и пользователей (`root`) на мастере.
 - **Transport security:** включайте `master_sign_pubkey: True` и `verify_master_pubkey_sign: True` для предотвращения MitM-атак на миньонах.
 - **Salt-API hardening:** размещайте Salt-API за reverse proxy с HSTS; ограничьте доступ через `external_auth` (LDAP/PAM) с короткоживущими токенами и минимальными правами.
-- **PKI backup:** регулярно бэкапите `/etc/salt/pki/master/` и проверяйте целостность ключей.
+- **PKI backup:** регулярно бэкапите `/etc/salt/pki/master/` и проверяйте целостность ключей — см. [Backup и восстановление](Backup_Restore.md).
 
 ### Практики DevOps / SRE
 
