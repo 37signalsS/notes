@@ -1,689 +1,785 @@
 # etcd: практические сценарии и обслуживание в Kubernetes
 
-## Определение
+**Актуально для:** etcd 3.5.x / 3.6.x, Kubernetes 1.30+
 
-В контексте Kubernetes **обслуживание etcd** — это комплекс регулярных и аварийных процедур, направленных на поддержание стабильности, производительности и целостности базы данных кластера.
+## Определения
 
-Для управления etcd используются две основные утилиты:
-*   **`etcdctl`**: Основной клиент (gRPC) для работы с запущенным кластером (online-операции: чтение данных, проверка здоровья, дефрагментация, создание снапшотов).
-*   **`etcdutl`**: Утилита (начиная с v3.6+) для административных задач, требующих прямого доступа к физическим файлам базы данных (offline-операции: восстановление из снапшота, проверка целостности файла).
-
-**Префикс `/registry`** — корневой путь в etcd, по которому Kubernetes хранит все свои сериализованные объекты.
+*   **`etcd`** — распределенное транзакционное хранилище ключей и значений с поддержкой версионирования (MVCC) и алгоритма консенсуса Raft. Является единственным хранилищем состояния кластера Kubernetes.
+*   **`etcdctl`** — официальная CLI-утилита (gRPC-клиент) для управления запущенным кластером etcd (online-операции: чтение и запись ключей, проверка состояния endpoint, дефрагментация, добавление/удаление членов, снятие снапшотов).
+*   **`etcdutl`** — специализированная CLI-утилита для прямого offline-администрирования файлов базы данных BoltDB без подключения к gRPC API (проверка целостности файла снапшота, восстановление данных, локальная дефрагментация файла).
+*   **Префикс `/registry`** — корневой иерархический путь в etcd, в котором `kube-apiserver` размещает все сериализованные объекты API кластера Kubernetes.
+*   **MVCC (Multi-Version Concurrency Control)** — механизм управления параллельным доступом, при котором изменения создают новые ревизии ключей без перезаписи старых, что обеспечивает неизменяемость истории для механизмов Watch.
+*   **Compaction (Компакция)** — логическая очистка устаревших ревизий ключей до заданной ревизии в памяти и файле BoltDB. Выполняется сервером или API-сервером, но не возвращает дисковое пространство операционной системе.
+*   **Defragmentation (Дефрагментация)** — физическое сжатие файла базы данных BoltDB с высвобождением неиспользуемых страниц файловой системе хоста.
+*   **Raft Quorum** — необходимое большинство голосующих узлов для фиксации записей и выбора лидера ($Q = \lfloor N/2 \rfloor + 1$).
+*   **Learner Node** — неголосующий член кластера etcd, который асинхронно реплицирует лог Raft и данные, не участвуя в подсчете кворума, до момента его перевода в полноправные члены командой `member promote`.
+*   **Alarm `NOSPACE`** — аварийный статус etcd, активирующийся при превышении квоты размера базы данных (`--quota-backend-bytes`). Переводит кластер в режим "только чтение" (read-only) для предотвращения повреждения базы данных.
 
 ---
 
-## Интеграция с Kubernetes и доступ
+## Архитектура и модель доступа
 
-`kube-apiserver` является единственным компонентом Kubernetes, имеющим прямой доступ к etcd. 
+### Взаимодействие с Control Plane
 
-### Конфигурация доступа
+В архитектуре Kubernetes `kube-apiserver` является **единственным компонентом**, имеющим сетевой и криптографический доступ к etcd. Планировщик (`kube-scheduler`), менеджер контроллеров (`kube-controller-manager`), сетевой плагин и узловые агенты (`kubelet`) работают с состоянием исключительно через HTTP/gRPC интерфейсы API-сервера.
 
-Параметры TLS-аутентификации задаются во флагах `kube-apiserver` (обычно в `/etc/kubernetes/manifests/kube-apiserver.yaml`):
+```text
++---------------------+     +--------------------------+
+|   kube-scheduler    |     | kube-controller-manager  |
++----------+----------+     +------------+-------------+
+           |                             |
+           +--------------+--------------+
+                          | HTTPS REST API
+                          v
+               +----------------------+
+               |    kube-apiserver    | (валидация, аутентификация, admission)
+               +----------+-----------+
+                          | gRPC + mTLS (порт 2379)
+                          v
+         +---------------------------------+
+         |       etcd Cluster (Raft)       |
+         |  +---------+ +---------+ +----+ |
+         |  | Node 1  | | Node 2  | | .. | |
+         |  +---------+ +---------+ +----+ |
+         +---------------------------------+
+```
+
+**Преимущества архитектурной изоляции:**
+*   Централизованная аутентификация и RBAC-авторизация запросов до момента их передачи в хранилище.
+*   Сквозная валидация схемы данных и применение мутирующих/валидирующих вебхуков.
+*   Оптимистическая блокировка через сопоставление `resourceVersion` (соответствует `modRevision` в etcd) для исключения race conditions.
+*   Кэширование потоков чтения через Watch Cache внутри `kube-apiserver`, что защищает etcd от избыточных `LIST`-запросов.
+
+### Топологии развертывания
+
+*   **Stacked etcd (Совмещенный):** etcd запускается в виде статического пода на каждом узле Control Plane под управлением локального `kubelet`. Стандартный подход в `kubeadm`.
+    *   *Плюсы:* Минимальные затраты оборудования, автоматизированное создание манифестов и сертификатов.
+    *   *Минусы:* Конкуренция за дисковый I/O и память с `kube-apiserver` и контейнерным рантаймом. Падение хоста выводит из строя и узел Control Plane, и член кластера etcd.
+*   **External etcd (Выделенный):** etcd развернут на отдельных физических серверах или изолированных виртуальных машинах вне узлов Kubernetes.
+    *   *Плюсы:* Полная изоляция ресурсов (выделенные NVMe-диски под WAL), независимое масштабирование, независимый цикл обслуживания и обновления ОС.
+    *   *Минусы:* Требуется в два раза больше вычислительных узлов (минимум 3 узла etcd + 2-3 узла Control Plane), усложняется первоначальная генерация PKI.
+
+### Модель безопасности и mTLS
+
+Все взаимодействия с etcd защищаются взаимным TLS (mTLS). В production-инфраструктуре строго рекомендуется использовать **два раздельных центра сертификации (CA)**:
+
+1.  **etcd-ca (`/etc/kubernetes/pki/etcd/ca.crt`):** Выпускает серверные сертификаты (`server.crt`), сертификаты межсерверной репликации (`peer.crt`) и сертификаты административных клиентов (`healthcheck-client.crt`).
+2.  **kubernetes-ca (`/etc/kubernetes/pki/ca.crt`):** Выпускает клиентский сертификат для API-сервера (`apiserver-etcd-client.crt`).
+
+Подключение `kube-apiserver` конфигурируется через флаги в `/etc/kubernetes/manifests/kube-apiserver.yaml`:
 
 ```bash
---etcd-servers=https://127.0.0.1:2379
+--etcd-servers=https://10.0.0.11:2379,https://10.0.0.12:2379,https://10.0.0.13:2379
 --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt
 --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt
 --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key
+--etcd-prefix=/registry
+--etcd-compaction-interval=5m
 ```
 
-### Настройка CLI для администратора
+### Форматы хранения и структура префиксов
 
-Для выполнения команд `etcdctl` на узле Control Plane необходимо использовать клиентские сертификаты. Для удобства рекомендуется настроить alias в профиле пользователя:
+Объекты Kubernetes хранятся по ключам с префиксом `/registry`:
+*   **Встроенные ресурсы (Core, Apps, Batch):** Сериализуются в бинарный формат **Protobuf** (`application/vnd.kubernetes.protobuf`) для снижения накладных расходов CPU и размера записи. Прямое чтение через `etcdctl get` возвращает бинарные данные.
+*   **Пользовательские ресурсы (CRD):** По умолчанию сериализуются в формат **JSON** (`application/json`).
+*   **Типовые префиксы:**
+    *   `/registry/pods/<namespace>/<name>` — спецификации и статусы подов.
+    *   `/registry/services/specs/<namespace>/<name>` — конфигурация сервисов и выделенные IP.
+    *   `/registry/secrets/<namespace>/<name>` — объекты секретов (в открытом или зашифрованном виде при включенном Encryption at Rest).
+    *   `/registry/events/<namespace>/<name>` — события кластера (короткоживущие объекты с TTL 1 час).
+    *   `/registry/leases/kube-node-lease/<node-name>` — Heartbeat-записи узлов кластера.
+
+---
+
+## Практические сценарии и конфигурация
+
+### Настройка CLI-доступа администратора
+
+Для выполнения операций обслуживания через `etcdctl` на хосте Control Plane требуются клиентские сертификаты с правами администратора.
+
+#### Вариант 1: Настройка псевдонима (alias) и переменных окружения на хосте
 
 ```bash
+# Экспорт переменных окружения для etcdctl v3
 export ETCDCTL_API=3
-alias k-etcdctl="etcdctl --endpoints=https://127.0.0.1:2379 \
+export ETCDCTL_CACERT="/etc/kubernetes/pki/etcd/ca.crt"
+export ETCDCTL_CERT="/etc/kubernetes/pki/etcd/server.crt"
+export ETCDCTL_KEY="/etc/kubernetes/pki/etcd/server.key"
+export ETCDCTL_ENDPOINTS="https://127.0.0.1:2379"
+
+# Проверка связи
+etcdctl endpoint health
+# → https://127.0.0.1:2379 is healthy: successfully committed proposal: took = 2.14512ms
+```
+
+Для постоянного использования добавьте удобный alias в `/root/.bashrc`:
+
+```bash
+alias k-etcdctl="ETCDCTL_API=3 etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
   --cacert=/etc/kubernetes/pki/etcd/ca.crt \
   --cert=/etc/kubernetes/pki/etcd/healthcheck-client.crt \
   --key=/etc/kubernetes/pki/etcd/healthcheck-client.key"
 ```
-*(В kubeadm-кластерах удобнее использовать `healthcheck-client` или `server` сертификаты, лежащие в `/etc/kubernetes/pki/etcd/`)*.
 
----
+#### Вариант 2: Выполнение команд внутри контейнера через crictl (когда на хосте нет etcdctl)
 
-## Работа с данными Kubernetes
-
-Все объекты Kubernetes сериализуются и хранятся в формате **Protobuf** (начиная с K8s 1.6+). Прямое чтение ключей через `etcdctl` вернет бинарные данные, которые сложно прочитать человеку, однако это полезно для отладки структуры.
-
-### Исследование структуры хранения
-
-*   **Список всех доступных префиксов (типов ресурсов):**
-    ```bash
-    k-etcdctl get /registry --prefix --keys-only
-    ```
-
-*   **Типовые пути K8s:**
-    *   `/registry/pods/<namespace>/<name>`
-    *   `/registry/secrets/<namespace>/<name>`
-    *   `/registry/events/<namespace>/<name>` — частая причина разрастания БД в нестабильных кластерах.
-    *   `/registry/leases/kube-node-lease/<node-name>` — Heartbeats узлов.
-
----
-
-## Обслуживание и мониторинг
-
-### Проверка здоровья и статуса
-
-Перед любыми операциями всегда проверяйте кворум:
+Если локальные бинарные файлы `etcdctl` не установлены в системе, используйте утилиту рантайма `crictl`:
 
 ```bash
-# Проверка доступности узлов
-k-etcdctl endpoint health --cluster -w table
-# → https://10.0.0.11:2379 is healthy: true
-# → https://10.0.0.12:2379 is healthy: true
-# → https://10.0.0.13:2379 is healthy: true
+# Поиск идентификатора контейнера etcd
+ETCD_CONTAINER_ID=$(crictl ps --name etcd -q)
 
-# Проверка размера БД, ревизии и кто является лидером
-k-etcdctl endpoint status --cluster -w table
-# → +------------------+---------+---------+-----------+------------------+--------------------------------+-------------------------------------+
-# → |     ENDPOINT     | VERSION | DB SIZE | IS LEADER | IS LEARNER | RAFT TERM | RAFT INDEX | RAFT APPLIED INDEX | ERRORS |
-# → +------------------+---------+---------+-----------+------------------+--------------------------------+-------------------------------------+
-# → | 10.0.0.11:2379 | 3.5.12 | 24 MB | true | false | 8 | 12345678 | 12345678 | |
-# → | 10.0.0.12:2379 | 3.5.12 | 24 MB | false | false | 8 | 12345677 | 12345677 | |
-# → | 10.0.0.13:2379 | 3.5.12 | 24 MB | false | false | 8 | 12345676 | 12345676 | |
-# → +------------------+---------+---------+-----------+------------------+--------------------------------+-------------------------------------+
-
-# Проверка количества ключей в БД (диагностика разрастания)
-k-etcdctl endpoint status --write-out=json | jq '.[] | {endpoint: .Status.header.member_id, dbSize: .Status.dbSize, revision: .Status.header.revision}'
-
-# Просмотр всех членов кластера и их ролей
-k-etcdctl member list -w table
-# → +------------------+---------+-------------+------------------+------------------+-------------+
-# → |        ID        | STATUS  |    NAME     |     PEER URLS    |    CLIENT URLS   |   IS LEARNER |
-# → +------------------+---------+-------------+------------------+------------------+-------------+
-# → | 8e9e05f54f240d12 | started | etcd-node-1 | https://10.0.0.11:2380 | https://10.0.0.11:2379 | false |
-# → | a1b2c3d4e5f60718 | started | etcd-node-2 | https://10.0.0.12:2380 | https://10.0.0.12:2379 | false |
-# → | b2c3d4e5f6071829 | started | etcd-node-3 | https://10.0.0.13:2380 | https://10.0.0.13:2379 | false |
-# → +------------------+---------+-------------+------------------+------------------+-------------+
-
-# Проверка версии etcd на каждом узле
-k-etcdctl version
-# → etcdctl version: 3.5.12
-# → API version: 3.5
+# Выполнение команды внутри пода
+crictl exec -it "$ETCD_CONTAINER_ID" etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  endpoint status -w table
 ```
 
-### Компакция и Дефрагментация
+### Конфигурация static pod etcd
 
-В Kubernetes API-сервер автоматически выполняет **компакцию** (сжатие истории версий MVCC) каждые 5 минут. Однако компакция лишь помечает место в БД как свободное, не возвращая его файловой системе.
+Ниже приведен эталонный production-манифест статического пода etcd для kubeadm-кластера (`/etc/kubernetes/manifests/etcd.yaml`):
 
-Для физического уменьшения файла базы данных необходима **дефрагментация**.
-
-> **ВНИМАНИЕ:** Дефрагментация блокирует узел на чтение и запись до завершения процесса. В HA-кластере ее необходимо выполнять **строго поочередно** на каждом узле, а не через флаг `--cluster`, чтобы не потерять кворум.
-
-```bash
-# Правильный подход: дефрагментация конкретного узла
-k-etcdctl --endpoints=https://10.0.0.11:2379 defrag
-k-etcdctl --endpoints=https://10.0.0.12:2379 defrag
-```
-
-### Устранение ошибки "database space exceeded" (NOSPACE)
-
-По умолчанию etcd имеет жесткий лимит на размер базы данных (обычно 2GB). Если БД достигает этого предела (часто из-за шторма событий K8s или отсутствия дефрагментации), etcd переходит в режим "только чтение" и генерирует Alarm `NOSPACE`. K8s API-сервер перестает принимать изменения.
-
-**Алгоритм восстановления:**
-1.  **Получите текущую ревизию:**
-    ```bash
-     rev=$(k-etcdctl endpoint status --write-out="json" | egrep -o '"revision":[0-9]*' | egrep -o '[0-9].*')
-    ```
-2.  **Выполните ручную компакцию:**
-    ```bash
-     k-etcdctl compact $rev
-    ```
-3.  **Выполните дефрагментацию на всех узлах:**
-    ```bash
-    k-etcdctl defrag --cluster
-    ```
-4.  **Снимите блокировку (Disarm Alarm):**
-    ```bash
-    k-etcdctl alarm list
-    k-etcdctl alarm disarm
-    ```
-
-**Диагностика причины NOSPACE:**
-```bash
-# Проверка текущего размера БД и квоты
-k-etcdctl endpoint status --write-out=json | jq '.[] | {dbSize: .Status.dbSize, dbSizeInUse: .Status.dbSizeInUse}'
-# → {"dbSize": 2147483648, "dbSizeInUse": 1073741824}
-
-# Проверка количества ключей (часто виноват event storm)
-k-etcdctl get /registry/events --prefix --keys-only | wc -l
-# → 1542000  (слишком много — требуется очистка)
-
-# Мониторинг размера БД в реальном времени (Prometheus)
-# etcd_mvcc_db_total_size_in_bytes / etcd_server_quota_backend_bytes > 0.85 — алерт
-```
-
-**Автоматическая профилактика NOSPACE:**
-```bash
-# Добавьте в crontab (ежедневно, в час низкой нагрузки):
-# Компакция + дефрагментация каждого узла поочередно
-0 3 * * * /usr/local/bin/k-etcdctl --endpoints=https://10.0.0.11:2379 defrag && \
-  sleep 30 && /usr/local/bin/k-etcdctl --endpoints=https://10.0.0.12:2379 defrag && \
-  sleep 30 && /usr/local/bin/k-etcdctl --endpoints=https://10.0.0.13:2379 defrag
-```
-
-### Мониторинг и ключевые метрики
-
-etcd предоставляет встроенный Prometheus Exporter на порту `2379/metrics`. Мониторинг критичен для раннего обнаружения проблем с производительностью диска, сетью и кворумом.
-
-**Ключевые метрики для алертинга:**
-
-| Метрика | Тип | Норма | Критичное значение | Описание |
-| :--- | :--- | :--- | :--- | :--- |
-| `etcd_server_has_leader` | Gauge | = 1 | = 0 | Наличие лидера. 0 на всех узлах — кластер read-only. |
-| `etcd_server_leader_changes_seen_total` | Counter | Стабильно | > 3 за 15 мин | Частая смена лидера (flapping) — проблемы с сетью/диском. |
-| `etcd_disk_wal_fsync_duration_seconds` | Histogram | p99 < 10 мс | p99 > 100 мс | Задержка записи WAL. Основной индикатор IOPS. |
-| `etcd_disk_backend_commit_duration_seconds` | Histogram | p99 < 25 мс | p99 > 100 мс | Задержка коммита в BoltDB. |
-| `etcd_network_peer_round_trip_time_seconds` | Histogram | p99 < 50 мс | p99 > 100 мс | RTT между узлами кластера. |
-| `etcd_server_proposals_failed_total` | Counter | 0 | Рост | Ошибки записи, потеря кворума. |
-| `etcd_mvcc_db_total_size_in_bytes` | Gauge | < 2 GB | > 80% квоты | Размер БД. Приближение к `quota-backend-bytes`. |
-| `etcd_debugging_server_lease_expired_total` | Counter | Пропорционально TTL | Всплески | Истечение аренд — проблемы с keepalive. |
-
-**Примеры PromQL-запросов для мониторинга:**
-
-```promql
-# Наличие лидера (алерт при = 0)
-etcd_server_has_leader == 0
-
-# Частота смены лидера (алерт при > 3 за 15 минут)
-rate(etcd_server_leader_changes_seen_total[15m]) > 3
-
-# p99 задержки WAL fsync (алерт при > 20 мс)
-histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m])) > 0.02
-
-# Заполнение БД > 85% (алерт при приближении к квоте)
-etcd_mvcc_db_total_size_in_bytes / etcd_server_quota_backend_bytes > 0.85
-
-# Количество active Watch (для диагностики нагрузки)
-etcd_server_watcher_total
-
-# Число активных leases (etcd не экспортирует эту метрику — только через etcdctl)
-# etcdctl lease list | wc -l
-
-# Суммарный gRPC-трафик (для оценки нагрузки на сеть)
-rate(etcd_network_client_grpc_sent_bytes_total[5m])
-rate(etcd_network_client_grpc_received_bytes_total[5m])
-```
-
-**Настройка скрейпинга etcd в Prometheus:**
 ```yaml
-# В kube-prometheus-stack: добавьте в values.yaml
-prometheus:
-  prometheusSpec:
-    additionalScrapeConfigs:
-    - job_name: 'etcd'
-      kubernetes_sd_configs:
-      - role: endpoints
-        namespaces:
-          names: ['kube-system']
-      scheme: https
-      tls_config:
-        ca_file: /etc/kubernetes/pki/etcd/ca.crt
-        cert_file: /etc/kubernetes/pki/etcd/healthcheck-client.crt
-        key_file: /etc/kubernetes/pki/etcd/healthcheck-client.key
-      relabel_configs:
-      - source_labels: [__meta_kubernetes_endpoint_name]
-        regex: etcd
-        action: keep
-```
-
-*Полный справочник метрик и настройка Grafana-дашбордов:* **[Мониторинг etcd](../../etcd/etcd_monitoring.md)**.
-
-### Управление членами кластера
-
-Операции с составом кластера etcd (добавление, удаление, повышение узлов) критичны для масштабирования и ремонта.
-
-**Добавление нового узла (через Learner):**
-
-```bash
-# 1. Добавьте узел как learner (неголосующий член)
-k-etcdctl member add etcd-node-4 \
-  --peer-urls=https://10.0.0.14:2380 \
-  --learner
-# → Member 8e9e05f54f240d12 added to cluster 8e9e05f54f240d12
-# → name: etcd-node-4
-# → peerURLs: https://10.0.0.14:2380
-# → isLearner: true
-
-# 2. Запустите etcd на новом узле с параметром --initial-cluster-state=existing
-# и --initial-cluster, включающим все узлы (включая learner)
-
-# 3. Дождитесь синхронизации лога (разница RAFT INDEX < 1000)
-k-etcdctl endpoint hashkv --cluster -w table
-
-# 4. Повысите learner до голосующего члена
-k-etcdctl member promote 8e9e05f54f240d12
-# → Member 8e9e05f54f240d12 promoted
-
-# 5. Проверьте кворум
-k-etcdctl endpoint health --cluster -w table
-```
-
-**Удаление узла:**
-```bash
-# Удаление узла (если узел мертв или выводится из кластера)
-k-etcdctl member remove 8e9e05f54f240d12
-# → Member 8e9e05f54f240d12 removed from cluster 8e9e05f54f240d12
-
-# Проверка: узел должен исчезнуть из member list
-k-etcdctl member list -w table
-```
-
-**Перенос лидерства (для планового обслуживания узла):**
-```bash
-# Перед выводом узла из кластера перенесите лидерство на другой узел
-# 1. Узнайте ID целевого узла
-k-etcdctl member list -w table
-# → 8e9e05f54f240d12 | started | etcd-node-1 | ... | is leader: true
-# → a1b2c3d4e5f60718 | started | etcd-node-2 | ...
-
-# 2. Перенесите лидерство
-k-etcdctl move-leader a1b2c3d4e5f60718
-# → Leadership transferred from 8e9e05f54f240d12 to a1b2c3d4e5f60718
-
-# 3. Проверьте, что лидер сменился
-k-etcdctl endpoint status --cluster -w table
-```
-
-*Детальное руководство по кластеризации и восстановлению кворума:* **[Кластеризация и восстановление etcd](../../etcd/clustering_and_recovery.md)**.
-
-### Конфигурация и тюнинг параметров
-
-Ключевые параметры etcd, требующие настройки для production-среды:
-
-| Параметр | Значение по умолчанию | Рекомендуемое | Описание |
-| :--- | :--- | :--- | :--- |
-| `--quota-backend-bytes` | 2 GB | 8 GB (максимум) | Максимальный размер БД. Увеличение требует пропорционального роста RAM (etcd потребляет ~2x от размера БД). |
-| `--max-request-bytes` | 1.5 MB | 1.5–3 MB | Максимальный размер одного запроса (объекта). Увеличение рекомендуется только при необходимости хранить большие ConfigMap/Secret. |
-| `--auto-compaction-mode` | periodic | periodic | Режим авто-компакции: `periodic` (по времени) или `revision` (по количеству ревизий). |
-| `--auto-compaction-retention` | 0 (отключено) | 5m | Интервал авто-компакции. Должен совпадать с `--etcd-compaction-interval` API-сервера. |
-| `--snapshot-count` | 10000 | 10000 | Количество коммитов между снапшотами. etcd 3.6+ снизил до 10000 (было 10000). |
-| `--heartbeat-interval` | 100 | 100 | Интервал heartbeat (мс). В больших кластерах (>5 узлов) или при высоком RTT увеличьте до 200–300. |
-| `--election-timeout` | 1000 | 1000 | Таймаут выборов лидера (мс). Должен быть >= 10 * heartbeat-interval. Увеличьте при RTT > 50 мс. |
-
-**Пример конфигурации etcd (Static Pod манифест):**
-```yaml
-# /etc/kubernetes/manifests/etcd.yaml
 apiVersion: v1
 kind: Pod
 metadata:
   name: etcd
   namespace: kube-system
+  labels:
+    component: etcd
+    tier: control-plane
 spec:
+  hostNetwork: true
+  priorityClassName: system-node-critical
   containers:
   - name: etcd
-    image: registry.k8s.io/etcd:3.5.12-0
+    image: registry.k8s.io/etcd:3.5.16-0
+    imagePullPolicy: IfNotPresent
     command:
     - etcd
     - --name=etcd-node-1
     - --data-dir=/var/lib/etcd
-    - --listen-peer-urls=https://127.0.0.1:2380
-    - --listen-client-urls=https://127.0.0.1:2379
-    - --advertise-client-urls=https://10.0.0.11:2379
+    - --listen-peer-urls=https://10.0.0.11:2380
+    - --listen-client-urls=https://127.0.0.1:2379,https://10.0.0.11:2379
     - --initial-advertise-peer-urls=https://10.0.0.11:2380
+    - --advertise-client-urls=https://10.0.0.11:2379
     - --initial-cluster=etcd-node-1=https://10.0.0.11:2380,etcd-node-2=https://10.0.0.12:2380,etcd-node-3=https://10.0.0.13:2380
     - --initial-cluster-state=existing
-    - --initial-cluster-token=k8s-etcd-cluster
+    - --initial-cluster-token=k8s-etcd-token
+    # Аутентификация клиентов
     - --client-cert-auth=true
     - --trusted-ca-file=/etc/kubernetes/pki/etcd/ca.crt
     - --cert-file=/etc/kubernetes/pki/etcd/server.crt
     - --key-file=/etc/kubernetes/pki/etcd/server.key
+    # Аутентификация пиров
     - --peer-client-cert-auth=true
     - --peer-trusted-ca-file=/etc/kubernetes/pki/etcd/ca.crt
     - --peer-cert-file=/etc/kubernetes/pki/etcd/peer.crt
     - --peer-key-file=/etc/kubernetes/pki/etcd/peer.key
-    # Тюнинг производительности
-    - --quota-backend-bytes=8589934592   # 8 GB
-    - --max-request-bytes=33554432       # 32 MB (только при необходимости)
-    - --auto-compaction-mode=periodic
-    - --auto-compaction-retention=5m
-    - --snapshot-count=10000
-    - --heartbeat-interval=100
-    - --election-timeout=1000
+    # Тюнинг производительности и надежности
+    - --quota-backend-bytes=8589934592    # Лимит базы данных 8 GB
+    - --snapshot-count=10000              # Сброс логов Raft на диск каждые 10000 транзакций
+    - --heartbeat-interval=100            # Интервал heartbeat 100 мс
+    - --election-timeout=1000             # Таймаут выборов лидера 1000 мс
+    - --auto-compaction-retention=0       # 0 = компакция управляется kube-apiserver
     volumeMounts:
     - mountPath: /var/lib/etcd
       name: etcd-data
     - mountPath: /etc/kubernetes/pki/etcd
       name: etcd-certs
-  hostNetwork: true
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+    startupProbe:
+      failureThreshold: 24
+      httpGet:
+        host: 127.0.0.1
+        path: /health?serializable=true
+        port: 2379
+        scheme: HTTPS
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 15
+    livenessProbe:
+      failureThreshold: 8
+      httpGet:
+        host: 127.0.0.1
+        path: /health?exclude=NOSPACE&serializable=true
+        port: 2379
+        scheme: HTTPS
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 15
   volumes:
-  - hostPath:
+  - name: etcd-data
+    hostPath:
       path: /var/lib/etcd
       type: DirectoryOrCreate
-    name: etcd-data
-  - hostPath:
+  - name: etcd-certs
+    hostPath:
       path: /etc/kubernetes/pki/etcd
       type: DirectoryOrCreate
-    name: etcd-certs
 ```
 
-**Изменение `quota-backend-bytes` без потери данных:**
+> [!IMPORTANT]
+> Параметр `--auto-compaction-retention` на стороне самого etcd должен оставаться равным `0` (отключено), если в кластере запущен `kube-apiserver`. API-сервер самостоятельно выполняет компакцию по флагу `--etcd-compaction-interval=5m`. Включение независимой авто-компакции в etcd приводит к конфликтам процессов и ошибкам `mvcc: required revision has been compacted` у клиентов.
+
+### Проверка состояния кластера и кворума
+
+Перед любыми административными процедурами необходимо удостовериться в стабильности кворума:
+
 ```bash
-# 1. Проверьте текущий размер БД
-k-etcdctl endpoint status --write-out=json | jq '.[].Status.dbSize'
-# → 2147483648 (2 GB — уже упирается в квоту)
+# 1. Проверка доступности и latency всех членов кластера
+k-etcdctl --endpoints=https://10.0.0.11:2379,https://10.0.0.12:2379,https://10.0.0.13:2379 \
+  endpoint health -w table
+# → +------------------------+--------+-------------+-------+
+# → |        ENDPOINT        | HEALTH |    TOOK     | ERROR |
+# → +------------------------+--------+-------------+-------+
+# → | https://10.0.0.11:2379 |   true |  2.124812ms |       |
+# → | https://10.0.0.12:2379 |   true |  3.045129ms |       |
+# → | https://10.0.0.13:2379 |   true |  2.894101ms |       |
+# → +------------------------+--------+-------------+-------+
 
-# 2. Сначала выполните defrag (если БД сильно фрагментирована)
-k-etcdctl defrag --endpoints=https://10.0.0.11:2379
+# 2. Проверка размера баз данных, текущих ревизий и статуса лидера
+k-etcdctl --endpoints=https://10.0.0.11:2379,https://10.0.0.12:2379,https://10.0.0.13:2379 \
+  endpoint status -w table
+# → +------------------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+# → |        ENDPOINT        |        ID        | VERSION | DB SIZE | IS LEADER | IS LEARNER | RAFT TERM | RAFT INDEX | RAFT APPLIED INDEX | ERRORS |
+# → +------------------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+# → | https://10.0.0.11:2379 | 8e9e05f54f240d12 |  3.5.16 |  342 MB |      true |      false |         8 |   24891045 |           24891045 |        |
+# → | https://10.0.0.12:2379 | a1b2c3d4e5f60718 |  3.5.16 |  342 MB |     false |      false |         8 |   24891045 |           24891045 |        |
+# → | https://10.0.0.13:2379 | b2c3d4e5f6071829 |  3.5.16 |  342 MB |     false |      false |         8 |   24891044 |           24891044 |        |
+# → +------------------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
 
-# 3. Измените квоту (требует перезапуска etcd)
-#    В манифесте etcd.yaml измените --quota-backend-bytes=8589934592
-
-# 4. Перезапустите etcd (переместите манифест в/out of /etc/kubernetes/manifests/)
-mv /etc/kubernetes/manifests/etcd.yaml /tmp/etcd.yaml && sleep 30 && mv /tmp/etcd.yaml /etc/kubernetes/manifests/etcd.yaml
-
-# 5. Проверьте новую квоту
-k-etcdctl endpoint status --cluster -w table
+# 3. Проверка списка членов кластера и URL пиров
+k-etcdctl member list -w table
+# → +------------------+---------+-------------+------------------------+------------------------+------------+
+# → |        ID        | STATUS  |    NAME     |       PEER URLS        |      CLIENT URLS       | IS LEARNER |
+# → +------------------+---------+-------------+------------------------+------------------------+------------+
+# → | 8e9e05f54f240d12 | started | etcd-node-1 | https://10.0.0.11:2380 | https://10.0.0.11:2379 |      false |
+# → | a1b2c3d4e5f60718 | started | etcd-node-2 | https://10.0.0.12:2380 | https://10.0.0.12:2379 |      false |
+# → | b2c3d4e5f6071829 | started | etcd-node-3 | https://10.0.0.13:2380 | https://10.0.0.13:2379 |      false |
+# → +------------------+---------+-------------+------------------------+------------------------+------------+
 ```
 
-### Проверка целостности (WAL verify, hashkv)
+### Проверка срока действия и ротация TLS-сертификатов
 
-Регулярная проверка целостности данных позволяет обнаружить повреждение до того, как оно приведет к простоям.
+В kubeadm-кластерах истечение сертификатов etcd приводит к потере связи `kube-apiserver` с базой и полной остановке Control Plane.
 
 ```bash
-# Проверка хешей всех узлов (должны совпадать)
-k-etcdctl endpoint hashkv --cluster -w table
-# → +------------------+----------+
-# → |     ENDPOINT     |    HASH  |
-# → +------------------+----------+
-# → | 10.0.0.11:2379 | 12345678 |
-# → | 10.0.0.12:2379 | 12345678 |
-# → | 10.0.0.13:2379 | 12345678 |
-# → +------------------+----------+
-# → Если хеши различаются — есть расхождение данных (требуется восстановление)
+# 1. Проверка срока действия сертификатов etcd
+kubeadm certs check-expiration
+# → CERTIFICATE                EXPIRES                  RESIDUAL TIME   CERTIFICATE AUTHORITY   EXTERNALLY MANAGED
+# → apiserver-etcd-client      Jan 15, 2027 08:30 UTC   364d            etcd-ca                 no
+# → etcd-healthcheck-client    Jan 15, 2027 08:30 UTC   364d            etcd-ca                 no
+# → etcd-peer                  Jan 15, 2027 08:30 UTC   364d            etcd-ca                 no
+# → etcd-server                Jan 15, 2027 08:30 UTC   364d            etcd-ca                 no
 
-# Проверка WAL (Write-Ahead Log) — целостность проверяется автоматически при старте etcd;
-# для ручной диагностики используется etcd-dump-logs (etcdutl не имеет wal-команды)
-go install go.etcd.io/etcd/v3/tools/etcd-dump-logs@latest
-etcd-dump-logs /var/lib/etcd
-# → поток записей WAL; ищите разрывы term/index между узлами
+# 2. Ручное обновление сертификатов на текущем Control Plane узле
+kubeadm certs renew etcd-server
+kubeadm certs renew etcd-peer
+kubeadm certs renew etcd-healthcheck-client
+kubeadm certs renew apiserver-etcd-client
 
-# Если WAL повреждена — восстановление из снапшота:
-etcdutl snapshot restore /backup/last-good.db \
-  --name node1 \
-  --initial-cluster node1=https://10.0.0.11:2380 \
-  --data-dir /var/lib/etcd-restored
+# 3. Принудительный перезапуск контейнера etcd для применения новых сертификатов
+crictl stop $(crictl ps --name etcd -q)
+# kubelet автоматически перезапустит статический под с новыми сертификатами
 ```
 
-**Когда проверять целостность:**
-- После аварийного завершения etcd (power loss, OOM kill)
-- После аппаратных сбоев диска
-- Планово — раз в месяц (включить в cron)
-- При подозрении на повреждение данных (ошибки `CORRUPT`)
+### Поочередная дефрагментация узлов без простоя
 
-*Подробнее о WAL и архитектуре хранения:* **[Внутреннее устройство etcd](../../etcd/storage_internals.md)**.
+Дефрагментация блокирует BoltDB на запись на время перестроения B-tree. В кластере высокой доступности (HA) дефрагментацию **категорически запрещено** выполнять одновременно через флаг `--cluster`. Ее проводят строго последовательно на каждом узле:
 
-### Диагностика производительности
-
-etcd критичен к производительности диска и сети. Высокие задержки приводят к перевыборам лидера, таймаутам и деградации всего кластера.
-
-**Комплексная диагностика:**
 ```bash
-# 1. Замер задержки fsync (критичнейшая метрика)
-curl -s https://127.0.0.1:2379/metrics --cert ... --key ... --cacert ... | \
-  grep etcd_disk_wal_fsync_duration_seconds_bucket
-# → etcd_disk_wal_fsync_duration_seconds_bucket{le="0.001"} 1500
-# → etcd_disk_wal_fsync_duration_seconds_bucket{le="0.01"} 9800
-# → etcd_disk_wal_fsync_duration_seconds_bucket{le="0.1"} 9999
-# → etcd_disk_wal_fsync_duration_seconds_bucket{le="+Inf"} 10000
-# → p99 должен быть < 10 мс, ideally < 1 мс на NVMe
+#!/usr/bin/env bash
+set -euo pipefail
 
-# 2. Проверка сетевой задержки между узлами
-k-etcdctl endpoint health --cluster -w table
-# Обратите внимание на время ответа каждого узла
+# Список клиентских адресов всех узлов etcd
+NODES=("https://10.0.0.11:2379" "https://10.0.0.12:2379" "https://10.0.0.13:2379")
 
-# 3. Замер IOPS диска (на хосте)
-iostat -x 1 5
-# → %util не должен превышать 80%
-# → await не должен превышать 10 мс
+for endpoint in "${NODES[@]}"; do
+  echo "=== Дефрагментация узла $endpoint ==="
+  
+  # Замер размера базы данных ДО дефрагментации
+  db_before=$(k-etcdctl --endpoints="$endpoint" endpoint status --write-out=json | jq -r '.[0].Status.dbSize')
+  
+  # Выполнение дефрагментации конкретного узла
+  k-etcdctl --endpoints="$endpoint" defrag
+  
+  # Замер размера базы данных ПОСЛЕ дефрагментации
+  db_after=$(k-etcdctl --endpoints="$endpoint" endpoint status --write-out=json | jq -r '.[0].Status.dbSize')
+  
+  echo "Размер до: $((db_before / 1024 / 1024)) MB, после: $((db_after / 1024 / 1024)) MB"
+  
+  # Пауза для синхронизации журнала Raft перед переходом к следующей ноде
+  echo "Ожидание 15 секунд для стабилизации репликации..."
+  sleep 15
+done
 
-# 4. Проверка использования CPU и RAM etcd
-ps aux | grep etcd
-# → RSS не должен превышать 2x от размера БД
-
-# 5. Проверка file descriptors
-cat /proc/$(pgrep etcd)/limits | grep "Max open files"
-# → Max open files  65536  65536  files  (рекомендуется >= 65536)
+echo "Дефрагментация всех узлов успешно завершена."
 ```
 
-**Базовый бенчмаркинг etcd:**
-```bash
-# Бенчмарк записи (только для тестовых сред!)
-etcdctl check perf --load=type=1000 --conns=10 --clients=10
-# → 1000 requests cost 1.234s (810.0048 ops/sec)
-# → 1000 requests cost 1.235s (809.7058 ops/sec)
+### Управление составом кластера
 
-# Ожидаемые результаты (NVMe SSD):
-# - Write: > 500 ops/sec
-# - Read: > 10000 ops/sec
-# - p99 latency: < 10 мс
+#### Безопасное добавление нового узла через Learner
+
+Механизм `learner` гарантирует, что добавляемый узел не уронит кворум, пока не выкачает полный снапшот базы данных:
+
+```bash
+# Шаг 1. Добавление узла в качестве learner
+k-etcdctl member add etcd-node-4 \
+  --peer-urls=https://10.0.0.14:2380 \
+  --learner
+# → Member 9c8b7a6f5e4d3c2b added to cluster 8e9e05f54f240d12
+# → ETCD_NAME="etcd-node-4"
+# → ETCD_INITIAL_CLUSTER="etcd-node-1=https://10.0.0.11:2380,etcd-node-2=https://10.0.0.12:2380,etcd-node-3=https://10.0.0.13:2380,etcd-node-4=https://10.0.0.14:2380"
+# → ETCD_INITIAL_CLUSTER_STATE="existing"
+
+# Шаг 2. Развертывание и запуск etcd на новом узле (10.0.0.14)
+# Манифест должен содержать --initial-cluster-state=existing и обновленный список пиров.
+
+# Шаг 3. Контроль догона репликации (сравнение хешей и индексов Raft)
+k-etcdctl --endpoints=https://10.0.0.14:2379 endpoint status -w table
+
+# Шаг 4. Повышение learner до полноправного голосующего члена
+k-etcdctl member promote 9c8b7a6f5e4d3c2b
+# → Member 9c8b7a6f5e4d3c2b promoted in cluster 8e9e05f54f240d12
 ```
 
-*Полное руководство по бенчмаркингу:* **[Бенчмаркинг etcd](../../etcd/benchmarking.md)**.
-
-### Обновление etcd в Kubernetes
-
-Обновление etcd — критичная операция, требующая последовательного выполнения на каждом узле Control Plane.
-
-**Порядок обновления (kubeadm-кластер):**
+#### Удаление узла из кластера
 
 ```bash
-# 1. СОЗДАЙТЕ СНАПШОТ ПЕРЕД ЛЮБЫМИ ИЗМЕНЕНИЯМИ
-k-etcdctl snapshot save /var/lib/kube-backups/etcd-pre-upgrade-$(date +%F).db
-
-# 2. Обновите etcd на ПЕРВОМ узле (сначалаfollower)
-#    Обновите манифест etcd.yaml (новый image tag)
-#    etcd.yaml → image: registry.k8s.io/etcd:3.5.15-0
-
-# 3. Перезапустите etcd (переместите манифест)
-mv /etc/kubernetes/manifests/etcd.yaml /tmp/ && sleep 30 && mv /tmp/etcd.yaml /etc/kubernetes/manifests/
-
-# 4. Проверьте здоровье после обновления
-k-etcdctl endpoint health --cluster -w table
+# Получение ID удаляемого узла
 k-etcdctl member list -w table
 
-# 5. Повторите для каждого узла (поочередно, с интервалом > 30 сек)
-
-# 6. ПОСЛЕ ОБНОВЛЕНИЯ ВСЕХ УЗЛОВ — проверьте кворум
-k-etcdctl endpoint status --cluster -w table
+# Удаление узла по ID
+k-etcdctl member remove 9c8b7a6f5e4d3c2b
+# → Member 9c8b7a6f5e4d3c2b removed from cluster 8e9e05f54f240d12
 ```
 
-**Чего ожидать при обновлении:**
-- 1-2 смены лидера (по одной на обновляемый узел) — это нормально
-- Более 5 смен лидера за обновление — проблема (проверьте сеть/диск)
-- Кратковременные ошибки `etcdserver: request timed out` — нормальны (< 5 сек)
-- Если ошибки длятся > 30 сек — откатывайте на предыдущую версию
+#### Перенос лидерства (Graceful Leader Demotion)
 
-**Откат etcd:**
+Перед выводом текущего лидера на плановое обслуживание рекомендуется заранее передать роль лидера другому узлу, чтобы избежать задержек при выборах:
+
 ```bash
-# 1. Остановите API-сервер и etcd на всех узлах
-mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/
-mv /etc/kubernetes/manifests/etcd.yaml /tmp/
+# Определение ID целевого фолловера
+TARGET_ID=$(k-etcdctl member list --write-out=json | jq -r '.members[] | select(.name=="etcd-node-2") | .ID')
 
-# 2. Восстановите из снапшота (на ПЕРВОМ узле)
-etcdutl snapshot restore /var/lib/kube-backups/etcd-pre-upgrade-$(date +%F).db \
-  --data-dir /var/lib/etcd-restored
-
-# 3. Обновите data-dir в манифесте etcd.yaml
-#    --data-dir=/var/lib/etcd-restored
-
-# 4. Запустите etcd и API-сервер
-mv /tmp/etcd.yaml /etc/kubernetes/manifests/
-mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/
+# Передача лидерства
+k-etcdctl move-leader "$TARGET_ID"
+# → Leadership transferred to 9c8b7a6f5e4d3c2b
 ```
-
-*Подробнее:* **[Обновление кластеров Kubernetes](../../Kubernetes/Operations/upgrading_clusters.md)**.
 
 ---
 
-## Резервное копирование и восстановление
+## Резервное копирование и аварийное восстановление
 
 ### Создание снапшота (Online Backup)
 
-Снапшот etcd — единственный надежный способ забекапить весь кластер K8s целиком. Выполняйте его перед мажорными обновлениями кластера и регулярно по расписанию.
+Снятие снапшота через `etcdctl snapshot save` является потоковой операцией и не прерывает обработку запросов.
 
 ```bash
-# Создание бекапа
-k-etcdctl snapshot save /var/lib/kube-backups/etcd-snapshot-$(date +%F).db
-# → Snapshot saved at /var/lib/kube-backups/etcd-snapshot-2026-08-30.db
+# Директория для резервных копий
+BACKUP_DIR="/var/lib/kube-backups"
+mkdir -p "$BACKUP_DIR"
+SNAPSHOT_PATH="${BACKUP_DIR}/etcd-snapshot-$(date +%Y%m%d_%H%M%S).db"
 
-# Проверка целостности созданного файла (используется etcdutl)
-etcdutl snapshot status /var/lib/kube-backups/etcd-snapshot-$(date +%F).db -w table
-# → +---------+----------+------------+--------------------------------+
-# → | REVISION | TOTAL KEYS | TOTAL SIZE | COMPACT REVISION |
-# → +---------+----------+------------+--------------------------------+
-# → | 12345678 | 154200 | 24 MB | 12340000 |
-# → +---------+----------+------------+--------------------------------+
+# 1. Создание снапшота базы
+k-etcdctl snapshot save "$SNAPSHOT_PATH"
+# → Snapshot saved at /var/lib/kube-backups/etcd-snapshot-20261018_100000.db
 
-# Проверка целостности — status читает файл и вычисляет хеш
-# (повреждённый снапшот вызовет ошибку)
-etcdutl snapshot status /var/lib/kube-backups/etcd-snapshot-$(date +%F).db
-# → hash, revision, total keys, total size, version
-
-# Автоматическое резервное копирование (cron example)
-# Добавьте в crontab на каждом узле etcd:
-0 2 * * * /usr/local/bin/k-etcdctl snapshot save /var/lib/kube-backups/etcd-snapshot-$(date +\%F).db && \
-  etcdutl snapshot status /var/lib/kube-backups/etcd-snapshot-$(date +\%F).db && \
-  find /var/lib/kube-backups/ -name "etcd-snapshot-*.db" -mtime +7 -delete
+# 2. Проверка целостности файла снапшота (выполняется утилитой etcdutl)
+etcdutl snapshot status "$SNAPSHOT_PATH" -w table
+# → +----------+----------+------------+------------+
+# → |   HASH   | REVISION | TOTAL KEYS | TOTAL SIZE |
+# → +----------+----------+------------+------------+
+# → | d41d8cd9 | 24891045 |     184200 |     342 MB |
+# → +----------+----------+------------+------------+
 ```
 
-**Важно关于 снапшотов:**
-- Снапшот содержит **всё** — все K8s объекты, секреты, конфигурации
-- `snapshot save` — online-операция (не останавливает etcd)
-- `snapshot restore` — **offline**-операция (требует остановки etcd)
-- Всегда проверяйте снапшот сразу после создания (`etcdutl snapshot status`)
-- Храните снапшоты минимум 7 дней, включая перед каждым обновлением
+#### Автоматизация создания бэкапов через cron
 
-### Восстановление при аварии (Offline Restore)
-
-Восстановление выполняется, когда кластер полностью разрушен или потерян кворум. Операция требует остановки Control Plane.
-
-**Pre-flight checklist:**
-- Определите, какой снапшот использовать (последний проверенный)
-- Убедитесь, что все узлы Control Plane доступны
-- Создайте резервную копию текущего `data-dir` на каждом узле (на случай неудачного restore)
-- Убедитесь, что версия etcd для restore совпадает с версией в снапшоте (или новее)
+Пример скрипта `/usr/local/bin/etcd-backup.sh`:
 
 ```bash
-# 1. Остановите API-сервер и etcd (убрав манифесты из /etc/kubernetes/manifests/)
-mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/
-mv /etc/kubernetes/manifests/etcd.yaml /tmp/
-# Дождитесь полной остановки:
-sleep 30
+#!/usr/bin/env bash
+set -euo pipefail
 
-# 2. Сделайте бэкап текущего data-dir (на случай неудачи)
-cp -r /var/lib/etcd /var/lib/etcd-backup-$(date +%F)
+BACKUP_DIR="/var/lib/kube-backups"
+DATE_TAG=$(date +%Y%m%d_%H%M%S)
+SNAPSHOT_FILE="${BACKUP_DIR}/etcd-snapshot-${DATE_TAG}.db"
 
-# 3. Восстановите данные из файла в новую директорию
-etcdutl snapshot restore /var/lib/kube-backups/etcd-snapshot.db \
-  --data-dir /var/lib/etcd-from-backup \
-  --name etcd-node-1 \
-  --initial-cluster "etcd-node-1=https://10.0.0.11:2380,etcd-node-2=https://10.0.0.12:2380,etcd-node-3=https://10.0.0.13:2380" \
-  --initial-advertise-peer-urls https://10.0.0.11:2380 \
-  --initial-cluster-token k8s-etcd-cluster
-# → recovered cluster from saved snapshot
-# → added member etcd-node-1 https://10.0.0.11:2380 to cluster 8e9e05f54f240d12
+mkdir -p "$BACKUP_DIR"
 
-# 4. Обновите конфигурацию etcd: Укажите новый data-dir (/var/lib/etcd-from-backup) в манифесте etcd.yaml
+# Сохранение снапшота
+ETCDCTL_API=3 etcdctl \
+  --endpoints="https://127.0.0.1:2379" \
+  --cacert="/etc/kubernetes/pki/etcd/ca.crt" \
+  --cert="/etc/kubernetes/pki/etcd/healthcheck-client.crt" \
+  --key="/etc/kubernetes/pki/etcd/healthcheck-client.key" \
+  snapshot save "$SNAPSHOT_FILE"
 
-# 5. Запустите компоненты: Верните манифесты в /etc/kubernetes/manifests/
-mv /tmp/etcd.yaml /etc/kubernetes/manifests/
-mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/
+# Валидация целостности
+etcdutl snapshot status "$SNAPSHOT_FILE" > /dev/null
 
-# 6. Проверьте восстановление
-k-etcdctl endpoint health --cluster -w table
-k-etcdctl member list -w table
-kubectl get nodes
+# Ротация: удаление снапшотов старше 7 дней
+find "$BACKUP_DIR" -type f -name "etcd-snapshot-*.db" -mtime +7 -delete
 ```
 
-**Восстановление одноузлового etcd ( fastest recovery ):**
-```bash
-# Для одноузлового кластера (kubeadm без HA):
-etcdutl snapshot restore /var/lib/kube-backups/etcd-snapshot.db \
-  --data-dir /var/lib/etcd-restored \
-  --name etcd-node-1 \
-  --initial-cluster "etcd-node-1=https://127.0.0.1:2380" \
-  --initial-advertise-peer-urls https://127.0.0.1:2380
-
-# Замените data-dir в манифесте и перезапустите
-```
-
-*Детальное руководство по восстановлению многоузлового кворума:* **[Кластеризация и восстановление etcd](../../etcd/clustering_and_recovery.md)**.
+Добавление в crontab: `0 2 * * * /usr/local/bin/etcd-backup.sh > /var/log/etcd-backup.log 2>&1`.
 
 ---
 
-## Продвинутая диагностика: "Request entity too large"
+### Полное аварийное восстановление (Offline Restore)
 
-Если Kubernetes возвращает ошибку `etcdserver: request is too large`, это означает, что размер объекта (например, ConfigMap или Secret) превышает `max-request-bytes` (по умолчанию 1.5 MB).
+> [!CAUTION]
+> Восстановление etcd из снапшота — это **offline-процедура**, требующая полной остановки `kube-apiserver` и всех узлов etcd. Восстановление откатывает состояние всего кластера к точке создания снапшота (все ресурсы, созданные позже, будут безвозвратно утеряны).
 
-**Диагностика:**
+#### Сценарий 1: Восстановление одноузлового Control Plane (Single-Node)
+
+1.  **Остановка Control Plane:**
+    ```bash
+    # Временный перенос манифестов статических подов
+    mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/
+    mv /etc/kubernetes/manifests/etcd.yaml /tmp/
+    
+    # Ожидание остановки контейнеров
+    while crictl ps | grep -qE "kube-apiserver|etcd"; do sleep 2; done
+    ```
+
+2.  **Резервное сохранение текущих поврежденных данных:**
+    ```bash
+    mv /var/lib/etcd /var/lib/etcd-damaged-"$(date +%s)"
+    ```
+
+3.  **Восстановление данных через `etcdutl`:**
+    ```bash
+    etcdutl snapshot restore /var/lib/kube-backups/etcd-snapshot-last.db \
+      --data-dir=/var/lib/etcd \
+      --name=etcd-node-1 \
+      --initial-cluster="etcd-node-1=https://127.0.0.1:2380" \
+      --initial-advertise-peer-urls="https://127.0.0.1:2380"
+    # → 2026-10-18T10:00:00Z INFO restored snapshot {"path": "/var/lib/kube-backups/etcd-snapshot-last.db", "data-dir": "/var/lib/etcd"}
+    ```
+
+4.  **Проверка прав доступа:**
+    ```bash
+    chown -R root:root /var/lib/etcd
+    chmod 700 /var/lib/etcd
+    ```
+
+5.  **Запуск компонентов:**
+    ```bash
+    mv /tmp/etcd.yaml /etc/kubernetes/manifests/
+    mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/
+    
+    # Контроль готовности API
+    kubectl get nodes
+    ```
+
+---
+
+#### Сценарий 2: Синхронное восстановление всех узлов HA-кластера
+
+Если все 3 узла etcd разрушены, процедура восстановления должна быть выполнена на **каждом узле кластера** с использованием **одного и того же файла снапшота** и единого `--initial-cluster-token`:
+
+1.  **Остановите `kube-apiserver` и `etcd` на ВСЕХ трех master-узлах.**
+2.  **Сделайте бэкап старых данных `/var/lib/etcd` на всех трех узлах.**
+3.  **Скопируйте валидный файл снапшота на все узлы.**
+4.  **Выполните `etcdutl snapshot restore` на каждом узле со специфичными для него IP:**
+
+*На Узле 1 (10.0.0.11):*
 ```bash
-# Проверка текущего лимита (из конфигурации etcd)
-ps aux | grep etcd | grep -o 'max-request-bytes=[0-9]*'
-# → max-request-bytes=1572864 (1.5 MB)
-
-# Проверка размера проблемного объекта
-kubectl get configmap <name> -o json | wc -c
-# → 2097152 (2 MB — превышает лимит)
-
-# Просмотр размера всех ConfigMap в namespace
-kubectl get configmaps -n <namespace> -o json | jq '.items[] | {name: .metadata.name, size: (. | length)}' | sort -r
+etcdutl snapshot restore /tmp/etcd-snapshot.db \
+  --data-dir=/var/lib/etcd \
+  --name=etcd-node-1 \
+  --initial-cluster="etcd-node-1=https://10.0.0.11:2380,etcd-node-2=https://10.0.0.12:2380,etcd-node-3=https://10.0.0.13:2380" \
+  --initial-advertise-peer-urls="https://10.0.0.11:2380" \
+  --initial-cluster-token="k8s-etcd-restore-token"
 ```
 
-**Решения:**
-*   **Решение 1:** Разбить ConfigMap на несколько частей (рекомендуется).
-*   **Решение 2:** Если разбиение невозможно, увеличьте лимит:
+*На Узле 2 (10.0.0.12):*
+```bash
+etcdutl snapshot restore /tmp/etcd-snapshot.db \
+  --data-dir=/var/lib/etcd \
+  --name=etcd-node-2 \
+  --initial-cluster="etcd-node-1=https://10.0.0.11:2380,etcd-node-2=https://10.0.0.12:2380,etcd-node-3=https://10.0.0.13:2380" \
+  --initial-advertise-peer-urls="https://10.0.0.12:2380" \
+  --initial-cluster-token="k8s-etcd-restore-token"
+```
+
+*На Узле 3 (10.0.0.13):*
+```bash
+etcdutl snapshot restore /tmp/etcd-snapshot.db \
+  --data-dir=/var/lib/etcd \
+  --name=etcd-node-3 \
+  --initial-cluster="etcd-node-1=https://10.0.0.11:2380,etcd-node-2=https://10.0.0.12:2380,etcd-node-3=https://10.0.0.13:2380" \
+  --initial-advertise-peer-urls="https://10.0.0.13:2380" \
+  --initial-cluster-token="k8s-etcd-restore-token"
+```
+
+5.  **Запустите манифесты `etcd.yaml` на всех трех узлах одновременно.** Узлы обнаружат друг друга по peer-портам 2380 и соберут кворум.
+6.  **После стабилизации etcd верните манифесты `kube-apiserver.yaml`.**
+
+---
+
+#### Сценарий 3: Пошаговое восстановление (1 узел + расширение через Learner)
+
+В реальной эксплуатации координация одновременного запуска 3 узлов может давать сбои из-за сетевых таймаутов. Наиболее надежный метод восстановления HA-кластера — **поднятие одного узла и добавление остальных как новых членов**:
+
+1.  На Узле 1 восстановите снапшот как **одноузловой кластер**:
     ```bash
-    # В манифесте etcd.yaml добавьте:
-    - --max-request-bytes=33554432   # 32 MB
-
-    # Также добавьте флаг в kube-apiserver:
-    --max-requests-inflight=... (не влияет напрямую, но учитывайте общую нагрузку)
-
-    # В etcd и kube-apiserver max-request-bytes должны совпадать
+    etcdutl snapshot restore /tmp/etcd-snapshot.db \
+      --data-dir=/var/lib/etcd \
+      --name=etcd-node-1 \
+      --initial-cluster="etcd-node-1=https://10.0.0.11:2380" \
+      --initial-advertise-peer-urls="https://10.0.0.11:2380" \
+      --initial-cluster-token="k8s-etcd-new-token"
     ```
-*   **Решение 3:** Хранить большие данные в Persistent Volume вместо ConfigMap/Secret.
+2.  В манифесте `/etc/kubernetes/manifests/etcd.yaml` на Узле 1 временно скорректируйте флаги `--initial-cluster` и `--initial-cluster-state=new`. Запустите etcd и `kube-apiserver` на Узле 1. Кластер Kubernetes снова работает.
+3.  Очистите `/var/lib/etcd` на Узлах 2 и 3.
+4.  Добавьте Узел 2 через `member add --learner`:
+    ```bash
+    k-etcdctl member add etcd-node-2 --peer-urls=https://10.0.0.12:2380 --learner
+    ```
+5.  Запустите etcd на Узле 2 с флагом `--initial-cluster-state=existing`.
+6.  После синхронизации переведите узел в голосующие: `k-etcdctl member promote <ID>`.
+7.  Повторите процедуру для Узла 3.
 
-**Предотвращение:**
-- Мониторьте размер ConfigMap/Secret перед применением
-- В CI/CD добавьте проверку: `kubectl apply --dry-run=client -f <file> | grep -i "too large"`
-- Установите NetworkPolicy или OPA/Gatekeeper限制 максимальный размер объектов
+---
+
+## Диагностика и устранение неисправностей
+
+### Авария "database space exceeded" (Alarm NOSPACE)
+
+Если база данных etcd достигает квоты (`--quota-backend-bytes`, по умолчанию 2 GB), etcd генерирует алерт `NOSPACE` и блокирует все операции записи. Kubernetes API-сервер начинает возвращать ошибку `HTTP 500: etcdserver: mvcc: database space exceeded`.
+
+#### Регламент восстановления:
+
+```bash
+# Шаг 1. Проверка наличия активных алармов
+k-etcdctl alarm list
+# → memberID:8e9e05f54f240d12 alarm:NOSPACE
+
+# Шаг 2. Определение последней ревизии
+LATEST_REV=$(k-etcdctl endpoint status --write-out=json | jq -r '.[0].Status.header.revision')
+echo "Текущая ревизия: $LATEST_REV"
+
+# Шаг 3. Логическая компакция старой истории версий
+k-etcdctl compact "$LATEST_REV"
+# → compacted revision 24891045
+
+# Шаг 4. Физическая дефрагментация каждого узла поочередно
+for ep in https://10.0.0.11:2379 https://10.0.0.12:2379 https://10.0.0.13:2379; do
+  echo "Дефрагментация $ep..."
+  k-etcdctl --endpoints="$ep" defrag
+  sleep 10
+done
+
+# Шаг 5. Снятие блокировки (Disarm Alarm)
+k-etcdctl alarm disarm
+# → memberID:8e9e05f54f240d12 alarm:NOSPACE
+
+# Шаг 6. Контрольная проверка (список алармов должен быть пуст)
+k-etcdctl alarm list
+# (пустой вывод)
+
+# Шаг 7. Проверка свободного места
+k-etcdctl endpoint status -w table
+```
+
+#### Расследование причин переполнения базы:
+
+Чаще всего причиной лавинообразного роста являются системные события (Event Storm) или утечки Lease-объектов:
+
+```bash
+# Подсчет количества событий в кластере
+k-etcdctl get /registry/events --prefix --keys-only | wc -l
+
+# Подсчет подов во всех неймспейсах
+k-etcdctl get /registry/pods --prefix --keys-only | wc -l
+```
+
+Если обнаружен Event Storm, уменьшите `--event-ttl` в `/etc/kubernetes/manifests/kube-apiserver.yaml` (например, до `15m` вместо `1h` по умолчанию).
+
+---
+
+### Ошибка "etcdserver: request is too large"
+
+Если объект Kubernetes (большой ConfigMap, бинарный Secret или CRD) превышает `--max-request-bytes` (по умолчанию 1.5 MB), API-сервер отклоняет сохранение:
+
+```text
+Error from server (InternalError): etcdserver: request is too large
+```
+
+**Решение:**
+1.  *Архитектурно правильное решение:* Разбить ConfigMap на несколько более мелких файлов или вынести бинарные данные в PersistentVolume.
+2.  *Инфраструктурное решение (при крайней необходимости):* Увеличьте лимит до 3–10 MB в манифесте `/etc/kubernetes/manifests/etcd.yaml`:
+    ```yaml
+    - --max-request-bytes=10485760   # 10 MB
+    ```
+    > [!WARNING]
+    > Увеличение `--max-request-bytes` свыше 10 MB не рекомендуется: большие объекты замедляют репликацию логов Raft и вызывают пиковые задержки в работе garbage collector рантайма Go.
+
+---
+
+### Восстановление при потере кворума (Disaster Quorum Loss)
+
+Если из 3 узлов etcd вышли из строя 2 узла, оставшийся узел не может принимать решения (кворум 1 из 3 невозможен). etcd переходит в read-only режим.
+
+Если упавшие узлы невозможно восстановить физически, выживший узел можно принудительно перевести в статус нового одноузлового кластера без потери текущих данных:
+
+1.  Остановите etcd на выжившем узле (переместите манифест `etcd.yaml` в `/tmp/`).
+2.  В манифесте `/tmp/etcd.yaml` добавьте аргумент:
+    ```yaml
+    - --force-new-cluster=true
+    ```
+3.  Верните манифест в `/etc/kubernetes/manifests/`.
+4.  etcd пересчитает Raft-членство, удалит мертвые узлы из топологии и назначит себя единственным членом нового кворума.
+5.  **ОБЯЗАТЕЛЬНО:** После успешного запуска сразу же удалите флаг `--force-new-cluster=true` из манифеста, чтобы избежать сброса топологии при следующем перезапуске!
+6.  Добавьте новые узлы по стандартной схеме через `member add --learner`.
+
+---
+
+### Задержки диска (fsync) и Leader Flapping
+
+Лидер etcd периодически отправляет фолловерам heartbeat (по умолчанию каждые 100 мс). Если диск фолловера или лидера не успевает сбросить WAL на диск за время `election-timeout` (по умолчанию 1000 мс), фолловер объявляет выборы. Начинается постоянная смена лидера (**Leader Flapping**), приводящая к каскадному сбою API-сервера.
+
+**Диагностика через Prometheus / curl:**
+
+```bash
+# Замер времени синхронизации WAL на диск
+curl -s https://127.0.0.1:2379/metrics \
+  --cacert /etc/kubernetes/pki/etcd/ca.crt \
+  --cert /etc/kubernetes/pki/etcd/healthcheck-client.crt \
+  --key /etc/kubernetes/pki/etcd/healthcheck-client.key | \
+  grep "etcd_disk_wal_fsync_duration_seconds_bucket"
+```
+
+*Норма:* p99 задержки fsync должен быть строго **< 10 мс** (на NVMe накопителях — < 1-2 мс). Если значение стабильно превышает 20–30 мс, дисковая подсистема непригодна для etcd.
+
+---
+
+### Проверка целостности данных (Data Drift & Corruption)
+
+Для выявления рассинхронизации данных между узлами кластера (когда ревизии совпадают, но хеши данных разошлись):
+
+```bash
+# Вычисление хеша базы данных на всех узлах
+k-etcdctl endpoint hashkv --cluster -w table
+# → +------------------------+------------+
+# → |        ENDPOINT        |    HASH    |
+# → +------------------------+------------+
+# → | https://10.0.0.11:2379 | 1084291845 |
+# → | https://10.0.0.12:2379 | 1084291845 |
+# → | https://10.0.0.13:2379 | 1084291845 |
+# → +------------------------+------------+
+```
+
+Если на одном из узлов хеш отличается, на нем произошло повреждение данных (Bit rot или рассинхронизация BoltDB).
+*Решение:* Остановить узел с несовпадающим хешем, удалить его `/var/lib/etcd`, удалить члена через `member remove`, добавить заново через `member add --learner` и перезапустить.
+
+---
+
+### Ключевые метрики мониторинга в Prometheus
+
+| Метрика | Тип | Порог алертинга | Описание и регламент |
+| :--- | :--- | :--- | :--- |
+| `etcd_server_has_leader` | Gauge | `== 0` | Узел потерял лидера. Если 0 на всех — кластер недоступен. |
+| `etcd_server_leader_changes_seen_total` | Counter | `rate(...) > 3 / 15m` | Частая смена лидера (flapping). Проверить задержки fsync и RTT сети. |
+| `etcd_disk_wal_fsync_duration_seconds` | Histogram | `p99 > 10ms` (Warn), `p99 > 50ms` (Crit) | Задержка записи WAL на диск хоста. |
+| `etcd_disk_backend_commit_duration_seconds` | Histogram | `p99 > 25ms` | Задержка фиксации транзакций в BoltDB. |
+| `etcd_network_peer_round_trip_time_seconds` | Histogram | `p99 > 50ms` | Время сетевого ответа между пирами в кластере. |
+| `etcd_mvcc_db_total_size_in_bytes` / `etcd_server_quota_backend_bytes` | Gauge | `> 0.85` | Заполнение базы свыше 85% от квоты. Требуется defrag или увеличение квоты. |
+| `etcd_server_proposals_failed_total` | Counter | `rate(...) > 0.1` | Отклонение транзакций (потеря кворума или перегрузка). |
+
+**Пример конфигурации PrometheusRule для Alertmanager:**
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: etcd-sre-alerts
+  namespace: monitoring
+spec:
+  groups:
+  - name: etcd.rules
+    rules:
+    - alert: EtcdNoLeader
+      expr: etcd_server_has_leader{job="etcd"} == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Член кластера etcd потерял связь с лидером"
+        description: "Узел {{ $labels.instance }} не видит лидера кластера etcd более 1 минуты."
+
+    - alert: EtcdWalFsyncSlow
+      expr: histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket{job="etcd"}[5m])) > 0.02
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Высокая задержка fsync WAL etcd (p99 > 20ms)"
+        description: "Медленный дисковый ввод-вывод на узле {{ $labels.instance }} угрожает стабильности кворума."
+
+    - alert: EtcdDatabaseQuotaApproaching
+      expr: (etcd_mvcc_db_total_size_in_bytes{job="etcd"} / etcd_server_quota_backend_bytes{job="etcd"}) > 0.85
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Размер БД etcd превышает 85% квоты"
+        description: "База данных {{ $labels.instance }} заполнена на {{ $value | humanizePercentage }}. Требуется срочная дефрагментация."
+```
+
+---
+
+## Лучшие практики
+
+### 1. Требования к дисковой подсистеме
+*   **Тип накопителей:** Исключительно серверные **NVMe SSD** (или enterprise SAS SSD с энергонезависимым кэшем). Обычные SATA HDD и виртуальные сетевые диски с высокой латентностью (NFS, Ceph RBD без QoS) строго запрещены.
+*   **Изолированная файловая система:** Размещайте `/var/lib/etcd` на отдельном выделенном физическом блочном устройстве, чтобы системные логи или сбросы дампов памяти не вызывали starvation I/O.
+*   **Опции монтирования:** Для ext4/xfs используйте опции `noatime,nodiratime`.
+
+### 2. Расчет оперативной памяти и настройка квот
+*   По умолчанию etcd имеет квоту базы данных `2 GB`. В production рекомендуется устанавливать:
+    ```bash
+    --quota-backend-bytes=8589934592 # 8 GB (максимально надежный размер BoltDB)
+    ```
+*   **Потребление RAM:** BoltDB отображает весь файл базы в виртуальную память через `mmap`. Реальное потребление памяти etcd обычно составляет **2–3x от размера базы данных на диске** (с учетом индексов и буферов сериализации Protobuf). Для базы в 4 GB сервер должен иметь минимум 12–16 GB оперативной памяти.
+
+### 3. Выделение отдельного etcd под события (Events Isolation)
+В кластерах масштабом свыше 500 узлов или при активном CI/CD штормы системных событий создают паразитный поток записи в etcd. Kubernetes поддерживает вынос событий в изолированный кластер:
+
+```bash
+# В манифесте kube-apiserver:
+--etcd-servers=https://10.0.0.11:2379,https://10.0.0.12:2379,https://10.0.0.13:2379
+--etcd-servers-overrides=/events#https://10.0.0.21:2379;https://10.0.0.22:2379;https://10.0.0.23:2379
+```
+
+Это гарантирует, что даже при переполнении базы событий основное состояние кластера (поды, деплойменты, секреты) продолжит работать стабильно.
+
+### 4. Синхронизация времени (NTP)
+Raft полагается на монотонные таймеры для выборов лидера. Расхождение часов (Clock Skew) между узлами etcd свыше **1 секунды** может приводить к ложным перевыборам и нестабильности соединений. На всех узлах должен работать синхронизатор времени (`chrony` или `systemd-timesyncd`).
 
 ---
 
 ## Дополнительная информация
 
-### Best Practices для production-среды
-
-1.  **Диск:** Только NVMe SSD. Задержка `fsync` (метрика `etcd_disk_wal_fsync_duration_seconds`) должна быть **< 10 мс**; при p99 > 100 мс лидер начинает пропускать heartbeat и происходят перевыборы. Желательно размещать данные и WAL на отдельных дисках от системного.
-2.  **Размер БД:** Установите `--quota-backend-bytes=8589934592` (8 GB) — это максимум стабильной работы BoltDB. Увеличение требует пропорционального роста RAM.
-3.  **Регулярные снапшоты:** Минимум 1 раз в сутки, плюс перед каждым обновлением кластера. Храните снапшоты минимум 7 дней.
-4.  **Авто-компакция:** Включите `--auto-compaction-mode=periodic --auto-compaction-retention=5m` для предотвращения разрастания БД.
-5.  **mTLS:** Обязательно для всех соединений (peer, client, admin). Два отдельных CA: для peer-соединений и для client-соединений.
-6.  **Изоляция etcd:** Не запускайте на узлах с другими нагрузками. Выделите отдельные узлы (3 или 5) только для etcd.
-7.  **Мониторинг:** Настройте алерты на `etcd_server_has_leader == 0`, `etcd_server_leader_changes_seen_total > 3/15m`, `etcd_disk_wal_fsync_duration_seconds p99 > 20ms`, `etcd_mvcc_db_total_size_in_bytes / quota > 0.85`.
-8.  **Резервное копирование:** Автоматизируйте создание снапшотов с проверкой целостности. Снапшот без проверки (`etcdutl snapshot status`) — ненадежен.
-9.  **Clock Sync:** Используйте NTP на всех узлах. Смещение часов > 1 секунды может привести к проблемам с Raft consensus.
-10. **Избегайте `kubectl edit`/`kubectl patch` на etcd напрямую:** Все изменения только через API-сервер.
-
-### Edge Cases и известные особенности
-
-*   **Split-Brain при потере кворума:** Если потеряно > n/2 узлов, кластер переходит в read-only режим. Восстановление требует `etcdutl snapshot restore` или `etcdctl member remove` для удаления мертвых членов.
-*   **Clock Skew:** etcd использует часы для выборов лидера и логов. Смещение > 1 секунды вызывает перевыборы. Обязательно настройте NTP.
-*   **Большой размер Events:** В нестабильных кластерах Events накапливаются быстро и раздувают БД. Настройте `--event-ttl` (по умолчанию 1 час) и регулярно очищайте.
-*   **Concurrent Compaction:** Несколько процессов компакции одновременно вызывают `etcd mvcc: database space exceeded`. Компакция должна выполняться одним процессом.
-*   **Snapshot при большом размере БД:** Если БД > 8 GB, `snapshot save` может выполняться долго и блокировать запись. Выполняйте снапшоты в часы низкой нагрузки.
-*   **Restore и initial-cluster-token:** При восстановлении из снапшота **обязательно** указывайте `--initial-cluster-token`. Без него etcd может отклонить подключение узлов, считая их частью другого кластера.
-*   **etcd v3.5.x иlearner:** etcd 3.5+ поддерживает learner-узлы (неголосующие члены). Используйте их для безопасного добавления узлов в production.
-*   **Auto-compaction-retention и API-сервер:** Параметр `--auto-compaction-retention` etcd **не должен** противоречить `--etcd-compaction-interval` API-сервера. Обычно API-сервер выполняет компакцию, а etcd — нет (оставьте `--auto-compaction-retention=0`).
-*   **etcd и Clock jumps в виртуализации:** В VM (ESXi, KVM) возможны скачки времени при миграции. Это может вызвать немедленные перевыборы. Настройте `--election-timeout` >= 5000 мс или изолируйте etcd-VM от миграций.
-
-**Связанные ресурсы:**
-*   **[Шпаргалка по командам etcdctl](../../etcd/etcdctl_cheatsheet.md)** — подробный справочник команд.
-*   **[Обзор etcd в Kubernetes](./etcd_overview.md)** — архитектурная роль компонента.
-*   **[MVCC, версионирование и компакция](../../etcd/mvcc_versioning_and_compaction.md)** — глубокое понимание устройства хранения etcd.
-*   **[Резервное копирование в Kubernetes](../Operations/backup-strategies.md)** — сравнение бэкапа etcd с инструментами типа Velero.
-*   **[Мониторинг etcd](../../etcd/etcd_monitoring.md)** — ключевые метрики, алерты и Grafana-дашборды.
-*   **[Кластеризация и восстановление etcd](../../etcd/clustering_and_recovery.md)** — построение HA-кластера и восстановление кворума.
-*   **[Бенчмаркинг etcd](../../etcd/benchmarking.md)** — тестирование производительности.
+*   **[Обзор etcd в Kubernetes](./etcd_overview.md)** — архитектурные основы и место etcd в Control Plane.
+*   **[Альтернативы etcd и безопасность](./etcd_alternatives_and_security.md)** — Kine, Dqlite, шифрование Encryption at Rest и интеграция с KMS v2.
+*   **[Хранение секретов в etcd](../Base/secrets/etcd_storage.md)** — механизмы шифрования секретов на диске.
+*   **[Шпаргалка по командам etcdctl](../../etcd/etcdctl_cheatsheet.md)** — развернутый справочник команд CLI.
+*   **[Мониторинг etcd](../../etcd/etcd_monitoring.md)** — подробные метрики Prometheus и настройка дашбордов Grafana.
+*   **[Кластеризация и восстановление etcd](../../etcd/clustering_and_recovery.md)** — проектирование топологий высокой доступности.
+*   **[MVCC, версионирование и компакция](../../etcd/mvcc_versioning_and_compaction.md)** — внутреннее устройство storage engine BoltDB.
+*   **[Стратегии резервного копирования в Kubernetes](../Operations/backup-strategies.md)** — сравнение резервного копирования etcd с решениями уровня Velero.

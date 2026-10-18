@@ -547,6 +547,50 @@ server {
 }
 ```
 
+### Сценарий 10: Преодоление лимита 65 000 сокетов через пул исходящих IP (`proxy_bind`)
+
+**Проблема:** В архитектурах с экстремальным RPS (20 000–80 000+ запросов в секунду) к одиночному внешнему IP-адресу бэкенда (например, шлюз оплаты, монолитный сервис или внешний API) сетевой стек ядра Linux сталкивается с физическим ограничением кортежа 4-tuple (`SRC_IP:SRC_PORT -> DST_IP:DST_PORT`). Диапазон эфемерных портов (`ip_local_port_range`) ограничен 64 511 портами. Даже при активном `keepalive` и `sysctl net.ipv4.tcp_tw_reuse = 1` при всплесках трафика порты исчерпываются с фатальной ошибкой:
+`connect() to 198.51.100.50:443 failed (99: Cannot assign requested address) while connecting to upstream`.
+
+**Решение SRE:** Назначение на исходящий сетевой интерфейс Nginx нескольких вторичных IP-адресов (IP-алиасов) и балансировка исходящих сокетов через директиву `proxy_bind` с помощью модуля `split_clients`:
+
+```nginx
+# 1. Распределение исходящих IP-адресов на базе хеша входящего клиентского сокета
+split_clients "$remote_addr$remote_port" $outbound_source_ip {
+    25%    10.0.1.51;
+    25%    10.0.1.52;
+    25%    10.0.1.53;
+    25%    10.0.1.54;
+}
+
+upstream high_rps_external_service {
+    zone high_rps_zone 256k;
+    server 198.51.100.50:443;
+    keepalive 128;
+}
+
+server {
+    listen 80;
+    server_name api.company.internal;
+
+    location /external-gateway/ {
+        proxy_pass https://high_rps_external_service;
+
+        # Привязка исходящего сокета к динамически выбранному локальному IP
+        proxy_bind $outbound_source_ip;
+
+        # Поддержка keepalive-пулов для каждого исходящего адреса
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+
+        proxy_set_header Host api.external-provider.com;
+        proxy_ssl_server_name on;
+    }
+}
+```
+
+*Эффект:* 4 локальных IP-адреса умножают емкость сокетного пула в 4 раза ($4 \times 64\,000 \approx 256\,000$ одновременных исходящих TCP-соединений к одному и тому же IP-адресу бэкенда).
+
 ---
 
 ## Операции и команды

@@ -1,210 +1,299 @@
 # PriorityClass — приоритеты подов
 
-## Определение
-
-**PriorityClass** — это кластерный объект Kubernetes, который позволяет назначать весовые приоритеты подам. PriorityClass напрямую влияет на два критических процесса управления ресурсами:
-1.  **Порядок планирования (Scheduling Order):** Определяет положение пода в очереди планировщика.
-2.  **Вытеснение (Preemption):** Позволяет высокоприоритетным подам принудительно освобождать ресурсы, удаляя поды с более низким приоритетом.
-
-Это фундаментальный механизм для обеспечения доступности критически важных сервисов в условиях дефицита ресурсов кластера.
+**Актуально для:** Kubernetes 1.30–1.35+
 
 ---
 
-## Основные концепции
+## Определения
 
-`PriorityClass` оперирует на уровне планировщика (`kube-scheduler`) и влияет на следующие этапы:
+*   **PriorityClass (класс приоритета)** — объект API Kubernetes (`scheduling.k8s.io/v1`), определяющий числовой вес (приоритет) пода и политику его вытеснения. Объект не привязан к пространствам имен (cluster-scoped).
+*   **Приоритет пода (`spec.priority`)** — вычисленное 32-битное целое число со знаком, фиксируемое в манифесте пода admission-контроллером при создании на основе связанного `PriorityClass`.
+*   **Вытеснение (Preemption)** — механизм планировщика (`kube-scheduler`), принудительно удаляющий поды с более низким приоритетом с узла для освобождения вычислительных ресурсов (CPU, Memory) под размещение пода с более высоким приоритетом.
+*   **Поды-жертвы (Victim Pods)** — запущенные поды с меньшим приоритетом, выбранные планировщиком для завершения (eviction) ради освобождения емкости узла.
+*   **Номинированный узел (`status.nominatedNodeName`)** — поле в статусе пода, указывающее на узел, зарезервированный планировщиком для пода-кандидата на время завершения работы подов-жертв.
+*   **Очереди планировщика (Scheduling Queues)** — внутренние структуры `kube-scheduler` (`activeQ`, `backoffQ`, `unschedulableQ`), определяющие порядок обработки подов.
+*   **Политика вытеснения (`preemptionPolicy`)** — параметр `PriorityClass`, определяющий, имеет ли право под вытеснять другие поды (`PreemptLowerPriority`) или только занимает приоритетное место в очереди без вытеснения (`Never`).
+*   **Глобальный дефолт (`globalDefault`)** — флаг, указывающий на автоматическое назначение данного класса всем создаваемым подам, у которых не задан `priorityClassName`.
+*   **Выселение узлом (Kubelet Eviction)** — процесс завершения подов агентом `kubelet` при достижении критических порогов локальных ресурсов узла (MemoryPressure, DiskPressure, PIDPressure). В отличие от Preemption, оперирует классами QoS и фактическим потреблением.
+*   **Pod Disruption Budget (PDB)** — объект защиты доступности сервиса (`policy/v1`), ограничивающий количество одновременно недоступных реплик при добровольных прерываниях, включая вытеснение планировщиком.
 
-### 1. Очередность планирования
-Когда несколько подов находятся в состоянии `Pending`, планировщик сортирует их по значению поля `value` в `PriorityClass`. Поды с наибольшим значением рассматриваются первыми. Это позволяет критическим задачам обходить "очередь" из менее важных подов, даже если те были созданы раньше.
+---
 
-### 2. Механизм вытеснения (Preemption)
-Если планировщик не может найти узел для высокоприоритетного пода из-за нехватки ресурсов (CPU, RAM), он инициирует процесс вытеснения:
-*   Планировщик ищет узел, где удаление одного или нескольких подов с более низким приоритетом позволит разместить целевой под.
-*   Жертвы выбираются так, чтобы минимизировать их количество и приоритет.
-*   Выбранные поды получают сигнал `TERM`, а высокоприоритетный под ожидает их завершения в состоянии `Pending`.
+## Архитектура и принцип работы
 
-### Структура манифеста
+### Роль PriorityClass в планировании
+
+`PriorityClass` оперирует на двух критических этапах жизненного цикла планирования:
+
+1.  **Порядок в очереди планирования:** Определение положения пода во внутренних структурах `kube-scheduler`.
+2.  **Вытеснение ресурсов (Preemption):** Освобождение ресурсов на узлах при отсутствии подходящей емкости в точке расширения `PostFilter`.
+
+```
+                    Создание Pod (spec.priorityClassName)
+                                   │
+                                   ▼
+                 ┌───────────────────────────────────┐
+                 │    Priority Admission Plugin      │
+                 │  - резолвит PriorityClass         │
+                 │  - заполняет spec.priority        │
+                 └─────────────────┬─────────────────┘
+                                   │
+                                   ▼
+                 ┌───────────────────────────────────┐
+                 │       kube-scheduler activeQ      │
+                 │  (сортировка по spec.priority)    │
+                 └─────────────────┬─────────────────┘
+                                   │
+                                   ▼
+                            Scheduling Cycle
+                      (PreFilter ──► Filter ──► Score)
+                                   │
+                   ┌───────────────┴───────────────┐
+             Узел найден?                     Узел НЕ найден
+                   │                               │
+                   ▼                               ▼
+             Binding Cycle               PostFilter (Preemption)
+        (Reserve ──► PreBind             - выбор жертв (PDB check)
+         ──► Bind ──► PostBind)          - nomination (nominatedNodeName)
+                                         - удаление подов-жертв
+```
+
+### Жизненный цикл приоритета и контроллер допуска
+
+1.  При создании пода (через Deployment, StatefulSet или напрямую) admission-контроллер `Priority` перехватывает запрос:
+    *   Если поле `spec.priorityClassName` заполнено, контроллер находит соответствующий `PriorityClass` и копирует его `value` в поле `spec.priority`.
+    *   Если указанный `priorityClassName` не существует в кластере, запрос на создание пода **немедленно отклоняется с ошибкой**.
+    *   Если поле `spec.priorityClassName` не указано, проверяется наличие класса с `globalDefault: true`. При его наличии под получает параметры дефолтного класса.
+    *   Если дефолтного класса нет, `spec.priorityClassName` остается пустым, а `spec.priority` выставляется в `0`.
+2.  **Иммутабельность:**
+    *   Поле `spec.priority` у работающего пода неизменяемо. Смена приоритета возможна только через удаление и повторное создание пода.
+    *   Поля `value` и `preemptionPolicy` внутри созданного `PriorityClass` также **неизменяемы (immutable)**. Любое изменение шкалы требует создания нового класса либо пересоздания существующего.
+
+### Внутренние очереди kube-scheduler
+
+Внутри планировщика поды распределяются по трем очередям:
+
+*   **`activeQ` (PriorityQueue):** Очередь подов, готовых к планированию. Упорядочена строго по убыванию `spec.priority`. Поды с равным приоритетом ранжируются по времени создания.
+*   **`backoffQ`:** Очередь подов, попытка планирования которых завершилась неудачей. Поды удерживаются здесь в течение экспоненциально растущего интервала (`backoffDuration`), после чего возвращаются в `activeQ`.
+*   **`unschedulableQ`:** Хранилище подов, которые не могут быть запланированы текущим состоянием кластера (например, нехватка ресурсов на всех узлах). Поды перемещаются обратно в `activeQ` только при возникновении событий кластера (добавление узла, освобождение ресурсов, удаление других подов).
+
+### Алгоритм вытеснения (DefaultPreemption)
+
+Когда планировщик выполняет цикл фильтрации (Filter) и не находит ни одного подходящего узла для пода-кандидата, управление передается в плагин `DefaultPreemption` на этапе **`PostFilter`**:
+
+```
+[Старт PostFilter]
+       │
+       ▼
+1. Проверка политики: прерывание, если preemptionPolicy == Never
+       │
+       ▼
+2. Поиск потенциальных узлов (Feasible Nodes):
+   Может ли узел удовлетворить требования кандидата, если с него удалить ВСЕ поды с приоритетом < кандидата?
+       │
+       ▼
+3. Выбор подов-жертв на каждом потенциальном узле:
+   - Исключаются поды с приоритетом >= приоритета кандидата.
+   - Минимизируется суммарный приоритет жертв.
+   - Учитывается PDB (предпочтение отдается жертвам, удаление которых не нарушит PDB).
+   - Минимизируется общее число удаляемых подов.
+       │
+       ▼
+4. Выбор наилучшего узла:
+   - Приоритет узлам, где PDB НЕ нарушается.
+   - Приоритет узлам с наименьшим максимальным приоритетом жертвы.
+       │
+       ▼
+5. Номинация узла:
+   Кандидату выставляется status.nominatedNodeName = <NodeName>.
+       │
+       ▼
+6. Удаление жертв:
+   Подам-жертвам отправляется команда на удаление через API-сервер (graceful deletion).
+```
+
+### Асинхронное вытеснение (SchedulerAsyncPreemption)
+
+В стабильных версиях Kubernetes (начиная с v1.33+ в статусе beta, v1.32 alpha) вызовы API на удаление выбранных подов-жертв выполняются асинхронно в отдельных горутинах. Планировщик не блокирует свой основной конвейер в ожидании подтверждения от `apiserver`, что устраняет просадки пропускной способности (scheduling throughput) при массовом дефиците ресурсов на On-Premise инфраструктуре.
+
+### Спецификация манифеста PriorityClass
 
 ```yaml
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
-  name: high-priority
-value: 1000000
+  name: production-critical
+value: 10000000
 globalDefault: false
 preemptionPolicy: PreemptLowerPriority
-description: "High priority for production workloads"
+description: "Для критически важных сервисов production-контура."
 ```
 
-### Поля конфигурации
+#### Правила и ограничения полей:
 
-*   **`value`**: Обязательное 32-битное целое число со знаком в диапазоне **от `-2147483648` до `1,000,000,000` включительно** для пользовательских классов. Чем больше число, тем выше приоритет. Значения выше 1 млрд зарезервированы для встроенных системных классов (`system-*`). Отрицательные значения допустимы и означают приоритет **ниже** приоритета по умолчанию (0) — удобно для фоновых/Batch-нагрузок, которые должны уступать всему остальному. Поле `value` **неизменяемо (immutable)** после создания.
-*   **`preemptionPolicy`**:
-    *   `PreemptLowerPriority` (по умолчанию, стабильно с v1.24): Разрешает вытеснение других подов.
-    *   `Never`: Под будет первым в очереди на планирование, но **не будет** вытеснять другие поды. Полезно для Batch-заданий, которые должны ждать свободного окна. Важные нюансы: такой под **сам может быть вытеснен** более высокоприоритетным подом; он подвержен обычному scheduler back-off (при неудаче попытки повторяются реже, пропуская более низкоприоритетные поды вперёд); планируется только когда ресурсы «естественно» освободятся.
-    *   Поле `preemptionPolicy` также **неизменяемо** после создания.
-*   **`globalDefault`**: Если установлено в `true`, значение этого класса автоматически применяется ко **всем новым** подам без явно указанного `priorityClassName`. В системе может существовать **только один** класс с этим флагом — создание второго будет отклонено admission-контроллером. Если ни одного класса с `globalDefault: true` нет, приоритет подов без `priorityClassName` равен `0`. Установка/смена `globalDefault` **не влияет на уже существующие поды** — только на создаваемые после изменения.
-*   **`description`**: Человекочитаемое описание назначения. Необязательное поле; полезно для документирования иерархии приоритетов.
+1.  **`value` (обязательное):**
+    *   32-битное целое число со знаком.
+    *   Пользовательский диапазон: **от `-2147483648` до `1000000000` включительно**.
+    *   Значения больше `1000000000` зарезервированы для встроенных системных классов. Попытка создать пользовательский класс со значением `> 1000000000` будет отклонена.
+    *   Отрицательные значения допустимы и используются для фоновых, обслуживающих или низкоприоритетных задач, которые должны уступать место дефолтным подам (`value: 0`).
+2.  **`preemptionPolicy` (опциональное):**
+    *   `PreemptLowerPriority` (по умолчанию): под имеет право вытеснять поды с меньшим значением `spec.priority`.
+    *   `Never`: под помещается в голову очереди `activeQ` в соответствии со своим весом, но **не вытесняет** работающие поды. Он ожидает естественного освобождения ресурсов узла.
+3.  **`globalDefault` (опциональное):**
+    *   Булево значение (`true`/`false`).
+    *   В кластере может существовать **только один** `PriorityClass` с `globalDefault: true`. Попытка применить манифест со вторым классом завершится ошибкой валидации API-сервера.
+    *   Изменение или удаление `globalDefault` не меняет приоритеты уже запущенных подов.
+4.  **Именование:**
+    *   Имя должно соответствовать требованиям RFC 1123 (DNS subdomain).
+    *   Запрещено использовать префикс `system-` для пользовательских классов.
 
-**Ограничения имени:** имя `PriorityClass` должно быть корректным DNS-subdomain именем и **не может начинаться с префикса `system-`** (он зарезервирован для встроенных классов).
+### Системные классы приоритета
 
-### Встроенные PriorityClass
+Kubernetes поставляется с двумя встроенными системными классами, которые создаются автоматически при инициализации кластера (`kube-apiserver`):
 
-Kubernetes автоматически резервирует диапазон выше 1,000,000,000 для системных нужд. Эти классы стоят **выше** любого пользовательского класса, поэтому критичные компоненты платформы всегда планируются/вытесняются раньше прикладных подов:
-
-| Имя класса | Значение | Назначение |
+| Имя класса | Значение | Назначение и примеры компонентов |
 | :--- | :--- | :--- |
-| **`system-node-critical`** | 2000001000 | Для компонентов узла (CNI, драйверы CSI, kubelet). |
-| **`system-cluster-critical`** | 2000000000 | Для компонентов Control Plane (API Server, Scheduler, etcd). |
+| **`system-node-critical`** | `2000001000` | Компоненты, критичные для жизнедеятельности конкретного узла: сетевой CNI-плагин (Cilium, Calico node daemonset), локальные демоны CSI-хранилищ. |
+| **`system-cluster-critical`** | `2000000000` | Компоненты, критичные для функционирования всего кластера: CoreDNS, etcd, kube-apiserver, kube-scheduler, kube-controller-manager. |
 
-> Таблица актуальна для K8s v1.36. Встраивание прикладных подов в эти классы (например, Ingress/DNS через `system-cluster-critical`) — распространённый приём, но злоупотреблять им нельзя: экосистема платформы должна выживать при дефиците ресурсов.
+> [!WARNING]
+> Назначение пользовательским прикладным подам классов `system-*` крайне не рекомендуется. Если бизнес-приложение с классом `system-cluster-critical` начнет вытеснять сетевые демоны или DNS, это приведет к каскадной деградации всего кластера.
 
-### Как под ссылается на PriorityClass
+### Сравнение: Scheduler Preemption vs Kubelet Eviction
 
-`PriorityClass` — это кластерный объект, поэтому в манифесте пода/деплоймента указывается только **имя** класса через поле `priorityClassName`. Admission-контроллер `Priority` в момент создания пода подставляет числовое `value` из класса в `spec.priority` пода:
+Одна из самых частых ошибок системных администраторов и инженеров эксплуатации — путать вытеснение планировщиком и выселение узловым агентом.
+
+| Критерий | Preemption (kube-scheduler) | Eviction (kubelet) |
+| :--- | :--- | :--- |
+| **Инициатор** | `kube-scheduler` (планировщик) | `kubelet` (агент на конкретном узле) |
+| **Причина (триггер)** | Новый под не может разместиться из-за нехватки лимитов/реквестов (`requests`) | Локальный узел физически исчерпал память, диск или PID (`thresholds`) |
+| **Основной критерий отбора жертв** | **Числовой приоритет (`spec.priority`)** | **Класс QoS (`BestEffort` ──► `Burstable` ──► `Guaranteed`) + перерасход ресурсов** |
+| **Роль QoS** | **Не учитывается.** `BestEffort` с высоким приоритетом вытеснит `Guaranteed` с низким приоритетом | Первичный критерий. Внутри одного QoS-класса учитывается приоритет и потребление сверх request |
+| **Соблюдение PDB** | Учитывает PDB (минимизирует нарушения) | **Игнорирует PDB** (стабильность узла важнее доступности приложения) |
+| **Статус и код завершения** | Под удаляется стандартно через API-сервер (сигнал `SIGTERM`, graceful period) | Под переводится в фазу `Failed` с причиной `Evicted` |
+| **Точка принятия решений** | Уровень кластера (Control Plane) | Уровень конкретного физического/виртуального сервера |
+
+---
+
+## Практические сценарии и конфигурация
+
+### Сценарий 1: Корпоративная иерархия приоритетов для On-Premise инфраструктуры
+
+В изолированных bare-metal и виртуализированных кластерах рекомендуется поддерживать четкую, ограниченную шкалу из 5–6 классов.
 
 ```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: web
-spec:
-  containers:
-  - name: web
-    image: nginx
-  priorityClassName: prod-critical   # имя PriorityClass, а не число!
-```
-
-Важные правила:
-
-*   **Задаётся имя, а не число.** Фактическая числовая шкала вычисляется и фиксируется в `spec.priority` пода при создании. Менять `metadata.priorityClassName` у работающего пода нельзя — для смены приоритета нужен пересозданный под.
-*   **Класс не найден** — под **отклоняется** при создании (ошибка вида `failed to find priority class <name>`). Это важно учитывать при удалении классов.
-*   Если `priorityClassName` не указан и в кластере есть `globalDefault` — берётся его значение; иначе приоритет пода = `0`.
-*   Приоритет пода фиксируется **на момент создания** и не изменяется, даже если позже изменить `value` класса или удалить/пересоздать класс с другим значением (см. ниже).
-
-### Влияние на существующие поды и удаление класса
-
-*   Добавление `globalDefault` или изменение `value` класса **не меняет приоритет уже созданных подов** — каждый под хранит свой `spec.priority` копией значения на момент создания.
-*   **Удаление `PriorityClass`:** уже существующие поды, ссылающиеся на удалённое имя, продолжают работать, но **новые** поды с этим `priorityClassName` создавать нельзя (запрос отклоняется). Правильная последовательность оператора: сначала перевести все deployment-манифесты на новый класс, дождаться реплейса подов, затем удалить класс.
-*   Поле `value` менять нельзя (immutable) — обновление значения требует **delete + recreate** класса, а это, в свою очередь, означает несовместимость с уже запущенными подами (их приоритет не обновится). Поэтому иерархию приоритетов нужно проектировать один раз и менять редко.
-
-### Взаимодействие с Pod Disruption Budget (PDB)
-
-Начиная с Kubernetes 1.21+, планировщик старается учитывать PDB при выборе жертв для вытеснения. 
-- Он попытается найти такие жертвы, удаление которых не нарушит установленный бюджет доступности.
-- Однако, если других вариантов размещения критического пода нет, планировщик может нарушить PDB (в отличие от операции `drain`, которая всегда блокируется PDB).
-- **Выбор узла для вытеснения:** если на узле с наименьшим суммарным приоритетом жертвы защищены PDB (нарушение бюджета неизбежно), планировщик может выбрать **другой узел** с более высоким уровнем приоритета подов, но нарушающий PDB. То есть PDB влияет не только на выбор жертв, но и на выбор узла.
-
-### Асинхронное вытеснение (Asynchronous Preemption)
-
-Начиная с v1.32 (alpha, KEP-4832) и стабильно масштабируясь с **v1.33 (beta)**, планировщик выполняет вытеснение **асинхронно**: в точке `PostFilter` вычисляются жертвы и узел (номинация через `Pod.Status.NominatedNodeName`), после чего API-вызовы на удаление жертв-подов уходят в фоновый goroutine, не блокируя цикл планирования. Это заметно повышает пропускную способность планировщика при высокой текучести подов и частых вытеснениях.
-
-*   Включается feature gate **`SchedulerAsyncPreemption`** (бета с v1.33).
-*   Пока идёт асинхронное вытеснение, целевой под блокируется (не перепланируется), а после завершения возвращается в очередь.
-*   Функционально результат тот же, что и при синхронном вытеснении; отличие — в производительности и латентности планирования.
-*   Наблюдаемость: наличие непустого `Pod.Status.NominatedNodeName` означает, что под попал в процесс вытеснения; метрика `goroutines_execution_total{operation="preemption"}` и связанные с ней дают представление о работе фоновых вытеснений.
-
----
-
-## Алгоритм выбора жертв (Victim Selection)
-
-Планировщик, когда под не помещается на узлах, ищет способ освободить ресурсы, причинив минимальный ущерб:
-
-1.  **Выбор узла:** Планировщик ищет узел, где суммарный приоритет уже размещённых подов наименьший (минимум жертв по "ценности"). Однако, если на таком узле жертвы защищены PDB и их удаление нарушило бы бюджет, может быть выбран **другой** узел с более высоким суммарным приоритетом, но без нарушения PDB.
-2.  **Приоритет жертв:** Сначала рассматриваются поды с наименьшим приоритетом; целевой под никогда не вытесняет поды с **равным или более высоким** приоритетом.
-3.  **QoS при вытеснении не учитывается.** Критерием вытеснения (preemption) является **только** `PriorityClass`/приоритет. Упорядочивание `BestEffort` → `Burstable` → `Guaranteed` относится к **выселению (eviction)**, которое выполняет `kubelet` при нехватке ресурсов узла, а не планировщик (см. раздел «Различия между Preemption и Kubelet Eviction»).
-4.  **PDB:** При прочих равных планировщик предпочитает жертв, удаление которых не нарушает PDB.
-5.  **Минимизация количества жертв:** выбирается минимально необходимый набор подов, чтобы освободить ровно столько ресурсов, сколько нужно целевому поду.
-
-Важно: детальный каскад правил выбора жертв не является публичным стабильным контрактом и может меняться между версиями; для SRE важно понимать принцип (наименьший приоритет + учёт PDB), а не полагаться на точную детерминированность.
-
----
-
-## Мониторинг и диагностика
-
-Для отслеживания процессов вытеснения используются метрики `kube-scheduler`:
-*   `scheduler_preemption_attempts_total`: Общее количество инициированных попыток вытеснения.
-*   `scheduler_preemption_victims_total`: Количество подов, выбранных в качестве жертв.
-
-Практические команды проверки приоритетов:
-
-```bash
-# Список всех PriorityClass и их значения
-kubectl get priorityclass
-
-# Подробная информация о классе (включая globalDefault, preemptionPolicy)
-kubectl describe priorityclass prod-critical
-
-# Какой класс применён к конкретному поду и чему численно равен его приоритет
-kubectl get pod web -n app -o jsonpath='{.spec.priorityClassName} {.spec.priority}{"\n"}'
-# → prod-critical 500000000
-
-# Найти поды, вытесняющие другие (NominatedNodeName указывает на номинированный узел)
-kubectl get pods -A -o jsonpath='{range .items[*]}{.metadata.name}{" → "}{.spec.nodeName}{" prio="}{.spec.priority}{"\n"}{end}' --field-selector=status.phase=Pending
-```
-
-В событиях пода (`kubectl describe pod`) вытеснение отображается как:
-`Preempted by <pod-name> on node <node-name>`
-
-При включённом асинхронном вытеснении процесс номинации виден через поле `Pod.Status.NominatedNodeName` (см. раздел «Асинхронное вытеснение»).
-
----
-
-## Практические сценарии
-
-### 1. Создание стандартной иерархии в организации
-
-```yaml
-# 1. Критическая инфраструктура (Ingress, DNS)
+# 1. Инфраструктурные аддоны (Ingress-контроллеры, cert-manager, node-exporter)
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
-  name: infra-critical
+  name: platform-high
 value: 1000000000
-description: "Критическая инфраструктура кластера."
-
+preemptionPolicy: PreemptLowerPriority
+description: "Платформенные контроллеры и критические аддоны кластера."
 ---
-# 2. Продуктивные нагрузки (Backend, DB)
+# 2. Высокоприоритетные продуктовые сервисы (БД, брокеры сообщений, шлюзы)
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
   name: prod-critical
-value: 500000000
-description: "Бизнес-критичные приложения."
-
+value: 800000000
+preemptionPolicy: PreemptLowerPriority
+description: "Критичные компоненты production-контура."
 ---
-# 3. Дефолтный класс (globalDefault)
+# 3. Стандартные рабочие сервисы production
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: prod-general
+value: 500000000
+preemptionPolicy: PreemptLowerPriority
+description: "Стандартные микросервисы и stateless нагрузки."
+---
+# 4. Класс по умолчанию для нагрузок без явного указания
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
   name: default-workload
 value: 100000
 globalDefault: true
-description: "Стандартный приоритет для всех подов."
+preemptionPolicy: PreemptLowerPriority
+description: "Дефолтный класс для всех неразмеченных подов."
+---
+# 5. Низкоприоритетные задачи и среды разработки
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: non-prod-workload
+value: 10000
+preemptionPolicy: PreemptLowerPriority
+description: "Тестовые стенды, Dev/QA окружения."
+---
+# 6. Утилизирующие фоновые задачи (Scavenger / Batch)
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: scavenger-batch
+value: -1000
+preemptionPolicy: Never
+description: "Фоновые аналитические задачи, вытесняемые любыми другими подами."
 ```
 
-### 2. Пакетная обработка (Batch Jobs) без агрессии
-Если у вас есть тяжелые Job-ы, которые должны запуститься сразу, как только появится место, но они не должны "убивать" работающий Staging.
+Применение манифеста:
+
+```bash
+kubectl apply -f priority-classes.yaml
+# → priorityclass.scheduling.k8s.io/platform-high created
+# → priorityclass.scheduling.k8s.io/prod-critical created
+# → priorityclass.scheduling.k8s.io/prod-general created
+# → priorityclass.scheduling.k8s.io/default-workload created
+# → priorityclass.scheduling.k8s.io/non-prod-workload created
+# → priorityclass.scheduling.k8s.io/scavenger-batch created
+```
+
+### Сценарий 2: Фоновая и Batch-обработка без агрессивного вытеснения
+
+Когда в кластере запускаются тяжелые вычислительные скрипты или ночные резервные копирования, они не должны нарушать работу стандартных сервисов. Для таких задач используется `preemptionPolicy: Never`.
 
 ```yaml
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
-  name: batch-low-impact
-value: 400000
+  name: batch-queue-runner
+value: 200000
 preemptionPolicy: Never
-description: "Высокое место в очереди, но без вытеснения."
+description: "Высокая позиция в очереди планирования, но без вытеснения запущенных подов."
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: night-backup
+  namespace: maintenance
+spec:
+  template:
+    spec:
+      priorityClassName: batch-queue-runner
+      restartPolicy: OnFailure
+      containers:
+      - name: backup-worker
+        image: backup-tool:2.4
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
 ```
 
-### 3. Ограничение через ResourceQuota
-Чтобы разработчики не назначали своим подам `infra-critical`, используйте квоты в Namespace:
+*Поведение:* Если свободных ресурсов на узлах нет, джоба ожидает в состоянии `Pending`. Как только ресурсы освобождаются, планировщик выбирает её раньше, чем поды с `value: 100000` (дефолтные), но ни один работающий под не завершается принудительно.
+
+### Сценарий 3: Разграничение доступа через ResourceQuota и scopeSelector
+
+В мультитенантном кластере разработчики не должны иметь возможность бесконтрольно указывать `priorityClassName: prod-critical` для тестовых приложений. Для жесткого контроля прав используются квоты пространств имен:
 
 ```yaml
 apiVersion: v1
 kind: ResourceQuota
 metadata:
-  name: restrict-priority
-  namespace: dev-team
+  name: dev-priority-restriction
+  namespace: team-development
 spec:
   hard:
     pods: "0"
@@ -212,121 +301,306 @@ spec:
     matchExpressions:
     - scopeName: PriorityClass
       operator: In
-      values: ["infra-critical", "prod-critical"]
+      values: ["prod-critical", "platform-high"]
 ```
 
-Область `PriorityClass` в `ResourceQuota` позволяет гибко квотировать поды **по имени класса** через `operator: In`/`NotIn`. Более широкая область **`PriorityClassInUse`** распространяется на любой под с ненулевым приоритетом вообще. Такое ограничение — единственный надёжный способ не допустить «захвата» кластера самовольно-высокими приоритетами в мультитенантном кластере.
+Проверка поведения:
 
-### 4. Подключение PriorityClass к рабочей нагрузке
+```bash
+# Попытка разработчика запустить под с защищенным классом
+kubectl run test-attack --image=nginx --restart=Never -n team-development --overrides='{"spec":{"priorityClassName":"prod-critical"}}'
+# → Error from server (Forbidden): pods "test-attack" is forbidden: exceeded quota: dev-priority-restriction, requested: pods=1, used: pods=0, limited: pods=0
+```
 
-Приоритет задаётся не вручную каждому поду, а в шаблоне Deploy/StatefulSet — это даёт единую точку управления:
+Для ограничения любых подов с приоритетом выше стандартного можно использовать `scopeName: PriorityClassInUse` или применить политики `ValidatingAdmissionPolicy`:
+
+```yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: disallow-critical-priority
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["pods"]
+  validations:
+  - expression: "!has(object.spec.priorityClassName) || !['prod-critical', 'platform-high'].contains(object.spec.priorityClassName)"
+    message: "Назначение критических классов приоритета запрещено регламентом платформы."
+```
+
+### Сценарий 4: Подключение PriorityClass к рабочим нагрузкам
+
+Класс приоритета указывается в спецификации шаблона пода (`spec.template.spec.priorityClassName`):
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: api
-  namespace: prod
+  name: order-gateway
+  namespace: orders
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: api
+      app: order-gateway
   template:
     metadata:
       labels:
-        app: api
+        app: order-gateway
     spec:
-      priorityClassName: prod-critical   # имя класса из "Сценария 1"
+      priorityClassName: prod-critical
       containers:
-      - name: api
-        image: myapp/api:1.0
+      - name: gateway
+        image: internal-registry.corp/apps/order-gw:1.14.0
         resources:
-          requests: {cpu: "250m", memory: "256Mi"}
-          limits:   {cpu: "500m", memory: "512Mi"}
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
 ```
 
-Проверка после деплоя:
+Проверка применения приоритета:
 
 ```bash
-kubectl apply -f deployment.yaml
-kubectl get deploy api -n prod -o jsonpath='{.spec.template.spec.priorityClassName}'
-kubectl get pod -n prod -l app=api -o jsonpath='{range .items[*]}{.metadata.name} {.spec.priority}{"\n"}{end}'
-# → api-xxxxx 500000000  (число подтянуто из PriorityClass)
+kubectl apply -f order-gateway.yaml
+# → deployment.apps/order-gateway created
+
+kubectl get pods -n orders -l app=order-gateway -o custom-columns=NAME:.metadata.name,PRIORITY_CLASS:.spec.priorityClassName,NUMERIC_PRIORITY:.spec.priority
+# → NAME                             PRIORITY_CLASS   NUMERIC_PRIORITY
+# → order-gateway-6bb98495f8-45k2n   prod-critical    800000000
+# → order-gateway-6bb98495f8-k8m9v   prod-critical    800000000
+# → order-gateway-6bb98495f8-zpq1x   prod-critical    800000000
 ```
 
-### 5. Миграция иерархии приоритетов в живом кластере
+### Сценарий 5: Резервирование ресурсов через «поды-заглушки» (Balloon Pods)
 
-`value` и `preemptionPolicy` неизменяемы, а `globalDefault` в системе — только один. Поэтому менять иерархию нужно как переключение, а не как патч.
+В On-Premise средах без динамического автомасштабирования серверов критически важно иметь гарантию моментального размещения дополнительных реплик продакшн-сервисов при авариях или всплесках нагрузки. Для этого применяется паттерн **Balloon Pods (поды-баллоны)**.
 
-**Смена дефолтного класса:**
-```bash
-# 1. Создать новую версию класса с прежним именем и новым значением под другим именем
-kubectl create -f default-new.yaml        # name: default-workload-v2, globalDefault: true
-# 2. Удалить старый globalDefault-класс (иначе создание второго отклонится)
-kubectl delete priorityclass default-workload
-# 3. Поды, создававшиеся со старым классом, приоритет НЕ сменят —
-#    нужно пересоздать их через реплейс Deployment
-kubectl rollout restart deployment/my-app -n app
+Запускается под с низким отрицательным приоритетом, который занимает ресурсы узлов. При появлении боевого пода планировщик моментально вытесняет «баллон».
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-resource-balloon
+  namespace: kube-system
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: resource-balloon
+  template:
+    metadata:
+      labels:
+        app: resource-balloon
+    spec:
+      priorityClassName: scavenger-batch # value: -1000
+      terminationGracePeriodSeconds: 0   # Мгновенное освобождение ресурсов узла
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.10
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
 ```
 
-**Изменение значения существующего класса** (например, `prod-critical` 500M → 900M):
+*Результат:* 8 ядер CPU и 16 GiB памяти гарантированно зарезервированы в кластере. Как только сервису с приоритетом `prod-critical` требуются ресурсы, `kube-scheduler` мгновенно вытесняет `pause`-контейнеры.
+
+### Сценарий 6: Безопасная ротация и миграция PriorityClass
+
+Поскольку значения `value` и `preemptionPolicy` неизменяемы, обновление иерархии приоритетов должно производиться по методу **Blue/Green переключения классов**:
+
 ```bash
-# value immutable → только delete + recreate
+# 1. Создать новую версию класса с желаемым числовым весом
+cat <<EOF | kubectl apply -f -
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: prod-critical-v2
+value: 900000000
+preemptionPolicy: PreemptLowerPriority
+description: "Актуализированный класс для critical workloads."
+EOF
+# → priorityclass.scheduling.k8s.io/prod-critical-v2 created
+
+# 2. Обновить манифесты деплойментов в Git / Helm values:
+# priorityClassName: prod-critical-v2
+
+# 3. Выполнить rollout перезапуск приложений
+kubectl rollout restart deployment/order-gateway -n orders
+# → deployment.apps/order-gateway restarted
+
+# 4. Проверить, что старый класс больше не используется подами
+kubectl get pods -A -o jsonpath='{range .items[?(@.spec.priorityClassName=="prod-critical")]}{.metadata.namespace}{"/"}{.metadata.name}{"\n"}{end}'
+# → (пустой вывод)
+
+# 5. Только после освобождения удалить старый класс
 kubectl delete priorityclass prod-critical
-kubectl apply -f prod-critical-new.yaml
-# ВНИМАНИЕ: пока класс удалён, новые поды с priorityClassName: prod-critical будут отклоняться!
-# Безопаснее: создать новый класс (prod-critical-v2: 900M), переключить манифесты,
-# дождаться реплейса, затем удалить старый класс.
+# → priorityclass.scheduling.k8s.io "prod-critical" deleted
 ```
 
-> Практическое правило SRE: никогда не удаляйте `PriorityClass`, который ещё упомянут в манифестах работающих workloads, — в промежутке между удалением и созданием новые поды будут падать в `Pending` с ошибкой поиска класса.
+---
+
+## Операции и команды
+
+Справочник команд администратора для мониторинга и отладки приоритетов:
+
+| Задача | Команда | Ожидаемый результат / вывод |
+| :--- | :--- | :--- |
+| **Список всех классов** | `kubectl get priorityclass` | Список классов, их `value`, `globalDefault`, `preemptionPolicy` и возраст. |
+| **Детальная информация о классе** | `kubectl describe priorityclass prod-critical` | Вывод полного манифеста, описания и настроек вытеснения. |
+| **Проверка приоритета пода** | `kubectl get pod <name> -n <ns> -o jsonpath='{.spec.priorityClassName}{" (val="}{.spec.priority}{")\n"}'` | `prod-critical (val=800000000)` |
+| **Вывод подов со всеми приоритетами** | `kubectl get pods -A -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,CLASS:.spec.priorityClassName,VAL:.spec.priority` | Табличный список всех подов с числовыми весами. |
+| **Поиск номинированных подов** | `kubectl get pods -A -o jsonpath='{range .items[?(@.status.nominatedNodeName)]}{.metadata.namespace}{"/"}{.metadata.name}{" nominated for "}{.status.nominatedNodeName}{"\n"}{end}'` | `orders/order-gw-xxx nominated for node-03.corp` |
+| **Поиск событий вытеснения** | `kubectl get events -A --field-selector reason=Preempted` | События завершения подов из-за преемпшна. |
+| **Проверка очередей шедулера в логах** | `kubectl logs -n kube-system kube-scheduler-<control-plane> \| grep -i preemption` | Записи о запуске `DefaultPreemption` и выборе жертв. |
+
+Пример проверки всех PriorityClass в терминале:
+
+```bash
+kubectl get priorityclass
+# → NAME                      VALUE        GLOBAL-DEFAULT   PREEMPTION-POLICY     AGE
+# → default-workload          100000       true             PreemptLowerPriority   5d
+# → non-prod-workload         10000        false            PreemptLowerPriority   5d
+# → platform-high             1000000000   false            PreemptLowerPriority   5d
+# → prod-critical             800000000    false            PreemptLowerPriority   5d
+# → prod-general              500000000    false            PreemptLowerPriority   5d
+# → scavenger-batch          -1000         false            Never                  5d
+# → system-cluster-critical   2000000000   false            PreemptLowerPriority   30d
+# → system-node-critical      2000001000   false            PreemptLowerPriority   30d
+```
 
 ---
 
 ## Диагностика и устранение неполадок
 
-### Типичные ошибки и их причины
+### Сводная таблица типовых сбоев
 
-| Симптом | Причина | Решение |
+| Симптом | Причина | Способ диагностики | Решение |
+| :--- | :--- | :--- | :--- |
+| **Ошибка при деплое:** `failed to find priority class` | В манифесте указан класс, который не существует или был удален из кластера | `kubectl describe pod <name>` или логи контроллера Deployment | Создать отсутствующий `PriorityClass` или исправить имя в манифесте приложения. |
+| **Ошибка при редактировании:** `PriorityClass is immutable` | Попытка изменить поле `value` или `preemptionPolicy` через `kubectl edit` / `kubectl apply` | `kubectl apply` возвращает ошибку API-сервера | Использовать Blue/Green ротацию классов (создать новый, перевести поды, удалить старый). |
+| **Высокоприоритетный под застрял в `Pending`** | Жертвы на узлах защищены `PodDisruptionBudget` (PDB) с `minAvailable: 100%` или `maxUnavailable: 0` | В выводе `kubectl describe pod` видно сообщение `0/N nodes are available: ... PDB violation` | Смягчить настройки PDB жертв или добавить вычислительные мощности на On-Premise хостах. |
+| **Под в `Pending`, вытеснение не инициируется** | 1. У пода-кандидата выставлен `preemptionPolicy: Never`.<br>2. На узлах нет подов с приоритетом **строго ниже**, чем у кандидата. | `kubectl get pod <name> -o yaml \| grep -E 'priority\|nominated'` | Проверить значения весов классов в кластере. Убедиться, что целевой под имеет более высокий вес, чем кандидаты в жертвы. |
+| **Вытеснение невозможно из-за ограничений размещения** | Узел свободен от подов, но не проходит по `NodeSelector`, `NodeAffinity`, `Tolerations` или `PVC node affinity` | `kubectl describe pod` фиксирует несовпадение taints или volume node affinity | Проверить taints узлов и топологические ограничения PVC. Преемпшн освобождает только CPU/RAM, но не отменяет жесткие правила фильтрации. |
+| **Шторм вытеснений (Preemption Thrashing)** | Два контроллера с разными приоритетами циклически вытесняют друг друга при перезапуске и автомасштабировании | Анализ логов шедулера и скачков метрики `scheduler_preemption_attempts_total` | Выровнять приоритеты, настроить PDB или разнести рабочие нагрузки по разным пулам узлов через taints/affinity. |
+
+### Пошаговый алгоритм трассировки вытеснения
+
+Если высокоприоритетный под не может запуститься:
+
+1.  **Шаг 1: Проверить фактический приоритет и фазу пода:**
+    ```bash
+    kubectl get pod <pod-name> -n <namespace> -o jsonpath='Phase: {.status.phase}, Class: {.spec.priorityClassName}, Priority: {.spec.priority}, NominatedNode: {.status.nominatedNodeName}{"\n"}'
+    # → Phase: Pending, Class: prod-critical, Priority: 800000000, NominatedNode: worker-02
+    ```
+2.  **Шаг 2: Проверить события пода:**
+    ```bash
+    kubectl describe pod <pod-name> -n <namespace> | grep -A 10 Events:
+    ```
+    *Искать:*
+    *   `Preempted by ...` — под сам стал жертвой вытеснения.
+    *   `0/8 nodes are available: 8 Insufficient cpu. preemption: 0/8 nodes are available: 8 No preemption victims found for incoming pod.` — нет подов с меньшим приоритетом, удаление которых освободило бы требуемый объем ресурсов.
+3.  **Шаг 3: Проверить блокировку со стороны PodDisruptionBudget:**
+    ```bash
+    kubectl get pdb -A
+    # Проверить, у каких сервисов ALLOWED DISRUPTIONS равно 0
+    ```
+4.  **Шаг 4: Проверить задержку завершения работы жертв:**
+    Если `status.nominatedNodeName` заполнено, но под все еще `Pending`, значит выбранные поды-жертвы еще находятся в стадии graceful shutdown (`Terminating`) из-за большого значения `terminationGracePeriodSeconds` или долгой отработки хуков `preStop`.
+
+### Метрики kube-scheduler в Prometheus
+
+Для мониторинга здоровья планировщика и детекции аномалий вытеснения используются встроенные метрики `kube-scheduler` (порт `10259/metrics`):
+
+| Метрика | Тип | Описание для SRE |
 | :--- | :--- | :--- |
-| Под отклонён при создании, событие `failed to find priority class` / `does not exist` | В манифесте указан `priorityClassName`, но класс удалён или имя опечатано. | Создать класс или исправить имя в манифесте; проверить точное имя через `kubectl get priorityclass`. |
-| `PriorityClass is immutable` при попытке изменить `value`/`preemptionPolicy` | Поле неизменяемо после создания. | `delete` + `recreate` с новым значением; учесть, что существующие поды приоритет не сменят. |
-| Создание второго класса с `globalDefault: true` отклонено | В системе допустим только один `globalDefault`-класс. | Удалить старый `globalDefault` перед созданием нового; учесть, что смена не влияет на существующие поды. |
-| Высокоприоритетный под «застрял» в `Pending`, жертвы не вытесняются | Жертвы защищены `PodDisruptionBudget` (PDB-конфликт), либо нет узла без нарушения PDB. | Увеличить число узлов, смягчить PDB, либо проверить, что вытеснение вообще разрешено (`preemptionPolicy: Never`) и целевой приоритет выше. |
-| Низкоприоритетный под «не уступает» место | Равный или более высокий приоритет у жертвы; планировщик не вытесняет поды с приоритетом ≥ целевого. | Поднять приоритет целевого пода или понизить приоритет жертвы. |
-| Инфраструктурный под (Ingress/DNS) вытеснен прикладным | Прикладному поду выставлен приоритет ≥ `system-*` или >= значения аддона. | Понизить приоритет прикладного workloads; системным компонентам задать `system-node-critical`/`system-cluster-critical`. |
+| `scheduler_preemption_attempts_total` | Counter | Общее количество начатых циклов вытеснения в плагине `DefaultPreemption`. |
+| `scheduler_preemption_victims_total` | Counter | Количество подов, фактически выбранных и отправленных на удаление в качестве жертв. |
+| `scheduler_pending_pods{queue="activeQ\|backoffQ\|unschedulableQ"}` | Gauge | Количество подов, ожидающих в каждой из трех очередей планировщика. |
+| `scheduler_schedule_attempts_total{result="unschedulable"}` | Counter | Частота неудачных попыток планирования. |
+| `scheduler_framework_extension_point_duration_seconds{extension_point="PostFilter"}` | Histogram | Латентность фазы PostFilter, на которой выполняется алгоритм вытеснения. |
 
-### Алгоритм диагностики
+### Правила алертинга (PrometheusRule)
 
-1.  Проверить фазу и события пода: `kubectl describe pod <name> -n <ns>` — искать `Preempted by`, `PreemptionVictims`, `failed to find priority class`.
-2.  Убедиться, что класс существует и значение соответствует ожидаемому: `kubectl get priorityclass`, `kubectl get pod -o jsonpath='{.spec.priority}'`.
-3.  Если под в `Pending` и вытеснение не происходит — проверить PDB в целевых namespace: `kubectl get pdb -A`.
-4.  Проверить, что на выбранном узле действительно не хватает ресурсов: `kubectl describe node <node> | grep -A5 -i taints|allocatable`.
-5.  Сверить `preemptionPolicy` целевого класса: `Never` откладывает связывание, но не убивает жертв.
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kube-scheduler-preemption-alerts
+  namespace: monitoring
+spec:
+  groups:
+  - name: scheduler.rules
+    rules:
+    - alert: HighPodPreemptionRate
+      expr: sum(rate(scheduler_preemption_victims_total[5m])) > 5
+      for: 5m
+      labels:
+        severity: warning
+        tier: platform
+      annotations:
+        summary: "Высокая частота вытеснения подов в кластере"
+        description: "Планировщик вытесняет более 5 подов в секунду за последние 5 минут. В кластере острый дефицит ресурсов или возник шторм преемпшна."
+
+    - alert: CriticalWorkloadPreempted
+      expr: sum by (namespace, pod) (increase(kube_pod_status_reason{reason="Preempted"}[10m])) > 0
+      for: 1m
+      labels:
+        severity: critical
+        tier: application
+      annotations:
+        summary: "Вытеснен под в namespace {{ $labels.namespace }}"
+        description: "Под {{ $labels.pod }} был принудительно вытеснен другим подом. Проверьте распределение приоритетов."
+
+    - alert: SchedulerUnschedulableQueueGrowing
+      expr: scheduler_pending_pods{queue="unschedulableQ"} > 50
+      for: 10m
+      labels:
+        severity: warning
+        tier: platform
+      annotations:
+        summary: "Большое количество подов в очереди unschedulableQ"
+        description: "В очереди {{ $labels.queue }} находится более 50 подов на протяжении 10 минут. Требуется расширение пула узлов."
+```
+
+---
+
+## Лучшие практики
+
+1.  **Держите иерархию компактной (3–5 классов):**
+    Не создавайте классы под каждую команду или микросервис (избегайте «гонки вооружений» приоритетов). Достаточно базового деления: Системные аддоны ──► Critical Prod ──► General Prod ──► Default ──► Batch/Dev.
+2.  **Всегда задавайте `resources.requests`:**
+    Вытеснение опирается **исключительно на `requests`**. Если у высокоприоритетного пода не указаны `requests` (или указаны нули), планировщик сочтет, что под помещается на любой узел, но фактическая нехватка памяти приведет к аварийному завершению процессов ядром через OOM Killer (`kubelet`), минуя graceful preemption.
+3.  **Оптимизируйте `terminationGracePeriodSeconds` у вытесняемых сервисов:**
+    Пока под-жертва корректно закрывает соединения, высокоприоритетный под ожидает в `Pending`. Для некритичных воркеров и очередей устанавливайте разумный таймаут (например, `10s`–`15s`), чтобы сократить задержку ввода в строй критичных сервисов.
+4.  **Не блокируйте вытеснение монопольными PDB:**
+    Конфигурации PDB вида `minAvailable: 100%` или `maxUnavailable: 0` для второстепенных сервисов парализуют алгоритм `DefaultPreemption`. Оставляйте как минимум 1 допустимую к прерыванию реплику.
+5.  **Защищайте классы через RBAC и Admission Control:**
+    Права на создание подов с `priorityClassName: platform-high` или `prod-critical` должны строго ограничиваться через `ResourceQuota` со `scopeSelector` или admission-контроллеры (Kyverno, Gatekeeper, ValidatingAdmissionPolicy).
+6.  **Используйте `preemptionPolicy: Never` для пакетных очередей:**
+    Если сервису важно быть первым при освобождении узлов, но он не имеет права прерывать живых пользователей, используйте политику `Never` вместо раздувания значения `value`.
+7.  **На On-Premise серверах держите буфер через поды-баллоны (Balloon Pods):**
+    В отличие от динамических платформ, физический сервер нельзя ввести в строй за 2 минуты. Заблаговременное резервирование емкости через низкоприоритетные pause-контейнеры защищает продакшн от нехватки мощностей при сбоях хостов.
 
 ---
 
 ## Дополнительная информация
 
-### Различия между Preemption и Kubelet Eviction
-
-| Характеристика | Preemption (Scheduler) | Eviction (Kubelet) |
-| :--- | :--- | :--- |
-| **Инициатор** | `kube-scheduler` | `kubelet` |
-| **Триггер** | Новый под не помещается на узлах. | Узел исчерпал ресурсы (OOM, DiskPressure). |
-| **Критерий** | `PriorityClass` (value) | QoS Class + Usage |
-| **Учет PDB** | Да (старается соблюдать) | Нет (игнорирует для стабильности узла) |
-| **Вытесняет ли поды равного/высшего приоритета** | Нет | Нет (по приоритету ниже) |
-
-### Рекомендации (Best Practices)
-*   **Не злоупотребляйте:** Достаточно 3–5 уровней приоритетов. Избыточность усложняет отладку.
-*   **Системные аддоны:** Всегда назначайте им высокий приоритет (напр. `system-cluster-critical`), чтобы приложение не могло "убить" Ingress-контроллер.
-*   **Используйте `ResourceQuota`:** В мультитенантных средах это единственный способ предотвратить захват кластера высокоприоритетными "пустышками".
-*   **Выделите нулевой/низкий ярус для Batch:** Отрицательные значения `value` или `preemptionPolicy: Never` — подходящий инструмент для фоновых задач, которым важна очередь, но не агрессивность.
-*   **Проектируйте иерархию один раз:** из-за immutability `value` и невозможности изменить приоритет запущенных подов изменение иерархии дорого; закладывайте уровни при планировании кластера.
-
-### См. также
-*   [Планировщик kube-scheduler](./kube_scheduler.md) — Scheduling Framework, PostFilter/preemption.
-*   [Квоты ресурсов и QoS](../Scheduling/qos_limit_and_requests.md) — ограничение приоритетов через ResourceQuota и влияние QoS на eviction.
-*   [Pod Disruption Budget (PDB)](../Autoscaling/pod_disruption_budget.md) — защита доступности при прерываниях.
+*   [Планировщик kube-scheduler](./kube_scheduler.md) — детальный разбор фаз Scheduling Framework, фильтрации и очередей.
+*   [Pod Disruption Budget (PDB)](../Autoscaling/pod_disruption_budget.md) — настройка допустимых прерываний доступности сервисов.
+*   [Квоты ресурсов и QoS](../Scheduling/qos_limit_and_requests.md) — взаимосвязь `requests`/`limits`, формирование классов QoS и квотирование приоритетов через `ResourceQuota`.
+*   [Диагностика ошибок Pod Pending](../Troubleshooting/Common_Errors/pod_pending/diagnostics.md) — трассировка причин задержки планирования подов.
+*   [Различия QoS и Eviction](../Troubleshooting/Common_Errors/PodEvicted/qos_and_eviction.md) — узловое выселение по порогам ресурсов kubelet.
+*   [Дескедулер (Descheduler)](../Autoscaling/descheduler.md) — вторичная ребалансировка и оптимизация распределения подов.
+*   [Правила размещения Affinity и Anti-Affinity](../Scheduling/affinity.md) — влияние топологических ограничений на выбор узлов при вытеснении.

@@ -558,6 +558,86 @@ sudo systemctl restart rsyslog
 
 ---
 
+### Сценарий 8: Конвейер доставки структурированных логов через Vector (в ClickHouse / Loki)
+
+В современных SRE-инфраструктурах логи доступа Nginx сбрасываются в формате `escape=json` (см. раздел «Настройка форматов логов в Nginx») и вычитываются локальным агентом **Vector** для обогащения и отправки в централизованные хранилища (ClickHouse, Loki, OpenSearch):
+
+Конфигурация агента `/etc/vector/vector.yaml`:
+
+```yaml
+sources:
+  nginx_access_logs:
+    type: file
+    include:
+      - /var/log/nginx/access_json.log
+    read_from: beginning
+
+  nginx_error_logs:
+    type: file
+    include:
+      - /var/log/nginx/error.log
+    read_from: beginning
+
+transforms:
+  # Парсинг JSON access-лога и приведение типов данных
+  parse_access_json:
+    type: remap
+    inputs:
+      - nginx_access_logs
+    source: |
+      . = parse_json!(string!(.message))
+      # Преобразование числовых полей
+      .status = to_int!(.status)
+      .request_time = to_float!(.request_time)
+      .bytes_sent = to_int!(.bytes_sent)
+      
+      # Обработка upstream таймингов (если запрос не уходил в upstream, поле равно "-")
+      if .upstream_response_time != "-" && .upstream_response_time != null {
+        .upstream_response_time = to_float!(.upstream_response_time)
+      } else {
+        .upstream_response_time = 0.0
+      }
+
+  # Парсинг неструктурированного формата error.log Nginx регулярным выражением
+  parse_error_log:
+    type: remap
+    inputs:
+      - nginx_error_logs
+    source: |
+      # Паттерн: YYYY/MM/DD HH:MM:SS [level] pid#tid: *cid message, client: ...
+      parsed, err = parse_regex(.message, r'^(?P<timestamp>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) \[(?P<level>\w+)\] (?P<pid>\d+)#(?P<tid>\d+): \*(?P<cid>\d+) (?P<msg>.*?), client: (?P<client>[^,]+), server: (?P<server>[^,]+), request: "(?P<request>[^"]+)"(?:, upstream: "(?P<upstream>[^"]+)")?')
+      if err == null {
+        . = merge(., parsed)
+        del(.message)
+      }
+
+sinks:
+  # Отправка структурированных логов в Loki
+  to_loki:
+    type: loki
+    inputs:
+      - parse_access_json
+    endpoint: http://loki.infra.internal:3100
+    encoding:
+      codec: json
+    labels:
+      service: "nginx"
+      status: "{{ status }}"
+      host: "{{ host }}"
+
+  # Для аналитики сверхвысокого RPS — прямая вставка в ClickHouse
+  to_clickhouse:
+    type: clickhouse
+    inputs:
+      - parse_access_json
+    endpoint: http://clickhouse.infra.internal:8123
+    database: logs
+    table: nginx_access_log
+    skip_unknown_fields: true
+```
+
+---
+
 ## Операции и команды
 
 Сводная таблица параметров и команд анализа логов:
