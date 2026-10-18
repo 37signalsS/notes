@@ -1,5 +1,7 @@
 # Keycloak
 
+**Актуально для:** Keycloak 26.x
+
 ## Определения
 
 **Keycloak** — open-source система управления идентификацией и доступом (Identity and Access Management, IAM). Обеспечивает централизованную аутентификацию, авторизацию, федерацию пользователей и единый вход (SSO) для веб-приложений, микросервисов и инфраструктурных сервисов. Разрабатывается Red Hat, базируется на Quarkus (начиная с версии 17). Поддерживает OIDC, OAuth 2.0, SAML 2.0 и SCIM 2.0.
@@ -15,8 +17,6 @@
 **Identity Provider (IdP)** — внешний провайдер аутентификации, которому Keycloak делегирует вход пользователя (Identity Brokering).
 
 **Authorization Services** — механизм тонкой авторизации на основе ресурсов, областей (scopes), политик и разрешений (permissions).
-
-**ID-JAG (Identity Assertion)** — механизм передачи личности пользователя внешним системам (включая ИИ-агентов) с сохранением контекста авторизации.
 
 ---
 
@@ -36,8 +36,7 @@ Keycloak разделяет зоны ответственности:
 | **OAuth 2.0** | Фреймворк авторизации (access, refresh и ID токены). |
 | **SAML 2.0** | Протокол для Enterprise-интеграций (XML-based). |
 | **SCIM 2.0** | Стандарт для автоматизированного управления пользователями (provisioning). |
-| **MCP (Model Context Protocol)** | (v26+) Протокол для авторизации ИИ-агентов и обмена контекстом. |
-| **SSF (Shared Signals)** | Передача сигналов безопасности между системами в реальном времени. |
+| **SSF (Shared Signals Framework)** | Экспериментальная функция Keycloak (`--features=ssf`, включается с 26.x). Реализует роль Transmitter для передачи сигналов безопасности (Security Event Tokens, SET) по RFC 8417/8935/8936. Поддерживает профили CAEP и RISC. |
 
 ### Типы клиентов и потоки
 
@@ -65,38 +64,39 @@ Keycloak разделяет зоны ответственности:
 - **Identity Brokering:** Делегирование входа внешним провайдерам (Google, GitHub, корпоративные IdP).
 - **Client Scopes:** Определение набора атрибутов (claims), передаваемых в токенах.
 - **Authorization Services:** Тонкая настройка политик доступа (ресурсы, области, разрешения).
-- **Identity Assertion (ID-JAG):** Механизм передачи личности пользователя ИИ-агентам для безопасного выполнения задач.
-- **Event Listener SPI:** Позволяет перехватывать события аутентификации, входов и управлений пользователями для внешних систем аудита.
+- **Event Listener SPI:** Позволяет перехватывать события аутентификации, входов и управления пользователями для внешних систем аудита.
 - **User Storage SPI:** Механизм кастомных поставщиков пользователей (пользовательские базы, NoSQL).
 
 ### Режимы развёртывания
 
-1. **Stateless Mode (Keycloak 26+):** Рекомендуемый режим для высоконагруженных сред. Сессии хранятся в базе данных (PostgreSQL), что исключает необходимость в Infinispan/JGroups и упрощает горизонтальное масштабирование за балансировщиком.
-2. **Cluster Mode (Legacy):** Использование Infinispan для репликации сессий в памяти. Требует тонкой настройки сетевых протоколов (UDP/TCP Multicast) и стабильного multicast-маршрутизирования между узлами.
-3. **Quarkus Runtime:** Современная база (вместо WildFly), обеспечивающая быстрый запуск (cold start < 2 сек) и низкое потребление памяти (от 256 MiB).
+1. **Stateless Mode (`--features=stateless`, Keycloak 26.7+):** Поддерживается (promoted из preview в supported начиная с 26.8). Сессии, action tokens и brute-force counters хранятся в базе данных вместо Infinispan/JGroups, что упрощает горизонтальное масштабирование и multi-cluster развёртывания без внешнего кеша. Требует `--cache-embedded-cluster-name` (уникальное значение на каждый cluster).
+2. **Cluster Mode (Legacy):** Использование встроенного Infinispan для репликации сессий в памяти. Требует настройки JGroups (UDP/TCP). Фича `multi-site` (multi-cluster v1) устарела (deprecated), рекомендуется миграция на `stateless`.
+3. **Quarkus Runtime:** Современная база (вместо WildFly). Быстрый запуск (cold start ~2 сек). Базовое потребление памяти — около 1250 MiB для 10 000 сессий; 70% от лимита контейнера выделяется под heap.
 
 ### Конфигурация и запуск (Quarkus)
 
 В современных версиях управление осуществляется через утилиту `kc.sh` (или `kc.bat` для Windows).
 
-- **Сборка (Build):** Оптимизация образа под конкретные настройки (БД, функции).
+- **Сборка (Build):** Оптимизация образа под конкретные настройки (БД, функции, метрики).
   ```bash
-  ./kc.sh build --db=postgres
+  ./kc.sh build --db=postgres --metrics-enabled=true
   ```
 - **Запуск в продакшн:**
   ```bash
-  ./kc.sh start --optimized --hostname=auth.example.com
+  ./kc.sh start --optimized --hostname=auth.example.com --proxy-headers=xforwarded
   ```
 - **Режим разработки:**
   ```bash
   ./kc.sh start-dev
   ```
 - **Перечень ключевых опций `start`:**
-  - `--hostname`: внешнее имя хоста.
-  - `--hostname-strict`: отключение проверки Strict-Transport-Security (только для тестовых сред).
+  - `--hostname`: внешнее имя хоста (полный URL или hostname). Обязательно для production.
+  - `--hostname-strict`: отключает динамическое разрешение hostname из заголовков запросов (по умолчанию `true`). Устанавливайте `false` только для тестовых сред.
+  - `--proxy-headers`: источник заголовков X-Forwarded-* от reverse proxy (`forwarded` или `xforwarded`). Критично при TLS-termination.
   - `--http-enabled`: включение HTTP-порта (только за балансировщиком с TLS-termination).
-  - `--https-port`: кастомный порт HTTPS (по умолчанию 8443 в dev, 8080 в optimized).
-  - `--db`: драйвер БД (`postgres`, `mysql`, `mariadb`, `cockroachdb`).
+  - `--https-port`: кастомный порт HTTPS (по умолчанию `8443`).
+  - `--db`: драйвер БД (`postgres`, `mysql`, `mariadb`, `mssql`, `oracle`, `tidb`). Для dev: `dev-file`, `dev-mem`.
+  - `--http-management-port`: порт управления (по умолчанию `9000`); эндпоинты `/health`, `/metrics`, `/info`.
 
 ---
 
@@ -114,16 +114,15 @@ Keycloak поддерживает перенос конфигурации Realm 
   --users realm_file
 ```
 - `--realm`: имя экспортируемого Realm.
-- `--users realm_file`: пользователи включаются в JSON-файл (альтернатива `realm_file` — `skip_users`, `realm_db`).
-- Включение `--users realm_file` в production без необходимости сохранять пароли в plaintext не рекомендуется; предпочтительнее `skip_users` и отдельный механизм резервного копирования БД.
+- `--users`: стратегия экспорта пользователей (`realm_file` — вместе с Realm, `skip` — без пользователей, `different_files`/`same_file` — в отдельные файлы).
+- `--users realm_file` в production без необходимости сохранять пароли в plaintext не рекомендуется; предпочтительнее `--users skip` и отдельный механизм резервного копирования БД.
 
 **Импорт:**
 ```bash
 /opt/keycloak/bin/kc.sh import \
-  --dir /backup/keycloak \
-  --realm internal.json
+  --dir /backup/keycloak
 ```
-Импорт требует остановки инстанса или использования `--if-realm-exists skip|overwrite`.
+Импорт требует остановки инстанса. Используйте `--override false` для сохранения существующих Realm или `--override true` (по умолчанию) для перезаписи.
 
 ### Обновление версий
 
@@ -131,10 +130,10 @@ Keycloak поддерживает перенос конфигурации Realm 
 2. **Бэкап:** Экспорт всех Realm и дамп БД.
 3. **Сборка:** Пересобрать образ с новой версией и драйвером БД.
    ```bash
-   ./kc.sh build --db=postgres
+   ./kc.sh build --db=postgres --metrics-enabled=true
    ```
 4. **Миграция БД:** Keycloak выполняет автоматическую миграцию схемы при первом запуске. Для production рекомендуется использовать инструменты миграции БД (Liquibase/Flyway) вручную для контроля версий.
-5. **Валидация:** Проверка `/health/ready` и `/metrics` после запуска.
+5. **Валидация:** Проверка `/health/ready` и `/metrics` после запуска (на порту управления `9000`).
 
 ---
 
@@ -142,10 +141,11 @@ Keycloak поддерживает перенос конфигурации Realm 
 
 ### Политика паролей и защита от брутфорса
 
-- **Brute Force Detection:** Включите в **Realm Settings → Security Defenses → Brute Force Detection**. Настройте:
+- **Brute Force Detection:** Включите в **Realm Settings → Security Defenses → Brute Force Detection**. Начиная с Keycloak 26.8, данные о неудачных логинах хранятся в базе данных по умолчанию (фича `login-failures:v2`), что сохраняет блокировки пользователей даже после перезапуска кластера. Настройте:
   - `Maximum Login Failures`: 5–10 попыток.
   - `Quick Login Check Milli Seconds`: 1000–5000 мс (задержка между попытками).
   - `Wait Increment Milliseconds`: 1000 мс.
+  - Для восстановления прежнего in-memory поведения: `--features=login-failures:v1` (устарело, несовместимо с `stateless`).
 - **Password Policy:** Настройте в **Realm Settings → Authentication → Password Policy**:
   - `Length` (мин. 12 символов).
   - `Digits` и `Special Characters`.
@@ -168,7 +168,7 @@ Keycloak поддерживает перенос конфигурации Realm 
 
 ### Ограничение доступа по сети
 
-- **Firewall / NetworkPolicy:** Разрешите порт 8080 (или 8443) только сервисам, которым нужна аутентификация.
+- **Firewall / NetworkPolicy:** Разрешите порт 8080 (или 8443) только сервисам, которым нужна аутентификация. Порт управления (`9000`) — только для health checks и метрик (внутренний доступ).
 - **Admin Console:** Доступ к `/admin` строго через VPN или защищённый reverse proxy с IP-allowlist.
 
 ### Content Security Policy
@@ -183,6 +183,11 @@ Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; 
 ## Обратный прокси и TLS
 
 Keycloak не должен быть доступен напрямую из интернета без reverse proxy, выполняющего TLS-termination.
+
+Keycloak запускается с `--proxy-headers=xforwarded` для корректной работы за reverse proxy с TLS-termination:
+```bash
+./kc.sh start --optimized --hostname=auth.example.com --proxy-headers=xforwarded --http-enabled=true
+```
 
 ### Nginx
 
@@ -211,8 +216,9 @@ server {
         proxy_set_header Connection "upgrade";
     }
 
+    # Health checks на управляемом порту (по умолчанию 9000)
     location /health {
-        proxy_pass http://keycloak.internal:8080/health;
+        proxy_pass http://keycloak.internal:9000/health;
         allow 10.0.0.0/8;
         deny all;
     }
@@ -229,6 +235,12 @@ http:
       service: keycloak
       tls:
         certResolver: myresolver
+      middlewares:
+        - keycloak-headers
+  middlewares:
+    keycloak-headers:
+      forwardedHeaders:
+        trustForwardHeader: true
   services:
     keycloak:
       loadBalancer:
@@ -250,14 +262,15 @@ http:
     ProxyPass / http://keycloak.internal:8080/
     ProxyPassReverse / http://keycloak.internal:8080/
     RequestHeader set X-Forwarded-Proto "https"
+    RequestHeader set X-Forwarded-Port "443"
 </VirtualHost>
 ```
 
 ### Примечания по TLS
 
-- В production используйте `--https-port` или `--http-enabled=false` и terminate TLS на reverse proxy.
-- Для `kc.sh start --optimized` порт по умолчанию — 8080 (HTTP). Если требуется HTTPS на стороне Keycloak, используйте `https-key-store-file` и связанные опции.
-- Настройте `--hostname-strict=false` только для тестовых сред; в production используйте точное имя хоста.
+- В production terminate TLS на reverse proxy: `--http-enabled=true` и `--proxy-headers=xforwarded` на Keycloak.
+- Для `kc.sh start --optimized` порт по умолчанию — 8080 (HTTP). Если требуется HTTPS на стороне Keycloak, используйте `--https-port`, `https-key-store-file` и связанные опции.
+- `--hostname-strict=false` только для тестовых сред; в production используйте точное имя хоста.
 
 ---
 
@@ -266,27 +279,27 @@ http:
 ### Экспорт Realm
 
 ```bash
-# Экспорт конфигурации Realm (без пользователей)
+# Экспорт конфигурации Realm с пользователями
 /opt/keycloak/bin/kc.sh export \
   --dir /backup/keycloak \
   --realm internal \
   --users realm_file
 
-# С пользователями в отдельном файле
+# Экспорт без пользователей (только конфигурация Realm)
 /opt/keycloak/bin/kc.sh export \
   --dir /backup/keycloak \
   --realm internal \
-  --users realm_file \
-  --realm-role-mappings realm_file
+  --users skip
 ```
 
 ### Импорт Realm
 
 ```bash
-/opt/keycloak/bin/kc.sh import \
-  --dir /backup/keycloak \
-  --realm internal.json \
-  --if-realm-exists skip
+# Импорт Realm из директории (перезапись по умолчанию)
+/opt/keycloak/bin/kc.sh import --dir /backup/keycloak
+
+# Импорт без перезаписи существующего Realm
+/opt/keycloak/bin/kc.sh import --dir /backup/keycloak --override false
 ```
 
 ### Бэкап базы данных
@@ -308,8 +321,8 @@ pg_dump -U keycloak -h postgres.internal keycloak \
 2. Восстановление БД из дампа.
 3. Импорт актуальных Realm-файлов (если дамп устарел).
 4. Запуск Keycloak с той же версией, что и до сбоя.
-5. Проверка `KC_DB_URL_HOST`, `KC_DB_USER`, `KC_DB_PASSWORD`.
-6. Валидация через `/health/ready` и проверка входа администратора.
+5. Проверка `KC_DB_URL_HOST`, `KC_DB_USERNAME`, `KC_DB_PASSWORD`.
+6. Валидация через `/health/ready` (порт `9000`) и проверка входа администратора.
 
 ### Автоматизация бэкапов
 
@@ -323,9 +336,9 @@ pg_dump -U keycloak -h postgres.internal keycloak \
 
 ### Метрики Prometheus
 
-Keycloak экспортирует метрики на `/metrics`:
+Метрики включаются на этапе сборки флагом `--metrics-enabled=true` и доступны на управляемом интерфейсе (порт по умолчанию `9000`) по пути `/metrics`:
 ```bash
-curl -s http://localhost:8080/realms/master/metrics | head
+curl -s http://localhost:9000/metrics
 ```
 
 Ключевые метрики:
@@ -337,6 +350,8 @@ curl -s http://localhost:8080/realms/master/metrics | head
 
 ### Health Checks
 
+Эндпоинты доступны на управляемом интерфейсе (порт по умолчанию `9000`):
+
 | Эндпоинт | Назначение |
 | :--- | :--- |
 | `/health/live` | Проверка работоспособности процесса (liveness). |
@@ -344,17 +359,23 @@ curl -s http://localhost:8080/realms/master/metrics | head
 
 ### Журналирование
 
-Keycloak поддерживает несколько форматов и output targets через Quarkus:
-- **JSON (structured):** ` quarkus.log.console.json=true` — для ELK/Loki.
-- **Syslog:** Перенаправление в удалённый syslog-сервер (например, Rsyslog или Graylog).
-- **File:** Ротация через `logrotate` или встроенную ротацию Quarkus (`quarkus.log.console.json`).
+Keycloak (Quarkus) выводит логи в stdout/stderr. Через systemd это попадает в `journald`. Для структурированных логов используйте:
+- **JSON (structured):** `quarkus.log.console.json=true` — для ELK/Loki.
+- **Syslog:** Перенаправление stdout/stderr в удалённый syslog-сервер (Rsyslog, Graylog).
+- **File:** Включение файлового логирования через `quarkus.log.file.enable=true` с ротацией внутри Quarkus.
 
-**Пример `application.properties`:**
+**Пример `keycloak.conf` (conf/keycloak.conf):**
 ```properties
 quarkus.log.console.json=true
 quarkus.log.console.json.pretty-print=false
 quarkus.log.category."org.keycloak".level=INFO
-quarkus.log.category."org.jgroups".level=WARN
+quarkus.log.category."org.infinispan".level=WARN
+
+# Файловое логирование с ротацией
+quarkus.log.file.enable=true
+quarkus.log.file.dir=/var/log/keycloak
+quarkus.log.file.log-rotate.max-file-size=10M
+quarkus.log.file.log-rotate.max-backup-index=5
 ```
 
 ### События и аудит
@@ -371,6 +392,9 @@ Keycloak генерирует события для:
 - **SYSLOG** listener (встроенный).
 - **RabbitMQ / Kafka** (через кастомный SPI).
 
+Метрики событий (на порту управления `9000`):
+- `keycloak_user_events_total{realm, event, error}`: счетчик событий пользователей (LOGIN, REGISTER, UPDATE_PASSWORD и др.).
+
 ---
 
 ## Производительность и масштабирование
@@ -380,31 +404,32 @@ Keycloak генерирует события для:
 | Компонент | Минимум | Рекомендуется (production) |
 | :--- | :--- | :--- |
 | **CPU** | 2 cores | 4+ cores |
-| **RAM** | 1 GiB | 2–4 GiB |
+| **RAM** | 1250 MiB (база: Realm cache + 10 тыс. сессий) | 2–4 GiB+ (масштаб зависит от нагрузки) |
 | **Диск** | 10 GiB SSD | 50+ GiB SSD (для БД и логов) |
 | **Сеть** | 1 Gbps | 10 Gbps (между Keycloak и БД) |
 
 ### Пул соединений к БД
 
-Для PostgreSQL рекомендуется использовать HikariCP (используется Quarkus по умолчанию):
+Для настройки пула соединений используйте first-class опции Keycloak (по умолчанию HikariCP через Quarkus):
 ```properties
-quarkus.datasource.jdbc.max-size=50
-quarkus.datasource.jdbc.min-size=10
-quarkus.datasource.jdbc.initial-size=10
+# keycloak.conf
+db-pool-max-size=50
+db-pool-min-size=10
+db-pool-initial-size=10
 ```
-Увеличивайте размер пула при высокой частоте запросов (WebAuthn, LDAP federation).
+Увеличивайте размер пула при высокой частоте запросов (WebAuthn, LDAP federation). Максимум — 100 по умолчанию.
 
 ### Кэширование
 
-- **Offline Session:** Долгоживущие токены хранятся в БД; контроль `--cache=local` или `--cache=ispn`.
+- **Режимы кэша:** `--cache=local` (локальный, без кластеризации — для dev/test) или `--cache=ispn` (встроенный Infinispan с кластеризацией — для production). При `--features=stateless` volatile данные (сессии, action tokens) сохраняются в БД, Infinispan используется только как локальный кеш с инвалидацией.
 - **Static Cache:** Кэширование JWKS и OpenID-configuration через reverse proxy (Nginx `proxy_cache` или CDN).
 
 ### Горизонтальное масштабирование
 
 В **Stateless Mode** разворачивайте несколько инстансов за балансировщиком (L4/L7). Убедитесь, что:
 - Все инстансы указывают на одну и ту же БД.
-- `kc_hostname` идентичен для всех инстансов.
-- Сессии не хранятся в локальной памяти (Infinispan отключён).
+- `--hostname` (или `KC_HOSTNAME`) идентичен для всех инстансов.
+- Сессии не хранятся в локальной памяти (Infinispan отключён, volatile данные в БД).
 
 ---
 
@@ -424,7 +449,7 @@ Wants=postgresql.service
 Type=simple
 User=keycloak
 Group=keycloak
-ExecStart=/opt/keycloak/bin/kc.sh start --optimized --hostname=auth.example.com
+ExecStart=/opt/keycloak/bin/kc.sh start --optimized --hostname=auth.example.com --proxy-headers=xforwarded
 ExecStop=/opt/keycloak/bin/kc.sh stop
 Restart=on-failure
 RestartSec=10
@@ -444,9 +469,10 @@ chmod 600 /etc/keycloak/admin.password
 
 ### Ротация логов
 
+Если используется файловое логирование (см. `quarkus.log.file.dir` в секции Журналирование), ротация через `logrotate`:
 ```bash
 # /etc/logrotate.d/keycloak
-/opt/keycloak/standalone/log/*.log {
+/var/log/keycloak/*.log {
     daily
     rotate 30
     compress
@@ -456,6 +482,7 @@ chmod 600 /etc/keycloak/admin.password
     delaycompress
 }
 ```
+В systemd-развёртывании по умолчанию логи идут в `journald` (`journalctl -u keycloak -f`), отдельный logrotate не требуется.
 
 ### Интеграция с Vault
 
@@ -475,9 +502,9 @@ chmod 600 /etc/keycloak/admin.password
 | **500 Internal Server Error при логине** | Невалидный issuer URL или JWKS | `curl -v http://localhost:8080/realms/<realm>` | Проверить `KC_HOSTNAME` и `KC_HOSTNAME_STRICT` |
 | **504 Gateway Timeout** | Таймаут на WebAuthn или LDAP | Логи Keycloak + tcpdump | Увеличить `proxy_read_timeout` на Nginx; проверить доступность LDAP |
 | **OutOfMemoryError** | Недостаточно heap для сессий | `jmap -histo <pid>` | Увеличить `-Xmx` (например, до 2g); перейти на Stateless Mode |
-| **Locked account** | Brute Force Detection сработал | Логи `keycloak-server.log` | Разблокировать через Admin API: `POST /admin/realms/<realm>/users/{id}/unlock` |
+| **Locked account** | Brute Force Detection сработал | `journalctl -u keycloak -f` (или файл `quarkus.log`) | Разблокировать через Admin API: `POST /admin/realms/<realm>/users/{id}/unlock` |
 | **Login loop (SAML)** | Несовпадение `Entity ID` или `ACS URL` | Логи браузера + метаданные IdP/SP | Сверить `Entity ID` на стороне Keycloak и SAML-клиента |
-| **DB connection pool exhaustion** | Слишком много одновременных запросов | Метрики `hikaricp_connections_active` | Увеличить `quarkus.datasource.jdbc.max-size`; оптимизировать запросы |
+| **DB connection pool exhaustion** | Слишком много одновременных запросов | Метрики `hikaricp_connections_active` | Увеличить `--db-pool-max-size`; оптимизировать запросы |
 | **Token expired сразу после выдачи** | Часовой пояс сервера | `date` на хосте Keycloak | Синхронизировать время через NTP (`chrony` или `systemd-timesyncd`) |
 
 ### Диагностические команды
@@ -489,11 +516,11 @@ systemctl status keycloak
 # Логи в реальном времени
 journalctl -u keycloak -f
 
-# Проверка открытых портов
-ss -tlnp | grep 8080
+# Проверка открытых портов (8080 — приложение, 9000 — управление)
+ss -tlnp | grep -E '8080|9000'
 
-# Проверка пула соединений HikariCP
-curl -s http://localhost:8080/realms/master/metrics | grep hikaricp
+# Проверка пула соединений к БД (на управляемом порту 9000)
+curl -s http://localhost:9000/metrics | grep -E 'hikaricp|agroal'
 
 # Разблокировка пользователя (Admin API)
 TOKEN=$(curl -s -d "client_id=admin-cli" \
@@ -538,7 +565,7 @@ Keycloak может выступать OAuth2-провайдером для Salt
 
 ### Рекомендуемые практики
 
-1. **База данных:** Использовать PostgreSQL или CockroachDB (для Stateless режима). H2 — только для тестирования.
+1. **База данных:** Использовать PostgreSQL, MySQL, MariaDB, MSSQL или Oracle. H2 — только для тестирования.
 2. **Безопасность:**
    - Включение **Brute Force Detection** в настройках Realm.
    - Использование **Passkeys** вместо классических паролей для критических систем.
@@ -550,13 +577,13 @@ Keycloak может выступать OAuth2-провайдером для Salt
 ### Мониторинг и наблюдаемость
 
 Keycloak предоставляет:
-- **Метрики:** `/metrics` в формате Prometheus.
-- **Health Checks:** `/health/live` и `/health/ready`.
+- **Метрики:** `/metrics` в формате OpenMetrics/Prometheus (на управляемом порту `9000`, включают `--metrics-enabled=true` при сборке).
+- **Health Checks:** `/health/live` и `/health/ready` (на управляемом порту `9000`).
 - **Журналирование:** Структурированные логи в формате JSON для интеграции с ELK/Loki.
 
 ### Лицензирование
 
-Keycloak распространяется под лицензией **Apache 2.0** (начиная с версии 17). Ранние версии использовали **EPL 2.0**. Для коммерческого использования на условиях поддержки Red Hat доступна подписка на RHEL.
+Keycloak распространяется под лицензией **Apache 2.0**. Ранние версии (до Quarkus, < 17) также использовали Apache 2.0. Для коммерческого использования на условиях поддержки Red Hat доступна подписка на Red Hat build of Keycloak.
 
 ### См. также
 

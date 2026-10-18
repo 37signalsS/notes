@@ -1,5 +1,7 @@
 # Интеграция логов CA с SIEM
 
+**Актуально для:** OpenSSL 3.0+ (PKI 2026; Linux: rsyslog/syslog-ng, auditd, Filebeat/Fluentd)
+
 ## Определения
 
 **SIEM (Security Information and Event Management)** — система сбора, нормализации и анализа событий безопасности в реальном времени. Собирает логи из разных источников, коррелирует их и генерирует алерты при обнаружении подозрительной активности.
@@ -10,7 +12,7 @@
 
 **Audit Trail (Аудиторский след)** — последовательность событий, документирующая все операции с сертификатами: выпуск, ротация, отзыв, изменение конфигурации CA.
 
-**index.txt** — текстовая база данных OpenSSL CA, содержащая записи о всех выпущенных и отозванных сертификатах. Формат: `статус到期_дата_serial颁发_дата_не_действителен DN颁发ителя`.
+**index.txt** — текстовая база данных OpenSSL CA, содержащая записи о всех выпущенных и отозванных сертификатах. Формат колонок: `статус дата_истечения дата_отзыва serial placeholder DN`.
 
 > Базовые концепции PKI описаны в **[обзоре PKI](../../../Concepts/pki_overview.md)**. Архитектура двухуровневого CA — в **[обзоре двухуровневого CA](./overview.md)**.
 
@@ -38,7 +40,7 @@
 ### Формат записей в index.txt
 
 ```
-# Статус Срок_действия Serial Выдан DN颁发ителя
+# Статус  Дата_истечения  Дата_отзова  Serial  placeholder  DN
 V    260101120000Z           0A1B2C3D    unknown /C=RU/ST=Moscow/O=Org/CN=service.local
 R    260101120000Z    250315120000Z 0A1B2C3D    unknown /C=RU/ST=Moscow/O=Org/CN=revoked.local
 ```
@@ -120,8 +122,8 @@ authorityKeyIdentifier = keyid,issuer
 subjectAltName         = @alt_names
 
 [alt_names]
-DNS.1 = ${SAN_DNS:-my-service.local}
-IP.1  = ${SAN_IP:-10.0.0.1}
+DNS.1 = ${SAN_DNS}
+IP.1  = ${SAN_IP}
 EOF
     EXT_ARGS="-extfile $TEMP_CNF -extensions v3_server_cert"
 else
@@ -145,6 +147,13 @@ fi
 
 # Очистка
 [ -n "$TEMP_CNF" ] && rm -f "$TEMP_CNF"
+```
+
+Ожидаемый результат — событие в syslog и на экран:
+
+```text
+# → OK: /certs/service.local.crt (serial=0A1B2C3D...)
+# → syslog: severity=info event=SIGN_SUCCESS serial=0A1B2C3D subject=/C=RU/.../CN=service.local output=/certs/service.local.crt operator=root timestamp=2026-...
 ```
 
 ### 2. Логирование отзыва сертификатов
@@ -231,7 +240,7 @@ sudo ausearch -k pki-index --start today
 ```bash
 # /etc/rsyslog.d/50-pki-ca.conf
 
-# Шаблон для CEF-формата
+# Шаблон для syslog-полей PKI (SIEM разбирает key=value на стороне приёмщика)
 template(name="PKI_CEF" type="string"
     string="<%pri%>%timestamp:::date-rfc3339% %hostname% %syslogtag% %msg%")
 
@@ -328,7 +337,7 @@ groups:
           severity: critical
         annotations:
           summary: "Доступ к корневому ключу CA"
-          description: "Зафиксирован доступ к ca.key. Проверьте,authorized ли оператор."
+          description: "Зафиксирован доступ к ca.key. Проверьте, authorized ли оператор."
 
       # Попытка нарушения политики
       - alert: CAPolicyViolation
@@ -341,6 +350,34 @@ groups:
           summary: "Нарушение политики CA"
           description: "Попытка подписи сертификата с нарушением политики."
 ```
+
+### 7. Проверка работоспособности интеграции
+
+После настройки убедитесь, что события CA достигают SIEM и вызывают алерты:
+
+```bash
+# 1. Тестовое syslog-сообщение (имитирует событие CA)
+logger -t openssl-ca "severity=info test_event=integration_check timestamp=$(date -u +%FT%TZ)"
+
+# 2. Проверка локального rsyslog перед отправкой
+sudo journalctl -u rsyslog -f --since "1 min ago" | grep openssl-ca
+# → ожидается строка с test_event=integration_check
+
+# 3. Проверка транспорта до SIEM (замените host:port)
+sudo tcpdump -ni any port 514 | grep -i test_event
+# → пакет UDP/TCP 514 с тестовым сообщением
+
+# 4. Проверка аудита доступа к ключу
+sudo bash -c 'cat /opt/pki/intermediate-ca/intermediate.key >/dev/null'
+sudo ausearch -k pki-intermediate-key --start recent
+# → событие типа PROCTITLE/PATH с именем файла ключа
+
+# 5. Проверка, что алерт сработал в Prometheus
+curl -s "http://prometheus:9090/api/v1/alerts" | grep -i certificate_revoked
+# → активный алерт при on_error_rate > 0
+```
+
+Ожидаемый результат — каждое тестовое событие появляется в соответствующем модуле SIEM в течение 1–5 секунд.
 
 ## Типичные ошибки и диагностика
 
@@ -369,4 +406,4 @@ groups:
 - **[Настройка Intermediate CA](./intermediate_ca_setup.md)** — логирование операций промежуточного CA.
 - **[Обзор двухуровневого CA](./overview.md)** — жизненный цикл и аварийное реагирование.
 - **[Логирование и аудит (single tier)](../single_tier/formats_and_advanced_config.md)** — пример syslog-обёртки для одноуровневого CA.
-- **[Audit и compliance](../../../Security/audit_and_compliance_overview.md)** — общие принципы аудита.
+- **[Audit и compliance](../../../audit_and_compliance_overview.md)** — общие принципы аудита.

@@ -193,7 +193,7 @@ vault write database/creds/readonly
 **Инструменты шифрования для Git:**
 
 - **[Sealed Secrets](../../Kubernetes/Security/sealed_secrets_overview.md)** — шифрует так, что расшифровать может только контроллер в кластере
-- **[SOPS](../Tools/sops_overview.md)** — шифрование файлов через KMS, PGP, age
+- **[SOPS](../Tools/sops_overview.md)** — шифрование файлов через PGP, age
 - **[External Secrets Operator](../../Kubernetes/Base/secrets/external_managers.md)** — синхронизация из Vault, локальных KMS
 
 ### SOPS + GitOps
@@ -316,7 +316,7 @@ docker save <image> > /tmp/image.tar && tar -xf /tmp/image.tar && grep -rn "secr
 | Симптом | Причина | Решение |
 |---------|---------|---------|
 | `vault: permission denied` | Политика запрещает путь или метод аутентификации | `vault policy read <policy>`; проверить `path` и `capabilities` |
-| `sops: no key found` | Отсутствует master key (KMS, age, PGP) в окружении | Указать `SOPS_AGE_KEY_FILE` или `--age` флаг |
+| `sops: no key found` | Отсутствует master key (age, PGP) в окружении | Указать `SOPS_AGE_KEY_FILE` или `--age` флаг |
 | `kubectl get secret` возвращает base64 | Это ожидаемое поведение; секрет не расшифрован | Использовать `kubectl get secret <name> -o jsonpath='{.data.<key>}' \| base64 -d` |
 | Secret не обновляется в Pod | Используется `subPath` или immutable Secret | Удалить Pod или отключить `immutable` |
 | `podman secret inspect` пустой | Секрет создан из env-переменной, но переменная пуста | Проверить переменную окружения при создании |

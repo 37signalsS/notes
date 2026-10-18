@@ -1,5 +1,7 @@
 # Настройка Root CA
 
+**Актуально для:** OpenSSL 3.0+
+
 ## Определения
 
 **PKI (Public Key Infrastructure, Инфраструктура открытых ключей)** — совокупность технологий, стандартов, политик и процедур, необходимых для создания, управления, распределения, использования, хранения и отзыва цифровых сертификатов. Основная цель — обеспечить доверенную среду для обмена данными и идентификации субъектов через асимметричную криптографию.
@@ -16,7 +18,7 @@
 
 **TPM (Trusted Platform Module)** — аппаратный модуль безопасности, интегрированный в материнскую плату. Поддерживает хранение ключей и криптографические операции. Может использоваться для защиты ключей Intermediate CA.
 
-**OpenSSL 3.0+** — версия инструментария, в которой архитектура перешла на использование провайдеров (Default, FIPS, Legacy), были депрецированы устаревшие параметры конфигурации (например, `RANDFILE`), и внедрена поддержка гибридных схем и постквантовой криптографии.
+**OpenSSL 3.0+** — версия инструментария, в которую архитектура перешла на модульную систему провайдеров (Default, FIPS, Legacy). Провайдер `default` загружается автоматически; для алгоритмов Legacy или FIPS требуется явная загрузка. Параметр конфигурации `RANDFILE` не нужен с OpenSSL 1.1.1 (улучшенный CSPRNG): сохраняется лишь для обратной совместимости, а энтропия берётся из ОС. Поддержаны гибридные схемы и постквантовая криптография (PQC).
 
 **mTLS (Mutual TLS, Взаимный TLS)** — стандарт безопасности для взаимодействия микросервисов, требующий обязательной аутентификации как сервера, так и клиента с помощью сертификатов. В двухуровневой схеме mTLS реализуется через промежуточные CA.
 
@@ -54,7 +56,7 @@
 - Использование аппаратного RNG (TrueRNG, TPM, HAVEKE в `/dev/random`) при генерации ключей.
 
 **OpenSSL 3.0+ и провайдеры:**
-В OpenSSL 3.0 архитектура перешла на модульную систему провайдеров. Для работы с legacy-алгоритмами или FIPS-режимом необходимо явно указывать провайдеры в конфигурации или через переменную окружения `OPENSSL_CONF`. Параметр `RANDFILE` депрецирован; вместо него используйте `RANDFILE` в секции `[ CA_default ]` только для совместимости, но предпочитайте указание явного устройства энтропии.
+В OpenSSL 3.0 архитектура перешла на модульную систему провайдеров. Провайдер `default` загружается автоматически; для алгоритмов Legacy или FIPS требуется явная загрузка через `-provider`/`-provider_path` или секцию `[provider_sect]`/`[openssl_init]` в конфигурации (`openssl_conf`). Параметр `RANDFILE` не нужен — с OpenSSL 1.1.1 CSPRNG заполняется напрямую из ОС (`/dev/urandom`, `getrandom()`) и не сохраняет состояние в файл; `RANDFILE` оставляется лишь для обратной совместимости и может быть опущен. На air-gapped хостах без аппаратного RNG предусмотрите альтернативный источник энтропии (см. ниже).
 
 ### Алгоритмы и сроки действия (2026)
 
@@ -259,6 +261,33 @@ chmod 600 ca.key
 chmod 644 ca.crt
 ```
 
+#### Верификация корневого сертификата
+
+После генерации корня убедитесь, что сертификат корректно сформирован, является самоподписанным (Subject == Issuer) и содержит требуемые расширения CA:
+
+```bash
+# 1. Самоподписанность: корень доверяет сам себе
+openssl verify -CAfile ca.crt ca.crt
+# → ca.crt: OK
+
+# 2. Subject == Issuer (подтверждает самоподпись)
+openssl x509 -in ca.crt -noout -subject -issuer
+# → subject=.../CN=My Private Root CA
+# → issuer=.../CN=My Private Root CA
+
+# 3. Basic Constraints: CA:TRUE (критично)
+openssl x509 -in ca.crt -noout -text | grep -A 1 "Basic Constraints"
+# → X509v3 Basic Constraints: critical
+# →     CA:TRUE
+
+# 4. Key Usage: подпись сертификатов и CRL
+openssl x509 -in ca.crt -noout -text | grep -A 1 "Key Usage"
+# → X509v3 Key Usage: critical
+# →     Digital Signature, Certificate Sign, CRL Sign
+```
+
+**Примечание:** если `openssl verify` не возвращает `OK`, либо Subject и Issuer не совпадают — проверьте секцию `[ req_distinguished_name ]` в `openssl.cnf`.
+
 ### 5. Подпись Intermediate CA
 
 Операция выполняется при получении CSR от промежуточного узла. На air-gapped системе:
@@ -267,12 +296,12 @@ chmod 644 ca.crt
 # Проверка CSR перед подписью
 openssl req -in ../intermediate-ca/csr/intermediate.csr -noout -text
 
-# Подпись с расширениями Intermediate CA
-openssl ca -config openssl.cnf \
-    -extensions v3_intermediate_ca \
-    -days 3650 -notext -md sha512 \
-    -in ../intermediate-ca/csr/intermediate.csr \
-    -out ../intermediate-ca/intermediate.crt
+    # Подпись с расширениями Intermediate CA (1825 дней ≈ 5 лет — ротация 3–5 лет)
+    openssl ca -config openssl.cnf \
+        -extensions v3_intermediate_ca \
+        -days 1825 -notext -md sha512 \
+        -in ../intermediate-ca/csr/intermediate.csr \
+        -out ../intermediate-ca/intermediate.crt
 
 # Верификация подписи корневым ключом
 openssl verify -CAfile ca.crt ../intermediate-ca/intermediate.crt
@@ -303,7 +332,7 @@ openssl crl -in crl/crl.pem -noout -text
 
 1. **Резервное копирование:** Сохраните `ca.key` и `ca.crt` на 2–3 USB-накопителях разных производителей. Ключ должен быть зашифрован (`-aes256`).
 2. **Верификация:** Проверьте контрольную сумму ключа: `sha512sum ca.key`.
-3. **Шамир:** Разделите парольную фразу по схеме Shamir (минимум 2 из 3) между доверенными администраторами (см. practical-примеры ниже).
+3. **Шамир:** Разделите парольную фразу по схеме Shamir (минимум 2 из 3) между доверенными администраторами (см. секцию «Разделение парольной фразы по схеме Шамира (ssss)» ниже).
 4. **Уничтожение:** Если использовалась временная ОС, выполните `shred -u ca.key` на временных копиях.
 5. **Безопасное хранение:** Носители должны находиться в запечатанных конвертах в банковской ячейке или сейфе.
 
@@ -364,8 +393,9 @@ ssss-combine -t 2
 # 1. Восстановить парольную фразу
 PASSPHRASE=$(ssss-combine -t 2 -q)
 
-# 2. Расшифровать ca.key
-openssl rsa -in ca.key -out /tmp/ca_decrypted.key -passin pass:"$PASSPHRASE"
+# 2. Расшифровать ca.key (passphrase из env — не попадает в ps)
+export PASSPHRASE
+openssl rsa -in ca.key -out /tmp/ca_decrypted.key -passin env:PASSPHRASE
 
 # 3. Выполнить необходимую операцию (например, подпись нового Intermediate CA)
 openssl ca -config openssl.cnf -extensions v3_intermediate_ca \

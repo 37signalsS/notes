@@ -1,6 +1,6 @@
 # SBOM в продакшене: чтение, интерпретация, реакция
 
-**Актуально для:** CycloneDX 1.7, SPDX 3.0, Trivy v0.69+, Syft v1.54+, Grype v0.35+, GUAC v1.x, Kyverno v1.19+ (ImageValidatingPolicy), Kubernetes 1.31+, Harbor v2.15+
+**Актуально для:** CycloneDX 1.7, SPDX 3.0, Trivy ≥ 0.71.0, Syft v1.54+, Grype v0.35+, GUAC v1.x, Kyverno v1.19+ (ImageValidatingPolicy), Kubernetes 1.31+, Harbor v2.15+
 
 ## Определения
 
@@ -122,7 +122,7 @@ SBOM — это не просто комплаенс-документ. В про
     │       → Да / Нет
     │
     ├── 3. Reachability: вызывается ли уязвимая функция?
-    │       grype harbor.internal/my-app:v1.2.3 --show-vulnerability-reachability
+    │       govulncheck ./...  (для Go) / osv-scanner --call-analysis=go  (call-graph)
     │       → Reachable / Unreachable
     │
     ├── 4. Определение Blast Radius: какие сервисы используют компонент?
@@ -146,7 +146,7 @@ SBOM — это не просто комплаенс-документ. В про
 
 | Компонент | Минимальная версия | Назначение |
 | :--- | :--- | :--- |
-| **Trivy** | v0.69+ | Сканирование SBOM и образов на CVE, VEX-фильтрация. |
+| **Trivy** | ≥ 0.71.0 | Сканирование SBOM и образов на CVE, VEX-фильтрация. |
 | **Grype** | v0.35+ | Анализ достижимости (reachability) уязвимостей. |
 | **GUAC** | v1.x | Граф зависимостей для blast radius и patch plan. |
 | **Kyverno** | v1.19+ | Admission-контроль через `ImageValidatingPolicy` для верификации SBOM и VEX. |
@@ -271,7 +271,7 @@ curl -s -X POST http://guac.internal:8080/query -H 'content-type: application/js
 
 ```bash
 # 1. Проверка: вызывается ли уязвимая функция?
-grype harbor.internal/my-app:v1.2.3 --show-vulnerability-reachability
+govulncheck ./...  # для Go; Grype OSS не имеет --show-vulnerability-reachability
 # → CVE-2024-EXAMPLE: unreachable
 
 # 2. Создание VEX-отчёта (CycloneDX 1.7)
@@ -445,7 +445,7 @@ curl -u "robot$ci-bot:$ROBOT_SECRET" -X POST \
 
 * **Динамические зависимости (dlopen):** SBOM фиксирует зависимости на этапе сборки. В рантайме могут загружаться дополнительные библиотеки через `dlopen` (Java ClassLoader, Python importlib, Go plugin). Для детекции — eBPF-агенты (Falco/Tetragon), сравнение runtime-SBOM с build-time через `syft runtime:process`.
 * **Mono-repo:** В монорепозитории с несколькими сервисами SBOM генерируется для каждого сервиса отдельно. Общий SBOM не отражает изоляцию сервисов. Используйте per-service SBOM с метаданными о сервисе.
-* **Обратная совместимость:** SBOM в формате CycloneDX 1.7 может не читаться старыми версиями Trivy (< v0.55). Проверяйте версию формата и инструмента. Для legacy-сред используйте SPDX 3.0+ как fallback.
+* **Обратная совместимость:** SBOM в формате CycloneDX 1.7 может не читаться старыми версиями Trivy (< v0.71.0). Проверяйте версию формата и инструмента. Для legacy-сред используйте SPDX 3.0+ как fallback.
 * **Multi-architecture образы:** SBOM и аттестации должны генерироваться для каждого архитектурного варианта (`linux/amd64`, `linux/arm64`) отдельно. Используйте `docker buildx imagetools inspect` для просмотра constituent-манифестов.
 * **Air-gapped среды:** Отсутствие доступа к базам CVE требует развертывания локального зеркала Trivy DB и использования offline-режимов Syft/cdxgen. Все обновления баз должны проходить через механизм "data diode".
 * **EU CRA compliance:** SBOM должен включать CBOM (Cryptography Bill of Materials) для оценки готовности к постквантовой миграции. Используйте `cdxgen` для генерации CBOM и проверяйте наличие уязвимых алгоритмов (RSA < 3072, ECDSA < P-384).

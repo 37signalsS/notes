@@ -250,13 +250,13 @@ spec:
 ## Дополнительная информация
 
 **Связанные документы:**
-- **[Sigstore и Cosign](../../Security/Tools/sigstore.md)** — глубокий разбор ключевых компонентов (Fulcio, Rekor, keyless, PQC).
+- **[Sigstore и Cosign](../../Security/Tools/sigstore.md)** — глубокий разбор ключевых компонентов (Fulcio, Rekor, keyless, Gitsign, Policy Controller).
 - **[Подпись артефактов](../../Security/Supply_Chain_Security/artifact_signing.md)** — общая методология, Notation, VSA, OCI 1.1 Referrers.
 - **[Docker SBOM](./docker_sbom.md)** — генерация аттестаций состава ПО (SBOM, Provenance).
 - **[Анализ зависимостей и SBOM](../../Security/Supply_Chain_Security/dependency_and_sbom_analysis.md)** — теория SCA и SBOM.
 
 **Глубокое изучение:**
-- **[Cosign keyless signing](../../Security/Tools/sigstore.md#keyless-подпись-в-github-actions-2026)** — подпись через OIDC. В Docker: `cosign sign --yes image:tag` через токен GitHub Actions/GitLab CI, проверка через `--certificate-identity` и `--certificate-oidc-issuer`.
+ - **[Cosign keyless signing](../../Security/Tools/sigstore.md#keyless-подпись-в-github-actions)** — подпись через OIDC. В Docker: `cosign sign --yes image:tag` через токен GitHub Actions/GitLab CI, проверка через `--certificate-identity` и `--certificate-oidc-issuer`.
 - **[Notation (OCI)](../../Security/Supply_Chain_Security/artifact_signing.md)** — PKI-based подпись. В Docker: `notation sign --key ca.key image:tag`, проверка через `notation verify`, интеграция с Harbor v2.15+.
 - **[Kyverno admission](../../Kubernetes/Security/kyverno/Scenarios/security_policies.md)** — блокировка неподписанных. В Docker/K8s: `imageVerify` policy для проверки Cosign/Notation перед запуском Pod.
 - **[Harbor: подпись образа с помощью Cosign](../../Docker/Docker_registries/Harbor/usage.md#сценарий-4-подпись-образа-с-помощью-cosign)** — практический сценарий подписи и верификации в Harbor.

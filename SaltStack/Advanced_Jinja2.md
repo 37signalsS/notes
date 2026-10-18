@@ -7,7 +7,8 @@
 - **Import**: Механизм подключения Jinja-макросов или переменных из других файлов через `{% from 'path/to/file.jinja' import variable with context %}` или `{% import 'path/to/file.jinja' as helper %}`.
 - **Filter**: Функция преобразования данных в Jinja ( `{{ value | default('fallback') }}`, `{{ list | join(',') }}`, `{{ dict | json }}`).
 - **with context**: Директива импорта, передающая контекст текущего шаблона (Grains, Pillar, переменные) в импортируемый файл.
-- **load_yaml / load_text**: Salt-фильтры для загрузки YAML/текста из строк: `{{ salt['slsdata.get']('path') | load_yaml }}`.
+- **import_yaml**: Встроенный Jinja-тег для загрузки YAML-файлов из `file_roots`: `{% import_yaml 'nginx/defaults.yaml' as defaults %}`.
+- **load_yaml / load_text**: Jinja-фильтры для загрузки YAML/текста из строк: `{{ salt['cp.get_file_str']('salt://path/to/file') | load_yaml }}`.
 - **Deferred Rendering**: Рендеринг шаблона Salt происходит в два этапа: сначала Jinja-шаблонизатор, затем Salt-рендерер (YAML). Порядок можно менять через `#!jinja|yaml` или `#!yaml|jinja`.
 
 ---
@@ -125,7 +126,7 @@ php_service:
 
 {% set os_params = osfamily_map.get(grains.os_family, {}) %}
 
-{% set config = salt['slsdata.utils.merge'](defaults, os_params, pillar.get('nginx', {})) %}
+{% set config = salt['slsutil.merge'](defaults, os_params, pillar.get('nginx', {})) %}
 ```
 
 **Использование в SLS:**
@@ -303,7 +304,7 @@ nginx:
 
 | Версия Salt | Особенности Jinja |
 |:---|:---|
-| 3006 LTS | Jinja2 3.x, `slsdata.get`, `slsdata.utils.merge` |
+| 3006 LTS | Jinja2 3.x, `import_yaml`, `slsutil.merge` |
 | 3007 STS | Улучшенные ошибки рендеринга |
 | 3008 LTS | Безопасный рендеринг, `SafeDict`/`SafeList` |
 

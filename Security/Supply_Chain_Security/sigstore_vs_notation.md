@@ -1,5 +1,7 @@
 # Sigstore vs Notation: сравнение и выбор
 
+**Актуально для:** Cosign v3.1.3, Notation v1.3.2, Harbor v2.15+, Kyverno v1.19+, GitLab Runner 16.0+, OIDC (GitLab Server 15.7+, GitHub Actions)
+
 ## Определения
 
 * **Sigstore:** Экосистема для keyless-подписи артефактов, включающая **Fulcio** (CA для эфемерных сертификатов), **Rekor** (transparency log) и **Cosign** (CLI для подписи/верификации). Использует OIDC для аутентификации CI/CD-раннеров без долгоживущих ключей.
@@ -52,10 +54,38 @@ cosign sign --yes ghcr.io/my-org/my-app:v1.0.0
 
 **Пример:**
 ```bash
-# Подпись через внутреннюю CA и HSM
-notation sign --key "hsm:0" harbor.internal/my-app:v1.0.0
+# Подпись через внутреннюю CA и HSM (Notation v1.x: плагин для HSM)
+notation sign --plugin notation-keysource-hsm --id "slot-0" harbor.internal/my-app:v1.0.0
 # → Подпись через ключ в HSM, сертификат от внутренней CA
 ```
+
+## Предварительные требования
+
+### Инструменты и версии
+
+| Компонент | Минимальная версия | Назначение |
+| :--- | :--- | :--- |
+| **Cosign** | v3.1.3 | Keyless-подпись образов; OCI 1.1 Referrers |
+| **Notation** | v1.3.2 | Корпоративная подпись через X.509 / HSM / internal CA |
+| **Harbor** | v2.15+ | OCI-реестр с поддержкой Referrers API |
+| **GitLab Server** | 15.7+ | OIDC ID-токены для keyless-подписи |
+| **GitLab Runner** | 16.0+ | Передача `id_tokens` в job |
+| **Kyverno** | v1.19+ | Admission control для верификации подписей |
+| **HSM** | PKCS#11 3.0+ | Требуется для Notation (YubiHSM, Nitrokey, SafeNet) |
+
+### Инфраструктурные требования
+
+* **OIDC provider:** GitLab Server ≥ 15.7 или GitHub Actions. Необходимо настроить `id_tokens` в `.gitlab-ci.yml` с `aud: sigstore`.
+* **Self-hosted Sigstore:** Fulcio (CA) и Rekor (transparency log) — отдельные сервисы в изолированной сети. Для air-gapped сред — разверните их внутри периметра.
+* **Internal CA:** X.509 CA (например, HashiCorp Vault PKI) с сертификатом, добавленным в trust store Notation.
+* **OIDC issuer URL:** При верификации через `cosign verify --certificate-oidc-issuer` укажите URL провайдера OIDC (например, `https://gitlab.internal/`), а не URL Fulcio.
+* **HSM:** PKCS#11 модуль должен быть установлен на runner и доступен через `notation-keysource-hsm` плагин.
+
+### Начальное состояние окружения
+
+* Реестр Harbor развернут с включённым OCI 1.1 Referrers API.
+* DNS резолвит `harbor.internal`, `fulcio.internal`, `rekor.internal`, `git.internal`.
+* Для Notation: корневой сертификат internal CA уже добавлен в trust store (`notation cert add`).
 
 ## Практические сценарии
 
@@ -67,27 +97,29 @@ sign-image:
   stage: deploy
   image: alpine:3.21
   id_tokens:
-    OIDC_TOKEN:
-      aud: https://fulcio.internal
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
   script:
     - apk add --no-cache cosign
     # Настройка переменных для self-hosted Fulcio/Rekor
     - export FULCIO_URL=https://fulcio.internal
     - export REKOR_URL=https://rekor.internal
-    - export OIDC_TOKEN=$OIDC_TOKEN
-    
+    - export OIDC_ISSUER=https://gitlab.internal/  # URL GitLab, выдающий OIDC токен
+
     # Подпись с использованием OIDC токена
+    # Cosign автоматически обнаруживает SIGSTORE_ID_TOKEN из id_tokens
     - cosign sign --yes \
-        --tlog-upload=false \
         --fulcio-url $FULCIO_URL \
         --rekor-url $REKOR_URL \
         harbor.internal/my-app:$CI_COMMIT_SHA
-    
-    # Верификация
+    # → Подпись прикреплена через OCI 1.1 Referrers API
+
+    # Верификация (OIDC issuer = GitLab, а не Fulcio)
     - cosign verify \
-        --certificate-identity "https://git.internal/my-org/my-app/-/jobs/$CI_JOB_ID" \
-        --certificate-oidc-issuer $FULCIO_URL \
+        --certificate-identity-regexp "https://gitlab.internal/my-org/my-app/-/jobs" \
+        --certificate-oidc-issuer $OIDC_ISSUER \
         harbor.internal/my-app:$CI_COMMIT_SHA
+    # → Verified 1 signature
 ```
 
 ### Сценарий 2: Настройка Notation (X.509 + HSM) для Harbor
@@ -101,8 +133,8 @@ notation cert list
 # → TYPE    STORE           SUBJECT
 # ca      internal-ca      CN=MyCorp Internal CA
 
-# 3. Подпись образа через ключ в HSM
-notation sign --key "hsm:pkcs11:0" harbor.internal/my-app:v1.0.0
+# 3. Подпись образа через HSM (Notation plugin)
+notation sign --plugin notation-keysource-hsm --id "my-hsm-key-id" harbor.internal/my-app:v1.0.0
 
 # 4. Верификация с trust policy
 cat > trustpolicy.json << 'EOF'
@@ -135,7 +167,7 @@ sign-artifacts:
     - cosign sign --yes harbor.internal/my-app:$TAG
     
     # Notation: корпоративная подпись для Harbor (согласно политике)
-    - notation sign --key "hsm:0" harbor.internal/my-app:$TAG
+    - notation sign --plugin notation-keysource-hsm --id "hsm-key-id" harbor.internal/my-app:$TAG
     
     # Обе подписи прикрепляются через Referrers API
     # Harbor покажет обе подписи в UI
@@ -215,18 +247,97 @@ spec:
 4. **Храните публичные ключи в Git:** Публичные ключи для верификации хранятся в репозитории и версионируются.
 5. **Тестируйте верификацию:** В CI/CD обязательно проверяйте `cosign verify` / `notation verify` перед деплоем.
 
+## Валидация внедрения
+
+### Проверка подписей и trust policy
+
+После настройки выполните комплексную проверку всех компонентов:
+
+```bash
+# 1. Проверка наличия подписей через Referrers API
+cosign verify harbor.internal/my-app:v1.0.0 \
+  --certificate-oidc-issuer "https://gitlab.internal/" \
+  --certificate-identity-regexp "https://gitlab.internal/my-org/my-app"
+# → Verified 1 signature
+
+# 2. Проверка Notation подписи и trust store
+notation cert list
+# → TYPE    STORE           SUBJECT
+# → ca      internal-ca     CN=MyCorp Internal CA
+
+notation verify harbor.internal/my-app:v1.0.0
+# → Successfully verified signature for harbor.internal/my-app:v1.0.0
+
+# 3. Проверка Referrers API реестра (Harbor)
+docker buildx imagetools inspect harbor.internal/my-app:v1.0.0
+# → Manifest has 1 signature(s) associated
+
+# 4. Проверка Kyverno политики
+kubectl describe clusterpolicy verify-image-signature | grep -A5 Status
+# → rule check-cosign-or-notation: pass
+```
+
+### Проверка OIDC-аутентификации (GitLab CI)
+
+```bash
+# 1. Проверка id_tokens в job
+# В .gitlab-ci.yml убедитесь, что:
+#   id_tokens:
+#     SIGSTORE_ID_TOKEN:
+#       aud: sigstore
+# 2. Проверка токена внутри job:
+echo $SIGSTORE_ID_TOKEN | cut -d. -f2 | base64 -d | jq .
+# → {"aud":"sigstore","iss":"https://gitlab.internal/",...}
+```
+
+## Очистка
+
+### Удаление подписей
+
+```bash
+# 1. Удаление подписи Cosign из реестра
+# Cosign не предоставляет прямую команду для удаления подписи.
+# Используйте Harbor API:
+curl -u "robot$ci-bot:$ROBOT_SECRET" -X DELETE \
+  "https://harbor.internal/api/v2.0/projects/my-app/repositories/my-app/artifacts/sha256:<SIG_DIGEST>"
+
+# 2. Удаление подписи Notation
+notation list harbor.internal/my-app:v1.0.0
+# → sha256:abc123...
+# Затем удалите через Harbor API (как показано выше для Cosign)
+
+# 3. Очистка trust store Notation
+notation cert delete --store internal-ca --type ca --all
+# → Certificate deleted from store internal-ca
+```
+
+### Отзыв сертификатов (Notation)
+
+```bash
+# 1. Удаление сертификата из trust store
+notation cert delete --type ca --store internal-ca --all
+# → Certificate revoked and removed from trust store
+
+# 2. Ротация корневого сертификата
+notation cert add --type ca --store internal-ca-new ./ca-new.pem
+# → Далее обновите trust policy для использования internal-ca-new
+```
+
 ## Устранение неполадок
 
 | Симптом | Причина | Решение |
 | :--- | :--- | :--- |
-| `cosign: error signing` | Fulcio недоступен или OIDC токен невалиден | `curl -k $FULCIO_URL`; проверьте `id_token` permissions в GitLab |
+| `cosign: error signing` | Fulcio недоступен или OIDC токен невалиден | `curl -k $FULCIO_URL`; проверьте `SIGSTORE_ID_TOKEN` и claims (`aud: sigstore`) в GitLab |
+| `cosign: error verifying` | `--certificate-oidc-issuer` указывает на Fulcio, а не на OIDC провайдера | Используйте URL GitLab/GitHub в `--certificate-oidc-issuer`, а не `FULCIO_URL` |
 | `notation: key not found` | Ключ не добавлен в trust store | `notation cert add --type ca --store <name> <cert.pem>` |
-| `certificate identity mismatch` | Идентичность в политике не совпадает с claim | Проверьте точное совпадение `--certificate-identity` с `sub` в токене |
+| `certificate identity mismatch` | Идентичность в политике не совпадает с OIDC claim | Проверьте точное совпадение `--certificate-identity` с claim `sub` в токене |
 | `Referrers API 404` | Реестр не поддерживает OCI 1.1 | Обновите Harbor до v2.15+ или используйте другой реестр |
+| `notation: plugin not found` | HSM-плагин не установлен | `notation plugin install --url <hsm-plugin-url>` |
+| `Rekor: inclusion proof failed` | Transparency log недоступен (air-gapped) | Используйте `--tlog-upload=false` или self-hosted Rekor |
 
 ## Граничные случаи и ограничения
 
-* **Self-hosted runners без OIDC:** GitLab Runner версии < 16 не поддерживают OIDC. Используйте key-based подпись с Notation.
+* **Self-hosted без OIDC:** GitLab Server версии < 15.7 не выдаёт ID-токены. GitLab Runner должен быть ≥ 16.0 для передачи токенов в job. Используйте key-based подпись с Notation или `--identity-token` для передачи токена вручную.
 * **HSM и PQC:** HSM пока не поддерживают ML-DSA (PQC). Для постквантовых подписей используйте Sigstore с software keys.
 * **Air-gapped:** Sigstore требует доступ к Fulcio/Rekor. В air-gapped — только Notation с внутренней CA.
 * **Стоимость HSM:** Notation с HSM требует аппаратного модуля (SafeNet, YubiHSM). Sigstore (keyless) — бесплатен.

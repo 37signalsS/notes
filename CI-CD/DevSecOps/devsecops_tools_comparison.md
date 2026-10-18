@@ -1,6 +1,6 @@
 # Сравнение инструментов DevSecOps
 
-**Актуально для:** DevSecOps tooling 2026 (Semgrep 1.x, Trivy 0.55+, Grype, Snyk CLI, HashiCorp Vault 1.15+, DefectDojo, OWASP ZAP)
+**Актуально для:** DevSecOps tooling 2026 (Semgrep 1.x, Trivy ≥ 0.70.1, Grype, Snyk CLI, HashiCorp Vault 1.15+, DefectDojo, OWASP ZAP)
 
 ## Определения
 
@@ -108,7 +108,7 @@
 | :--- | :--- | :--- | :--- | :--- |
 | **Языки/форматы** | Multi (container, SBOM, fs, git) | SBOM, container image | Multi (npm, Maven, pip, container) | SBOM, language-specific |
 | **Скорость** | Быстрый | Средний | Быстрый | Быстрый |
-| **EPSS** | Да (v0.55+) | Нет | Да | Нет |
+| **EPSS** | Нет (OSS; коммерчески — Plopsen) | Да (`--sort-by epss`) | Да | Нет |
 | **VEX** | Да | Да | Да | Нет |
 | **SBOM-генерация** | Да (Syft) | Нет | Да | Нет |
 | **SARIF-экспорт** | Да | Да | Да | Нет |

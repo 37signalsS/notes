@@ -1,5 +1,7 @@
 # Анализ зависимостей и SBOM
 
+**Актуально для:** Trivy ≥ 0.71.0, Syft v1.54+, Grype v0.82+, cdxgen 1.5+, Harbor v2.15+, Kyverno v1.19+, Kubernetes 1.31+, Docker Engine 29.x, BuildKit 0.34+, CycloneDX 1.7, SPDX 3.0
+
 ## Определения
 
 * **SCA (Software Composition Analysis — анализ состава ПО):** Автоматизированный процесс идентификации сторонних компонентов (open-source библиотек, коммерческих модулей) и оценки связанных с ними рисков безопасности, лицензионной чистоты и качества. В 2026 году интегрирован с **ASPM** для приоритизации рисков.
@@ -33,7 +35,7 @@
 
 ### Категории инструментов SCA (2026)
 
-*   **Сканеры (Scanners):** `Trivy v0.69+`, `Grype`, `osv-scanner`, `Snyk`. Поддерживают семантический анализ и REACH.
+*   **Сканеры (Scanners):** `Trivy ≥ 0.71.0`, `Grype`, `osv-scanner`, `Snyk`. Поддерживают семантический анализ и REACH.
 *   **Генераторы (Generators):** `Syft v1.54+`, `cdxgen`, `CycloneDX CLI`. Поддержка профилей для специализированных систем и CBOM.
 *   **Платформы ASPM / SBOM:** `Dependency-Track v5.x`, `Harbor v2.15+` (с нативной поддержкой Referrers), `Snyk AppRisk`.
 *   **Наблюдаемость (Observability):** `GUAC` (Graph for Understanding Artifact Composition).
@@ -47,22 +49,18 @@
 5.  **Хранение:** Harbor или внутренний реестр хранит SBOM как аттестацию, связанную с digest образа.
 6.  **Верификация:** Admission-контроллер (Kyverno/OPA) проверяет наличие подписанного SBOM и отсутствие критических CVE перед деплоем.
 
-## Практические сценарии
-
-### Предварительные требования
+## Предпосылки
 
 Для реализации сквозного анализа зависимостей и SBOM на bare metal / on-prem инфраструктуре необходимы следующие компоненты:
 
 | Компонент | Минимальная версия | Назначение |
-| :--- | :--- | :--- |
+|:---|:---|:---|
 | **Syft** | v1.54+ | Генерация SBOM/CBOM в форматах SPDX 3.0 и CycloneDX 1.7. |
-| **Trivy** | v0.55+ | Сканирование зависимостей и артефактов, VEX-фильтрация. |
-| **Grype** | v0.35+ | Анализ достижимости (reachability) уязвимостей. |
+| **Trivy** | ≥ 0.71.0 | Сканирование зависимостей и артефактов, VEX-фильтрация. |
+| **Grype** | v0.82+ | Анализ достижимости (reachability) уязвимостей. |
 | **cdxgen** | 1.5+ | Генерация CycloneDX для языков, не покрытых Syft. |
 | **Harbor** | v2.15+ | Локальный OCI-реестр с поддержкой OCI 1.1 Referrers API для хранения SBOM. |
 | **Kyverno** | v1.19+ | Admission-контроль для верификации наличия SBOM и блокировки уязвимых образов. |
-| **Git-сервер** | Gitea 1.21+ / GitLab 16+ | Хостинг исходного кода с защитой веток и подписью коммитов. |
-| **Kubernetes** | 1.29+ | Целевая платформа для деплоя с Admission-политиками. |
 
 **Аппаратные требования:**
 * CPU с поддержкой AES-NI для ускорения криптографических операций при подписи SBOM.
@@ -73,7 +71,24 @@
 * Отдельный кластер Kubernetes для продакшна с включенными admission-вебхуками.
 * Внутренний DNS-сервер, разрешающий `harbor.internal` и `git.internal`.
 
-### Генерация и фильтрация через VEX (Trivy v0.69+)
+## Операции и команды
+
+| Операция | Инструмент | Команда | Примечание |
+|:---|:---|:---|:---|
+| Генерация SBOM из образа | Syft | `syft img -o cyclonedx-json > sbom.json` | CycloneDX — основной формат для VEX |
+| Генерация SBOM из исходников | Syft / Trivy | `syft dir:. -o cyclonedx-json` / `trivy fs --format cyclonedx` | |
+| Сканирование SBOM на CVE | Trivy / Grype | `trivy sbom sbom.json` / `grype sbom:sbom.cdx.json` | |
+| Применение VEX-фильтра | Trivy / Grype | `trivy sbom --vex vex.json sbom.json` | `--vex` подавляет `not_affected` |
+| Анализ достижимости (Go) | govulncheck | `govulncheck ./...` | OSS-замена reachability |
+| CBOM для криптографии | cdxgen | `cdxgen -t java --output-format json --output cbom.json` | ECMA-424 |
+| Проверка signature в Harbor | Harbor API | `curl .../referrers` | через OCI 1.1 Referrers API |
+| Сравнение SBOM между версиями | diff + jq | `diff <(jq -r '.components[].purl' a.json) <(jq -r '.components[].purl' b.json)` | `trivy diff` НЕ существует в OSS |
+| Локальное зеркалирование Trivy DB | Trivy | `trivy image --download-db-only` | для air-gapped |
+| Air-gapped сканирование | Trivy | `trivy image --skip-db-update img` | использует локальную DB |
+
+## Практические сценарии
+
+### Генерация и фильтрация через VEX (Trivy ≥ 0.71.0)
 
 Использование VEX позволяет игнорировать уязвимости, которые присутствуют в коде библиотеки, но не могут быть эксплуатированы в текущей конфигурации.
 
@@ -112,18 +127,21 @@ trivy sbom sbom.json --severity CRITICAL
 Современные сканеры сочетают статический анализ с динамическими данными о выполнении кода.
 
 ```bash
-# Статический анализ достижимости (Go, Java, Python)
-grype my-app:latest --show-vulnerability-reachability
+# Статический анализ достижимости: Grype OSS не имеет флага --show-vulnerability-reachability.
+# Reachability — govulncheck (Go), osv-scanner --call-analysis, либо VEX (not_affected / code_not_reachable).
+govulncheck ./...
+trivy sbom --vex ./vex.cdx ./sbom.cdx.json
 
 # В 2026 году данные о достижимости могут обогащаться через eBPF (например, Falco/Tetragon)
 # Это позволяет подтвердить, что уязвимый бинарный файл действительно был загружен в память.
 ```
 
-**Валидация:** Grype помечает уязвимости как `reachable` или `unreachable` в зависимости от статического анализа импортов.
+**Валидация:** VEX со статусом `not_affected` исключает уязвимость из отчёта Grype/Trivy (`--vex`); после применения она исчезает из `.matches`.
 
 ```bash
-grype my-app:latest -o json | jq '.matches[] | select(.vulnerability.severity=="HIGH") | {cve: .vulnerability.id, reachable: .matchDetails[0].maxReachability}'
-# → {"cve":"CVE-2024-EXAMPLE","reachable":"UNREACHABLE"}
+grype sbom:./sbom.cdx.json --vex ./vex.cdx -o json | \
+  jq '[.matches[]? | select(.vulnerability.severity=="HIGH")] | length'
+# → 0  (высокие CVE покрыты VEX not_affected)
 ```
 
 ### Инвентаризация криптографии (CBOM через ECMA-424)
@@ -272,15 +290,17 @@ syft my-app:v1.0.0 -o cyclonedx-json > sbom-baseline.json
 # Генерация текущего SBOM
 syft my-app:v1.1.0 -o cyclonedx-json > sbom-current.json
 
-# Сравнение через trivy diff
-trivy diff sbom:./sbom-baseline.json sbom:./sbom-current.json
+# Сравнение состава (trivy diff в OSS не существует — проверено на v0.71.0)
+diff <(jq -r '.components[].purl' sbom-baseline.json | sort) \
+     <(jq -r '.components[].purl' sbom-current.json | sort)
 ```
 
-**Валидация:** При отсутствии дрифта Trivy возвращает пустой отчет.
+**Валидация:** при отсутствии дрифта `diff` выводит пусто (состав компонентов идентичен).
 
 ```bash
-trivy diff sbom:./sbom-baseline.json sbom:./sbom-current.json
-# → Total: 0 dependencies added, 0 removed, 0 changed.
+diff <(jq -r '.components[].purl' sbom-baseline.json | sort) \
+     <(jq -r '.components[].purl' sbom-current.json | sort)
+# → пустой вывод = состав идентичен (нет drift)
 ```
 
 ### Интеграция SCA в GitLab CI (фрагмент пайплайна)
@@ -295,7 +315,7 @@ variables:
 
 sbom-generate:
   stage: scan
-  image: aquasec/syft:v1.5.0
+  image: aquasec/syft:v1.54.0
   script:
     - syft dir:. -o cyclonedx-json > $SBOM_FILE
   artifacts:
@@ -306,7 +326,7 @@ sbom-generate:
 
 trivy-scan:
   stage: scan
-  image: aquasec/trivy:0.55.0
+  image: aquasec/trivy:0.71.0
   script:
     - trivy sbom $SBOM_FILE --severity CRITICAL,HIGH --exit-code 1
   only:
@@ -316,7 +336,7 @@ trivy-scan:
 
 vex-apply:
   stage: scan
-  image: aquasec/trivy:0.55.0
+  image: aquasec/trivy:0.71.0
   script:
     - trivy sbom --vex $VEX_FILE $SBOM_FILE --severity CRITICAL,HIGH
   only:
@@ -324,6 +344,146 @@ vex-apply:
   dependencies:
     - sbom-generate
 ```
+
+### Интеграция SCA в GitHub Actions (фрагмент workflow)
+
+```yaml
+name: SCA и SBOM
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write   # для keyless cosign
+  contents: read
+  packages: write
+
+jobs:
+  sbom-generate:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Генерация SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          format: cyclonedx-json
+          output-file: sbom.json
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+
+  trivy-scan:
+    runs-on: ubuntu-22.04
+    needs: sbom-generate
+    steps:
+      - name: Download SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: .
+      - name: Сканирование
+        uses: aquasecurity/trivy-action@master
+        with:
+          sbom: sbom.json
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
+  cosign-sign:
+    runs-on: ubuntu-22.04
+    needs: trivy-scan
+    steps:
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.7.0
+        with:
+          cosign-release: v3.1.0
+      - name: Sign SBOM attestation
+        run: |
+          cosign attach --sbom=sbom.json \
+            harbor.internal/my-app:${{ github.sha }}
+```
+
+**Валидация:** Workflow завершается с ошибкой, если Trivy обнаруживает CRITICAL/HIGH CVE, не покрытые VEX.
+
+### Политика зависимостей в production (Dependency Policy Enforcement)
+
+Определение, какие зависимости допустимы в production. Используется на этапе pre-commit и в CI для блокировки запрещённых пакетов.
+
+```bash
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/43001b1/pre-commit-hooks
+    rev: v1.5.0
+    hooks:
+      - id: dependency-check
+        args:
+          - "--policy=deps-policy.yml"
+```
+
+```yaml
+# deps-policy.yml — политика зависимостей
+policies:
+  - name: "block GPL licenses"
+    condition: "license in ['GPL-2.0', 'GPL-3.0']"
+    action: "deny"
+  - name: "block dev dependencies in production"
+    condition: "dev == true"
+    action: "deny"
+  - name: "block packages from unverified registrars"
+    condition: "registry not in ['npm.internal', 'pypi.internal', 'proxy.golang.org']"
+    action: "deny"
+```
+
+```bash
+# Проверка политики локально
+dependency-check --project my-app --scan . --policy deps-policy.yml
+# → FAIL: GPL-3.0 found in package 'example-gpl-lib'
+```
+
+**Валидация:** CI блокирует сборку, если найден запрещенный пакет.
+
+```bash
+# В CI: проверка через Trivy
+trivy fs --scanners license --scanners vuln \
+  --license-failed-levels HIGH \
+  --policy bundle/policies/ \
+  .
+# → pipeline fails if license or vulnerability policy triggered
+```
+
+### Верификация SBOM в production (Runtime Verification)
+
+Проверка, что deployed-образ соответствует ожидаемому SBOM и содержит подписанную аттестацию.
+
+```bash
+# 1. Получение digest deployed-образа
+IMAGE_DIGEST=$(kubectl get pod/my-app -o jsonpath='{.spec.containers[0].imageID}')
+# → docker-pullable://harbor.internal/my-app@sha256:abc123...
+
+# 2. Проверка наличия SBOM-аттестации через Referrers API
+curl -u "robot$ci-bot:${ROBOT_SECRET}" \
+  "https://harbor.internal/v2/my-app/manifests/sha256:abc123.../referrers" \
+  -H "Accept: application/vnd.oci.image.index+json"
+# → {"manifests":[{"mediaType":"application/vnd.cyclonedx.json.v1.7","digest":"sha256:..."}]}
+
+# 3. Проверка подписи SBOM (keyless через Cosign)
+cosign verify \
+  --bundle "harbor.internal/my-app@sha256:abc123.../cyclonedx" \
+  harbor.internal/my-app:sha256:abc123...
+# → Verification for harbor.internal/my-app --
+# → Verified OK
+
+# 4. Сравнение runtime-состава с SBOM (eBPF)
+kubectl exec my-app -- /proc/*/maps 2>/dev/null | \
+  jq -r '.components[].name' sbom.json | \
+  sort > /tmp/sbom-packages.txt
+# Сравнение с falcon-agents или Tetragon для обнаружения drift
+```
+
+**Валидация:** SBOM-аттестация найдена, подпись валидна, runtime-состав совпадает с SBOM.
 
 ## Валидация внедрения
 
@@ -348,9 +508,10 @@ cdxgen -t generic --output-format json --output cbom.json .
 grep -E '"(RSA|ECDSA|AES)"' cbom.json | wc -l
 # → Должен показать 0 уязвимых алгоритмов после миграции на ML-DSA
 
-# 5. Проверка дрейфа SBOM (сравнение эталона и Runtime)
-trivy diff sbom:./expected-sbom.json sbom:./runtime-sbom.json
-# → Должен показать 0 изменений, если дрейф отсутствует
+# 5. Проверка дрейфа SBOM (trivy diff в OSS не существует — проверено на v0.71.0)
+diff <(jq -r '.components[].purl' expected-sbom.json | sort) \
+     <(jq -r '.components[].purl' runtime-sbom.json | sort)
+# → пустой вывод = дрейф отсутствует
 ```
 
 ## Устранение неполадок
@@ -358,7 +519,7 @@ trivy diff sbom:./expected-sbom.json sbom:./runtime-sbom.json
 | Симптом | Причина | Диагностика | Решение |
 | :--- | :--- | :--- | :--- |
 | `Syft: unsupported package manager` | Язык/экосистема не покрыта стандартными плагинами | `syft dir:. -o cyclonedx-json` | Установите соответствующий плагин или используйте `cdxgen` как fallback. |
-| `Trivy: false positive на CVE` | Уязвимый код не вызывается (reachability) | `trivy sbom --show-vulnerability-reachability` | Создайте VEX-отчет со статусом `not_affected`. |
+| `Trivy: false positive на CVE` | Уязвимый код не вызывается (reachability) | `govulncheck ./...` (Go) / VEX `code_not_reachable` | Создайте VEX-отчёт со статусом `not_affected` и примените `--vex`. |
 | `SBOM generation failed: multi-arch` | Syft не поддерживает манифест image index | `syft -o spdx-json ...` | Используйте `docker buildx imagetools inspect --format '{{json .Manifest}}'` и генерацию SBOM для каждого архитектурного варианта отдельно. |
 | `VEX не применяется` | Неверный формат VEX-файла или отсутствие полей `status` | `cat vex-report.json \| jq .` | Убедитесь, что VEX соответствует CycloneDX или SPDX VEX-профилю. |
 | `SBOM drift detected` | В Runtime загружены библиотеки, отличные от SBOM | `syft runtime:process --output json` | Сравните загруженные библиотеки с SBOM через eBPF-агенты (Falco/Tetragon). |

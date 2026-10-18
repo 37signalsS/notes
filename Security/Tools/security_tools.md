@@ -48,7 +48,7 @@
 
 - **[Vault](../../Vault/overview.md)**: Централизованная платформа для управления секретами, ключами шифрования и динамического выпуска сертификатов.
 - **[GPG и OpenPGP](../../Linux/Security/Tools/gpg_and_openpgp.md)**: Свободная реализация стандарта OpenPGP (RFC 4880/9580) для шифрования, подписи и управления ключами.
-- **[SOPS](./sops_overview.md)**: Редактор для шифрования данных внутри файлов (YAML, JSON, .env) с поддержкой KMS, PGP и `age`.
+- **[SOPS](./sops_overview.md)**: Редактор для шифрования данных внутри файлов (YAML, JSON, .env) c поддержкой PGP и `age`.
 - **[Betterleaks](./betterleaks.md)**: Сканер секретов (наследник Gitleaks) — локальные файлы, Git-история, GitHub, GitLab, Hugging Face, S3 с валидацией найденных credentials.
 - **[Sealed Secrets](../../Kubernetes/Security/sealed_secrets_overview.md)**: Инструмент Kubernetes для шифрования секретов в Git, которые могут быть расшифрованы только контроллером в кластере.
 - **[Диагностика SSL/TLS сертификатов](./ssl_certificate_diagnostics.md)**: Практическое руководство по отладке цепочек доверия и верификации сертификатов через OpenSSL.

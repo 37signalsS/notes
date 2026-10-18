@@ -230,7 +230,6 @@ container_scan:
 | `--format` | Формат вывода | `--format json` |
 | `--misconfig-scanners` | Сканеры misconfigurations | `--misconfig-scanners dockerfile` |
 | `-o, --output` | Файл отчета | `-o results/trivy.json` |
-| `--show-epss` | Показ EPSS-метрик | `--show-epss` |
 
 ### Основные параметры Hadolint
 

@@ -1,5 +1,7 @@
 # Обзор двухуровневого центра сертификации (CA) на OpenSSL
 
+**Актуально для:** OpenSSL 3.0+ (PKI 2026; X.509 v3, RSA-4096/ECDSA P-384/Ed25519, NIST PQC FIPS 203/204/205)
+
 ## Определения
 
 **CA (Certificate Authority, Центр сертификации)** — доверенная сущность, выпускающая цифровые сертификаты для подтверждения подлинности открытых ключей.
@@ -8,7 +10,7 @@
 
 **Root CA (Корневой CA)** и **Intermediate CA (Промежуточный CA)** — ключевые элементы иерархии. Их определения, а также понятия **Цепочки доверия (Chain of Trust)**, **CSR (Certificate Signing Request)** и механизмов отзыва (**CRL**, **OCSP**) подробно описаны в **[обзоре PKI](../../../Concepts/pki_overview.md)**.
 
-**OpenSSL 3.0+** — современная версия криптографического тулсета, в которой реализована модульная архитектура провайдеров (Default, Legacy, FIPS) и депрецированы устаревшие параметры (например, `RANDFILE`).
+**OpenSSL 3.0+** — современная версия криптографического тулсета, в которой реализована модульная архитектура провайдеров (Default, Legacy, FIPS). Параметр `RANDFILE` не нужен с OpenSSL 1.1.1 и сохраняется лишь для обратной совместимости.
 
 **mTLS (Mutual TLS)** — механизм взаимной аутентификации, требующий наличия сертификатов как у сервера, так и у клиента. В двухуровневой схеме mTLS реализуется через промежуточные CA.
 
@@ -130,10 +132,10 @@ openssl req -new -x509 -config root-ca/openssl.cnf \
     -newkey ec:<(openssl ecparam -name secp384r1) -sha512 \
     -keyout root-ca/ca.key -out root-ca/ca.crt -days 7300
 
-# Подпись Intermediate CA (внесение CSR с air-gapped машины)
+# Подпись Intermediate CA (внесение CSR с air-gapped машины; 1825 дней ≈ 5 лет — ротация 3–5 лет)
 openssl ca -config root-ca/openssl.cnf \
     -extensions v3_intermediate_ca \
-    -days 3650 -notext -md sha512 \
+    -days 1825 -notext -md sha512 \
     -in intermediate-ca/csr/intermediate.csr \
     -out intermediate-ca/intermediate.crt
 
@@ -155,9 +157,8 @@ openssl verify -CAfile root-ca/ca.crt intermediate-ca/intermediate.crt
 
 - **Внутренние API и веб-сервисы:** аутентификация серверов и клиентов внутри локальной сети.
 - **VPN (OpenVPN/WireGuard):** аутентификация удаленных пользователей и узлов.
-- **Управление конфигурациями (Ansible, SaltStack):** подпись артефактов и аутентификация агентов.
+- **Управление конфигурациями (Ansible, SaltStack):** подпись артефакактов и аутентификация агентов.
 - **Почтовые системы:** подпись и шифрование почты через S/MIME.
-- **Аутентификация в K8s:** замена стандартного CA кластера на корпоративный Intermediate CA для повышения безопасности.
 
 ### Интеграция с системами управления секретами
 
@@ -522,6 +523,363 @@ done
 
 Базовый модуль для проверки TLS и алерты подробно описаны в **[обзоре PKI](../../../Concepts/pki_overview.md)**. Для мониторинга истечения именно корневого и промежуточного CA используйте локальные скрипты (см. выше) или blackbox exporter с указанием `server_name`, соответствующего внутреннему домену.
 
+> **Кросс-платформенная заметка:** скрипты в этом разделе используют `date -j -f` (macOS) с fallback на `date -d` (GNU/Linux). Для production-развёртываний на Linux рекомендуется использовать `openssl x509 -checkend`, который не зависит от парсинга даты:
+> ```bash
+> # Проверка, что сертификат действителен ещё 30 дней (2592000 секунд)
+> openssl x509 -in my-service.crt -noout -checkend 2592000
+> # → Certificate will not expire
+> ```
+
+### Автоматизация через systemd
+
+Для production-развёртываний Intermediate CA на Linux рекомендуется использовать **systemd-таймеры** вместо `cron`. Это обеспечивает централизованное управление через `journalctl`, защиту от двойного запуска и интеграцию с системой логирования.
+
+#### Генерация CRL через systemd timer
+
+```ini
+# /etc/systemd/system/ca-crl-generate.service
+[Unit]
+Description=Generate CRL for Intermediate CA
+After=network.target
+
+[Service]
+Type=oneshot
+User=ca
+Group=ca
+WorkingDirectory=/opt/ca/intermediate-ca
+ExecStart=/usr/bin/openssl ca -config openssl.cnf -gencrl -out crl/crl.pem
+# Уведомление о завершении через systemd (опционально)
+ExecStartPost=/bin/systemctl reload nginx.service
+```
+
+```ini
+# /etc/systemd/system/ca-crl-generate.timer
+[Unit]
+Description=Generate CRL every 12 hours
+
+[Timer]
+OnCalendar=*-*-* 00,12:00:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+# Активация таймера
+chmod 644 /etc/systemd/system/ca-crl-generate.service
+chmod 644 /etc/systemd/system/ca-crl-generate.timer
+systemctl daemon-reload
+systemctl enable --now ca-crl-generate.timer
+
+# Проверка статуса
+systemctl list-timers ca-crl-generate.timer
+# → NEXT                        LEFT LAST                        PASSED UNIT                 ACTIVATES
+# → ...                         ...  ...                         ...    ca-crl-generate.timer  ca-crl-generate.service
+```
+
+> **Важно:** если Intermediate CA работает на air-gapped хосте, CRL должен генерироваться локально и распространяться на серверы через защищённый канал (SCP, rsync по SSH с jump-host). Настройка распределения CRL описана в **[CRL Distribution Points](../crl_distribution_points.md)**.
+
+#### Проверка срока действия сертификатов через systemd timer
+
+```bash
+# /usr/local/sbin/check-ca-expiry.sh
+#!/bin/bash
+set -euo pipefail
+
+CA_DIR="/opt/ca"
+ALERT_DAYS="${1:-90}"
+ALERT_FILE="/var/log/ca/ca-expiry-alerts.log"
+
+mkdir -p "$(dirname "$ALERT_FILE")"
+
+for crt in "$CA_DIR"/root/ca.crt "$CA_DIR"/intermediate-prod/intermediate.crt; do
+    if [ ! -f "$crt" ]; then
+        echo "WARNING: $crt не найден" | tee -a "$ALERT_FILE"
+        continue
+    fi
+
+    # Используем checkend — кросс-платформенно и не зависит от парсинга даты
+    if openssl x509 -in "$crt" -noout -checkend "$((ALERT_DAYS * 86400))" 2>/dev/null; then
+        days_left=$(openssl x509 -in "$crt" -noout -enddate \
+            | cut -d= -f2 \
+            | xargs -I{} date -d "{}" +%j \
+            | awk '{print int($1/365*365)}' 2>/dev/null || \
+            openssl x509 -in "$crt" -noout -enddate \
+            | cut -d= -f2 \
+            | xargs -I{} date -j -f "%b %d %H:%M:%S %Y %Z" "{}" +%s \
+            | awk -v now=$(date +%s) '{print int(($1-now)/86400)}')
+        echo "OK: $crt — $days_left дней осталось" | tee -a "$ALERT_FILE"
+    else
+        echo "CRITICAL: $crt истекает менее чем через $ALERT_DAYS дней" | tee -a "$ALERT_FILE"
+        # Отправка в syslog для интеграции с SIEM
+        logger -t "ca-monitor" -p auth.warning "CRITICAL: $crt истекает менее чем через $ALERT_DAYS дней"
+    fi
+done
+
+# Очистка старых записей (старше 90 дней)
+find "$(dirname "$ALERT_FILE")" -name "ca-expiry-alerts.log" -mtime +90 -exec truncate -s 0 {} \;
+```
+
+```ini
+# /etc/systemd/system/ca-expiry-check.service
+[Unit]
+Description=Check CA and Intermediate certificate expiration
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/check-ca-expiry.sh 90
+```
+
+```ini
+# /etc/systemd/system/ca-expiry-check.timer
+[Unit]
+Description=Daily check of CA certificate expiration
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+#### Ротация журналов аудита CA
+
+Журналы `index.txt` и системные логи CA растут нелинейно. Настройте `logrotate` для предотвращения переполнения диска на Intermediate CA хосте:
+
+```conf
+# /etc/logrotate.d/ca-audit
+/var/log/ca/*.log {
+    daily
+    rotate 90
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 ca ca
+    sharedscripts
+    postrotate
+        # Архивируем index.txt перед ротацией журнала
+        if [ -f /opt/ca/intermediate-ca/db/index.txt ]; then
+            cp /opt/ca/intermediate-ca/db/index.txt /opt/ca/intermediate-ca/db/index.txt.$(date +%Y%m%d)
+        fi
+    endscript
+}
+```
+
+### Резервное копирование и архивирование
+
+#### Политика резервного копирования
+
+Резервные копии ключей CA — критически важны для восстановления после потери. Политика должна учитывать уровень доступа каждого ключа:
+
+| Ключ | Частота бэкапа | Хранилище | Шифрование | Примечание |
+| :--- | :--- | :--- | :--- | :--- |
+| `root-ca/ca.key` | Один раз при создании, при ротации | Air-gapped носитель (USB-HSM) + офлайн-хранилище | AES-256 + GPG-шифрование | Доступ только через Shamir Split |
+| `intermediate-ca/intermediate.key` | Ежемесячно | Защищённый сегмент + off-site | AES-256 | Восстановление в течение 4 часов |
+| `intermediate-ca/db/index.txt` | Еженедельно | SIEM + off-site | AES-256 | Требуется для аудита отзыва |
+
+#### Процедура создания зашифрованного бэкапа
+
+```bash
+# 1. Создание бэкапа на Intermediate CA хосте
+cd /opt/ca/intermediate-ca
+BACKUP_FILE="intermediate-backup-$(date +%Y%m%d).tar.gz.gpg"
+
+# Архивируем ключ, сертификат и базу данных
+tar czf - \
+    intermediate.key \
+    intermediate.crt \
+    ca-chain.crt \
+    db/index.txt \
+    db/serial \
+    db/crlnumber \
+    openssl.cnf \
+| gpg --symmetric --cipher-algo AES256 --output "/secure-backups/$BACKUP_FILE"
+
+# 2. Проверка целостности
+gpg --decrypt "/secure-backups/$BACKUP_FILE" | tar tzf - | head -10
+# → intermediate.key
+#   intermediate.crt
+#   ca-chain.crt
+#   ...
+
+# 3. Копирование на off-site носитель (air-gapped перенос)
+# Используйте физический носитель, передаваемый через доверенный канал
+```
+
+#### Шифрование корневого ключа по схеме Shamir
+
+Root CA ключ должен быть защищён разделением пароля по схеме Шамира (минимум 2 из 3 доверенных администраторов). Используйте `ssss`:
+
+```bash
+# 1. Разделение пароля корневого ключа на 3 доли (порог 2)
+echo "SUPER_SECRET_ROOT_PASSPHRASE" | ssss-split -t 2 -n 3
+# → Доля 1: 8c7e...
+#   Доля 2: 5a3f...
+#   Доля 3: 2b9d...
+
+# 2. Хранение долей на отдельных air-gapped носителях
+#    Каждый доверенный администратор хранит свою долю в отдельной ячейке
+
+# 3. Восстановление при необходимости
+cat share1.txt share2.txt | ssss-combine -t 2
+# → SUPER_SECRET_ROOT_PASSPHRASE
+```
+
+Подробнее о политике хранения ключей и Shamir's Secret Sharing — в **[Key Escrow Policy](../../../Concepts/key_escrow_policy.md)**.
+
+### CI/CD интеграция для внутреннего CA
+
+Для DevOps-пайплайнов внутренняя PKI интегрируется через локальные CI/CD-системы (GitLab CI, Jenkins, GitHub Actions Self-Hosted) без обращения к публичным сервисам.
+
+#### GitLab CI: выпуск и ротация сертификатов
+
+```yaml
+# .gitlab-ci.yml
+stages:
+  - prepare
+  - sign
+  - deploy
+  - verify
+
+# Этап 1: Подготовка CSR на сервисе
+generate_csr:
+  stage: prepare
+  script:
+    - openssl genrsa -out service.key 2048
+    - openssl req -new -key service.key -out service.csr
+        -subj "/C=RU/O=MyOrg/OU=Services/CN=api.internal"
+        -addext "subjectAltName=DNS:api.internal,DNS:api.int.myorg.ru"
+  artifacts:
+    paths:
+      - service.key
+      - service.csr
+
+# Этап 2: Подпись CSR через Intermediate CA (на защищённом хосте)
+sign_certificate:
+  stage: sign
+  script:
+    # SCP CSR на Intermediate CA хост через jump-host
+    - scp service.csr ca-user@intermediate-ca.int:/tmp/service.csr
+    # Подпись через SSH
+    - |
+      ssh ca-user@intermediate-ca.int \
+        "openssl ca -config /opt/ca/intermediate-ca/openssl.cnf \
+        -extensions v3_server_cert \
+        -in /tmp/service.csr \
+        -out /tmp/service.crt \
+        -batch \
+        -notext -md sha512"
+    # Загрузка подписанного сертификата обратно
+    - scp ca-user@intermediate-ca.int:/tmp/service.crt ./service.crt
+  artifacts:
+    paths:
+      - service.crt
+      - service.key
+
+# Этап 3: Развёртывание на целевых хостах
+deploy_certificate:
+  stage: deploy
+  script:
+    - ssh app@app-server.int \
+        "sudo cp service.crt /etc/nginx/ssl/service.crt && \
+         sudo cp service.key /etc/nginx/ssl/service.key && \
+         sudo chmod 600 /etc/nginx/ssl/service.key && \
+         sudo nginx -t && sudo systemctl reload nginx"
+
+# Этап 4: Верификация
+verify_certificate:
+  stage: verify
+  script:
+    - |
+      echo | openssl s_client -connect api.internal:443 -servername api.internal \
+        | openssl verify -CAfile /opt/ca/intermediate-ca/ca-chain.crt
+      # → api.internal: OK
+  only:
+    - schedules
+```
+
+#### Ansible: ротация сертификатов по расписанию
+
+```yaml
+# Ansible playbook: rotate_certificates.yml
+---
+- name: Rotate certificates for all services
+  hosts: all
+  serial: 10%  # 10% хостов за раз для canary-развёртывания
+  vars:
+    cert_valid_days: 2592000  # 30 дней
+  tasks:
+    - name: Check if certificate needs renewal
+      command: >
+        openssl x509 -in /etc/ssl/service.crt -checkend {{ cert_valid_days }}
+      register: cert_check
+      changed_when: false
+      failed_when: false
+
+    - name: Generate new CSR if certificate expired soon
+      block:
+        - name: Generate private key
+          openssl_privatekey:
+            path: /tmp/service.key
+            size: 2048
+
+        - name: Generate CSR
+          openssl_csr:
+            path: /tmp/service.csr
+            privatekey_path: /tmp/service.key
+            common_name: "{{ inventory_hostname }}"
+            subject_alt_name:
+              - "DNS:{{ inventory_hostname }}"
+              - "DNS:{{ ansible_fqdn }}"
+
+      when: cert_check.rc == 1
+
+    - name: Sign CSR via Intermediate CA
+      delegate_to: intermediate_ca_host
+      block:
+        - copy:
+            src: /tmp/service.csr
+            dest: /tmp/service.{{ inventory_hostname }}.csr
+
+        - command: >
+            openssl ca -config /opt/ca/intermediate-ca/openssl.cnf
+            -extensions v3_server_cert
+            -in /tmp/service.{{ inventory_hostname }}.csr
+            -out /tmp/service.{{ inventory_hostname }}.crt
+            -batch -notext -md sha512
+
+        - fetch:
+            src: /tmp/service.{{ inventory_hostname }}.crt
+            dest: /tmp/signed-certs/
+
+      when: cert_check.rc == 1
+
+    - name: Install renewed certificate
+      copy:
+        src: /tmp/signed-certs/service.{{ inventory_hostname }}.crt
+        dest: /etc/ssl/service.crt
+        owner: root
+        group: ssl-cert
+        mode: '0644'
+      notify: reload services
+      when: cert_check.rc == 1
+
+  handlers:
+    - name: reload services
+      systemd:
+        name: "{{ item }}"
+        state: reloaded
+      loop:
+        - nginx
+        - sshd
+```
+
+Ансибл-роли для управления сертификатами детально описаны в **[Ansible: автоматизация сертификатов](../../../../Ansible/ansible_certificate_management.md)**.
+
 ## Best Practices
 
 - **Приватные ключи всегда offline:** Root CA ключ никогда не должен находиться на машине с сетевым доступом. Intermediate CA ключ — только в защищенном сегменте.
@@ -559,39 +917,31 @@ done
 - **[Certificate Pinning](../../../Concepts/certificate_pinning.md)** — привязка клиентов к сертификатам/ключам, защита от MITM.
 - **[Certificate Transparency](../../../Concepts/certificate_transparency.md)** — публичное логирование сертификатов, CT-мониторинг.
 - **[Key Escrow Policy](../../../Concepts/key_escrow_policy.md)** — политика хранения копий ключей, Shamir's Secret Sharing.
-- **[ГОСТ-криптография](../../../Security/Tools/gost_cryptography.md)** — реализация ГОСТ-алгоритмов в OpenSSL, CryptoPro, Кузнечик.
+- **[ГОСТ-криптография](../../gost_cryptography.md)** — реализация ГОСТ-алгоритмов в OpenSSL, CryptoPro, Кузнечик.
 
 #### TLS-конфигурация и харденинг
 
-- **[TLS-протокол](../../../Networking/Protocols/tls.md)** — теория TLS, cipher suites, AEAD, forward secrecy, handshake.
-- **[Nginx: глобальные параметры TLS](../../../WebServers/Nginx/Security/TLS_SSL/nginx_tls_global_parameters.md)** — шифры, протоколы, HSTS, сессии.
-- **[Nginx: диагностика TLS](../../../WebServers/Nginx/Security/TLS_SSL/nginx_tls_troubleshooting_and_compatibility.md)** — отладка TLS-handshake.
-- **[Nginx: mTLS](../../../WebServers/Nginx/Security/TLS_SSL/nginx_mtls_configuration.md)** — взаимная аутентификация в Nginx.
-- **[Оптимизация TLS](../../../WebServers/Concepts/web_performance/tls_optimization.md)** — бенчмарки, AES-GCM vs ChaCha20, 0-RTT, session tickets.
+- **[TLS-протокол](../../../../Networking/Protocols/tls.md)** — теория TLS, cipher suites, AEAD, forward secrecy, handshake.
+- **[Nginx: глобальные параметры TLS](../../../../WebServers/Nginx/Security/TLS_SSL/nginx_tls_global_parameters.md)** — шифры, протоколы, HSTS, сессии.
+- **[Nginx: диагностика TLS](../../../../WebServers/Nginx/Security/TLS_SSL/nginx_tls_troubleshooting_and_compatibility.md)** — отладка TLS-handshake.
+- **[Nginx: mTLS](../../../../WebServers/Nginx/Security/TLS_SSL/nginx_mtls_configuration.md)** — взаимная аутентификация в Nginx.
+- **[Оптимизация TLS](../../../../WebServers/Concepts/web_performance/tls_optimization.md)** — бенчмарки, AES-GCM vs ChaCha20, 0-RTT, session tickets.
 
 #### Автоматизация и управление сертификатами
 
 - **[Ansible: автоматизация сертификатов](../../../../Ansible/ansible_certificate_management.md)** — плейбуки выпуска, ротации и распространения.
-- **[cert-manager (Kubernetes)](../../../../Kubernetes/ToolsUtilities/cert_manager/definitions.md)** — CRDs, Issuer/ClusterIssuer, ACME.
-- **[Let's Encrypt + certbot](../../../../WebServers/Concepts/https_with_certbot.md)** — автоматический выпуск публичных сертификатов.
-- **[acme.sh](../../../../WebServers/Concepts/acme_sh.md)** — lightweight ACME-клиент.
+- **step-ca** — легковесный внутренний CA с ACME для enterprise-сред; подходит для гибридных сетей без облака.
+- **[Автоматизация через systemd](#автоматизация-через-systemd)** — таймеры для генерации CRL, проверки срока действия и ротации.
 
 #### Секреты и HSM
 
 - **[HashiCorp Vault](../../../../Vault/overview.md)** — PKI Secrets Engine, SSH CA, управление секретами.
-- **[Vault PKI + cert-manager](../../../../Kubernetes/ToolsUtilities/cert_manager/Private_CA/vault_integration.md)** — интеграция Vault с Kubernetes.
-- **[Step-CA](../../../../Kubernetes/ToolsUtilities/cert_manager/Private_CA/step_ca_integration.md)** — легковесный внутренний CA с ACME.
+- **[Vault PKI + Ansible](../../../../Ansible/ansible_certificate_management.md)** — интеграция Vault с Ansible-плейбуками для выпуска и ротации сертификатов.
 
 #### Мониторинг
 
 - **[Blackbox Exporter](../../../../Prometheus/Exporters/blackbox/blackbox_exporter_overview.md)** — мониторинг TLS и сертификатов через Prometheus.
 - **[Blackbox Exporter: метрики и алертинг](../../../../Prometheus/Exporters/blackbox/blackbox_exporter_metrics_and_alerting.md)** — `probe_ssl_earliest_cert_expiry`, alerting rules.
-
-#### Service Mesh и mTLS
-
-- **[Istio: безопасность](../../../../Service_Mesh/istio-security-policies.md)** — SPIFFE, PeerAuthentication, AuthorizationPolicy.
-- **[TLS/mTLS в Kubernetes](../../../../Kubernetes/Security/tls_and_mtls_in_kubernetes.md)** — CA-модель, CSR workflow, Kubelet TLS bootstrap.
-- **[mkcert](../../../../Kubernetes/ToolsUtilities/cert_manager/Private_CA/scenarios.md)** — локальный CA для dev-окружений.
 
 #### SSH-сертификаты
 

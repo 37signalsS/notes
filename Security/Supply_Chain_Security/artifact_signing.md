@@ -260,7 +260,7 @@ trivy diff sbom:./expected-sbom.json sbom:./runtime-sbom.json
 | `Attestation not found` | SBOM/SLSA не прикреплен к образу | `curl /v2/.../referrers` | Убедитесь, что `docker buildx build` завершился с `--push` и флагами `--attest`. Для локальных тестов используйте `--output type=docker`. |
 | `Cosign verify: certificate identity mismatch` | Идентичность в политике Kyverno не совпадает с OIDC-claim | `cosign verify --output text ...` | Проверьте точное совпадение `--certificate-identity` с claim `sub` в токене. |
 | `Notation: key not found` | Ключ не добавлен в trust store | `notation cert list` | Добавьте сертификат через `notation cert add --type ca --store <name> <cert.pem>`. |
-| `Trivy: false positive на CVE` | Уязвимый код не вызывается (reachability) | `trivy sbom --show-vulnerability-reachability` | Создайте VEX-отчет со статусом `not_affected`. |
+| `Trivy: false positive на CVE` | Уязвимый код не вызывается (reachability) | `govulncheck ./...` (Go) / `osv-scanner --call-analysis=go` | Создайте VEX-отчет со статусом `not_affected`. |
 | `Kyverno блокирует валидный образ` | Политика содержит устаревший public key | `kyverno apply --policy ... --resource ...` | Обновите public key и используйте `ImageValidatingPolicy` (Kyverno v1.19+; `ClusterPolicy` для подписей устарел). |
 | `SBOM generation failed: multi-arch` | Syft не поддерживает манифест image index | `syft -o spdx-json ...` | Используйте `docker buildx imagetools inspect --format '{{json .Manifest}}'` и генерацию SBOM для каждого архитектурного варианта отдельно. |
 | `Referrers API 404` | Реестр не поддерживает OCI 1.1 | `curl -v /v2/.../referrers` | Обновите Harbor до v2.15 или используйте альтернативный реестр с поддержкой Referrers. |

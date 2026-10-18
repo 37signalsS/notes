@@ -1,6 +1,6 @@
 # Целостность сборки
 
-**Актуально для:** SLSA v1.2 (Build Track L1–L3, Source Track L1–L4), Docker Engine 29.x, BuildKit 0.34+, Cosign v3.1+, Syft v1.54+, Trivy v0.69+, Harbor v2.15+, Kyverno v1.19+, Kubernetes 1.31+, Tekton Chains v2.0+, GitLab Runner 16+
+**Актуально для:** SLSA v1.2 (Build Track L1–L3, Source Track L1–L4), Docker Engine 29.x, BuildKit 0.34+, Cosign v3.1+, Syft v1.54+, Trivy ≥ 0.71.0, Harbor v2.15+, Kyverno v1.19+, Kubernetes 1.31+, Tekton Chains v2.0+, GitLab Runner 16+
 
 ## Определения
 

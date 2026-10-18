@@ -166,31 +166,23 @@ systemctl enable --now nginx
 
 ### 3. Docker в LXC (Unprivileged)
 
+Полный SSoT: nesting/keyctl, AppArmor trade-off, установка Engine, Compose, бэкап/restore (`pct restore`), мониторинг и диагностика — [Запуск Docker в LXC-контейнерах Proxmox VE](./proxmox_docker_lxc.md). Ниже — минимальный каркас конфигурации гостя:
+
 ```bash
-# Создание контейнера с nesting
 pct create 210 local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst \
   --hostname docker-host \
   --memory 4096 \
   --cores 2 \
-  --rootfs 32 \
+  --rootfs local-lvm:32 \
   --unprivileged 1 \
   --net0 name=eth0,bridge=vmbr0,ip=dhcp
 
-# Включение nesting и ключевых опций
-cat >> /etc/pve/lxc/210.conf << EOF
-lxc.apparmor.profile: unconfined
-lxc.cgroup2.devices.allow: c *:* rwm
-lxc.mount.auto: proc:rw sys:rw cgroup:rw
-lxc.cap.drop:
-EOF
+pct set 210 --features nesting=1,keyctl=1
+# keyctl=1 is required for unprivileged (pct.conf);
+# --features replaces the whole list — pass all flags in one call
 
-# Перезапуск контейнера
 pct reboot 210
-
-# Установка Docker внутри контейнера
-pct enter 210
-curl -fsSL https://get.docker.com | sh
-usermod -aG docker your_user
+pct enter 210   # далее — установка Docker Engine (см. SSoT)
 ```
 
 ### 4. NFS-сервер в Privileged LXC

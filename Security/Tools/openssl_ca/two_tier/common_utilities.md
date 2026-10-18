@@ -1,22 +1,24 @@
 # Утилиты и диагностика двухуровневого CA
 
+**Актуально для:** OpenSSL 3.0+ (PKI 2026; X.509 v3, RSA-4096/ECDSA P-384/Ed25519, NIST PQC FIPS 203/204/205)
+
 ## Определения
 
 **PKI (Public Key Infrastructure, Инфраструктура открытых ключей)** — совокупность технологий, стандартов, политик и процедур, необходимых для создания, управления, распределения, использования, хранения и отзыва цифровых сертификатов. Основная цель — обеспечить доверенную среду для обмена данными и идентификации субъектов через асимметричную криптографию.
 
 **CA (Certificate Authority, Центр сертификации)** — доверенная сущность, выпускающая цифровые сертификаты для подтверждения подлинности открытых ключей.
 
-**Root CA (Корневой центр сертификации)** — вершина иерархии доверия. Самоподписанный сертификат с расширением `CA:true`, используемый исключительно для подписи промежуточных центров сертификации. Его приватный ключ является наиболее критичным активом и должен находиться в максимально изолированной среде.
+**Root CA (Корневой центр сертификации)** — вершина иерархии доверия. Самоподписанный сертификат с расширением `CA:true`, используемый исключительно для подписи промежуточных центров сертификации. Его приватный ключ является наиболее критичным активом и должен находиться в максимально изолированной среде (offline/air-gapped).
 
 **Intermediate CA (Промежуточный центр сертификации)** — подчинённый удостоверяющий центр, сертификат которого подписан корневым CA. В двухуровневой архитектуре он является единственным узлом, выпускающим конечные сертификаты. Его безопасность обеспечивается через ограничение `pathlen:0` в расширении Basic Constraints.
 
-**ca-chain.crt (Bundle)** — PEM-файл, объединяющий сертификат Intermediate CA и Root CA. TLS-серверы обязаны отдавать полную цепочку клиентам, так как клиенты доверяют только корневому якорю и не знают о промежуточном звене.
+**ca-chain.crt (Bundle)** — PEM-файл, объединяющий сертификат Intermediate CA и Root CA в строгом порядке (сначала Intermediate, затем Root). TLS-серверы обязаны отдавать полную цепочку клиентам, так как клиенты доверяют только корневому якорю и не знают о промежуточном звене.
 
 **HSM (Hardware Security Module, Аппаратный модуль безопасности)** — специализированное устройство для генерации и безопасного хранения криптографических ключей, обеспечивающее защиту от физического и логического извлечения. Рекомендуется для хранения корневого ключа в production-средах.
 
 **TPM (Trusted Platform Module)** — аппаратный модуль безопасности, интегрированный в материнскую плату. Поддерживает хранение ключей и криптографические операции. Может использоваться для защиты ключей Intermediate CA.
 
-**OpenSSL 3.0+** — версия инструментария, в которой архитектура перешла на использование провайдеров (Default, FIPS, Legacy), были депрецированы устаревшие параметры конфигурации (например, `RANDFILE`), и внедрена поддержка гибридных схем и постквантовой криптографии.
+**OpenSSL 3.0+** — поколение криптографического тулсета с модульной архитектурой провайдеров (Default, Legacy, FIPS). Параметр конфигурации `RANDFILE` не нужен с OpenSSL 1.1.1 (улучшенный CSPRNG): сохраняется лишь для обратной совместимости, а энтропия берётся из ОС. Полная поддержка NIST PQC (ML-KEM, ML-DSA, SLH-DSA, FIPS 203/204/205) и гибридных схем требует OpenSSL 3.5+; в OpenSSL 3.0–3.4 PQC доступен только через сторонний `oqs-provider`. Команда `openssl rsa` находится в режиме поддержки (maintenance mode) — используйте `openssl pkey`.
 
 **mTLS (Mutual TLS, Взаимный TLS)** — стандарт безопасности для взаимодействия микросервисов, требующий обязательной аутентификации как сервера, так и клиента с помощью сертификатов. В двухуровневой схеме mTLS реализуется через промежуточные CA.
 
@@ -26,7 +28,7 @@
 
 **Shamir's Secret Sharing** — схема разделения секрета на части, при которой для восстановления исходного секрета необходимо наличие минимального количества частей (порогового значения). Применяется для разделения парольной фразы Root CA между доверенными администраторами.
 
-> Базовые понятия (ключ, CSR (Certificate Signing Request), X.509, цепочка доверия, CRL, OCSP, расширения X.509, алгоритмы 2026, PQC) подробно описаны в **[обзоре PKI](../../../Concepts/pki_overview.md)**. Об архитектуре двухуровневого CA и сравнении с одноуровневой см. **[обзор двухуровневого CA](./overview.md)**.
+> Базовые понятия (ключ, CSR (Certificate Signing Request), X.509, цепочка доверия, CRL, OCSP, расширения X.509, алгоритмы 2026, PQC) подробно описаны в **[обзоре PKI](../../../Concepts/pki_overview.md)**. Об архитектуре двухуровневого CA и сравнении с одноуровневой см. **[обзор двухуровневого CA](./overview.md)**. Общие методы диагностики TLS (s_client, OCSP Stapling, проверка версий TLS, коды verify return code) — в **[Диагностика SSL/TLS сертификатов](../../ssl_certificate_diagnostics.md)**.
 
 ## Базовые концепции
 
@@ -35,18 +37,19 @@
 Все команды OpenSSL для работы с сертификатами разделяются на:
 
 - **Просмотр** — извлечение метаданных (команды `x509`, `req`, `crl`).
-- **Верификация** — проверка криптографического соответствия и подписей (команды `verify`, `-modulus`, `pubkey`).
+- **Верификация** — проверка криптографического соответствия и подписей (команды `verify`, `pkey`, `pubkey`).
 - **Подключение** — имитация клиента для тестирования TLS-конфигураций (команда `s_client`).
 
 ### Контекст двухуровневого CA
 
-Ключевое отличие от **[одноуровневого CA](../../openssl_ca/single_tier/common_utilities.md)** заключается в необходимости использования полной цепочки `ca-chain.crt`.
+Ключевое отличие от **[одноуровневого CA](../../openssl_ca/single_tier/common_utilities.md)** заключается в необходимости использования полной цепочки `ca-chain.crt` и наличия двух уровней верификации.
 
 | Операция | Одноуровневый CA | Двухуровневый CA |
 |:---|:---|:---|
 | Доверенный корень | `ca.crt` | `ca-chain.crt` (Intermediate + Root) |
 | Верификация сервиса | `-CAfile ca.crt` | `-CAfile ca-chain.crt` |
 | Путь к CRL | `ca/crl.pem` | `intermediate-ca/db/crl.pem` |
+| Проверка порядка в bundle | не требуется (один сертификат) | **Обязательна** (Intermediate → Root) |
 | Проверка SNI | Рекомендуется | **Обязательна** (для TLS 1.3) |
 
 ### Архитектурные особенности верификации
@@ -69,7 +72,7 @@ OpenSSL 3.x использует модульную архитектуру пр�
 openssl list -providers
 ```
 
-Если команда выдает ошибку `unsupported algorithm`, возможно, требуется явно указать провайдер Legacy или обновить конфигурацию `openssl.cnf`.
+Если команда выдаёт ошибку `unsupported algorithm`, возможно, требуется явно включить провайдер Legacy или обновить конфигурацию `openssl.cnf`.
 
 ## Предварительные требования
 
@@ -160,22 +163,23 @@ openssl req -in my-service.csr -noout -subject -pubkey
 
 Для предотвращения ошибок при запуске TLS-серверов необходимо убедиться, что файлы составляют рабочую пару.
 
-#### Сценарий А: RSA-ключи
-Сравниваются хеши модулей.
+**Универсальный метод (работает для RSA, ECDSA, Ed25519, OpenSSL 3.0+):**
+
+Сравниваются хеши публичных ключей (DER-формат). Команда `openssl rsa -modulus` унаследована и находится в режиме maintenance mode — используйте `openssl pkey`/`openssl x509 -pubkey`.
+
+```bash
+# Извлечение публичного ключа из приватного ключа
+openssl pkey -in service.key -pubout -outform DER | openssl sha256
+# Извлечение публичного ключа из сертификата
+openssl x509 -in service.crt -pubkey -noout -outform DER | openssl sha256
+# Хеши должны совпадать
+```
+
+**RSA (наследуемый метод через модуль):**
 
 ```bash
 openssl rsa -noout -modulus -in service.key | openssl sha256
 openssl x509 -noout -modulus -in service.crt | openssl sha256
-```
-
-#### Сценарий Б: ECDSA/Ed25519 (2026)
-Сравниваются хеши публичных ключей (DER-формат).
-
-```bash
-# Извлечение из приватного ключа
-openssl pkey -in service.key -pubout -outform DER | openssl sha256
-# Извлечение из сертификата
-openssl x509 -in service.crt -pubkey -noout -outform DER | openssl sha256
 ```
 
 ### Просмотр списка отозванных сертификатов CRL
@@ -191,6 +195,110 @@ openssl crl -in intermediate-ca/db/crl.pem -noout -text
 openssl crl -in intermediate-ca/db/crl.pem -noout -text | grep -A 1 "Serial Number:"
 ```
 
+### Проверка срока действия
+
+```bash
+# Сроки действия сертификата
+openssl x509 -in service.crt -noout -dates
+# → notBefore=Jan  1 00:00:00 2025 GMT
+# → notAfter=Jan  1 00:00:00 2026 GMT
+
+# Быстрая проверка: сертификат действителен ещё минимум N секунд
+# (возвращает код 0, если сертификат НЕ истечёт через N секунд;
+#  также ловит «not yet valid» при рассинхронизации часов)
+openssl x509 -in service.crt -noout -checkend 2592000
+# exit 0 → валиден ещё не менее 30 дней; exit != 0 → скоро истекает или просрочен
+```
+
+### Проверка порядка сертификатов в bundle
+
+В двухуровневой схеме порядок сертификатов в `ca-chain.crt` критичен: клиенту необходимо увидеть Intermediate CA первым (перед тем, как пройти к Root). Неверный порядок приводит к `Verify return code: 21` даже при корректной цепочке.
+
+```bash
+openssl crl2pkcs7 -nocrl -certfile intermediate-ca/ca-chain.crt | openssl pkcs7 -print_certs -noout | grep "subject="
+# → subject=CN = My Private Intermediate CA ...
+# → subject=CN = My Private Root CA ...
+# Порядок: сначала Intermediate, затем Root — верно
+```
+
+### Проверка отзова через CRL
+
+```bash
+# Проверка конечного сертификата с учётом CRL промежуточного CA.
+# CRL необходимо предоставить через -CRLfile (или разместить в trust store);
+# -untrusted указывает Intermediate CA, -CAfile — доверенный Root CA.
+openssl verify -crl_check -CAfile root-ca/ca.crt \
+    -untrusted intermediate-ca/intermediate.crt \
+    -CRLfile intermediate-ca/db/crl.pem my-service.crt
+# → my-service.crt: OK
+
+# -crl_check_all проверяет статус всех сертификатов в цепочке
+# (требует CRL от Root CA и Intermediate CA; при необходимости
+#  конкатенируйте их: cat root-ca/crl.pem intermediate-ca/db/crl.pem > all.crl.pem)
+```
+
+### Извлечение AIA и CDP
+
+Расширения Authority Information Access (URL OCSP-резолвера) и CRL Distribution Points (URL CRL) нужны для онлайн-проверки статуса:
+
+```bash
+# URL OCSP-резолвера из сертификата сервиса
+openssl x509 -in my-service.crt -noout -text | grep -A 2 "Authority Information Access"
+# → CA Issuers - URI:http://..., OCSP - URI:http://ocsp.my-ca.local
+
+# URL CRL
+openssl x509 -in my-service.crt -noout -text | grep -A 4 "CRL Distribution"
+# → X509v3 CRL Distribution Points: ... http://crl.my-ca.local/intermediate.crl.pem
+```
+
+Подробнее о развёртывании серверов CRL и OCSP — в **[CRL Distribution Points](../crl_distribution_points.md)** и **[OCSP Responder](../ocsp_responder.md)**.
+
+### Верификация цепочки доверия
+
+Проверка конечного сертификата относительно полной цепочки CA:
+
+```bash
+openssl verify -CAfile intermediate-ca/ca-chain.crt my-service.crt
+# → my-service.crt: OK
+
+# Или через доверенный Root + недоверенный Intermediate (формальный метод):
+openssl verify -CAfile root-ca/ca.crt \
+    -untrusted intermediate-ca/intermediate.crt my-service.crt
+# → my-service.crt: OK
+```
+
+Проверка самого промежуточного CA относительно корня:
+
+```bash
+openssl verify -CAfile root-ca/ca.crt intermediate-ca/intermediate.crt
+# → intermediate-ca/intermediate.crt: OK
+```
+
+### Верификация корневого CA (самоподписанный)
+
+```bash
+# Корневой сертификат должен проходить самоподпись
+openssl verify -CAfile root-ca/ca.crt root-ca/ca.crt
+# → root-ca/ca.crt: OK
+
+# Проверка соответствия ключа и корневого сертификата (универсальный метод)
+openssl pkey -in root-ca/ca.key -pubout -outform DER | openssl sha256
+openssl x509 -in root-ca/ca.crt -pubkey -noout -outform DER | openssl sha256
+# Хеши должны совпасть
+```
+
+### Проверка расширений сертификата
+
+```bash
+# Просмотр Basic Constraints (для leaf — CA:FALSE, для Intermediate — CA:TRUE, pathlen:0)
+openssl x509 -in intermediate-ca/intermediate.crt -noout -text | grep -A 3 "Basic Constraints"
+# → basicConstraints = critical, CA:true, pathlen:0
+
+# Проверка только Subject Alternative Name
+openssl x509 -in my-service.crt -noout -text | grep -A 1 "Subject Alternative Name"
+# → DNS:service.local, DNS:www.service.local, IP:10.0.5.10
+```
+
 ### Диагностика TLS-сервера (s_client)
 
 ```bash
@@ -199,15 +307,17 @@ openssl s_client -connect my-service.local:443 -servername my-service.local -sho
 
 **Анализ вывода:**
 - `Verification: OK` — цепочка доверена.
-- `Verification error: unable to get local issuer certificate` — сервер не отдает промежуточный сертификат (нужно использовать `fullchain.crt`).
+- `Verification error: unable to get local issuer certificate` — сервер не отдает промежуточный сертификат (нужно использовать `ca-chain.crt` / `fullchain.crt`).
 
 #### Критические флаги s_client
 
-- `-servername` — **Обязателен** для современных серверов (SNI). Без него сервер может отдать дефолтный (неверный) сертификат.
-- `-CAfile intermediate-ca/ca-chain.crt` — позволяет проверить доверие, используя ваш локальный Bundle.
+- `-servername` — **Обязательно** для современных серверов (SNI). Без него сервер может отдать дефолтный (неверный) сертификат.
+- `-CAfile intermediate-ca/ca-chain.crt` — позволяет проверить доверие, используя ваш локальный bundle.
 - `-tls1_3` (или `-tls1_2`) — форсирование версии протокола для проверки совместимости.
 - `-status` — проверка OCSP Stapling (отправляет запрос статуса сертификата).
 - `-brief` — краткий режим вывода, упрощающий парсинг (OpenSSL 3.0+).
+
+Подробный разбор флагов `s_client`, OCSP Stapling, TLS-версий и кодов verify return code — в **[Диагностика SSL/TLS сертификатов](../../ssl_certificate_diagnostics.md)**.
 
 #### Краткий вывод и проверка статуса верификации
 
@@ -218,29 +328,13 @@ openssl s_client -connect my-service.local:443 -servername my-service.local -bri
 # → Verify return code: 0 (ok)
 ```
 
-| Показатель | Ожидаемое значение | Смысл |
-|:---|:---|:---|
-| `Verify return code: 0 (ok)` | OK | Цепочка доверена |
-| `Verify return code: 21` | `unable to verify the first certificate` | Сервер не отдает промежуточный CA |
-| `Verify return code: 20` | `unable to get local issuer certificate` | В хранилище клиента нет корневого CA |
-| `Handshake failure` | — | Нет общих шифров или протоколов |
-
-#### Проверка OCSP Stapling
+Таблица кодов верификации приведена в **[ssl_certificate_diagnostics.md](../../ssl_certificate_diagnostics.md#операции-и-команды)**; в двухуровневой схеме характерны коды `20` (нет корня в trust store) и `21` (сервер не отдаёт Intermediate CA).
 
 ```bash
+# Проверка OCSP Stapling
 openssl s_client -connect my-service.local:443 -servername my-service.local -status </dev/null | grep -A 5 "OCSP response"
 # → OCSP Response Data:
 # →     OCSP Response Status: successful (0x0)
-```
-
-### Проверка поддерживаемых версий TLS
-
-```bash
-# Проверка TLS 1.3 (рекомендуется в 2026)
-openssl s_client -connect my-service.local:443 -servername my-service.local -tls1_3 </dev/null
-
-# Проверка TLS 1.2 (для совместимости с устаревшими клиентами)
-openssl s_client -connect my-service.local:443 -servername my-service.local -tls1_2 </dev/null>
 ```
 
 ### Верификация mTLS
@@ -252,45 +346,16 @@ openssl s_client -connect my-service.local:443 -servername my-service.local \
     -CAfile intermediate-ca/ca-chain.crt -cert client.crt -key client.key </dev/null
 ```
 
-Если клиентский сертификат подписан вашим Intermediate CA, handshake завершится успешно. В противном случае OpenSSL завершит соединение с ошибкой.
+Если клиентский сертификат подписан вашим Intermediate CA, handshake завершится успешно. Если сертификат подписан иным CA — OpenSSL разорвет соединение с ошибкой.
 
-### Верификация цепочки доверия
-
-Проверка конечного сертификата относительно полной цепочки CA:
+### Проверка поддерживаемых версий TLS
 
 ```bash
-openssl verify -CAfile intermediate-ca/ca-chain.crt my-service.crt
-```
+# Проверка TLS 1.3 (рекомендуется в 2026)
+openssl s_client -connect my-service.local:443 -servername my-service.local -tls1_3 </dev/null
 
-Проверка самого промежуточного CA относительно корня:
-
-```bash
-openssl verify -CAfile root-ca/ca.crt intermediate-ca/intermediate.crt
-```
-
-### Верификация корневого CA (самоподписанный)
-
-```bash
-# Корневой сертификат должен проходить самоподпись
-openssl verify -CAfile root-ca/ca.crt root-ca/ca.crt
-# → ca.crt: OK
-
-# Проверка соответствия ключа и корневого сертификата
-openssl x509 -noout -modulus -in root-ca/ca.crt | openssl sha256
-openssl rsa -noout -modulus -in root-ca/ca.key | openssl sha256
-# Хеши должны совпасть
-```
-
-### Проверка расширений сертификата
-
-```bash
-# Просмотр всех расширений (Basic Constraints, Key Usage, EKU, SAN, AKI/SKI)
-openssl x509 -in intermediate-ca/intermediate.crt -noout -text | grep -A 3 "Basic Constraints"
-# → basicConstraints = critical, CA:true, pathlen:0
-
-# Проверка только Subject Alternative Name
-openssl x509 -in my-service.crt -noout -text | grep -A 1 "Subject Alternative Name"
-# → DNS:service.local, DNS:www.service.local, IP:10.0.5.10
+# Проверка TLS 1.2 (для совместимости с устаревшими клиентами)
+openssl s_client -connect my-service.local:443 -servername my-service.local -tls1_2 </dev/null
 ```
 
 ### Извлечение информации из цепочки сертификатов
@@ -303,7 +368,30 @@ openssl s_client -connect my-service.local:443 -servername my-service.local -sho
 # → i:/CN=My Private Root CA, O = Dev, C = RU
 ```
 
+## Операции и команды
+
+Краткая сводка команд двухуровневого CA. Полный набор диагностических команд и их флагов — в **[ssl_certificate_diagnostics.md](../../ssl_certificate_diagnostics.md#операции-и-команды)**.
+
+| Команда | Назначение | Пример |
+|:---|:---|:---|
+| `openssl verify -CAfile ca-chain.crt cert` | Верификация цепочки (leaf → Intermediate → Root) | `openssl verify -CAfile intermediate-ca/ca-chain.crt my-service.crt` |
+| `openssl verify -CAfile root.crt -untrusted int.crt cert` | Формальная верификация с разделением доверия | `openssl verify -CAfile root-ca/ca.crt -untrusted intermediate-ca/intermediate.crt my-service.crt` |
+| `openssl verify -crl_check -CAfile root.crt -untrusted int.crt -CRLfile crl.pem cert` | Верификация с проверкой CRL | `openssl verify -crl_check -CAfile root-ca/ca.crt -untrusted intermediate-ca/intermediate.crt -CRLfile intermediate-ca/db/crl.pem my-service.crt` |
+| `openssl crl2pkcs7 -nocrl -certfile ca-chain.crt \| pkcs7 -print_certs` | Порядок сертификатов в bundle | `openssl crl2pkcs7 -nocrl -certfile intermediate-ca/ca-chain.crt \| openssl pkcs7 -print_certs -noout` |
+| `openssl pkey -in key -pubout -outform DER \| sha256` | Хеш публичного ключа (проверка key/cert match) | `openssl pkey -in service.key -pubout -outform DER \| openssl sha256` |
+| `openssl x509 -in cert -noout -checkend <sec>` | Проверка, не истечёт ли сертификат через N сек | `openssl x509 -in service.crt -noout -checkend 2592000` |
+| `openssl s_client -connect host:443 -servername host -CAfile ca-chain.crt` | Диагностика TLS с локальным доверием | `openssl s_client -connect my-service.local:443 -servername my-service.local -CAfile intermediate-ca/ca-chain.crt` |
+
 ## Типичные ошибки и диагностика
+
+| Ошибка | Код | Вероятная причина | Решение |
+|:---|:---|:---|:---|
+| `unable to get local issuer certificate` | 20 | Root CA отсутствует в trust store | Установить `ca.crt` в хранилище ОС или передать через `-CAfile ca-chain.crt` |
+| `unable to verify the first certificate` | 21 | Сервер не отдаёт Intermediate CA | Настроить `fullchain.crt` (leaf + intermediate) на сервере |
+| `certificate has expired` | 10 | Сертификат просрочен | Перевыпустить сертификат |
+| `certificate is not yet valid` | 12 | Системные часы сбиты или сертификат ещё не активен | Проверить NTP, дождаться `notBefore` |
+| `self signed certificate in chain` | 19 | Самоподписанный Intermediate или иной порядок в bundle | Проверить порядок в `ca-chain.crt` (Intermediate → Root), перевыпустить Intermediate |
+| `signature routines::unsupported algorithm` | — | Алгоритм не поддерживается провайдером OpenSSL 3.0+ | Использовать `-sha256` или добавить `-provider legacy` |
 
 ### Ошибка: `unable to load certificate` / `certificate verify failed`
 
@@ -337,11 +425,14 @@ sudo update-ca-certificates
 # RHEL/CentOS/Fedora
 sudo cp root-ca/ca.crt /etc/pki/ca-trust/source/anchors/
 sudo update-ca-trust
+
+# macOS
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain root-ca/ca.crt
 ```
 
 ### Ошибка: `Verify return code: 21 (unable to verify the first certificate)`
 
-**Причина:** Сервер передает только leaf-сертификат без промежуточного CA. В двухуровневой архитектуре это означает, что сервер настроен некорректно.
+**Причина:** Сервер передаёт только leaf-сертификат без промежуточного CA. В двухуровневой архитектуре это означает, что сервер настроен некорректно.
 
 **Диагностика:**
 ```bash
@@ -351,7 +442,7 @@ openssl s_client -connect my-service.local:443 -servername my-service.local -sho
 # → i:/CN=My Private Intermediate CA, O = Dev, C = RU
 ```
 
-**Решение:** Установите `fullchain.pem` (leaf + intermediate) в конфигурации TLS-сервера.
+**Решение:** Установите `fullchain.crt` (leaf + intermediate) в конфигурации TLS-сервера.
 
 ### Ошибка: `signature routines::unsupported algorithm`
 
@@ -379,15 +470,17 @@ subjectAltName=DNS:service.local,DNS:www.service.local,IP:10.0.0.5
 
 ### Ошибка: `serial file already exists` / `trying to commit certificate twice`
 
-**Причина:** Файл `.srl` с серийным номером уже существует, и OpenSSL не может его прочитать или записать.
+**Причина:** Файл `.srl` с серийным номером или `db/serial` уже существует, и OpenSSL не может его прочитать или записать.
 
 **Решение:**
 ```bash
 # Проверка содержимого
 cat intermediate-ca/db/crlnumber
+cat intermediate-ca/db/serial
 
 # Переинициализация (если нет конфликта с другими сертификатами)
 echo "1000" > intermediate-ca/db/crlnumber
+echo "1000" > intermediate-ca/db/serial
 ```
 
 ### Ошибка: `No value for key` / `unable to find key`
@@ -400,7 +493,7 @@ echo "1000" > intermediate-ca/db/crlnumber
 
 **Причина:** Промежуточный CA пытается подписать другой CA, но в его сертификате установлено ограничение `pathlen:0`.
 
-**Решение:** Используйте промежуточный CA только для подписи конечных сертификатов (серверов, клиентов), а не для создания подчиненных CA.
+**Решение:** Используйте промежуточный CA только для подписи конечных сертификатов (серверов, клиентов), а не для создания подчинённых CA.
 
 ## Рекомендации и лучшие практики
 
@@ -409,34 +502,47 @@ echo "1000" > intermediate-ca/db/crlnumber
 Всегда выполняйте комплексную проверку перед установкой сертификата в production:
 
 ```bash
-# 1. Проверка соответствия ключа и сертификата
-openssl x509 -noout -modulus -in service.crt | openssl sha256
-openssl rsa -noout -modulus -in service.key | openssl sha256
-# Хеши должны совпасть
+# 1. Проверка срока действия (не истечёт ли в течение 30 дней)
+openssl x509 -in service.crt -noout -checkend 2592000
+# exit 0 → ок
 
 # 2. Проверка цепочки доверия (через Bundle)
 openssl verify -CAfile intermediate-ca/ca-chain.crt service.crt
 # → service.crt: OK
 
-# 3. Проверка срока действия
+# 3. Проверка сроков
 openssl x509 -in service.crt -noout -dates
 
-# 4. Проверка SAN (обязательно для современных браузеров)
+# 4. Проверка соответствия ключа и сертификата (универсальный метод)
+openssl pkey -in service.key -pubout -outform DER | openssl sha256
+openssl x509 -in service.crt -pubkey -noout -outform DER | openssl sha256
+# Хеши должны совпадать
+
+# 5. Проверка SAN (обязательно для современных браузеров)
 openssl x509 -in service.crt -noout -text | grep -A 1 "Subject Alternative Name"
 # → DNS:service.local, DNS:www.service.local, IP:10.0.5.10
 
-# 5. Проверка AKI/SKI соответствия Intermediate CA
+# 6. Проверка AKI/SKI соответствия Intermediate CA
 openssl x509 -in service.crt -noout -text | grep -A 1 "Authority Key Identifier"
 openssl x509 -in intermediate-ca/intermediate.crt -noout -text | grep -A 1 "Subject Key Identifier"
-# Значения должны совпадать
+# Значения AKI leaf должно совпадать со SKI Intermediate CA
 ```
 
 ### Безопасность при работе с утилитами
 
 - **Никогда не передавайте приватный ключ CA по сети.** Все операции с `intermediate.key` и `root-ca/ca.key` выполняйте на машине, где хранится CA.
-- **Храните `service.key` с правами `600`.** Утечка приватного ключа сервиса позволяет impersonate-атаки.
+- **Храните `service.key` с правами `600`.** Утечка приватного ключа сервиса позволяет impersonation-атаки.
 - **Проверяйте `issuer` перед установкой:** убедитесь, что сертификат выпущен именно вашим Intermediate CA, а не публичным центром.
-- **Используйте `-CAfile` явно:** не полагайтесь на системное хранилище CA в скриптах — указывайте корень явно.
+- **Используйте `-CAfile` явно:** не полагайтесь на системное хранилище CA в скриптах — указывайте bundle явно.
+- **Приватные ключи всегда offline:** Root CA ключ никогда не должен находиться на машине с сетевым доступом. Intermediate CA ключ — только в защищённом сегменте.
+- **HSM/TPM для корневых ключей:** использование аппаратных модулей исключает возможность извлечения ключа.
+- **Права доступа:** `ca.key` и `intermediate.key` должны иметь права `600` и принадлежать выделенному пользователю (например, `ca`).
+- **Резервное копирование:** зашифрованные копии ключей хранятся отдельно от сертификатов, с использованием отдельного пароля или шифрования GPG.
+- **Аудит:** ведение журнала всех операций подписи через `index.txt` и отправка событий в SIEM.
+- **Ротация по расписанию:** ротация Intermediate CA каждые 3–5 лет, конечных сертификатов — по мере приближения срока действия.
+- **CRL Distribution Points:** всегда указывайте доступные URL для CRL в расширениях сертификата.
+- **Тестовый выпуск:** перед использованием в production выпускайте тестовый сертификат и проверяйте его через `openssl verify`.
+- **Документация:** поддерживайте актуальную схему инфраструктуры и список ответственных администраторов.
 
 ### Автоматизация в CI/CD
 
@@ -457,12 +563,14 @@ openssl x509 -in service.crt -noout -checkend 2592000 || echo "CRITICAL: Certifi
 
 ## Ограничения и крайние случаи
 
-- **OpenSSL 3.0+ провайдеры:** некоторые устаревшие алгоритмы (SHA-1, MD5) требуют явного включения провайдера Legacy. Без этого команды `verify` и `x509` завершатся ошибкой.
+- **OpenSSL 3.0+ провайдеры:** некоторые устаревшие алгоритмы (SHA-1, MD5) требуют явного включения провайдера Legacy. Без этого команды `verify` и `x509` завершятся ошибкой.
+- **`openssl rsa` в maintenance mode:** начиная с OpenSSL 3.0 команда `openssl rsa` не получает новых фич; для универсальной проверки key/cert используйте `openssl pkey` (см. выше).
+- **PQC:** полная поддержка NIST PQC (ML-KEM/ML-DSA/SLH-DSA) доступна, начиная с OpenSSL 3.5. На OpenSSL 3.0–3.4 требуется сторонний `oqs-provider`.
 - **Совместимость оболочек:** команды с `<(printf ...)` требуют Bash. В Alpine Linux, Ubuntu/Debian (где `/bin/sh` → dash) используйте явный вызов Bash или временные файлы.
 - **Энтропия в виртуальных средах:** генерация ключей на ВМ без аппаратного RNG может блокироваться. Используйте `haveged` или подключение к `/dev/random` через virtio-rng.
 - **Сервисы с жесткими требованиями к совместимости:** некоторые устаревшие системы (например, старые Java-приложения до версии 8) могут требовать RSA-ключей и специфических расширений.
 - **Регуляторные требования:** в финансовой и медицинской отраслях может требоваться использование сертифицированных средств криптозащиты (СКЗИ) с поддержкой ГОСТ.
-- **Ограничение `pathlen`:** после установки `pathlen:0` в Intermediate CA невозможно создать подчиненный CA без перевыпуска Intermediate.
+- **Ограничение `pathlen`:** после установки `pathlen:0` в Intermediate CA невозможно создать подчинённый CA без перевыпуска Intermediate.
 
 ## Очистка и откат изменений
 
@@ -478,6 +586,9 @@ sudo update-ca-certificates --fresh
 
 # RHEL/CentOS/Fedora
 sudo update-ca-trust
+
+# macOS
+sudo security remove-trusted-cert -d root-ca/ca.crt
 
 # Windows Server
 certutil -delstore "Root" "CN=My Private Root CA"
@@ -521,7 +632,9 @@ rm -rf ~/.openssl/
 
 ## Мониторинг и оповещение
 
-### Проверка срока действия удаленных сертификатов
+### Проверка срока действия удалённых сертификатов
+
+Скрипт работает как на Linux (GNU `date`), так и на macOS/BSD (`date -j -f`) — порядок пробует BSD-синтаксис в первую очередь с fallback на GNU:
 
 ```bash
 #!/usr/bin/env bash
@@ -545,10 +658,13 @@ DAYS_LEFT=$(( (EXP_EPOCH - NOW_EPOCH) / 86400 ))
 
 if [ "$DAYS_LEFT" -lt 0 ]; then
   echo "CRITICAL: $HOST сертификат истёк $(( -DAYS_LEFT )) дней назад"
+  exit 2
 elif [ "$DAYS_LEFT" -lt "$DAYS_WARN" ]; then
   echo "WARNING: $HOST сертификат истекает через $DAYS_LEFT дней"
+  exit 1
 else
   echo "OK: $HOST сертификат действителен ещё $DAYS_LEFT дней"
+  exit 0
 fi
 ```
 
@@ -585,6 +701,7 @@ elif [ "$DAYS_LEFT" -lt "$DAYS_WARN" ]; then
   exit 1
 else
   echo "OK: Intermediate CA действителен ещё $DAYS_LEFT дней"
+  exit 0
 fi
 ```
 
@@ -592,18 +709,6 @@ fi
 - Добавьте скрипт в cron для ежедневной проверки.
 - Настройте оповещение в Slack/Telegram/PagerDuty при достижении критического порога.
 - Для enterprise-сред интегрируйте с Prometheus Blackbox Exporter, указав `server_name`, соответствующий внутреннему домену (см. **[обзор PKI](../../../Concepts/pki_overview.md)**).
-
-## Best Practices
-
-- **Приватные ключи всегда offline:** Root CA ключ никогда не должен находиться на машине с сетевым доступом. Intermediate CA ключ — только в защищенном сегменте.
-- **HSM/TPM для корневых ключей:** использование аппаратных модулей исключает возможность извлечения ключа.
-- **Права доступа:** `ca.key` и `intermediate.key` должны иметь права `600` и принадлежать выделенному пользователю (например, `ca`).
-- **Резервное копирование:** зашифрованные копии ключей хранятся отдельно от сертификатов, с использованием отдельного пароля или шифрования GPG.
-- **Аудит:** ведение журнала всех операций подписи через `index.txt` и отправка событий в SIEM.
-- **Ротация по расписанию:** ротация Intermediate CA каждые 3–5 лет, конечных сертификатов — по мере приближения срока действия.
-- **CRL Distribution Points:** всегда указывайте доступные URL для CRL в расширениях сертификата.
-- **Тестовый выпуск:** перед использованием в production выпускайте тестовый сертификат и проверяйте его через `openssl verify`.
-- **Документация:** поддерживайте актуальную схему инфраструктуры и список ответственных администраторов.
 
 ## Дополнительная информация
 
@@ -622,6 +727,8 @@ fi
 - **[Обзор PKI](../../../Concepts/pki_overview.md)** — фундаментальная теория инфраструктуры открытых ключей, алгоритмы 2026, PQC, расширения X.509.
 - **[Обзор двухуровневого CA](./overview.md)** — архитектура, алгоритмы, хранилище ключей, порядок развёртывания, сценарии использования.
 - **[Алгоритм диагностики](./troubleshooting_flowchart.md)** — decision-tree для поиска проблем с сертификатами.
-- **[Диагностика SSL-сертификатов](../../../../Security/Tools/ssl_certificate_diagnostics.md)** — методы поиска ошибок в цепочках доверия.
-- **[Certificate Automation](../../../../Ansible/ansible_certificate_management.md)** — автоматизация выдачи и ротации через Ansible.
+- **[Диагностика SSL-сертификатов](../../ssl_certificate_diagnostics.md)** — общие методы поиска ошибок в цепочках доверя, коды verify return code, OCSP Stapling, TLS-версии.
 - **[Утилиты и диагностика одноуровневого CA](../../openssl_ca/single_tier/common_utilities.md)** — сравнение подходов и команды для простой архитектуры.
+- **[Настройка OCSP Responder](../ocsp_responder.md)** — выпуск и эксплуататура OCSP-резолвера для двухуровневого CA.
+- **[CRL Distribution Points](../crl_distribution_points.md)** — публикация списков отзыва.
+- **[Certificate Automation](../../../../Ansible/ansible_certificate_management.md)** — автоматизация выдачи и ротации через Ansible.

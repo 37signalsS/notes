@@ -1,6 +1,6 @@
 # Обзор безопасности цепочки поставок (Supply Chain Security)
 
-**Актуально для:** SLSA v1.2, Cosign v3.1+, Syft v1.54+, Trivy v0.69+, Harbor v2.15+, Kyverno v1.19+, Kubernetes 1.31+, Docker Engine 29.x, BuildKit 0.34+, SPDX 3.0, CycloneDX 1.7, NIST SP 800-218 Rev 1
+**Актуально для:** SLSA v1.2, Cosign v3.1+, Syft v1.54+, Trivy ≥ 0.71.0, Harbor v2.15+, Kyverno v1.19+, Kubernetes 1.31+, Docker Engine 29.x, BuildKit 0.34+, SPDX 3.0, CycloneDX 1.7, NIST SP 800-218 Rev 1
 
 ## Определения
 
@@ -90,7 +90,7 @@
 | **Docker / BuildKit** | 29.x (BuildKit 0.34+) | Сборка образов с генерацией SBOM и SLSA-аттестаций. |
 | **Cosign** | v3.1+ | Keyless-подпись образов и аттестаций; ML-DSA (PQC) через KMS (в стабильной версии недоступна). |
 | **Syft** | v1.54+ | Генерация SBOM/CBOM в форматах SPDX 3.0 и CycloneDX 1.7. |
-| **Trivy** | v0.69+ | Сканирование зависимостей и артефактов, VEX-фильтрация. |
+| **Trivy** | ≥ 0.71.0 | Сканирование зависимостей и артефактов, VEX-фильтрация. |
 | **Grype** | v0.35+ | Анализ достижимости (reachability) уязвимостей. |
 | **Harbor** | v2.15+ | Локальный OCI-реестр с поддержкой OCI 1.1 Referrers API. |
 | **Kyverno** | v1.19+ | Admission-контроль для верификации подписей и VSA-аттестаций (ClusterPolicy устарел — см. ImageValidatingPolicy). |
@@ -422,7 +422,7 @@ trivy diff sbom:./expected-sbom.json sbom:./runtime-sbom.json
 | `cosign: error signing` | Fulcio недоступен или сертификат отклонен | `curl -k $FULCIO_URL` | Проверьте сетевую доступность Fulcio и срок действия OIDC-токена. В on-prem используйте внутренний CA или key-based подпись. |
 | `Attestation not found` | SBOM/SLSA не прикреплен к образу | `curl /v2/.../referrers` | Убедитесь, что `docker buildx build` завершился с `--push` и флагами `--attest`. Для локальных тестов используйте `--output type=docker`. |
 | `Cosign verify: certificate identity mismatch` | Идентичность в политике Kyverno не совпадает с OIDC-claim | `cosign verify --output text ...` | Проверьте точное совпадение `--certificate-identity` с claim `sub` в токене. |
-| `Trivy: false positive на CVE` | Уязвимый код не вызывается (reachability) | `trivy sbom --show-vulnerability-reachability` | Создайте VEX-отчет со статусом `not_affected`. |
+| `Trivy: false positive на CVE` | Уязвимый код не вызывается (reachability) | `govulncheck ./...` (Go) / `osv-scanner --call-analysis=go` | Создайте VEX-отчет со статусом `not_affected`. |
 | `Kyverno блокирует валидный образ` | Политика содержит устаревший public key | `kyverno apply --policy ... --resource ...` | Обновите public key в `ClusterPolicy` после ротации ключей Cosign. |
 | `SBOM generation failed: multi-arch` | Syft не поддерживает манифест image index | `syft -o spdx-json ...` | Используйте `docker buildx imagetools inspect --format '{{json .Manifest}}'` и генерацию SBOM для каждого архитектурного варианта отдельно. |
 
@@ -468,7 +468,7 @@ curl -u "admin:Harbor12345" -X POST \
 * [Примеры реальных атак на цепочку поставок](./supply_chain_attack_examples.md) — SolarWinds, Log4Shell, event-stream, colors.js, 3CX: хронология, защита.
 * [Безопасность цепочки поставок контейнерных образов](./container_image_supply_chain.md) — distroless, digest pinning, multi-stage builds, admission control.
 * [Сравнение SCA-инструментов](./sca_tools_comparison.md) — Trivy vs Grype vs Snyk vs osv-scanner vs Syft.
-* [Анализ зависимостей и SBOM](./dependency_and_sbom_analysis.md) — SCA, VEX и инвентаризация по CycloneDX 1.6.
+* [Анализ зависимостей и SBOM](./dependency_and_sbom_analysis.md) — SCA, VEX и инвентаризация по CycloneDX 1.7.
 * [Целостность сборки](./build_integrity.md) — SLSA v1.2, аттестации и воспроизводимость.
 * [Подпись артефактов](./artifact_signing.md) — Sigstore, Cosign и PQC-алгоритмы подписи.
 * [SBOM в продакшене](./sbom_in_production.md) — чтение SBOM, blast radius, реакция на CVE.

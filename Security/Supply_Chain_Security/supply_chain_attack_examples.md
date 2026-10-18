@@ -1,5 +1,7 @@
 # Примеры реальных атак на цепочку поставок
 
+**Актуально для:** SLSA v1.2, Cosign v3.1.3, Trivy ≥ 0.71.0, Syft v1.54+, Grype v0.82+, CycloneDX 1.7, SPDX 3.0, Kubernetes 1.31+ (для admission control), eBPF-based runtime monitoring (Falco/Tetragon)
+
 ## Определения
 
 * **Supply Chain Attack (Атака на цепочку поставок):** Класс атак, при которых злоумышленник компрометирует не само приложение, а один из элементов его жизненного цикла: зависимость, инструмент сборки, CI/CD-пайплайн, реестр артефактов или учётную запись мейнтейнера. Цель — внедрение бэкдора или кражи данных через легитимный канал обновления.
@@ -19,6 +21,38 @@
 | **Учётные записи мейнтейнеров** | ua-parser.js, colors.js | Мониторинг смены владельцев, аудит npm/GitHub |
 | **Базовые образы** | Криптомайнеры в Docker Hub образах | Сканирование образов, digest pinning |
 | **Инструменты сборки/обновления** | SolarWinds Orion | Проверка целостности инструментов, SLSA provenance |
+
+## Предпосылки
+
+### Программное обеспечение
+
+* **Управление зависимостями:** npm 10+, pip 24+ (с `--require-hashes`), Maven 3.9+, Gradle 8.5+ с включённым `dependencyLocking`.
+* **Сканирование образов:** Trivy ≥ 0.71.0, Grype v0.82+, Syft v1.54+.
+* **Подпись и верификация артефактов:** Cosign v3.1.3 (Keyless через Sigstore или внутренний Fulcio/Rekor).
+* **Runtime наблюдаемость:** Falco (eBPF) 0.38+ или Cilium Tetragon 0.14+ для обнаружения аномальной загрузки библиотек.
+* **Контроль доступа:** Kyverno v1.19+ с ImageValidatingPolicy для проверки SLSA provenance на этапе deployment.
+* **Реестр артефактов:** Harbor v2.15+ с поддержкой OCI 1.1 Referrers API для хранения аттестаций.
+
+### Требования к среде
+
+* **Egress control:** CI/CD раннеры работают в изолированных сетях с явно разрешённым egress только к доверенным реестрам и API-сервисам.
+* **Hardware:** процессоры с поддержкой AES-NI для ускорения TLS в инфраструктуре подписи; 8–16 ГБ ОЗУ для локального сканирования больших образов.
+* **Хранилище журналов:** централизованный сбор логов CI/CD ( Loki + Promtail или syslog-ng) для корреляции подозрительных egress-соединений.
+
+## Операции и команды
+
+| Операция | Инструмент | Команда | Когда использовать |
+| :--- | :--- | :--- | :--- |
+| Проверка владельцев npm | npm | `npm owner ls <package>` | При появлении нового мейнтейнера критичного пакета |
+| Аудит зависимостей npm | npm | `npm audit --audit-level=moderate` | Периодически в CI и перед релизом |
+| Проверка registry пакетов | npm + jq | `npm ls --json \| jq '.[] \| .resolved'` | Обнаружение пакетов из непроверенных реестров |
+| Поиск уязвимостей в образе | Trivy | `trivy image <image> --scanners vuln` | CI/CD gate перед деплоем |
+| Поиск по конкретной CVE | Trivy | `trivy image <image> --vuln CVE-XXXX-XXXX` | Быстрая реакция на новую уязвимость |
+| Генерация SBOM из образа | Syft | `syft <image> -o cyclonedx-json` | Инвентаризация для incident response |
+| Верификация provenance | Cosign | `cosign verify-attestation --type slsaprovenance <image>` | Перед деплоем, если артефакт подписан |
+| Сравнение SBOM между версиями | Syft + diff | `diff <(syft img:old --output table) <(syft img:new --output table)` | Обнаружение неожиданного drift |
+| Мониторинг загрузки библиотек | Falco | `falco -K <kubeconfig> -S` | Обнаружение runtime-атак типа 3CX |
+| Проверка хеша скачанного скрипта | sha256sum | `sha256sum -c <(echo "<expected>  script.sh")` | Перед выполнением любого удалённого скрипта |
 
 ## Практические сценарии
 
@@ -123,10 +157,11 @@ zip -q -d log4j-core-*.jar org/apache/logging/log4j/core/lookup/JndiLookup.class
 - **Network monitoring:** Обнаружение аномальных DNS-запросов (SUNBURSTcommunicate через DNS).
 
 ```bash
-# Проверка provenance артефакта
+# Проверка provenance артефакта (Cosign v3.1.3)
 cosign verify-attestation --type slsaprovenance harbor.internal/orion:v2024.1 \
-  --certificate-identity "https://solarwinds.internal/build" \
-  --certificate-oidc-issuer "https://solarwinds.internal"
+  --certificate-identity-regexp "https://solarwinds.internal/build" \
+  --certificate-oidc-issuer "https://solarwinds.internal" \
+  | jq '.payload | fromjson | .verified'
 # → Проверяется, что артефакт собран в доверенной среде с указанным provenance
 ```
 
@@ -206,8 +241,65 @@ echo "expected_hash  codecov.sh" | sha256sum -c -
 ## Граничные случаи и ограничения
 
 * **Protestware:** Намеренная порча пакета мейнтейнером (colors.js) — не обнаруживается SCA-сканерами, так как пакет технически «валиден». Защита — пининг версий и аудит changelog.
+
 * **Внутренние атаки:** SolarWinds показал, что скомпрометирована может быть даже среда сборки. Только reproducible builds и hardware isolation (SLSA L3) дают гарантию.
-* **Транзитивные зависимости:** Log4Shell показал, что уязвимость может скрываться на глубине 3–4 уровня в дереве зависимостей. Только SBOM с reachability analysis позволяет быстро оценитьimpact.
+
+* **Транзитивные зависимости:** Log4Shell показал, что уязвимость может скрываться на глубине 3–4 уровня в дереве зависимостей. Только SBOM с reachability analysis позволяет быстро оценить impact.
+
+### SRE runbook: реакция на компрометацию maintainer-аккаунта
+
+Когда мейнтейнер критичного пакета (например, `ua-parser.js`) публикует подозрительную версию:
+
+1. **Немедленно:** отключить автоматические обновления через Renovate/Dependabot для этого пакета (emergency policy).
+2. **Идентифицировать затронутые сервисы:** построить reverse-dependency graph через Dependency-Track или GUAC.
+3. **Срочная проверка:** запустить Trivy + Grype со scan-by-SBOM для всех затронутых образов.
+4. **Создать VEX:** опубликовать CycloneDX VEX с `not_affected` для сервисов, где уязвимый код не достижим (подтверждённый reachability analysis).
+5. **Откатить:** если VEX нельзя выпустить — откатить на проверенную версию и увеличить версию lock-файла принудительно.
+
+### Sysadmin: egress monitoring через eBPF
+
+Атаки типа 3CX и Codecov Bash Uploader используют runtime загрузку библиотек и обращение к C2 через DNS/HTTPS. Локальные системные администраторы могут обнаружить такие атаки через:
+
+```bash
+# Falco — мониторинг подозрительной загрузки библиотек (ptrace, dlopen)
+# → Alert при: openat + интерпретируемый файл + неизвестный remote IP
+
+# Tetragon — отслеживание syscall execve с неизвестных бинарных путей
+kubectl exec -n tetragon ds/tetragon -- \
+  tetra getevents -s execve -k 'binary=/usr/bin/python3' --follow
+
+# sysdig — поиск аномального DNS traffic от CI/CD runner'ов
+sysdig -pc 'evt.type=dns and fd.net != "10.0.0.0/8"' \
+  | grep -i 'suspicious-domain'
+```
+
+**Настройка syslog-ng для egress-логов CI runner'ов:**
+
+```bash
+# /etc/syslog-ng/conf.d/ci-egress.conf
+source s_ci_runner {
+  iptables(prefix("ci-egress."));
+};
+filter f_egress {
+  netmask(10.0.0.0/8, { inverse(true); });
+};
+destination d_alert {
+  file("/var/log/ci-egress-alerts.log");
+};
+log { source(s_ci_runner); filter(f_egress); destination(d_alert); };
+```
+
+### DevOps: проверка скриптов перед выполнением в CI
+
+Во многих атаках (Codecov, 3CX) злоумышленники модифицируют удалённые скрипты, которые вызываются через `curl | bash`. Защита на уровне CI/CD:
+
+```yaml
+# .gitlab-ci.yml — проверка скрипта перед исполнением
+before_script:
+  - curl -sSL https://example.com/install.sh -o install.sh
+  - echo "sha256:expected_hash_here  install.sh" | sha256sum -c -
+  # → install.sh: OK (или FAIL → pipeline aborts)
+```
 
 ## Дополнительная информация
 

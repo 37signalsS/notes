@@ -871,7 +871,7 @@ echo -n "test" | kubeseal --cert pub-cert.pem --format yaml | kubeseal --recover
 | Критерий | Sealed Secrets | SOPS | External Secrets Operator |
 |:---|:---|:---|:---|
 | **Хранение в Git** | Да (зашифрованный SealedSecret) | Да (зашифрованный файл) | Нет (ссылки на внешнее хранилище) |
-| **Внешняя инфраструктура** | Не требуется | Требуется (age-ключ или KMS) | Требуется (Vault, AWS SM и т.д.) |
+| **Внешняя инфраструктура** | Не требуется | Требуется (age-ключ) | Требуется (Vault, AWS SM и т.д.) |
 | **Привязка к кластеру** | Да (ключи уникальны) | Нет (ключи общие) | Нет (синхронизация извне) |
 | **Ротация секретов** | Ручная (только шифрование) | Ручная | Автоматическая (sync из Vault) |
 | **Динамические секреты** | Нет | Нет | Да (generate из Vault) |
@@ -905,7 +905,7 @@ echo -n "test" | kubeseal --cert pub-cert.pem --format yaml | kubeseal --recover
 ### См. также
 
 - **[External Secrets Operator](../Base/secrets/external_managers.md)** — интеграция с внешними KMS (Vault, AWS Secrets Manager).
-- **[SOPS](../../Security/Tools/sops_overview.md)** — шифрование файлов с ключами AWS/GCP/Age без привязки к контроллеру.
+- **[SOPS](../../Security/Tools/sops_overview.md)** — шифрование файлов с age-ключами без привязки к контроллеру.
 - **[Vault](../../Vault/zero_trust.md)** — полноценная система управления секретами.
 - Общий обзор стратегий — **[Secrets Management Overview](../../Security/Concepts/secrets_management_overview.md)**.
 - Пайплайны GitOps — **[GitOps Secrets Encryption](../../GitOps/secrets_encryption.md)**, включая сценарий [Sealed Secrets с Argo CD (hub-and-spoke)](../../GitOps/secrets_encryption.md#сценарий-sealed-secrets-с-argo-cd-hub-and-spoke) для управления kubeconfigами spoke-кластеров.

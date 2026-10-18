@@ -181,7 +181,7 @@ sudo rkhunter --check --skip-keypress --report-warnings-only
 
 Причины (по исходному коду rkhunter 1.4.6):
 
-- скрытый процесс не обнаруживается, потому что тест `hidden_procs` (сравнение `ps` с `/proc` через утилиту `unhide`) отключён в поставляемом конфиге: `DISABLE_TESTS="suspscan hidden_ports hidden_procs deleted_files packet_cap_apps"`;
+- скрытый процесс не обнаруживается, потому что тест `hidden_procs` (сравнение `ps` с `/proc` через утилиту `unhide`) отключён в поставляемом конфиге: `DISABLE_TESTS="suspscan hidden_ports hidden_procs deleted_files packet_cap_apps apps"`;
 - скрытый модуль не попадает в проверку `loaded_modules`: при маскировке Diamorphine делает только `list_del(&THIS_MODULE->list)` — модуль исчезает из `lsmod` и `/proc/modules` согласованно, а проверка известных имён (`LKM_BADNAMES`, включая `diamorphine.ko`) ищет файлы в дереве модулей, а не в выводе `lsmod`.
 
 7. После переключения видимости модуля (`kill -63 <pid>`) rkhunter обнаруживает руткит по сигнатуре — в выводе появляется предупреждение о нахождении «Diamorphine LKM». Проверка ищет символы ядра `diamorphine`, `module_hide`, `module_hidden`, `is_invisible`, `hacked_getdents`, `hacked_kill` в файле символов (`/proc/ksyms` → `/proc/kallsyms` → `/boot/System.map-$(uname -r)`) и имя файла `diamorphine.ko`. Поскольку при маскировке символы остаются в `/proc/kallsyms`, результат символной проверки зависит от конкретной системы — в демонстрации обнаружение произошло после переключения видимости модуля.

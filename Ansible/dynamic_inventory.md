@@ -504,44 +504,42 @@ ansible-playbook -i inventories/foreman.yml playbooks/site.yml --limit "os_cento
 
 ### Инвентарь на основе Proxmox VE
 
-Proxmox VE — self-hosted платформа виртуализации. Плагин `proxmox` из коллекции `community.proxmox` автоматически получает список всех VM, LXC и узлов.
+Proxmox VE — self-hosted платформа виртуализации. Плагин `proxmox` из коллекции `community.proxmox` автоматически получает список всех VM, LXC и узлов. Имя файла **обязано** заканчиваться на `.proxmox.yml`/`.proxmox.yaml` — иначе Ansible не распознает источник. Профильные примеры (теги, фильтры, connection plugins) — в [Автоматизация Proxmox VE через Ansible](../Proxmox/proxmox_ansible.md).
 
 ```yaml
-# inventories/proxmox.yml
+# inventories/pve.proxmox.yml
 plugin: community.proxmox.proxmox
 url: https://pve1.internal:8006
 user: "automation@pam!ansible"
 password: "{{ vault_proxmox_password }}"
-want_proxmox_nodes_enabled: true
-want_proxmox_nodes_availabe_only: true
+want_facts: true
+want_proxmox_nodes_ansible_host: false
 validate_certs: false
 
-# Сопоставление IP для подключения
+# Сопоставление IP для подключения (факты want_facts)
 compose:
-  ansible_host: proxmox_net0_ip | default(proxmox_ip)
-  proxmox_status: proxmox_status
-  proxmox_node: proxmox_node
-  proxmox_tags: proxmox_tags
-  proxmox_vmid: proxmox_vmid
+  ansible_host: >-
+    proxmox_ipconfig0.ip | default(proxmox_net0.ip)
+    | default(proxmox_ip) | ipaddr('address')
 
-# Группировка по статусу, узлу и тегам
+# Группировка по статусу, узлу, тегам и типу гостя
 keyed_groups:
   - key: proxmox_status
     prefix: status
   - key: proxmox_node
     prefix: node
-  - key: proxmox_tags
-    separator: "_"
-  - key: proxmox_type
+  - key: proxmox_tags_parsed
+    separator: ""
+    prefix: tag
+  - key: proxmox_vmtype
     prefix: type
 
 # Условия группировки
 groups:
   running: "proxmox_status == 'running'"
   stopped: "proxmox_status == 'stopped'"
-  lxc_containers: "proxmox_type == 'lxc'"
-  virtual_machines: "proxmox_type == 'qemu'"
-  nodes: "proxmox_type == 'node'"
+  lxc_containers: "proxmox_vmtype == 'lxc'"
+  virtual_machines: "proxmox_vmtype == 'qemu'"
 
 # Кэширование
 cache: true
@@ -552,7 +550,7 @@ cache_connection: /tmp/proxmox_inventory_cache
 
 **Запуск:**
 ```bash
-ansible-playbook -i inventories/proxmox.yml playbooks/site.yml \
+ansible-playbook -i inventories/pve.proxmox.yml playbooks/site.yml \
   --limit "node_pve1"
 ```
 
